@@ -1580,7 +1580,14 @@ internal class TaSignalsFunction(
         barDuration = barDuration,
         timestampAnchor = timestampAnchor,
       )
-    val realizedVol = realizedVol(series, config.realizedVolWindow)
+    val realizedVol =
+      realizedVol(
+        series,
+        realizedVolWindowBars(
+          windowSeconds = config.realizedVolWindow,
+          barDuration = barDuration,
+        ),
+      )
 
     val barEndTime = signalBarEndTime(envelope.payload.t, barDuration, timestampAnchor)
     val quote = freshQuotePayloadForBar(quoteState.value(), barEndTime, config.quoteStaleAfterMs)
@@ -1684,11 +1691,25 @@ internal fun signalHistoryLimit(
   barDuration: Duration,
 ): Int {
   require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val realizedVolBars = realizedVolWindowBars(realizedVolWindow, barDuration)
   val vwapBars =
     kotlin.math
       .ceil(vwapWindow.toMillis().toDouble() / barDuration.toMillis().toDouble())
       .toInt()
-  return maxOf(realizedVolWindow + 5, vwapBars + 60)
+  return maxOf(realizedVolBars + 5, vwapBars + 60)
+}
+
+internal fun realizedVolWindowBars(
+  windowSeconds: Int,
+  barDuration: Duration,
+): Int {
+  require(windowSeconds > 0) { "windowSeconds must be positive" }
+  require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val windowMillis = Duration.ofSeconds(windowSeconds.toLong()).toMillis()
+  return kotlin.math
+    .ceil(windowMillis.toDouble() / barDuration.toMillis().toDouble())
+    .toInt()
+    .coerceAtLeast(1)
 }
 
 internal fun rollingSignalVwap(

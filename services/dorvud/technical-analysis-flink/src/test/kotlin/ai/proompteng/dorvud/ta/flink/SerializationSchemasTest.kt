@@ -144,6 +144,8 @@ class SerializationSchemasTest {
   fun `signal history limits respect the source cadence`() {
     assertEquals(360, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofSeconds(1)))
     assertEquals(65, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofMinutes(1)))
+    assertEquals(60, realizedVolWindowBars(60, Duration.ofSeconds(1)))
+    assertEquals(1, realizedVolWindowBars(60, Duration.ofMinutes(1)))
     assertSerializable(
       TaSignalsFunction(
         FlinkTaConfig.fromEnv(),
