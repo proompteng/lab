@@ -91,7 +91,7 @@ describe('impact router', () => {
 
   test('routes Flink observability and S3A documentation through scripts contract tests', () => {
     const plan = selectImpactPlan(
-      ['argocd/applications/observability/cluster-metrics-alloy-configmap.yaml', 'docs/torghut/ceph-migration.md'],
+      ['argocd/applications/observability/cluster-metrics-alloy-config.river', 'docs/torghut/ceph-migration.md'],
       map,
     )
     expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])
