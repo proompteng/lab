@@ -178,6 +178,22 @@ describe('torghut build-push workflow', () => {
     expect(releaseWorkflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
   })
 
+  it('evaluates migration safety across every commit since the promoted source', () => {
+    const migrationGateStart = releaseWorkflow.indexOf('      - name: Evaluate migration safety gate')
+    const migrationGateEnd = releaseWorkflow.indexOf('      - name: Update Torghut manifests', migrationGateStart)
+    const migrationGate = releaseWorkflow.slice(migrationGateStart, migrationGateEnd)
+
+    expect(migrationGateStart).toBeGreaterThan(-1)
+    expect(migrationGateEnd).toBeGreaterThan(migrationGateStart)
+    expect(migrationGate).toContain('bun run packages/scripts/src/torghut/source-ci.ts source-sha')
+    expect(migrationGate).toContain('--manifest argocd/applications/torghut/knative-service.yaml')
+    expect(migrationGate).toContain('git cat-file -e "${PROMOTED_SOURCE_SHA}^{commit}"')
+    expect(migrationGate).toContain('git merge-base --is-ancestor "${PROMOTED_SOURCE_SHA}" "${SOURCE_SHA}"')
+    expect(migrationGate).toContain('git diff --name-only "${PROMOTED_SOURCE_SHA}..${SOURCE_SHA}" --')
+    expect(migrationGate).toContain('services/torghut/migrations/')
+    expect(migrationGate).not.toContain('git diff-tree --no-commit-id --name-only -r')
+  })
+
   it('publishes and contracts TA and WS images through the shared Nix OCI workflow', () => {
     const serviceWorkflows = [
       {

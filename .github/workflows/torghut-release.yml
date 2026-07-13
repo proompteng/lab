@@ -225,8 +225,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${{ steps.meta.outputs.source_sha }}")"
-          if printf '%s\n' "${CHANGED_FILES}" | grep -Eq '^services/torghut/migrations/'; then
+          SOURCE_SHA='${{ steps.meta.outputs.source_sha }}'
+          PROMOTED_SOURCE_SHA="$(
+            bun run packages/scripts/src/torghut/source-ci.ts source-sha \
+              --manifest argocd/applications/torghut/knative-service.yaml
+          )"
+          REQUIRES_APPROVAL='false'
+
+          if ! git cat-file -e "${PROMOTED_SOURCE_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "Currently promoted Torghut source ${PROMOTED_SOURCE_SHA} is not present in git history"
+            REQUIRES_APPROVAL='true'
+          elif ! git merge-base --is-ancestor "${PROMOTED_SOURCE_SHA}" "${SOURCE_SHA}"; then
+            echo "Currently promoted Torghut source ${PROMOTED_SOURCE_SHA} is not an ancestor of ${SOURCE_SHA}"
+            REQUIRES_APPROVAL='true'
+          else
+            CHANGED_MIGRATIONS="$(
+              git diff --name-only "${PROMOTED_SOURCE_SHA}..${SOURCE_SHA}" -- \
+                services/torghut/migrations/
+            )"
+            if [ -n "${CHANGED_MIGRATIONS}" ]; then
+              echo "Migration changes detected since promoted source ${PROMOTED_SOURCE_SHA}:"
+              printf '%s\n' "${CHANGED_MIGRATIONS}"
+              REQUIRES_APPROVAL='true'
+            fi
+          fi
+
+          if [ "${REQUIRES_APPROVAL}" = 'true' ]; then
             {
               echo "requires_approval=true"
               echo "label=do-not-automerge"
