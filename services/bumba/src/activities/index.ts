@@ -577,14 +577,15 @@ const resolveCompletionDefaults = (apiBaseUrl: string) => {
   const hosted = isHostedOpenAiBaseUrl(apiBaseUrl)
   return {
     model: hosted ? DEFAULT_OPENAI_COMPLETION_MODEL : DEFAULT_SELF_HOSTED_COMPLETION_MODEL,
-    temperature: hosted ? 0 : DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE,
+    temperature: hosted ? null : DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE,
     topP: hosted ? null : DEFAULT_SELF_HOSTED_COMPLETION_TOP_P,
     reasoningEffort: hosted ? 'high' : DEFAULT_SELF_HOSTED_COMPLETION_REASONING_EFFORT,
   }
 }
 
-const loadCompletionTemperature = (fallback: number) => {
+const loadCompletionTemperature = (fallback: number | null) => {
   const temperature = normalizeOptionalFloat(process.env.OPENAI_COMPLETION_TEMPERATURE) ?? fallback
+  if (temperature === null) return null
   if (!Number.isFinite(temperature) || temperature < 0) {
     throw createNonRetryableError(
       'OPENAI_COMPLETION_TEMPERATURE must be a non-negative number',
@@ -2999,7 +3000,7 @@ export const activities = {
       model,
       stream: true,
       max_tokens: maxOutputTokens,
-      temperature,
+      ...(temperature === null ? {} : { temperature }),
       ...(topP === null ? {} : { top_p: topP }),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages,
