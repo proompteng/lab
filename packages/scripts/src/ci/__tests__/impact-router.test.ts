@@ -67,6 +67,12 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
+  test('routes per-service Nix image changes to compatibility validation', () => {
+    const plan = selectImpactPlan(['nix/images/jangar.nix'], map)
+    expect(plan.validationTargets).toEqual(['shared-compat'])
+    expect(plan.delegatedWorkflows).toEqual([])
+  })
+
   test('routes a package and infrastructure change without duplicate targets', () => {
     const plan = selectImpactPlan(['packages/k8s/src/cli.ts', 'argocd/applications/docs/generated/app.yaml'], map)
     expect(plan.validationTargets).toEqual(['argo-lint', 'cdk8s', 'kubeconform'])

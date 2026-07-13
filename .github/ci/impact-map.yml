@@ -82,9 +82,7 @@ targets:
       - nix/cache-push.sh
       - nix/ci-*.sh
       - nix/oci-*.sh
-      - nix/images/bun-workspace-service.nix
-      - nix/images/openai-codex-cli.nix
-      - nix/images/dorvud-jvm-service.nix
+      - nix/images/*.nix
       - .github/actions/setup-nix-toolchain/**
 
   design:

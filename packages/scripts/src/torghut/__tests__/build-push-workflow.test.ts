@@ -300,6 +300,39 @@ describe('torghut build-push workflow', () => {
     expect(pullRequestWorkflow).not.toContain('check_changed_files:')
   })
 
+  it('keeps deleted manifests out of kubeconform inputs', () => {
+    const fetchFilesStep = pullRequestWorkflow.indexOf('Fetch changed files once')
+    const activeManifestFilter = pullRequestWorkflow.indexOf('select(.status != "removed") | .filename', fetchFilesStep)
+    const activeManifestOutput = pullRequestWorkflow.indexOf('changed_manifests=', activeManifestFilter)
+    const manifestValidation = pullRequestWorkflow.indexOf('CHANGED_MANIFESTS_JSON:', activeManifestOutput)
+    const kubeconformInput = pullRequestWorkflow.indexOf('<<< "${CHANGED_MANIFESTS_JSON}"', manifestValidation)
+
+    expect(fetchFilesStep).toBeGreaterThan(-1)
+    expect(activeManifestFilter).toBeGreaterThan(fetchFilesStep)
+    expect(activeManifestOutput).toBeGreaterThan(activeManifestFilter)
+    expect(manifestValidation).toBeGreaterThan(activeManifestOutput)
+    expect(kubeconformInput).toBeGreaterThan(manifestValidation)
+  })
+
+  it('scopes Convex admin secrets to landing validation only', () => {
+    const validateJob = pullRequestWorkflow.indexOf('  validate:')
+    const landingStep = pullRequestWorkflow.indexOf('- name: Run landing validation')
+    const validationStep = pullRequestWorkflow.indexOf('- name: Run selected validation')
+    const validationEnv = pullRequestWorkflow.indexOf('CONVEX_SELF_HOSTED_ADMIN_KEY:', landingStep)
+    const validationRun = pullRequestWorkflow.indexOf('run: |', validationStep)
+    const jobEnv = pullRequestWorkflow.indexOf('env:\n      CHANGED_FILES_JSON:', validateJob)
+
+    expect(validateJob).toBeGreaterThan(-1)
+    expect(landingStep).toBeGreaterThan(-1)
+    expect(validationStep).toBeGreaterThan(-1)
+    expect(validationEnv).toBeGreaterThan(landingStep)
+    expect(validationEnv).toBeLessThan(validationStep)
+    expect(pullRequestWorkflow.slice(landingStep, validationStep)).toContain("if: ${{ matrix.target == 'landing' }}")
+    expect(pullRequestWorkflow.slice(validationStep, validationRun)).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY:')
+    expect(jobEnv).toBeGreaterThan(-1)
+    expect(pullRequestWorkflow.slice(jobEnv, landingStep)).not.toContain('CONVEX_SELF_HOSTED_ADMIN_KEY:')
+  })
+
   it('gates release manifest-only CI on digest-pinned multi-arch image contracts', () => {
     const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
     const buildContractStep = ciWorkflow.indexOf('name: Verify source image digest contract', releaseManifestJob)

@@ -19,6 +19,7 @@ jobs:
       targets: ${{ steps.impact.outputs.targets }}
       delegated: ${{ steps.impact.outputs.delegated }}
       changed_files: ${{ steps.impact.outputs.changed_files }}
+      changed_manifests: ${{ steps.active_files.outputs.changed_manifests }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -38,7 +39,9 @@ jobs:
         run: |
           set -euo pipefail
           changed_files="${RUNNER_TEMP}/changed-files.txt"
+          changed_manifests="${RUNNER_TEMP}/changed-manifests.txt"
           : > "${changed_files}"
+          : > "${changed_manifests}"
           page=1
           while true; do
             response="$({
@@ -53,9 +56,11 @@ jobs:
               break
             fi
             jq -r '.[].filename' <<< "${response}" >> "${changed_files}"
+            jq -r '.[] | select(.status != "removed") | .filename' <<< "${response}" >> "${changed_manifests}"
             page=$((page + 1))
           done
           printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
+          printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve impact targets
         id: impact
@@ -66,6 +71,14 @@ jobs:
           --files "${CHANGED_FILES}"
           --map .github/ci/impact-map.yml
           --github-output "${GITHUB_OUTPUT}"
+
+      - name: Serialize active changed files
+        id: active_files
+        env:
+          CHANGED_MANIFESTS: ${{ steps.files.outputs.changed_manifests }}
+        run: |
+          set -euo pipefail
+          printf 'changed_manifests=%s\n' "$(jq -Rsc 'split("\n") | map(select(length > 0))' "${CHANGED_MANIFESTS}")" >> "${GITHUB_OUTPUT}"
 
       - name: Summarize impact plan
         env:
@@ -90,8 +103,7 @@ jobs:
     runs-on: ${{ (matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' || 'ubuntu-latest' }}
     env:
       CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
-      CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
-      CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+      CHANGED_MANIFESTS_JSON: ${{ needs.plan.outputs.changed_manifests }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -116,7 +128,21 @@ jobs:
           extra-nix-config: |
             experimental-features = nix-command flakes
 
+      - name: Run landing validation
+        if: ${{ matrix.target == 'landing' }}
+        shell: bash
+        env:
+          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+          bun run --cwd apps/landing lint:oxlint
+          bun run --cwd apps/landing lint:oxlint:type
+          bun run --filter landing build
+
       - name: Run selected validation
+        if: ${{ matrix.target != 'landing' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -130,12 +156,6 @@ jobs:
               bun run --cwd apps/docs lint:oxlint
               bun run --cwd apps/docs lint:oxlint:type
               bun run --filter docs build
-              ;;
-            landing)
-              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-              bun run --cwd apps/landing lint:oxlint
-              bun run --cwd apps/landing lint:oxlint:type
-              bun run --filter landing build
               ;;
             app)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
@@ -217,7 +237,7 @@ jobs:
               nix run .#lint-argo-workflows
               ;;
             kubeconform)
-              mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_FILES_JSON}")
+              mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_MANIFESTS_JSON}")
               if [ "${#changed_manifests[@]}" -gt 0 ]; then
                 nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
               else
