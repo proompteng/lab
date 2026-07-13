@@ -1516,7 +1516,7 @@ internal class TaSignalsFunction(
     bars: List<MicroBarPayload>,
     session: SessionAccumulatorState,
   ): Envelope<TaSignalsPayload> {
-    val series = BaseBarSeries("ta-${barDuration}-${envelope.symbol}")
+    val series = BaseBarSeries("ta-$barDuration-${envelope.symbol}")
     bars.forEach { bar ->
       val barTime = ZonedDateTime.ofInstant(bar.t, ZoneOffset.UTC)
       val baseBar = BaseBar(barDuration, barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
