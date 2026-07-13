@@ -744,7 +744,6 @@ describe('native OCI build workflows', () => {
       oiratWorkflow,
       bumbaWorkflow,
       froussardWorkflow,
-      productNixWorkflow,
       agentsBuildWorkflow,
       jangarBuildWorkflow,
       sagBuildWorkflow,
@@ -754,8 +753,16 @@ describe('native OCI build workflows', () => {
     }
     expect(atticWorkflow).not.toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
+    expect(productNixWorkflow).not.toContain("- 'flake.nix'")
+    expect(productNixWorkflow).toContain("- 'flake.lock'")
+    expect(productNixWorkflow).toContain("- 'nix/images/bun-workspace-service.nix'")
     expect(headlampWorkflow).not.toContain("- 'flake.nix'")
     expect(headlampReleaseWorkflow).toContain('flake.nix')
+  })
+
+  it('validates Bumba pull requests when the Temporal SDK changes', () => {
+    const pullRequestTrigger = bumbaWorkflow.match(/\n  pull_request:\n([\s\S]*?)\n  workflow_dispatch:/)?.[1]
+    expect(pullRequestTrigger).toContain("- 'packages/temporal-bun-sdk/**'")
   })
 
   it('allows Nix dockerTools archives without Docker repo tags', () => {
@@ -1418,7 +1425,20 @@ describe('native OCI build workflows', () => {
     expect(enabledProductReleaseWorkflow).toContain('${service}-image')
     expect(enabledProductReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${image}@${digest}"')
     expect(enabledProductReleaseWorkflow).toContain('service build inputs changed after')
-    expect(productNixWorkflow).not.toContain("'nix/packages.nix'")
+    for (const sharedInput of [
+      'nix/images/bun-workspace-service.nix',
+      'nix/packages.nix',
+      'nix/cache-push.sh',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-push.sh',
+      'flake.lock',
+      'bun.lock',
+    ]) {
+      expect(productNixWorkflow.match(new RegExp(`'${escapeRegex(sharedInput)}'`, 'g'))).toHaveLength(6)
+      expect(enabledProductReleaseWorkflow).toContain(sharedInput)
+    }
     expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/product-nix-images.yml')
     expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/nix-oci-build-common.yml')
     expect(enabledProductReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')

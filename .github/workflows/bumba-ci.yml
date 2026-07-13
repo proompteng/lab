@@ -11,6 +11,7 @@ on:
   pull_request:
     paths:
       - 'services/bumba/**'
+      - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
   workflow_dispatch:
 
