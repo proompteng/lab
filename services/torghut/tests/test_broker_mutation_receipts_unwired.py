@@ -26,13 +26,13 @@ def test_receipt_api_remains_unwired_from_all_broker_mutation_runtimes() -> None
         assert "broker_mutation_receipts" not in source, relative_path
 
 
-def test_receipt_slice_does_not_change_scheduler_replica_contract() -> None:
+def test_scheduler_singleton_replica_contract_remains_enabled() -> None:
     manifest = (
         SERVICE_ROOT.parents[1]
         / "argocd/applications/torghut/scheduler-deployment.yaml"
     ).read_text(encoding="utf-8")
 
-    assert "replicas: 0" in manifest
+    assert "replicas: 1" in manifest
 
 
 def test_receipt_postgres_races_are_a_required_ci_gate() -> None:
