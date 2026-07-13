@@ -32,6 +32,7 @@ test('Torghut keeps Knative metadata drift visible to Argo CD', () => {
   }
 
   expect(ignoredPaths.has('/spec/template/metadata/annotations/client.knative.dev~1updateTimestamp')).toBeTrue()
+  expect(ignoredPaths.has('/metadata/annotations/serving.knative.dev~1lastModifier')).toBeTrue()
   expect(ignoredPaths.has('/spec/template/metadata/creationTimestamp')).toBeTrue()
   expect(ignoredPaths.has('/spec/template/spec/containers/0/readinessProbe')).toBeTrue()
 })

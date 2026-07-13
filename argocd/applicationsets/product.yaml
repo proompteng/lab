@@ -310,6 +310,7 @@ spec:
                     kind: Service
                     jsonPointers:
                       # Ignore only operator-defaulted fields. User-controlled metadata must remain diff-visible.
+                      - /metadata/annotations/serving.knative.dev~1lastModifier
                       - /spec/traffic
                       - /spec/template/metadata/annotations/client.knative.dev~1updateTimestamp
                       - /spec/template/metadata/creationTimestamp
