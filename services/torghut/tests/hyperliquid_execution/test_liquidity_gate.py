@@ -11,7 +11,11 @@ from pytest import MonkeyPatch
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
-from app.hyperliquid_execution.models import ExecutionMarket, OrderIntent, RuntimeDependencyStatus
+from app.hyperliquid_execution.models import (
+    ExecutionMarket,
+    OrderIntent,
+    RuntimeDependencyStatus,
+)
 from app.hyperliquid_execution.service import HyperliquidExecutionService
 from tests.hyperliquid_execution.test_runtime_surfaces import (
     _FakeSession,
@@ -186,7 +190,9 @@ def test_exchange_validates_the_generated_order_side_before_submission() -> None
     )
 
     with pytest.raises(ValueError, match="order_not_crossable:buy"):
-        exchange.validate_order_intent_crossability(_intent(side="buy", limit_price="102"))
+        exchange.validate_order_intent_crossability(
+            _intent(side="buy", limit_price="102")
+        )
     exchange.validate_order_intent_crossability(_intent(side="sell", limit_price="98"))
 
 
