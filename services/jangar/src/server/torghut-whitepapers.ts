@@ -321,8 +321,9 @@ const DEFAULT_LIMIT = 30
 const MAX_LIMIT = 100
 const DEFAULT_SEARCH_LIMIT = 15
 const MAX_SEARCH_LIMIT = 50
-const DEFAULT_WHITEPAPER_CONTROL_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
 const WHITEPAPER_CONTROL_TIMEOUT_MS = 15_000
+const WHITEPAPER_SOURCE_MAX_REDIRECTS = 5
+const DEFAULT_WHITEPAPER_SOURCE_HOSTS = new Set(['github.com'])
 
 const asString = (value: unknown): string | null => {
   if (typeof value !== 'string') return null
@@ -371,8 +372,43 @@ const asStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value.map((entry) => asString(entry)).filter((entry): entry is string => entry !== null)
   }
+
   const single = asString(value)
   return single ? [single] : []
+}
+
+const resolveWhitepaperSourceAllowedHosts = (env: Record<string, string | undefined> = process.env) =>
+  new Set(
+    (env.JANGAR_WHITEPAPER_SOURCE_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  )
+
+const isAllowedWhitepaperSourceHost = (hostname: string, env: Record<string, string | undefined> = process.env) => {
+  const normalized = hostname.trim().toLowerCase().replace(/\.$/, '')
+  return (
+    DEFAULT_WHITEPAPER_SOURCE_HOSTS.has(normalized) ||
+    normalized.endsWith('.githubusercontent.com') ||
+    resolveWhitepaperSourceAllowedHosts(env).has(normalized)
+  )
+}
+
+const resolveTrustedWhitepaperSourceUrl = (
+  rawUrl: string | URL,
+  baseUrl?: URL,
+  env: Record<string, string | undefined> = process.env,
+): URL | null => {
+  try {
+    const url = rawUrl instanceof URL ? new URL(rawUrl) : baseUrl ? new URL(rawUrl, baseUrl) : new URL(rawUrl)
+    if (url.protocol !== 'https:') return null
+    if (url.username || url.password) return null
+    if (url.port && url.port !== '443') return null
+    if (!isAllowedWhitepaperSourceHost(url.hostname, env)) return null
+    return url
+  } catch {
+    return null
+  }
 }
 
 const extractSourceAttachmentUrl = (uploadMetadata: unknown): string | null => {
@@ -477,10 +513,12 @@ const formatPdfResponse = (
   },
 ) => {
   if (!upstream.ok || !upstream.body) return null
+  const contentType = upstream.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+  if (contentType !== 'application/pdf') return null
 
   const safeName = (fileName ?? 'whitepaper.pdf').replace(/[^a-zA-Z0-9._-]+/g, '_')
   const headers = new Headers()
-  headers.set('content-type', upstream.headers.get('content-type') ?? 'application/pdf')
+  headers.set('content-type', 'application/pdf')
   headers.set('cache-control', 'private, max-age=60')
   headers.set('content-disposition', `inline; filename="${safeName}"`)
   headers.set('x-whitepaper-pdf-source', source)
@@ -505,8 +543,26 @@ const fetchPdfFromUrl = async (
   },
 ) => {
   try {
-    const upstream = await fetch(url)
-    return formatPdfResponse(upstream, { fileName, source })
+    if (source === 'source_url') {
+      let currentUrl = resolveTrustedWhitepaperSourceUrl(url)
+      if (!currentUrl) return null
+
+      for (let redirectCount = 0; redirectCount <= WHITEPAPER_SOURCE_MAX_REDIRECTS; redirectCount += 1) {
+        const upstream = await fetch(currentUrl, { redirect: 'manual' })
+        if (upstream.status >= 300 && upstream.status < 400) {
+          if (redirectCount === WHITEPAPER_SOURCE_MAX_REDIRECTS) return null
+          const location = upstream.headers.get('location')
+          if (!location) return null
+          currentUrl = resolveTrustedWhitepaperSourceUrl(location, currentUrl)
+          if (!currentUrl) return null
+          continue
+        }
+        return formatPdfResponse(upstream, { fileName, source })
+      }
+      return null
+    }
+
+    return formatPdfResponse(await fetch(url), { fileName, source })
   } catch {
     return null
   }
