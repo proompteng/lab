@@ -162,8 +162,9 @@ const SUBMIT_ATTEMPT_DECISION_STAGES = new Set(['submit_requested', 'submitted',
 const resolveStalePlannedThresholdMs = (env: Record<string, string | undefined> = process.env) => {
   const raw = env.TRADING_PLANNED_DECISION_TIMEOUT_SECONDS?.trim()
   if (!raw) return 600_000
-  const seconds = Number.parseInt(raw, 10)
-  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 600_000
+  const seconds = Number(raw)
+  if (seconds === 0) return null
+  return Number.isInteger(seconds) && seconds > 0 ? seconds * 1000 : 600_000
 }
 
 const countMapToSortedList = (counts: Map<string, number>, limit = 12) =>
@@ -183,9 +184,9 @@ const hasSubmitAttempt = (decision: TorghutDecisionRow) => {
   return decision.executionAdapterSelected
 }
 
-const summarizeDecisionLifecycle = (decisions: TorghutDecisionRow[], staleCutoffIso: string) => {
+const summarizeDecisionLifecycle = (decisions: TorghutDecisionRow[], staleCutoffIso: string | null) => {
   const blockedReasonCounts = new Map<string, number>()
-  const staleCutoff = Date.parse(staleCutoffIso)
+  const staleCutoff = staleCutoffIso === null ? Number.NaN : Date.parse(staleCutoffIso)
   let plannedCount = 0
   let blockedCount = 0
   let stalePlannedCount = 0
@@ -829,11 +830,13 @@ export const buildTorghutTradingSummary = async (params: {
 
   const pnl = computeRealizedPnlAverageCostLongOnly(executions)
   const staleReferenceTime = Math.min(Date.parse(params.interval.endUtc), Date.now())
-  const staleCutoffIso = toIsoString(
-    new Date(
-      (Number.isFinite(staleReferenceTime) ? staleReferenceTime : Date.now()) - resolveStalePlannedThresholdMs(),
-    ),
-  )
+  const stalePlannedThresholdMs = resolveStalePlannedThresholdMs()
+  const staleCutoffIso =
+    stalePlannedThresholdMs === null
+      ? null
+      : toIsoString(
+          new Date((Number.isFinite(staleReferenceTime) ? staleReferenceTime : Date.now()) - stalePlannedThresholdMs),
+        )
   const decisionLifecycle = summarizeDecisionLifecycle(decisions, staleCutoffIso)
   const runtimeProfitability: RuntimeProfitabilitySummary = profitabilityResult.ok
     ? parseRuntimeProfitabilitySummary(profitabilityResult.payload)

@@ -16,7 +16,34 @@ afterEach(() => {
 describe('torghut trading summary reason parsing', () => {
   it('uses the configured planned-decision timeout', () => {
     expect(__private.resolveStalePlannedThresholdMs({ TRADING_PLANNED_DECISION_TIMEOUT_SECONDS: '90' })).toBe(90_000)
+    expect(__private.resolveStalePlannedThresholdMs({ TRADING_PLANNED_DECISION_TIMEOUT_SECONDS: '0' })).toBeNull()
     expect(__private.resolveStalePlannedThresholdMs({})).toBe(600_000)
+  })
+
+  it('does not classify planned decisions as stale when the timeout is disabled', () => {
+    const lifecycle = __private.summarizeDecisionLifecycle(
+      [
+        {
+          id: 'planned',
+          createdAt: '2020-01-01T00:00:00.000Z',
+          alpacaAccountLabel: 'paper',
+          symbol: 'AAPL',
+          timeframe: '1m',
+          status: 'planned',
+          rationale: null,
+          submissionBlockReason: null,
+          submissionBlockAtomic: [],
+          submissionStage: null,
+          executionAdapterSelected: false,
+          strategyId: 'strategy',
+          strategyName: 'strategy',
+        },
+      ],
+      null,
+    )
+
+    expect(lifecycle.plannedCount).toBe(1)
+    expect(lifecycle.stalePlannedCount).toBe(0)
   })
 
   it('splits semicolon-delimited risk reasons into individual tokens', () => {
