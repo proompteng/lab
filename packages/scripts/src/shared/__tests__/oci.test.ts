@@ -605,7 +605,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
       expect(workflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
       expect(workflow).toContain("'nix/images/jangar.nix'")
-      expect(workflow).toContain("'nix/images/bun-workspace-service.nix'")
+      expect(workflow).not.toContain("'nix/images/bun-workspace-service.nix'")
       expect(workflow).not.toContain("- 'nix/oci-release-contract.sh'")
     }
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/symphony/**'")
@@ -749,12 +749,12 @@ describe('native OCI build workflows', () => {
       jangarBuildWorkflow,
       sagBuildWorkflow,
     ]) {
-      expect(workflow).toContain("- 'flake.lock'")
-      expect(workflow).toContain("- 'nix/images/bun-workspace-service.nix'")
+      expect(workflow).not.toContain("- 'flake.lock'")
+      expect(workflow).not.toContain("- 'nix/images/bun-workspace-service.nix'")
     }
-    expect(atticWorkflow).toContain("- 'flake.lock'")
+    expect(atticWorkflow).not.toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
-    expect(headlampWorkflow.split("- 'flake.nix'")).toHaveLength(3)
+    expect(headlampWorkflow).not.toContain("- 'flake.nix'")
     expect(headlampReleaseWorkflow).toContain('flake.nix')
   })
 
@@ -1210,6 +1210,7 @@ describe('native OCI build workflows', () => {
 
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
     expect(productNixWorkflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
     expect(productNixWorkflow).not.toContain('mathieudutour/github-tag-action')
     expect(productNixWorkflow).not.toContain('ncipollo/release-action')
@@ -1366,16 +1367,16 @@ describe('native OCI build workflows', () => {
     expect(enabledSimpleReleaseWorkflow).toContain('- froussard')
     expect(enabledSimpleReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
     expect(enabledSimpleReleaseWorkflow).toContain('service build inputs changed after source commit')
-    for (const [workflow, dependencyPath] of [
+    for (const [workflow, sharedPath] of [
       [oiratWorkflow, "'packages/discord/**'"],
       [bumbaWorkflow, "'packages/temporal-bun-sdk/**'"],
-      [froussardWorkflow, "'packages/agent-contracts/**'"],
       [froussardWorkflow, "'packages/codex/**'"],
       [froussardWorkflow, "'packages/discord/**'"],
       [froussardWorkflow, "'packages/otel/**'"],
     ]) {
-      expect(workflow).toContain(dependencyPath)
+      expect(workflow).toContain(sharedPath)
     }
+    expect(froussardWorkflow).toContain("'packages/agent-contracts/**'")
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/oirat/kustomization.yaml')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/deployment.yaml')
@@ -1417,7 +1418,7 @@ describe('native OCI build workflows', () => {
     expect(enabledProductReleaseWorkflow).toContain('${service}-image')
     expect(enabledProductReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${image}@${digest}"')
     expect(enabledProductReleaseWorkflow).toContain('service build inputs changed after')
-    expect(productNixWorkflow).toContain("'nix/packages.nix'")
+    expect(productNixWorkflow).not.toContain("'nix/packages.nix'")
     expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/product-nix-images.yml')
     expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/nix-oci-build-common.yml')
     expect(enabledProductReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')

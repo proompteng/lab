@@ -7,33 +7,17 @@ on:
   pull_request:
     paths:
       - 'services/headlamp/**'
-      - 'flake.nix'
-      - 'flake.lock'
       - 'nix/images/headlamp.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
   push:
     branches:
       - main
     paths:
       - 'services/headlamp/**'
-      - 'flake.nix'
-      - 'flake.lock'
       - 'nix/images/headlamp.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -64,7 +48,6 @@ jobs:
   nix-image:
     if: >-
       ${{
-        github.event_name == 'pull_request' ||
         github.event_name == 'workflow_dispatch' ||
         (
           github.event_name == 'push' &&
@@ -77,6 +60,7 @@ jobs:
       image_name: headlamp
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'headlamp-release-contract' || '' }}
       image_build_timeout: 20m

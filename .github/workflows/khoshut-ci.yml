@@ -11,28 +11,16 @@ on:
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
       - '.github/workflows/khoshut-ci.yml'
       - '.github/workflows/common-monorepo.yml'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'nix/**'
-      - 'package.json'
-      - 'bun.lock'
   pull_request:
     paths:
       - 'services/khoshut/**'
       - 'argocd/applications/khoshut/**'
       - 'argocd/applicationsets/product.yaml'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
-      - '.github/workflows/khoshut-ci.yml'
-      - '.github/workflows/common-monorepo.yml'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'nix/**'
-      - 'package.json'
-      - 'bun.lock'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -47,18 +35,3 @@ jobs:
       oxlint-type-command: bun run --cwd services/khoshut lint:oxlint:type
       test-command: bun run --cwd services/khoshut tsc && bun run --cwd services/khoshut test
     secrets: inherit
-
-  argocd-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Nix toolchain
-        uses: ./.github/actions/setup-nix-toolchain
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          extra-nix-config: |
-            experimental-features = nix-command flakes
-
-      - name: Validate Argo CD manifests
-        run: nix develop -c scripts/kubeconform.sh argocd

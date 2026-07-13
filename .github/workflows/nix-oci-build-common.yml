@@ -31,6 +31,10 @@ on:
         required: false
         type: boolean
         default: false
+      pr_number:
+        required: false
+        type: string
+        default: ''
     outputs:
       image:
         value: ${{ jobs.publish-index.outputs.image }}
@@ -44,7 +48,7 @@ on:
         value: ${{ jobs.publish-index.outputs.platform_digest_arm64 }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.image_name }}-${{ inputs.tag }}
+  group: ${{ inputs.pr_number != '' && format('ci-pr-{0}', inputs.pr_number) || format('{0}-{1}-{2}', github.workflow, inputs.image_name, inputs.tag) }}
   cancel-in-progress: true
 
 jobs:

@@ -4,10 +4,9 @@ on:
   pull_request:
     paths:
       - 'packages/schematic/**'
-      - '.github/workflows/schematic-ci.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

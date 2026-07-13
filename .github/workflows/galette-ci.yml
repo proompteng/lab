@@ -10,7 +10,6 @@ on:
   pull_request:
     paths:
       - 'services/galette/**'
-      - '.github/workflows/galette-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

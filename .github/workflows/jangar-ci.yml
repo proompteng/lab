@@ -6,10 +6,9 @@ on:
       - 'services/jangar/**'
       - 'packages/scripts/src/jangar/**'
       - 'argocd/applications/jangar/**'
-      - '.github/workflows/jangar-ci.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

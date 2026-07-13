@@ -1,15 +1,6 @@
 name: kubeconform
 
 on:
-  pull_request:
-    paths:
-      - 'argocd/**/*.yaml'
-      - 'scripts/kubeconform.sh'
-      - 'schemas/custom/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'nix/**'
-      - '.github/workflows/kubeconform.yml'
   push:
     branches:
       - main

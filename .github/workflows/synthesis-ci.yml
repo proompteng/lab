@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'apps/synthesis/**'
-      - 'packages/design/**'
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
@@ -15,12 +14,10 @@ on:
   pull_request:
     paths:
       - 'apps/synthesis/**'
-      - 'packages/design/**'
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
       - 'argocd/applicationsets/product.yaml'
-      - '.github/workflows/synthesis-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

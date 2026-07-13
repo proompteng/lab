@@ -7,7 +7,6 @@ on:
       - 'argocd/applications/dernier/**'
       - 'docs/dernier.md'
       - 'skaffold.yaml'
-      - '.github/workflows/dernier-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

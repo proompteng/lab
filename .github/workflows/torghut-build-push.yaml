@@ -4,23 +4,6 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'services/torghut/**'
-      - 'packages/scripts/src/torghut/**'
-      - '!packages/scripts/src/torghut/__tests__/**'
-      - '!packages/scripts/src/torghut/**/*.test.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
-      - 'nix/images/torghut.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'services/torghut/uv.lock'
   push:
     branches:
       - main
@@ -29,16 +12,7 @@ on:
       - 'packages/scripts/src/torghut/**'
       - '!packages/scripts/src/torghut/__tests__/**'
       - '!packages/scripts/src/torghut/**/*.test.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'nix/images/torghut.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'flake.nix'
-      - 'flake.lock'
       - 'services/torghut/uv.lock'
   workflow_dispatch:
 
@@ -48,12 +22,13 @@ concurrency:
 
 jobs:
   nix-image:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: torghut
       package_attr: torghut-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-release-contract' || '' }}
       publish_on_dispatch: true

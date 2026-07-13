@@ -4,36 +4,13 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'flake.nix'
-      - 'nix/images/arc-runner.nix'
-      - 'flake.lock'
-      - 'nix/packages.nix'
-      - 'nix/attic-release-metadata.sh'
-      - 'nix/cache-doctor.sh'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'nix/oci-doctor.sh'
-      - 'nix/toolchain-doctor.sh'
   push:
     branches:
       - main
     paths:
-      - 'flake.nix'
       - 'nix/images/arc-runner.nix'
-      - 'flake.lock'
-      - 'nix/packages.nix'
       - 'nix/attic-release-metadata.sh'
       - 'nix/cache-doctor.sh'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
       - 'nix/oci-doctor.sh'
       - 'nix/toolchain-doctor.sh'
   workflow_dispatch:
@@ -49,6 +26,7 @@ jobs:
       image_name: arc-runner
       package_attr: arc-runner-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       publish_on_dispatch: true
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'arc-runner-release-contract' || '' }}

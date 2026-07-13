@@ -1,0 +1,318 @@
+version: 1
+
+# This file is the path ownership contract for pull-request.yml. Keep service
+# workflows for expensive, service-specific validation; list those workflows as
+# delegated targets so the router can explain why they run without duplicating
+# their jobs.
+targets:
+  planner:
+    kind: planner
+    paths: []
+
+  docs:
+    kind: validation
+    paths:
+      - apps/docs/**
+
+  landing:
+    kind: validation
+    paths:
+      - apps/landing/**
+      - packages/backend/**
+
+  app:
+    kind: validation
+    paths:
+      - apps/app/**
+
+  olden:
+    kind: validation
+    paths:
+      - apps/olden/**
+
+  cms:
+    kind: validation
+    paths:
+      - apps/cms/**
+
+  bonjour:
+    kind: validation
+    paths:
+      - services/bonjour/**
+
+  discord:
+    kind: validation
+    paths:
+      - packages/discord/**
+
+  kitty-krew:
+    kind: validation
+    paths:
+      - apps/kitty-krew/**
+
+  reviseur:
+    kind: validation
+    paths:
+      - apps/reviseur/**
+
+  root-scripts:
+    kind: validation
+    paths:
+      - scripts/**
+
+  sag:
+    kind: validation
+    paths:
+      - services/sag/**
+
+  shellcheck:
+    kind: validation
+    paths:
+      - '**/*.sh'
+
+  shared-compat:
+    kind: validation
+    paths:
+      - bun.lock
+      - flake.lock
+      - flake.nix
+      - package.json
+      - tsconfig.base.json
+      - nix/packages.nix
+      - nix/cache-push.sh
+      - nix/ci-*.sh
+      - nix/oci-*.sh
+      - nix/images/*.nix
+      - .github/actions/setup-nix-toolchain/**
+
+  design:
+    kind: validation
+    paths:
+      - packages/design/**
+
+  argo-lint:
+    kind: validation
+    paths:
+      - argocd/**/*.yaml
+      - scripts/argo-lint.sh
+
+  kubeconform:
+    kind: validation
+    paths:
+      - argocd/**/*.yaml
+      - argocd/**/*.yml
+      - schemas/custom/**
+      - scripts/kubeconform.sh
+      - kubernetes/**/*.yaml
+      - kubernetes/**/*.yml
+
+  cdk8s:
+    kind: validation
+    paths:
+      - packages/k8s/**
+      - argocd/applications/*/generated/**
+      - argocd/applications/docs/**
+      - argocd/applications/analysis/**
+      - argocd/applications/argocd/base/image-updater-product.yaml
+      - schemas/custom/**
+
+  workflow-lint:
+    kind: validation
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/ci/**
+      - .github/actionlint.yaml
+
+  codex:
+    kind: delegated
+    workflow: codex-ci
+    paths:
+      - packages/codex/**
+
+  agents:
+    kind: delegated
+    workflow: agents-ci
+    exclude:
+      - services/agents/agentctl/**
+      - docs/agents/agentctl-release.md
+    paths:
+      - packages/agent-contracts/**
+      - packages/cx-tools/**
+      - packages/scripts/src/agents/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
+      - packages/scripts/src/shared/git.ts
+      - services/agents/**
+      - charts/agents/**
+      - docs/agents/**
+      - scripts/agents/**
+
+  agentctl:
+    kind: delegated
+    workflow: agentctl-ci
+    paths:
+      - services/agents/agentctl/**
+      - docs/agents/agentctl-release.md
+
+  bumba:
+    kind: delegated
+    workflow: bumba-ci
+    paths:
+      - services/bumba/**
+
+  jangar:
+    kind: delegated
+    workflow: jangar-ci
+    paths:
+      - services/jangar/**
+      - packages/scripts/src/jangar/**
+      - argocd/applications/jangar/**
+
+  froussard:
+    kind: delegated
+    workflow: froussard-ci
+    paths:
+      - apps/froussard/**
+
+  golink:
+    kind: delegated
+    workflow: golink-ci
+    paths:
+      - services/golink/**
+      - packages/scripts/src/golink/**
+      - argocd/applications/golink/**
+
+  khoshut:
+    kind: delegated
+    workflow: khoshut-ci
+    paths:
+      - services/khoshut/**
+      - argocd/applications/khoshut/**
+
+  oirat:
+    kind: delegated
+    workflow: oirat-ci
+    paths:
+      - services/oirat/**
+
+  reestr:
+    kind: delegated
+    workflow: reestr-ci
+    paths:
+      - apps/reestr/**
+
+  schematic:
+    kind: delegated
+    workflow: schematic-ci
+    paths:
+      - packages/schematic/**
+
+  scripts:
+    kind: delegated
+    workflow: scripts-ci
+    paths:
+      - packages/scripts/**
+      - argocd/root.yaml
+      - argocd/applicationsets/**
+      - docs/runbooks/rook-ceph-client-ops-performance.md
+      - docs/nix-enabled-app-build-performance-rollout-plan.md
+
+  symphony:
+    kind: delegated
+    workflow: symphony-ci
+    paths:
+      - services/symphony/**
+      - packages/scripts/src/symphony/**
+      - argocd/applications/symphony/**
+
+  synthesis:
+    kind: delegated
+    workflow: synthesis-ci
+    paths:
+      - apps/synthesis/**
+      - packages/scripts/src/synthesis/**
+      - argocd/applications/synthesis/**
+
+  temporal-bun-sdk:
+    kind: delegated
+    workflow: temporal-bun-sdk
+    paths:
+      - packages/temporal-bun-sdk/**
+      - packages/temporal-bun-sdk-example/**
+
+  torghut:
+    kind: delegated
+    workflow: torghut-ci
+    paths:
+      - services/torghut/**
+      - packages/scripts/src/torghut/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/git.ts
+      - argocd/applications/torghut/**
+      - argocd/applications/torghut-options/**
+      - argocd/applications/torghut-hyperliquid-runtime/**
+
+  dorvud:
+    kind: delegated
+    workflow: dorvud-ci
+    paths:
+      - services/dorvud/**
+
+  otel:
+    kind: delegated
+    workflow: otel
+    paths:
+      - packages/otel/**
+
+  buf:
+    kind: delegated
+    workflow: buf-ci
+    paths:
+      - proto/**
+      - buf.work.yaml
+      - buf.gen.yaml
+
+  karapace:
+    kind: delegated
+    workflow: karapace-schema-sync
+    paths:
+      - proto/schema-subjects.json
+      - scripts/karapace/**
+
+  dernier:
+    kind: delegated
+    workflow: dernier-ci
+    paths:
+      - services/dernier/**
+      - argocd/applications/dernier/**
+
+  facteur:
+    kind: delegated
+    workflow: facteur-ci
+    paths:
+      - services/facteur/**
+
+  galette:
+    kind: delegated
+    workflow: galette-ci
+    paths:
+      - services/galette/**
+
+  graf:
+    kind: delegated
+    workflow: graf-service
+    paths:
+      - services/graf/**
+
+  headlamp:
+    kind: delegated
+    workflow: headlamp-ci
+    paths:
+      - services/headlamp/**
+
+  miel:
+    kind: delegated
+    workflow: miel-ci
+    paths:
+      - services/miel/**

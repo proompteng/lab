@@ -10,35 +10,12 @@ on:
       - 'packages/codex/**'
       - 'packages/discord/**'
       - 'packages/otel/**'
-      - 'flake.lock'
       - 'nix/images/froussard.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'apps/froussard/**'
       - 'packages/agent-contracts/**'
-      - 'packages/codex/**'
-      - 'packages/discord/**'
-      - 'packages/otel/**'
-      - 'flake.lock'
       - 'nix/images/froussard.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:
@@ -57,12 +34,13 @@ jobs:
     secrets: inherit
 
   nix-image:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: froussard
       package_attr: froussard-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'froussard-release-contract' || '' }}
     secrets: inherit

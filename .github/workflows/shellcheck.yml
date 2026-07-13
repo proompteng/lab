@@ -1,9 +1,6 @@
 name: ShellCheck
 
 on:
-  pull_request:
-    paths:
-      - '**/*.sh'
   push:
     branches:
       - main

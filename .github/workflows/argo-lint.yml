@@ -1,14 +1,6 @@
 name: argo-lint
 
 on:
-  pull_request:
-    paths:
-      - '**/*.yaml'
-      - 'scripts/argo-lint.sh'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'nix/**'
-      - '.github/workflows/argo-lint.yml'
   push:
     branches:
       - main

@@ -4,29 +4,6 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'apps/app/**'
-      - 'apps/docs/**'
-      - 'apps/landing/**'
-      - 'apps/olden/**'
-      - 'apps/synthesis/**'
-      - 'packages/backend/**'
-      - 'packages/design/**'
-      - 'nix/images/app.nix'
-      - 'nix/images/docs.nix'
-      - 'nix/images/olden.nix'
-      - 'nix/images/proompteng.nix'
-      - 'nix/images/synthesis.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'flake.lock'
-      - 'bun.lock'
   push:
     branches:
       - main
@@ -43,15 +20,6 @@ on:
       - 'nix/images/olden.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'flake.lock'
-      - 'bun.lock'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -110,57 +78,22 @@ jobs:
               - 'packages/backend/**'
               - 'packages/design/**'
               - 'nix/images/proompteng.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/oci-*.sh'
-              - 'nix/ci-*.sh'
-              - 'flake.lock'
-              - 'bun.lock'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
               - 'nix/images/app.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/oci-*.sh'
-              - 'nix/ci-*.sh'
-              - 'flake.lock'
-              - 'bun.lock'
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
               - 'nix/images/synthesis.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/oci-*.sh'
-              - 'nix/ci-*.sh'
-              - 'flake.lock'
-              - 'bun.lock'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
               - 'nix/images/docs.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/oci-*.sh'
-              - 'nix/ci-*.sh'
-              - 'flake.lock'
-              - 'bun.lock'
             olden:
               - 'apps/olden/**'
               - 'packages/design/**'
               - 'nix/images/olden.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/oci-*.sh'
-              - 'nix/ci-*.sh'
-              - 'flake.lock'
-              - 'bun.lock'
 
       - name: Manual build selection
         id: manual
@@ -182,6 +115,7 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: true
       release_artifact_name: proompteng-release-contract
     secrets: inherit
@@ -194,6 +128,7 @@ jobs:
       image_name: app
       package_attr: app-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: true
       release_artifact_name: app-release-contract
     secrets: inherit
@@ -206,6 +141,7 @@ jobs:
       image_name: synthesis
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: true
       release_artifact_name: synthesis-release-contract
     secrets: inherit
@@ -218,6 +154,7 @@ jobs:
       image_name: docs
       package_attr: docs-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: true
       release_artifact_name: docs-release-contract
     secrets: inherit
@@ -230,6 +167,7 @@ jobs:
       image_name: olden
       package_attr: olden-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: true
       release_artifact_name: olden-release-contract
     secrets: inherit
