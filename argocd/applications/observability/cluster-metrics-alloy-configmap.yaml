@@ -129,3 +129,29 @@ data:
       scrape_timeout  = "10s"
       forward_to      = [prometheus.relabel.arc_resource_metrics.receiver]
     }
+
+    prometheus.scrape "flink" {
+      targets = [
+        {
+          "__address__" = "flink-operator-metrics.flink.svc.cluster.local:8080",
+          "job"         = "flink-operator",
+          "namespace"   = "flink",
+          "service"     = "flink-operator-metrics",
+        },
+        {
+          "__address__" = "torghut-ta-metrics.torghut.svc.cluster.local:9249",
+          "job"         = "torghut",
+          "namespace"   = "torghut",
+          "service"     = "torghut-ta-metrics",
+        },
+        {
+          "__address__" = "torghut-ta-sim-metrics.torghut.svc.cluster.local:9249",
+          "job"         = "torghut-sim",
+          "namespace"   = "torghut",
+          "service"     = "torghut-ta-sim-metrics",
+        },
+      ]
+      scrape_interval = "30s"
+      scrape_timeout  = "10s"
+      forward_to      = [prometheus.remote_write.mimir.receiver]
+    }

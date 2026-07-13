@@ -215,7 +215,9 @@ targets:
       - packages/scripts/**
       - argocd/root.yaml
       - argocd/applications/argocd/**
+      - argocd/applications/observability/**
       - argocd/applicationsets/**
+      - docs/torghut/ceph-migration.md
       - docs/runbooks/rook-ceph-client-ops-performance.md
       - docs/nix-enabled-app-build-performance-rollout-plan.md
 

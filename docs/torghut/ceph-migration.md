@@ -12,7 +12,7 @@
 ## 2. Why Ceph RGW fits
 
 - Rook deploys/operates Ceph RGW on Kubernetes and exposes an in-cluster S3 endpoint (`rook-ceph-rgw-<store>.<ns>.svc`).
-- RGW is S3-compatible and works with Flink’s `s3a://` filesystem via custom `s3.endpoint` / `s3.path.style.access` settings.
+- RGW is S3-compatible and works with Flink’s Hadoop `s3a://` filesystem via `fs.s3a.*` settings.
 - Published benchmarks show RGW scales to high aggregate throughput under load (multi-node GET/PUT testing).
 
 ## 3. Target architecture
@@ -23,7 +23,7 @@ graph LR
     Rook[Rook operator]
     Ceph[Ceph cluster OSD/MON/MGR]
     RGW[RGW pods]
-    SVC[(rgw service :443)]
+    SVC[(rgw service :80)]
   end
 
   Flink[torghut Flink TA job] -->|s3a checkpoints| SVC
@@ -34,12 +34,12 @@ graph LR
 ### Key design points
 
 - **Namespace**: `rook-ceph` (operator + cluster); RGW service consumed from `torghut` namespace via cluster DNS.
-- **CephObjectStore**: TLS enabled with cert referenced via `sslCertificateRef`; advertise endpoint DNS to match cert SAN.
+- **CephObjectStore**: use the in-cluster HTTP service on port 80; traffic remains inside the cluster network.
 - **Buckets**:
   - `flink-checkpoints` (state.checkpoints.dir, state.savepoints.dir)
   - `torghut-artifacts` (future: fixtures, replays)
 - **Access**: dedicated `CephObjectStoreUser` named `torghut-flink`; keys mounted as K8s Secret `torghut-ceph-s3` in `torghut`.
-- **Networking**: allow egress from Flink JM/TM pods to RGW service TCP/443; optional NodePort/Ingress for external ops not required.
+- **Networking**: allow egress from Flink JM/TM pods to RGW service TCP/80; optional NodePort/Ingress for external ops not required.
 - **Durability**: start with EC 2+1 or replica 3 (depending on available OSDs); revisit after sizing.
 
 ## 4. Client configuration changes (Flink)
@@ -47,19 +47,17 @@ graph LR
 Set in `FlinkDeployment` `spec.jobManager.spec.flinkConfiguration` and mirrored in TM section:
 
 ```yaml
-s3.endpoint: https://rook-ceph-rgw-objstore.rook-ceph.svc:443
-s3.path.style.access: true
-s3.access-key: ${CEPH_ACCESS_KEY}
-s3.secret-key: ${CEPH_SECRET_KEY}
-s3.connection.ssl.enabled: true
-s3.connection.maximum: 256
-s3.socket.timeout: 300000
+fs.s3a.endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+fs.s3a.path.style.access: true
+fs.s3a.access.key: ${CEPH_ACCESS_KEY}
+fs.s3a.secret.key: ${CEPH_SECRET_KEY}
+fs.s3a.connection.ssl.enabled: false
+fs.s3a.connection.maximum: 256
+fs.s3a.socket.timeout: 300000
 fs.s3a.fast.upload: true
 fs.s3a.connection.establish.timeout: 60000
-fs.s3a.path.style.access: true
 ```
 
-- If the cert is internal, mount CA bundle and set `ssl.truststore.location` accordingly.
 - Use `s3a://flink-checkpoints/torghut/` for both `state.checkpoints.dir` and `state.savepoints.dir`.
 - Keep transaction timeout > checkpoint timeout (e.g., 120s).
 
@@ -68,9 +66,9 @@ fs.s3a.path.style.access: true
 ### Phase 0 - Prep
 
 - Deploy Rook operator + CephCluster (distinct storage class or raw devices).
-- Create `CephObjectStore` (`objstore`), `CephObjectStoreUser` (`torghut-flink`).
+- Create `CephObjectStore` (`objectstore`), `CephObjectStoreUser` (`torghut-flink`).
 - Create buckets via `radosgw-admin bucket create` or `aws s3api --endpoint`.
-- Add NetworkPolicy allowing JM/TM → RGW:443.
+- Add NetworkPolicy allowing JM/TM → RGW:80.
 
 ### Phase 1 - Dual-write ready (optional)
 
@@ -100,16 +98,16 @@ fs.s3a.path.style.access: true
 
 ## 6. Operations and security
 
-- **TLS**: Terminate at RGW; benchmarks typically show small overhead (<5% PUT) when HTTPS is enabled.
+- **Network isolation**: keep RGW access cluster-internal and restrict TCP/80 egress to the object-store Service. Add TLS only if the deployed CephObjectStore and Flink trust configuration are changed together.
 - **Multitenancy**: Ceph IAM accounts support per-tenant users/roles on RGW.
 - **Lifecycle/tiering**: RGW bucket lifecycle rules can transition objects to other storage classes/providers (e.g., COS) for cold data.
 - **Capacity planning**: Start with replica 3 for simplicity; evaluate EC 2+1 after baseline to reduce overhead.
 
 ## 7. Risks and mitigations
 
-- **Client compatibility**: Ensure `s3.path.style.access=true` for s3a; without it virtual-hosted style may fail on cluster DNS. Mitigate via config above.
+- **Client compatibility**: Ensure `fs.s3a.path.style.access=true`; without it virtual-hosted style may fail on cluster DNS. Mitigate via config above.
 - **Checkpoint consistency**: Always migrate via savepoint; do not reuse in-flight MinIO checkpoints.
-- **TLS trust**: Provide CA bundle to Flink pods; misaligned SANs will break HTTPS-match `advertiseEndpoint` in CephObjectStore.
+- **Endpoint drift**: Keep the RGW Service port, `fs.s3a.endpoint`, and `fs.s3a.connection.ssl.enabled` aligned; changing one without the others makes checkpoint storage unreachable.
 - **Performance**: Start with conservative `connection.maximum` and adjust after observing RGW CPU; benchmarks indicate network-bound at scale, so watch NIC saturation.
 
 ## References
