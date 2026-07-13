@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import uuid
 from argparse import ArgumentTypeError, Namespace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -19,6 +20,7 @@ from scripts.reconcile_order_feed_coverage import project_order_feed_coverage
 
 
 UTC = timezone.utc
+TRADE_DECISION_ID = uuid.UUID("00000000-0000-0000-0000-000000000777")
 
 
 def _engine() -> object:
@@ -68,6 +70,7 @@ def _event(
     source_offset: int | None = 1,
     alpaca_order_id: str | None = "order-linked",
     client_order_id: str | None = "client-order-linked",
+    trade_decision_id: object = TRADE_DECISION_ID,
 ) -> ExecutionOrderEvent:
     return ExecutionOrderEvent(
         event_fingerprint=fingerprint,
@@ -88,6 +91,7 @@ def _event(
         avg_fill_price=Decimal("100"),
         raw_event={"event": event_type or status or "unknown"},
         execution_id=execution_id,
+        trade_decision_id=trade_decision_id,
         source_window_id=source_window_id,
         created_at=datetime(2026, 7, 10, 14, 31, tzinfo=UTC),
     )
@@ -138,6 +142,13 @@ class TestOrderFeedCoverageProjection(TestCase):
                         client_order_id=None,
                     ),
                     _event(
+                        fingerprint="linked-fill-without-trade-decision",
+                        execution_id=linked_execution.id,
+                        trade_decision_id=None,
+                        source_window_id=linked_execution.id,
+                        source_offset=12,
+                    ),
+                    _event(
                         fingerprint="unlinked-fill",
                         event_type="partial_fill",
                         status="partially_filled",
@@ -166,13 +177,14 @@ class TestOrderFeedCoverageProjection(TestCase):
             self.assertEqual(
                 report["event_lineage"],
                 {
-                    "fill_event_count": 3,
-                    "linked_fill_event_count": 2,
+                    "fill_event_count": 4,
+                    "linked_fill_event_count": 3,
                     "unlinked_fill_event_count": 1,
                     "linked_fill_events_missing_source_window_count": 1,
                     "linked_fill_events_missing_source_offset_count": 1,
                     "fill_events_missing_order_identity_count": 1,
-                    "positive_fill_delta_event_count": 3,
+                    "linked_fill_events_missing_trade_decision_count": 1,
+                    "positive_fill_delta_event_count": 4,
                     "positive_fill_delta_unlinked_count": 1,
                 },
             )
@@ -180,7 +192,7 @@ class TestOrderFeedCoverageProjection(TestCase):
                 report["coverage"],
                 {
                     "filled_execution_to_fill_event_ratio": "0.500000",
-                    "fill_event_to_execution_ratio": "0.666667",
+                    "fill_event_to_execution_ratio": "0.750000",
                 },
             )
             self.assertEqual(
@@ -191,6 +203,7 @@ class TestOrderFeedCoverageProjection(TestCase):
                     "fill_events_missing_source_window",
                     "fill_events_missing_source_offset",
                     "fill_events_missing_order_identity",
+                    "fill_events_missing_trade_decision",
                 ],
             )
             self.assertEqual(
@@ -200,6 +213,56 @@ class TestOrderFeedCoverageProjection(TestCase):
             self.assertEqual(report["read_only"], True)
             self.assertEqual(report["writes_performed"], False)
             self.assertEqual(report["promotion_authority_eligible"], False)
+
+    def test_execution_window_uses_updated_at_and_reports_sample_activity(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            execution = _execution(
+                order_id="updated-at-only",
+                filled_qty="2",
+                status="filled",
+                activity_at=datetime(2026, 7, 9, 15, 0, tzinfo=UTC),
+            )
+            execution.order_feed_last_event_ts = None
+            execution.last_update_at = None
+            execution.updated_at = datetime(2026, 7, 10, 15, 0, tzinfo=UTC)
+            session.add(execution)
+            session.commit()
+
+            report = project_order_feed_coverage(
+                session,
+                window_start=datetime(2026, 7, 10, 14, 0, tzinfo=UTC),
+                window_end=datetime(2026, 7, 10, 16, 0, tzinfo=UTC),
+            )
+
+            self.assertEqual(report["population"]["execution_count"], 1)
+            self.assertEqual(
+                report["samples"]["filled_executions_missing_fill_event"][0][
+                    "activity_at"
+                ],
+                "2026-07-10T15:00:00+00:00",
+            )
+
+    def test_filled_qty_only_event_is_fill_activity(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            session.add(
+                _event(
+                    fingerprint="cumulative-filled-qty",
+                    event_type="status",
+                    status="new",
+                    filled_qty="1",
+                    filled_qty_delta=None,
+                    execution_id=None,
+                )
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(report["event_lineage"]["fill_event_count"], 1)
+            self.assertEqual(report["event_lineage"]["unlinked_fill_event_count"], 1)
+            self.assertIn("unlinked_fill_events_present", report["blockers"])
 
     def test_projection_scopes_account_and_window_and_does_not_mutate_rows(
         self,

@@ -37,6 +37,7 @@ BLOCKER_UNLINKED_FILL_EVENTS = "unlinked_fill_events_present"
 BLOCKER_FILL_EVENT_SOURCE_WINDOW = "fill_events_missing_source_window"
 BLOCKER_FILL_EVENT_SOURCE_OFFSET = "fill_events_missing_source_offset"
 BLOCKER_FILL_EVENT_ORDER_IDENTITY = "fill_events_missing_order_identity"
+BLOCKER_FILL_EVENT_TRADE_DECISION = "fill_events_missing_trade_decision"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ class _SourceEvidenceCounts:
     linked_fill_events_missing_source_window: int
     linked_fill_events_missing_source_offset: int
     fill_events_missing_order_identity: int
+    linked_fill_events_missing_trade_decision: int
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,7 @@ def _execution_time_expression() -> ColumnElement[object]:
     return func.coalesce(
         Execution.order_feed_last_event_ts,
         Execution.last_update_at,
+        Execution.updated_at,
         Execution.created_at,
     )
 
@@ -173,6 +176,7 @@ def _fill_event_predicate() -> ColumnElement[bool]:
     return or_(
         func.lower(ExecutionOrderEvent.event_type).in_(FILL_EVENT_TYPES),
         func.lower(ExecutionOrderEvent.status).in_(FILL_EVENT_TYPES),
+        ExecutionOrderEvent.filled_qty > 0,
         ExecutionOrderEvent.filled_qty_delta > 0,
     )
 
@@ -226,7 +230,10 @@ def _execution_sample(row: Execution) -> dict[str, object]:
         "status": row.status,
         "filled_qty": _decimal_text(row.filled_qty),
         "activity_at": _iso(
-            row.order_feed_last_event_ts or row.last_update_at or row.created_at
+            row.order_feed_last_event_ts
+            or row.last_update_at
+            or row.updated_at
+            or row.created_at
         ),
     }
 
@@ -278,6 +285,7 @@ def _blockers(
     linked_fill_events_missing_source_window: int,
     linked_fill_events_missing_source_offset: int,
     fill_events_missing_order_identity: int,
+    linked_fill_events_missing_trade_decision: int,
 ) -> list[str]:
     blockers: list[str] = []
     if filled_executions_missing_fill_event:
@@ -290,6 +298,8 @@ def _blockers(
         blockers.append(BLOCKER_FILL_EVENT_SOURCE_OFFSET)
     if fill_events_missing_order_identity:
         blockers.append(BLOCKER_FILL_EVENT_ORDER_IDENTITY)
+    if linked_fill_events_missing_trade_decision:
+        blockers.append(BLOCKER_FILL_EVENT_TRADE_DECISION)
     return blockers
 
 
@@ -441,6 +451,14 @@ def _lineage_counts(
                 ExecutionOrderEvent.client_order_id.is_(None),
             ),
         ),
+        linked_fill_events_missing_trade_decision=_count(
+            session,
+            select(_count_expression(ExecutionOrderEvent.id)).where(
+                *fill_event_scope,
+                ExecutionOrderEvent.execution_id.is_not(None),
+                ExecutionOrderEvent.trade_decision_id.is_(None),
+            ),
+        ),
     )
     fill_deltas = _FillDeltaCounts(
         positive_fill_delta_event_count=_count(
@@ -548,6 +566,9 @@ def _projection_payload(
             "fill_events_missing_order_identity_count": (
                 lineage.source_evidence.fill_events_missing_order_identity
             ),
+            "linked_fill_events_missing_trade_decision_count": (
+                lineage.source_evidence.linked_fill_events_missing_trade_decision
+            ),
             "positive_fill_delta_event_count": lineage.fill_deltas.positive_fill_delta_event_count,
             "positive_fill_delta_unlinked_count": (
                 lineage.fill_deltas.positive_fill_delta_unlinked_count
@@ -613,6 +634,9 @@ def project_order_feed_coverage(
         ),
         fill_events_missing_order_identity=(
             lineage.source_evidence.fill_events_missing_order_identity
+        ),
+        linked_fill_events_missing_trade_decision=(
+            lineage.source_evidence.linked_fill_events_missing_trade_decision
         ),
     )
     counts = _ProjectionCounts(
