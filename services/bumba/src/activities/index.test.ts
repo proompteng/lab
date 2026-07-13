@@ -661,4 +661,63 @@ describe('bumba completions', () => {
       }
     }
   })
+
+  it('omits temperature for hosted GPT-5.6 completion requests', async () => {
+    const previousFetch = globalThis.fetch
+    const previousEnv = {
+      OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      OPENAI_COMPLETION_MODEL: process.env.OPENAI_COMPLETION_MODEL,
+      OPENAI_COMPLETION_TEMPERATURE: process.env.OPENAI_COMPLETION_TEMPERATURE,
+      OPENAI_COMPLETION_TOP_P: process.env.OPENAI_COMPLETION_TOP_P,
+      OPENAI_COMPLETION_REASONING_EFFORT: process.env.OPENAI_COMPLETION_REASONING_EFFORT,
+      OPENAI_COMPLETION_TIMEOUT_MS: process.env.OPENAI_COMPLETION_TIMEOUT_MS,
+      OPENAI_COMPLETION_MAX_OUTPUT_TOKENS: process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS,
+    }
+
+    process.env.OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
+    process.env.OPENAI_API_KEY = 'test-key'
+    delete process.env.OPENAI_COMPLETION_MODEL
+    delete process.env.OPENAI_COMPLETION_TEMPERATURE
+    delete process.env.OPENAI_COMPLETION_TOP_P
+    delete process.env.OPENAI_COMPLETION_REASONING_EFFORT
+    process.env.OPENAI_COMPLETION_TIMEOUT_MS = '5000'
+    process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS = '256'
+
+    let requestBody: Record<string, unknown> | null = null
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"{\\"summary\\":\\"ok\\",\\"enriched\\":\\"- tuned\\"}"}}]}\n\ndata: [DONE]\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      )
+    }) as typeof fetch
+
+    try {
+      const result = await activities.enrichWithModel({
+        filename: 'sample.ts',
+        content: 'export const sample = true\n',
+        astSummary: '- export const sample',
+        context: '',
+      })
+
+      expect(result.summary).toBe('ok')
+      if (!requestBody) {
+        throw new Error('expected completion request body')
+      }
+      const body = requestBody as Record<string, unknown>
+      expect(body.model).toBe('gpt-5.6-sol')
+      expect(body).not.toHaveProperty('temperature')
+      expect(body).not.toHaveProperty('top_p')
+      expect(body.reasoning_effort).toBe('high')
+    } finally {
+      globalThis.fetch = previousFetch
+      for (const [key, value] of Object.entries(previousEnv)) {
+        restoreEnv(key, value)
+      }
+    }
+  })
 })
