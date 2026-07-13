@@ -32,4 +32,8 @@ test('Ceph migration guide uses Hadoop S3A configuration keys', () => {
   }
 
   expect(guide).not.toMatch(/^s3\./m)
+  expect(guide).toContain('rgw service :80')
+  expect(guide).toContain('RGW service TCP/80')
+  expect(guide).not.toContain('RGW service TCP/443')
+  expect(guide).not.toContain('RGW:443')
 })
