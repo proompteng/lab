@@ -138,5 +138,5 @@ From `services/jangar`:
 bun run dev
 curl -N -X POST http://localhost:3000/openai/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}'
+  -d '{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"stream":true}'
 ```

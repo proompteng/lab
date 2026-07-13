@@ -20,7 +20,7 @@ const jangarChatCompletionsUrl = `http://127.0.0.1:${playwrightPort}/openai/v1/c
 const startupTimeoutMs = Number.parseInt(process.env.OPENWEBUI_E2E_STARTUP_TIMEOUT_MS ?? '300000', 10)
 const useExistingStack = process.env.OPENWEBUI_E2E_USE_EXISTING_STACK === '1'
 const useMockCodex = process.env.OPENWEBUI_E2E_USE_MOCK_CODEX === '1' || process.env.JANGAR_MOCK_CODEX === '1'
-const openWebUiModel = process.env.OPENWEBUI_E2E_MODEL ?? process.env.JANGAR_DEFAULT_MODEL ?? 'gpt-5.5'
+const openWebUiModel = process.env.OPENWEBUI_E2E_MODEL ?? process.env.JANGAR_DEFAULT_MODEL ?? 'gpt-5.6-sol'
 
 type ChatMessage = {
   role: 'user' | 'assistant'

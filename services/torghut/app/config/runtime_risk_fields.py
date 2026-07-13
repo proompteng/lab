@@ -564,7 +564,7 @@ class RuntimeRiskSettingsFields(BaseSettings):
 
     llm_enabled: bool = Field(default=True, alias="LLM_ENABLED")
 
-    llm_model: str = Field(default="gpt-5.5", alias="LLM_MODEL")
+    llm_model: str = Field(default="gpt-5.6-sol", alias="LLM_MODEL")
 
     llm_prompt_version: str = Field(default="v1", alias="LLM_PROMPT_VERSION")
 

@@ -448,11 +448,11 @@ spec:
             - name: TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT
               value: "0.08"
             - name: LLM_MODEL
-              value: gpt-5.5
+              value: gpt-5.6-sol
             - name: LLM_MODEL_VERSION_LOCK
-              value: gpt-5.5
+              value: gpt-5.6-sol
             - name: LLM_ALLOWED_MODELS
-              value: gpt-5.5
+              value: gpt-5.6-sol
             - name: LLM_ALLOWED_PROMPT_VERSIONS
               value: v1
             - name: LLM_ENABLED

@@ -467,7 +467,7 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(codex, 'effort')).toBe('low')
     expect(objectAt(codex, 'cwd')).toBeUndefined()
     expect(objectAt(envTemplate, 'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT')).toBe('/workspace/.agentrun/smoke/result.md')
-    expect(JSON.stringify(provider)).not.toContain('gpt-5.5')
+    expect(JSON.stringify(provider)).not.toContain('gpt-5.6-sol')
     expect(objectAt(smokeRunSpec, 'vcsRef')).toBeUndefined()
     expect(objectAt(smokeRunSpec, 'vcsPolicy')).toBeUndefined()
     expect(objectAt(smokeRunSpec, 'secrets')).toEqual(['codex-auth'])
@@ -523,7 +523,7 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(codex, 'model')).toBe('agents-fake-codex-app-server')
     expect(objectAt(codex, 'cwd')).toBeUndefined()
     expect(objectAt(envTemplate, 'AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT')).toBe('/workspace/lab/.agents-runner.log')
-    expect(JSON.stringify(provider)).not.toContain('gpt-5.5')
+    expect(JSON.stringify(provider)).not.toContain('gpt-5.6-sol')
   })
 
   it('configures default runner resource requests for swarm jobs', () => {
@@ -602,12 +602,12 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(envTemplate, 'AGENT_RUN_NAMESPACE')).toBe('{{agentRun.namespace}}')
     expect(objectAt(envTemplate, 'CODEX_MODEL')).toBe('gpt-5.3-codex-spark')
     expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).toBe(
-      'gpt-5.5,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex',
+      'gpt-5.6-sol,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex',
     )
     expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).not.toContain('gpt-5.3-codex-spark')
     expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
     expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-5.3-codex-spark"')
-    expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.5"')
+    expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
       '/root/.codex/provider-codex-spark.json',
     )
@@ -1128,7 +1128,7 @@ crossProductDescribe('autonomous trader provider', () => {
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ARTIFACT_DIR')).toBeUndefined()
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_WORK_DIR')).toBe('/tmp/autonomous-trader-work')
     expect(objectAt(envTemplate, 'ANALYSIS_FETCH_DEPTH')).toBeUndefined()
-    expect(objectAt(codex, 'model')).toBe('gpt-5.5')
+    expect(objectAt(codex, 'model')).toBe('gpt-5.6-sol')
     expect(objectAt(codex, 'effort')).toBe('high')
     expect(inputFilePaths).toContain('/root/.codex/config.toml')
     expect(inputFilePaths).toContain('/root/bootstrap-analysis-daytrading.sh')

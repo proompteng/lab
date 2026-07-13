@@ -25,7 +25,7 @@ services:
       - DATABASE_TYPE=postgresql
       - OPENAI_API_BASE_URL=${JANGAR_OPENAI_BASE_URL:-http://host.docker.internal:3000/openai/v1}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-changeme}
-      - DEFAULT_MODELS=${OPENWEBUI_DEFAULT_MODEL:-gpt-5.5}
+      - DEFAULT_MODELS=${OPENWEBUI_DEFAULT_MODEL:-gpt-5.6-sol}
       - ENABLE_OPENAI_API=true
       - BYPASS_MODEL_ACCESS_CONTROL=true
       - ENABLE_SIGNUP=false
