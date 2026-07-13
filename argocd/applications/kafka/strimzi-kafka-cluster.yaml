@@ -4,9 +4,12 @@ metadata:
   name: kafka
   namespace: kafka
   annotations:
+    argocd.argoproj.io/sync-wave: "-1"
     argocd.argoproj.io/sync-options: Replace=true
     strimzi.io/node-pools: enabled
     strimzi.io/kraft: enabled
+    # Freeze the legacy cluster while the local-controller replacement is built and validated.
+    strimzi.io/pause-reconciliation: "true"
 spec:
   kafka:
     version: 4.2.0
