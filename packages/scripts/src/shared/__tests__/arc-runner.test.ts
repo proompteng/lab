@@ -17,7 +17,6 @@ const argoLintWorkflow = readRepoFile('.github/workflows/argo-lint.yml')
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
 const kubeconformWorkflow = readRepoFile('.github/workflows/kubeconform.yml')
-const khoshutWorkflow = readRepoFile('.github/workflows/khoshut-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
 const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
 const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
@@ -41,6 +40,7 @@ const arcRunnerToolchainScriptPaths = Array.from(
   new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
 )
 const arcRunnerReleaseOnlyScriptPaths = new Set(['nix/oci-release-contract.sh'])
+const arcRunnerSharedScriptPaths = new Set(['nix/cache-push.sh', 'nix/oci-inspect-archive.sh', 'nix/oci-push.sh'])
 
 const releaseGuardFragmentForPath = (path: string): string => {
   const guardPath = path.endsWith('/**') ? `${path.slice(0, -3)}/` : path
@@ -144,7 +144,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain(
       "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
     )
-    expect(arcRunnerBuildTriggerPaths).toContain('flake.nix')
+    expect(arcRunnerBuildTriggerPaths).not.toContain('flake.nix')
     expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
     expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerBuildWorkflow).not.toContain('docker run')
@@ -165,7 +165,10 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
     expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
     for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
-      if (arcRunnerReleaseOnlyScriptPaths.has(toolchainScriptPath)) {
+      if (
+        arcRunnerReleaseOnlyScriptPaths.has(toolchainScriptPath) ||
+        arcRunnerSharedScriptPaths.has(toolchainScriptPath)
+      ) {
         expect(
           arcRunnerBuildTriggerPaths,
           `${toolchainScriptPath} must not fan out ARC runner image builds`,
@@ -244,7 +247,7 @@ describe('ARC Nix runner toolchain', () => {
       expect(workflow).toContain("require-preinstalled: 'true'")
     }
 
-    for (const workflow of [argoLintWorkflow, kubeconformWorkflow, khoshutWorkflow]) {
+    for (const workflow of [argoLintWorkflow, kubeconformWorkflow]) {
       expect(workflow).toContain('runs-on: ubuntu-latest')
       expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
       expect(workflow).not.toContain("require-preinstalled: 'true'")

@@ -203,7 +203,7 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('BUN_BASE_IMAGE=docker.io/oven/bun')
   })
 
-  it('runs Agents CI when Nix image inputs change', () => {
+  it('keeps shared Nix inputs out of Agents CI triggers', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
     const nixImageInputs = [
       'flake.lock',
@@ -215,8 +215,9 @@ describe('agents-ci workflow local Agents image build', () => {
     ]
 
     for (const input of nixImageInputs) {
-      expect(workflow.split(`- '${input}'`).length - 1).toBe(2)
+      expect(workflow).not.toContain(`- '${input}'`)
     }
+    expect(workflow.split("- 'services/agents/**'").length - 1).toBe(2)
     expect(workflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
   })
 

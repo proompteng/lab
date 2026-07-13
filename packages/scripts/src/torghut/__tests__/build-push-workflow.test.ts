@@ -69,20 +69,17 @@ const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string 
 }
 
 describe('torghut build-push workflow', () => {
-  it('builds the core Torghut image for source and image input changes only', () => {
-    const requiredPatterns = [
-      'services/torghut/**',
-      'packages/scripts/src/torghut/**',
-      'packages/scripts/src/shared/cli.ts',
-      'packages/scripts/src/shared/git.ts',
-      'nix/images/torghut.nix',
-      'flake.nix',
-    ]
+  it('publishes the core Torghut image from main-owned inputs only', () => {
+    const ownedPatterns = ['services/torghut/**', 'packages/scripts/src/torghut/**', 'nix/images/torghut.nix']
 
-    for (const pattern of requiredPatterns) {
-      expect(pathPatternOccurrences(pattern)).toBe(2)
+    for (const pattern of ownedPatterns) {
+      expect(pathPatternOccurrences(pattern)).toBe(1)
+    }
+    for (const sharedPath of ['packages/scripts/src/shared/cli.ts', 'packages/scripts/src/shared/git.ts']) {
+      expect(pathPatternOccurrences(sharedPath)).toBe(0)
     }
 
+    expect(workflow).not.toContain('\n  pull_request:')
     const scriptsInclude = pathPatternIndex('packages/scripts/src/torghut/**')
     expect(pathPatternIndex('!packages/scripts/src/torghut/__tests__/**')).toBeGreaterThan(scriptsInclude)
     expect(pathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')).toBeGreaterThan(scriptsInclude)
@@ -288,18 +285,19 @@ describe('torghut build-push workflow', () => {
     expect(compareCall).toBeGreaterThan(authHeader)
   })
 
-  it('retries generic pull-request changed-file planner GitHub API calls', () => {
-    const changesJob = pullRequestWorkflow.indexOf('check_changed_files:')
-    const tokenEnv = pullRequestWorkflow.indexOf('GH_TOKEN: ${{ github.token }}', changesJob)
+  it('retries central pull-request changed-file router GitHub API calls', () => {
+    const fetchFilesStep = pullRequestWorkflow.indexOf('Fetch changed files once')
+    const tokenEnv = pullRequestWorkflow.indexOf('GH_TOKEN: ${{ github.token }}', fetchFilesStep)
     const retryCurl = pullRequestWorkflow.indexOf('curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors', tokenEnv)
     const authHeader = pullRequestWorkflow.indexOf('-H "Authorization: Bearer ${GH_TOKEN}"', retryCurl)
     const prFilesCall = pullRequestWorkflow.indexOf('/pulls/${PR_NUMBER}/files?per_page=100&page=${page}', authHeader)
 
-    expect(changesJob).toBeGreaterThan(-1)
-    expect(tokenEnv).toBeGreaterThan(changesJob)
+    expect(fetchFilesStep).toBeGreaterThan(-1)
+    expect(tokenEnv).toBeGreaterThan(fetchFilesStep)
     expect(retryCurl).toBeGreaterThan(tokenEnv)
     expect(authHeader).toBeGreaterThan(retryCurl)
     expect(prFilesCall).toBeGreaterThan(authHeader)
+    expect(pullRequestWorkflow).not.toContain('check_changed_files:')
   })
 
   it('gates release manifest-only CI on digest-pinned multi-arch image contracts', () => {
