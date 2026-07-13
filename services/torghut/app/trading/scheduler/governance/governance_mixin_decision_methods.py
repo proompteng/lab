@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ....config import settings
 from ...autonomy import (
+    prune_autonomy_run_directories,
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
 )
@@ -326,6 +327,11 @@ class TradingSchedulerGovernanceDecisionMethods(
         self.state.metrics.no_signal_streak = self.state.autonomy_no_signal_streak
         run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
         run_output_dir.mkdir(parents=True, exist_ok=True)
+        prune_autonomy_run_directories(
+            artifact_root,
+            retention_runs=settings.trading_autonomy_artifact_retention_runs,
+            active_run_directory=run_output_dir,
+        )
         no_signal_path = run_output_dir / "no-signals.json"
         reason = batch.no_signal_reason or "no_signal"
         no_signal_payload: dict[str, Any] = {
@@ -447,6 +453,11 @@ class TradingSchedulerGovernanceDecisionMethods(
     ) -> tuple[Path, Path]:
         run_output_dir = artifact_root / now.strftime("%Y%m%dT%H%M%S")
         run_output_dir.mkdir(parents=True, exist_ok=True)
+        prune_autonomy_run_directories(
+            artifact_root,
+            retention_runs=settings.trading_autonomy_artifact_retention_runs,
+            active_run_directory=run_output_dir,
+        )
         signals_path = run_output_dir / "signals.json"
         signal_payloads = [signal.model_dump(mode="json") for signal in signals]
         signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
