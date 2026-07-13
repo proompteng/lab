@@ -214,6 +214,7 @@ targets:
     paths:
       - packages/scripts/**
       - argocd/root.yaml
+      - argocd/applications/argocd/**
       - argocd/applicationsets/**
       - docs/runbooks/rook-ceph-client-ops-performance.md
       - docs/nix-enabled-app-build-performance-rollout-plan.md

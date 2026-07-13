@@ -133,6 +133,6 @@ data:
         secretEnv: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
     staticPasswords:
       - email: admin@proompteng.ai
-        hash: "$2b$10$ra1qX8LB233SZ/rgZ08n4eHlPfOpc5FMYAXYVN5csb6LPgg7VFUHq"
+        hashFromEnv: ARGO_WORKFLOWS_SSO_PASSWORD_HASH
         username: admin
         userID: 86c47abf-4b23-4818-9b4c-76a2d17e7c98
