@@ -146,6 +146,14 @@ class SerializationSchemasTest {
     assertEquals(65, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofMinutes(1)))
     assertEquals(60, realizedVolWindowBars(60, Duration.ofSeconds(1)))
     assertEquals(1, realizedVolWindowBars(60, Duration.ofMinutes(1)))
+    assertEquals(
+      "v2-pt1s-end",
+      signalStateNamespace(Duration.ofSeconds(1), SignalBarTimestampAnchor.END),
+    )
+    assertEquals(
+      "v2-pt1m-start",
+      signalStateNamespace(Duration.ofMinutes(1), SignalBarTimestampAnchor.START),
+    )
     assertSerializable(
       TaSignalsFunction(
         FlinkTaConfig.fromEnv(),

@@ -1485,10 +1485,22 @@ internal class TaSignalsFunction(
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
 
   override fun open(openContext: OpenContext) {
+    val stateNamespace = signalStateNamespace(barDuration, timestampAnchor)
     barsState =
-      runtimeContext.getListState(ListStateDescriptor("bars", TypeInformation.of(MicroBarPayload::class.java)))
-    quoteState = runtimeContext.getState(ValueStateDescriptor("quote-timed-v1", TimedQuoteState::class.java))
-    sessionState = runtimeContext.getState(ValueStateDescriptor("session", SessionAccumulatorState::class.java))
+      runtimeContext.getListState(
+        ListStateDescriptor(
+          "bars-$stateNamespace",
+          TypeInformation.of(MicroBarPayload::class.java),
+        ),
+      )
+    quoteState =
+      runtimeContext.getState(
+        ValueStateDescriptor("quote-timed-$stateNamespace", TimedQuoteState::class.java),
+      )
+    sessionState =
+      runtimeContext.getState(
+        ValueStateDescriptor("session-$stateNamespace", SessionAccumulatorState::class.java),
+      )
   }
 
   override fun processElement1(
@@ -1654,6 +1666,15 @@ internal class TaSignalsFunction(
 internal enum class SignalBarTimestampAnchor {
   START,
   END,
+}
+
+internal fun signalStateNamespace(
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): String {
+  require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val durationToken = barDuration.toString().lowercase()
+  return "v2-$durationToken-${timestampAnchor.name.lowercase()}"
 }
 
 internal fun signalBarEndTime(
