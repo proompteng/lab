@@ -482,6 +482,55 @@ def test_positive_exponent_values_cannot_bypass_numeric_20_8_integer_bounds(
     )
 
 
+@pytest.mark.parametrize(
+    ("intent_overrides", "broker_overrides", "reason"),
+    [
+        (
+            {"qty": "1 "},
+            {},
+            AlpacaRecoveryObservationReason.REQUEST_QTY_INVALID,
+        ),
+        (
+            {"limit_price": "1_000"},
+            {},
+            AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
+        ),
+        (
+            {},
+            {"qty": "1\n"},
+            AlpacaRecoveryObservationReason.BROKER_PAYLOAD_INVALID,
+        ),
+        (
+            {},
+            {"filled_qty": "1_000"},
+            AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
+        ),
+        (
+            {},
+            {"filled_avg_price": "1\n"},
+            AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
+        ),
+        (
+            {},
+            {"limit_price": "1_000"},
+            AlpacaRecoveryObservationReason.ORDER_IDENTITY_MISMATCH,
+        ),
+    ],
+)
+def test_numeric_string_fields_require_canonical_text(
+    intent_overrides: dict[str, object],
+    broker_overrides: dict[str, object],
+    reason: AlpacaRecoveryObservationReason,
+) -> None:
+    _assert_indeterminate(
+        reason,
+        result=_observe(
+            intent=_intent(**intent_overrides),
+            broker_order=_broker_order(**broker_overrides),
+        ),
+    )
+
+
 def test_twelve_integer_digit_scientific_values_remain_in_bounds() -> None:
     result = _observe(
         intent=_intent(qty="1e11", limit_price="1e11"),

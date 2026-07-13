@@ -27,6 +27,7 @@ from ..broker_mutation_receipts.validation import (
 
 
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,31}$")
+_DECIMAL_TEXT = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$")
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit", "trailing_stop"})
 _TIME_IN_FORCE = frozenset({"day", "gtc", "opg", "cls", "ioc", "fok"})
 _UNSUPPORTED_NESTED_ORDER_FIELDS = ("take_profit", "stop_loss", "legs")
@@ -573,6 +574,7 @@ def _decimal(
         isinstance(value, bool)
         or isinstance(value, float)
         or not isinstance(value, (str, int, Decimal))
+        or (isinstance(value, str) and _DECIMAL_TEXT.fullmatch(value) is None)
     ):
         return None
     try:
