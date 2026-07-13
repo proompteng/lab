@@ -1573,7 +1573,13 @@ internal class TaSignalsFunction(
       }
 
     val vwapSession = session.value()
-    val vwap5m = rollingVwap(bars, config.vwapWindow)
+    val vwap5m =
+      rollingSignalVwap(
+        bars = bars,
+        window = config.vwapWindow,
+        barDuration = barDuration,
+        timestampAnchor = timestampAnchor,
+      )
     val realizedVol = realizedVol(series, config.realizedVolWindow)
 
     val barEndTime = signalBarEndTime(envelope.payload.t, barDuration, timestampAnchor)
@@ -1615,21 +1621,6 @@ internal class TaSignalsFunction(
     return envelope
       .withPayload(payload, window = window, seqOverride = envelope.seq)
       .copy(source = taSignalOutputSource(envelope.source))
-  }
-
-  private fun rollingVwap(
-    bars: List<MicroBarPayload>,
-    window: Duration,
-  ): Double? {
-    val cutoff = bars.lastOrNull()?.t?.minus(window) ?: return null
-    var pv = 0.0
-    var vol = 0.0
-    bars.filter { it.t.isAfter(cutoff) || it.t == cutoff }.forEach { bar ->
-      pv += bar.c * bar.v
-      vol += bar.v
-    }
-    if (vol == 0.0) return null
-    return pv / vol
   }
 
   private fun realizedVol(
@@ -1698,6 +1689,30 @@ internal fun signalHistoryLimit(
       .ceil(vwapWindow.toMillis().toDouble() / barDuration.toMillis().toDouble())
       .toInt()
   return maxOf(realizedVolWindow + 5, vwapBars + 60)
+}
+
+internal fun rollingSignalVwap(
+  bars: List<MicroBarPayload>,
+  window: Duration,
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): Double? {
+  val currentEnd =
+    bars.lastOrNull()?.let { bar ->
+      signalBarEndTime(bar.t, barDuration, timestampAnchor)
+    } ?: return null
+  val cutoff = currentEnd.minus(window)
+  var priceVolume = 0.0
+  var volume = 0.0
+
+  bars.forEach { bar ->
+    val barEnd = signalBarEndTime(bar.t, barDuration, timestampAnchor)
+    if (!barEnd.isAfter(cutoff) || barEnd.isAfter(currentEnd)) return@forEach
+    priceVolume += bar.c * bar.v
+    volume += bar.v
+  }
+
+  return if (volume == 0.0) null else priceVolume / volume
 }
 
 internal fun taSignalOutputSource(inputSource: String): String =
