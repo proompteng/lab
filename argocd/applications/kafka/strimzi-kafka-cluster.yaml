@@ -4,6 +4,7 @@ metadata:
   name: kafka
   namespace: kafka
   annotations:
+    argocd.argoproj.io/sync-wave: "-1"
     argocd.argoproj.io/sync-options: Replace=true
     strimzi.io/node-pools: enabled
     strimzi.io/kraft: enabled
