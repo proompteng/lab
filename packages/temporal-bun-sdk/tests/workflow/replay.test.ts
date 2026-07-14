@@ -19,6 +19,7 @@ import {
   ActivityTaskCancelRequestedEventAttributesSchema,
   HistoryEventSchema,
   MarkerRecordedEventAttributesSchema,
+  NexusOperationScheduledEventAttributesSchema,
   SignalExternalWorkflowExecutionInitiatedEventAttributesSchema,
   StartChildWorkflowExecutionInitiatedEventAttributesSchema,
   TimerStartedEventAttributesSchema,
@@ -970,6 +971,36 @@ test('ingestWorkflowHistory reconstructs command history from legacy events when
     expect(cont.backoffStartIntervalMs).toBe(1000)
     expect(replay.determinismState.commandHistory[4]?.metadata?.eventId).toBe('5')
   }
+})
+
+test('ingestWorkflowHistory derives Nexus fallback operation IDs from the scheduled event ID', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-nexus-fallback',
+    runId: 'run-nexus-fallback',
+    workflowType: 'nexusWorkflow',
+  }
+  const event = create(HistoryEventSchema, {
+    eventId: 42n,
+    eventType: EventType.NEXUS_OPERATION_SCHEDULED,
+    attributes: {
+      case: 'nexusOperationScheduledEventAttributes',
+      value: create(NexusOperationScheduledEventAttributesSchema, {
+        endpoint: 'payments',
+        service: 'billing',
+        operation: 'charge',
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({ info, history: [event], dataConverter: converter }),
+  )
+  const intent = replay.determinismState.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('schedule-nexus-operation')
+  expect(intent?.kind === 'schedule-nexus-operation' ? intent.operationId : null).toBe('nexus-42')
 })
 
 test('ingestWorkflowHistory captures failure metadata from workflow events', async () => {

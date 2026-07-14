@@ -151,6 +151,47 @@ test('child workflow defaults reuse recorded ids on replay', async () => {
   }
 })
 
+test('Nexus schedule defaults reuse headerless replay operation ids', async () => {
+  const previous: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'nexus-42',
+          input: { amount: 100 },
+          nexusHeader: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const guard = new DeterminismGuard({ previousState: previous })
+  const { context } = createWorkflowContext({
+    input: [],
+    info: baseInfo,
+    determinismGuard: guard,
+    nexusResults: new Map([['nexus-42', { status: 'completed', value: 'ok' }]]),
+  })
+
+  const result = await Effect.runPromise(context.nexus.schedule('payments', 'billing', 'charge', { amount: 100 }))
+
+  expect(result).toBe('ok')
+  const intent = guard.snapshot.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('schedule-nexus-operation')
+  if (intent?.kind === 'schedule-nexus-operation') {
+    expect(intent.operationId).toBe('nexus-42')
+    expect(intent.nexusHeader).toEqual({})
+  }
+})
+
 test('intentsEqual normalizes activity timeout defaults', () => {
   const expected = {
     id: 'schedule-activity-0',
