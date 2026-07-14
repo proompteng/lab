@@ -1506,6 +1506,19 @@ data:
                   )
                 ) == 0
               )
+              and
+              (
+                sum(
+                  increase(
+                    torghut_trading_rejected_signal_reason_total{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler",
+                      reason=~"missing_executable_quote|spread_bps_exceeded"
+                    }[5m]
+                  )
+                ) == 0
+              )
               and on()
               (
                 (day_of_week(vector(time())) >= 1)
@@ -1519,9 +1532,9 @@ data:
             annotations:
               summary: Torghut trading decisions stalled (market hours)
               description: |
-                No Torghut trading decisions or strategy evaluation events have been recorded for 15 minutes during
-                market hours (UTC schedule). This indicates a stalled decision pipeline rather than a valid fail-closed
-                quote-quality rejection.
+                No Torghut trading decisions, strategy evaluation events, or executable quote-quality rejections have
+                been recorded for 15 minutes during market hours (UTC schedule). This indicates a stalled decision
+                pipeline rather than a valid fail-closed quote-quality rejection.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
           - alert: TorghutExecutableQuoteCoverageDegradedDuringMarketHours
             expr: |

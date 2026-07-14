@@ -31,8 +31,8 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 `torghut-quant-control-plane.rules` plus upstream signal chain groups (`torghut-ws.rules`,
 `torghut-clickhouse.guardrails.rules`).
 
-- **TorghutQuantDecisionsStalledDuringMarketHours**: No trading decisions and no strategy evaluation events for 15
-  minutes during market hours.
+- **TorghutQuantDecisionsStalledDuringMarketHours**: No trading decisions, strategy evaluation events, or executable
+  quote-quality rejections for 15 minutes during market hours.
 - **TorghutExecutableQuoteCoverageDegradedDuringMarketHours**: At least ten candidate signals fail executable quote
   validation in ten minutes while no decision is produced.
 - **TorghutAutonomyNoSignalStreakDuringMarketHours**: Autonomy has consecutive no-signal windows in market hours.
