@@ -214,6 +214,21 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `options clickhouse batches can reach the production minimum without weakening replay guardrails`() {
+    assertEquals(1, normalizeOptionsClickhouseInsertBatchSize(0))
+    assertEquals(1_000, normalizeOptionsClickhouseInsertBatchSize(1_000))
+    assertEquals(MAX_SAFE_OPTIONS_CLICKHOUSE_INSERT_BATCH_SIZE, normalizeOptionsClickhouseInsertBatchSize(10_000))
+    assertEquals(MAX_SAFE_CLICKHOUSE_INSERT_BATCH_SIZE, normalizeClickhouseInsertBatchSize(1_000))
+  }
+
+  @Test
+  fun `clickhouse sink parallelism remains within stream bounds`() {
+    assertEquals(1, normalizeClickhouseSinkParallelism(0, 4))
+    assertEquals(1, normalizeClickhouseSinkParallelism(1, 4))
+    assertEquals(4, normalizeClickhouseSinkParallelism(8, 4))
+  }
+
+  @Test
   fun `clickhouse insert flush interval falls back to safe minimum`() {
     assertEquals(DEFAULT_CLICKHOUSE_INSERT_FLUSH_MS, normalizeClickhouseInsertFlushMs(0))
     assertEquals(MIN_CLICKHOUSE_INSERT_FLUSH_MS, normalizeClickhouseInsertFlushMs(10))

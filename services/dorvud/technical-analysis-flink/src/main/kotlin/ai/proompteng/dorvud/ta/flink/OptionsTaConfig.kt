@@ -44,6 +44,7 @@ data class OptionsTaConfig(
   val clickhouseInsertBatchSize: Int,
   val clickhouseInsertFlushMs: Long,
   val clickhouseInsertMaxRetries: Int,
+  val clickhouseSinkParallelism: Int,
   val clickhouseConnectionTimeoutSeconds: Int,
   val clickhouseSchemaInitMaxRetries: Int,
   val clickhouseSchemaInitRetryDelayMs: Long,
@@ -86,6 +87,7 @@ data class OptionsTaConfig(
           "s3a://flink-checkpoints/torghut/options-technical-analysis",
         )!!
       val clickhouseUrl = envEither("OPTIONS_TA_CLICKHOUSE_URL", "TA_CLICKHOUSE_URL")
+      val parallelism = envInt("OPTIONS_TA_PARALLELISM", "TA_PARALLELISM", 4)
 
       return OptionsTaConfig(
         feed = envEither("OPTIONS_TA_FEED", "ALPACA_FEED", "opra")!!,
@@ -113,7 +115,7 @@ data class OptionsTaConfig(
         checkpointTimeoutMs = envLong("OPTIONS_TA_CHECKPOINT_TIMEOUT_MS", "TA_CHECKPOINT_TIMEOUT_MS", 300_000),
         minPauseBetweenCheckpointsMs = envLong("OPTIONS_TA_CHECKPOINT_PAUSE_MS", "TA_CHECKPOINT_PAUSE_MS", 10_000),
         maxOutOfOrderMs = envLong("OPTIONS_TA_MAX_OUT_OF_ORDER_MS", "TA_MAX_OUT_OF_ORDER_MS", 2_000),
-        parallelism = envInt("OPTIONS_TA_PARALLELISM", "TA_PARALLELISM", 4),
+        parallelism = parallelism,
         quoteStaleAfterMs =
           (envEither("OPTIONS_TA_QUOTE_STALE_AFTER_SEC", "OPTIONS_SLO_HOT_SNAPSHOT_FRESHNESS_SEC", "30")!!.toLong()) * 1_000,
         snapshotStaleAfterMs =
@@ -139,7 +141,7 @@ data class OptionsTaConfig(
         clickhouseUsername = envEither("OPTIONS_TA_CLICKHOUSE_USERNAME", "TA_CLICKHOUSE_USERNAME", "torghut"),
         clickhousePassword = envEither("OPTIONS_TA_CLICKHOUSE_PASSWORD", "TA_CLICKHOUSE_PASSWORD"),
         clickhouseInsertBatchSize =
-          normalizeClickhouseInsertBatchSize(
+          normalizeOptionsClickhouseInsertBatchSize(
             envInt(
               "OPTIONS_TA_CLICKHOUSE_BATCH_SIZE",
               "TA_CLICKHOUSE_BATCH_SIZE",
@@ -155,6 +157,15 @@ data class OptionsTaConfig(
             ),
           ),
         clickhouseInsertMaxRetries = envInt("OPTIONS_TA_CLICKHOUSE_MAX_RETRIES", "TA_CLICKHOUSE_MAX_RETRIES", 3),
+        clickhouseSinkParallelism =
+          normalizeClickhouseSinkParallelism(
+            envInt(
+              "OPTIONS_TA_CLICKHOUSE_SINK_PARALLELISM",
+              "TA_CLICKHOUSE_SINK_PARALLELISM",
+              DEFAULT_CLICKHOUSE_SINK_PARALLELISM,
+            ),
+            parallelism,
+          ),
         clickhouseConnectionTimeoutSeconds =
           envInt("OPTIONS_TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", "TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS", 30),
         clickhouseSchemaInitMaxRetries =
