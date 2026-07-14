@@ -149,17 +149,19 @@ describe('torghut-deploy-automerge workflow', () => {
 
   test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {
     const manifestPath = 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
+    const writerManifestPath = 'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
 
     expect(hyperliquidFeedReleaseWorkflow).toContain(manifestPath)
+    expect(hyperliquidFeedReleaseWorkflow).toContain(writerManifestPath)
     expect(hyperliquidFeedReleaseWorkflow).toContain(
       'codex/torghut-hyperliquid-feed-release-${{ steps.meta.outputs.tag }}',
     )
     expect(countOccurrences(deployAutomergeWorkflow, `'${manifestPath}'`)).toBeGreaterThanOrEqual(2)
+    expect(countOccurrences(deployAutomergeWorkflow, `'${writerManifestPath}'`)).toBeGreaterThanOrEqual(2)
     expect(deployAutomergeWorkflow).toContain(
       "startsWith(github.event.pull_request.head.ref, 'codex/torghut-hyperliquid-feed-release-')",
     )
     expect(deployAutomergeWorkflow).toContain("steps.gates.outputs.release_lane == 'hyperliquid-feed'")
-    expect(deployAutomergeWorkflow).toContain("'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'")
     expect(deployAutomergeWorkflow).toContain(
       'Hyperliquid feed and Kafka ClickHouse writer release metadata do not match',
     )

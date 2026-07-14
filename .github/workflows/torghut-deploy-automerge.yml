@@ -27,6 +27,7 @@ on:
       - 'argocd/applications/torghut/ta-sim/flinkdeployment.yaml'
       - 'argocd/applications/torghut/ws/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
+      - 'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
       - 'argocd/applications/torghut-options/archive/deployment.yaml'
