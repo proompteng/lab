@@ -18,6 +18,11 @@ data class HyperliquidTopics(
   val status: String,
 )
 
+data class ClickHouseBatchPolicy(
+  val batchSize: Int,
+  val flushMs: Long,
+)
+
 data class ClickHouseConfig(
   val enabled: Boolean,
   val requiredForReadiness: Boolean,
@@ -34,7 +39,15 @@ data class ClickHouseConfig(
   val enabledTables: Set<String>,
   val readyTables: Set<String> = setOf("hyperliquid_raw", "hyperliquid_candles"),
   val freshnessCheckMs: Long = 30_000,
-)
+  val tableBatchPolicies: Map<String, ClickHouseBatchPolicy> = emptyMap(),
+  val queueCapacity: Int = 10_000,
+  val retryInitialMs: Long = 250,
+  val retryMaxMs: Long = 5_000,
+  val shutdownFlushTimeoutMs: Long = 5_000,
+) {
+  fun batchPolicyFor(table: String): ClickHouseBatchPolicy =
+    tableBatchPolicies[table] ?: ClickHouseBatchPolicy(batchSize = batchSize, flushMs = flushMs)
+}
 
 data class HyperliquidConfig(
   val network: String,
@@ -85,6 +98,14 @@ data class HyperliquidConfig(
       )
     private val supportedClickHouseTables =
       supportedClickHouseReadyTables + "hyperliquid_market_catalog"
+    private val sparseClickHouseTables =
+      setOf(
+        "hyperliquid_market_catalog",
+        "hyperliquid_candles",
+        "hyperliquid_asset_contexts",
+        "hyperliquid_funding",
+        "hyperliquid_status",
+      )
 
     fun fromEnv(env: Map<String, String>? = null): HyperliquidConfig {
       val mergedEnv = env ?: mergeEnv()
@@ -164,6 +185,19 @@ data class HyperliquidConfig(
       val clickHouseReadyMaxAgeMs = longEnv(mergedEnv, "CLICKHOUSE_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000)
       val clickHouseTableReadyMaxAgeMs =
         longEnv(mergedEnv, "CLICKHOUSE_TABLE_READY_MAX_AGE_MS", 300_000).coerceAtLeast(clickHouseReadyMaxAgeMs)
+      val clickHouseBatchSize = intEnv(mergedEnv, "CLICKHOUSE_BATCH_SIZE", 250).coerceIn(1, 5_000)
+      val clickHouseFlushMs = longEnv(mergedEnv, "CLICKHOUSE_FLUSH_MS", 1_000).coerceIn(250, 300_000)
+      val clickHouseBboPolicy =
+        ClickHouseBatchPolicy(
+          batchSize = intEnv(mergedEnv, "CLICKHOUSE_BBO_BATCH_SIZE", 1_000).coerceIn(1, 5_000),
+          flushMs = longEnv(mergedEnv, "CLICKHOUSE_BBO_FLUSH_MS", 10_000).coerceIn(250, 300_000),
+        )
+      val clickHouseSparsePolicy =
+        ClickHouseBatchPolicy(
+          batchSize = intEnv(mergedEnv, "CLICKHOUSE_SPARSE_BATCH_SIZE", 100).coerceIn(1, 5_000),
+          flushMs = longEnv(mergedEnv, "CLICKHOUSE_SPARSE_FLUSH_MS", 30_000).coerceIn(250, 300_000),
+        )
+      val clickHouseRetryInitialMs = longEnv(mergedEnv, "CLICKHOUSE_RETRY_INITIAL_MS", 250).coerceIn(10, 60_000)
       val clickHouse =
         ClickHouseConfig(
           enabled = mergedEnv["CLICKHOUSE_ENABLED"]?.toBooleanStrictOrNull() ?: true,
@@ -172,8 +206,8 @@ data class HyperliquidConfig(
           database = mergedEnv["CLICKHOUSE_DATABASE"] ?: "torghut",
           username = mergedEnv["CLICKHOUSE_USERNAME"] ?: "torghut",
           password = mergedEnv["CLICKHOUSE_PASSWORD"] ?: "",
-          batchSize = intEnv(mergedEnv, "CLICKHOUSE_BATCH_SIZE", 250).coerceIn(1, 5000),
-          flushMs = longEnv(mergedEnv, "CLICKHOUSE_FLUSH_MS", 1000).coerceAtLeast(250),
+          batchSize = clickHouseBatchSize,
+          flushMs = clickHouseFlushMs,
           requestTimeoutMs = longEnv(mergedEnv, "CLICKHOUSE_REQUEST_TIMEOUT_MS", 10_000).coerceAtLeast(1_000),
           readyMaxAgeMs = clickHouseReadyMaxAgeMs,
           tableReadyMaxAgeMs = clickHouseTableReadyMaxAgeMs,
@@ -195,6 +229,18 @@ data class HyperliquidConfig(
                 if (unknown.isNotEmpty()) error("Unsupported CLICKHOUSE_READY_TABLES: ${unknown.joinToString(",")}")
               },
           freshnessCheckMs = longEnv(mergedEnv, "CLICKHOUSE_FRESHNESS_CHECK_MS", 30_000).coerceAtLeast(1_000),
+          tableBatchPolicies =
+            buildMap {
+              put("hyperliquid_bbo", clickHouseBboPolicy)
+              sparseClickHouseTables.forEach { table -> put(table, clickHouseSparsePolicy) }
+            },
+          queueCapacity = intEnv(mergedEnv, "CLICKHOUSE_QUEUE_CAPACITY", 10_000).coerceIn(100, 100_000),
+          retryInitialMs = clickHouseRetryInitialMs,
+          retryMaxMs =
+            longEnv(mergedEnv, "CLICKHOUSE_RETRY_MAX_MS", 5_000)
+              .coerceIn(clickHouseRetryInitialMs, 60_000),
+          shutdownFlushTimeoutMs =
+            longEnv(mergedEnv, "CLICKHOUSE_SHUTDOWN_FLUSH_TIMEOUT_MS", 5_000).coerceIn(1_000, 120_000),
         )
       val disabledReadyTables = clickHouse.readyTables - clickHouse.enabledTables
       if (disabledReadyTables.isNotEmpty()) {

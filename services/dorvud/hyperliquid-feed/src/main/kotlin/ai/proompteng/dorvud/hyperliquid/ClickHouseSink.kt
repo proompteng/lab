@@ -8,12 +8,22 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
@@ -25,8 +35,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import mu.KotlinLogging
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.min
+import kotlin.random.Random
 
 private val clickHouseLogger = KotlinLogging.logger {}
 private val clickHouseIdentifierPattern = Regex("[A-Za-z_][A-Za-z0-9_]*")
@@ -54,9 +68,15 @@ class ClickHouseSink(
   private val nowMs: () -> Long = { System.currentTimeMillis() },
   private val onReady: (ClickHouseReadinessUpdate) -> Unit = {},
 ) {
-  private val channel = Channel<RoutedEnvelope>(capacity = 10_000)
+  private val channelCapacity = maxOf(1, config.queueCapacity / maxOf(1, config.enabledTables.size))
+  private val tableChannels = config.enabledTables.associateWith { Channel<RoutedEnvelope>(capacity = channelCapacity) }
+  private val failedTables = ConcurrentHashMap.newKeySet<String>()
+  private val freshnessMutex = Mutex()
   private val lastFreshnessCheckMs = AtomicLong(0)
   private val tableFreshnessReady = AtomicBoolean(!config.enabled)
+
+  @Volatile
+  private var workerJob: Job? = null
 
   @Volatile
   private var latestTableIngestLagMs: Map<String, Long?> = config.readyTables.associateWith { null }
@@ -69,52 +89,163 @@ class ClickHouseSink(
 
   suspend fun enqueue(record: RoutedEnvelope) {
     if (!config.enabled) return
-    if (tableForTopic(record.topic) !in config.enabledTables) return
-    channel.send(record)
+    if (workerJob?.isActive == false) return
+    val table = tableForTopic(record.topic)
+    val channel = tableChannels[table] ?: return
+    metrics.addClickHousePendingRecords(table, 1)
+    try {
+      channel.send(record)
+    } catch (_: ClosedSendChannelException) {
+      metrics.addClickHousePendingRecords(table, -1)
+    } catch (error: CancellationException) {
+      metrics.addClickHousePendingRecords(table, -1)
+      throw error
+    }
   }
 
-  fun start(scope: CoroutineScope): Job =
-    scope.launch(Dispatchers.IO) {
-      if (!config.enabled) {
-        metrics.setClickHouseReady(true)
-        emitReadiness(ready = true, tableFreshnessReady = true)
-        return@launch
+  fun start(scope: CoroutineScope): Job {
+    check(workerJob == null) { "ClickHouse sink has already been started" }
+    val job =
+      scope.launch(Dispatchers.IO) {
+        if (!config.enabled) {
+          metrics.setClickHouseReady(true)
+          emitReadiness(ready = true, tableFreshnessReady = true)
+          return@launch
+        }
+        try {
+          coroutineScope {
+            tableChannels
+              .map { (table, channel) -> launch { processTable(table, channel) } }
+              .joinAll()
+          }
+        } finally {
+          tableChannels.values.forEach { it.close() }
+        }
       }
-      val batch = mutableListOf<RoutedEnvelope>()
-      while (isActive) {
-        val first = channel.receiveCatching().getOrNull() ?: continue
+    workerJob = job
+    return job
+  }
+
+  private suspend fun processTable(
+    table: String,
+    channel: Channel<RoutedEnvelope>,
+  ) {
+    val policy = config.batchPolicyFor(table)
+    val batch = mutableListOf<RoutedEnvelope>()
+    try {
+      while (currentCoroutineContext().isActive) {
+        val first = channel.receiveCatching().getOrNull() ?: break
         batch += first
-        val deadline = nowMs() + config.flushMs
-        while (batch.size < config.batchSize) {
-          val remainingMs = deadline - nowMs()
-          if (remainingMs <= 0) break
-          val next =
-            withTimeoutOrNull(remainingMs) {
-              channel.receiveCatching().getOrNull()
-            } ?: break
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(policy.flushMs)
+        while (batch.size < policy.batchSize) {
+          val remainingNanos = deadlineNanos - System.nanoTime()
+          if (remainingNanos <= 0) break
+          val remainingMs = TimeUnit.NANOSECONDS.toMillis(remainingNanos).coerceAtLeast(1)
+          val next = withTimeoutOrNull(remainingMs) { channel.receiveCatching().getOrNull() } ?: break
           batch += next
         }
-        flush(batch.toList())
+        val reason = if (batch.size >= policy.batchSize) "size" else "time"
+        flushWithRetry(table, batch, reason)
         batch.clear()
+        refreshReadinessAfterInsert()
       }
+    } finally {
+      while (true) {
+        val pending = channel.tryReceive().getOrNull() ?: break
+        batch += pending
+      }
+      flushOnShutdown(table, batch)
     }
+  }
 
-  private suspend fun flush(records: List<RoutedEnvelope>) {
-    records.groupBy { tableForTopic(it.topic) }.forEach { (table, tableRecords) ->
-      val body = tableRecords.joinToString("\n") { json.encodeToString(rowFor(it)) }
-      runCatching {
-        insertRows(table, body)
-        refreshTableFreshnessIfDue()
-      }.onSuccess {
-        metrics.setClickHouseReady(it)
-        emitReadiness(ready = it, tableFreshnessReady = it)
-      }.onFailure { error ->
-        metrics.setClickHouseReady(false)
-        emitReadiness(ready = false, tableFreshnessReady = false)
-        metrics.recordClickHouseError(table)
-        clickHouseLogger.warn(error) { "clickhouse insert failed table=$table records=${tableRecords.size}" }
+  private suspend fun flushOnShutdown(
+    table: String,
+    records: List<RoutedEnvelope>,
+  ) {
+    if (records.isEmpty()) return
+    withContext(NonCancellable) {
+      val completed =
+        withTimeoutOrNull(config.shutdownFlushTimeoutMs) {
+          flushWithRetry(table, records, "shutdown")
+          true
+        } ?: false
+      if (!completed) {
+        clickHouseLogger.error {
+          "clickhouse shutdown flush timed out table=$table records=${records.size} " +
+            "timeout_ms=${config.shutdownFlushTimeoutMs}"
+        }
       }
     }
+  }
+
+  private suspend fun flushWithRetry(
+    table: String,
+    records: List<RoutedEnvelope>,
+    reason: String,
+  ) {
+    if (records.isEmpty()) return
+    // Reusing the exact body keeps ReplicatedMergeTree retry block hashes stable.
+    val body = records.joinToString("\n") { json.encodeToString(rowFor(it)) }
+    val bodyBytes = body.toByteArray(Charsets.UTF_8).size
+    val startedAtNanos = System.nanoTime()
+    var retryDelayMs = config.retryInitialMs
+    var attempt = 1
+    while (currentCoroutineContext().isActive) {
+      try {
+        insertRows(table, body)
+      } catch (error: Exception) {
+        if (error is CancellationException && !currentCoroutineContext().isActive) throw error
+        failedTables.add(table)
+        val freshnessReady = tableFreshnessReady.get()
+        val ready = !hasRequiredFailures() && freshnessReady
+        runCatching {
+          metrics.recordClickHouseError(table)
+          metrics.recordClickHouseRetry(table)
+          metrics.setClickHouseReady(ready)
+          emitReadiness(ready = ready, tableFreshnessReady = freshnessReady)
+        }.onFailure { metricsError ->
+          clickHouseLogger.warn(metricsError) { "clickhouse retry metric recording failed table=$table" }
+        }
+        if (attempt == 1 || attempt % 10 == 0) {
+          clickHouseLogger.warn(error) {
+            "clickhouse insert failed table=$table records=${records.size} attempt=$attempt retry_ms=$retryDelayMs"
+          }
+        }
+        delay(jitteredRetryDelay(retryDelayMs))
+        retryDelayMs = min(config.retryMaxMs, retryDelayMs * 2)
+        attempt += 1
+        continue
+      }
+      failedTables.remove(table)
+      runCatching {
+        metrics.addClickHousePendingRecords(table, -records.size)
+        metrics.recordClickHouseFlush(
+          table = table,
+          reason = reason,
+          rows = records.size,
+          bytes = bodyBytes,
+          durationNanos = System.nanoTime() - startedAtNanos,
+        )
+      }.onFailure { error ->
+        clickHouseLogger.warn(error) { "clickhouse flush metric recording failed table=$table" }
+      }
+      return
+    }
+  }
+
+  private suspend fun refreshReadinessAfterInsert() {
+    val freshnessReady = refreshTableFreshnessIfDue()
+    val ready = !hasRequiredFailures() && freshnessReady
+    metrics.setClickHouseReady(ready)
+    emitReadiness(ready = ready, tableFreshnessReady = freshnessReady)
+  }
+
+  private fun hasRequiredFailures(): Boolean = failedTables.any { it in config.readyTables }
+
+  private fun jitteredRetryDelay(baseMs: Long): Long {
+    if (baseMs >= config.retryMaxMs) return config.retryMaxMs
+    val jitterLimit = maxOf(1, baseMs / 5)
+    return min(config.retryMaxMs, baseMs + Random.nextLong(jitterLimit + 1))
   }
 
   private suspend fun insertRows(
@@ -154,19 +285,25 @@ class ClickHouseSink(
     val lastCheck = lastFreshnessCheckMs.get()
     if (lastCheck > 0 && observedAt - lastCheck < config.freshnessCheckMs) return tableFreshnessReady.get()
 
-    return runCatching {
-      queryTableFreshness(observedAt)
-    }.fold(
-      onSuccess = { freshness ->
+    return freshnessMutex.withLock {
+      val lockedObservedAt = nowMs()
+      val lockedLastCheck = lastFreshnessCheckMs.get()
+      if (lockedLastCheck > 0 && lockedObservedAt - lockedLastCheck < config.freshnessCheckMs) {
+        return@withLock tableFreshnessReady.get()
+      }
+      try {
+        val freshness = queryTableFreshness(lockedObservedAt)
         latestTableIngestLagMs = freshness.ingestLagMs
         latestTableEventLagMs = freshness.eventLagMs
         latestTableEventFutureSkewMs = freshness.eventFutureSkewMs
         freshness.ingestLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableIngestLagMs(table, lagMs) }
         freshness.eventLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableEventLagMs(table, lagMs) }
-        freshness.eventFutureSkewMs.forEach { (table, skewMs) -> metrics.setClickHouseTableEventFutureSkewMs(table, skewMs) }
+        freshness.eventFutureSkewMs.forEach { (table, skewMs) ->
+          metrics.setClickHouseTableEventFutureSkewMs(table, skewMs)
+        }
         val fresh = freshness.ingestLagMs.values.all { lagMs -> lagMs != null && lagMs <= config.tableReadyMaxAgeMs }
         tableFreshnessReady.set(fresh)
-        lastFreshnessCheckMs.set(observedAt)
+        lastFreshnessCheckMs.set(lockedObservedAt)
         if (!fresh) {
           clickHouseLogger.warn {
             "clickhouse table ingest freshness stale ingest_lags_ms=${freshness.ingestLagMs} " +
@@ -174,14 +311,14 @@ class ClickHouseSink(
           }
         }
         fresh
-      },
-      onFailure = { error ->
+      } catch (error: Exception) {
+        if (error is CancellationException && !currentCoroutineContext().isActive) throw error
         tableFreshnessReady.set(false)
-        lastFreshnessCheckMs.set(observedAt)
+        lastFreshnessCheckMs.set(lockedObservedAt)
         clickHouseLogger.warn(error) { "clickhouse table freshness query failed" }
         false
-      },
-    )
+      }
+    }
   }
 
   private suspend fun queryTableFreshness(observedAt: Long): ClickHouseTableFreshness {

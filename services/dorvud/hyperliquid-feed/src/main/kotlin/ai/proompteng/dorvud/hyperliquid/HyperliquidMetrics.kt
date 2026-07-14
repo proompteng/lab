@@ -1,9 +1,12 @@
 package ai.proompteng.dorvud.hyperliquid
 
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -24,6 +27,12 @@ class HyperliquidMetrics(
   private val eventCounters = ConcurrentHashMap<String, Counter>()
   private val kafkaErrors = ConcurrentHashMap<String, Counter>()
   private val clickHouseErrors = ConcurrentHashMap<String, Counter>()
+  private val clickHouseRetries = ConcurrentHashMap<String, Counter>()
+  private val clickHouseFlushes = ConcurrentHashMap<String, Counter>()
+  private val clickHouseBatchRows = ConcurrentHashMap<String, DistributionSummary>()
+  private val clickHouseBatchBytes = ConcurrentHashMap<String, DistributionSummary>()
+  private val clickHouseFlushDuration = ConcurrentHashMap<String, Timer>()
+  private val clickHousePendingRecords = ConcurrentHashMap<String, AtomicInteger>()
   private val dedupDrops = ConcurrentHashMap<String, Counter>()
   private val readinessBlockers = ConcurrentHashMap<String, AtomicInteger>()
   private val eventLastSeenEpochMs = ConcurrentHashMap<String, AtomicLong>()
@@ -137,6 +146,66 @@ class HyperliquidMetrics(
       .computeIfAbsent(table) {
         Counter.builder("torghut_hyperliquid_clickhouse_insert_errors_total").tag("table", it).register(registry)
       }.increment()
+  }
+
+  fun recordClickHouseRetry(table: String) {
+    clickHouseRetries
+      .computeIfAbsent(table) {
+        Counter.builder("torghut_hyperliquid_clickhouse_insert_retries_total").tag("table", it).register(registry)
+      }.increment()
+  }
+
+  fun recordClickHouseFlush(
+    table: String,
+    reason: String,
+    rows: Int,
+    bytes: Int,
+    durationNanos: Long,
+  ) {
+    val key = "$table:$reason"
+    clickHouseFlushes
+      .computeIfAbsent(key) {
+        Counter
+          .builder("torghut_hyperliquid_clickhouse_flushes_total")
+          .tag("table", table)
+          .tag("reason", reason)
+          .register(registry)
+      }.increment()
+    clickHouseBatchRows
+      .computeIfAbsent(table) {
+        DistributionSummary
+          .builder("torghut_hyperliquid_clickhouse_batch_rows")
+          .baseUnit("rows")
+          .tag("table", it)
+          .register(registry)
+      }.record(rows.toDouble())
+    clickHouseBatchBytes
+      .computeIfAbsent(table) {
+        DistributionSummary
+          .builder("torghut_hyperliquid_clickhouse_batch_bytes")
+          .baseUnit("bytes")
+          .tag("table", it)
+          .register(registry)
+      }.record(bytes.toDouble())
+    clickHouseFlushDuration
+      .computeIfAbsent(table) {
+        Timer.builder("torghut_hyperliquid_clickhouse_flush_duration").tag("table", it).register(registry)
+      }.record(durationNanos, TimeUnit.NANOSECONDS)
+  }
+
+  fun addClickHousePendingRecords(
+    table: String,
+    delta: Int,
+  ) {
+    clickHousePendingRecords
+      .computeIfAbsent(table) {
+        val value = AtomicInteger(0)
+        Gauge
+          .builder("torghut_hyperliquid_clickhouse_pending_records", value) { it.get().toDouble() }
+          .tag("table", table)
+          .register(registry)
+        value
+      }.addAndGet(delta)
   }
 
   fun setClickHouseTableIngestLagMs(
