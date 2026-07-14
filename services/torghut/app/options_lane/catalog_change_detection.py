@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
 
 _CONTRACT_CATALOG_CHANGE_FIELDS = (
@@ -26,8 +26,8 @@ _CONTRACT_CATALOG_CHANGE_FIELDS = (
 
 def contract_catalog_row_changed(
     *,
-    current: dict[str, Any] | None,
-    payload: dict[str, Any],
+    current: Mapping[str, object] | None,
+    payload: Mapping[str, object],
 ) -> bool:
     """Return whether a provider payload changes a persisted catalog field."""
     return current is None or any(
