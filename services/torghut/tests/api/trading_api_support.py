@@ -67,9 +67,6 @@ _OPTIONS_CATALOG_FRESHNESS_CACHE = health_cache_state.OPTIONS_CATALOG_FRESHNESS_
 _TRADING_DEPENDENCY_HEALTH_CACHE = health_cache_state.TRADING_DEPENDENCY_HEALTH_CACHE
 _assert_dspy_cutover_migration_guard = app_bootstrap.assert_dspy_cutover_migration_guard
 _build_hypothesis_runtime_payload = health_checks_api.build_hypothesis_runtime_payload
-_build_live_submission_gate_payload = (
-    health_checks_api.build_api_live_submission_gate_payload
-)
 _check_alpaca = health_checks_api.check_alpaca_dependency
 _daily_runtime_ledger_portfolio_summary = daily_runtime_ledger_portfolio_summary
 _decimal_or_none = health_checks_api.decimal_or_none
@@ -697,7 +694,6 @@ __all__: tuple[str, ...] = (
     "_TimedOutBoundedOptionsFreshnessSession",
     "_assert_dspy_cutover_migration_guard",
     "_build_hypothesis_runtime_payload",
-    "_build_live_submission_gate_payload",
     "_check_alpaca",
     "_daily_runtime_ledger_portfolio_summary",
     "_decimal_or_none",

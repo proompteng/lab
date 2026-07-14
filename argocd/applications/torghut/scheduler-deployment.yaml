@@ -421,7 +421,9 @@ spec:
             - name: TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY
               value: "0.05"
             - name: TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET
-              value: "15:30:00"
+              # P0 capital freeze: the scheduler stays healthy for recovery and
+              # closeout, while every risk-increasing decision is rejected.
+              value: "00:00:00"
             - name: TRADING_FLATTEN_START_TIME_ET
               value: "15:45:00"
             - name: TRADING_FLAT_CONFIRMATION_TIME_ET

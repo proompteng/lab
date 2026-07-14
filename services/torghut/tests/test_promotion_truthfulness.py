@@ -66,10 +66,9 @@ class TestPromotionTruthfulness(TestCase):
                         "benchmark_parity": {
                             "artifact_ref": "gates/benchmark-parity-report-v1.json",
                             "artifact_authority": evidence_contract_payload(
-                                provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
-                                maturity=EvidenceMaturity.STUB,
-                                authoritative=False,
-                                placeholder=True,
+                                provenance=ArtifactProvenance.NON_PROMOTABLE_VALIDATION,
+                                maturity=EvidenceMaturity.EMPIRICALLY_VALIDATED,
+                                authoritative=True,
                             ),
                         }
                     },

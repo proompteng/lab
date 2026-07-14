@@ -193,7 +193,7 @@ def readiness_live_submission_gate(
 
     try:
         freshness = status_dependencies.load_clickhouse_ta_status(scheduler)
-        gate = status_dependencies.build_api_live_submission_gate_payload(
+        gate = status_dependencies.build_live_submission_gate_payload(
             scheduler.state,
             clickhouse_ta_status=freshness,
         )

@@ -12,6 +12,7 @@ class ArtifactProvenance(str, Enum):
     HISTORICAL_MARKET_REPLAY = "historical_market_replay"
     PAPER_RUNTIME_OBSERVED = "paper_runtime_observed"
     LIVE_RUNTIME_OBSERVED = "live_runtime_observed"
+    NON_PROMOTABLE_VALIDATION = "non_promotable_validation"
 
 
 class EvidenceMaturity(str, Enum):
@@ -22,6 +23,14 @@ class EvidenceMaturity(str, Enum):
 
 
 NON_AUTHORITATIVE_PROVENANCE: frozenset[ArtifactProvenance] = frozenset(
+    {
+        ArtifactProvenance.STRUCTURAL_PLACEHOLDER,
+        ArtifactProvenance.SYNTHETIC_GENERATED,
+        ArtifactProvenance.NON_PROMOTABLE_VALIDATION,
+    }
+)
+
+PLACEHOLDER_PROVENANCE: frozenset[ArtifactProvenance] = frozenset(
     {
         ArtifactProvenance.STRUCTURAL_PLACEHOLDER,
         ArtifactProvenance.SYNTHETIC_GENERATED,
@@ -39,15 +48,11 @@ def evidence_contract_payload(
     deviation_summary: Mapping[str, Any] | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
-    resolved_authoritative = (
-        authoritative
-        if authoritative is not None
-        else provenance not in NON_AUTHORITATIVE_PROVENANCE
+    resolved_authoritative = provenance not in NON_AUTHORITATIVE_PROVENANCE and (
+        authoritative if authoritative is not None else True
     )
     resolved_placeholder = (
-        placeholder
-        if placeholder is not None
-        else provenance in NON_AUTHORITATIVE_PROVENANCE
+        placeholder if placeholder is not None else provenance in PLACEHOLDER_PROVENANCE
     )
     payload: dict[str, Any] = {
         "provenance": provenance.value,
@@ -69,11 +74,10 @@ def parse_evidence_contract(value: Any) -> dict[str, Any]:
     provenance = _coerce_provenance(payload.get("provenance"))
     maturity = _coerce_maturity(payload.get("maturity"))
     authoritative = bool(
-        payload.get("authoritative", provenance not in NON_AUTHORITATIVE_PROVENANCE)
+        provenance not in NON_AUTHORITATIVE_PROVENANCE
+        and payload.get("authoritative", True)
     )
-    placeholder = bool(
-        payload.get("placeholder", provenance in NON_AUTHORITATIVE_PROVENANCE)
-    )
+    placeholder = bool(payload.get("placeholder", provenance in PLACEHOLDER_PROVENANCE))
     normalized: dict[str, Any] = {
         "provenance": provenance.value,
         "maturity": maturity.value,
@@ -127,6 +131,7 @@ __all__ = [
     "ArtifactProvenance",
     "EvidenceMaturity",
     "NON_AUTHORITATIVE_PROVENANCE",
+    "PLACEHOLDER_PROVENANCE",
     "contract_from_artifact_payload",
     "evidence_contract_payload",
     "parse_evidence_contract",
