@@ -5,8 +5,33 @@ import type { Database } from '../db'
 const ATLAS_EMBEDDING_DIMENSION = 1024
 
 export const up = async (db: Kysely<Database>) => {
-  // Atlas is disposable derived state. The new single-current-corpus constraints cannot be made truthful in place.
-  await sql`TRUNCATE TABLE atlas.repositories CASCADE;`.execute(db)
+  // The indexed corpus is disposable derived state. Keep repository identities and webhook/ingestion history, while
+  // clearing every row that is derived from Git and every association that points into that corpus.
+  await sql`TRUNCATE TABLE atlas.file_keys, atlas.symbols CASCADE;`.execute(db)
+
+  await sql`
+    UPDATE atlas.repositories
+    SET default_ref = 'main',
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+          'indexStatus', 'maintenance',
+          'indexedCommit', NULL,
+          'targetCommit', NULL,
+          'gitHead', NULL,
+          'treeHash', NULL,
+          'expectedFiles', 0,
+          'indexedFiles', 0,
+          'missingPaths', 0,
+          'stalePaths', 0,
+          'hashMismatches', 0,
+          'uncoveredLines', 0,
+          'indexedChunks', 0,
+          'embeddedChunks', 0,
+          'embeddingDimension', ${sql.raw(String(ATLAS_EMBEDDING_DIMENSION))},
+          'lastError', NULL,
+          'resetAt', now()
+        ),
+        updated_at = now();
+  `.execute(db)
 
   await sql`DROP INDEX IF EXISTS atlas.atlas_chunk_embeddings_embedding_idx;`.execute(db)
   await sql`DROP INDEX IF EXISTS atlas.atlas_file_versions_hash_null_commit_idx;`.execute(db)

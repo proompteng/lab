@@ -288,7 +288,7 @@ describe('atlas store', () => {
     }
   })
 
-  it('does not attempt CREATE EXTENSION during schema bootstrap', async () => {
+  it('bootstraps only the trusted pg_trgm extension during schema bootstrap', async () => {
     const { db, calls } = makeFakeDb()
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
@@ -298,7 +298,9 @@ describe('atlas store', () => {
     await store.upsertRepository({ name: 'acme', defaultRef: 'main' })
 
     const queries = calls.map((call) => call.sql.toLowerCase())
-    expect(queries.some((query) => query.includes('create extension'))).toBe(false)
+    const extensionQueries = queries.filter((query) => query.includes('create extension'))
+    expect(extensionQueries).toEqual([expect.stringContaining('create extension if not exists pg_trgm')])
+    expect(extensionQueries.some((query) => query.includes('vector') || query.includes('pgcrypto'))).toBe(false)
   })
 
   it('uses typed Postgres arrays for tags', async () => {

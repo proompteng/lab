@@ -92,11 +92,13 @@ describe('migration registration', () => {
     expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
   })
 
-  it('keeps the Atlas migration a destructive single-corpus 1024-dimensional HNSW reset', () => {
+  it('keeps the Atlas migration a destructive single-corpus 1024-dimensional HNSW reset without deleting history', () => {
     const migrationPath = new URL('../migrations/20260714_atlas_current_corpus.ts', import.meta.url)
     const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
 
-    expect(normalized).toContain('truncate table atlas.repositories cascade')
+    expect(normalized).toContain('truncate table atlas.file_keys, atlas.symbols cascade')
+    expect(normalized).toContain("'indexstatus', 'maintenance'")
+    expect(normalized).not.toContain('truncate table atlas.repositories')
     expect(normalized).toContain('alter column embedding type vector(${sql.raw(string(atlas_embedding_dimension))})')
     expect(normalized).toContain('const atlas_embedding_dimension = 1024')
     expect(normalized).toContain('using hnsw (embedding vector_cosine_ops)')

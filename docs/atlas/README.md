@@ -66,14 +66,13 @@ The GitOps manifest intentionally sets `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=fals
 until `atlas:verify` exits zero against the live image and indexed commit. If `origin/main` advances, run rebuild and
 verification again. Re-enable the same consumer in Git only after the final verification passes.
 
-For the existing PostgreSQL cluster, an operator must ensure `pg_trgm` exists before the Jangar migration runs:
+Jangar idempotently installs the trusted `pg_trgm` extension as the owner of its existing application database before
+validating extensions and running migrations. New clusters also install it through `postInitApplicationSQL`. PostgreSQL
+documents `pg_trgm` as a trusted extension that a non-superuser with `CREATE` privilege on the database may install.
 
-```bash
-kubectl cnpg psql -n jangar jangar-db -- -d jangar -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
-```
+The application migration truncates the Git-derived corpus under `atlas.file_keys` and `atlas.symbols`, while preserving
+repository identities plus `github_events` and `ingestions` operational history. It then changes the empty embedding
+column to `vector(1024)` and creates the unique, trigram, and HNSW indexes. Git remains the recovery source.
 
-The application migration then truncates `atlas.repositories CASCADE`, changes the existing embedding column to
-`vector(1024)`, and creates the unique, trigram, and HNSW indexes. Git remains the recovery source.
-
-`kubectl cnpg psql` connects to the primary as PostgreSQL's `postgres` user; use it only for this explicit extension
-installation. See the [CloudNativePG kubectl plugin documentation](https://cloudnative-pg.io/documentation/1.24/kubectl-plugin/).
+See the PostgreSQL documentation for [trusted extension installation](https://www.postgresql.org/docs/current/sql-createextension.html)
+and [`pg_trgm`](https://www.postgresql.org/docs/current/pgtrgm.html).

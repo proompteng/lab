@@ -15,7 +15,21 @@ const integration = databaseUrl ? describe : describe.skip
 integration('Atlas code search PostgreSQL integration', () => {
   let db: Db
   let lockDb: Db
-  let migrationEvidence: { embeddingType: string; hasHnsw: boolean; hasCurrentUnique: boolean; truncated: boolean }
+  let migrationEvidence: {
+    embeddingType: string
+    hasHnsw: boolean
+    hasCurrentUnique: boolean
+    hasPgTrgm: boolean
+    repositoryStatus: string | null
+    counts: {
+      repositories: number
+      fileKeys: number
+      githubEvents: number
+      ingestions: number
+      eventFiles: number
+      ingestionTargets: number
+    }
+  }
   const embeddedInputs: string[] = []
   const previousStatementTimeout = process.env.ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
   const previousSemanticTimeout = process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS
@@ -28,15 +42,119 @@ integration('Atlas code search PostgreSQL integration', () => {
     lockDb = createKyselyDb(databaseUrl)
     await sql`DROP SCHEMA IF EXISTS atlas CASCADE;`.execute(db)
     await sql`CREATE SCHEMA atlas;`.execute(db)
+    await sql`DROP EXTENSION IF EXISTS pg_trgm CASCADE;`.execute(db)
     await sql`CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;`.execute(db)
     await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;`.execute(db)
-    await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;`.execute(db)
+    await sql`
+      CREATE TABLE atlas.repositories (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        name text NOT NULL UNIQUE,
+        default_ref text NOT NULL DEFAULT 'main',
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE atlas.file_keys (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        repository_id uuid NOT NULL REFERENCES atlas.repositories(id) ON DELETE CASCADE,
+        path text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (repository_id, path)
+      );
+      CREATE TABLE atlas.file_versions (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        file_key_id uuid NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
+        repository_ref text NOT NULL DEFAULT 'main',
+        repository_commit text,
+        content_hash text NOT NULL DEFAULT '',
+        language text,
+        byte_size int,
+        line_count int,
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        source_timestamp timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CHECK (repository_commit IS NULL OR repository_commit <> ''),
+        UNIQUE (file_key_id, repository_ref, repository_commit, content_hash)
+      );
+      CREATE TABLE atlas.github_events (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        repository_id uuid REFERENCES atlas.repositories(id) ON DELETE SET NULL,
+        delivery_id text NOT NULL UNIQUE,
+        event_type text NOT NULL,
+        repository text NOT NULL,
+        installation_id text,
+        sender_login text,
+        payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+        received_at timestamptz NOT NULL DEFAULT now(),
+        processed_at timestamptz
+      );
+      CREATE TABLE atlas.ingestions (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id uuid NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
+        workflow_id text NOT NULL,
+        status text NOT NULL,
+        error text,
+        started_at timestamptz NOT NULL DEFAULT now(),
+        finished_at timestamptz,
+        UNIQUE (event_id, workflow_id)
+      );
+      CREATE TABLE atlas.event_files (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        event_id uuid NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
+        file_key_id uuid NOT NULL REFERENCES atlas.file_keys(id) ON DELETE CASCADE,
+        change_type text NOT NULL,
+        UNIQUE (event_id, file_key_id)
+      );
+      CREATE TABLE atlas.ingestion_targets (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        ingestion_id uuid NOT NULL REFERENCES atlas.ingestions(id) ON DELETE CASCADE,
+        file_version_id uuid NOT NULL REFERENCES atlas.file_versions(id) ON DELETE CASCADE,
+        kind text NOT NULL,
+        UNIQUE (ingestion_id, file_version_id, kind)
+      );
+    `.execute(db)
+    await sql`
+      WITH repository AS (
+        INSERT INTO atlas.repositories (name, default_ref, metadata)
+        VALUES ('proompteng/lab', 'main', '{"indexStatus":"ready","indexedCommit":"stale"}'::jsonb)
+        RETURNING id
+      ), file_key AS (
+        INSERT INTO atlas.file_keys (repository_id, path)
+        SELECT id, 'stale.ts' FROM repository
+        RETURNING id
+      ), file_version AS (
+        INSERT INTO atlas.file_versions (file_key_id, repository_ref, repository_commit, content_hash, metadata)
+        SELECT id, 'main', 'stale', 'stale-hash', '{}'::jsonb FROM file_key
+        RETURNING id
+      ), event AS (
+        INSERT INTO atlas.github_events (repository_id, delivery_id, event_type, repository, payload)
+        SELECT id, 'delivery-before-reset', 'push', 'proompteng/lab', '{}'::jsonb FROM repository
+        RETURNING id
+      ), ingestion AS (
+        INSERT INTO atlas.ingestions (event_id, workflow_id, status)
+        SELECT id, 'workflow-before-reset', 'completed' FROM event
+        RETURNING id
+      ), event_file AS (
+        INSERT INTO atlas.event_files (event_id, file_key_id, change_type)
+        SELECT event.id, file_key.id, 'modified' FROM event CROSS JOIN file_key
+      )
+      INSERT INTO atlas.ingestion_targets (ingestion_id, file_version_id, kind)
+      SELECT ingestion.id, file_version.id, 'index' FROM ingestion CROSS JOIN file_version;
+    `.execute(db)
     await ensureMigrations(db)
     const migrationRows = await sql<{
       embedding_type: string
       has_hnsw: boolean
       has_current_unique: boolean
-      repositories: string
+      has_pg_trgm: boolean
+      repository_status: string | null
+      repositories: number
+      file_keys: number
+      github_events: number
+      ingestions: number
+      event_files: number
+      ingestion_targets: number
     }>`
       SELECT
         format_type(a.atttypid, a.atttypmod) AS embedding_type,
@@ -48,7 +166,14 @@ integration('Atlas code search PostgreSQL integration', () => {
           SELECT 1 FROM pg_indexes
           WHERE schemaname = 'atlas' AND indexname = 'atlas_file_versions_file_key_id_unique_idx'
         ) AS has_current_unique,
-        (SELECT count(*)::text FROM atlas.repositories) AS repositories
+        EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS has_pg_trgm,
+        (SELECT metadata->>'indexStatus' FROM atlas.repositories WHERE name = 'proompteng/lab') AS repository_status,
+        (SELECT count(*)::int FROM atlas.repositories) AS repositories,
+        (SELECT count(*)::int FROM atlas.file_keys) AS file_keys,
+        (SELECT count(*)::int FROM atlas.github_events) AS github_events,
+        (SELECT count(*)::int FROM atlas.ingestions) AS ingestions,
+        (SELECT count(*)::int FROM atlas.event_files) AS event_files,
+        (SELECT count(*)::int FROM atlas.ingestion_targets) AS ingestion_targets
       FROM pg_attribute a
       WHERE a.attrelid = 'atlas.chunk_embeddings'::regclass
         AND a.attname = 'embedding';
@@ -58,7 +183,16 @@ integration('Atlas code search PostgreSQL integration', () => {
       embeddingType: migration?.embedding_type ?? '',
       hasHnsw: migration?.has_hnsw ?? false,
       hasCurrentUnique: migration?.has_current_unique ?? false,
-      truncated: migration?.repositories === '0',
+      hasPgTrgm: migration?.has_pg_trgm ?? false,
+      repositoryStatus: migration?.repository_status ?? null,
+      counts: {
+        repositories: migration?.repositories ?? -1,
+        fileKeys: migration?.file_keys ?? -1,
+        githubEvents: migration?.github_events ?? -1,
+        ingestions: migration?.ingestions ?? -1,
+        eventFiles: migration?.event_files ?? -1,
+        ingestionTargets: migration?.ingestion_targets ?? -1,
+      },
     }
     await sql`DROP SCHEMA atlas CASCADE;`.execute(db)
     await sql`CREATE SCHEMA atlas;`.execute(db)
@@ -227,12 +361,21 @@ integration('Atlas code search PostgreSQL integration', () => {
       },
     })
 
-  it('applies the destructive current-corpus migration on real pgvector', () => {
+  it('resets only the derived corpus and bootstraps pg_trgm on real PostgreSQL', () => {
     expect(migrationEvidence).toEqual({
       embeddingType: 'vector(1024)',
       hasHnsw: true,
       hasCurrentUnique: true,
-      truncated: true,
+      hasPgTrgm: true,
+      repositoryStatus: 'maintenance',
+      counts: {
+        repositories: 1,
+        fileKeys: 0,
+        githubEvents: 1,
+        ingestions: 1,
+        eventFiles: 0,
+        ingestionTargets: 0,
+      },
     })
   })
 

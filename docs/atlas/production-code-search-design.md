@@ -51,8 +51,9 @@ Use the tables as follows:
 - `atlas.chunk_embeddings`: one 1,024-dimensional embedding per current chunk, using the existing Saigak model.
 - `atlas.enrichments`, `atlas.embeddings`, and `atlas.tree_sitter_facts`: optional derived enrichment. Their failure must
   not block code-search readiness.
-- `atlas.github_events`, `atlas.ingestions`, `atlas.event_files`, and `atlas.ingestion_targets`: current operational
-  history only. Truncation may remove all of it.
+- `atlas.github_events` and `atlas.ingestions`: operational delivery history. Preserve these rows during a corpus reset.
+- `atlas.event_files` and `atlas.ingestion_targets`: associations into the derived corpus. Clear them through foreign-key
+  cascades when `file_keys` and `file_versions` are truncated.
 - Existing symbol tables are not required. Exact identifier search can use chunk content and trigram indexes.
 
 Required schema changes are limited to:
@@ -93,6 +94,8 @@ Sources:
 - [Qwen3-Embedding model capabilities and benchmark](https://github.com/QwenLM/Qwen3-Embedding)
 - [Qwen3-Embedding-8B model card](https://huggingface.co/Qwen/Qwen3-Embedding-8B)
 - [pgvector HNSW dimension limits](https://github.com/pgvector/pgvector#hnsw)
+- [PostgreSQL trusted extension installation](https://www.postgresql.org/docs/current/sql-createextension.html)
+- [PostgreSQL `pg_trgm`](https://www.postgresql.org/docs/current/pgtrgm.html)
 
 ## Code Changes
 
@@ -195,13 +198,14 @@ together.
 
 1. Implement the code changes, migration, regression tests, `atlas:rebuild`, and `atlas:verify`.
 2. Pass focused Bumba/Jangar tests, real PostgreSQL integration tests, and CI.
-3. Before the new Jangar image is reconciled, install `pg_trgm` once on the existing CNPG cluster. New clusters install
-   it through `postInitApplicationSQL`.
+3. Let Jangar install the trusted `pg_trgm` extension idempotently as the application database owner before it validates
+   extensions and runs migrations. New clusters also install it through `postInitApplicationSQL`.
 4. Merge, publish the images, and let GitOps deploy maintenance mode. The Bumba Deployment is an earlier Argo sync wave,
    so the disabled event consumer must become healthy before Jangar can apply the destructive migration.
 5. Confirm `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=false` in the live Bumba pod.
-6. Let the Jangar migration truncate `atlas.repositories CASCADE`, change the empty embedding column to `vector(1024)`,
-   and create the unique, trigram, and HNSW indexes.
+6. Let the Jangar migration truncate the Git-derived rows under `atlas.file_keys` and `atlas.symbols`, preserve repository
+   identities plus webhook/ingestion history, change the empty embedding column to `vector(1024)`, and create the unique,
+   trigram, and HNSW indexes.
 7. Run `bun run atlas:rebuild --repository proompteng/lab --ref main` against the exact current `origin/main` commit.
 8. Run `bun run atlas:verify` with the live database URL and Jangar base URL.
 9. Reconcile and verify once more if `origin/main` advanced during the rebuild.

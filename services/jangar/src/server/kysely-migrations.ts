@@ -67,6 +67,17 @@ const resolveMigrationsMode = () => resolveMigrationsConfig(process.env).mode
 
 const resolveAllowUnorderedMigrations = () => resolveMigrationsConfig(process.env).allowUnorderedMigrations
 
+const ensureTrustedExtensions = async (db: Db) => {
+  try {
+    // pg_trgm is a trusted PostgreSQL extension, so the owner of the Jangar database can install it. This must happen
+    // before extension validation because postInitApplicationSQL is not replayed for an existing CNPG cluster.
+    await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;`.execute(db)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`failed to install required trusted Postgres extension pg_trgm: ${message}`)
+  }
+}
+
 const ensureExtensions = async (db: Db) => {
   const { rows: extensionRows } = await sql<{ extname: string }>`
     SELECT extname FROM pg_extension WHERE extname IN ('vector', 'pgcrypto', 'pg_trgm')
@@ -77,13 +88,14 @@ const ensureExtensions = async (db: Db) => {
   if (missing.length > 0) {
     throw new Error(
       `missing required Postgres extensions: ${missing.join(', ')}. ` +
-        'Install them as a privileged user (e.g. `CREATE EXTENSION vector; CREATE EXTENSION pgcrypto; CREATE EXTENSION pg_trgm;`) ' +
-        'or configure CNPG bootstrap.initdb.postInitApplicationSQL to create them at cluster init.',
+        'Install vector and pgcrypto as a privileged user, or configure CNPG ' +
+        'bootstrap.initdb.postInitApplicationSQL to create them at cluster init.',
     )
   }
 }
 
 const runMigrations = async (db: Db) => {
+  await ensureTrustedExtensions(db)
   await ensureExtensions(db)
 
   const migrator = new Migrator({
