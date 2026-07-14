@@ -18,10 +18,12 @@ from .options_status import build_status_payload
 from .repository import (
     OptionsRepository,
     merge_top_ranked_contract_rows,
+    subscription_tier_limits,
     top_ranked_contract_rows,
 )
 from .session import session_state, utc_now
 from .settings import get_options_lane_settings
+from .subscription_reconciliation import plan_provisional_subscription_reconciliation
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -203,7 +205,18 @@ def _run_discovery_cycle() -> None:
     live_seed_rows = [
         row for row in persisted_subscription_rows if row.get("tier") in {"hot", "warm"}
     ]
-    persisted_symbols = {str(row["contract_symbol"]) for row in live_seed_rows}
+    protected_hot_symbols = {
+        str(row["contract_symbol"]) for row in live_seed_rows if row["tier"] == "hot"
+    }
+    protected_warm_symbols = {
+        str(row["contract_symbol"]) for row in live_seed_rows if row["tier"] == "warm"
+    }
+    hot_limit, warm_limit = subscription_tier_limits(
+        hot_cap=settings.options_subscription_hot_cap,
+        warm_cap=settings.options_subscription_warm_cap,
+        provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
+    )
+    cycle_owned_symbols: set[str] = set()
     active_seed_rows = [row for row in live_seed_rows if row.get("status") == "active"]
     max_open_interest = max(
         (cast(int, row.get("open_interest") or 0) for row in active_seed_rows),
@@ -266,35 +279,45 @@ def _run_discovery_cycle() -> None:
             underlying_priority=settings.underlying_priority_set,
         )
         flush_time = monotonic()
-        subscription_flush_due = (
+        subscription_flush_due = bool(page_token) and (
             page_count == 1
             or page_count % PROVISIONAL_SUBSCRIPTION_FLUSH_PAGES == 0
-            or not page_token
             or flush_time - last_subscription_flush
             >= PROVISIONAL_SUBSCRIPTION_FLUSH_SECONDS
         )
-        if provisional_ranked_rows and subscription_flush_due:
-            provisional_symbols = {
-                str(row["contract_symbol"]) for row in provisional_ranked_rows
-            }
-            reconcile_result = _repository.write_subscription_state(
-                ranked_rows=provisional_ranked_rows,
-                deactivate_symbols=persisted_symbols - provisional_symbols,
-                observed_at=observed_at,
+        if subscription_flush_due:
+            provisional_plan = plan_provisional_subscription_reconciliation(
+                provisional_ranked_rows,
+                protected_hot_symbols=protected_hot_symbols,
+                protected_warm_symbols=protected_warm_symbols,
+                previously_owned_symbols=cycle_owned_symbols,
+                hot_limit=hot_limit,
+                warm_limit=warm_limit,
             )
-            _state.record_subscription_reconciliation(
-                changed_count=reconcile_result.changed_count,
-                deactivated_count=reconcile_result.deactivated_count,
-                observed_at=observed_at,
-            )
-            persisted_symbols = provisional_symbols
+            changed_count_for_flush = 0
+            deactivated_count_for_flush = 0
+            if provisional_plan.ranked_rows or provisional_plan.deactivate_symbols:
+                reconcile_result = _repository.write_subscription_state(
+                    ranked_rows=provisional_plan.ranked_rows,
+                    deactivate_symbols=provisional_plan.deactivate_symbols,
+                    observed_at=observed_at,
+                )
+                changed_count_for_flush = reconcile_result.changed_count
+                deactivated_count_for_flush = reconcile_result.deactivated_count
+                _state.record_subscription_reconciliation(
+                    changed_count=changed_count_for_flush,
+                    deactivated_count=deactivated_count_for_flush,
+                    observed_at=observed_at,
+                )
+            cycle_owned_symbols = provisional_plan.owned_symbols
             last_subscription_flush = flush_time
             logger.info(
-                "options catalog subscription reconciliation pages=%s desired=%s changed=%s deactivated=%s",
+                "options catalog subscription reconciliation pages=%s protected=%s cycle_owned=%s changed=%s deactivated=%s",
                 page_count,
-                len(provisional_ranked_rows),
-                reconcile_result.changed_count,
-                reconcile_result.deactivated_count,
+                len(protected_hot_symbols) + len(protected_warm_symbols),
+                len(provisional_plan.ranked_rows),
+                changed_count_for_flush,
+                deactivated_count_for_flush,
             )
             if not _state.snapshot()["ready"] and any(
                 row["tier"] == "hot" for row in provisional_ranked_rows

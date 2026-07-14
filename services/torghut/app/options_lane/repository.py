@@ -739,7 +739,7 @@ def ranked_contract_rows(
     ranked.sort(
         key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"]))
     )
-    hot_count, warm_count = _tier_limits(
+    hot_count, warm_count = subscription_tier_limits(
         hot_cap=hot_cap,
         warm_cap=warm_cap,
         provider_cap_bootstrap=provider_cap_bootstrap,
@@ -766,7 +766,7 @@ def top_ranked_contract_rows(
 ) -> list[dict[str, Any]]:
     """Rank only the hot and warm candidates while streaming the active universe."""
 
-    hot_count, warm_count = _tier_limits(
+    hot_count, warm_count = subscription_tier_limits(
         hot_cap=hot_cap,
         warm_cap=warm_cap,
         provider_cap_bootstrap=provider_cap_bootstrap,
@@ -842,7 +842,7 @@ def merge_top_ranked_contract_rows(
     )
 
 
-def _tier_limits(
+def subscription_tier_limits(
     *, hot_cap: int, warm_cap: int, provider_cap_bootstrap: int
 ) -> tuple[int, int]:
     hot_count = min(hot_cap, max(int(provider_cap_bootstrap * 0.8), 0))

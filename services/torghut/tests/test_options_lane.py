@@ -547,7 +547,7 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertIsNone(payload["hot_contracts"])
         self.assertEqual(payload["rest_backlog"], 11)
 
-    def test_partial_catalog_cycle_keeps_unseen_persisted_candidate(self) -> None:
+    def test_partial_catalog_cycle_protects_unseen_persisted_candidate(self) -> None:
         service = cast(
             _CatalogDiscoveryServiceModule,
             self._import_service("app.options_lane.catalog_service"),
@@ -563,13 +563,13 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
 
         self.assertEqual(len(repository.reconciliations), 1)
         desired_symbols, deactivate_symbols = repository.reconciliations[0]
-        self.assertIn("AAPL260717C00200000", desired_symbols)
-        self.assertIn("MSFT260717C00400000", desired_symbols)
+        self.assertEqual(desired_symbols, ["MSFT260717C00400000"])
         self.assertNotIn("ARCHIVE260717P00100000", desired_symbols)
+        self.assertNotIn("AAPL260717C00200000", deactivate_symbols)
         self.assertEqual(deactivate_symbols, set())
         snapshot = service._state.snapshot()
         self.assertEqual(snapshot["subscription_reconciliations_total"], 1)
-        self.assertEqual(snapshot["subscription_rows_changed_total"], 2)
+        self.assertEqual(snapshot["subscription_rows_changed_total"], 1)
         self.assertEqual(snapshot["subscription_rows_deactivated_total"], 0)
 
     def test_complete_catalog_cycle_deactivates_cold_rows_only_at_final_cleanup(
@@ -585,11 +585,8 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
 
         service._run_discovery_cycle()
 
-        self.assertEqual(len(repository.reconciliations), 2)
-        provisional_symbols, provisional_deactivations = repository.reconciliations[0]
-        final_symbols, final_deactivations = repository.reconciliations[1]
-        self.assertEqual(provisional_symbols, ["AAPL260717C00200000"])
-        self.assertEqual(provisional_deactivations, set())
+        self.assertEqual(len(repository.reconciliations), 1)
+        final_symbols, final_deactivations = repository.reconciliations[0]
         self.assertEqual(final_symbols, ["AAPL260717C00200000"])
         self.assertEqual(final_deactivations, {"ARCHIVE260717P00100000"})
 
