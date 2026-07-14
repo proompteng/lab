@@ -500,6 +500,7 @@ fun main() {
   when (val mode = System.getenv("TORGHUT_HYPERLIQUID_MODE") ?: "feed") {
     "feed" -> runHyperliquidFeed()
     "clickhouse-writer" -> runKafkaClickHouseWriter()
+    "clickhouse-parity" -> runKafkaClickHouseParity()
     else -> {
       appLogger.error { "unsupported TORGHUT_HYPERLIQUID_MODE=$mode" }
       exitProcess(2)

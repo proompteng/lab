@@ -1,5 +1,7 @@
 package ai.proompteng.dorvud.platform
 
+import org.apache.kafka.clients.admin.Admin
+import org.apache.kafka.clients.admin.AdminClientConfig
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.KafkaProducer
@@ -91,6 +93,13 @@ fun KafkaConsumerSettings.toProperties(): Properties =
     props.applySecurity(securityProtocol, auth, tls)
   }
 
+fun KafkaConsumerSettings.toAdminProperties(): Properties =
+  Properties().also { props ->
+    props[AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG] = bootstrapServers
+    props[AdminClientConfig.CLIENT_ID_CONFIG] = "$clientId-admin"
+    props.applySecurity(securityProtocol, auth, tls)
+  }
+
 private fun Properties.applySecurity(
   securityProtocol: String,
   auth: KafkaAuth,
@@ -108,3 +117,5 @@ private fun Properties.applySecurity(
 fun buildProducer(settings: KafkaProducerSettings): KafkaProducer<String, String> = KafkaProducer(settings.toProperties())
 
 fun buildConsumer(settings: KafkaConsumerSettings): KafkaConsumer<String, String> = KafkaConsumer(settings.toProperties())
+
+fun buildAdmin(settings: KafkaConsumerSettings): Admin = Admin.create(settings.toAdminProperties())

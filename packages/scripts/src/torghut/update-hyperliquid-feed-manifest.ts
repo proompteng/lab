@@ -14,6 +14,8 @@ const defaultManifestPath = 'argocd/applications/torghut-hyperliquid-feed/deploy
 const defaultContainerName = 'torghut-hyperliquid-feed'
 const defaultWriterManifestPath = 'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
 const defaultWriterContainerName = 'torghut-hyperliquid-clickhouse-writer'
+const defaultParityManifestPath = 'argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml'
+const defaultParityContainerName = 'torghut-hyperliquid-clickhouse-parity'
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
 type CliOptions = {
@@ -241,6 +243,7 @@ const main = (cliOptions?: CliOptions) => {
       : [
           { manifestPath: defaultManifestPath, containerName: defaultContainerName },
           { manifestPath: defaultWriterManifestPath, containerName: defaultWriterContainerName },
+          { manifestPath: defaultParityManifestPath, containerName: defaultParityContainerName },
         ]
   const results = updateHyperliquidFeedManifests(imageName, digest, version, commit, targets)
   results.forEach((result) => {

@@ -238,7 +238,8 @@ jobs:
           set -euo pipefail
           if git diff --quiet -- \
             argocd/applications/torghut-hyperliquid-feed/deployment.yaml \
-            argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml; then
+            argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml \
+            argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -261,12 +262,13 @@ jobs:
           add-paths: |
             argocd/applications/torghut-hyperliquid-feed/deployment.yaml
             argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml
+            argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml
           body: |
             ## Summary
 
             - Promote the immutable Torghut Hyperliquid feed image built from `${{ steps.meta.outputs.source_sha }}`.
-            - Pin both the feed and Kafka-backed ClickHouse writer Deployments to `${{ steps.digest.outputs.digest }}`.
-            - Preserve one source commit and image digest across both runtime modes.
+            - Pin the feed, Kafka-backed ClickHouse writer, and suspended parity gate to `${{ steps.digest.outputs.digest }}`.
+            - Preserve one source commit and image digest across all runtime modes.
 
             ## Related Issues
 
@@ -286,7 +288,7 @@ jobs:
 
             - [x] Testing section documents the exact automated release validation.
             - [x] Screenshots are not applicable; Breaking Changes is filled in.
-            - [x] Both runtime manifests carry the same immutable source and image identity.
+            - [x] All runtime manifests carry the same immutable source and image identity.
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
