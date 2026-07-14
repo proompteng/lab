@@ -18,6 +18,8 @@ class KafkaClickHouseParityConfigTest {
           "CLICKHOUSE_READY_TABLES" to "hyperliquid_bbo,hyperliquid_status",
           "CLICKHOUSE_PARITY_GROUP_ID" to "cutover-parity",
           "CLICKHOUSE_PARITY_OFFSET_QUERY_BATCH_SIZE" to "250",
+          "CLICKHOUSE_WRITER_REQUEST_TIMEOUT_MS" to "1000",
+          "CLICKHOUSE_PARITY_REQUEST_TIMEOUT_MS" to "90000",
         ),
       )
 
@@ -26,6 +28,7 @@ class KafkaClickHouseParityConfigTest {
     assertEquals(5_000, config.kafka.maxPollRecords)
     assertEquals(250, config.offsetQueryBatchSize)
     assertEquals(1_000_000, config.maxCompactedRecordsPerPartition)
+    assertEquals(90_000, config.clickHouse.requestTimeoutMs)
     assertEquals("hyperliquid_bbo_kafka_staging", config.destinationTable("hyperliquid_bbo"))
   }
 }

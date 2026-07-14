@@ -51,7 +51,11 @@ internal data class KafkaClickHouseParityConfig(
           ),
         topicTables = writer.topicTables,
         destinationSuffix = writer.destinationSuffix,
-        clickHouse = writer.clickHouse,
+        clickHouse =
+          writer.clickHouse.copy(
+            requestTimeoutMs =
+              longEnv(sourceEnv, "CLICKHOUSE_PARITY_REQUEST_TIMEOUT_MS", 120_000).coerceIn(5_000, 300_000),
+          ),
         operationTimeoutMs =
           longEnv(sourceEnv, "CLICKHOUSE_PARITY_OPERATION_TIMEOUT_MS", 30_000).coerceIn(1_000, 120_000),
         pollTimeoutMs =
