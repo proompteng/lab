@@ -14,6 +14,7 @@ from scripts.historical_simulation_analysis.report_builder import _build_report
 from scripts.historical_simulation_analysis.report_helpers import (
     _build_last_price_map,
     _extract_run_scope_decisions,
+    _filter_rows_by_scope_ids,
     _fifo_trade_pnl,
     _query_rows,
 )
@@ -181,6 +182,56 @@ class TestAnalyzeHistoricalSimulation(TestCase):
         scoped = _extract_run_scope_decisions(decisions, run_id="run-b")
         self.assertEqual(len(scoped), 1)
         self.assertEqual(scoped[0]["id"], "d2")
+
+    def test_empty_run_scope_does_not_admit_unrelated_child_rows(self) -> None:
+        decisions = [
+            {
+                "id": "decision-other",
+                "decision_json": {
+                    "params": {
+                        "simulation_context": {
+                            "simulation_run_id": "other-run",
+                        }
+                    }
+                },
+            }
+        ]
+
+        scoped_decisions = _extract_run_scope_decisions(
+            decisions,
+            run_id="requested-run",
+        )
+        decision_ids = {str(row.get("id")) for row in scoped_decisions}
+        executions = _filter_rows_by_scope_ids(
+            [
+                {
+                    "id": "execution-other",
+                    "trade_decision_id": "decision-other",
+                }
+            ],
+            foreign_key="trade_decision_id",
+            scope_ids=decision_ids,
+        )
+        execution_ids = {str(row.get("id")) for row in executions}
+
+        self.assertEqual(scoped_decisions, [])
+        self.assertEqual(executions, [])
+        self.assertEqual(
+            _filter_rows_by_scope_ids(
+                [{"execution_id": "execution-other"}],
+                foreign_key="execution_id",
+                scope_ids=execution_ids,
+            ),
+            [],
+        )
+        self.assertEqual(
+            _filter_rows_by_scope_ids(
+                [{"trade_decision_id": "decision-other"}],
+                foreign_key="trade_decision_id",
+                scope_ids=decision_ids,
+            ),
+            [],
+        )
 
     def test_fifo_trade_pnl_computes_realized_and_unrealized(self) -> None:
         executions = [

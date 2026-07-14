@@ -37,6 +37,7 @@ from .report_helpers import (
     _decimal_to_str,
     _extract_run_scope_decisions,
     _extract_signal_event_ts,
+    _filter_rows_by_scope_ids,
     _fifo_trade_pnl,
     _json_default,
     _load_json,
@@ -109,14 +110,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "execution_actual_adapter, execution_fallback_reason, execution_fallback_count "
             "FROM executions ORDER BY created_at ASC",
         )
-        if decision_ids:
-            executions = [
-                row
-                for row in executions_all
-                if str(row.get("trade_decision_id") or "") in decision_ids
-            ]
-        else:
-            executions = executions_all
+        executions = _filter_rows_by_scope_ids(
+            executions_all,
+            foreign_key="trade_decision_id",
+            scope_ids=decision_ids,
+        )
         execution_ids = {str(row.get("id")) for row in executions}
 
         order_events_all = _query_rows(
@@ -127,14 +125,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         order_events_unlinked = sum(
             1 for row in order_events_all if row.get("execution_id") is None
         )
-        if execution_ids:
-            order_events = [
-                row
-                for row in order_events_all
-                if str(row.get("execution_id") or "") in execution_ids
-            ]
-        else:
-            order_events = order_events_all
+        order_events = _filter_rows_by_scope_ids(
+            order_events_all,
+            foreign_key="execution_id",
+            scope_ids=execution_ids,
+        )
 
         tca_all = _query_rows(
             conn,
@@ -142,14 +137,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "arrival_price, shortfall_notional, slippage_bps, realized_shortfall_bps, divergence_bps, computed_at "
             "FROM execution_tca_metrics ORDER BY computed_at ASC",
         )
-        if execution_ids:
-            tca_rows = [
-                row
-                for row in tca_all
-                if str(row.get("execution_id") or "") in execution_ids
-            ]
-        else:
-            tca_rows = tca_all
+        tca_rows = _filter_rows_by_scope_ids(
+            tca_all,
+            foreign_key="execution_id",
+            scope_ids=execution_ids,
+        )
 
         llm_reviews_all = _query_rows(
             conn,
@@ -157,14 +149,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "tokens_completion, risk_flags, response_json, created_at "
             "FROM llm_decision_reviews ORDER BY created_at ASC",
         )
-        if decision_ids:
-            llm_reviews = [
-                row
-                for row in llm_reviews_all
-                if str(row.get("trade_decision_id") or "") in decision_ids
-            ]
-        else:
-            llm_reviews = llm_reviews_all
+        llm_reviews = _filter_rows_by_scope_ids(
+            llm_reviews_all,
+            foreign_key="trade_decision_id",
+            scope_ids=decision_ids,
+        )
 
         trade_cursor_rows = _query_rows(
             conn,

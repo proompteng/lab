@@ -240,6 +240,16 @@ def _extract_run_scope_decisions(
     return scoped
 
 
+def _filter_rows_by_scope_ids(
+    rows: list[dict[str, Any]],
+    *,
+    foreign_key: str,
+    scope_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Keep only rows linked to the explicitly scoped parent records."""
+    return [row for row in rows if str(row.get(foreign_key) or "") in scope_ids]
+
+
 def _build_last_price_map(
     *,
     clickhouse_config: ClickHouseRuntimeConfig | None,
@@ -658,6 +668,7 @@ __all__ = [
     "_extract_simulation_context",
     "_extract_signal_event_ts",
     "_extract_run_scope_decisions",
+    "_filter_rows_by_scope_ids",
     "_build_last_price_map",
     "_last_prices_from_clickhouse",
     "_last_prices_from_clickhouse_field",
