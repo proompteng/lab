@@ -15,28 +15,36 @@ class ProvisionalSubscriptionPlan:
     owned_symbols: set[str]
 
 
+@dataclass(frozen=True)
+class ProtectedSubscriptionSeed:
+    """Immutable initial membership and effective tier capacity for one scan."""
+
+    hot_symbols: frozenset[str]
+    warm_symbols: frozenset[str]
+    hot_limit: int
+    warm_limit: int
+
+    def __post_init__(self) -> None:
+        if self.hot_limit < 0 or self.warm_limit < 0:
+            raise ValueError("subscription tier limits must be non-negative")
+
+
 def plan_provisional_subscription_reconciliation(
     ranked_rows: Iterable[Mapping[str, object]],
     *,
-    protected_hot_symbols: set[str],
-    protected_warm_symbols: set[str],
+    protected_seed: ProtectedSubscriptionSeed,
     previously_owned_symbols: set[str],
-    hot_limit: int,
-    warm_limit: int,
 ) -> ProvisionalSubscriptionPlan:
     """Fill only capacity not occupied by the cycle's immutable live seed."""
 
-    if hot_limit < 0 or warm_limit < 0:
-        raise ValueError("subscription tier limits must be non-negative")
-
-    protected_symbols = protected_hot_symbols | protected_warm_symbols
+    protected_symbols = protected_seed.hot_symbols | protected_seed.warm_symbols
     eligible_rows = [
         row
         for row in ranked_rows
         if str(row.get("contract_symbol") or "") not in protected_symbols
     ]
-    hot_slots = max(hot_limit - len(protected_hot_symbols), 0)
-    warm_slots = max(warm_limit - len(protected_warm_symbols), 0)
+    hot_slots = max(protected_seed.hot_limit - len(protected_seed.hot_symbols), 0)
+    warm_slots = max(protected_seed.warm_limit - len(protected_seed.warm_symbols), 0)
     selected_rows: list[dict[str, object]] = []
     for index, row in enumerate(eligible_rows[: hot_slots + warm_slots]):
         selected_row = dict(row)

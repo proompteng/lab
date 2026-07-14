@@ -23,7 +23,10 @@ from .repository import (
 )
 from .session import session_state, utc_now
 from .settings import get_options_lane_settings
-from .subscription_reconciliation import plan_provisional_subscription_reconciliation
+from .subscription_reconciliation import (
+    ProtectedSubscriptionSeed,
+    plan_provisional_subscription_reconciliation,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -216,6 +219,12 @@ def _run_discovery_cycle() -> None:
         warm_cap=settings.options_subscription_warm_cap,
         provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
     )
+    protected_seed = ProtectedSubscriptionSeed(
+        hot_symbols=frozenset(protected_hot_symbols),
+        warm_symbols=frozenset(protected_warm_symbols),
+        hot_limit=hot_limit,
+        warm_limit=warm_limit,
+    )
     cycle_owned_symbols: set[str] = set()
     active_seed_rows = [row for row in live_seed_rows if row.get("status") == "active"]
     max_open_interest = max(
@@ -288,11 +297,8 @@ def _run_discovery_cycle() -> None:
         if subscription_flush_due:
             provisional_plan = plan_provisional_subscription_reconciliation(
                 provisional_ranked_rows,
-                protected_hot_symbols=protected_hot_symbols,
-                protected_warm_symbols=protected_warm_symbols,
+                protected_seed=protected_seed,
                 previously_owned_symbols=cycle_owned_symbols,
-                hot_limit=hot_limit,
-                warm_limit=warm_limit,
             )
             changed_count_for_flush = 0
             deactivated_count_for_flush = 0
