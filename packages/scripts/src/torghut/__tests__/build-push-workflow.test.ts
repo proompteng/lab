@@ -273,6 +273,7 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedReleaseWorkflow).toContain(
       'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml',
     )
+    expect(hyperliquidFeedReleaseWorkflow).toContain('argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml')
     expect(hyperliquidFeedReleaseWorkflow).toContain(
       'branch: codex/torghut-hyperliquid-feed-release-${{ steps.meta.outputs.tag }}',
     )

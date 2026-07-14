@@ -15,6 +15,10 @@ describe('update-hyperliquid-feed-manifest', () => {
         manifestPath: join(dir, 'writer-deployment.yaml'),
         containerName: 'torghut-hyperliquid-clickhouse-writer',
       },
+      {
+        manifestPath: join(dir, 'parity-cronjob.yaml'),
+        containerName: 'torghut-hyperliquid-clickhouse-parity',
+      },
     ]
     for (const target of targets) {
       writeFileSync(

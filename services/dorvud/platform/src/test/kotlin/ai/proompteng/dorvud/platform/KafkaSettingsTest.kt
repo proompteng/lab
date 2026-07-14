@@ -1,5 +1,6 @@
 package ai.proompteng.dorvud.platform
 
+import org.apache.kafka.clients.admin.AdminClientConfig
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.config.SaslConfigs
 import org.apache.kafka.common.config.SslConfigs
@@ -31,5 +32,23 @@ class KafkaSettingsTest {
     assertEquals("SASL_PLAINTEXT", properties["security.protocol"])
     assertEquals("SCRAM-SHA-512", properties[SaslConfigs.SASL_MECHANISM])
     assertEquals("HTTPS", properties[SslConfigs.SSL_ENDPOINT_IDENTIFICATION_ALGORITHM_CONFIG])
+  }
+
+  @Test
+  fun `admin properties preserve security without consumer-only settings`() {
+    val properties =
+      KafkaConsumerSettings(
+        bootstrapServers = "kafka:9092",
+        groupId = "clickhouse-writer",
+        clientId = "clickhouse-parity",
+        securityProtocol = "SASL_PLAINTEXT",
+        auth = KafkaAuth(username = "writer", password = "secret"),
+      ).toAdminProperties()
+
+    assertEquals("kafka:9092", properties[AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG])
+    assertEquals("clickhouse-parity-admin", properties[AdminClientConfig.CLIENT_ID_CONFIG])
+    assertEquals(null, properties[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG])
+    assertEquals("SASL_PLAINTEXT", properties["security.protocol"])
+    assertEquals("SCRAM-SHA-512", properties[SaslConfigs.SASL_MECHANISM])
   }
 }

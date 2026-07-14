@@ -28,6 +28,7 @@ on:
       - 'argocd/applications/torghut/ws/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
+      - 'argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
       - 'argocd/applications/torghut-options/archive/deployment.yaml'
@@ -114,6 +115,7 @@ jobs:
           feed_allowed_paths=(
             'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
             'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
+            'argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml'
           )
 
           if [ "${release_lane}" = 'hyperliquid-feed' ]; then
@@ -382,6 +384,41 @@ jobs:
           )"
           if [ "${writer_source_sha}" != "${source_sha}" ] || [ "${writer_image_ref}" != "${image_ref}" ]; then
             echo "Hyperliquid feed and Kafka ClickHouse writer release metadata do not match"
+            exit 1
+          fi
+
+          parity_manifest="$(
+            gh api \
+              -H 'Accept: application/vnd.github.raw' \
+              "repos/${GH_REPO}/contents/argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml?ref=${PR_HEAD_SHA}"
+          )"
+          parity_source_sha="$(
+            printf '%s\n' "${parity_manifest}" |
+              awk '
+                /^[[:space:]]*- name:[[:space:]]*TORGHUT_HYPERLIQUID_FEED_COMMIT[[:space:]]*$/ { found = 1; next }
+                found && /^[[:space:]]*value:/ {
+                  sub(/^[[:space:]]*value:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  print
+                  exit
+                }
+              '
+          )"
+          parity_image_ref="$(
+            printf '%s\n' "${parity_manifest}" |
+              awk '
+                /^[[:space:]]*image:[[:space:]]*/ {
+                  sub(/^[[:space:]]*image:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  if (index($0, "registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:") == 1) {
+                    print
+                    exit
+                  }
+                }
+              '
+          )"
+          if [ "${parity_source_sha}" != "${source_sha}" ] || [ "${parity_image_ref}" != "${image_ref}" ]; then
+            echo "Hyperliquid feed and ClickHouse parity release metadata do not match"
             exit 1
           fi
 

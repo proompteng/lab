@@ -7,6 +7,7 @@ resources:
   - clickhouse-schema-job.yaml
   - deployment.yaml
   - writer-deployment.yaml
+  - parity-cronjob.yaml
   - service.yaml
   - writer-service.yaml
   - pdb.yaml
