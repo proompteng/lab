@@ -6,7 +6,7 @@ import os
 import sys
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
-from typing import Iterator, Protocol, cast
+from typing import Any, Iterator, Protocol, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -21,6 +21,7 @@ from app.options_lane.alpaca import (
 from app.options_lane.options_status import build_status_payload
 from app.options_lane.repository import (
     OptionsRepository,
+    SubscriptionReconcileResult,
     merge_top_ranked_contract_rows,
     ranked_contract_rows,
     top_ranked_contract_rows,
@@ -86,6 +87,35 @@ class _FakeCountRepository(OptionsRepository):
         yield cast(Session, self.fake_session)
 
 
+class _FakeWriteResult:
+    def __init__(self, rowcount: int) -> None:
+        self.rowcount = rowcount
+
+
+class _FakeWriteSession:
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, dict[str, object]]] = []
+
+    def begin(self) -> _FakeBegin:
+        return _FakeBegin()
+
+    def execute(
+        self, statement: object, parameters: dict[str, object] | None = None
+    ) -> _FakeWriteResult:
+        sql = str(statement)
+        self.statements.append((sql, parameters or {}))
+        return _FakeWriteResult(2 if "INSERT INTO" in sql else 1)
+
+
+class _FakeWriteRepository(OptionsRepository):
+    def __init__(self, session: _FakeWriteSession) -> None:
+        self.fake_session = session
+
+    @contextmanager
+    def session(self) -> Iterator[Session]:
+        yield cast(Session, self.fake_session)
+
+
 class _NoCountRepository:
     active_count_calls = 0
     hot_count_calls = 0
@@ -126,6 +156,94 @@ class _FakeProducer:
 class _FakeAlpacaClient:
     def __init__(self, **_: object) -> None:
         pass
+
+
+class _PartialCatalogClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def list_contracts(self, **_: object) -> tuple[list[dict[str, object]], str]:
+        self.calls += 1
+        if self.calls > 1:
+            raise RuntimeError("provider interrupted after first page")
+        return (
+            [
+                {
+                    "id": "contract-new",
+                    "symbol": "MSFT260717C00400000",
+                    "status": "active",
+                    "expiration_date": "2026-07-17",
+                    "root_symbol": "MSFT",
+                    "underlying_symbol": "MSFT",
+                    "type": "call",
+                    "style": "american",
+                    "strike_price": "400",
+                    "size": "100",
+                    "open_interest": "1",
+                }
+            ],
+            "next-page",
+        )
+
+
+class _SeededCycleRepository:
+    def __init__(self) -> None:
+        self.reconciliations: list[tuple[list[str], set[str]]] = []
+
+    def list_live_subscription_candidates(self) -> list[dict[str, object]]:
+        return [
+            {
+                "contract_symbol": "AAPL260717C00200000",
+                "status": "active",
+                "underlying_symbol": "AAPL",
+                "expiration_date": date(2026, 7, 17),
+                "strike_price": 200.0,
+                "close_price": 200.0,
+                "open_interest": 100,
+                "ranking_inputs": {},
+                "tier": "hot",
+            },
+            {
+                "contract_symbol": "ARCHIVE260717P00100000",
+                "status": "active",
+                "underlying_symbol": "ARCHIVE",
+                "expiration_date": date(2026, 7, 17),
+                "strike_price": 100.0,
+                "close_price": 100.0,
+                "open_interest": 1_000,
+                "ranking_inputs": {},
+                "tier": "cold",
+            },
+        ]
+
+    def acquire_rate_bucket(self, *_: object) -> bool:
+        return True
+
+    def sync_contract_catalog_page(
+        self, *_: object, **__: object
+    ) -> list[dict[str, object]]:
+        return []
+
+    def write_subscription_state(
+        self,
+        *,
+        ranked_rows: list[dict[str, Any]],
+        deactivate_symbols: set[str],
+        observed_at: datetime,
+    ) -> SubscriptionReconcileResult:
+        del observed_at
+        self.reconciliations.append(
+            (
+                [str(row["contract_symbol"]) for row in ranked_rows],
+                set(deactivate_symbols),
+            )
+        )
+        return SubscriptionReconcileResult(
+            hot_count=sum(row["tier"] == "hot" for row in ranked_rows),
+            warm_count=sum(row["tier"] == "warm" for row in ranked_rows),
+            changed_count=len(ranked_rows),
+            deactivated_count=len(deactivate_symbols),
+        )
 
 
 class _CatalogStatusServiceModule(Protocol):
@@ -222,6 +340,85 @@ class TestOptionsRepositoryStatusCounts(TestCase):
         )
 
 
+class TestOptionsRepositorySubscriptionReconciliation(TestCase):
+    def test_reconciliation_uses_one_conditional_upsert_and_explicit_deactivation(
+        self,
+    ) -> None:
+        session = _FakeWriteSession()
+        repo = _FakeWriteRepository(session)
+        observed_at = datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc)
+
+        result = repo.write_subscription_state(
+            ranked_rows=[
+                {
+                    "contract_symbol": "AAPL260717C00200000",
+                    "ranking_score": 0.91,
+                    "ranking_inputs": {"liquidity_score": 1.0},
+                    "tier": "hot",
+                    "desired_channels": ["trades", "quotes"],
+                    "provider_cap_generation": 200,
+                },
+                {
+                    "contract_symbol": "MSFT260717P00400000",
+                    "ranking_score": 0.72,
+                    "ranking_inputs": {"liquidity_score": 0.5},
+                    "tier": "warm",
+                    "desired_channels": ["trades", "quotes"],
+                    "provider_cap_generation": 200,
+                },
+            ],
+            deactivate_symbols={"STALE260717C00100000"},
+            observed_at=observed_at,
+        )
+
+        self.assertEqual(len(session.statements), 2)
+        upsert_sql, upsert_parameters = session.statements[0]
+        deactivate_sql, deactivate_parameters = session.statements[1]
+        self.assertIn("jsonb_array_elements", upsert_sql)
+        self.assertIn("IS DISTINCT FROM", upsert_sql)
+        self.assertNotIn("contract_symbol <> ALL", upsert_sql)
+        self.assertEqual(
+            json.loads(cast(str, upsert_parameters["ranked_rows"]))[0][
+                "contract_symbol"
+            ],
+            "AAPL260717C00200000",
+        )
+        self.assertIn("contract_symbol = ANY", deactivate_sql)
+        self.assertIn("tier IS DISTINCT FROM 'off'", deactivate_sql)
+        self.assertNotIn("contract_symbol <> ALL", deactivate_sql)
+        self.assertEqual(deactivate_parameters["symbols"], ["STALE260717C00100000"])
+        self.assertEqual(result.hot_count, 1)
+        self.assertEqual(result.warm_count, 1)
+        self.assertEqual(result.changed_count, 2)
+        self.assertEqual(result.deactivated_count, 1)
+
+    def test_reconciliation_skips_deactivation_statement_without_displacements(
+        self,
+    ) -> None:
+        session = _FakeWriteSession()
+        repo = _FakeWriteRepository(session)
+
+        repo.write_subscription_state(
+            ranked_rows=[
+                {
+                    "contract_symbol": "AAPL260717C00200000",
+                    "ranking_score": 0.91,
+                    "ranking_inputs": {},
+                    "tier": "hot",
+                    "desired_channels": ["trades", "quotes"],
+                    "provider_cap_generation": 200,
+                }
+            ],
+            deactivate_symbols=set(),
+            observed_at=datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(session.statements), 1)
+        self.assertNotIn(
+            "UPDATE torghut_options_subscription_state", session.statements[0][0]
+        )
+
+
 class TestOptionsServiceStatusHeartbeat(TestCase):
     def setUp(self) -> None:
         _NoCountRepository.active_count_calls = 0
@@ -291,6 +488,31 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertIsNone(payload["active_contracts"])
         self.assertIsNone(payload["hot_contracts"])
         self.assertEqual(payload["rest_backlog"], 11)
+
+    def test_partial_catalog_cycle_keeps_unseen_persisted_candidate(self) -> None:
+        service = cast(
+            Any,
+            self._import_service("app.options_lane.catalog_service"),
+        )
+        repository = _SeededCycleRepository()
+        service._repository = repository
+        service._client = _PartialCatalogClient()
+
+        with self.assertRaisesRegex(
+            RuntimeError, "provider interrupted after first page"
+        ):
+            service._run_discovery_cycle()
+
+        self.assertEqual(len(repository.reconciliations), 1)
+        desired_symbols, deactivate_symbols = repository.reconciliations[0]
+        self.assertIn("AAPL260717C00200000", desired_symbols)
+        self.assertIn("MSFT260717C00400000", desired_symbols)
+        self.assertNotIn("ARCHIVE260717P00100000", desired_symbols)
+        self.assertEqual(deactivate_symbols, set())
+        snapshot = service._state.snapshot()
+        self.assertEqual(snapshot["subscription_reconciliations_total"], 1)
+        self.assertEqual(snapshot["subscription_rows_changed_total"], 2)
+        self.assertEqual(snapshot["subscription_rows_deactivated_total"], 0)
 
 
 class TestOptionsLaneNormalization(TestCase):
@@ -598,6 +820,35 @@ class TestOptionsLaneRanking(TestCase):
             ["AAPL260320C00100000", "AAPL260320P00100000"],
         )
         self.assertEqual([row["tier"] for row in ranked], ["hot", "warm"])
+
+    def test_merge_top_ranked_contract_rows_replaces_duplicate_symbols(self) -> None:
+        observed_at = datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc)
+        existing = {
+            "contract_symbol": "AAPL260717C00200000",
+            "status": "active",
+            "underlying_symbol": "AAPL",
+            "expiration_date": date(2026, 7, 17),
+            "strike_price": 200.0,
+            "close_price": 200.0,
+            "open_interest": 10,
+            "ranking_inputs": {},
+        }
+        refreshed = {**existing, "open_interest": 100}
+
+        ranked = merge_top_ranked_contract_rows(
+            [existing],
+            [refreshed],
+            observed_at=observed_at,
+            hot_cap=1,
+            warm_cap=1,
+            max_open_interest=100,
+            provider_cap_bootstrap=2,
+            underlying_priority={"AAPL"},
+        )
+
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["contract_symbol"], existing["contract_symbol"])
+        self.assertEqual(ranked[0]["open_interest"], 100)
 
 
 class TestOptionsStatusPayload(TestCase):

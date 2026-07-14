@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import heapq
-from itertools import chain
 import json
 import logging
 from typing import Any, Iterator, cast
@@ -20,6 +20,14 @@ from sqlalchemy.orm import Session, sessionmaker
 logger = logging.getLogger(__name__)
 
 OPTIONS_STATUS_COUNT_TIMEOUT_MS = 500
+
+
+@dataclass(frozen=True)
+class SubscriptionReconcileResult:
+    hot_count: int
+    warm_count: int
+    changed_count: int
+    deactivated_count: int
 
 
 def _utc_now() -> datetime:
@@ -479,24 +487,97 @@ class OptionsRepository:
                 for row in batch:
                     yield dict(row)
 
+    def list_live_subscription_candidates(self) -> list[dict[str, Any]]:
+        """Return only the persisted hot/warm candidate seed."""
+
+        with self.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT catalog.contract_symbol,
+                           catalog.status,
+                           catalog.underlying_symbol,
+                           catalog.expiration_date,
+                           catalog.strike_price,
+                           catalog.close_price,
+                           catalog.open_interest,
+                           subs.ranking_score,
+                           COALESCE(subs.ranking_inputs, '{}'::JSONB) AS ranking_inputs,
+                           subs.tier,
+                           subs.desired_channels,
+                           subs.provider_cap_generation
+                    FROM torghut_options_subscription_state AS subs
+                    JOIN torghut_options_contract_catalog AS catalog
+                      ON catalog.contract_symbol = subs.contract_symbol
+                    WHERE subs.tier IN ('hot', 'warm')
+                    ORDER BY subs.ranking_score DESC, catalog.contract_symbol ASC
+                    """
+                )
+            ).mappings()
+            return [dict(row) for row in rows]
+
     def write_subscription_state(
         self,
         *,
         ranked_rows: list[dict[str, Any]],
+        deactivate_symbols: Iterable[str],
         observed_at: datetime,
-    ) -> tuple[int, int]:
+    ) -> SubscriptionReconcileResult:
         hot_count = 0
         warm_count = 0
+        desired_rows: list[dict[str, Any]] = []
+        desired_symbols: set[str] = set()
+        for row in ranked_rows:
+            contract_symbol = str(row["contract_symbol"])
+            if contract_symbol in desired_symbols:
+                raise ValueError(
+                    f"duplicate subscription contract symbol: {contract_symbol}"
+                )
+            desired_symbols.add(contract_symbol)
+            tier = cast(str, row["tier"])
+            if tier == "hot":
+                hot_count += 1
+            elif tier == "warm":
+                warm_count += 1
+            desired_rows.append(
+                {
+                    "contract_symbol": contract_symbol,
+                    "ranking_score": float(row["ranking_score"]),
+                    "ranking_inputs": row["ranking_inputs"],
+                    "tier": tier,
+                    "desired_channels": list(row["desired_channels"]),
+                    "provider_cap_generation": int(row["provider_cap_generation"]),
+                }
+            )
+
+        explicit_deactivations = sorted(
+            {
+                str(contract_symbol)
+                for contract_symbol in deactivate_symbols
+                if str(contract_symbol)
+            }
+            - desired_symbols
+        )
+        changed_count = 0
+        deactivated_count = 0
         with self.session() as session, session.begin():
-            for row in ranked_rows:
-                tier = cast(str, row["tier"])
-                if tier == "hot":
-                    hot_count += 1
-                elif tier == "warm":
-                    warm_count += 1
-                session.execute(
+            if desired_rows:
+                result = session.execute(
                     text(
                         """
+                        WITH desired AS (
+                          SELECT item ->> 'contract_symbol' AS contract_symbol,
+                                 CAST(item ->> 'ranking_score' AS DOUBLE PRECISION) AS ranking_score,
+                                 COALESCE(item -> 'ranking_inputs', '{}'::JSONB) AS ranking_inputs,
+                                 item ->> 'tier' AS tier,
+                                 ARRAY(
+                                   SELECT jsonb_array_elements_text(
+                                     COALESCE(item -> 'desired_channels', '[]'::JSONB)
+                                   )
+                                 ) AS desired_channels,
+                                 CAST(item ->> 'provider_cap_generation' AS BIGINT) AS provider_cap_generation
+                          FROM jsonb_array_elements(CAST(:ranked_rows AS JSONB)) AS source(item)
+                        )
                         INSERT INTO torghut_options_subscription_state (
                           contract_symbol,
                           ranking_score,
@@ -506,16 +587,16 @@ class OptionsRepository:
                           subscribed_channels,
                           provider_cap_generation,
                           last_ranked_ts
-                        ) VALUES (
-                          :contract_symbol,
-                          :ranking_score,
-                          CAST(:ranking_inputs AS JSONB),
-                          :tier,
-                          :desired_channels,
-                          ARRAY[]::TEXT[],
-                          :provider_cap_generation,
-                          :last_ranked_ts
                         )
+                        SELECT contract_symbol,
+                          ranking_score,
+                          ranking_inputs,
+                          tier,
+                          desired_channels,
+                          ARRAY[]::TEXT[],
+                          provider_cap_generation,
+                          :last_ranked_ts
+                        FROM desired
                         ON CONFLICT (contract_symbol) DO UPDATE
                         SET ranking_score = EXCLUDED.ranking_score,
                             ranking_inputs = EXCLUDED.ranking_inputs,
@@ -523,33 +604,50 @@ class OptionsRepository:
                             desired_channels = EXCLUDED.desired_channels,
                             provider_cap_generation = EXCLUDED.provider_cap_generation,
                             last_ranked_ts = EXCLUDED.last_ranked_ts
+                        WHERE (
+                          torghut_options_subscription_state.ranking_score,
+                          torghut_options_subscription_state.ranking_inputs,
+                          torghut_options_subscription_state.tier,
+                          torghut_options_subscription_state.desired_channels,
+                          torghut_options_subscription_state.provider_cap_generation
+                        ) IS DISTINCT FROM (
+                          EXCLUDED.ranking_score,
+                          EXCLUDED.ranking_inputs,
+                          EXCLUDED.tier,
+                          EXCLUDED.desired_channels,
+                          EXCLUDED.provider_cap_generation
+                        )
                         """
                     ),
                     {
-                        "contract_symbol": row["contract_symbol"],
-                        "ranking_score": row["ranking_score"],
-                        "ranking_inputs": _coerce_json(row["ranking_inputs"]),
-                        "tier": tier,
-                        "desired_channels": row["desired_channels"],
-                        "provider_cap_generation": row["provider_cap_generation"],
+                        "ranked_rows": _coerce_json(desired_rows),
                         "last_ranked_ts": observed_at,
                     },
                 )
-            session.execute(
-                text(
-                    """
-                    UPDATE torghut_options_subscription_state
-                    SET tier = 'off',
-                        last_ranked_ts = :last_ranked_ts
-                    WHERE contract_symbol <> ALL(:symbols)
-                    """
-                ),
-                {
-                    "symbols": [row["contract_symbol"] for row in ranked_rows] or [""],
-                    "last_ranked_ts": observed_at,
-                },
-            )
-        return hot_count, warm_count
+                changed_count = max(int(getattr(result, "rowcount", 0) or 0), 0)
+            if explicit_deactivations:
+                result = session.execute(
+                    text(
+                        """
+                        UPDATE torghut_options_subscription_state
+                        SET tier = 'off',
+                            last_ranked_ts = :last_ranked_ts
+                        WHERE contract_symbol = ANY(:symbols)
+                          AND tier IS DISTINCT FROM 'off'
+                        """
+                    ),
+                    {
+                        "symbols": explicit_deactivations,
+                        "last_ranked_ts": observed_at,
+                    },
+                )
+                deactivated_count = max(int(getattr(result, "rowcount", 0) or 0), 0)
+        return SubscriptionReconcileResult(
+            hot_count=hot_count,
+            warm_count=warm_count,
+            changed_count=changed_count,
+            deactivated_count=deactivated_count,
+        )
 
     def get_hot_symbols(self, limit: int) -> list[str]:
         with self.session() as session:
@@ -858,8 +956,20 @@ def merge_top_ranked_contract_rows(
 ) -> list[dict[str, Any]]:
     """Merge new contract rows into the current hot/warm candidate set."""
 
+    rows_by_symbol = {
+        str(row["contract_symbol"]): row
+        for row in ranked_rows
+        if row.get("contract_symbol")
+    }
+    rows_by_symbol.update(
+        {
+            str(row["contract_symbol"]): row
+            for row in contracts
+            if row.get("contract_symbol")
+        }
+    )
     return top_ranked_contract_rows(
-        iter(chain(ranked_rows, contracts)),
+        iter(rows_by_symbol.values()),
         observed_at=observed_at,
         hot_cap=hot_cap,
         warm_cap=warm_cap,

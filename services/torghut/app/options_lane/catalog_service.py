@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import logging
 import threading
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,8 @@ from .settings import get_options_lane_settings
 logger = logging.getLogger("uvicorn.error")
 
 settings = get_options_lane_settings()
+PROVISIONAL_SUBSCRIPTION_FLUSH_PAGES = 10
+PROVISIONAL_SUBSCRIPTION_FLUSH_SECONDS = 30.0
 
 
 class _CatalogState:
@@ -34,6 +37,10 @@ class _CatalogState:
         self.last_error_code: str | None = None
         self.last_error_detail: str | None = None
         self.ready = False
+        self.subscription_reconciliations_total = 0
+        self.subscription_rows_changed_total = 0
+        self.subscription_rows_deactivated_total = 0
+        self.last_subscription_reconcile_ts: str | None = None
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
 
@@ -53,6 +60,15 @@ class _CatalogState:
             self.last_error_code = code
             self.last_error_detail = detail
 
+    def record_subscription_reconciliation(
+        self, *, changed_count: int, deactivated_count: int, observed_at: datetime
+    ) -> None:
+        with self._lock:
+            self.subscription_reconciliations_total += 1
+            self.subscription_rows_changed_total += max(changed_count, 0)
+            self.subscription_rows_deactivated_total += max(deactivated_count, 0)
+            self.last_subscription_reconcile_ts = observed_at.isoformat()
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
@@ -60,6 +76,10 @@ class _CatalogState:
                 "last_error_code": self.last_error_code,
                 "last_error_detail": self.last_error_detail,
                 "ready": self.ready,
+                "subscription_reconciliations_total": self.subscription_reconciliations_total,
+                "subscription_rows_changed_total": self.subscription_rows_changed_total,
+                "subscription_rows_deactivated_total": self.subscription_rows_deactivated_total,
+                "last_subscription_reconcile_ts": self.last_subscription_reconcile_ts,
             }
 
 
@@ -179,8 +199,28 @@ def _run_discovery_cycle() -> None:
     page_count = 0
     contract_count = 0
     changed_count = 0
-    max_open_interest = 0
-    provisional_ranked_rows: list[dict[str, Any]] = []
+    persisted_subscription_rows = _repository.list_live_subscription_candidates()
+    live_seed_rows = [
+        row
+        for row in persisted_subscription_rows
+        if row.get("tier") in {"hot", "warm"}
+    ]
+    persisted_symbols = {str(row["contract_symbol"]) for row in live_seed_rows}
+    active_seed_rows = [row for row in live_seed_rows if row.get("status") == "active"]
+    max_open_interest = max(
+        (cast(int, row.get("open_interest") or 0) for row in active_seed_rows),
+        default=0,
+    )
+    provisional_ranked_rows = top_ranked_contract_rows(
+        iter(active_seed_rows),
+        observed_at=observed_at,
+        hot_cap=settings.options_subscription_hot_cap,
+        warm_cap=settings.options_subscription_warm_cap,
+        max_open_interest=max(max_open_interest, 1),
+        provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
+        underlying_priority=settings.underlying_priority_set,
+    )
+    last_subscription_flush = monotonic()
 
     while True:
         while not _repository.acquire_rate_bucket("contracts", 1.0, 4):
@@ -227,9 +267,36 @@ def _run_discovery_cycle() -> None:
             provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
             underlying_priority=settings.underlying_priority_set,
         )
-        if provisional_ranked_rows:
-            _repository.write_subscription_state(
-                ranked_rows=provisional_ranked_rows, observed_at=observed_at
+        flush_time = monotonic()
+        subscription_flush_due = (
+            page_count == 1
+            or page_count % PROVISIONAL_SUBSCRIPTION_FLUSH_PAGES == 0
+            or not page_token
+            or flush_time - last_subscription_flush
+            >= PROVISIONAL_SUBSCRIPTION_FLUSH_SECONDS
+        )
+        if provisional_ranked_rows and subscription_flush_due:
+            provisional_symbols = {
+                str(row["contract_symbol"]) for row in provisional_ranked_rows
+            }
+            reconcile_result = _repository.write_subscription_state(
+                ranked_rows=provisional_ranked_rows,
+                deactivate_symbols=persisted_symbols - provisional_symbols,
+                observed_at=observed_at,
+            )
+            _state.record_subscription_reconciliation(
+                changed_count=reconcile_result.changed_count,
+                deactivated_count=reconcile_result.deactivated_count,
+                observed_at=observed_at,
+            )
+            persisted_symbols = provisional_symbols
+            last_subscription_flush = flush_time
+            logger.info(
+                "options catalog subscription reconciliation pages=%s desired=%s changed=%s deactivated=%s",
+                page_count,
+                len(provisional_ranked_rows),
+                reconcile_result.changed_count,
+                reconcile_result.deactivated_count,
             )
             if not _state.snapshot()["ready"] and any(
                 row["tier"] == "hot" for row in provisional_ranked_rows
@@ -268,17 +335,31 @@ def _run_discovery_cycle() -> None:
         provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
         underlying_priority=settings.underlying_priority_set,
     )
-    _repository.write_subscription_state(
-        ranked_rows=ranked_rows, observed_at=observed_at
+    final_symbols = {str(row["contract_symbol"]) for row in ranked_rows}
+    current_non_off_symbols = {
+        str(row["contract_symbol"])
+        for row in _repository.list_live_subscription_candidates()
+    }
+    final_reconcile_result = _repository.write_subscription_state(
+        ranked_rows=ranked_rows,
+        deactivate_symbols=current_non_off_symbols - final_symbols,
+        observed_at=observed_at,
+    )
+    _state.record_subscription_reconciliation(
+        changed_count=final_reconcile_result.changed_count,
+        deactivated_count=final_reconcile_result.deactivated_count,
+        observed_at=observed_at,
     )
     logger.info(
-        "options catalog discovery cycle completed pages=%s contracts=%s changed=%s transitions=%s hot=%s warm=%s",
+        "options catalog discovery cycle completed pages=%s contracts=%s changed=%s transitions=%s hot=%s warm=%s subscription_changes=%s subscription_deactivations=%s",
         page_count,
         contract_count,
         changed_count,
         len(transition_rows),
         sum(1 for row in ranked_rows if row["tier"] == "hot"),
         sum(1 for row in ranked_rows if row["tier"] == "warm"),
+        final_reconcile_result.changed_count,
+        final_reconcile_result.deactivated_count,
     )
     _publish_status(status_value="ok", observed_at=observed_at)
     _producer.flush()
