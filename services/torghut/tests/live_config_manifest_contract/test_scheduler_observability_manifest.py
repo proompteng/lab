@@ -49,10 +49,10 @@ class SchedulerObservabilityManifestTests(TestCase):
         self.assertIsInstance(collectors, list)
         self.assertIn("services", cast(list[object], collectors))
 
-        alloy_config = _configmap_data(
-            "argocd/applications/observability/cluster-metrics-alloy-configmap.yaml",
-            "config.river",
-        )
+        alloy_config = (
+            _repo_root()
+            / "argocd/applications/observability/cluster-metrics-alloy-config.river"
+        ).read_text(encoding="utf-8")
         self.assertIn("kube_deployment_spec_replicas", alloy_config)
         self.assertIn("kube_service_info", alloy_config)
 
