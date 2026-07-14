@@ -210,9 +210,11 @@ rather than silently excluded.
 **Invariant:** protocol health and journal writes are not accepted as proof of economic parity.
 
 - Deliverable: reconcile the full broker-derived economic projection against TigerBeetle balances/transfers, publish
-  source watermark and age, and make freshness plus zero unexplained settled delta a blocking readiness dependency.
+  source watermark and age, and make freshness plus zero unexplained settled delta blocking dependencies for
+  `entry_allowed`, accounting authority, and promotion. They must not make `service_healthy` or Kubernetes readiness
+  false while the control/recovery endpoint can still serve safely.
 - Primary surfaces: `services/torghut/scripts/audit_tigerbeetle_runtime_ledger_parity.py`, verification scripts,
-  `argocd/applications/torghut/tigerbeetle-smoke-job.yaml`, scheduler readiness, and GitOps schedules.
+  `argocd/applications/torghut/tigerbeetle-smoke-job.yaml`, scheduler entry/status projections, and GitOps schedules.
 - Tests: missing transfers, duplicate transfers, stale watermark, source lag, correction events, and protocol-up/parity-
   down behavior.
 - Runtime proof: scheduled parity completes from the broker event watermark through both ledgers and fails closed when a
