@@ -118,9 +118,9 @@ flowchart LR
 
 At cycle start, load only the current `hot` and `warm` subscription rows and seed the bounded candidate set. This
 preserves the last known-good live set while the new provider scan is incomplete. `cold` rows created by snapshot
-enrichment are never candidates for this seed. The repository may read all non-off symbols separately for explicit
-cleanup, but those symbols do not enter ranking unless the live scan observes them. Newly observed candidates compete
-with the hot/warm seed. Only a candidate that enters, leaves, or materially changes the top-K produces a mutation.
+enrichment are neither candidates nor deactivation targets for live reconciliation; their lifecycle remains owned by
+snapshot enrichment. Explicit cleanup tracks only the previously persisted hot/warm symbols. Newly observed candidates
+compete with that seed. Only a candidate that enters, leaves, or materially changes the top-K produces a mutation.
 
 The candidate limit continues to come from `_tier_limits()`. With the current provider cap of 200, the effective limits
 are 160 hot and 800 warm contracts.
