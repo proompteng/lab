@@ -102,6 +102,16 @@ patches:
           argocd.argoproj.io/sync-options: Replace=true
   - target:
       kind: StatefulSet
+      name: observability-mimir-kafka
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-kafka
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
       name: observability-tempo-ingester
     patch: |-
       apiVersion: apps/v1

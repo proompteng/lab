@@ -309,6 +309,51 @@ data:
               summary: CloudNativePG WAL archive backlog is growing
               description: {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: PersistentVolumeFreeLowWarning
+            expr: |
+              (
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) /
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+                )
+              ) < 0.15
+              and
+              (
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) /
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+                )
+              ) >= 0.05
+            for: 30m
+            labels:
+              severity: warning
+              service: kubernetes-storage
+              team: platform
+            annotations:
+              summary: Persistent volume free space is low
+              description: {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 15% free space for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: PersistentVolumeFreeLowCritical
+            expr: |
+              min by (namespace, persistentvolumeclaim) (
+                kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+              ) /
+              min by (namespace, persistentvolumeclaim) (
+                kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+              ) < 0.05
+            for: 10m
+            labels:
+              severity: critical
+              service: kubernetes-storage
+              team: platform
+            annotations:
+              summary: Persistent volume free space is critically low
+              description: {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
             expr: ceph_health_status{job="ceph-storage"} == 1
             for: 10m

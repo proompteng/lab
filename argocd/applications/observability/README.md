@@ -85,7 +85,7 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics.
 - `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, and the Ceph manager; it applies bounded metric allowlists, including pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
-- `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on missing telemetry, WAL archive backlog, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+- `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on missing telemetry, low PVC capacity, WAL archive backlog, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
 Validate the Mimir tenant after sync:
 
