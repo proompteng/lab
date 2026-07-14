@@ -724,6 +724,9 @@ class OptionsArchiveRepository:
                     transitioned_count=current.transitioned_count,
                 )
 
+            candidate_expiration_dates = [
+                cast(date, row["expiration_date"]) for row in candidate_rows
+            ]
             candidate_symbols = [str(row["contract_symbol"]) for row in candidate_rows]
             transition_result = cast(
                 CursorResult[object],
@@ -731,6 +734,14 @@ class OptionsArchiveRepository:
                     session,
                     text(
                         f"""
+                    WITH candidates AS (
+                      SELECT candidate.expiration_date,
+                             candidate.contract_symbol
+                      FROM unnest(
+                        CAST(:candidate_expiration_dates AS DATE[]),
+                        CAST(:candidate_symbols AS TEXT[])
+                      ) AS candidate(expiration_date, contract_symbol)
+                    )
                     UPDATE torghut_options_contract_catalog AS catalog
                     SET status = CASE
                           WHEN catalog.expiration_date < CAST(:observed_at AS DATE)
@@ -738,9 +749,9 @@ class OptionsArchiveRepository:
                           ELSE 'inactive'
                         END,
                         last_seen_ts = :observed_at
-                    WHERE catalog.contract_symbol = ANY(
-                            CAST(:candidate_symbols AS TEXT[])
-                          )
+                    FROM candidates
+                    WHERE catalog.expiration_date = candidates.expiration_date
+                      AND catalog.contract_symbol = candidates.contract_symbol
                       AND catalog.status = 'active'
                       AND NOT EXISTS (
                         SELECT 1
@@ -754,6 +765,7 @@ class OptionsArchiveRepository:
                     ),
                     {
                         "observed_at": observed_at,
+                        "candidate_expiration_dates": candidate_expiration_dates,
                         "candidate_symbols": candidate_symbols,
                         "component": ARCHIVE_COMPONENT,
                         "query_fingerprint": query_fingerprint,

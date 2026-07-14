@@ -430,6 +430,7 @@ describe('Torghut manifest scheduling', () => {
     )
 
     const runtimeMigrationJob = parseManifest('argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml')
+    expect(getAtPath(runtimeMigrationJob, ['spec']).activeDeadlineSeconds).toBe(3600)
     const migrationContainer = getAtPath(runtimeMigrationJob, ['spec', 'template', 'spec', 'containers', 0])
     expect(String(migrationContainer.image)).toMatch(
       /^registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:[0-9a-f]{64}$/,

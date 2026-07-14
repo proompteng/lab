@@ -610,14 +610,27 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
     )
     assert "LIMIT :batch_size" in candidate_sql
     assert "ORDER BY catalog.expiration_date, catalog.contract_symbol" in candidate_sql
-    transition_sql = next(
-        sql
-        for sql, _ in session.calls
+    transition_sql, transition_parameters = next(
+        (sql, parameters)
+        for sql, parameters in session.calls
         if "UPDATE torghut_options_contract_catalog" in sql
     )
+    assert "WITH candidates AS" in transition_sql
+    assert "CAST(:candidate_expiration_dates AS DATE[])" in transition_sql
     assert "CAST(:candidate_symbols AS TEXT[])" in transition_sql
+    assert "catalog.expiration_date = candidates.expiration_date" in transition_sql
+    assert "catalog.contract_symbol = candidates.contract_symbol" in transition_sql
     assert "membership.query_fingerprint = :query_fingerprint" in transition_sql
     assert "membership.shard_key = :shard_key" in transition_sql
+    assert isinstance(transition_parameters, dict)
+    assert transition_parameters["candidate_expiration_dates"] == [
+        date(2026, 7, 14),
+        date(2026, 7, 15),
+    ]
+    assert transition_parameters["candidate_symbols"] == [
+        "AAPL-CONTRACT",
+        "MSFT-CONTRACT",
+    ]
     assert not any(
         "DELETE FROM torghut_options_archive_membership" in sql
         for sql, _ in session.calls
