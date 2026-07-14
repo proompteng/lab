@@ -156,7 +156,7 @@ def test_archive_repository_cancels_the_inflight_driver_statement() -> None:
 
     assert repository.cancel_active_work()
 
-    driver_connection.cancel.assert_called_once_with()
+    driver_connection.cancel_safe.assert_called_once_with(timeout=5.0)
     repository._active_driver_connection = None
     repository.close()
 

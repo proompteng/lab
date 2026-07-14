@@ -11,6 +11,7 @@ import json
 import threading
 from typing import cast
 
+from psycopg import Error as PsycopgError
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, CursorResult, Engine, Result
 from sqlalchemy.exc import SQLAlchemyError
@@ -255,12 +256,12 @@ class OptionsArchiveRepository:
             connection = self._active_driver_connection
             if connection is None:
                 return False
-            cancel = getattr(connection, "cancel", None)
+            cancel = getattr(connection, "cancel_safe", None)
             if not callable(cancel):
                 return False
             try:
-                cancel()
-            except Exception:
+                cancel(timeout=5.0)
+            except PsycopgError:
                 return False
             return True
 
