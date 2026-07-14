@@ -107,6 +107,24 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             {"name": "torghut-clickhouse-auth", "key": "torghut_password"},
         )
 
+    def test_production_options_ta_clickhouse_sink_uses_batched_inserts(self) -> None:
+        config = _load_yaml_mapping(
+            "argocd/applications/torghut-options/ta/configmap.yaml"
+        )
+        data = config.get("data")
+        self.assertIsInstance(data, Mapping)
+        config_data = cast(Mapping[str, object], data)
+
+        self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_BATCH_SIZE"), "1000")
+        self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_FLUSH_MS"), "5000")
+        self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_SINK_PARALLELISM"), "1")
+
+        deployment = _load_yaml_mapping(
+            "argocd/applications/torghut-options/ta/flinkdeployment.yaml"
+        )
+        spec = cast(Mapping[str, object], deployment.get("spec", {}))
+        self.assertGreaterEqual(int(str(spec.get("restartNonce"))), 32)
+
     def test_direct_torghut_deployments_bound_replica_set_history(self) -> None:
         deployment_paths = [
             "argocd/applications/torghut/alloy-deployment.yaml",
