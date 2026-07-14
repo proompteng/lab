@@ -12,7 +12,9 @@ data:
   OPTIONS_TA_CONTRACT_BARS_TOPIC: "torghut.options.ta.contract-bars.1s.v1"
   OPTIONS_TA_CONTRACT_FEATURES_TOPIC: "torghut.options.ta.contract-features.v1"
   OPTIONS_TA_CLICKHOUSE_BATCH_SIZE: "1000"
-  OPTIONS_TA_CLICKHOUSE_FLUSH_MS: "5000"
+  # Sparse after-hours tables need the accepted 30-second age bound to avoid
+  # recreating tiny parts while staying inside the 120-second freshness SLO.
+  OPTIONS_TA_CLICKHOUSE_FLUSH_MS: "30000"
   OPTIONS_TA_CLICKHOUSE_SINK_PARALLELISM: "1"
   OPTIONS_TA_SURFACE_FEATURES_TOPIC: "torghut.options.ta.surface-features.v1"
   OPTIONS_TA_STATUS_TOPIC: "torghut.options.ta.status.v1"
