@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 
 import yaml
 
-from .hashing import canonical_json, hash_payload
+from .hashing import canonical_artifact_uri_for_hash, canonical_json, hash_payload
 from .schemas import DSPyCompileResult, DSPyEvalReport
 from .workflow import build_eval_report
 
@@ -390,7 +390,9 @@ def _evaluate_deterministic_compatibility(
             "optimizer": compile_result.optimizer,
             "dataset_hash": compile_result.dataset_hash,
             "compiled_prompt_hash": compile_result.compiled_prompt_hash,
-            "compiled_artifact_uri": compile_result.compiled_artifact_uri,
+            "compiled_artifact_uri": canonical_artifact_uri_for_hash(
+                compile_result.compiled_artifact_uri
+            ),
             "reproducibility_hash": compile_result.reproducibility_hash,
         }
     )

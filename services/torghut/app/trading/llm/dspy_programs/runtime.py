@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from typing import Any, Literal, Mapping, cast
 
 from ....config import settings
-from ..dspy_compile.hashing import hash_payload
+from ..dspy_compile.hashing import canonical_artifact_uri_for_hash, hash_payload
 from ..schema import LLMReviewRequest, LLMReviewResponse
 from .adapters import dspy_output_to_llm_response, review_request_to_dspy_input
 from .committee_programs import (
@@ -329,7 +329,9 @@ class DSPyReviewRuntime:
                 "optimizer": row.optimizer,
                 "dataset_hash": row.dataset_hash,
                 "compiled_prompt_hash": row.compiled_prompt_hash,
-                "compiled_artifact_uri": row.artifact_uri,
+                "compiled_artifact_uri": canonical_artifact_uri_for_hash(
+                    row.artifact_uri
+                ),
                 "reproducibility_hash": row.reproducibility_hash,
             }
         )

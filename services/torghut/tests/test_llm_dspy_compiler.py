@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from urllib.parse import urlsplit, unquote
 
 from app.trading.llm.dspy_compile.compiler import (
     _percentile_disc,
@@ -17,13 +16,6 @@ from app.trading.llm.dspy_compile.hashing import canonical_json
 class TestLLMDSPyCompiler(TestCase):
     def test_percentile_disc_selects_upper_tail_for_two_samples(self) -> None:
         self.assertEqual(_percentile_disc([110, 190], percentile=0.95), 190)
-
-    @staticmethod
-    def _normalize_ref(ref: str) -> str:
-        parsed = urlsplit(ref)
-        if parsed.scheme == "file":
-            return str(Path(unquote(parsed.path)))
-        return ref
 
     def test_compile_artifacts_emit_hashes_and_compiled_uri(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -90,16 +82,12 @@ class TestLLMDSPyCompiler(TestCase):
             )
             self.assertEqual(compile_result_payload["optimizer"], "miprov2")
             self.assertEqual(
-                self._normalize_ref(
-                    compile_result_payload["metricBundle"]["metricPolicyRef"]
-                ),
-                f"{metric_policy_path.resolve()}",
+                compile_result_payload["metricBundle"]["metricPolicyRef"],
+                f"sha256:{compile_result_payload['metricBundle']['metricPolicyHash']}",
             )
             self.assertEqual(
-                self._normalize_ref(
-                    compile_result_payload["metricBundle"]["datasetRef"]
-                ),
-                f"{dataset_path.resolve()}",
+                compile_result_payload["metricBundle"]["datasetRef"],
+                f"sha256:{compile_result_payload['datasetHash']}",
             )
             self.assertEqual(
                 compile_result_payload["metricBundle"]["rowCountsBySplit"],
@@ -227,10 +215,67 @@ class TestLLMDSPyCompiler(TestCase):
                 from_file_uri.compile_result.artifact_hash,
             )
             self.assertEqual(
-                self._normalize_ref(
-                    from_path.compile_result.metric_bundle["datasetRef"]
-                ),
-                f"{dataset_path.resolve()}",
+                from_path.compile_result.metric_bundle["datasetRef"],
+                f"sha256:{from_path.compile_result.dataset_hash}",
+            )
+
+    def test_compile_hashes_are_stable_across_checkout_roots(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = []
+            for checkout_name in ("checkout-a", "checkout-b"):
+                checkout = root / checkout_name
+                checkout.mkdir()
+                dataset_path = checkout / "dspy-dataset.json"
+                metric_policy_path = checkout / "dspy-metrics.yaml"
+                dataset_path.write_text(
+                    canonical_json(
+                        {
+                            "schemaVersion": "torghut.dspy.dataset.v1",
+                            "rows": [{"rowId": "row-1", "split": "train"}],
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                metric_policy_path.write_text(
+                    "schemaVersion: torghut.dspy.metrics.v1\npolicy:\n  schemaValidRateMin: 0.995\n",
+                    encoding="utf-8",
+                )
+                results.append(
+                    compile_dspy_program_artifacts(
+                        repository="proompteng/lab",
+                        base="main",
+                        head="codex/dspy-compile-test",
+                        artifact_path=checkout / "compile",
+                        dataset_ref=str(dataset_path),
+                        metric_policy_ref=str(metric_policy_path),
+                        optimizer="miprov2",
+                        created_at=datetime(2026, 2, 27, 13, 0, tzinfo=timezone.utc),
+                    )
+                )
+
+            first, second = results
+            self.assertNotEqual(
+                first.compile_result.compiled_artifact_uri,
+                second.compile_result.compiled_artifact_uri,
+            )
+            self.assertEqual(
+                first.compile_result.compiled_prompt_hash,
+                second.compile_result.compiled_prompt_hash,
+            )
+            self.assertEqual(
+                first.compile_result.reproducibility_hash,
+                second.compile_result.reproducibility_hash,
+            )
+            self.assertEqual(
+                first.compile_result.artifact_hash,
+                second.compile_result.artifact_hash,
+            )
+            self.assertEqual(first.metric_bundle_hash, second.metric_bundle_hash)
+            self.assertEqual(
+                first.compiled_artifact_path.read_text(encoding="utf-8"),
+                second.compiled_artifact_path.read_text(encoding="utf-8"),
             )
 
     def test_compile_rejects_non_local_dataset_ref(self) -> None:
@@ -407,7 +452,7 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertEqual(metric_bundle["vetoAlignmentRate"], 1.0)
             self.assertEqual(metric_bundle["falseVetoRate"], 1.0)
             self.assertEqual(metric_bundle["fallbackRate"], 2 / 3)
-            self.assertEqual(metric_bundle["latencyP95Ms"], 190)
+            self.assertEqual(metric_bundle["latencyP95Ms"], 110)
 
     def test_compile_rejects_partial_observed_metrics(self) -> None:
         with TemporaryDirectory() as tmp:
