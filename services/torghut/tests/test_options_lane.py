@@ -23,6 +23,7 @@ from app.options_lane.options_status import build_status_payload
 from app.options_lane.repository import (
     OptionsRepository,
     SubscriptionReconcileResult,
+    _contract_catalog_row_changed,
     merge_top_ranked_contract_rows,
     ranked_contract_rows,
     top_ranked_contract_rows,
@@ -370,6 +371,32 @@ class TestOptionsLaneSettings(TestCase):
 
 
 class TestOptionsRepositoryStatusCounts(TestCase):
+    def test_contract_change_detection_ignores_nonpersisted_underlying_asset_id(
+        self,
+    ) -> None:
+        current = {
+            "contract_id": "contract-1",
+            "status": "active",
+            "tradable": True,
+            "expiration_date": date(2026, 3, 20),
+            "root_symbol": "AAPL",
+            "underlying_symbol": "AAPL",
+            "option_type": "call",
+            "style": "american",
+            "strike_price": 100.0,
+            "contract_size": 100,
+            "open_interest": 25,
+            "open_interest_date": date(2026, 3, 8),
+            "close_price": 4.5,
+            "close_price_date": date(2026, 3, 8),
+            "provider_updated_ts": datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc),
+        }
+        payload = {**current, "underlying_asset_id": "provider-asset-1"}
+
+        self.assertFalse(
+            _contract_catalog_row_changed(current=current, payload=payload)
+        )
+
     def test_count_active_contracts_uses_bounded_statement_timeout(self) -> None:
         session = _FakeCountSession(value=42)
         repo = _FakeCountRepository(session)
