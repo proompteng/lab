@@ -292,34 +292,6 @@ def load_clickhouse_ta_status(
     ).latest_signal_status()
 
 
-def budget_exhausted_live_submission_gate_payload(
-    *,
-    reason: str,
-) -> dict[str, object]:
-    operational_blockers = [reason]
-    if not settings.trading_simple_submit_enabled:
-        operational_blockers.append("submit_disabled")
-    return {
-        "schema_version": "torghut.operational-submission-gate.v2",
-        "allowed": False,
-        "reason": reason,
-        "blocked_reasons": list(dict.fromkeys(operational_blockers)),
-        "reason_codes": [reason],
-        "read_model_unavailable": True,
-        "read_model_status": "timeout",
-        "capital_stage": "blocked",
-        "capital_state": "blocked",
-        "authority_scope": "operational_submission",
-        "configured_live_submit": settings.trading_live_submit_enabled,
-        "simple_submit_enabled": settings.trading_simple_submit_enabled,
-        "operational_submission_gate": {
-            "allowed": False,
-            "reason": reason,
-            "blocked_reasons": list(dict.fromkeys(operational_blockers)),
-        },
-    }
-
-
 def budget_exhausted_options_catalog_freshness_payload(
     *,
     reason: str,
@@ -582,7 +554,6 @@ __all__: tuple[str, ...] = (
     "TorghutAlpacaClient",
     "_alpaca_probe_account",
     "alpaca_cached_last_good",
-    "budget_exhausted_live_submission_gate_payload",
     "budget_exhausted_options_catalog_freshness_payload",
     "build_tca_gate_inputs",
     "check_alpaca",

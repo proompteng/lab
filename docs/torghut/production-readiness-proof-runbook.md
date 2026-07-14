@@ -10,6 +10,27 @@ This runbook is the authoritative operator sequence for a production-readiness s
 - Broker target: Alpaca `paper`
 - Signoff rule: every proof lane must pass on the same `image_digest`
 
+## Current P0 Capital Hold
+
+Production-readiness signoff is blocked while the profitability roadmap P0 mutation and reconciliation proofs remain
+incomplete. GitOps keeps `TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET=00:00:00`: the scheduler continues status, reconciliation,
+cancel, and closeout work, but strategy decisions cannot increase exposure.
+
+The authoritative baseline is `GET /trading/status` on the scheduler owner. Record all of these independently:
+
+- `action_authority.service_healthy`
+- `action_authority.entry_allowed`
+- `action_authority.reduce_only_allowed`
+- `action_authority.recovery_degraded`
+- `broker_mutation_safety.runtime_wired`
+- `broker_mutation_safety.*_fencing_proven`
+- `broker_mutation_safety.reason_codes`
+
+Do not reinterpret `live_submission_gate.allowed`, Kubernetes readiness, or Argo health as capital authority. Until the
+broker-mutation coordinator and recovery worker are production-wired and fault-proved, the expected truthful baseline
+is `entry_allowed=false`, `reduce_only_allowed=false`, and `recovery_degraded=true`; the existing emergency closeout
+path remains operational but is not yet a durably fenced reduction authority.
+
 ## Preconditions
 
 1. Freeze the candidate digest and confirm it is the active digest on:
@@ -80,9 +101,11 @@ python services/torghut/scripts/verify_quant_readiness.py \
   ...
 ```
 
-### 3. Live paper broker proof
+### 3. Live paper broker proof (blocked until mutation fencing is wired)
 
-Execute the production-real Alpaca paper proof on the next live US equities session.
+Do not execute a broker mutation while `broker_mutation_safety.runtime_wired=false`. After the mutation coordinator,
+recovery worker, and reduction fencing are deployed, execute the production-real Alpaca paper proof on the next live US
+equities session only through Torghut's normal coordinator under a short-lived `InfrastructureValidationPermit`.
 
 Required outcome:
 
@@ -92,13 +115,7 @@ Required outcome:
 - readback succeeds
 - terminal cancel or fill is observed
 
-Suggested command:
-
-```bash
-python services/torghut/scripts/verify_alpaca_broker.py \
-  --mode paper \
-  --output <bundle-dir>/broker-proof.raw.json
-```
+Direct script-to-broker submission is not admissible proof.
 
 ### 4. Session readiness proof
 
@@ -106,11 +123,11 @@ Capture the live readiness gate on the same digest used for the replay and broke
 
 Required outcome:
 
-- `GET /readyz` returns `200`
-- `GET /trading/health` returns `200`
-- Jangar dependency quorum returns `allow`
-- broker status is `broker_ok`
-- no rollback-required blocker is active
+- `GET /scheduler/readyz` returns `200` for the scheduler workload;
+- `GET /trading/status` reports `action_authority.service_healthy=true`;
+- entry, reduction, recovery, and broker-mutation fields match the intended capital stage;
+- the core `/readyz` result is recorded separately and may be `503` while capital entry is intentionally blocked;
+- no rollback-required service blocker is active.
 
 Persist the captured readiness payload as `session-ready.json`.
 
@@ -127,12 +144,13 @@ out="/tmp/torghut-proof-rerun-${stamp}"
 mkdir -p "${out}"
 ```
 
-After the rerun, capture:
+After the rerun, capture only the current operational endpoints:
 
 ```bash
 curl -fsS http://torghut.torghut.svc.cluster.local/trading/status > "${out}/status.json"
-curl -fsS http://torghut.torghut.svc.cluster.local/trading/empirical-jobs > "${out}/empirical-jobs.json"
-curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair > "${out}/revenue-repair.json"
+kubectl -n torghut get --raw \
+  '/api/v1/namespaces/torghut/services/http:torghut-scheduler:8183/proxy/scheduler/readyz' \
+  > "${out}/scheduler-ready.json"
 ```
 
 Do not submit or fabricate an Alpaca order from this runbook. Broker execution evidence must come from Torghut’s normal

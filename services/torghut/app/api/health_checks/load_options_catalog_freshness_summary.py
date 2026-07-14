@@ -68,20 +68,13 @@ from app.trading.lean_runtime import lean_authority_status as _lean_authority_st
 from app.trading.scheduler import TradingScheduler
 from app.trading.submission_council import build_hypothesis_runtime_summary
 from app.trading.submission_council import (
-    build_live_submission_gate_payload as _raw_build_live_submission_gate_payload,
-)
-from app.trading.submission_council import (
     build_shadow_first_toggle_parity as _build_shadow_first_toggle_parity,
 )
 from app.trading.submission_council import (
     resolve_active_capital_stage as _resolve_active_capital_stage,
 )
-from ..application import get_app
 from .remember_alpaca_success import (
     alpaca_cached_last_good as _alpaca_cached_last_good,
-)
-from .remember_alpaca_success import (
-    budget_exhausted_live_submission_gate_payload as _budget_exhausted_live_submission_gate_payload,
 )
 from .remember_alpaca_success import (
     budget_exhausted_options_catalog_freshness_payload as _budget_exhausted_options_catalog_freshness_payload,
@@ -505,28 +498,6 @@ def _build_hypothesis_runtime_payload(
     )
 
 
-def _build_live_submission_gate_payload(
-    state: object,
-    *,
-    clickhouse_ta_status: Mapping[str, Any] | None = None,
-) -> dict[str, object]:
-    resolved_clickhouse_ta_status = clickhouse_ta_status
-    if resolved_clickhouse_ta_status is None:
-        resolved_clickhouse_ta_status = _load_clickhouse_ta_status(
-            cast(
-                TradingScheduler | None,
-                getattr(get_app().state, "trading_scheduler", None),
-            )
-        )
-    shared_gate_builder = build_live_submission_gate_payload
-    if shared_gate_builder is _PUBLIC_BUILD_LIVE_SUBMISSION_GATE_PAYLOAD:
-        shared_gate_builder = _raw_build_live_submission_gate_payload
-    return shared_gate_builder(
-        state,
-        clickhouse_ta_status=resolved_clickhouse_ta_status,
-    )
-
-
 def build_hypothesis_runtime_payload(
     scheduler: TradingScheduler,
     *,
@@ -544,25 +515,10 @@ def build_hypothesis_runtime_payload(
     )
 
 
-def build_live_submission_gate_payload(
-    state: object,
-    *,
-    clickhouse_ta_status: Mapping[str, Any] | None = None,
-) -> dict[str, object]:
-    return _build_live_submission_gate_payload(
-        state,
-        clickhouse_ta_status=clickhouse_ta_status,
-    )
-
-
-_PUBLIC_BUILD_LIVE_SUBMISSION_GATE_PAYLOAD = build_live_submission_gate_payload
-
-
 ensure_utc_datetime = _ensure_utc_datetime
 load_last_decision_at = _load_last_decision_at
 load_options_catalog_freshness_summary = _load_options_catalog_freshness_summary
 raw_hypothesis_runtime_payload = _build_hypothesis_runtime_payload
-api_live_submission_gate_payload = _build_live_submission_gate_payload
 resolve_tca_scope_symbols = _resolve_tca_scope_symbols
 
 
@@ -592,7 +548,6 @@ __all__ = [
     "_tca_row_payload",
     "_load_tca_summary",
     "_load_clickhouse_ta_status",
-    "_budget_exhausted_live_submission_gate_payload",
     "_budget_exhausted_options_catalog_freshness_payload",
     "_route_claim_symbols",
     "_load_cached_options_catalog_freshness_summary",
@@ -605,10 +560,7 @@ __all__ = [
     "_ensure_utc_datetime",
     "_load_last_decision_at",
     "_build_hypothesis_runtime_payload",
-    "_build_live_submission_gate_payload",
-    "api_live_submission_gate_payload",
     "build_hypothesis_runtime_payload",
-    "build_live_submission_gate_payload",
     "ensure_utc_datetime",
     "load_last_decision_at",
     "load_options_catalog_freshness_summary",

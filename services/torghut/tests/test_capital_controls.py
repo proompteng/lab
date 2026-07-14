@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest import TestCase
@@ -259,6 +259,32 @@ class TestCapitalSafetyController(TestCase):
 
         self.assertFalse(controller.state.capital_new_exposure_allowed)
         self.assertFalse(controller.state.emergency_stop_active)
+
+    def test_midnight_cutoff_freezes_entry_without_disabling_closeout_controller(
+        self,
+    ) -> None:
+        adapter = _ExecutionAdapter([])
+        controller = self._controller(adapter)
+        now = datetime(2026, 7, 10, 9, 30, tzinfo=ZoneInfo("America/New_York"))
+        risk = CapitalRiskSnapshot(
+            current_equity=Decimal("10000"),
+            daily_start_equity=Decimal("10000"),
+            high_water_equity=Decimal("10000"),
+            daily_loss_ratio=Decimal("0"),
+            drawdown_ratio=Decimal("0"),
+        )
+
+        with (
+            patch.object(controller, "_load_risk_snapshot", return_value=risk),
+            patch.object(settings, "trading_mode", "live"),
+            patch.object(settings, "trading_new_exposure_cutoff_time_et", time(0, 0)),
+        ):
+            controller.evaluate(SimpleNamespace(), SimpleNamespace(as_of=now))
+
+        self.assertFalse(controller.state.capital_new_exposure_allowed)
+        self.assertFalse(controller.state.emergency_stop_active)
+        self.assertEqual(adapter.cancel_calls, 0)
+        self.assertEqual(adapter.submissions, [])
 
     def test_closeout_uses_marketable_limit_and_confirms_flat(self) -> None:
         adapter = _ExecutionAdapter(

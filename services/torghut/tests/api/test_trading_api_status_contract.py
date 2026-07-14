@@ -42,8 +42,12 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 return_value=freshness,
             ),
             patch(
-                "app.api.trading_status.build_api_live_submission_gate_payload",
+                "app.api.trading_status.build_live_submission_gate_payload",
                 return_value=gate,
+            ),
+            patch(
+                "app.api.trading_status.scheduler_readiness_payload",
+                return_value={"ok": True, "detail": "ok"},
             ),
             patch(
                 "app.api.trading_status._read_with_session",
@@ -82,6 +86,8 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "last_error",
                 "accepted_source_freshness",
                 "live_submission_gate",
+                "action_authority",
+                "broker_mutation_safety",
                 "capital_controls",
                 "execution",
                 "signal_continuity",
@@ -103,6 +109,9 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
             "scheduler_startup_failed:SchedulerLeadershipError",
         )
         self.assertEqual(payload["live_submission_gate"], gate)
+        self.assertFalse(payload["action_authority"]["entry_allowed"])
+        self.assertFalse(payload["action_authority"]["reduce_only_allowed"])
+        self.assertFalse(payload["broker_mutation_safety"]["runtime_wired"])
         self.assertEqual(payload["capital_controls"]["gross_limit"], 4.0)
         self.assertEqual(payload["capital_controls"]["net_limit"], 0.5)
         self.assertEqual(payload["capital_controls"]["symbol_limit"], 0.5)

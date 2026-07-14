@@ -12,13 +12,11 @@ from app.api.health_checks.shared_context import (
 )
 
 from .load_options_catalog_freshness_summary import (
-    api_live_submission_gate_payload,
     load_last_decision_at,
     load_options_catalog_freshness_summary,
     raw_hypothesis_runtime_payload,
 )
 from .remember_alpaca_success import (
-    budget_exhausted_live_submission_gate_payload,
     budget_exhausted_options_catalog_freshness_payload,
     check_alpaca,
     decimal_or_none,
@@ -42,7 +40,6 @@ check_alpaca_dependency = check_alpaca
 check_clickhouse_dependency = check_clickhouse
 check_postgres_dependency = check_postgres
 build_hypothesis_runtime_payload = raw_hypothesis_runtime_payload
-build_api_live_submission_gate_payload = api_live_submission_gate_payload
 lean_authority_status = lean_authority_status_payload
 
 __all__ = (
@@ -64,7 +61,6 @@ __all__ = (
     "load_tca_summary",
     "load_clickhouse_ta_status",
     "tca_row_payload",
-    "budget_exhausted_live_submission_gate_payload",
     "budget_exhausted_options_catalog_freshness_payload",
     "route_claim_symbols",
     "load_options_catalog_freshness_summary",
@@ -72,5 +68,4 @@ __all__ = (
     "sqlalchemy_error_indicates_statement_timeout",
     "load_last_decision_at",
     "build_hypothesis_runtime_payload",
-    "build_api_live_submission_gate_payload",
 )

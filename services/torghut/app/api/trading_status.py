@@ -15,12 +15,17 @@ from sqlalchemy.orm import Session
 from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST, BUILD_VERSION
 from app.config import settings
 from app.db import SessionLocal
+from app.trading.action_authority import reduce_runtime_action_authority
+from app.trading.broker_mutation_receipts.runtime_status import (
+    build_broker_mutation_runtime_status,
+)
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.scheduler import TradingScheduler
+from app.trading.scheduler.runtime_health import scheduler_readiness_payload
+from app.trading.submission_council import build_live_submission_gate_payload
 
 from .application import get_app, runtime_owner_for_role
 from .health_checks import (
-    build_api_live_submission_gate_payload,
     build_tigerbeetle_ledger_status,
     load_clickhouse_ta_status,
     load_last_decision_at,
@@ -125,9 +130,16 @@ def trading_status() -> dict[str, object] | Response:
     scheduler = get_trading_scheduler()
     state = scheduler.state
     accepted_source = load_clickhouse_ta_status(scheduler)
-    live_gate = build_api_live_submission_gate_payload(
+    live_gate = build_live_submission_gate_payload(
         state,
         clickhouse_ta_status=accepted_source,
+    )
+    broker_mutation = build_broker_mutation_runtime_status()
+    action_authority = reduce_runtime_action_authority(
+        service_status=scheduler_readiness_payload(scheduler),
+        live_submission_gate=live_gate,
+        broker_mutation_status=broker_mutation,
+        state=state,
     )
     tigerbeetle = _read_with_session(
         build_tigerbeetle_ledger_status,
@@ -168,6 +180,8 @@ def trading_status() -> dict[str, object] | Response:
         "last_error": state.last_error,
         "accepted_source_freshness": accepted_source,
         "live_submission_gate": live_gate,
+        "action_authority": action_authority.to_payload(),
+        "broker_mutation_safety": broker_mutation,
         "capital_controls": _capital_controls(state),
         "execution": build_execution_status_payload(
             state=state,
