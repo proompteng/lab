@@ -3715,6 +3715,10 @@ export const activities = {
 
       const chunks = await extractFileChunks(input.content, input.filePath)
       if (chunks.length === 0) {
+        await db`
+          DELETE FROM atlas.file_chunks
+          WHERE file_version_id = ${input.fileVersionId};
+        `
         logActivity('info', 'completed', 'indexFileChunks', {
           fileVersionId: input.fileVersionId,
           filePath: input.filePath,
@@ -3781,6 +3785,11 @@ export const activities = {
         `) as Array<{ id: string; chunk_index: number }>
 
         chunkIdByIndex = new Map(rows.map((row) => [row.chunk_index, row.id]))
+        await db`
+          DELETE FROM atlas.file_chunks
+          WHERE file_version_id = ${input.fileVersionId}
+            AND NOT (chunk_index = ANY(${db.array(chunkIndexes, 'int4')}));
+        `
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         const normalized = message.toLowerCase()
