@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.options_lane.alpaca import normalize_contract_record
+from app.options_lane.archive_status import ARCHIVE_STATUS_RECONCILE_LOCK_ID
 from app.options_lane.catalog_scope import OptionsCatalogScope
 from app.options_lane.repository import OptionsRepository
 
@@ -230,25 +231,34 @@ def test_missing_contract_transition_is_scoped_to_exact_completed_scan() -> None
 
     assert rows[0]["catalog_status_reason"] == "not_seen_in_active_discovery_run"
     assert rows[1]["catalog_status_reason"] == "expired_below_live_discovery_window"
+    assert "pg_advisory_xact_lock" in session.calls[0][0]
+    assert session.calls[0][1] == {"lock_id": ARCHIVE_STATUS_RECONCILE_LOCK_ID}
     assert (
-        "CREATE TEMPORARY TABLE options_catalog_seen_contracts" in session.calls[0][0]
+        "CREATE TEMPORARY TABLE options_catalog_seen_contracts" in session.calls[1][0]
     )
-    assert session.calls[1][1] == {
+    assert session.calls[2][1] == {
         "seen_symbols": ["AAPL260717C00200000", "MSFT260717C00400000"]
     }
-    transition_sql, transition_parameters = session.calls[2]
+    transition_sql, transition_parameters = session.calls[3]
     assert "catalog.underlying_symbol = ANY(:underlying_symbols)" in transition_sql
     assert "catalog.expiration_date BETWEEN :expiration_date_gte" in transition_sql
     assert "AND :expiration_date_lte" in transition_sql
     assert "catalog.expiration_date < :expiration_date_gte" not in transition_sql
     assert "NOT EXISTS" in transition_sql
+    assert (
+        "FROM torghut_options_contract_archive_status AS archive_status"
+        in transition_sql
+    )
     assert "last_seen_ts <" not in transition_sql
     assert transition_parameters == {
         "observed_at": observed_at,
         **_scope().query_parameters,
     }
-    expired_sql, expired_parameters = session.calls[3]
+    expired_sql, expired_parameters = session.calls[4]
     assert "WITH expired_batch AS" in expired_sql
+    assert (
+        "FROM torghut_options_contract_archive_status AS archive_status" in expired_sql
+    )
     assert "LIMIT :expired_cleanup_limit" in expired_sql
     assert "FOR UPDATE SKIP LOCKED" in expired_sql
     assert expired_parameters == {

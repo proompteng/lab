@@ -297,6 +297,10 @@ class OptionsRepository:
 
         with self.session() as session, session.begin():
             session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": ARCHIVE_STATUS_RECONCILE_LOCK_ID},
+            )
+            session.execute(
                 text(
                     """
                     CREATE TEMPORARY TABLE options_catalog_seen_contracts (
@@ -334,6 +338,11 @@ class OptionsRepository:
                         FROM options_catalog_seen_contracts AS seen
                         WHERE seen.contract_symbol = catalog.contract_symbol
                       )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM torghut_options_contract_archive_status AS archive_status
+                        WHERE archive_status.contract_symbol = catalog.contract_symbol
+                      )
                     RETURNING catalog.*
                     """
                     ),
@@ -350,6 +359,11 @@ class OptionsRepository:
                           WHERE catalog.status = 'active'
                             AND catalog.underlying_symbol = ANY(:underlying_symbols)
                             AND catalog.expiration_date < :expiration_date_gte
+                            AND NOT EXISTS (
+                              SELECT 1
+                              FROM torghut_options_contract_archive_status AS archive_status
+                              WHERE archive_status.contract_symbol = catalog.contract_symbol
+                            )
                           LIMIT :expired_cleanup_limit
                           FOR UPDATE SKIP LOCKED
                         )
