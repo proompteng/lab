@@ -24,7 +24,9 @@ class TestLLMDSPyEval(TestCase):
                 optimizer="miprov2",
                 dataset_payload={"rows": [{"rowId": "row-1", "split": "train"}]},
                 metric_bundle={"schema_valid_rate": 1.0},
-                compiled_prompt_payload={"promptTemplate": "torghut.dspy.trade-review.v1"},
+                compiled_prompt_payload={
+                    "promptTemplate": "torghut.dspy.trade-review.v1"
+                },
                 compiled_artifact_uri=artifact_uri,
                 seed="seed-1",
                 created_at=datetime(2026, 2, 27, 12, 0, tzinfo=timezone.utc),
