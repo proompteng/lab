@@ -50,8 +50,8 @@ The Hyperliquid feed has one mixed-topic channel and one global `1,000`-record, 
 is grouped by table only at flush time, so each table receives a much smaller insert. Production `system.part_log`
 sampling showed roughly:
 
-- 50-55 rows per new BBO part; and
-- 3-4 rows per new candle part.
+- 42-55 rows per new BBO part; and
+- 2-4 rows per new candle part.
 
 Both ClickHouse replicas continuously merge these tiny parts on Ceph RBD. The current sink also clears a failed batch
 after logging the error, so ClickHouse persistence is not replay-safe even though the same event was sent to Kafka.
@@ -203,13 +203,13 @@ Replace the global buffer with independent table buffers. Initial policies are:
 
 | Table class                | Size threshold | Maximum age |
 | -------------------------- | -------------: | ----------: |
-| BBO                        |     1,000 rows |  10 seconds |
+| BBO                        |     1,000 rows |  30 seconds |
 | Candles                    |       100 rows |  30 seconds |
 | Asset contexts and funding |       100 rows |  30 seconds |
 | Market catalog and status  |       100 rows |  30 seconds |
 
-The BBO policy is anchored to the observed roughly 100-row-per-second input rate: it should normally reach the 1,000-row
-size threshold while the age limit bounds persistence latency at ten seconds.
+The BBO policy is anchored to the observed roughly 34-40-row-per-second input rate: it should normally reach the
+1,000-row size threshold while the age limit bounds persistence latency at 30 seconds.
 
 Thresholds are typed configuration with validation. Each flush records table, rows, bytes, duration, attempt, and
 flush reason. Shutdown drains all acknowledged buffers within a bounded grace period.
