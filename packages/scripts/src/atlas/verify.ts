@@ -52,8 +52,12 @@ type IndexedFileRow = {
 }
 
 type CodeSearchItem = {
+  repository?: string
+  ref?: string
   path?: string
   commit?: string
+  startLine?: number | null
+  endLine?: number | null
   contentHash?: string
   retrievalMode?: string
   degradation?: string | null
@@ -504,16 +508,62 @@ const main = async () => {
           WHERE schemaname = 'atlas'
             AND indexname = 'atlas_file_versions_file_key_id_unique_idx'
             AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
-        ) AS has_current_file_unique
+        ) AS has_current_file_unique,
+        EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname = 'atlas'
+            AND indexname = 'atlas_file_keys_path_trgm_idx'
+            AND indexdef ILIKE '%USING gin%gin_trgm_ops%'
+        ) AS has_path_trgm,
+        EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname = 'atlas'
+            AND indexname = 'atlas_file_chunks_content_trgm_idx'
+            AND indexdef ILIKE '%USING gin%gin_trgm_ops%'
+        ) AS has_content_trgm,
+        EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname = 'atlas'
+            AND indexname = 'atlas_file_chunks_text_tsvector_gin_idx'
+            AND indexdef ILIKE '%USING gin%'
+        ) AS has_lexical_gin,
+        (
+          SELECT count(*)::int
+          FROM pg_constraint
+          WHERE connamespace = 'atlas'::regnamespace
+            AND convalidated
+            AND conname IN (
+              'atlas_repositories_metadata_object_check',
+              'atlas_file_versions_metadata_object_check',
+              'atlas_file_chunks_metadata_object_check',
+              'atlas_enrichments_metadata_object_check',
+              'atlas_tree_sitter_facts_metadata_object_check',
+              'atlas_github_events_payload_object_check'
+            )
+        ) AS json_object_constraints
       FROM pg_catalog.pg_attribute a
       WHERE a.attrelid = 'atlas.chunk_embeddings'::regclass
         AND a.attname = 'embedding'
         AND NOT a.attisdropped;
-    `) as Array<{ embedding_type: string; has_hnsw: boolean; has_current_file_unique: boolean }>
+    `) as Array<{
+      embedding_type: string
+      has_hnsw: boolean
+      has_current_file_unique: boolean
+      has_path_trgm: boolean
+      has_content_trgm: boolean
+      has_lexical_gin: boolean
+      json_object_constraints: number
+    }>
     const schema = schemaRows[0]
     if (schema?.embedding_type !== 'vector(1024)') errors.push(`chunk embedding column is ${schema?.embedding_type}`)
     if (!schema?.has_hnsw) errors.push('Atlas HNSW index is missing')
     if (!schema?.has_current_file_unique) errors.push('current-file unique index is missing')
+    if (!schema?.has_path_trgm) errors.push('Atlas path trigram index is missing')
+    if (!schema?.has_content_trgm) errors.push('Atlas content trigram index is missing')
+    if (!schema?.has_lexical_gin) errors.push('Atlas lexical GIN index is missing')
+    if (count(schema?.json_object_constraints) !== 6) {
+      errors.push(`expected 6 validated Atlas JSON-object constraints, found ${count(schema?.json_object_constraints)}`)
+    }
 
     const unfinishedRows = (await db`
       SELECT count(*)::bigint AS unfinished
@@ -530,47 +580,86 @@ const main = async () => {
       errors.push(`${processedEventsWithUnfinishedIngestions} processed events have unfinished ingestion`)
     }
 
+    const returnedPaths = new Set<string>()
+    const retrievalModes = new Set(['exact', 'lexical', 'semantic', 'hybrid'])
+    const validateSearchPayload = (query: string, payload: CodeSearchResponse) => {
+      if (payload.ok !== true) errors.push(`search response omitted ok=true for ${query}`)
+      const items = payload.items ?? []
+      const paths: string[] = []
+      for (const item of items) {
+        const path = item.path ?? ''
+        if (path) {
+          paths.push(path)
+          returnedPaths.add(path)
+        }
+        const indexed = indexedByPath.get(path)
+        if (!indexed) errors.push(`search returned a path outside the indexed manifest: ${path || 'unknown path'}`)
+        if (item.repository !== options.repository) {
+          errors.push(`search result used wrong repository for ${path || 'unknown path'}`)
+        }
+        if (item.ref !== options.ref) errors.push(`search result used wrong ref for ${path || 'unknown path'}`)
+        if (item.commit !== gitHead) errors.push(`search result used wrong commit for ${path || 'unknown path'}`)
+        if (
+          !Number.isInteger(item.startLine) ||
+          !Number.isInteger(item.endLine) ||
+          (item.startLine ?? 0) < 1 ||
+          (item.endLine ?? 0) < (item.startLine ?? 0)
+        ) {
+          errors.push(`search result used invalid line bounds for ${path || 'unknown path'}`)
+        }
+        if (item.contentHash !== indexed?.content_hash) {
+          errors.push(`search result used wrong content hash for ${path || 'unknown path'}`)
+        }
+        if (!retrievalModes.has(item.retrievalMode ?? '')) {
+          errors.push(`search result used invalid retrieval mode for ${path || 'unknown path'}`)
+        }
+        if (item.degradation !== null) errors.push(`search degraded for ${query}: ${String(item.degradation)}`)
+      }
+      if (payload.indexHealth?.status !== 'ok' || payload.indexHealth.indexedCommit !== gitHead) {
+        errors.push(`search health disagreed with Git for ${query}`)
+      }
+      return paths
+    }
+
     const goldResults: Array<{ query: string; paths: string[]; durationMs: number }> = []
     for (const fixture of gold.queries) {
       const result = await search(options.baseUrl, options.repository, options.ref, fixture.query)
-      const paths = (result.payload.items ?? [])
-        .map((item) => item.path)
-        .filter((path): path is string => Boolean(path))
+      const paths = validateSearchPayload(fixture.query, result.payload)
       const matchingPath = fixture.expectedPaths.find((path) => paths.includes(path))
       if (!matchingPath) errors.push(`gold query missed top ten: ${fixture.query}`)
       if (fixture.expectedFirst && !fixture.expectedPaths.includes(paths[0] ?? '')) {
         errors.push(`exact gold query did not rank expected path first: ${fixture.query}`)
       }
-      for (const item of result.payload.items ?? []) {
-        const path = item.path ?? ''
-        const indexed = indexedByPath.get(path)
-        if (!indexed) errors.push(`search returned a path outside the indexed manifest: ${path || 'unknown path'}`)
-        if (item.commit !== gitHead) errors.push(`search result used wrong commit for ${path || 'unknown path'}`)
-        if (item.contentHash !== indexed?.content_hash) {
-          errors.push(`search result used wrong content hash for ${path || 'unknown path'}`)
-        }
-        if (!item.retrievalMode) errors.push(`search result omitted retrieval mode for ${path || 'unknown path'}`)
-        if (item.degradation) errors.push(`search degraded for ${fixture.query}: ${item.degradation}`)
-      }
-      if (result.payload.indexHealth?.status !== 'ok' || result.payload.indexHealth.indexedCommit !== gitHead) {
-        errors.push(`search health disagreed with Git for ${fixture.query}`)
-      }
       goldResults.push({ query: fixture.query, paths, durationMs: result.durationMs })
     }
 
-    const previewPaths = [...new Set(gold.queries.flatMap((fixture) => fixture.expectedPaths))]
+    const deletedPathResults: Array<{ query: string; paths: string[]; durationMs: number }> = []
+    for (const path of gold.absentPaths) {
+      const result = await search(options.baseUrl, options.repository, options.ref, path)
+      const paths = validateSearchPayload(path, result.payload)
+      if (paths.includes(path)) errors.push(`deleted path was returned by search: ${path}`)
+      deletedPathResults.push({ query: path, paths, durationMs: result.durationMs })
+    }
+
+    const previewPaths = [...returnedPaths]
     for (const path of previewPaths) {
       const response = await fetch(
         `${options.baseUrl}/api/atlas/file?${new URLSearchParams({ repository: options.repository, ref: options.ref, path })}`,
       )
       const payload = (await response.json()) as {
         ok?: boolean
+        repository?: string
+        ref?: string
         commit?: string
         contentHash?: string
+        path?: string
         error?: string
       }
-      if (!response.ok || payload.ok === false) errors.push(`source preview failed for ${path}: ${payload.error}`)
+      if (!response.ok || payload.ok !== true) errors.push(`source preview failed for ${path}: ${payload.error}`)
+      if (payload.repository !== options.repository) errors.push(`source preview repository mismatch for ${path}`)
+      if (payload.ref !== options.ref) errors.push(`source preview ref mismatch for ${path}`)
       if (payload.commit !== gitHead) errors.push(`source preview commit mismatch for ${path}`)
+      if (payload.path !== path) errors.push(`source preview path mismatch for ${path}`)
       if (payload.contentHash !== indexedByPath.get(path)?.content_hash)
         errors.push(`source preview hash mismatch for ${path}`)
     }
@@ -622,6 +711,8 @@ const main = async () => {
       schema,
       processedEventsWithUnfinishedIngestions,
       goldSet: { version: gold.version, queries: goldResults },
+      deletedPaths: deletedPathResults,
+      sourcePreviews: { paths: previewPaths.length },
       performance: {
         requests: latencies.length,
         concurrency: options.concurrency,
