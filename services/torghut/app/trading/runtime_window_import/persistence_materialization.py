@@ -23,10 +23,6 @@ from .common import (
     string_list,
     text_value,
 )
-from .evidence_gates import (
-    capital_multiplier_for_stage,
-    capital_stage_for_runtime_import,
-)
 from .ledger_persistence import (
     journal_tigerbeetle_runtime_ledger_bucket,
     ledger_payload_with_tigerbeetle_refs,
@@ -41,10 +37,13 @@ from .persistence_types import (
     PersistedRows,
     PersistencePlan,
 )
-from ..promotion_authority import (
-    capital_allowed_authority,
-    capital_blocked_authority,
+from ..evidence_collection_policy import (
+    evidence_admissibility_policy,
 )
+
+
+_EVIDENCE_ONLY_CAPITAL_STAGE = "shadow"
+_EVIDENCE_ONLY_CAPITAL_MULTIPLIER = "0"
 
 
 def runtime_materialization_target(
@@ -52,14 +51,9 @@ def runtime_materialization_target(
     proof_status: str,
     proof_blockers: Sequence[dict[str, Any]],
     evidence_blocking_reasons: Sequence[str],
-    promotion_allowed: bool,
 ) -> dict[str, Any]:
-    authority = (
-        capital_allowed_authority()
-        if promotion_allowed
-        else capital_blocked_authority(
-            blockers=plan.promotion.promotion_blocking_reasons
-        )
+    evidence_policy = evidence_admissibility_policy(
+        blockers=evidence_blocking_reasons,
     )
     return {
         "candidate_id": plan.request.candidate_id,
@@ -86,7 +80,7 @@ def runtime_materialization_target(
         "proof_status": proof_status,
         "proof_blockers": list(proof_blockers),
         "evidence_blocking_reasons": list(evidence_blocking_reasons),
-        **authority.as_target_fields(),
+        **evidence_policy.as_target_fields(),
         "capital_promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
     }
 
@@ -201,9 +195,8 @@ def _runtime_ledger_row(
 
 def persist_governance_rows(plan: PersistencePlan) -> PersistedRows:
     metric_window_rows, runtime_ledger_rows = _persist_metric_and_ledger_rows(plan)
-    final_capital_stage = _final_capital_stage(plan)
-    _add_capital_allocation(plan, final_capital_stage)
-    promotion_decision_row = _add_promotion_decision(plan, final_capital_stage)
+    _add_capital_allocation(plan, _EVIDENCE_ONLY_CAPITAL_STAGE)
+    promotion_decision_row = _add_promotion_decision(plan, _EVIDENCE_ONLY_CAPITAL_STAGE)
     plan.request.session.flush()
     return PersistedRows(
         metric_window_rows=metric_window_rows,
@@ -217,16 +210,8 @@ def _persist_metric_and_ledger_rows(
 ) -> tuple[list[StrategyHypothesisMetricWindow], list[StrategyRuntimeLedgerBucket]]:
     metric_window_rows: list[StrategyHypothesisMetricWindow] = []
     runtime_ledger_rows: list[StrategyRuntimeLedgerBucket] = []
-    running_session_samples = 0
     for bucket in plan.buckets.sorted_buckets:
-        running_session_samples += bucket.market_session_count
-        capital_stage = capital_stage_for_runtime_import(
-            observed_stage=plan.request.observed_stage,
-            promotion_allowed=plan.promotion.promotion_allowed,
-            session_samples=running_session_samples,
-            manifest=plan.context.manifest,
-        )
-        metric_row = _metric_window_row(plan, bucket, capital_stage)
+        metric_row = _metric_window_row(plan, bucket, _EVIDENCE_ONLY_CAPITAL_STAGE)
         plan.request.session.add(metric_row)
         metric_window_rows.append(metric_row)
         runtime_ledger_rows.extend(_persist_bucket_ledger_rows(plan, bucket))
@@ -253,20 +238,9 @@ def _persist_bucket_ledger_rows(
     return rows
 
 
-def _final_capital_stage(plan: PersistencePlan) -> str:
-    return capital_stage_for_runtime_import(
-        observed_stage=plan.request.observed_stage,
-        promotion_allowed=plan.promotion.promotion_allowed,
-        session_samples=plan.metrics.total_session_samples,
-        manifest=plan.context.manifest,
-    )
-
-
-def _promotion_authority_fields(plan: PersistencePlan) -> dict[str, object]:
-    if plan.promotion.promotion_allowed:
-        return capital_allowed_authority().as_target_fields()
-    return capital_blocked_authority(
-        blockers=plan.promotion.promotion_blocking_reasons
+def _evidence_policy_fields(plan: PersistencePlan) -> dict[str, object]:
+    return evidence_admissibility_policy(
+        blockers=plan.promotion.evidence_blocking_reasons,
     ).as_target_fields()
 
 
@@ -278,7 +252,7 @@ def _add_capital_allocation(plan: PersistencePlan, final_capital_stage: str) -> 
             hypothesis_id=plan.request.hypothesis_id,
             prior_stage="shadow",
             stage=final_capital_stage,
-            capital_multiplier=capital_multiplier_for_stage(final_capital_stage),
+            capital_multiplier=_EVIDENCE_ONLY_CAPITAL_MULTIPLIER,
             rollback_target_stage="shadow",
             payload_json=_capital_allocation_payload(plan),
         )
@@ -289,7 +263,7 @@ def _capital_allocation_payload(plan: PersistencePlan) -> dict[str, Any]:
     return {
         **_summary_payload(plan),
         **plan.metrics.runtime_ledger_daily_summary,
-        **_promotion_authority_fields(plan),
+        **_evidence_policy_fields(plan),
         "promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
         "evidence_blocking_reasons": plan.promotion.evidence_blocking_reasons,
         "delay_adjusted_depth_stress": plan.context.delay_depth_stress_summary,
@@ -304,7 +278,7 @@ def _promotion_decision_payload(plan: PersistencePlan) -> dict[str, Any]:
         "avg_post_cost_expectancy_bps": str(plan.metrics.average_post_cost),
         **plan.metrics.runtime_ledger_daily_summary,
         "latest_three_within_budget": plan.metrics.latest_three_budget_ok,
-        **_promotion_authority_fields(plan),
+        **_evidence_policy_fields(plan),
         "promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
         "evidence_blocking_reasons": plan.promotion.evidence_blocking_reasons,
         "delay_adjusted_depth_stress": plan.context.delay_depth_stress_summary,
@@ -346,24 +320,31 @@ def _add_promotion_decision(
     plan: PersistencePlan,
     final_capital_stage: str,
 ) -> StrategyPromotionDecision:
+    decision_blockers = _legacy_evidence_decision_blockers(plan)
     promotion_decision_row = StrategyPromotionDecision(
         run_id=plan.request.run_id,
         candidate_id=plan.request.candidate_id,
         hypothesis_id=plan.request.hypothesis_id,
         promotion_target=plan.request.observed_stage,
         state=final_capital_stage,
-        allowed=plan.promotion.promotion_allowed,
-        reason_summary=_reason_summary(plan),
+        # This legacy row records evidence admissibility only. Capital remains
+        # shadow/zero and requires a separate StrategyCapitalAuthority.
+        allowed=not decision_blockers,
+        reason_summary=_reason_summary(decision_blockers),
         payload_json=_promotion_decision_payload(plan),
     )
     plan.request.session.add(promotion_decision_row)
     return promotion_decision_row
 
 
-def _reason_summary(plan: PersistencePlan) -> str:
-    if plan.promotion.promotion_allowed:
+def _legacy_evidence_decision_blockers(plan: PersistencePlan) -> list[str]:
+    return list(plan.promotion.evidence_blocking_reasons)
+
+
+def _reason_summary(blockers: Sequence[str]) -> str:
+    if not blockers:
         return "runtime_evidence_thresholds_satisfied"
-    return ",".join(plan.promotion.promotion_blocking_reasons)[:255]
+    return ",".join(blockers)[:255]
 
 
 def materialization_counts(
@@ -606,7 +587,7 @@ def final_summary(
         **plan.metrics.runtime_ledger_daily_summary,
         "latest_three_within_budget": plan.metrics.latest_three_budget_ok,
         "slippage_budget_bps": str(plan.context.budget),
-        **_promotion_authority_fields(plan),
+        **_evidence_policy_fields(plan),
         "promotion_blocking_reasons": plan.promotion.promotion_blocking_reasons,
         "evidence_blocking_reasons": plan.promotion.evidence_blocking_reasons,
         "proof_status": plan.promotion.proof_status,

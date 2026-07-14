@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence, cast
 
-from ..promotion_authority import (
-    capital_blocked_authority,
-    target_capital_promotion_allowed,
-    target_promotion_stage,
+from ..evidence_collection_policy import (
+    collection_blocked_policy,
+    target_evidence_admissible,
+    target_evidence_collection_stage,
 )
 from .repair_queue import (
     bool_value,
@@ -189,8 +189,9 @@ def _summarize_runtime_window_import_target(
         "handoff": _text(target.get("handoff")),
         "probation_reason": _text(target.get("probation_reason")),
         "max_notional": _text(target.get("max_notional"), "0"),
-        "promotion_stage": target_promotion_stage(target).value,
-        "capital_promotion_allowed": target_capital_promotion_allowed(target),
+        "evidence_collection_stage": target_evidence_collection_stage(target).value,
+        "evidence_admissible": target_evidence_admissible(target),
+        "capital_promotion_allowed": False,
         "promotion_blockers": promotion_blockers,
         "promotion_allowed": _bool(target.get("promotion_allowed")),
         "final_promotion_allowed": _bool(target.get("final_promotion_allowed")),
@@ -236,7 +237,7 @@ def _summarize_runtime_window_import_repair(
             "skipped_target_count": 0,
             "blocked_reasons": blocked_reasons,
             "top_targets": [],
-            **capital_blocked_authority(
+            **collection_blocked_policy(
                 blockers=["runtime_ledger_source_collection_plan_missing"],
             ).as_target_fields(),
         }
@@ -300,7 +301,7 @@ def _summarize_runtime_window_import_repair(
             for target in skipped_targets[:5]
         ],
         "diagnostic_reasons": ["runtime_window_import_required"],
-        **capital_blocked_authority(
+        **collection_blocked_policy(
             blockers=[],
         ).as_target_fields(),
     }

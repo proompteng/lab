@@ -185,7 +185,10 @@ class TestRuntimeAndDocCompletionMatricesMatch(_TestCompletionTraceBase):
         self.assertFalse(status["promotion_authority"]["final_promotion_allowed"])
         self.assertEqual(
             status["promotion_authority"]["final_promotion_blockers"],
-            ["completion_trace_not_runtime_ledger_authority"],
+            [
+                "completion_trace_not_runtime_ledger_authority",
+                "strategy_capital_authority_required",
+            ],
         )
 
     def test_doc29_completion_status_derives_empirical_jobs_gate(self) -> None:
@@ -654,7 +657,10 @@ class TestRuntimeAndDocCompletionMatricesMatch(_TestCompletionTraceBase):
         self.assertFalse(status["promotion_authority"]["final_promotion_allowed"])
         self.assertEqual(
             status["promotion_authority"]["final_promotion_blockers"],
-            ["completion_trace_not_runtime_ledger_authority"],
+            [
+                "completion_trace_not_runtime_ledger_authority",
+                "strategy_capital_authority_required",
+            ],
         )
 
     def test_runtime_ledger_daily_summary_falls_back_to_bucket_rows(self) -> None:

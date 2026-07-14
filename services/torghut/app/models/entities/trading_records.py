@@ -25,35 +25,15 @@ from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, GUID, JSONType
+from .model_mixins import CreatedAtMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from .runtime_cursors import LLMDecisionReview
+    from .strategy_capital_records import StrategyCapitalAuthorityRecord
     from .strategy_evidence import StrategyRuntimeLedgerBucket
     from .whitepaper_runtime import ExecutionTCAMetric
 
 MARKET_SYMBOL_MAX_LENGTH = 64
-
-
-class TimestampMixin:
-    """Mixin providing created_at and updated_at timestamps."""
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
-
-
-class CreatedAtMixin:
-    """Mixin providing created_at timestamp only."""
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
 
 
 class Strategy(Base, TimestampMixin):
@@ -76,14 +56,35 @@ class Strategy(Base, TimestampMixin):
     max_notional_per_trade: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True
     )
+    active_capital_authority_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        nullable=True,
+    )
 
     trade_decisions: Mapped[List["TradeDecision"]] = relationship(
         back_populates="strategy", cascade="all, delete-orphan"
     )
+    active_capital_authority: Mapped[Optional["StrategyCapitalAuthorityRecord"]] = (
+        relationship(
+            foreign_keys=[active_capital_authority_id],
+            post_update=True,
+        )
+    )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["active_capital_authority_id", "id"],
+            [
+                "strategy_capital_authorities.id",
+                "strategy_capital_authorities.strategy_id",
+            ],
+            name="fk_strategies_active_capital_authority_identity",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
         Index("ix_strategies_enabled", "enabled"),
         Index("ix_strategies_name", "name"),
+        Index("ix_strategies_active_capital_authority", "active_capital_authority_id"),
     )
 
 
@@ -117,6 +118,18 @@ class TradeDecision(Base, CreatedAtMixin):
     executed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    strategy_capital_authority_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True, deferred=True
+    )
+    strategy_capital_authority_digest: Mapped[Optional[str]] = mapped_column(
+        String(length=71), nullable=True, deferred=True
+    )
+    strategy_capital_authority_evaluated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, deferred=True
+    )
+    strategy_capital_authority_allowed: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True, deferred=True
+    )
 
     strategy: Mapped[Strategy] = relationship(back_populates="trade_decisions")
     executions: Mapped[List["Execution"]] = relationship(
@@ -132,6 +145,21 @@ class TradeDecision(Base, CreatedAtMixin):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            [
+                "strategy_capital_authority_id",
+                "strategy_capital_authority_digest",
+                "strategy_id",
+            ],
+            [
+                "strategy_capital_authorities.authority_id",
+                "strategy_capital_authorities.authority_digest",
+                "strategy_capital_authorities.strategy_id",
+            ],
+            name="fk_trade_decisions_strategy_capital_authority_identity",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
         Index("ix_trade_decisions_strategy", "strategy_id"),
         Index("ix_trade_decisions_status", "status"),
         Index("ix_trade_decisions_decision_hash", "decision_hash"),
@@ -150,6 +178,34 @@ class TradeDecision(Base, CreatedAtMixin):
             "created_at",
         ),
         Index("ix_trade_decisions_created_id", "created_at", "id"),
+        Index(
+            "ix_trade_decisions_capital_authority_usage",
+            "strategy_id",
+            "alpaca_account_label",
+            "strategy_capital_authority_evaluated_at",
+        ),
+        CheckConstraint(
+            "strategy_capital_authority_allowed IS NULL OR "
+            "strategy_capital_authority_evaluated_at IS NOT NULL",
+            name="ck_trade_decisions_capital_authority_evaluated",
+        ),
+        CheckConstraint(
+            "strategy_capital_authority_allowed IS NOT TRUE OR "
+            "(strategy_capital_authority_id IS NOT NULL AND "
+            "strategy_capital_authority_digest IS NOT NULL)",
+            name="ck_trade_decisions_capital_authority_allowed_identity",
+        ),
+        CheckConstraint(
+            "(strategy_capital_authority_id IS NULL) = "
+            "(strategy_capital_authority_digest IS NULL)",
+            name="ck_trade_decisions_capital_authority_identity_pair",
+        ),
+        CheckConstraint(
+            "strategy_capital_authority_digest IS NULL OR "
+            "(length(strategy_capital_authority_digest) = 71 AND "
+            "strategy_capital_authority_digest LIKE 'sha256:%')",
+            name="ck_trade_decisions_capital_authority_digest",
+        ),
         Index(
             "uq_trade_decisions_account_decision_hash",
             "alpaca_account_label",
@@ -879,68 +935,4 @@ class TigerBeetleTransferRef(Base, TimestampMixin):
             "ix_tigerbeetle_transfer_refs_runtime_ledger_bucket_id",
             "runtime_ledger_bucket_id",
         ),
-    )
-
-
-class TigerBeetleReconciliationRun(Base, TimestampMixin):
-    """Summary row for TigerBeetle reconciliation checks."""
-
-    __tablename__ = "tigerbeetle_reconciliation_runs"
-
-    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
-    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    finished_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
-    checked_transfer_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    missing_transfer_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    mismatched_transfer_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    source_missing_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    account_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    transfer_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    runtime_ledger_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    runtime_ledger_signed_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    runtime_ledger_missing_signed_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    runtime_ledger_missing_account_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    stable_ref_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    stable_ref_missing_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    stable_ref_mismatch_count: Mapped[int] = mapped_column(
-        BigInteger(), nullable=False, server_default=text("0")
-    )
-    blockers_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    ref_counts_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
-
-    __table_args__ = (
-        Index("ix_tigerbeetle_reconciliation_runs_cluster_id", "cluster_id"),
-        Index("ix_tigerbeetle_reconciliation_runs_status", "status"),
-        Index("ix_tigerbeetle_reconciliation_runs_started_at", "started_at"),
     )

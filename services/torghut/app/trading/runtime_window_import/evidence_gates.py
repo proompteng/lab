@@ -379,30 +379,6 @@ def delay_adjusted_depth_stress_summary(
     }
 
 
-def capital_stage_for_runtime_import(
-    *,
-    observed_stage: str,
-    promotion_allowed: bool,
-    session_samples: int,
-    manifest: HypothesisManifest,
-) -> str:
-    if observed_stage == "paper" or not promotion_allowed:
-        return "shadow"
-    if session_samples >= manifest.min_sample_count_for_scale_up:
-        return "0.50x live"
-    return "0.10x canary"
-
-
-def capital_multiplier_for_stage(stage: str) -> str:
-    return {
-        "shadow": "0",
-        "0.10x canary": "0.10",
-        "0.25x canary": "0.25",
-        "0.50x live": "0.50",
-        "1.00x live": "1.00",
-    }.get(stage, "0")
-
-
 def _runtime_window_proof_blocker_payload(
     request: RuntimeWindowProofBlockerRequest,
     code: str,

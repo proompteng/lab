@@ -491,6 +491,11 @@ def _final_profitability_truth(
     runtime_authority: Mapping[str, object], runtime_aggregate: Mapping[str, object]
 ) -> dict[str, object]:
     blockers = _text_list(runtime_authority.get("blockers"))
+    capital_blockers = _text_list(
+        runtime_authority.get("strategy_capital_authority_blockers")
+    )
+    if runtime_authority.get("final_authority_ok") is not True and not capital_blockers:
+        capital_blockers = ["strategy_capital_authority_required"]
     final_blockers = [
         code
         for code in blockers
@@ -498,6 +503,10 @@ def _final_profitability_truth(
     ]
     return {
         "authority_proof_passed": runtime_authority.get("final_authority_ok") is True,
+        "evidence_admissible": runtime_authority.get("evidence_admissible") is True,
+        "strategy_capital_authority_required": (
+            runtime_authority.get("final_authority_ok") is not True
+        ),
         "profitability_claimed_by_census": False,
         "measurement_only": True,
         "daily_post_cost_pnl_threshold": "500",
@@ -527,7 +536,7 @@ def _final_profitability_truth(
             runtime_aggregate.get("clean_authority_closed_round_trips")
         ),
         "open_position_count": _int(runtime_aggregate.get("open_position_count")),
-        "blockers": sorted(dict.fromkeys(final_blockers)),
+        "blockers": sorted(dict.fromkeys([*final_blockers, *capital_blockers])),
     }
 
 

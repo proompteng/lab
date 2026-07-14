@@ -422,7 +422,6 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -447,6 +446,8 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(session, strategy=strategy)
                 session.commit()
 
             signal = SignalEnvelope(
@@ -476,6 +477,7 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(verdict="approve"),
             )
+            self._prime_test_capital_state(pipeline.state)
 
             pipeline.run_once()
 
@@ -487,7 +489,6 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 self.assertEqual(len(executions), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
@@ -530,7 +531,6 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = False
@@ -547,6 +547,8 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(session, strategy=strategy)
                 session.commit()
 
             signal = SignalEnvelope(
@@ -575,6 +577,7 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
+            self._prime_test_capital_state(pipeline.state)
 
             pipeline.run_once()
             pipeline.run_once()
@@ -590,7 +593,6 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 self.assertEqual(len(executions), 0)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

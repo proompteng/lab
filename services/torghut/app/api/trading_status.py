@@ -22,6 +22,9 @@ from app.trading.broker_mutation_receipts.runtime_status import (
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.scheduler import TradingScheduler
 from app.trading.scheduler.runtime_health import scheduler_readiness_payload
+from app.trading.strategy_capital_authority_store import (
+    strategy_capital_authority_status,
+)
 from app.trading.submission_council import build_live_submission_gate_payload
 
 from .application import get_app, runtime_owner_for_role
@@ -152,6 +155,19 @@ def trading_status() -> dict[str, object] | Response:
             "reason_codes": ["runtime_ledger_status_unavailable"],
         },
     )
+    strategy_authorities = _read_with_session(
+        lambda session: strategy_capital_authority_status(
+            session,
+            observed_at=datetime.now(timezone.utc),
+            runtime_code_commit=BUILD_COMMIT,
+            runtime_image_digest=BUILD_IMAGE_DIGEST,
+        ),
+        unavailable={
+            "schema_version": "torghut.strategy-capital-authority-status.v1",
+            "status": "unavailable",
+            "reason_codes": ["strategy_capital_authority_status_unavailable"],
+        },
+    )
     tca = _read_with_session(
         lambda session: load_tca_summary(session, scheduler=scheduler),
         unavailable={"status": "unavailable", "reason_codes": ["tca_unavailable"]},
@@ -192,6 +208,7 @@ def trading_status() -> dict[str, object] | Response:
         "shorting_metadata": scheduler.shorting_metadata_status(),
         "tigerbeetle_ledger": tigerbeetle,
         "runtime_ledger": runtime_ledger,
+        "strategy_capital_authorities": strategy_authorities,
         "tca": tca,
         "metrics": state.metrics.to_payload(),
         "llm": scheduler.llm_status(),

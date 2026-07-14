@@ -4,6 +4,21 @@ from datetime import time
 
 from typing import Literal
 
+from app.models import EvidenceEpochRecord
+from app.strategies.catalog import extract_catalog_metadata
+from app.trading.strategy_capital_authority import (
+    AuthorityProofBindings,
+    CapitalAccountMode,
+    CapitalSessionWindow,
+    CapitalStage,
+    CapitalVenue,
+    StrategyCapitalAuthority,
+    canonical_payload_digest,
+)
+from app.trading.strategy_capital_authority_store import (
+    activate_strategy_capital_authority,
+)
+
 from tests.pipeline.trading_pipeline_support import (
     AdaptiveExecutionPolicyDecision,
     Any,
@@ -117,7 +132,6 @@ class TradingPipelineTestCaseBase(TestCase):
             for name in (
                 "trading_enabled",
                 "trading_mode",
-                "trading_mode",
                 "trading_autonomy_allow_live_promotion",
                 "trading_kill_switch_enabled",
                 "trading_universe_source",
@@ -180,8 +194,119 @@ class TradingPipelineTestCaseBase(TestCase):
         config.settings.trading_new_exposure_cutoff_time_et = time(23, 57)
         config.settings.trading_flatten_start_time_et = time(23, 58)
         config.settings.trading_flat_confirmation_time_et = time(23, 59)
+        self._capital_commit_patcher = patch(
+            "app.trading.strategy_capital_runtime.BUILD_COMMIT",
+            "a" * 40,
+        )
+        self._capital_image_patcher = patch(
+            "app.trading.strategy_capital_runtime.BUILD_IMAGE_DIGEST",
+            "sha256:" + "a" * 64,
+        )
+        self._capital_commit_patcher.start()
+        self._capital_image_patcher.start()
+
+    def _activate_test_capital_authority(
+        self,
+        session: Session,
+        *,
+        strategy: Strategy,
+        account_mode: Literal["paper", "live"] = "paper",
+        account_label: str | None = None,
+        symbols: Sequence[str] | None = None,
+    ) -> StrategyCapitalAuthority:
+        """Issue an explicit bounded grant for tests that intentionally submit."""
+
+        now = datetime.now(timezone.utc)
+        digest = "sha256:" + "a" * 64
+        evidence_epoch_id = f"tee-{uuid4().hex}"
+        evidence_fresh_until = now + timedelta(hours=2)
+        evidence_stage_scope = "paper" if account_mode == "paper" else "live"
+        evidence_decision = (
+            "paper_allowed" if account_mode == "paper" else "live_allowed"
+        )
+        evidence_payload = {
+            "schema_version": "torghut.evidence-epoch.v1",
+            "evidence_epoch_id": evidence_epoch_id,
+            "account_label": account_label or account_mode,
+            "stage_scope": evidence_stage_scope,
+            "created_at": now.isoformat(),
+            "fresh_until": evidence_fresh_until.isoformat(),
+            "decision": evidence_decision,
+            "reason_codes": [],
+            "receipt_ids": [],
+            "receipts": [],
+        }
+        session.add(
+            EvidenceEpochRecord(
+                evidence_epoch_id=evidence_epoch_id,
+                account_label=account_label or account_mode,
+                stage_scope=evidence_stage_scope,
+                decision=evidence_decision,
+                fresh_until=evidence_fresh_until,
+                reason_codes_json=[],
+                receipt_ids_json=[],
+                payload_json=evidence_payload,
+            )
+        )
+        candidate_ref = str(
+            extract_catalog_metadata(strategy.description).get("strategy_id")
+            or strategy.name
+        ).strip()
+        authority = StrategyCapitalAuthority(
+            authority_id=f"test-{strategy.name}-{account_mode}-v1",
+            strategy_ref=strategy.name,
+            candidate_ref=candidate_ref,
+            evidence_epoch_id=evidence_epoch_id,
+            stage=(
+                CapitalStage.PAPER_PROBATION
+                if account_mode == "paper"
+                else CapitalStage.CAPITAL_ALLOWED
+            ),
+            account_label=account_label or account_mode,
+            account_mode=CapitalAccountMode(account_mode),
+            venue=CapitalVenue.ALPACA,
+            allowed_symbols=tuple(symbols or strategy.universe_symbols or ()),
+            max_order_notional=Decimal("1000000"),
+            max_gross_notional=Decimal("10000000"),
+            max_net_notional=Decimal("10000000"),
+            max_loss=Decimal("1000000"),
+            max_orders_per_minute=100,
+            max_orders_per_session=10000,
+            session=CapitalSessionWindow(
+                timezone_name="UTC",
+                weekdays=(0, 1, 2, 3, 4, 5, 6),
+                start=time(0, 0),
+                end=time(23, 59, 59),
+            ),
+            issued_at=now - timedelta(hours=1),
+            expires_at=now + timedelta(hours=1),
+            proofs=AuthorityProofBindings(
+                policy_digest=digest,
+                evidence_digest=canonical_payload_digest(evidence_payload),
+                code_commit="a" * 40,
+                image_digest=digest,
+                data_digest=digest,
+                execution_digest=digest,
+            ),
+            issued_by="test-research-owner",
+            approved_by="test-risk-owner",
+            reduce_only=False,
+        )
+        activate_strategy_capital_authority(
+            session,
+            strategy=strategy,
+            authority=authority,
+        )
+        return authority
+
+    @staticmethod
+    def _prime_test_capital_state(state: TradingState) -> None:
+        state.capital_daily_start_equity = Decimal("100000")
+        state.capital_current_equity = Decimal("100000")
 
     def tearDown(self) -> None:
+        self._capital_image_patcher.stop()
+        self._capital_commit_patcher.stop()
         from app import config
 
         for name, value in self._settings_snapshot.items():

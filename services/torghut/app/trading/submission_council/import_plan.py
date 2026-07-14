@@ -6,10 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from app.trading.promotion_authority import (
-    capital_blocked_authority,
-    paper_probation_authority,
-    source_collection_authority,
+from app.trading.evidence_collection_policy import (
+    collection_blocked_policy,
+    paper_probation_policy,
+    source_collection_policy,
 )
 
 from .common import (
@@ -309,12 +309,12 @@ def runtime_ledger_base_import_target(
         bounded_probe_payload.get("bounded_evidence_collection_authorized")
     )
     authority = (
-        source_collection_authority(
+        source_collection_policy(
             blockers=candidate.final_blockers,
             bounded_live_paper_collection_authorized=bounded_probe_authorized,
         )
         if candidate.source_collection
-        else paper_probation_authority(
+        else paper_probation_policy(
             blockers=candidate.final_blockers,
             bounded_live_paper_collection_authorized=bounded_probe_authorized,
         )
@@ -501,21 +501,21 @@ def runtime_ledger_import_plan_payload(
         for target in targets
     )
     if source_collection_target_count:
-        authority = source_collection_authority(
+        authority = source_collection_policy(
             blockers=list(_RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS),
             bounded_live_paper_collection_authorized=(
                 bounded_live_paper_collection_authorized
             ),
         )
     elif paper_probation_target_count:
-        authority = paper_probation_authority(
+        authority = paper_probation_policy(
             blockers=list(_RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS),
             bounded_live_paper_collection_authorized=(
                 bounded_live_paper_collection_authorized
             ),
         )
     else:
-        authority = capital_blocked_authority(
+        authority = collection_blocked_policy(
             blockers=["runtime_ledger_paper_probation_import_targets_missing"],
         )
     return {
@@ -658,7 +658,7 @@ def bounded_paper_route_manifest_collection_targets(
                 ],
                 "proof_mode": "probation",
                 "canary_collection_authorized": False,
-                **source_collection_authority(
+                **source_collection_policy(
                     blockers=list(_BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS),
                     bounded_live_paper_collection_authorized=True,
                 ).as_target_fields(),
@@ -718,7 +718,7 @@ def with_bounded_paper_route_manifest_collection_targets(
         for target in targets
     )
     merged_plan.update(
-        source_collection_authority(
+        source_collection_policy(
             blockers=list(_BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS),
             bounded_live_paper_collection_authorized=bool(
                 merged_plan["bounded_live_paper_collection_authorized"]

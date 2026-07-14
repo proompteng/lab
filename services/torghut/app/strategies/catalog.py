@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -29,6 +30,15 @@ from ..models import Strategy
 from ..trading.strategy_specs import (
     build_compiled_strategy_artifacts,
     strategy_type_supports_spec_v2,
+)
+from ..trading.strategy_capital_authority import (
+    BROKER_RISK_STAGES,
+    CapitalStage,
+    StrategyCapitalAuthority,
+    quarantined_strategy_capital_authority,
+)
+from ..trading.strategy_capital_authority_store import (
+    activate_strategy_capital_authority,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +67,7 @@ class StrategyConfig(BaseModel):
     )
     max_position_pct_equity: Decimal | None = None
     max_notional_per_trade: Decimal | None = None
+    capital_authority: StrategyCapitalAuthority | None = None
 
     @field_validator("universe_symbols", mode="before")
     @classmethod
@@ -75,6 +86,26 @@ class StrategyConfig(BaseModel):
 
         if not self.name:
             raise ValueError("strategy.name is required; provide name or strategy_id")
+        if (
+            self.capital_authority is not None
+            and self.capital_authority.strategy_ref != self.name
+        ):
+            raise ValueError("capital_authority.strategy_ref must equal strategy.name")
+        if (
+            not self.enabled
+            and self.capital_authority is not None
+            and self.capital_authority.stage in BROKER_RISK_STAGES
+        ):
+            raise ValueError("disabled strategy cannot carry broker capital authority")
+        if (
+            self.capital_authority is not None
+            and self.capital_authority.stage in BROKER_RISK_STAGES
+            and self.capital_authority.candidate_ref != (strategy_id or self.name)
+        ):
+            raise ValueError(
+                "broker capital_authority.candidate_ref must equal the exact "
+                "catalog strategy_id or strategy name"
+            )
 
         strategy_type = (self.strategy_type or "").strip()
         if self.universe_type == "static" and strategy_type:
@@ -128,7 +159,10 @@ class StrategyCatalog:
 
         if not self.path.exists():
             logger.warning("Strategy catalog not found path=%s", self.path)
-            return False
+            return self._quarantine_after_refresh_failure(
+                session,
+                failure="catalog_file_unavailable",
+            )
 
         try:
             raw, payload = _load_catalog_payload(self.path)
@@ -146,14 +180,20 @@ class StrategyCatalog:
             logger.warning(
                 "Strategy catalog load failed path=%s error=%s", self.path, exc
             )
-            return False
+            return self._quarantine_after_refresh_failure(
+                session,
+                failure="catalog_payload_invalid",
+            )
 
         try:
             applied = _apply_catalog(session, catalog, mode=self.mode)
-        except Exception:
+        except (SQLAlchemyError, ValueError):
             session.rollback()
             logger.exception("Strategy catalog apply failed path=%s", self.path)
-            return False
+            return self._quarantine_after_refresh_failure(
+                session,
+                failure="catalog_apply_failed",
+            )
 
         self._last_digest = digest
         if applied:
@@ -164,6 +204,29 @@ class StrategyCatalog:
                 self.mode,
             )
         return applied > 0
+
+    def _quarantine_after_refresh_failure(
+        self,
+        session: Session,
+        *,
+        failure: str,
+    ) -> bool:
+        self._last_digest = None
+        try:
+            changed = _quarantine_catalog_authorities(session)
+        except (SQLAlchemyError, ValueError) as exc:
+            session.rollback()
+            raise RuntimeError(
+                "strategy catalog failed and active capital authorities could not "
+                "be quarantined"
+            ) from exc
+        logger.error(
+            "Strategy catalog fail-closed path=%s failure=%s quarantined=%s",
+            self.path,
+            failure,
+            changed,
+        )
+        return changed > 0
 
 
 def _load_catalog_payload(path: Path) -> tuple[str, Any]:
@@ -210,10 +273,12 @@ def _map_strategy_type_to_universe_type(strategy_type: str) -> str:
 def _apply_catalog(
     session: Session, catalog: StrategyCatalogConfig, mode: Literal["merge", "sync"]
 ) -> int:
-    existing = {
-        strategy.name: strategy
-        for strategy in session.execute(select(Strategy)).scalars().all()
-    }
+    existing_rows = session.execute(select(Strategy)).scalars().all()
+    existing: dict[str, Strategy] = {}
+    for strategy in existing_rows:
+        if strategy.name in existing:
+            raise ValueError(f"duplicate persisted strategy name: {strategy.name}")
+        existing[strategy.name] = strategy
     seen: set[str] = set()
     updated = 0
 
@@ -236,17 +301,61 @@ def _apply_catalog(
         strategy.universe_symbols = config.universe_symbols or None
         strategy.max_position_pct_equity = config.max_position_pct_equity
         strategy.max_notional_per_trade = config.max_notional_per_trade
+        authority = config.capital_authority
+        if authority is None:
+            suffix = hashlib.sha256(strategy_name.encode("utf-8")).hexdigest()[:20]
+            authority = quarantined_strategy_capital_authority(
+                strategy_ref=strategy_name,
+                reason="catalog_authority_missing",
+                authority_id=f"catalog-missing-{suffix}-v1",
+            )
+        activate_strategy_capital_authority(
+            session,
+            strategy=strategy,
+            authority=authority,
+        )
         updated += 1
 
     if mode == "sync":
         for name, strategy in existing.items():
-            if name not in seen and strategy.enabled:
+            if name not in seen:
                 strategy.enabled = False
+                suffix = hashlib.sha256(name.encode("utf-8")).hexdigest()[:20]
+                activate_strategy_capital_authority(
+                    session,
+                    strategy=strategy,
+                    authority=StrategyCapitalAuthority(
+                        authority_id=f"catalog-sync-disabled-{suffix}-v1",
+                        strategy_ref=name,
+                        stage=CapitalStage.DISABLED,
+                        blockers=("catalog_sync_disabled",),
+                    ),
+                )
                 updated += 1
 
     if updated:
         session.commit()
     return updated
+
+
+def _quarantine_catalog_authorities(session: Session) -> int:
+    strategies = session.execute(select(Strategy)).scalars().all()
+    changed = 0
+    for strategy in strategies:
+        suffix = hashlib.sha256(str(strategy.id).encode("utf-8")).hexdigest()[:20]
+        prior_id = strategy.active_capital_authority_id
+        record = activate_strategy_capital_authority(
+            session,
+            strategy=strategy,
+            authority=quarantined_strategy_capital_authority(
+                strategy_ref=strategy.name,
+                reason="catalog_authority_refresh_failed",
+                authority_id=f"catalog-fail-closed-{suffix}-v1",
+            ),
+        )
+        changed += int(prior_id != record.id)
+    session.commit()
+    return changed
 
 
 def extract_catalog_metadata(description: str | None) -> dict[str, Any]:

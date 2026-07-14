@@ -79,7 +79,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
@@ -115,6 +114,13 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -143,6 +149,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
+            self._prime_test_capital_state(pipeline.state)
             pipeline._is_market_session_open = lambda _now=None: True
 
             self._seed_promotion_certificate_evidence()
@@ -168,7 +175,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 self.assertGreaterEqual(executions[0].submitted_qty, Decimal("1"))
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
@@ -254,7 +260,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
@@ -284,6 +289,13 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -311,6 +323,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 account_label="live",
                 session_factory=self.session_local,
             )
+            self._prime_test_capital_state(pipeline.state)
             pipeline._is_market_session_open = lambda _now=None: True
 
             self._seed_promotion_certificate_evidence()
@@ -335,7 +348,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 self.assertEqual(len(executions), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
@@ -779,7 +791,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
@@ -802,6 +813,13 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -829,6 +847,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 account_label="live",
                 session_factory=self.session_local,
             )
+            self._prime_test_capital_state(pipeline.state)
             pipeline._is_market_session_open = lambda _now=None: True
 
             self._seed_promotion_certificate_evidence()
@@ -842,7 +861,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             self.assertEqual(len(executions), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"

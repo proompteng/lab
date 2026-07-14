@@ -389,9 +389,8 @@ class TradingPipelineInteractions(Protocol):
     def _submit_decision_execution(
         self,
         *,
-        session: Session,
+        context: DecisionSubmissionContext,
         decision: StrategyDecision,
-        decision_row: TradeDecision,
         policy_outcome: ExecutionPolicyOutcome,
     ) -> bool: ...
 

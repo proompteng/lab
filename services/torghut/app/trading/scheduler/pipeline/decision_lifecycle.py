@@ -417,9 +417,8 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineRuntime):
                     decision_row=decision_row,
                 )
                 or not self._submit_decision_execution(
-                    session=context.session,
+                    context=submission_context,
                     decision=decision,
-                    decision_row=decision_row,
                     policy_outcome=policy_outcome,
                 )
             ):

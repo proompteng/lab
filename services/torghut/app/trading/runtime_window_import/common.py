@@ -15,7 +15,6 @@ from ...models import (
 from ..hypotheses import (
     HypothesisManifest,
 )
-from ..promotion_authority import target_capital_promotion_allowed
 from ..runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
 from ..runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
@@ -59,7 +58,7 @@ _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
 
 RUNTIME_WINDOW_IMPORT_CAPITAL_ONLY_BLOCKERS = frozenset(
     {
-        "capital_promotion_not_allowed",
+        "strategy_capital_authority_required",
         "drift_checks_not_ok",
         "live_runtime_ledger_required",
         "paper_probation_evidence_collection_only",
@@ -662,17 +661,17 @@ def paper_probation_blocking_reasons(runtime_payload: Mapping[str, Any]) -> list
     reasons.extend(
         target_blockers(target_metadata.get("runtime_ledger_target_metadata_blockers"))
     )
-    if not target_metadata:
-        return list(dict.fromkeys(reasons))
-
-    paper_probation_authorized = observation_bool(
-        target_metadata.get("paper_probation_authorized")
-    )
-    evidence_collection_stage = text_value(
-        target_metadata.get("evidence_collection_stage")
-    )
-    if paper_probation_authorized is True and evidence_collection_stage == "paper":
-        reasons.append("paper_probation_evidence_collection_only")
-    if not target_capital_promotion_allowed(target_metadata):
-        reasons.append("capital_promotion_not_allowed")
+    if target_metadata:
+        paper_probation_authorized = observation_bool(
+            target_metadata.get("paper_probation_authorized")
+        )
+        evidence_collection_stage = text_value(
+            target_metadata.get("evidence_collection_stage")
+        )
+        if paper_probation_authorized is True and evidence_collection_stage in {
+            "paper",
+            "paper_probation",
+        }:
+            reasons.append("paper_probation_evidence_collection_only")
+    reasons.append("strategy_capital_authority_required")
     return list(dict.fromkeys(reasons))
