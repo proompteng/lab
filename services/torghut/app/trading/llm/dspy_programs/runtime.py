@@ -322,20 +322,31 @@ class DSPyReviewRuntime:
                 "dspy_artifact_missing_reproducibility_fields"
             )
 
-        computed_hash = hash_payload(
-            {
-                "program_name": program_name,
-                "signature_versions": signature_versions,
-                "optimizer": row.optimizer,
-                "dataset_hash": row.dataset_hash,
-                "compiled_prompt_hash": row.compiled_prompt_hash,
-                "compiled_artifact_uri": canonical_artifact_uri_for_hash(
-                    row.artifact_uri
-                ),
-                "reproducibility_hash": row.reproducibility_hash,
-            }
-        )
-        if computed_hash != artifact_hash:
+        hash_payload_base = {
+            "program_name": program_name,
+            "signature_versions": signature_versions,
+            "optimizer": row.optimizer,
+            "dataset_hash": row.dataset_hash,
+            "compiled_prompt_hash": row.compiled_prompt_hash,
+            "reproducibility_hash": row.reproducibility_hash,
+        }
+        accepted_hashes = {
+            hash_payload(
+                {
+                    **hash_payload_base,
+                    "compiled_artifact_uri": canonical_artifact_uri_for_hash(
+                        row.artifact_uri
+                    ),
+                }
+            ),
+            hash_payload(
+                {
+                    **hash_payload_base,
+                    "compiled_artifact_uri": row.artifact_uri,
+                }
+            ),
+        }
+        if artifact_hash not in accepted_hashes:
             raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_mismatch")
 
         metadata: dict[str, Any] = {}

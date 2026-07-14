@@ -8,6 +8,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.config import settings
+from app.trading.llm.dspy_compile.hashing import hash_payload
 from app.trading.llm.dspy_programs.runtime import (
     DSPyArtifactManifest,
     DSPyReviewRuntime,
@@ -26,6 +27,30 @@ from app.trading.llm.dspy_programs.signatures import DSPyTradeReviewOutput
 
 
 class TestLLMDSPyRuntime(TestCase):
+    @staticmethod
+    def _fake_session_context(row: SimpleNamespace) -> object:
+        class _FakeResult:
+            def scalars(self) -> "_FakeResult":
+                return self
+
+            def first(self) -> SimpleNamespace:
+                return row
+
+        class _FakeSession:
+            def execute(self, _query: Any) -> _FakeResult:
+                return _FakeResult()
+
+        class _FakeSessionContext:
+            def __enter__(self) -> _FakeSession:
+                return _FakeSession()
+
+            def __exit__(
+                self, exc_type: object, exc: object, tb: object
+            ) -> bool | None:
+                return None
+
+        return _FakeSessionContext()
+
     def _enable_live_runtime_gate(
         self,
         *,
@@ -599,6 +624,49 @@ class TestLLMDSPyRuntime(TestCase):
                 runtime._load_manifest_from_db(artifact_hash)
 
         self.assertIn("dspy_artifact_executor_missing", str(exc.exception))
+
+    def test_load_manifest_accepts_legacy_local_artifact_uri_hash(self) -> None:
+        artifact_uri = "/workspace/legacy/compile/dspy-compiled-program.json"
+        row = SimpleNamespace(
+            artifact_uri=artifact_uri,
+            reproducibility_hash="b" * 64,
+            optimizer="miprov2",
+            dataset_hash="c" * 64,
+            compiled_prompt_hash="d" * 64,
+            signature_version="trade_review:v1",
+            program_name="trade-review-committee-v1",
+            gate_compatibility="pass",
+            metadata_json={"executor": "dspy_live"},
+        )
+        artifact_hash = hash_payload(
+            {
+                "program_name": row.program_name,
+                "signature_versions": {"trade_review": "v1"},
+                "optimizer": row.optimizer,
+                "dataset_hash": row.dataset_hash,
+                "compiled_prompt_hash": row.compiled_prompt_hash,
+                "compiled_artifact_uri": artifact_uri,
+                "reproducibility_hash": row.reproducibility_hash,
+            }
+        )
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash=artifact_hash,
+            program_name=row.program_name,
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+
+        with patch(
+            "app.db.SessionLocal",
+            return_value=self._fake_session_context(row),
+        ):
+            manifest = runtime._load_manifest_from_db(artifact_hash)
+
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        self.assertEqual(manifest.artifact_hash, artifact_hash)
+        self.assertEqual(manifest.executor, "dspy_live")
 
     def test_active_readiness_rejects_heuristic_executor(self) -> None:
         original_base = settings.jangar_base_url
