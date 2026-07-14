@@ -58,10 +58,6 @@
       "types": "./dist/src/workflow/index.d.ts",
       "default": "./dist/src/workflow/index.js"
     },
-    "./workflow/runtime": {
-      "types": "./dist/src/workflow/runtime/index.d.ts",
-      "default": "./dist/src/workflow/runtime/index.js"
-    },
     "./worker": {
       "types": "./dist/src/worker.d.ts",
       "default": "./dist/src/worker.js"
