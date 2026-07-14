@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, nullcontext
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 import threading
 from types import SimpleNamespace
 from typing import cast
@@ -20,6 +20,7 @@ from app.options_lane.archive_model import (
 )
 from app.options_lane.archive_repository import (
     ArchiveCheckpoint,
+    ArchiveFailure,
     ArchiveLeaseLostError,
     ArchiveStateError,
     OptionsArchiveRepository,
@@ -460,6 +461,55 @@ def test_page_checkpoint_persists_exact_membership_and_next_cursor() -> None:
         "AAPL-CONTRACT",
         "MSFT-CONTRACT",
     ]
+
+
+def test_record_failure_retains_cursor_and_caps_exponential_backoff() -> None:
+    fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
+    observed_at = datetime(2026, 7, 14, 12, tzinfo=UTC)
+    session = _ArchiveSession()
+    repository = _ArchiveRepository(
+        row=_watermark_row(
+            fingerprint=fingerprint,
+            status="running",
+            cursor="page-4",
+            page_count=4,
+            seen_count=30_000,
+            retry_count=3,
+        ),
+        membership_count=30_000,
+        session=session,
+    )
+
+    failed = repository.record_failure(
+        checkpoint=ArchiveCheckpoint(
+            shard=_shard(),
+            query_fingerprint=fingerprint,
+            status="running",
+            cursor="page-4",
+            page_count=4,
+            seen_count=30_000,
+            retry_count=3,
+            next_eligible_at=None,
+            last_success_at=None,
+        ),
+        observed_at=observed_at,
+        failure=ArchiveFailure(
+            error_code="provider_timeout",
+            error_detail="request timed out",
+            retry_base_seconds=10,
+            retry_max_seconds=30,
+        ),
+    )
+
+    assert failed.status == "retry"
+    assert failed.cursor == "page-4"
+    assert failed.retry_count == 4
+    assert failed.next_eligible_at == observed_at + timedelta(seconds=30)
+    update_sql, update_parameters = session.calls[-1]
+    assert "UPDATE torghut_options_watermarks" in update_sql
+    assert isinstance(update_parameters, dict)
+    assert update_parameters["retry_count"] == 4
+    assert "provider_timeout" in str(update_parameters["metadata"])
 
 
 def test_finalize_is_exactly_shard_scoped_and_cleans_membership() -> None:
