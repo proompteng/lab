@@ -10,10 +10,68 @@ from app.trading.llm.dspy_compile import (
     build_compile_result,
     evaluate_dspy_compile_artifact,
 )
-from app.trading.llm.dspy_compile.hashing import canonical_json
+from app.trading.llm.dspy_compile.hashing import canonical_json, hash_payload
 
 
 class TestLLMDSPyEval(TestCase):
+    def test_eval_accepts_legacy_local_artifact_uri_hash(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact_uri = str(root / "compile" / "dspy-compiled-program.json")
+            compile_result = build_compile_result(
+                program_name="trade-review-committee-v1",
+                signature_versions={"trade_review": "v1"},
+                optimizer="miprov2",
+                dataset_payload={"rows": [{"rowId": "row-1", "split": "train"}]},
+                metric_bundle={"schema_valid_rate": 1.0},
+                compiled_prompt_payload={"promptTemplate": "torghut.dspy.trade-review.v1"},
+                compiled_artifact_uri=artifact_uri,
+                seed="seed-1",
+                created_at=datetime(2026, 2, 27, 12, 0, tzinfo=timezone.utc),
+            )
+            payload = compile_result.model_dump(mode="json", by_alias=True)
+            payload["artifactHash"] = hash_payload(
+                {
+                    "program_name": compile_result.program_name,
+                    "signature_versions": dict(compile_result.signature_versions),
+                    "optimizer": compile_result.optimizer,
+                    "dataset_hash": compile_result.dataset_hash,
+                    "compiled_prompt_hash": compile_result.compiled_prompt_hash,
+                    "compiled_artifact_uri": artifact_uri,
+                    "reproducibility_hash": compile_result.reproducibility_hash,
+                }
+            )
+            compile_result_path = root / "compile" / "dspy-compile-result.json"
+            compile_result_path.parent.mkdir(parents=True, exist_ok=True)
+            compile_result_path.write_text(
+                canonical_json(payload) + "\n",
+                encoding="utf-8",
+            )
+            gate_policy_path = root / "gate-policy.yaml"
+            gate_policy_path.write_text(
+                "schemaVersion: torghut.dspy.gate-policy.v1\npolicy: {}\n",
+                encoding="utf-8",
+            )
+
+            result = evaluate_dspy_compile_artifact(
+                repository="proompteng/lab",
+                base="main",
+                head="codex/dspy-eval-test",
+                artifact_path=root / "eval",
+                compile_result_ref=str(compile_result_path),
+                gate_policy_ref=str(gate_policy_path),
+                created_at=datetime(2026, 2, 27, 12, 5, tzinfo=timezone.utc),
+            )
+
+            compatibility = result.eval_report.metric_bundle[
+                "deterministicCompatibility"
+            ]
+            self.assertTrue(compatibility["artifactHashMatches"])
+            self.assertNotIn(
+                "deterministic_artifact_hash_mismatch",
+                compatibility["failures"],
+            )
+
     def test_eval_report_passes_when_thresholds_are_met(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

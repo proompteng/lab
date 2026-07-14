@@ -383,20 +383,32 @@ def _evaluate_deterministic_compatibility(
         if not _required_key_present(key=key, compile_result=compile_result)
     )
 
+    artifact_hash_payload = {
+        "program_name": compile_result.program_name,
+        "signature_versions": dict(compile_result.signature_versions),
+        "optimizer": compile_result.optimizer,
+        "dataset_hash": compile_result.dataset_hash,
+        "compiled_prompt_hash": compile_result.compiled_prompt_hash,
+        "reproducibility_hash": compile_result.reproducibility_hash,
+    }
     recomputed_artifact_hash = hash_payload(
         {
-            "program_name": compile_result.program_name,
-            "signature_versions": dict(compile_result.signature_versions),
-            "optimizer": compile_result.optimizer,
-            "dataset_hash": compile_result.dataset_hash,
-            "compiled_prompt_hash": compile_result.compiled_prompt_hash,
+            **artifact_hash_payload,
             "compiled_artifact_uri": canonical_artifact_uri_for_hash(
                 compile_result.compiled_artifact_uri
             ),
-            "reproducibility_hash": compile_result.reproducibility_hash,
         }
     )
-    artifact_hash_matches = recomputed_artifact_hash == compile_result.artifact_hash
+    legacy_artifact_hash = hash_payload(
+        {
+            **artifact_hash_payload,
+            "compiled_artifact_uri": compile_result.compiled_artifact_uri,
+        }
+    )
+    artifact_hash_matches = compile_result.artifact_hash in {
+        recomputed_artifact_hash,
+        legacy_artifact_hash,
+    }
 
     failures: list[str] = []
     if missing_keys:
