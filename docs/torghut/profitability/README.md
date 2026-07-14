@@ -37,6 +37,8 @@ readback. The audit snapshot records what was observed at its stated time.
   enforcement, evidence separation, catalog baseline, and live proof contract.
 - [Implementation roadmap](implementation-roadmap.md): ordered PR-sized delivery slices, tests, rollout proof,
   dependencies, and rollback posture.
+- [Slice 3 production evidence](evidence/slice-03-autoresearch-completion-2026-07-14.md): committed revision, CI and
+  image chain, GitOps rollout, deployed candidate-processing exercise, safety readback, and unresolved deltas.
 
 ## Current Decision
 
