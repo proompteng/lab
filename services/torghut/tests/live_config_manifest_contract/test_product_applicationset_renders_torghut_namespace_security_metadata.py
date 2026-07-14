@@ -116,6 +116,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         config_data = cast(Mapping[str, object], data)
 
         self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_BATCH_SIZE"), "1000")
+        self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_FLUSH_MS"), "5000")
         self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_SINK_PARALLELISM"), "1")
 
         deployment = _load_yaml_mapping(
