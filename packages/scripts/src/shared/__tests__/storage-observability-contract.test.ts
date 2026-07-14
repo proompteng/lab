@@ -47,6 +47,7 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
     'torghut_postgres:requested_checkpoint_ratio:rate1h',
     'ceph_storage:osd_commit_latency_ms:max',
     'ceph_storage:pool_write_bytes_per_second:rate5m',
+    'ceph_storage:scrubbing_pgs:sum',
     'ceph_storage:rbd_pod_write_bytes_per_second:rate5m',
     'ceph_storage:rbd_pod_write_iops:rate5m',
     'alert: TorghutPostgresMetricsMissing',
@@ -70,6 +71,8 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
 
   expect(rules).toContain('max(ceph_osd_flag_noscrub{job="ceph-storage"}) > 0 or')
   expect(rules).toContain('max(ceph_osd_flag_nodeep_scrub{job="ceph-storage"}) > 0')
+  expect(rules).toContain('expr: sum(ceph_pg_scrubbing{job="ceph-storage"})')
+  expect(rules).not.toContain('sum(ceph_pg_scrubbing{job="ceph-storage"}) +')
   expect(rules).toContain(
     'sum(\n                increase(\n                  cnpg_pg_stat_checkpointer_checkpoints_req{',
   )

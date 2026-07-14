@@ -48,6 +48,7 @@ it('rolls OSDs when scrub configuration changes', () => {
 
   expect(values).toContain('osd_scrub_auto_repair: "true"')
   expect(values).toContain('osd_scrub_auto_repair_num_errors: "5"')
+  expect(values).toContain('osd_max_scrubs: "1"')
   expect(kustomization).toContain('path: cephcluster-osd-config-rollout.yaml')
   expect(kustomization).toContain('kind: CephCluster')
   expect(kustomization).toContain('name: rook-ceph')

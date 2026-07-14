@@ -239,9 +239,9 @@ data:
           - record: ceph_storage:pool_read_bytes_per_second:rate5m
             expr: sum(rate(ceph_pool_rd_bytes{job="ceph-storage"}[5m]))
           - record: ceph_storage:scrubbing_pgs:sum
-            expr: |
-              sum(ceph_pg_scrubbing{job="ceph-storage"}) +
-              sum(ceph_pg_deep{job="ceph-storage"})
+            # ceph_pg_deep is a subset of ceph_pg_scrubbing. Adding both counts
+            # every deep-scrubbing PG twice and overstates live concurrency.
+            expr: sum(ceph_pg_scrubbing{job="ceph-storage"})
           - record: ceph_storage:rbd_pod_write_bytes_per_second:rate5m
             expr: |
               sum by (namespace, pod, device) (
