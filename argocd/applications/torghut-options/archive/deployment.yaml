@@ -22,7 +22,7 @@ spec:
       annotations:
         # Bump with archive ConfigMap changes so GitOps starts a pod with the
         # new write budget instead of leaving the existing env snapshot alive.
-        proompteng.ai/config-revision: archive-finalize-write-budget-20260713a
+        proompteng.ai/config-revision: archive-finalize-write-budget-20260714b
     spec:
       terminationGracePeriodSeconds: 45
       nodeSelector:
