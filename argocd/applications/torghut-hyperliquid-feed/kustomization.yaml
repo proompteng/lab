@@ -6,5 +6,7 @@ resources:
   - clickhouse-schema-configmap.yaml
   - clickhouse-schema-job.yaml
   - deployment.yaml
+  - writer-deployment.yaml
   - service.yaml
+  - writer-service.yaml
   - pdb.yaml

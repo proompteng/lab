@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-hyperliquid-clickhouse-writer
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app: torghut-hyperliquid-clickhouse-writer
+spec:
+  # Activated only after the new image, staging schema, and consumer-group
+  # lineage checks are live. The direct sink remains authoritative meanwhile.
+  replicas: 0
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-hyperliquid-clickhouse-writer
+  template:
+    metadata:
+      labels:
+        app: torghut-hyperliquid-clickhouse-writer
+    spec:
+      serviceAccountName: torghut-runtime
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-hyperliquid-clickhouse-writer
+          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:40598685cc3298597be18666959510683789d1c59521f089724a7a3724198ec1
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: torghut-hyperliquid-feed-config
+          env:
+            - name: TORGHUT_HYPERLIQUID_MODE
+              value: clickhouse-writer
+            - name: TORGHUT_HYPERLIQUID_FEED_VERSION
+              value: main-sha-bf6d10ebebc63e55322a5d4d08a2c4f8b20c7bcf
+            - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
+              value: bf6d10ebebc63e55322a5d4d08a2c4f8b20c7bcf
+            - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
+              value: sha256:40598685cc3298597be18666959510683789d1c59521f089724a7a3724198ec1
+            - name: KAFKA_SASL_USER
+              value: torghut-hyperliquid-feed
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-hyperliquid-feed
+                  key: password
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: JAVA_TOOL_OPTIONS
+              value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=30.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
