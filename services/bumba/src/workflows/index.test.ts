@@ -120,6 +120,31 @@ test('publishMainMergeMemoryNote delegates durable delivery to a retrying activi
   expect(intent.timeouts.scheduleToCloseTimeoutMs).toBe(7 * 24 * 60 * 60 * 1_000)
 })
 
+test('reconcileAtlasRepository schedules one bounded full-repository activity', async () => {
+  const { executor, dataConverter } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab',
+    repository: 'proompteng/lab',
+    ref: 'main',
+    commit: 'abcdef1234567890abcdef1234567890abcdef1234',
+  }
+
+  const output = await execute(executor, { workflowType: 'reconcileAtlasRepository', arguments: input })
+
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toHaveLength(1)
+  const schedule = output.commands[0]
+  expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
+  if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected Atlas reconciliation activity command.')
+  }
+  const attributes = schedule.attributes.value
+  expect(attributes.activityType?.name).toBe('reconcileAtlasRepository')
+  expect(Number(attributes.startToCloseTimeout?.seconds ?? 0n)).toBe(24 * 60 * 60)
+  expect(Number(attributes.scheduleToCloseTimeout?.seconds ?? 0n)).toBe(3 * 24 * 60 * 60)
+  expect(await decodePayloadsToValues(dataConverter, attributes.input?.payloads ?? [])).toEqual([input])
+})
+
 test('enrichFile schedules the first activity and blocks', async () => {
   const { executor, dataConverter } = makeExecutor()
   const input = {
@@ -303,7 +328,9 @@ test('enrichFile marks ingestion failed when initial upsertIngestion fails', asy
     (entry) => entry.intent.kind === 'schedule-activity' && entry.intent.activityType === 'upsertIngestion',
   )
   expect(upsertIntents).toHaveLength(2)
-  expect((upsertIntents[1]?.intent as { input: unknown[] }).input).toEqual([
+  const failedUpsert = upsertIntents[1]
+  if (!failedUpsert) throw new Error('expected failed ingestion upsert')
+  expect((failedUpsert.intent as { input: unknown[] }).input).toEqual([
     {
       deliveryId: input.eventDeliveryId,
       workflowId: 'test-workflow-id',
@@ -1287,7 +1314,9 @@ test('enrichRepository marks ingestion failed when initial upsertIngestion fails
     (entry) => entry.intent.kind === 'schedule-activity' && entry.intent.activityType === 'upsertIngestion',
   )
   expect(upsertIntents).toHaveLength(2)
-  expect((upsertIntents[1]?.intent as { input: unknown[] }).input).toEqual([
+  const failedUpsert = upsertIntents[1]
+  if (!failedUpsert) throw new Error('expected failed ingestion upsert')
+  expect((failedUpsert.intent as { input: unknown[] }).input).toEqual([
     {
       deliveryId: input.eventDeliveryId,
       workflowId: 'test-workflow-id',

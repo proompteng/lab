@@ -578,6 +578,7 @@
       "name": "@proompteng/scripts",
       "version": "0.1.0",
       "dependencies": {
+        "@proompteng/bumba": "workspace:*",
         "@proompteng/temporal-bun-sdk": "workspace:*",
         "yaml": "^2.8.4",
       },

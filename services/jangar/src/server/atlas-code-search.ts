@@ -17,6 +17,7 @@ export type AtlasCodeSearchInput = {
 }
 
 export type AtlasCodeSearchSignals = {
+  exactRank: number | null
   semanticDistance: number | null
   lexicalRank: number | null
   matchedIdentifiers: string[]
@@ -28,6 +29,8 @@ export type AtlasCodeSearchMatch = {
   fileVersion: FileVersionRecord
   chunk: FileChunkRecord
   score: number
+  retrievalMode: 'exact' | 'lexical' | 'semantic' | 'hybrid'
+  degradation: string | null
   signals: AtlasCodeSearchSignals
 }
 
@@ -38,6 +41,10 @@ export type AtlasCodeSearchHealth = {
   checkedAt: string
   model: string
   dimension: number
+  indexStatus: 'maintenance' | 'building' | 'ready' | 'failed' | 'missing'
+  indexedCommit: string | null
+  gitHead: string | null
+  treeHash: string | null
   filters: {
     repository: string | null
     ref: string | null
@@ -51,6 +58,17 @@ export type AtlasCodeSearchHealth = {
     missing: number
     coverage: number
   }
+  corpus: {
+    expectedFiles: number
+    indexedFiles: number
+    missingPaths: number
+    stalePaths: number
+    hashMismatches: number
+    uncoveredLines: number
+    chunks: number
+    embeddedChunks: number
+  }
+  lastError: string | null
   thresholds: {
     minSemanticCoverage: number
   }
@@ -91,6 +109,7 @@ type AtlasCodeSearchRow = {
   repository_updated_at: Date | string
   semantic_distance?: number | string | null
   lexical_rank?: number | string | null
+  exact_rank?: number | string | null
 }
 
 type CodeSearchFilters = {
@@ -111,14 +130,11 @@ type CreateAtlasCodeSearchHandlersOptions = {
 const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 200
 const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 12_000
+const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
+const MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 900
 const DEFAULT_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = 60_000
-const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT = 100
-const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT_CAP = 500
-const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_MULTIPLIER = 20
-const MAX_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT = 50_000
-const DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 50
-const MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 5_000
-const DEFAULT_MIN_SEMANTIC_COVERAGE = 0.95
+const RRF_K = 60
+const ATLAS_QUERY_INSTRUCTION = 'Given a query, retrieve relevant source-code chunks from the repository'
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
@@ -170,13 +186,6 @@ const countIdentifierMatches = (haystack: string, identifiers: string[]) => {
   return { matched, count: matched.length }
 }
 
-const isSingleExactCodeIdentifierQuery = (query: string, identifiers: string[]) => {
-  if (identifiers.length !== 1) return false
-  const identifier = identifiers[0]
-  if (!identifier || query.trim() !== identifier) return false
-  return /^[A-Za-z0-9_$./:-]+$/.test(identifier)
-}
-
 const parsePositiveIntEnv = (name: string, fallback: number, max = Number.MAX_SAFE_INTEGER) => {
   const raw = process.env[name]?.trim()
   if (!raw) return fallback
@@ -187,49 +196,9 @@ const parsePositiveIntEnv = (name: string, fallback: number, max = Number.MAX_SA
   return Math.min(max, Math.floor(parsed))
 }
 
-const normalizeCoverageThreshold = (value: number | undefined) => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MIN_SEMANTIC_COVERAGE
-  return Math.max(0, Math.min(1, value))
-}
+const buildAtlasQueryInstruction = (query: string) => `Instruct: ${ATLAS_QUERY_INSTRUCTION}\nQuery: ${query}`
 
-const normalizeHealthSampleLimit = (value: number | undefined) => {
-  const defaultLimit = parsePositiveIntEnv(
-    'ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT',
-    DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT,
-    MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT,
-  )
-  if (typeof value !== 'number' || !Number.isFinite(value)) return defaultLimit
-  return Math.max(1, Math.min(MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT, Math.floor(value)))
-}
-
-const resolveSemanticCandidateLimit = (resultLimit: number) => {
-  const fallback = Math.min(
-    DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT_CAP,
-    Math.max(
-      DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT,
-      resultLimit * DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_MULTIPLIER,
-    ),
-  )
-  return parsePositiveIntEnv(
-    'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
-    fallback,
-    MAX_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT,
-  )
-}
-
-const withTimeout = async <T>(input: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      input,
-      new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
-      }),
-    ])
-  } finally {
-    if (timeout) clearTimeout(timeout)
-  }
-}
+const escapeLikePattern = (value: string) => value.replace(/[\\%_]/g, (match) => `\\${match}`)
 
 const resolveCodeSearchFilters = ({
   repository,
@@ -243,61 +212,45 @@ const resolveCodeSearchFilters = ({
   language: typeof language === 'string' ? language.trim() : '',
 })
 
-const applyCodeSearchFilters = <T extends { where: (...args: unknown[]) => T }>(
-  query: T,
-  filters: CodeSearchFilters,
-) => {
-  let next = query
-  if (filters.repository) {
-    next = next.where('repositories.name', '=', filters.repository)
-  }
-  if (filters.ref) {
-    next = next.where('file_versions.repository_ref', '=', filters.ref)
-  }
+const asMetadata = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+
+const metadataString = (metadata: Record<string, unknown>, key: string) => {
+  const value = metadata[key]
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+const metadataCount = (metadata: Record<string, unknown>, key: string) => {
+  const value = metadata[key]
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0
+}
+
+const searchWhereClause = (filters: CodeSearchFilters) => {
+  const conditions: Array<ReturnType<typeof sql>> = [
+    sql`repositories.metadata->>'indexStatus' = 'ready'`,
+    sql`file_versions.repository_ref = repositories.default_ref`,
+    sql`file_versions.repository_commit = repositories.metadata->>'indexedCommit'`,
+  ]
+  if (filters.repository) conditions.push(sql`repositories.name = ${filters.repository}`)
+  if (filters.ref) conditions.push(sql`file_versions.repository_ref = ${filters.ref}`)
   if (filters.pathPrefix) {
-    next = next.where('file_keys.path', 'like', `${filters.pathPrefix}%`)
+    conditions.push(sql`file_keys.path LIKE ${`${escapeLikePattern(filters.pathPrefix)}%`} ESCAPE '\'`)
   }
-  if (filters.language) {
-    next = next.where('file_versions.language', '=', filters.language)
-  }
-  return next
+  if (filters.language) conditions.push(sql`file_versions.language = ${filters.language}`)
+  return sql`WHERE ${sql.join(conditions, sql` AND `)}`
 }
-
-const latestFileVersionPredicate = (filters: CodeSearchFilters) => {
-  const languageClause = filters.language ? sql`AND newer_file_versions.language = ${filters.language}` : sql``
-  return sql<boolean>`
-    NOT EXISTS (
-      SELECT 1
-      FROM atlas.file_versions AS newer_file_versions
-      WHERE newer_file_versions.file_key_id = file_versions.file_key_id
-        AND newer_file_versions.repository_ref = file_versions.repository_ref
-        ${languageClause}
-        AND (
-          newer_file_versions.updated_at,
-          newer_file_versions.created_at,
-          newer_file_versions.id
-        ) > (
-          file_versions.updated_at,
-          file_versions.created_at,
-          file_versions.id
-        )
-    )
-  `
-}
-
-const applyLatestFileVersionFilter = <T extends { where: (...args: unknown[]) => T }>(
-  query: T,
-  filters: CodeSearchFilters,
-) => query.where(latestFileVersionPredicate(filters))
 
 const toIso = (value: Date | string) => (value instanceof Date ? value.toISOString() : String(value))
 
 const rowToMatch = (
   row: AtlasCodeSearchRow,
   score: number,
+  exactRank: number | null,
   semanticDistance: number | null,
   lexicalRank: number | null,
   matchedIdentifiers: string[],
+  retrievalMode: AtlasCodeSearchMatch['retrievalMode'],
 ): AtlasCodeSearchMatch => ({
   repository: {
     id: row.repository_id,
@@ -344,7 +297,10 @@ const rowToMatch = (
     createdAt: toIso(row.chunk_created_at),
   },
   score,
+  retrievalMode,
+  degradation: null,
   signals: {
+    exactRank,
     semanticDistance,
     lexicalRank,
     matchedIdentifiers,
@@ -387,23 +343,6 @@ const codeSearchSelectColumns = [
 
 const codeSearchRawSelectColumns = codeSearchSelectColumns.join(',\n')
 
-const semanticCandidateWhereClause = (filters: CodeSearchFilters) => {
-  const conditions: Array<ReturnType<typeof sql>> = [latestFileVersionPredicate(filters)]
-  if (filters.repository) {
-    conditions.push(sql`repositories.name = ${filters.repository}`)
-  }
-  if (filters.ref) {
-    conditions.push(sql`file_versions.repository_ref = ${filters.ref}`)
-  }
-  if (filters.pathPrefix) {
-    conditions.push(sql`file_keys.path LIKE ${`${filters.pathPrefix}%`}`)
-  }
-  if (filters.language) {
-    conditions.push(sql`file_versions.language = ${filters.language}`)
-  }
-  return sql`WHERE ${sql.join(conditions, sql` AND `)}`
-}
-
 export const createAtlasCodeSearchHandlers = ({
   db,
   ensureSchema,
@@ -423,7 +362,7 @@ export const createAtlasCodeSearchHandlers = ({
     const cached = queryEmbeddingCache.get(cacheKey)
     if (cached && cached.expiresAt > now) return cached.embedding
 
-    const embedding = await embedText(query, config)
+    const embedding = await embedText(buildAtlasQueryInstruction(query), config)
     queryEmbeddingCache.set(cacheKey, { embedding, expiresAt: now + cacheTtlMs })
     return embedding
   }
@@ -433,52 +372,79 @@ export const createAtlasCodeSearchHandlers = ({
     ref,
     pathPrefix,
     language,
-    minSemanticCoverage,
-    healthSampleLimit,
   }: Omit<AtlasCodeSearchInput, 'query' | 'limit'>): Promise<AtlasCodeSearchHealth> => {
     await ensureSchema()
 
     const embeddingConfig = loadEmbeddingConfig()
     const filters = resolveCodeSearchFilters({ repository, ref, pathPrefix, language })
-    const sampleLimit = normalizeHealthSampleLimit(healthSampleLimit)
-    const coverageThreshold = normalizeCoverageThreshold(minSemanticCoverage)
-
-    let healthQuery = db
-      .selectFrom('atlas.file_chunks as file_chunks')
-      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
-      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
-      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-      .leftJoin('atlas.chunk_embeddings as chunk_embeddings', (join) =>
-        join
-          .onRef('chunk_embeddings.chunk_id', '=', 'file_chunks.id')
-          .on('chunk_embeddings.model', '=', embeddingConfig.model)
-          .on('chunk_embeddings.dimension', '=', embeddingConfig.dimension),
-      )
-      .select(['file_chunks.id as chunk_id', 'chunk_embeddings.chunk_id as embedded_chunk_id'])
-
-    healthQuery = applyCodeSearchFilters(healthQuery, filters)
-    healthQuery = applyLatestFileVersionFilter(healthQuery, filters)
-
-    const rows = await healthQuery.orderBy('file_chunks.created_at', 'desc').limit(sampleLimit).execute()
-    const chunks = rows.length
-    const embedded = rows.filter((row) => row.embedded_chunk_id != null).length
-    const missing = chunks - embedded
-    const coverage = chunks === 0 ? 0 : embedded / chunks
-    const status: AtlasCodeSearchHealthStatus =
-      chunks === 0 ? 'empty' : coverage >= coverageThreshold ? 'ok' : embedded === 0 ? 'critical' : 'degraded'
-
-    const message =
-      status === 'ok'
-        ? 'semantic chunk coverage is healthy'
-        : status === 'empty'
-          ? 'no indexed chunks matched the requested filters'
-          : `semantic chunk coverage is below ${coverageThreshold}`
+    let query = db
+      .selectFrom('atlas.repositories as repositories')
+      .select([
+        'repositories.name as repository_name',
+        'repositories.default_ref as repository_default_ref',
+        'repositories.metadata as repository_metadata',
+      ])
+    if (filters.repository) query = query.where('repositories.name', '=', filters.repository)
+    const rows = await query.orderBy('repositories.name').limit(2).execute()
+    const row = rows[0]
+    const metadata = asMetadata(row?.repository_metadata)
+    const storedStatus = metadataString(metadata, 'indexStatus')
+    const indexStatus: AtlasCodeSearchHealth['indexStatus'] =
+      storedStatus === 'maintenance' ||
+      storedStatus === 'building' ||
+      storedStatus === 'ready' ||
+      storedStatus === 'failed'
+        ? storedStatus
+        : 'missing'
+    const expectedFiles = metadataCount(metadata, 'expectedFiles')
+    const indexedFiles = metadataCount(metadata, 'indexedFiles')
+    const chunks = metadataCount(metadata, 'indexedChunks')
+    const embedded = metadataCount(metadata, 'embeddedChunks')
+    const missing = Math.max(0, chunks - embedded)
+    const coverage = chunks === 0 ? (expectedFiles === 0 && indexStatus === 'ready' ? 1 : 0) : embedded / chunks
+    const refMatches = !filters.ref || row?.repository_default_ref === filters.ref
+    const configurationMatches =
+      metadataString(metadata, 'embeddingModel') === embeddingConfig.model &&
+      metadataCount(metadata, 'embeddingDimension') === embeddingConfig.dimension
+    const corpusMatches =
+      expectedFiles === indexedFiles &&
+      metadataCount(metadata, 'missingPaths') === 0 &&
+      metadataCount(metadata, 'stalePaths') === 0 &&
+      metadataCount(metadata, 'hashMismatches') === 0 &&
+      metadataCount(metadata, 'uncoveredLines') === 0 &&
+      chunks === embedded &&
+      (expectedFiles === 0 || chunks > 0)
+    const ready = rows.length === 1 && indexStatus === 'ready' && refMatches && configurationMatches && corpusMatches
+    const status: AtlasCodeSearchHealthStatus = ready
+      ? 'ok'
+      : !row
+        ? 'empty'
+        : indexStatus === 'failed' || (indexStatus === 'ready' && (!configurationMatches || !corpusMatches))
+          ? 'critical'
+          : 'degraded'
+    const message = ready
+      ? 'Atlas is ready at a fully reconciled commit'
+      : !row
+        ? 'Atlas repository is not indexed'
+        : rows.length > 1 && !filters.repository
+          ? 'repository is required because multiple Atlas corpora exist'
+          : !refMatches
+            ? `Atlas indexes only ${row.repository_default_ref}`
+            : indexStatus !== 'ready'
+              ? `Atlas index is ${indexStatus}`
+              : !configurationMatches
+                ? 'Atlas embedding configuration does not match the indexed corpus'
+                : 'Atlas corpus verification metadata is inconsistent'
 
     return {
       status,
       checkedAt: new Date().toISOString(),
       model: embeddingConfig.model,
       dimension: embeddingConfig.dimension,
+      indexStatus,
+      indexedCommit: metadataString(metadata, 'indexedCommit'),
+      gitHead: metadataString(metadata, 'gitHead'),
+      treeHash: metadataString(metadata, 'treeHash'),
       filters: {
         repository: filters.repository || null,
         ref: filters.ref || null,
@@ -486,14 +452,25 @@ export const createAtlasCodeSearchHandlers = ({
         language: filters.language || null,
       },
       sample: {
-        limit: sampleLimit,
+        limit: chunks,
         chunks,
         embedded,
         missing,
         coverage,
       },
+      corpus: {
+        expectedFiles,
+        indexedFiles,
+        missingPaths: metadataCount(metadata, 'missingPaths'),
+        stalePaths: metadataCount(metadata, 'stalePaths'),
+        hashMismatches: metadataCount(metadata, 'hashMismatches'),
+        uncoveredLines: metadataCount(metadata, 'uncoveredLines'),
+        chunks,
+        embeddedChunks: embedded,
+      },
+      lastError: metadataString(metadata, 'lastError'),
       thresholds: {
-        minSemanticCoverage: coverageThreshold,
+        minSemanticCoverage: 1,
       },
       message,
     }
@@ -512,129 +489,143 @@ export const createAtlasCodeSearchHandlers = ({
     const resolvedQuery = normalizeText(query, 'query')
     const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
     const filters = resolveCodeSearchFilters({ repository, ref, pathPrefix, language })
+    const health = await codeSearchHealth({ repository, ref, pathPrefix, language })
+    if (health.status !== 'ok') throw new Error(`Atlas code search is not ready: ${health.message}`)
 
     const identifiers = extractIdentifierTokens(resolvedQuery)
-    const semanticLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
-    const lexicalLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
+    const candidateLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
+    const embeddingConfig = loadEmbeddingConfig()
+    const embedding = await embedCodeSearchQuery(resolvedQuery, embeddingConfig)
+    const vectorString = vectorToPgArray(embedding)
+    const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
+    const whereClause = searchWhereClause(filters)
+    const semanticTimeoutMs = parsePositiveIntEnv(
+      'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
+      DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS,
+    )
+    const statementTimeoutMs = parsePositiveIntEnv(
+      'ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS',
+      Math.min(DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS, Math.max(250, semanticTimeoutMs - 250)),
+      Math.min(MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS, Math.max(250, semanticTimeoutMs - 250)),
+    )
 
-    const lexicalQueryExpr = sql<string>`websearch_to_tsquery('simple', ${resolvedQuery})`
-    const lexicalRankExpr = sql<number>`ts_rank_cd(file_chunks.text_tsvector, ${lexicalQueryExpr})`
+    const { exactRows, lexicalRows, semanticRows } = await db.transaction().execute(async (trx) => {
+      await sql`SELECT set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true);`.execute(trx)
 
-    let lexicalQuery = db
-      .selectFrom('atlas.file_chunks as file_chunks')
-      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
-      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
-      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-      .select([...codeSearchSelectColumns, lexicalRankExpr.as('lexical_rank')])
-      .where(sql<boolean>`file_chunks.text_tsvector @@ ${lexicalQueryExpr}`)
-
-    lexicalQuery = applyCodeSearchFilters(lexicalQuery, filters)
-    lexicalQuery = applyLatestFileVersionFilter(lexicalQuery, filters)
-
-    const lexicalRows = (await lexicalQuery
-      .orderBy(lexicalRankExpr, 'desc')
-      .limit(lexicalLimit)
-      .execute()) as AtlasCodeSearchRow[]
-
-    const shouldSkipSemantic = lexicalRows.length > 0 && isSingleExactCodeIdentifierQuery(resolvedQuery, identifiers)
-
-    const semanticRows: AtlasCodeSearchRow[] = shouldSkipSemantic
-      ? []
-      : await (async () => {
-          const semanticTimeoutMs = parsePositiveIntEnv(
-            'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
-            DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS,
-          )
-          try {
-            return await withTimeout(
-              (async () => {
-                const embeddingConfig = loadEmbeddingConfig()
-                const embedding = await embedCodeSearchQuery(resolvedQuery, embeddingConfig)
-                const vectorString = vectorToPgArray(embedding)
-                const semanticDistanceExpr = sql<number>`chunk_embeddings.embedding <=> ${vectorString}::vector`
-
-                const semanticCandidateLimit = resolveSemanticCandidateLimit(resolvedLimit)
-                const whereClause = semanticCandidateWhereClause(filters)
-                const { rows } = await sql<AtlasCodeSearchRow>`
-                  WITH candidate_chunks AS MATERIALIZED (
-                    SELECT ${sql.raw(codeSearchRawSelectColumns)}
-                    FROM atlas.file_chunks AS file_chunks
-                    INNER JOIN atlas.file_versions AS file_versions
-                      ON file_versions.id = file_chunks.file_version_id
-                    INNER JOIN atlas.file_keys AS file_keys
-                      ON file_keys.id = file_versions.file_key_id
-                    INNER JOIN atlas.repositories AS repositories
-                      ON repositories.id = file_keys.repository_id
-                    ${whereClause}
-                    ORDER BY file_chunks.created_at DESC
-                    LIMIT ${semanticCandidateLimit}
-                  )
-                  SELECT
-                    candidate_chunks.*,
-                    ${semanticDistanceExpr} AS semantic_distance
-                  FROM candidate_chunks
-                  INNER JOIN atlas.chunk_embeddings AS chunk_embeddings
-                    ON chunk_embeddings.chunk_id = candidate_chunks.chunk_id
-                   AND chunk_embeddings.model = ${embeddingConfig.model}
-                   AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
-                  ORDER BY semantic_distance
-                  LIMIT ${semanticLimit};
-                `.execute(db)
-
-                return rows as AtlasCodeSearchRow[]
-              })(),
-              semanticTimeoutMs,
-              `semantic code search timed out after ${semanticTimeoutMs}ms`,
+      const exactResult = await sql<AtlasCodeSearchRow>`
+        SELECT
+          ${sql.raw(codeSearchRawSelectColumns)},
+          CASE
+            WHEN file_keys.path = ${resolvedQuery} THEN 1.0
+            WHEN lower(file_keys.path) = lower(${resolvedQuery}) THEN 0.99
+            WHEN file_chunks.content ILIKE ${containsPattern} ESCAPE '\' THEN 0.95
+            WHEN file_keys.path ILIKE ${containsPattern} ESCAPE '\' THEN 0.90
+            ELSE GREATEST(
+              similarity(file_keys.path, ${resolvedQuery}::text),
+              similarity(file_chunks.content, ${resolvedQuery}::text)
             )
-          } catch (error) {
-            console.warn('[atlas] semantic code search unavailable; falling back to lexical only', {
-              error: error instanceof Error ? error.message : String(error),
-            })
-            return []
-          }
-        })()
+          END AS exact_rank
+        FROM atlas.file_chunks AS file_chunks
+        INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+        INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+        INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+        ${whereClause}
+          AND (
+            file_keys.path ILIKE ${containsPattern} ESCAPE '\'
+            OR file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
+            OR file_keys.path % ${resolvedQuery}::text
+            OR file_chunks.content % ${resolvedQuery}::text
+          )
+        ORDER BY exact_rank DESC, file_keys.path, file_chunks.chunk_index
+        LIMIT ${candidateLimit};
+      `.execute(trx)
 
-    const merged = new Map<
-      string,
-      {
-        row: AtlasCodeSearchRow
-        semanticDistance: number | null
-        lexicalRank: number | null
+      const lexicalResult = await sql<AtlasCodeSearchRow>`
+        SELECT
+          ${sql.raw(codeSearchRawSelectColumns)},
+          ts_rank_cd(file_chunks.text_tsvector, websearch_to_tsquery('simple', ${resolvedQuery}::text)) AS lexical_rank
+        FROM atlas.file_chunks AS file_chunks
+        INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+        INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+        INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+        ${whereClause}
+          AND file_chunks.text_tsvector @@ websearch_to_tsquery('simple', ${resolvedQuery}::text)
+        ORDER BY lexical_rank DESC, file_keys.path, file_chunks.chunk_index
+        LIMIT ${candidateLimit};
+      `.execute(trx)
+
+      const semanticResult = await sql<AtlasCodeSearchRow>`
+        SELECT
+          ${sql.raw(codeSearchRawSelectColumns)},
+          chunk_embeddings.embedding <=> ${vectorString}::vector AS semantic_distance
+        FROM atlas.chunk_embeddings AS chunk_embeddings
+        INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.id = chunk_embeddings.chunk_id
+        INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+        INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+        INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+        ${whereClause}
+          AND chunk_embeddings.model = ${embeddingConfig.model}
+          AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
+        ORDER BY chunk_embeddings.embedding <=> ${vectorString}::vector
+        LIMIT ${candidateLimit};
+      `.execute(trx)
+
+      return {
+        exactRows: exactResult.rows as AtlasCodeSearchRow[],
+        lexicalRows: lexicalResult.rows as AtlasCodeSearchRow[],
+        semanticRows: semanticResult.rows as AtlasCodeSearchRow[],
       }
-    >()
+    })
 
-    for (const row of semanticRows) {
-      merged.set(row.chunk_id, { row, semanticDistance: Number(row.semantic_distance), lexicalRank: null })
+    type MergedMatch = {
+      row: AtlasCodeSearchRow
+      score: number
+      exactRank: number | null
+      lexicalRank: number | null
+      semanticDistance: number | null
+      modes: Set<'exact' | 'lexical' | 'semantic'>
     }
-
-    for (const row of lexicalRows) {
-      const existing = merged.get(row.chunk_id)
-      if (existing) {
-        existing.lexicalRank = Number(row.lexical_rank)
-      } else {
-        merged.set(row.chunk_id, { row, semanticDistance: null, lexicalRank: Number(row.lexical_rank) })
-      }
+    const merged = new Map<string, MergedMatch>()
+    const addRows = (rows: AtlasCodeSearchRow[], mode: 'exact' | 'lexical' | 'semantic', weight: number) => {
+      rows.forEach((row, index) => {
+        const entry = merged.get(row.chunk_id) ?? {
+          row,
+          score: 0,
+          exactRank: null,
+          lexicalRank: null,
+          semanticDistance: null,
+          modes: new Set<'exact' | 'lexical' | 'semantic'>(),
+        }
+        entry.score += weight / (RRF_K + index + 1)
+        entry.modes.add(mode)
+        if (mode === 'exact') entry.exactRank = Number(row.exact_rank)
+        if (mode === 'lexical') entry.lexicalRank = Number(row.lexical_rank)
+        if (mode === 'semantic') entry.semanticDistance = Number(row.semantic_distance)
+        merged.set(row.chunk_id, entry)
+      })
     }
+    addRows(exactRows, 'exact', 3)
+    addRows(lexicalRows, 'lexical', 2)
+    addRows(semanticRows, 'semantic', 1)
 
-    const results: AtlasCodeSearchMatch[] = []
-
-    for (const entry of merged.values()) {
-      const row = entry.row
-      const content = row.chunk_content ?? ''
-      const { matched } = countIdentifierMatches(content, identifiers)
-
-      const semanticDistance = entry.semanticDistance
-      const lexicalRank = entry.lexicalRank
-      const semanticScore = semanticDistance === null ? 0 : 1 / (1 + Math.max(0, semanticDistance))
-      const lexicalScore = lexicalRank === null ? 0 : Math.max(0, lexicalRank)
-      const identifierBoost = matched.length > 0 ? 1 + Math.min(0.5, matched.length * 0.1) : 0
-
-      results.push(
-        rowToMatch(row, semanticScore + lexicalScore + identifierBoost, semanticDistance, lexicalRank, matched),
-      )
-    }
-
-    return results.sort((a, b) => b.score - a.score).slice(0, resolvedLimit)
+    return [...merged.values()]
+      .map((entry) => {
+        const content = `${entry.row.file_key_path}\n${entry.row.chunk_content ?? ''}`
+        const { matched } = countIdentifierMatches(content, identifiers)
+        const modes = [...entry.modes]
+        const retrievalMode: AtlasCodeSearchMatch['retrievalMode'] = modes.length > 1 ? 'hybrid' : (modes[0] ?? 'exact')
+        return rowToMatch(
+          entry.row,
+          entry.score,
+          entry.exactRank,
+          entry.semanticDistance,
+          entry.lexicalRank,
+          matched,
+          retrievalMode,
+        )
+      })
+      .sort((left, right) => right.score - left.score || left.fileKey.path.localeCompare(right.fileKey.path))
+      .slice(0, resolvedLimit)
   }
 
   return { codeSearch, codeSearchHealth }

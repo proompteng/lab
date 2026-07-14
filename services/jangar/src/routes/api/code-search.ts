@@ -46,6 +46,7 @@ const resolveServiceError = (message: string) => {
   const normalized = message.toLowerCase()
   if (message.includes('DATABASE_URL')) return errorResponse(message, 503)
   if (message.includes('OPENAI_API_KEY')) return errorResponse(message, 503)
+  if (normalized.includes('not ready')) return errorResponse(message, 503)
   if (normalized.includes('timed out') || normalized.includes('timeout')) return errorResponse(message, 504)
   return errorResponse(message, 500)
 }
@@ -75,7 +76,10 @@ const toItem = (match: AtlasCodeSearchMatch) => ({
   startLine: match.chunk.startLine,
   endLine: match.chunk.endLine,
   score: match.score,
+  retrievalMode: match.retrievalMode,
+  degradation: match.degradation,
   signals: match.signals,
+  contentHash: match.fileVersion.contentHash,
   snippet: match.chunk.content,
 })
 
@@ -104,7 +108,7 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
         healthSampleLimit: parsed.value.healthSampleLimit,
       })
 
-      if (parsed.value.requireSemanticCoverage && indexHealth.status !== 'ok') {
+      if (indexHealth.status !== 'ok') {
         return jsonResponse(
           {
             ok: false,
@@ -150,13 +154,24 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
 
 export const postCodeSearchHandler = async (request: Request) => {
   const effectiveTimeoutMs = resolveAtlasRuntimeConfig(process.env).codeSearchTimeoutMs
+  const controller = new AbortController()
+  let timedOut = false
+  const abortOnDisconnect = () => controller.abort(request.signal.reason)
+  request.signal.addEventListener('abort', abortOnDisconnect, { once: true })
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort(new Error(`atlas code search timed out after ${effectiveTimeoutMs}ms`))
+  }, effectiveTimeoutMs)
 
-  return Promise.race([
-    handlerRuntime.runPromise(postCodeSearchHandlerEffect(request)),
-    new Promise<Response>((resolve) => {
-      setTimeout(() => {
-        resolve(errorResponse(`atlas code search timed out after ${effectiveTimeoutMs}ms`, 504))
-      }, effectiveTimeoutMs)
-    }),
-  ])
+  try {
+    return await handlerRuntime.runPromise(postCodeSearchHandlerEffect(request), { signal: controller.signal })
+  } catch (error) {
+    if (timedOut) return errorResponse(`atlas code search timed out after ${effectiveTimeoutMs}ms`, 504)
+    if (request.signal.aborted) return errorResponse('atlas code search request was canceled', 499)
+    const message = error instanceof Error ? error.message : String(error)
+    return resolveServiceError(message)
+  } finally {
+    clearTimeout(timeout)
+    request.signal.removeEventListener('abort', abortOnDisconnect)
+  }
 }

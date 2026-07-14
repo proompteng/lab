@@ -657,6 +657,9 @@ Jangar terminals are intended to run against a dedicated terminal backend deploy
 
 Jangar exposes the Atlas MCP endpoint at `POST /mcp` (see `services/jangar/src/routes/mcp.ts`). The Codex app-server registers this endpoint as `threadConfig.mcp_servers.atlas` and registers Agents-owned memory tools through `threadConfig.mcp_servers.memories` (see `services/jangar/src/server/codex-client.ts`).
 
+Atlas search correctness, production rollout, and agent verification requirements are defined in
+`../../docs/atlas/production-code-search-design.md`.
+
 The Jangar MCP server provides Atlas indexing/search tools only:
 
 - `atlas_index`: records repository file-version metadata for Atlas enrichment.

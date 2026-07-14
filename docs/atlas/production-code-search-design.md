@@ -1,0 +1,260 @@
+# Atlas Code Search Repair Plan
+
+Status: Implemented on `codex/atlas-code-search-repair`; Atlas is not production-proven until the live Definition of
+Done passes.
+
+Evidence baseline: 2026-07-13, repository commit `9f6487ada0cf9222b65cbb1ee9b10d50a09b216e`.
+
+## Decision
+
+Atlas is a disposable cache of the current `proompteng/lab` default branch.
+
+- Keep the existing `atlas` schema and tables.
+- Run one Atlas service and one ingestion worker.
+- Store only the current eligible file version for each path.
+- Do not index branches, pull requests, or source history.
+- Do not create new schemas, replacement tables, dual writes, shadow indexes, backups, or fallback corpora.
+- Fix the code, stop ingestion, truncate Atlas, rebuild from `origin/main`, verify 100%, then reopen it.
+
+Git is the source of truth. If Atlas breaks, truncate and rebuild it.
+
+## Why It Is Broken
+
+The live audit found concrete correctness failures:
+
+- The audited Git tree had 8,183 eligible files. Atlas contained only 5,049 current paths, with 3,134 missing and 1,292
+  stale paths.
+- Push ingestion ignores deleted paths and trusts changed-path payloads instead of reconciling the exact Git tree.
+- Ingestion overwrites `repositories.default_ref` with whichever branch it processes.
+- The chunker misses exported arrow functions and leaves source regions uncovered.
+- Semantic search vector-ranks only the newest 100 chunks.
+- The 4,096-dimensional embedding table has no ANN index.
+- Health samples 50 chunks and therefore cannot prove corpus correctness.
+- JSON metadata is written as encoded strings instead of objects.
+- Request timeouts leave PostgreSQL queries running.
+- Source preview reads a mutable, stale local `main` checkout.
+
+The existing table structure is enough. The writers and readers use it incorrectly.
+
+## Existing Tables After Repair
+
+Use the tables as follows:
+
+- `atlas.repositories`: one row for `proompteng/lab`. Keep `default_ref = 'main'`. Store `indexStatus`, `indexedCommit`,
+  `treeHash`, expected/indexed/embedded counts, chunker version, embedding configuration, and last error in its existing
+  JSON object metadata.
+- `atlas.file_keys`: exactly one row for every eligible path in the current `main` tree. This is the manifest.
+- `atlas.file_versions`: exactly one row per `file_key_id`. Add a unique index on `file_key_id`; replace the row when
+  content changes.
+- `atlas.file_chunks`: only chunks for the current file version. Store chunker version and chunk content hash in the
+  existing metadata object. Replacing a file version already cascades old chunks.
+- `atlas.chunk_embeddings`: one 1,024-dimensional embedding per current chunk, using the existing Saigak model.
+- `atlas.enrichments`, `atlas.embeddings`, and `atlas.tree_sitter_facts`: optional derived enrichment. Their failure must
+  not block code-search readiness.
+- `atlas.github_events` and `atlas.ingestions`: operational delivery history. Preserve these rows during a corpus reset.
+- `atlas.event_files` and `atlas.ingestion_targets`: associations into the derived corpus. Clear them through foreign-key
+  cascades when `file_keys` and `file_versions` are truncated.
+- Existing symbol tables are not required. Exact identifier search can use chunk content and trigram indexes.
+
+Required schema changes are limited to:
+
+1. A unique index on `file_versions(file_key_id)` after the destructive reset.
+2. Change `chunk_embeddings.embedding` to `vector(1024)` while the table is empty.
+3. Add HNSW on `chunk_embeddings.embedding`.
+4. Add trigram indexes for `file_keys.path` and `file_chunks.content`.
+5. Add JSON-object constraints after fixing the writers.
+
+No new tables are required.
+
+## Embedding Model And Dimension
+
+Keep `qwen3-embedding-saigak:8b`. Do not deploy another embedding model or change the dimension used by unrelated Saigak
+consumers.
+
+Atlas must have its own embedding configuration in Bumba and Jangar:
+
+- `ATLAS_CODE_SEARCH_EMBEDDING_MODEL=qwen3-embedding-saigak:8b`
+- `ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION=1024`
+
+The model and dimension are coupled, but changing the Atlas output dimension does not require changing the model.
+Qwen3-Embedding-8B was trained with Matryoshka Representation Learning and officially supports user-selected output sizes
+from 32 through 4,096 dimensions. The repository originally deployed this same 8B model at 1,024 dimensions for Atlas in
+commit `c8b5aec0a`; commit `a30048cb9` later changed the whole self-hosted embedding stack to 4,096 without an Atlas
+retrieval evaluation.
+
+The 4,096 configuration cannot remain: pgvector HNSW supports at most 2,000 dimensions for `vector` and 4,000 for
+`halfvec`, so neither can index the native output. Use 1,024 because it is a supported MRL output, fits a normal
+`vector_cosine_ops` HNSW index, and restores the already-integrated Atlas contract without adding a model or serving path.
+This is not accepted on model reputation alone: before truncation, the fixed Atlas query set must pass at 1,024 against
+chunks produced from the current Git tree. Failure blocks the rollout and reopens the model/index decision; it does not
+permit a partial corpus or an unindexed production launch.
+
+Sources:
+
+- [Qwen3-Embedding model capabilities and benchmark](https://github.com/QwenLM/Qwen3-Embedding)
+- [Qwen3-Embedding-8B model card](https://huggingface.co/Qwen/Qwen3-Embedding-8B)
+- [pgvector HNSW dimension limits](https://github.com/pgvector/pgvector#hnsw)
+- [PostgreSQL trusted extension installation](https://www.postgresql.org/docs/current/sql-createextension.html)
+- [PostgreSQL `pg_trgm`](https://www.postgresql.org/docs/current/pgtrgm.html)
+
+## Code Changes
+
+### 1. Ingestion represents the complete Git tree
+
+In `services/bumba/src/event-consumer.ts` and `services/bumba/src/activities/index.ts`:
+
+- Accept only pushes to the configured default branch.
+- Resolve the exact `after` commit and enumerate its complete tree.
+- Apply one versioned eligibility filter.
+- Diff eligible Git paths against `atlas.file_keys`.
+- Add new paths, replace changed file versions, leave unchanged paths alone, and delete removed `file_keys` rows.
+- Treat renames as delete plus add.
+- Never update `repositories.default_ref` from an event.
+- Bind metadata as JSON objects; never pass `JSON.stringify(...)` into JSONB parameters.
+- Mark an event processed only after its required ingestion work is terminal.
+
+For a normal push, fetch/chunk/embed changed files before the database transaction. If preparation fails, leave the last
+verified corpus unchanged. When preparation succeeds, apply additions, replacements, deletions, and repository metadata
+in one transaction.
+
+### 2. Chunking covers the source
+
+In `services/bumba/src/activities/index.ts`:
+
+- Recognize exported variables, arrow functions, functions, classes, interfaces, types, methods, and assignments.
+- Add overlapping line windows for every region not covered by syntax chunks.
+- Assert that every eligible nonblank line belongs to at least one chunk.
+- Replace the complete chunk set when a file changes.
+
+Regression fixtures must include `export const createAtlasCodeSearchHandlers = ...`.
+
+### 3. Search uses the entire current corpus
+
+In `services/jangar/src/server/atlas-code-search.ts`:
+
+1. Search exact path and exact identifier matches.
+2. Search lexical full text and trigram matches.
+3. Search all current chunk embeddings through HNSW.
+4. Merge and deduplicate the ranked results.
+
+Remove the `created_at DESC LIMIT 100` candidate query. Search joins only the one current file version for each
+`file_key`.
+
+Embed queries as instructed Qwen inputs:
+
+```text
+Instruct: Given a query, retrieve relevant source-code chunks from the repository
+Query: <query>
+```
+
+Embed chunk documents without the query instruction. Qwen reports a typical 1% to 5% retrieval improvement from task
+instructions; the current search embeds the raw query and misses that supported behavior. Use only the Atlas-specific
+1,024-dimensional configuration for both sides. If embedding generation fails for any eligible chunk, Atlas remains not
+ready. Do not silently fall back while reporting success.
+
+### 4. Results and health tell the truth
+
+- Every response includes repository, `main`, indexed commit, path, lines, file hash, retrieval mode, and degradation.
+- Source preview uses `git show <indexedCommit>:<path>` and verifies the content hash.
+- Repository metadata has only four states: `maintenance`, `building`, `ready`, and `failed`.
+- Search is available only in `ready`.
+- Health reports the stored commit, Git head, expected files, indexed files, missing paths, stale paths, chunk coverage,
+  embedding coverage, and last error.
+- A reconciliation command computes those values from the complete Git tree and database; request handlers never sample
+  rows or run unbounded counts.
+
+### 5. Timeouts cancel work
+
+- Set PostgreSQL `statement_timeout` below the API deadline.
+- Propagate request cancellation to the SQL client.
+- Cancel on disconnect.
+- Test that the backend query disappears from `pg_stat_activity` within one second.
+
+## Tests That Must Exist Before Truncation
+
+Use a temporary Git repository and real PostgreSQL/pgvector integration database.
+
+1. Initial tree: every eligible path and hash is indexed.
+2. Modification: the old file version, chunks, and embeddings disappear.
+3. Deletion: the path and all dependent artifacts disappear.
+4. Rename: the old path disappears and the new path appears.
+5. Duplicate and out-of-order events converge to the newest exact tree.
+6. Branch pushes do not affect the `main` corpus or default ref.
+7. Exported-arrow identifiers are returned first for exact search.
+8. A fixed set of conceptual queries, including natural-language and exact-identifier cases, returns the expected files
+   in the top ten with the 1,024-dimensional instructed-query configuration.
+9. A deleted-file query returns nothing.
+10. Source preview commit and hash match the result.
+11. Metadata is a JSON object in PostgreSQL.
+12. A timed-out search cancels its database query.
+
+Add one command, `atlas:verify`, that runs the tree/path/hash audit and the fixed query set. Agents and operators use the
+same command; there is no separate proof path.
+
+## Implementation and Rollout
+
+Do this in one implementation PR because the writer, schema constraints, rebuild command, and reader contract must land
+together.
+
+1. Implement the code changes, migration, regression tests, `atlas:rebuild`, and `atlas:verify`.
+2. Pass focused Bumba/Jangar tests, real PostgreSQL integration tests, and CI.
+3. Let Jangar install the trusted `pg_trgm` extension idempotently as the application database owner before it validates
+   extensions and runs migrations. New clusters also install it through `postInitApplicationSQL`.
+4. Merge, publish the images, and let GitOps deploy maintenance mode. The Bumba Deployment is an earlier Argo sync wave,
+   so the disabled event consumer must become healthy before Jangar can apply the destructive migration.
+5. Confirm `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=false` in the live Bumba pod.
+6. Let the Jangar migration truncate the Git-derived rows under `atlas.file_keys` and `atlas.symbols`, preserve repository
+   identities plus webhook/ingestion history, change the empty embedding column to `vector(1024)`, and create the unique,
+   trigram, and HNSW indexes.
+7. Run `bun run atlas:rebuild --repository proompteng/lab --ref main` against the exact current `origin/main` commit.
+8. Run `bun run atlas:verify` with the live database URL and Jangar base URL.
+9. Reconcile and verify once more if `origin/main` advanced during the rebuild.
+10. Change the same Bumba Deployment to `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=true`, merge through GitOps, and prove the
+    consumer is live and the indexed commit converges after one subsequent `main` change.
+
+If anything fails after truncation, Atlas stays in maintenance, the defect is fixed, and the idempotent rebuild resumes.
+There is nothing to restore.
+
+## Definition of Done
+
+Atlas works only when all of these pass on the live indexed commit:
+
+- Eligible Git path count equals `atlas.file_keys` count.
+- Missing paths: zero.
+- Stale paths: zero.
+- File hash mismatches: zero.
+- Uncovered eligible nonblank lines: zero.
+- Chunks without the configured embedding: zero.
+- Exact identifier fixtures return the expected file first.
+- Every fixed conceptual query returns its expected file in the top ten.
+- Deleted paths never appear.
+- Source preview commit and hash match every sampled result.
+- Search p95 is below one second and p99 below two seconds under representative concurrency.
+- Search produces no 504s, and canceled queries leave PostgreSQL within one second.
+- The indexed commit reaches the observed `origin/main` commit within ten minutes.
+- No processed event has unfinished required ingestion work.
+- Live image digests, Argo state, repository metadata, `atlas:verify`, and the current Git commit agree.
+
+No percentage-based partial coverage is accepted. No fallback mode is called healthy.
+
+## Agent Rule
+
+Until every Definition of Done item passes live, agents treat Atlas results only as navigation leads and verify material
+findings against Git. A miss, stale path, wrong commit, or fallback must be reported, not hidden with a narrower query.
+
+## Code Map
+
+- Search: `../../services/jangar/src/server/atlas-code-search.ts`
+- Search configuration: `../../services/jangar/src/server/memory-config.ts`
+- Schema: `../../services/jangar/src/server/migrations/20251228_init.ts`
+- Chunk embeddings: `../../services/jangar/src/server/migrations/20260209_atlas_chunk_search.ts`
+- Current-corpus migration: `../../services/jangar/src/server/migrations/20260714_atlas_current_corpus.ts`
+- Source preview: `../../services/jangar/src/routes/api/atlas/file.ts`
+- Ingestion and chunking: `../../services/bumba/src/activities/index.ts`
+- Eligibility: `../../services/bumba/src/atlas/file-eligibility.ts`
+- Reconciliation planner: `../../services/bumba/src/atlas/reconciliation.ts`
+- GitHub events: `../../services/bumba/src/event-consumer.ts`
+- Rebuild command: `../../packages/scripts/src/atlas/rebuild.ts`
+- Verification command: `../../packages/scripts/src/atlas/verify.ts`
+- Fixed query set: `query-gold-set.json`
+- PostgreSQL: `../../argocd/applications/jangar/postgres-cluster.yaml`

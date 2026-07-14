@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, extname, relative, resolve, sep } from 'node:path'
@@ -8,6 +8,13 @@ import * as TSemaphore from 'effect/TSemaphore'
 import { Language, Parser } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
+import { shouldSkipAtlasPath } from '../atlas/file-eligibility'
+import {
+  type AtlasCurrentFile,
+  type AtlasGitFile,
+  parseAtlasGitTree,
+  planAtlasFileChanges,
+} from '../atlas/reconciliation'
 import { runCommandIsolated } from '../command-runner'
 import {
   publishMainMergeMemoryNoteActivity,
@@ -137,6 +144,27 @@ export type IndexFileChunksOutput = {
   embedded: number
 }
 
+export type ReconcileAtlasRepositoryInput = {
+  repoRoot: string
+  repository: string
+  ref?: string | null
+  commit?: string | null
+}
+
+export type ReconcileAtlasRepositoryOutput = {
+  repository: string
+  ref: string
+  commit: string
+  treeHash: string
+  expectedFiles: number
+  indexedFiles: number
+  deletedFiles: number
+  changedFiles: number
+  unchangedFiles: number
+  chunks: number
+  embeddings: number
+}
+
 export type CleanupEnrichmentInput = {
   fileMetadata: FileMetadata
 }
@@ -191,6 +219,7 @@ const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:8b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 4096
+const DEFAULT_ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION = 1024
 const DEFAULT_OPENAI_COMPLETION_MODEL = 'gpt-5.6-sol'
 const DEFAULT_SELF_HOSTED_COMPLETION_MODEL = 'qwen36-flamingo'
 const DEFAULT_SELF_HOSTED_COMPLETION_TEMPERATURE = 0.7
@@ -220,6 +249,7 @@ const DEFAULT_EMBEDDING_BATCH_WINDOW_MS = 0
 const DEFAULT_REPO_SYNC_INTERVAL_MS = 120_000
 const DEFAULT_MAX_REPO_FILES = 5_000
 const MAX_REPO_FILES = 20_000
+const ATLAS_CHUNKER_VERSION = 'atlas-chunker-v2'
 
 const logActivity = (
   level: 'info' | 'error',
@@ -298,68 +328,6 @@ const parseRetryAfterMs = (response: Response): number | undefined => {
   return undefined
 }
 
-const LOCK_FILENAMES = new Set([
-  'bun.lock',
-  'composer.lock',
-  'cargo.lock',
-  'gemfile.lock',
-  'go.sum',
-  'go.work.sum',
-  'package-lock.json',
-  'pnpm-lock.yaml',
-  'pnpm-lock.yml',
-  'poetry.lock',
-  'pipfile.lock',
-  'yarn.lock',
-  'npm-shrinkwrap.json',
-])
-
-const BINARY_EXTENSIONS = new Set([
-  '.7z',
-  '.avi',
-  '.avif',
-  '.bmp',
-  '.bz2',
-  '.class',
-  '.db',
-  '.dll',
-  '.dylib',
-  '.eot',
-  '.exe',
-  '.flac',
-  '.gif',
-  '.gz',
-  '.ico',
-  '.icns',
-  '.jar',
-  '.jpeg',
-  '.jpg',
-  '.mkv',
-  '.mov',
-  '.mp3',
-  '.mp4',
-  '.ogg',
-  '.otf',
-  '.pdf',
-  '.png',
-  '.psd',
-  '.rar',
-  '.so',
-  '.sqlite',
-  '.sqlite3',
-  '.tar',
-  '.tgz',
-  '.ttf',
-  '.wav',
-  '.webp',
-  '.woff',
-  '.woff2',
-  '.xz',
-  '.zip',
-  '.wasm',
-  '.bin',
-])
-
 const normalizeOptionalText = (value: unknown) => {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
@@ -393,19 +361,7 @@ const normalizeOptionalBoolean = (value: unknown) => {
   return null
 }
 
-const shouldSkipRepoFile = (filePath: string) => {
-  const normalized = filePath.trim()
-  if (!normalized) return true
-  const lower = normalized.toLowerCase()
-  const base = lower.split('/').pop() ?? lower
-  const extension = extname(base)
-
-  if (LOCK_FILENAMES.has(base)) return true
-  if (extension === '.lock') return true
-  if (BINARY_EXTENSIONS.has(extension)) return true
-
-  return false
-}
+const shouldSkipRepoFile = shouldSkipAtlasPath
 
 const normalizePathPrefix = (value: unknown) => {
   const trimmed = normalizeOptionalText(value)
@@ -649,6 +605,26 @@ const loadEmbeddingConfig = () => {
   }
 }
 
+type EmbeddingRuntimeConfig = ReturnType<typeof loadEmbeddingConfig>
+
+const loadAtlasCodeSearchEmbeddingConfig = (): EmbeddingRuntimeConfig => {
+  const base = loadEmbeddingConfig()
+  const rawDimension =
+    process.env.ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION ?? String(DEFAULT_ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION)
+  const dimension = Number.parseInt(rawDimension, 10)
+  if (!Number.isFinite(dimension) || dimension <= 0) {
+    throw createNonRetryableError(
+      'ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION must be a positive integer',
+      'EmbeddingConfigError',
+    )
+  }
+  return {
+    ...base,
+    model: normalizeOptionalText(process.env.ATLAS_CODE_SEARCH_EMBEDDING_MODEL) ?? base.model,
+    dimension,
+  }
+}
+
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
 type CommandResult = {
@@ -729,7 +705,7 @@ const fetchCommitFromOrigin = async (repoRoot: string, commit: string) => {
 const fetchFromOrigin = async (repoRoot: string, ref?: string) => {
   const fetchArgs = ['fetch', '--no-auto-maintenance', '--quiet', '--depth=1', 'origin']
   if (ref) {
-    fetchArgs.push(ref)
+    fetchArgs.push(ref === 'main' ? '+refs/heads/main:refs/remotes/origin/main' : ref)
   }
   const result = await runGitFetchWithPublicFallback(fetchArgs, (args) =>
     runCommandResult(['git', '-C', repoRoot, ...args], repoRoot, { GIT_TERMINAL_PROMPT: '0' }),
@@ -1858,10 +1834,14 @@ type ExtractedFileChunk = {
 
 const loadChunkingConfig = () => {
   const linesPerChunk = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_CHUNK_LINES ?? '', 10), 80)
-  const minChunkLines = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MIN_CHUNK_LINES ?? '', 10), 3)
+  const minChunkLines = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MIN_CHUNK_LINES ?? '', 10), 1)
   const maxChunkLines = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MAX_CHUNK_LINES ?? '', 10), 220)
-  const maxChunks = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MAX_CHUNKS ?? '', 10), 250)
-  return { linesPerChunk, minChunkLines, maxChunkLines, maxChunks }
+  const maxChunks = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_MAX_CHUNKS ?? '', 10), 1_000)
+  const overlapLines = Math.min(
+    linesPerChunk - 1,
+    clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_CHUNK_OVERLAP_LINES ?? '', 10), 12),
+  )
+  return { linesPerChunk, minChunkLines, maxChunkLines, maxChunks, overlapLines }
 }
 
 const chunkNodeTypes = new Set([
@@ -1872,6 +1852,9 @@ const chunkNodeTypes = new Set([
   'interface_declaration',
   'type_alias_declaration',
   'enum_declaration',
+  'lexical_declaration',
+  'variable_declaration',
+  'assignment_expression',
   // Go
   'function_declaration',
   'method_declaration',
@@ -1969,7 +1952,8 @@ const extractFixedLineChunks = (source: string, config: ReturnType<typeof loadCh
   const chunks: ExtractedFileChunk[] = []
   if (lines.length === 0) return chunks
   let index = 0
-  for (let start = 0; start < lines.length && chunks.length < config.maxChunks; start += config.linesPerChunk) {
+  const stride = Math.max(1, config.linesPerChunk - config.overlapLines)
+  for (let start = 0; start < lines.length; start += stride) {
     const end = Math.min(lines.length, start + config.linesPerChunk)
     const content = lines.slice(start, end).join('\n')
     chunks.push({
@@ -1983,8 +1967,93 @@ const extractFixedLineChunks = (source: string, config: ReturnType<typeof loadCh
       },
     })
     index += 1
+    if (end === lines.length) break
   }
   return chunks
+}
+
+const addUncoveredLineChunks = (
+  source: string,
+  chunks: ExtractedFileChunk[],
+  config: ReturnType<typeof loadChunkingConfig>,
+) => {
+  const lines = splitLines(source)
+  const covered = new Uint8Array(lines.length)
+  for (const chunk of chunks) {
+    for (let line = Math.max(1, chunk.startLine); line <= Math.min(lines.length, chunk.endLine); line += 1) {
+      covered[line - 1] = 1
+    }
+  }
+
+  while (true) {
+    const firstUncovered = lines.findIndex((line, index) => line.trim().length > 0 && covered[index] === 0)
+    if (firstUncovered === -1) break
+
+    const start = Math.max(0, firstUncovered - config.overlapLines)
+    const end = Math.min(lines.length, start + config.linesPerChunk)
+    const content = lines.slice(start, end).join('\n')
+    chunks.push({
+      chunkIndex: chunks.length,
+      startLine: start + 1,
+      endLine: end,
+      content,
+      tokenCount: estimateTokenCount(content),
+      metadata: {
+        chunkType: 'uncovered_lines',
+      },
+    })
+
+    for (let line = start; line < end; line += 1) {
+      covered[line] = 1
+    }
+  }
+
+  return chunks
+}
+
+const assertChunkCoverage = (source: string, chunks: ExtractedFileChunk[]) => {
+  const lines = splitLines(source)
+  const covered = new Uint8Array(lines.length)
+  for (const chunk of chunks) {
+    for (let line = Math.max(1, chunk.startLine); line <= Math.min(lines.length, chunk.endLine); line += 1) {
+      covered[line - 1] = 1
+    }
+  }
+
+  const uncovered = lines
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter(({ line, number }) => line.trim().length > 0 && covered[number - 1] === 0)
+    .map(({ number }) => number)
+
+  if (uncovered.length > 0) {
+    throw new Error(`Atlas chunk coverage failed for nonblank lines: ${uncovered.slice(0, 20).join(', ')}`)
+  }
+}
+
+const finalizeFileChunks = (
+  source: string,
+  chunks: ExtractedFileChunk[],
+  config: ReturnType<typeof loadChunkingConfig>,
+) => {
+  const sorted = chunks.sort(
+    (left, right) =>
+      left.startLine - right.startLine || left.endLine - right.endLine || left.content.localeCompare(right.content),
+  )
+  if (sorted.length > config.maxChunks) {
+    throw new Error(`Atlas chunk limit exceeded: generated ${sorted.length}, maximum ${config.maxChunks}`)
+  }
+
+  const finalized = sorted.map((chunk, chunkIndex) => ({
+    ...chunk,
+    chunkIndex,
+    metadata: {
+      ...chunk.metadata,
+      chunkerVersion: ATLAS_CHUNKER_VERSION,
+      contentHash: createHash('sha256').update(chunk.content).digest('hex'),
+    },
+  }))
+  assertChunkCoverage(source, finalized)
+  return finalized
 }
 
 const extractFileChunks = async (source: string, filePath: string): Promise<ExtractedFileChunk[]> => {
@@ -1993,25 +2062,25 @@ const extractFileChunks = async (source: string, filePath: string): Promise<Extr
 
   const { maxBytes } = loadAstLimits()
   if (source.length > maxBytes) {
-    return extractFixedLineChunks(source, config)
+    return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
   }
 
   const ext = extname(filePath).toLowerCase()
   const customParser = customAstParsers.get(ext)
   if (customParser) {
     // Some file types use custom parsing for facts; chunking still falls back to stable line windows.
-    return extractFixedLineChunks(source, config)
+    return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
   }
 
   let entry: LoadedLanguage | null
   try {
     entry = await loadLanguageForExtension(ext)
   } catch {
-    return extractFixedLineChunks(source, config)
+    return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
   }
 
   if (!entry) {
-    return extractFixedLineChunks(source, config)
+    return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
   }
 
   try {
@@ -2020,13 +2089,14 @@ const extractFileChunks = async (source: string, filePath: string): Promise<Extr
     const tree = parser.parse(source)
     const root = tree?.rootNode as AstNode | undefined
     if (!root) {
-      return extractFixedLineChunks(source, config)
+      return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
     }
     const chunks = extractTreeSitterChunks(root, source, config)
-    if (chunks.length > 0) return chunks
-    return extractFixedLineChunks(source, config)
+    const completeChunks =
+      chunks.length > 0 ? addUncoveredLineChunks(source, chunks, config) : extractFixedLineChunks(source, config)
+    return finalizeFileChunks(source, completeChunks, config)
   } catch {
-    return extractFixedLineChunks(source, config)
+    return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
   }
 }
 
@@ -2251,9 +2321,11 @@ const normalizeEmbeddingMatrix = (raw: unknown): number[][] | null => {
 const isRetryableStatus = (status: number) =>
   status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504
 
-const requestEmbeddingBatchOnce = async (texts: string[]): Promise<number[][]> => {
-  const { apiKey, embeddingBaseUrl, model, dimension, timeoutMs, maxInputChars, truncate, keepAlive } =
-    loadEmbeddingConfig()
+const requestEmbeddingBatchOnce = async (
+  texts: string[],
+  config: EmbeddingRuntimeConfig = loadEmbeddingConfig(),
+): Promise<number[][]> => {
+  const { apiKey, embeddingBaseUrl, model, dimension, timeoutMs, maxInputChars, truncate, keepAlive } = config
 
   for (const text of texts) {
     if (text.length > maxInputChars) {
@@ -2344,14 +2416,17 @@ const requestEmbeddingBatchOnce = async (texts: string[]): Promise<number[][]> =
   }
 }
 
-const requestEmbeddingBatch = async (texts: string[]): Promise<number[][]> => {
+const requestEmbeddingBatch = async (
+  texts: string[],
+  config: EmbeddingRuntimeConfig = loadEmbeddingConfig(),
+): Promise<number[][]> => {
   const { maxAttempts, initialDelayMs, maxDelayMs, backoffCoefficient } = loadEmbeddingRetryConfig()
   let attempt = 1
   let lastError: unknown
 
   while (attempt <= maxAttempts) {
     try {
-      return await requestEmbeddingBatchOnce(texts)
+      return await requestEmbeddingBatchOnce(texts, config)
     } catch (error) {
       lastError = error
       if (isNonRetryableError(error) || attempt >= maxAttempts) {
@@ -2521,10 +2596,11 @@ const embedText = async (text: string): Promise<number[]> => {
 const embedTexts = async (texts: string[]): Promise<number[][]> => {
   if (texts.length === 0) return []
 
-  const batchSize = loadEmbeddingBatchSize()
+  const config = loadAtlasCodeSearchEmbeddingConfig()
+  const batchSize = config.batchSize
   const batchMaxChars = loadEmbeddingBatchMaxChars()
   if (batchSize <= 1 && !batchMaxChars) {
-    return await requestEmbeddingBatch(texts)
+    return await requestEmbeddingBatch(texts, config)
   }
 
   const chunks: number[][] = []
@@ -2545,7 +2621,7 @@ const embedTexts = async (texts: string[]): Promise<number[][]> => {
       batch.push(texts[i] ?? '')
       i += 1
     }
-    const embeddings = await requestEmbeddingBatch(batch)
+    const embeddings = await requestEmbeddingBatch(batch, config)
     chunks.push(...embeddings)
   }
   return chunks
@@ -2611,7 +2687,7 @@ const updateChunkEmbeddingMetadata = async (db: SQL, chunkIds: string[], metadat
   try {
     await db`
       UPDATE atlas.file_chunks
-      SET metadata = COALESCE(metadata, '{}'::jsonb) || ${patch}::jsonb
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || ${patch}::text::jsonb
       WHERE id = ANY(${db.array(chunkIds, 'uuid')});
     `
   } catch (error) {
@@ -2623,9 +2699,653 @@ const updateChunkEmbeddingMetadata = async (db: SQL, chunkIds: string[], metadat
   }
 }
 
+type AtlasRepositoryStateRow = {
+  id: string
+  metadata: Record<string, unknown> | string | null
+}
+
+type AtlasCurrentFileRow = AtlasCurrentFile & {
+  file_key_id: string
+  file_version_id: string
+  repository_commit: string | null
+}
+
+type PreparedAtlasFile = {
+  git: AtlasGitFile
+  contentHash: string
+  language: string | null
+  lineCount: number
+  chunks: Array<ExtractedFileChunk & { embedding: number[] }>
+}
+
+const asMetadataRecord = (value: unknown): Record<string, unknown> => {
+  if (typeof value === 'string') {
+    try {
+      return asMetadataRecord(JSON.parse(value))
+    } catch {
+      return {}
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+const toDatabaseCount = (value: unknown) => {
+  if (typeof value === 'bigint') return Number(value)
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') return Number.parseInt(value, 10)
+  return 0
+}
+
+const batchValues = <T>(values: T[], size: number) => {
+  const batches: T[][] = []
+  for (let index = 0; index < values.length; index += size) {
+    batches.push(values.slice(index, index + size))
+  }
+  return batches
+}
+
+const resolveAtlasTargetCommit = async (repoRoot: string, ref: string, requestedCommit: string | null) => {
+  const fetched = await fetchFromOrigin(repoRoot, ref)
+  if (!fetched) {
+    throw new Error(`failed to fetch the authoritative origin/${ref} ref`)
+  }
+
+  const remoteCommit = await runCommand(
+    ['git', '-C', repoRoot, 'rev-parse', '--verify', `refs/remotes/origin/${ref}^{commit}`],
+    repoRoot,
+    { GIT_TERMINAL_PROMPT: '0' },
+  )
+  const targetCommit = remoteCommit
+  if (!targetCommit || !/^[0-9a-f]{40}$/i.test(targetCommit)) {
+    throw new Error(`unable to resolve an exact 40-character origin/${ref} commit`)
+  }
+  if (!(await commitExistsLocally(repoRoot, targetCommit))) {
+    const fetched = await fetchCommitFromOrigin(repoRoot, targetCommit)
+    if (!fetched || !(await commitExistsLocally(repoRoot, targetCommit))) {
+      throw new Error(`target commit ${targetCommit} is not available in the repository`)
+    }
+  }
+  if (requestedCommit && requestedCommit !== targetCommit) {
+    logActivity('info', 'superseded', 'reconcileAtlasRepository', {
+      requestedCommit,
+      targetCommit,
+    })
+  }
+  return targetCommit
+}
+
+const loadAtlasGitManifest = async (repoRoot: string, commit: string) => {
+  const result = await runCommandRaw(['git', '-C', repoRoot, 'ls-tree', '-r', '-z', '--long', commit], repoRoot, {
+    GIT_TERMINAL_PROMPT: '0',
+  })
+  if (result.exitCode !== 0) {
+    throw new Error(`failed to enumerate Git tree ${commit}: ${result.stderr}`)
+  }
+  return parseAtlasGitTree(result.stdout)
+}
+
+const loadAtlasRepositoryState = async (db: SQL, repository: string) => {
+  const repositoryRows = (await db`
+    SELECT id, metadata
+    FROM atlas.repositories
+    WHERE name = ${repository}
+    LIMIT 1;
+  `) as AtlasRepositoryStateRow[]
+  const repositoryRow = repositoryRows[0] ?? null
+  if (!repositoryRow) return { repository: null, files: [] as AtlasCurrentFileRow[] }
+
+  const files = (await db`
+    SELECT
+      fk.id AS file_key_id,
+      fv.id AS file_version_id,
+      fk.path,
+      fv.content_hash AS "contentHash",
+      NULLIF(fv.metadata->>'gitObjectId', '') AS "gitObjectId",
+      fv.repository_commit
+    FROM atlas.file_keys fk
+    LEFT JOIN atlas.file_versions fv ON fv.file_key_id = fk.id
+    WHERE fk.repository_id = ${repositoryRow.id}
+    ORDER BY fk.path;
+  `) as AtlasCurrentFileRow[]
+  return { repository: repositoryRow, files }
+}
+
+const updateAtlasRepositoryState = async (db: SQL, repository: string, patch: Record<string, unknown>) => {
+  const serialized = JSON.stringify(patch)
+  await db`
+    INSERT INTO atlas.repositories (name, default_ref, metadata)
+    VALUES (${repository}, ${'main'}, ${serialized}::text::jsonb)
+    ON CONFLICT (name) DO UPDATE
+    SET default_ref = 'main',
+        metadata = COALESCE(atlas.repositories.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+        updated_at = now();
+  `
+}
+
+const markAtlasRepositoryFailed = async (
+  db: SQL,
+  repository: string,
+  baseIndexedCommit: string | null,
+  error: unknown,
+) => {
+  const patch = JSON.stringify({
+    indexStatus: 'failed',
+    lastError: truncateMetadataError(error),
+    failedAt: new Date().toISOString(),
+  })
+  await db`
+    UPDATE atlas.repositories
+    SET metadata = COALESCE(metadata, '{}'::jsonb) || ${patch}::text::jsonb,
+        updated_at = now()
+    WHERE name = ${repository}
+      AND NULLIF(metadata->>'indexedCommit', '') IS NOT DISTINCT FROM ${baseIndexedCommit};
+  `
+}
+
+const prepareAtlasFile = async (repoRoot: string, commit: string, file: AtlasGitFile): Promise<PreparedAtlasFile> => {
+  const content = await readGitFile(repoRoot, commit, file.path)
+  if (content === null) {
+    throw new Error(`failed to read ${file.path} from Git commit ${commit}`)
+  }
+  if (content.includes('\0')) {
+    throw new Error(`eligible Atlas file contains NUL bytes: ${file.path}`)
+  }
+
+  const actualBytes = Buffer.byteLength(content, 'utf8')
+  if (actualBytes !== file.byteSize) {
+    throw new Error(`Git byte-size mismatch for ${file.path}: expected ${file.byteSize}, read ${actualBytes}`)
+  }
+
+  const chunks = await extractFileChunks(content, file.path)
+  const config = loadAtlasCodeSearchEmbeddingConfig()
+  const inputs = chunks.map((chunk) =>
+    chunk.content.length > config.maxInputChars ? chunk.content.slice(0, config.maxInputChars) : chunk.content,
+  )
+  const embeddings = await embedTexts(inputs)
+  if (embeddings.length !== chunks.length) {
+    throw new Error(`embedding count mismatch for ${file.path}: expected ${chunks.length}, got ${embeddings.length}`)
+  }
+
+  return {
+    git: file,
+    contentHash: createHash('sha256').update(content).digest('hex'),
+    language: languageNameByExtension.get(extname(file.path).toLowerCase()) ?? null,
+    lineCount: content.split(/\r?\n/).length,
+    chunks: chunks.map((chunk, index) => ({
+      ...chunk,
+      embedding: embeddings[index] ?? [],
+    })),
+  }
+}
+
+const applyAtlasReconciliation = async (input: {
+  db: SQL
+  repository: string
+  ref: string
+  commit: string
+  manifest: Awaited<ReturnType<typeof loadAtlasGitManifest>>
+  preparedFiles: PreparedAtlasFile[]
+  baseIndexedCommit: string | null
+  deletedFiles: number
+  unchangedFiles: number
+}): Promise<ReconcileAtlasRepositoryOutput> => {
+  const { db, repository, ref, commit, manifest, preparedFiles, baseIndexedCommit } = input
+  const embeddingConfig = loadAtlasCodeSearchEmbeddingConfig()
+  const manifestPaths = manifest.files.map((file) => file.path)
+  const manifestObjectIds = manifest.files.map((file) => file.objectId)
+  const preparedPaths = preparedFiles.map((file) => file.git.path)
+
+  return await db.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`atlas:${repository}`}, 0));`
+
+    const lockedRows = (await tx`
+      SELECT id, metadata
+      FROM atlas.repositories
+      WHERE name = ${repository}
+      FOR UPDATE;
+    `) as AtlasRepositoryStateRow[]
+    const lockedRepository = lockedRows[0]
+    if (!lockedRepository) throw new Error(`Atlas repository state disappeared for ${repository}`)
+    const lockedMetadata = asMetadataRecord(lockedRepository.metadata)
+    const lockedIndexedCommit =
+      typeof lockedMetadata.indexedCommit === 'string' && lockedMetadata.indexedCommit.length > 0
+        ? lockedMetadata.indexedCommit
+        : null
+    if (lockedIndexedCommit !== baseIndexedCommit) {
+      throw new Error(
+        `Atlas reconciliation was superseded: prepared from ${baseIndexedCommit ?? 'empty'}, current is ${lockedIndexedCommit ?? 'empty'}`,
+      )
+    }
+
+    const fileKeyRows = (await tx`
+      INSERT INTO atlas.file_keys (repository_id, path)
+      SELECT ${lockedRepository.id}, path
+      FROM UNNEST(${tx.array(manifestPaths, 'text')}) AS manifest(path)
+      ON CONFLICT (repository_id, path) DO UPDATE SET path = EXCLUDED.path
+      RETURNING id, path;
+    `) as Array<{ id: string; path: string }>
+    const fileKeyIdByPath = new Map(fileKeyRows.map((row) => [row.path, row.id]))
+
+    await tx`
+      DELETE FROM atlas.file_keys
+      WHERE repository_id = ${lockedRepository.id}
+        AND NOT (path = ANY(${tx.array(manifestPaths, 'text')}));
+    `
+
+    if (preparedPaths.length > 0) {
+      await tx`
+        DELETE FROM atlas.file_versions fv
+        USING atlas.file_keys fk
+        WHERE fv.file_key_id = fk.id
+          AND fk.repository_id = ${lockedRepository.id}
+          AND fk.path = ANY(${tx.array(preparedPaths, 'text')});
+      `
+    }
+
+    const fileVersionIdByPath = new Map<string, string>()
+    for (const batch of batchValues(preparedFiles, 500)) {
+      const ids = batch.map(() => randomUUID())
+      const fileKeyIds = batch.map((file) => {
+        const id = fileKeyIdByPath.get(file.git.path)
+        if (!id) throw new Error(`missing file key for prepared path ${file.git.path}`)
+        return id
+      })
+      const rows = (await tx`
+        INSERT INTO atlas.file_versions (
+          id,
+          file_key_id,
+          repository_ref,
+          repository_commit,
+          content_hash,
+          language,
+          byte_size,
+          line_count,
+          metadata,
+          source_timestamp
+        )
+        SELECT
+          id,
+          file_key_id,
+          ${ref},
+          ${commit},
+          content_hash,
+          language,
+          byte_size,
+          line_count,
+          jsonb_build_object(
+            'source', 'git',
+            'gitObjectId', git_object_id,
+            'indexedCommit', ${commit}::text,
+            'eligibilityVersion', ${manifest.eligibilityVersion}::text,
+            'chunkerVersion', ${ATLAS_CHUNKER_VERSION}::text
+          ),
+          NULL
+        FROM UNNEST(
+          ${tx.array(ids, 'uuid')},
+          ${tx.array(fileKeyIds, 'uuid')},
+          ${tx.array(
+            batch.map((file) => file.contentHash),
+            'text',
+          )},
+          ${tx.array(
+            batch.map((file) => file.language),
+            'text',
+          )},
+          ${tx.array(
+            batch.map((file) => file.git.byteSize),
+            'int4',
+          )},
+          ${tx.array(
+            batch.map((file) => file.lineCount),
+            'int4',
+          )},
+          ${tx.array(
+            batch.map((file) => file.git.objectId),
+            'text',
+          )}
+        ) AS source(id, file_key_id, content_hash, language, byte_size, line_count, git_object_id)
+        RETURNING id, file_key_id;
+      `) as Array<{ id: string; file_key_id: string }>
+      const pathByFileKeyId = new Map(batch.map((file, index) => [fileKeyIds[index], file.git.path]))
+      for (const row of rows) {
+        const path = pathByFileKeyId.get(row.file_key_id)
+        if (path) fileVersionIdByPath.set(path, row.id)
+      }
+    }
+
+    await tx`
+      UPDATE atlas.file_versions fv
+      SET repository_ref = ${ref},
+          repository_commit = ${commit},
+          metadata = COALESCE(fv.metadata, '{}'::jsonb) || jsonb_build_object(
+            'gitObjectId', manifest.object_id,
+            'indexedCommit', ${commit}::text,
+            'eligibilityVersion', ${manifest.eligibilityVersion}::text,
+            'chunkerVersion', ${ATLAS_CHUNKER_VERSION}::text
+          ),
+          updated_at = now()
+      FROM atlas.file_keys fk
+      JOIN UNNEST(
+        ${tx.array(manifestPaths, 'text')},
+        ${tx.array(manifestObjectIds, 'text')}
+      ) AS manifest(path, object_id) ON manifest.path = fk.path
+      WHERE fv.file_key_id = fk.id
+        AND fk.repository_id = ${lockedRepository.id};
+    `
+
+    const preparedChunks = preparedFiles.flatMap((file) => {
+      const fileVersionId = fileVersionIdByPath.get(file.git.path)
+      if (!fileVersionId) throw new Error(`missing file version for prepared path ${file.git.path}`)
+      return file.chunks.map((chunk) => ({
+        ...chunk,
+        id: randomUUID(),
+        fileVersionId,
+      }))
+    })
+
+    for (const batch of batchValues(preparedChunks, 500)) {
+      await tx`
+        INSERT INTO atlas.file_chunks (
+          id,
+          file_version_id,
+          chunk_index,
+          start_line,
+          end_line,
+          content,
+          token_count,
+          metadata,
+          text_tsvector
+        )
+        SELECT
+          id,
+          file_version_id,
+          chunk_index,
+          start_line,
+          end_line,
+          content,
+          token_count,
+          jsonb_strip_nulls(jsonb_build_object(
+            'chunkType', chunk_type,
+            'nodeType', node_type,
+            'name', chunk_name,
+            'chunkerVersion', ${ATLAS_CHUNKER_VERSION}::text,
+            'contentHash', content_hash
+          )),
+          to_tsvector('simple', content)
+        FROM UNNEST(
+          ${tx.array(
+            batch.map((chunk) => chunk.id),
+            'uuid',
+          )},
+          ${tx.array(
+            batch.map((chunk) => chunk.fileVersionId),
+            'uuid',
+          )},
+          ${tx.array(
+            batch.map((chunk) => chunk.chunkIndex),
+            'int4',
+          )},
+          ${tx.array(
+            batch.map((chunk) => chunk.startLine),
+            'int4',
+          )},
+          ${tx.array(
+            batch.map((chunk) => chunk.endLine),
+            'int4',
+          )},
+          ${tx.array(
+            batch.map((chunk) => chunk.content),
+            'text',
+          )},
+          ${tx.array(
+            batch.map((chunk) => chunk.tokenCount),
+            'int4',
+          )},
+          ${tx.array(
+            batch.map((chunk) => (typeof chunk.metadata.chunkType === 'string' ? chunk.metadata.chunkType : 'unknown')),
+            'text',
+          )},
+          ${tx.array(
+            batch.map((chunk) => (typeof chunk.metadata.nodeType === 'string' ? chunk.metadata.nodeType : null)),
+            'text',
+          )},
+          ${tx.array(
+            batch.map((chunk) => (typeof chunk.metadata.name === 'string' ? chunk.metadata.name : null)),
+            'text',
+          )},
+          ${tx.array(
+            batch.map((chunk) => (typeof chunk.metadata.contentHash === 'string' ? chunk.metadata.contentHash : '')),
+            'text',
+          )}
+        ) AS chunk(
+          id,
+          file_version_id,
+          chunk_index,
+          start_line,
+          end_line,
+          content,
+          token_count,
+          chunk_type,
+          node_type,
+          chunk_name,
+          content_hash
+        );
+      `
+    }
+
+    for (const batch of batchValues(preparedChunks, 100)) {
+      await tx`
+        INSERT INTO atlas.chunk_embeddings (chunk_id, model, dimension, embedding)
+        SELECT chunk_id, ${embeddingConfig.model}, ${embeddingConfig.dimension}, embedding::vector
+        FROM UNNEST(
+          ${tx.array(
+            batch.map((chunk) => chunk.id),
+            'uuid',
+          )},
+          ${tx.array(
+            batch.map((chunk) => vectorToPgArray(chunk.embedding)),
+            'text',
+          )}
+        ) AS embedding(chunk_id, embedding);
+      `
+    }
+
+    const indexedRows = (await tx`
+      SELECT
+        fk.path,
+        fv.repository_commit,
+        fv.metadata->>'gitObjectId' AS object_id
+      FROM atlas.file_keys fk
+      JOIN atlas.file_versions fv ON fv.file_key_id = fk.id
+      WHERE fk.repository_id = ${lockedRepository.id}
+      ORDER BY fk.path;
+    `) as Array<{ path: string; repository_commit: string | null; object_id: string | null }>
+    if (indexedRows.length !== manifest.files.length) {
+      throw new Error(`Atlas file count mismatch: expected ${manifest.files.length}, indexed ${indexedRows.length}`)
+    }
+    for (let index = 0; index < manifest.files.length; index += 1) {
+      const expected = manifest.files[index]
+      const actual = indexedRows[index]
+      if (!expected || !actual || actual.path !== expected.path || actual.object_id !== expected.objectId) {
+        throw new Error(`Atlas manifest mismatch at ${expected?.path ?? actual?.path ?? `index ${index}`}`)
+      }
+      if (actual.repository_commit !== commit) {
+        throw new Error(`Atlas commit mismatch for ${actual.path}`)
+      }
+    }
+
+    const coverageRows = (await tx`
+      SELECT
+        count(fc.id)::bigint AS chunks,
+        count(ce.chunk_id)::bigint AS embeddings,
+        count(fc.id) FILTER (WHERE ce.chunk_id IS NULL)::bigint AS missing_embeddings
+      FROM atlas.file_keys fk
+      JOIN atlas.file_versions fv ON fv.file_key_id = fk.id
+      LEFT JOIN atlas.file_chunks fc ON fc.file_version_id = fv.id
+      LEFT JOIN atlas.chunk_embeddings ce
+        ON ce.chunk_id = fc.id
+       AND ce.model = ${embeddingConfig.model}
+       AND ce.dimension = ${embeddingConfig.dimension}
+      WHERE fk.repository_id = ${lockedRepository.id};
+    `) as Array<{ chunks: unknown; embeddings: unknown; missing_embeddings: unknown }>
+    const chunks = toDatabaseCount(coverageRows[0]?.chunks)
+    const embeddings = toDatabaseCount(coverageRows[0]?.embeddings)
+    const missingEmbeddings = toDatabaseCount(coverageRows[0]?.missing_embeddings)
+    if (missingEmbeddings !== 0 || chunks !== embeddings) {
+      throw new Error(
+        `Atlas embedding coverage mismatch: chunks=${chunks}, embeddings=${embeddings}, missing=${missingEmbeddings}`,
+      )
+    }
+
+    const readyMetadata = JSON.stringify({
+      indexStatus: 'ready',
+      indexedCommit: commit,
+      gitHead: commit,
+      treeHash: manifest.treeHash,
+      eligibilityVersion: manifest.eligibilityVersion,
+      chunkerVersion: ATLAS_CHUNKER_VERSION,
+      embeddingModel: embeddingConfig.model,
+      embeddingDimension: embeddingConfig.dimension,
+      expectedFiles: manifest.files.length,
+      indexedFiles: indexedRows.length,
+      missingPaths: 0,
+      stalePaths: 0,
+      hashMismatches: 0,
+      uncoveredLines: 0,
+      expectedChunks: chunks,
+      indexedChunks: chunks,
+      embeddedChunks: embeddings,
+      lastError: null,
+      indexedAt: new Date().toISOString(),
+    })
+    await tx`
+      UPDATE atlas.repositories
+      SET default_ref = 'main',
+          metadata = COALESCE(metadata, '{}'::jsonb) || ${readyMetadata}::text::jsonb,
+          updated_at = now()
+      WHERE id = ${lockedRepository.id};
+    `
+
+    return {
+      repository,
+      ref,
+      commit,
+      treeHash: manifest.treeHash,
+      expectedFiles: manifest.files.length,
+      indexedFiles: indexedRows.length,
+      deletedFiles: input.deletedFiles,
+      changedFiles: preparedFiles.length,
+      unchangedFiles: input.unchangedFiles,
+      chunks,
+      embeddings,
+    }
+  })
+}
+
 export const activities = {
   async publishMainMergeMemoryNote(input: MainMergeMemoryNoteInput): Promise<void> {
     await publishMainMergeMemoryNoteActivity(input)
+  },
+
+  async reconcileAtlasRepository(input: ReconcileAtlasRepositoryInput): Promise<ReconcileAtlasRepositoryOutput> {
+    const startedAt = Date.now()
+    const repoRoot = resolve(input.repoRoot)
+    const repository = normalizeRepositorySlug(input.repository)
+    const ref = normalizeRepositoryRef(input.ref) ?? 'main'
+    const requestedCommit = normalizeOptionalText(input.commit)
+    if (!repository.includes('/')) throw new Error('Atlas repository must be an owner/name slug')
+    if (ref !== 'main') throw new Error(`Atlas indexes only main; received ${ref}`)
+
+    const db = getAtlasDb()
+    if (!db) throw new Error('DATABASE_URL is required for Atlas reconciliation')
+
+    const initialState = await loadAtlasRepositoryState(db, repository)
+    const initialMetadata = asMetadataRecord(initialState.repository?.metadata)
+    const baseIndexedCommit =
+      typeof initialMetadata.indexedCommit === 'string' && initialMetadata.indexedCommit.length > 0
+        ? initialMetadata.indexedCommit
+        : null
+
+    logActivity('info', 'started', 'reconcileAtlasRepository', {
+      repository,
+      ref,
+      requestedCommit,
+      baseIndexedCommit,
+    })
+
+    try {
+      const commit = await resolveAtlasTargetCommit(repoRoot, ref, requestedCommit)
+      const manifest = await loadAtlasGitManifest(repoRoot, commit)
+      const embeddingConfig = loadAtlasCodeSearchEmbeddingConfig()
+      const planned = planAtlasFileChanges(manifest, initialState.files)
+      const configurationMatches =
+        initialMetadata.eligibilityVersion === manifest.eligibilityVersion &&
+        initialMetadata.chunkerVersion === ATLAS_CHUNKER_VERSION &&
+        initialMetadata.embeddingModel === embeddingConfig.model &&
+        initialMetadata.embeddingDimension === embeddingConfig.dimension
+      const changedFiles = configurationMatches ? planned.changed : manifest.files
+      const unchangedFiles = configurationMatches ? planned.unchanged : []
+
+      await updateAtlasRepositoryState(db, repository, {
+        indexStatus: 'building',
+        targetCommit: commit,
+        gitHead: commit,
+        treeHash: manifest.treeHash,
+        expectedFiles: manifest.files.length,
+        eligibilityVersion: manifest.eligibilityVersion,
+        chunkerVersion: ATLAS_CHUNKER_VERSION,
+        embeddingModel: embeddingConfig.model,
+        embeddingDimension: embeddingConfig.dimension,
+        lastError: null,
+        buildStartedAt: new Date().toISOString(),
+      })
+
+      const prepareConcurrency = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_PREPARE_CONCURRENCY ?? '', 10), 4)
+      const preparedFiles: PreparedAtlasFile[] = []
+      for (const batch of batchValues(changedFiles, prepareConcurrency)) {
+        preparedFiles.push(...(await Promise.all(batch.map((file) => prepareAtlasFile(repoRoot, commit, file)))))
+        if (preparedFiles.length % 100 === 0 || preparedFiles.length === changedFiles.length) {
+          logActivity('info', 'progress', 'reconcileAtlasRepository', {
+            repository,
+            commit,
+            preparedFiles: preparedFiles.length,
+            changedFiles: changedFiles.length,
+          })
+        }
+      }
+
+      const result = await applyAtlasReconciliation({
+        db,
+        repository,
+        ref,
+        commit,
+        manifest,
+        preparedFiles,
+        baseIndexedCommit,
+        deletedFiles: planned.deleted.length,
+        unchangedFiles: unchangedFiles.length,
+      })
+      logActivity('info', 'completed', 'reconcileAtlasRepository', {
+        ...result,
+        durationMs: Date.now() - startedAt,
+      })
+      return result
+    } catch (error) {
+      await markAtlasRepositoryFailed(db, repository, baseIndexedCommit, error).catch((stateError) => {
+        logActivity('error', 'failed', 'markAtlasRepositoryFailed', {
+          repository,
+          error: formatActivityError(stateError),
+        })
+      })
+      logActivity('error', 'failed', 'reconcileAtlasRepository', {
+        repository,
+        ref,
+        requestedCommit,
+        durationMs: Date.now() - startedAt,
+        error: formatActivityError(error),
+      })
+      throw error
+    }
   },
 
   async listRepoFiles(input: ListRepoFilesInput): Promise<ListRepoFilesOutput> {
@@ -3367,6 +4087,9 @@ export const activities = {
     })
 
     try {
+      if (repositoryRef !== 'main') {
+        throw new Error(`Atlas persists only main; received ${repositoryRef}`)
+      }
       const db = getAtlasDb()
       if (!db) {
         throw new Error('DATABASE_URL is required for Atlas enrichment persistence')
@@ -3374,15 +4097,23 @@ export const activities = {
 
       const repositoryRows = (await db`
         INSERT INTO atlas.repositories (name, default_ref, metadata)
-        VALUES (${repositoryName}, ${repositoryRef}, ${JSON.stringify({ source: 'bumba' })}::jsonb)
+        VALUES (${repositoryName}, ${'main'}, ${JSON.stringify({ source: 'bumba' })}::text::jsonb)
         ON CONFLICT (name) DO UPDATE
-        SET default_ref = COALESCE(EXCLUDED.default_ref, atlas.repositories.default_ref),
+        SET metadata = COALESCE(atlas.repositories.metadata, '{}'::jsonb) || EXCLUDED.metadata,
             updated_at = now()
-        RETURNING id;
-      `) as Array<{ id: string }>
+        RETURNING id, metadata;
+      `) as Array<{ id: string; metadata: Record<string, unknown> | null }>
 
       const repositoryId = repositoryRows[0]?.id
       if (!repositoryId) throw new Error('failed to upsert repository')
+      const repositoryMetadata = asMetadataRecord(repositoryRows[0]?.metadata)
+      const indexedCommit =
+        typeof repositoryMetadata.indexedCommit === 'string' ? repositoryMetadata.indexedCommit : null
+      if (indexedCommit && repositoryCommit !== indexedCommit) {
+        throw new Error(
+          `Atlas file write commit ${repositoryCommit ?? 'unknown'} does not match ready corpus ${indexedCommit}`,
+        )
+      }
 
       const fileKeyRows = (await db`
         INSERT INTO atlas.file_keys (repository_id, path)
@@ -3395,68 +4126,41 @@ export const activities = {
       const fileKeyId = fileKeyRows[0]?.id
       if (!fileKeyId) throw new Error('failed to upsert file key')
 
-      const fileVersionRows = (
-        shouldUseNullCommitConflictTarget(repositoryCommit)
-          ? await db`
-              INSERT INTO atlas.file_versions (
-                file_key_id,
-                repository_ref,
-                repository_commit,
-                content_hash,
-                language,
-                byte_size,
-                line_count,
-                metadata,
-                source_timestamp
-              )
-              VALUES (
-                ${fileKeyId},
-                ${repositoryRef},
-                ${repositoryCommit},
-                ${contentHash},
-                ${fileMeta.language},
-                ${fileMeta.byteSize},
-                ${fileMeta.lineCount},
-                ${JSON.stringify(fileMeta.metadata)}::jsonb,
-                ${fileMeta.sourceTimestamp}
-              )
-              ON CONFLICT (file_key_id, repository_ref, content_hash)
-              WHERE repository_commit IS NULL
-              DO UPDATE
-              SET updated_at = now(),
-                  metadata = EXCLUDED.metadata
-              RETURNING id;
-            `
-          : await db`
-              INSERT INTO atlas.file_versions (
-                file_key_id,
-                repository_ref,
-                repository_commit,
-                content_hash,
-                language,
-                byte_size,
-                line_count,
-                metadata,
-                source_timestamp
-              )
-              VALUES (
-                ${fileKeyId},
-                ${repositoryRef},
-                ${repositoryCommit},
-                ${contentHash},
-                ${fileMeta.language},
-                ${fileMeta.byteSize},
-                ${fileMeta.lineCount},
-                ${JSON.stringify(fileMeta.metadata)}::jsonb,
-                ${fileMeta.sourceTimestamp}
-              )
-              ON CONFLICT (file_key_id, repository_ref, repository_commit, content_hash)
-              DO UPDATE
-              SET updated_at = now(),
-                  metadata = EXCLUDED.metadata
-              RETURNING id;
-            `
-      ) as Array<{ id: string }>
+      const fileVersionRows = (await db`
+        INSERT INTO atlas.file_versions (
+          file_key_id,
+          repository_ref,
+          repository_commit,
+          content_hash,
+          language,
+          byte_size,
+          line_count,
+          metadata,
+          source_timestamp
+        )
+        VALUES (
+          ${fileKeyId},
+          ${repositoryRef},
+          ${repositoryCommit},
+          ${contentHash},
+          ${fileMeta.language},
+          ${fileMeta.byteSize},
+          ${fileMeta.lineCount},
+          ${JSON.stringify(fileMeta.metadata)}::text::jsonb,
+          ${fileMeta.sourceTimestamp}
+        )
+        ON CONFLICT (file_key_id) DO UPDATE
+        SET repository_ref = EXCLUDED.repository_ref,
+            repository_commit = EXCLUDED.repository_commit,
+            content_hash = EXCLUDED.content_hash,
+            language = EXCLUDED.language,
+            byte_size = EXCLUDED.byte_size,
+            line_count = EXCLUDED.line_count,
+            metadata = EXCLUDED.metadata,
+            source_timestamp = EXCLUDED.source_timestamp,
+            updated_at = now()
+        RETURNING id;
+      `) as Array<{ id: string }>
 
       const fileVersionId = fileVersionRows[0]?.id
       if (!fileVersionId) throw new Error('failed to upsert file version')
@@ -3525,7 +4229,7 @@ export const activities = {
           ${input.enriched},
           ${input.summary},
           ${db.array([], 'text')}::text[],
-          ${JSON.stringify(enrichmentMetadata)}::jsonb
+          ${JSON.stringify(enrichmentMetadata)}::text::jsonb
         )
         ON CONFLICT (file_version_id, kind, source) WHERE chunk_id IS NULL DO UPDATE
         SET content = EXCLUDED.content,
@@ -3824,9 +4528,9 @@ export const activities = {
       }
 
       const indexedChunkIds = Array.from(chunkIdByIndex.values())
-      let embeddingConfig: ReturnType<typeof loadEmbeddingConfig>
+      let embeddingConfig: ReturnType<typeof loadAtlasCodeSearchEmbeddingConfig>
       try {
-        embeddingConfig = loadEmbeddingConfig()
+        embeddingConfig = loadAtlasCodeSearchEmbeddingConfig()
       } catch (error) {
         await updateChunkEmbeddingMetadata(db, indexedChunkIds, {
           embeddingStatus: 'failed',
@@ -4261,7 +4965,14 @@ export const activities = {
 }
 
 export const __test__ = {
+  ATLAS_CHUNKER_VERSION,
+  assertChunkCoverage,
+  extractFileChunks,
   shouldUseNullCommitConflictTarget,
+  resetAtlasDb: async () => {
+    if (atlasDb) await atlasDb.close()
+    atlasDb = undefined
+  },
 }
 
 export default activities

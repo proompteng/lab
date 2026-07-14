@@ -1,10 +1,10 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db'
-import { resolveEmbeddingConfig } from '../memory-config'
+import { resolveAtlasCodeSearchEmbeddingConfig } from '../memory-config'
 import { createPgvectorAnnIndexIfSupported } from '../pgvector-indexing'
 
-const resolveEmbeddingDimension = () => resolveEmbeddingConfig(process.env).dimension
+const resolveEmbeddingDimension = () => resolveAtlasCodeSearchEmbeddingConfig(process.env).dimension
 
 export const up = async (db: Kysely<Database>) => {
   const embeddingDimension = resolveEmbeddingDimension()

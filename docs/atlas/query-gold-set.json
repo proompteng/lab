@@ -1,0 +1,41 @@
+{
+  "version": "atlas-code-search-gold-v1",
+  "repository": "proompteng/lab",
+  "ref": "main",
+  "queries": [
+    {
+      "query": "createAtlasCodeSearchHandlers",
+      "expectedPaths": ["services/jangar/src/server/atlas-code-search.ts"],
+      "expectedFirst": true
+    },
+    {
+      "query": "ATLAS_CHUNKER_VERSION",
+      "expectedPaths": ["services/bumba/src/activities/index.ts"],
+      "expectedFirst": true
+    },
+    {
+      "query": "how Atlas decides which Git files are eligible for indexing",
+      "expectedPaths": ["services/bumba/src/atlas/file-eligibility.ts"]
+    },
+    {
+      "query": "reconcile the complete authoritative origin main Git tree after a push",
+      "expectedPaths": ["services/bumba/src/activities/index.ts", "services/bumba/src/atlas/reconciliation.ts"]
+    },
+    {
+      "query": "source preview verifies the indexed commit and content hash",
+      "expectedPaths": ["services/jangar/src/routes/api/atlas/file.ts"]
+    },
+    {
+      "query": "HNSW index for 1024 dimensional Atlas chunk embeddings",
+      "expectedPaths": ["services/jangar/src/server/migrations/20260714_atlas_current_corpus.ts"]
+    },
+    {
+      "query": "ignore non-default branch GitHub pushes and start repository reconciliation",
+      "expectedPaths": ["services/bumba/src/event-consumer.ts"]
+    }
+  ],
+  "absentPaths": [
+    "services/torghut/app/trading/promotion_authority.py",
+    "services/torghut/tests/trading/test_promotion_authority.py"
+  ]
+}

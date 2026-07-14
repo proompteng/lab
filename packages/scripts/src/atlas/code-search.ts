@@ -13,8 +13,12 @@ type CodeSearchItem = {
   startLine?: number | null
   endLine?: number | null
   score?: number
+  retrievalMode?: string
+  degradation?: string | null
+  contentHash?: string
   snippet?: string | null
   signals?: {
+    exactRank?: number | null
     semanticDistance?: number | null
     lexicalRank?: number | null
     matchedIdentifiers?: string[]
@@ -289,6 +293,7 @@ const renderHuman = (items: CodeSearchItem[]) => {
     const semantic =
       typeof item.signals?.semanticDistance === 'number' ? item.signals.semanticDistance.toFixed(4) : 'n/a'
     const lexical = typeof item.signals?.lexicalRank === 'number' ? item.signals.lexicalRank.toFixed(4) : 'n/a'
+    const exact = typeof item.signals?.exactRank === 'number' ? item.signals.exactRank.toFixed(4) : 'n/a'
     const identifiers = item.signals?.matchedIdentifiers?.join(', ') || ''
 
     console.log(`\n[${index + 1}] ${item.path ?? '(unknown path)'}:${lineStart}-${lineEnd}`)
@@ -296,7 +301,11 @@ const renderHuman = (items: CodeSearchItem[]) => {
     if (item.commit) {
       console.log(`  commit: ${item.commit}`)
     }
-    console.log(`  score: ${score} (semanticDistance=${semantic}, lexicalRank=${lexical})`)
+    console.log(
+      `  score: ${score} (mode=${item.retrievalMode ?? 'unknown'}, exactRank=${exact}, semanticDistance=${semantic}, lexicalRank=${lexical})`,
+    )
+    if (item.contentHash) console.log(`  content hash: ${item.contentHash}`)
+    if (item.degradation) console.log(`  degradation: ${item.degradation}`)
     if (identifiers) {
       console.log(`  identifiers: ${identifiers}`)
     }

@@ -33,6 +33,10 @@
 ## Discovery and Commands
 
 - Search code with `bun run atlas:code-search --query "<query>" --repository proompteng/lab --limit 10`. Narrow only as needed with `--path-prefix`, `--language`, then `--ref`.
+- Follow `docs/atlas/README.md` for Atlas trust and verification rules. Until its production gates pass, treat Atlas
+  results as navigation leads, verify material findings against the exact Git ref, and report misses, stale paths, or
+  silent fallbacks instead of hiding them with a narrower query. Atlas health or stats alone do not prove corpus
+  completeness.
 - Install dependencies with `bun install`.
 - Frontends: `bun run dev:<app>`, `bun run build:<app>`, `bun run start:<app>`.
 - Convex: `bun run dev:convex`, `bun run --filter @proompteng/backend codegen`, `bun run seed:models`.

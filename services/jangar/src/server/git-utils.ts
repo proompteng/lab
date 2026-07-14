@@ -66,6 +66,7 @@ export const runGitCommand = async (args: string[]): Promise<GitCommandResult> =
 type AtlasRepositoryResult = { ok: true; repository: string } | { ok: false; message: string }
 
 type AtlasRefResult = { ok: true } | { ok: false; message: string }
+type GitCommandRunner = (args: string[]) => Promise<GitCommandResult>
 
 export const resolveAtlasRepository = (rawRepository: string): AtlasRepositoryResult => {
   const repository = rawRepository.trim()
@@ -85,6 +86,25 @@ export const ensureGitRef = async (ref: string): Promise<AtlasRefResult> => {
     return { ok: false, message: detail || 'Ref not found.' }
   }
 
+  return { ok: true }
+}
+
+export const ensureAtlasCommitAvailable = async (
+  commit: string,
+  run: GitCommandRunner = runGitCommand,
+): Promise<AtlasRefResult> => {
+  if (!/^[0-9a-f]{40}$/i.test(commit)) return { ok: false, message: 'Indexed commit is not an exact Git SHA.' }
+
+  const verify = () => run(['cat-file', '-e', `${commit}^{commit}`])
+  if ((await verify()).exitCode === 0) return { ok: true }
+
+  const fetched = await run(['fetch', '--no-auto-maintenance', '--quiet', '--depth=1', 'origin', commit])
+  if (fetched.exitCode !== 0) {
+    return { ok: false, message: fetched.stderr.trim() || `Unable to fetch indexed commit ${commit}.` }
+  }
+  if ((await verify()).exitCode !== 0) {
+    return { ok: false, message: `Indexed commit ${commit} is unavailable after fetch.` }
+  }
   return { ok: true }
 }
 

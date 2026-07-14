@@ -382,7 +382,7 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
             if (isNotification) return null
             return toolError(id, healthResult.left.message, { tool: toolName })
           }
-          if (parsed.value.requireSemanticCoverage && healthResult.right.status !== 'ok') {
+          if (healthResult.right.status !== 'ok') {
             if (isNotification) return null
             return toolError(id, healthResult.right.message, {
               tool: toolName,
