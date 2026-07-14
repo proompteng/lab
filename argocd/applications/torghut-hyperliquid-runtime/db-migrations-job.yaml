@@ -9,7 +9,9 @@ metadata:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
   backoffLimit: 6
-  activeDeadlineSeconds: 900
+  # This hook runs the same migration heads as the core Torghut hook. Keep the
+  # deadline above the 45-minute concurrent index-build statement timeout.
+  activeDeadlineSeconds: 3600
   ttlSecondsAfterFinished: 600
   template:
     metadata:
