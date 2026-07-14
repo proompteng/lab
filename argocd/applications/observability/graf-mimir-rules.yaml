@@ -361,10 +361,8 @@ data:
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephScrubbingDisabled
             expr: |
-              max(
-                ceph_osd_flag_noscrub{job="ceph-storage"} or
-                ceph_osd_flag_nodeep_scrub{job="ceph-storage"}
-              ) > 0
+              max(ceph_osd_flag_noscrub{job="ceph-storage"}) > 0 or
+              max(ceph_osd_flag_nodeep_scrub{job="ceph-storage"}) > 0
             for: 30m
             labels:
               severity: warning
@@ -378,12 +376,14 @@ data:
             expr: |
               torghut_postgres:requested_checkpoint_ratio:rate1h > 0.25
               and
-              increase(
-                cnpg_pg_stat_checkpointer_checkpoints_req{
-                  cluster="torghut-db",
-                  job="cnpg-postgres",
-                  role="primary"
-                }[1h]
+              sum(
+                increase(
+                  cnpg_pg_stat_checkpointer_checkpoints_req{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[1h]
+                )
               ) >= 4
             for: 30m
             labels:

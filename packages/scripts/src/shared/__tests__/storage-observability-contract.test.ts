@@ -50,4 +50,10 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
   ]) {
     expect(rules).toContain(contract)
   }
+
+  expect(rules).toContain('max(ceph_osd_flag_noscrub{job="ceph-storage"}) > 0 or')
+  expect(rules).toContain('max(ceph_osd_flag_nodeep_scrub{job="ceph-storage"}) > 0')
+  expect(rules).toContain(
+    'sum(\n                increase(\n                  cnpg_pg_stat_checkpointer_checkpoints_req{',
+  )
 })
