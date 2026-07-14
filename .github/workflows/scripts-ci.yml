@@ -11,6 +11,7 @@ on:
       - 'argocd/applications/observability/**'
       - 'argocd/applicationsets/**'
       - 'docs/torghut/ceph-migration.md'
+      - 'docs/agents/designs/handoff-common.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - '.github/workflows/scripts-ci.yml'
@@ -22,6 +23,7 @@ on:
       - 'argocd/applications/observability/**'
       - 'argocd/applicationsets/**'
       - 'docs/torghut/ceph-migration.md'
+      - 'docs/agents/designs/handoff-common.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
 
