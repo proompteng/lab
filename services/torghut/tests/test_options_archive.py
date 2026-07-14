@@ -81,7 +81,7 @@ class _ArchiveSession:
             return _Result(scalar=self.active_count > 0)
         if "SELECT catalog.expiration_date" in sql:
             return _Result(rows=self.candidate_rows)
-        if "UPDATE torghut_options_contract_catalog" in sql:
+        if "INSERT INTO torghut_options_contract_archive_status" in sql:
             return _Result(rowcount=self.transition_count)
         return _Result()
 
@@ -204,10 +204,14 @@ def _watermark_row(
     next_eligible_ts: datetime | None = None,
     finalize_after_expiration_date: date | None = None,
     finalize_after_contract_symbol: str | None = None,
+    finalize_snapshot_at: datetime | None = None,
     transitioned_count: int = 0,
 ) -> dict[str, object]:
+    if status == "finalizing" and finalize_snapshot_at is None:
+        finalize_snapshot_at = datetime(2026, 7, 14, 11, tzinfo=UTC)
     return {
         "cursor": cursor,
+        "last_event_ts": finalize_snapshot_at,
         "last_success_ts": None,
         "next_eligible_ts": next_eligible_ts,
         "retry_count": retry_count,
@@ -216,6 +220,7 @@ def _watermark_row(
             "status": status,
             "page_count": page_count,
             "seen_count": seen_count,
+            "finalize_snapshot_at": finalize_snapshot_at,
             "finalize_after_expiration_date": (
                 finalize_after_expiration_date.isoformat()
                 if finalize_after_expiration_date is not None
@@ -504,6 +509,46 @@ def test_page_checkpoint_persists_exact_membership_and_next_cursor() -> None:
     ]
 
 
+def test_terminal_page_captures_stable_finalization_snapshot() -> None:
+    fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
+    observed_at = datetime(2026, 7, 14, 12, tzinfo=UTC)
+    session = _ArchiveSession()
+    repository = _ArchiveRepository(
+        row=_watermark_row(
+            fingerprint=fingerprint,
+            status="running",
+            cursor="page-2",
+            page_count=2,
+            seen_count=2,
+        ),
+        membership_count=2,
+        session=session,
+    )
+
+    checkpoint = repository.checkpoint_page(
+        checkpoint=ArchiveCheckpoint(
+            shard=_shard(),
+            query_fingerprint=fingerprint,
+            status="running",
+            cursor="page-2",
+            page_count=2,
+            seen_count=2,
+            retry_count=0,
+            next_eligible_at=None,
+            last_success_at=None,
+        ),
+        observed_at=observed_at,
+        contract_symbols=set(),
+        next_cursor=None,
+    )
+
+    assert checkpoint.status == "finalizing"
+    assert checkpoint.finalize_snapshot_at == observed_at
+    watermark_parameters = session.calls[-1][1]
+    assert isinstance(watermark_parameters, dict)
+    assert observed_at.isoformat() in str(watermark_parameters["metadata"])
+
+
 def test_record_failure_retains_cursor_and_caps_exponential_backoff() -> None:
     fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
     observed_at = datetime(2026, 7, 14, 12, tzinfo=UTC)
@@ -613,15 +658,19 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
     transition_sql, transition_parameters = next(
         (sql, parameters)
         for sql, parameters in session.calls
-        if "UPDATE torghut_options_contract_catalog" in sql
+        if "INSERT INTO torghut_options_contract_archive_status" in sql
     )
     assert "WITH candidates AS" in transition_sql
+    assert "INSERT INTO torghut_options_contract_archive_status" in transition_sql
+    assert "UPDATE torghut_options_contract_catalog" not in transition_sql
     assert "CAST(:candidate_expiration_dates AS DATE[])" in transition_sql
     assert "CAST(:candidate_symbols AS TEXT[])" in transition_sql
     assert "catalog.expiration_date = candidates.expiration_date" in transition_sql
     assert "catalog.contract_symbol = candidates.contract_symbol" in transition_sql
     assert "membership.query_fingerprint = :query_fingerprint" in transition_sql
     assert "membership.shard_key = :shard_key" in transition_sql
+    assert "subscription.tier IS DISTINCT FROM 'off'" in transition_sql
+    assert "ON CONFLICT (contract_symbol) DO UPDATE" in transition_sql
     assert isinstance(transition_parameters, dict)
     assert transition_parameters["candidate_expiration_dates"] == [
         date(2026, 7, 14),

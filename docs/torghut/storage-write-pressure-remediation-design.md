@@ -214,6 +214,23 @@ The live trading universe and the archival catalog are separate workloads:
 - Treat statement and lock timeouts as secondary safety bounds, not as the remediation. Shutdown explicitly cancels an
   in-flight archive statement and each committed batch remains independently replay-safe.
 
+### Low-WAL archive status overlay
+
+Live validation of the initial finalizer showed that pacing alone was insufficient. Even ten catalog status updates per
+transaction rewrote a roughly 3.1 GiB heap and four status-dependent indexes in a roughly 3.2 GiB index set, pushing
+PostgreSQL WAL above the discovery budget. Archive finalization therefore must not update or row-lock the wide catalog.
+
+Missing archive contracts are recorded in the logged, narrow
+`torghut_options_contract_archive_status` table. `torghut_options_active_contract_catalog` exposes the effective active
+set by excluding those overrides, and every active-catalog read uses that view. A provider page conditionally deletes
+matching overrides and publishes the effective reactivation even when the wide catalog row itself is unchanged.
+
+The finalizer writes one compact row keyed by contract symbol, updates it only when status, shard, or query fingerprint
+materially changes, and protects every non-off subscription from archival deactivation. A transaction-scoped advisory
+lock serializes status-overlay insertion with provider-page reactivation without dirtying catalog heap pages. The
+existing physical catalog status remains the bounded live-discovery state and is the rollback source if the overlay is
+disabled.
+
 ## Design 2: ClickHouse ingestion
 
 ### Per-table buffering

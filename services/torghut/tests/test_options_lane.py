@@ -393,7 +393,10 @@ class TestOptionsRepositoryStatusCounts(TestCase):
             )
         )
         self.assertTrue(
-            any("torghut_options_contract_catalog" in sql for sql in session.statements)
+            any(
+                "torghut_options_active_contract_catalog" in sql
+                for sql in session.statements
+            )
         )
 
     def test_count_hot_contracts_returns_none_when_telemetry_count_times_out(

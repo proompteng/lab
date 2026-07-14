@@ -59,6 +59,7 @@ from app.api.health_checks.tigerbeetle_health import (
 from app.config import settings
 from app.db import SessionLocal
 from app.models import TradeDecision
+from app.options_lane.archive_status import ACTIVE_CATALOG_VIEW
 from app.trading.hypotheses import (
     JangarDependencyQuorumStatus,
     load_hypothesis_registry,
@@ -200,7 +201,7 @@ def _load_options_catalog_freshness_summary(
         session.execute(text("SET LOCAL statement_timeout = 500"))
         if scoped_symbols:
             scoped_query = text(
-                """
+                f"""
 SELECT
   underlying_symbol,
   COUNT(*) AS active_contracts,
@@ -209,7 +210,7 @@ SELECT
   MAX(provider_updated_ts) AS newest_provider_updated_ts,
   COUNT(*) FILTER (WHERE close_price IS NULL) AS missing_close_price_count,
   COUNT(*) FILTER (WHERE COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
-FROM torghut_options_contract_catalog
+FROM {ACTIVE_CATALOG_VIEW}
 WHERE underlying_symbol IN :route_symbols
   AND status = 'active'
 GROUP BY underlying_symbol
@@ -266,14 +267,14 @@ GROUP BY underlying_symbol
             global_rows = list(
                 session.execute(
                     text(
-                        """
+                        f"""
 SELECT
   underlying_symbol,
   last_seen_ts,
   provider_updated_ts,
   close_price,
   open_interest
-FROM torghut_options_contract_catalog
+FROM {ACTIVE_CATALOG_VIEW}
 WHERE status = 'active'
 ORDER BY last_seen_ts DESC NULLS LAST
 LIMIT 200

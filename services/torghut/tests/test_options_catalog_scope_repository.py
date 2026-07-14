@@ -44,7 +44,7 @@ class _CatalogSession:
     def execute(self, statement: object, parameters: object = None) -> _RowsResult:
         sql = str(statement)
         self.calls.append((sql, parameters))
-        if "SELECT *" in sql and "contract_symbol = ANY" in sql:
+        if "SELECT catalog.*" in sql and "contract_symbol = ANY" in sql:
             return _RowsResult(self.existing_rows)
         if "WITH expired_batch AS" in sql:
             return _RowsResult(self.expired_transition_rows)
@@ -144,8 +144,34 @@ def test_unchanged_catalog_page_performs_no_upsert_or_publication() -> None:
         repository.sync_contract_catalog_page([contract], observed_at=observed_at) == []
     )
 
-    assert len(session.calls) == 1
-    assert "SELECT *" in session.calls[0][0]
+    assert len(session.calls) == 3
+    assert "pg_advisory_xact_lock" in session.calls[0][0]
+    assert "SELECT catalog.*" in session.calls[1][0]
+    assert "DELETE FROM torghut_options_contract_archive_status" in session.calls[2][0]
+
+
+def test_seen_catalog_row_clears_archive_overlay_and_publishes_reactivation() -> None:
+    observed_at = datetime(2026, 7, 14, 15, tzinfo=UTC)
+    contract = _contract(
+        "AAPL260717C00200000", observed_at=observed_at, open_interest=42
+    )
+    existing = _persisted_contract_row(contract)
+    existing["first_seen_ts"] = observed_at - timedelta(days=1)
+    existing["last_seen_ts"] = observed_at - timedelta(minutes=5)
+    existing["archive_status_symbol"] = contract["contract_symbol"]
+    session = _CatalogSession(existing_rows=[existing])
+    repository = _CatalogRepository(session)
+
+    changed_rows = repository.sync_contract_catalog_page(
+        [contract], observed_at=observed_at
+    )
+
+    assert [row["contract_symbol"] for row in changed_rows] == ["AAPL260717C00200000"]
+    assert changed_rows[0]["status"] == "active"
+    assert not any("jsonb_to_recordset" in sql for sql, _ in session.calls)
+    delete_sql, delete_parameters = session.calls[-1]
+    assert "DELETE FROM torghut_options_contract_archive_status" in delete_sql
+    assert delete_parameters == {"symbols": ["AAPL260717C00200000"]}
 
 
 def test_catalog_upserts_changed_rows_in_stable_order_with_database_guard() -> None:
@@ -165,7 +191,7 @@ def test_catalog_upserts_changed_rows_in_stable_order_with_database_guard() -> N
         "AAPL260717C00200000",
         "MSFT260717C00400000",
     ]
-    insert_sql, insert_parameters = session.calls[1]
+    insert_sql, insert_parameters = session.calls[2]
     assert "jsonb_to_recordset" in insert_sql
     assert "IS DISTINCT FROM" in insert_sql
     assert isinstance(insert_parameters, dict)

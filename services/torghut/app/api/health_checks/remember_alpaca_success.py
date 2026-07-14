@@ -34,6 +34,7 @@ from app.api.health_checks.shared_context import (
 from app.config import settings
 from app.db import SessionLocal
 from app.models import ExecutionTCAMetric
+from app.options_lane.archive_status import ACTIVE_CATALOG_VIEW
 from app.trading.ingest import ClickHouseSignalIngestor
 from app.trading.scheduler import TradingScheduler
 from app.trading.tca import build_tca_gate_inputs
@@ -433,14 +434,14 @@ def load_bounded_options_catalog_freshness_summary(
         fallback_reason_codes.append(reason)
     rows: list[Mapping[str, object]] = []
     bounded_query = text(
-        """
+        f"""
 SELECT
   underlying_symbol,
   last_seen_ts,
   provider_updated_ts,
   close_price,
   open_interest
-FROM torghut_options_contract_catalog
+FROM {ACTIVE_CATALOG_VIEW}
 WHERE underlying_symbol = :route_symbol
   AND status = 'active'
 LIMIT 1

@@ -140,7 +140,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         self.assertIn("AND status = 'active'", fake_session.calls[1][0])
         self.assertEqual(
             sum(
-                "FROM torghut_options_contract_catalog" in sql
+                "FROM torghut_options_active_contract_catalog" in sql
                 for sql, _params in fake_session.calls
             ),
             1,
@@ -197,7 +197,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         self.assertIn("LIMIT 200", fake_session.calls[1][0])
         self.assertEqual(
             sum(
-                "FROM torghut_options_contract_catalog" in sql
+                "FROM torghut_options_active_contract_catalog" in sql
                 for sql, _params in fake_session.calls
             ),
             1,
@@ -519,7 +519,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         self.assertEqual(payload["route_symbols"], ["AAPL"])
         self.assertEqual(
             sum(
-                "FROM torghut_options_contract_catalog" in sql
+                "FROM torghut_options_active_contract_catalog" in sql
                 for sql, _params in fake_session.calls
             ),
             1,

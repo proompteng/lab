@@ -11,6 +11,7 @@ from typing import cast
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.options_lane.archive_status import ACTIVE_CATALOG_VIEW
 from app.options_lane.catalog_scope import OptionsCatalogScope
 
 
@@ -32,7 +33,7 @@ def load_live_subscription_candidates(
 
     rows = session.execute(
         text(
-            """
+            f"""
             SELECT catalog.contract_symbol,
                    catalog.status,
                    catalog.underlying_symbol,
@@ -41,12 +42,12 @@ def load_live_subscription_candidates(
                    catalog.close_price,
                    catalog.open_interest,
                    subs.ranking_score,
-                   COALESCE(subs.ranking_inputs, '{}'::JSONB) AS ranking_inputs,
+                   COALESCE(subs.ranking_inputs, '{{}}'::JSONB) AS ranking_inputs,
                    subs.tier,
                    subs.desired_channels,
                    subs.provider_cap_generation
             FROM torghut_options_subscription_state AS subs
-            JOIN torghut_options_contract_catalog AS catalog
+            JOIN {ACTIVE_CATALOG_VIEW} AS catalog
               ON catalog.contract_symbol = subs.contract_symbol
             WHERE catalog.status = 'active'
               AND subs.tier IN ('hot', 'warm')
