@@ -183,7 +183,7 @@ class TradingSchedulerGovernanceRuntimeMethods(
         self._update_autonomy_throughput_state(
             throughput_payload=gate_report.get("throughput")
         )
-        self.state.last_autonomy_error = None
+        self._set_autonomy_iteration_error(None)
 
         if settings.trading_drift_governance_enabled:
             drift_governance_payload = self._evaluate_drift_governance(

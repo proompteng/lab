@@ -383,7 +383,7 @@ class TradingSchedulerGovernanceDecisionMethods(
         self.state.metrics.autonomy_last_trade_count = 0
         self.state.metrics.autonomy_last_fold_metrics_count = 0
         self.state.metrics.autonomy_last_stress_metrics_count = 0
-        self.state.last_autonomy_error = None
+        self._set_autonomy_iteration_error(None)
         self.state.last_autonomy_reason = reason
         self.state.metrics.record_autonomy_promotion_outcome(
             AutonomyPromotionOutcomeMetrics(
@@ -415,7 +415,7 @@ class TradingSchedulerGovernanceDecisionMethods(
         except Exception as exc:
             self.state.autonomy_failure_streak += 1
             self.state.last_autonomy_reason = "autonomy_no_signal_persistence_failed"
-            self.state.last_autonomy_error = str(exc)
+            self._set_autonomy_iteration_error(str(exc))
             logger.exception(
                 "Autonomy no-signal persistence failed; ingest_reason=%s window_start=%s window_end=%s",
                 reason,
@@ -669,7 +669,7 @@ class TradingSchedulerGovernanceDecisionMethods(
         except Exception as exc:
             self.state.autonomy_failure_streak += 1
             self.state.last_autonomy_phase_manifest = None
-            self.state.last_autonomy_error = str(exc)
+            self._set_autonomy_iteration_error(str(exc))
             self.state.last_autonomy_reason = "lane_execution_failed"
             self._clear_autonomy_result_state()
             self._emit_autonomy_domain_telemetry(
