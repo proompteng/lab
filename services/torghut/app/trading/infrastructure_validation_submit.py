@@ -410,19 +410,16 @@ def _race_validation_submissions(
     state: _SubmissionRaceState,
     timeout_seconds: float,
 ) -> tuple[_WorkerResult, _WorkerResult]:
-    try:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            winner = executor.submit(submit, "validation-primary")
-            if not state.broker_started.wait(timeout=timeout_seconds):
-                raise RuntimeError("infrastructure_validation_broker_boundary_timeout")
-            contender = executor.submit(submit, "validation-contender")
-            try:
-                contender_result = contender.result(timeout=timeout_seconds)
-            finally:
-                state.contender_finished.set()
-            winner_result = winner.result(timeout=timeout_seconds)
-    finally:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        winner = executor.submit(submit, "validation-primary")
+        if not state.broker_started.wait(timeout=timeout_seconds):
+            raise RuntimeError("infrastructure_validation_broker_boundary_timeout")
+        contender = executor.submit(submit, "validation-contender")
+        contender_result = contender.result(timeout=timeout_seconds)
+        if contender_result.outcome != "deferred":
+            raise RuntimeError("infrastructure_validation_race_contender_not_fenced")
         state.contender_finished.set()
+        winner_result = winner.result(timeout=timeout_seconds)
     return winner_result, contender_result
 
 
