@@ -18,6 +18,7 @@ from app.options_lane.alpaca import (
     normalize_contract_record,
     normalize_snapshot_record,
 )
+from app.options_lane.catalog_watermark_repository import CatalogCycleSummary
 from app.options_lane.options_status import build_status_payload
 from app.options_lane.repository import (
     OptionsRepository,
@@ -211,6 +212,7 @@ class _CompleteCatalogClient:
 class _SeededCycleRepository:
     def __init__(self) -> None:
         self.reconciliations: list[tuple[list[str], set[str]]] = []
+        self.completed_cycles: list[CatalogCycleSummary] = []
 
     def list_live_subscription_candidates(self) -> list[dict[str, object]]:
         return [
@@ -290,6 +292,9 @@ class _SeededCycleRepository:
             changed_count=len(ranked_rows),
             deactivated_count=len(deactivate_symbols),
         )
+
+    def record_catalog_cycle_success(self, summary: CatalogCycleSummary) -> None:
+        self.completed_cycles.append(summary)
 
 
 class _CatalogStatusServiceModule(Protocol):
@@ -571,6 +576,7 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertEqual(snapshot["subscription_reconciliations_total"], 1)
         self.assertEqual(snapshot["subscription_rows_changed_total"], 1)
         self.assertEqual(snapshot["subscription_rows_deactivated_total"], 0)
+        self.assertEqual(repository.completed_cycles, [])
 
     def test_complete_catalog_cycle_deactivates_cold_rows_only_at_final_cleanup(
         self,
@@ -589,6 +595,9 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         final_symbols, final_deactivations = repository.reconciliations[0]
         self.assertEqual(final_symbols, ["AAPL260717C00200000"])
         self.assertEqual(final_deactivations, {"ARCHIVE260717P00100000"})
+        self.assertEqual(len(repository.completed_cycles), 1)
+        self.assertEqual(repository.completed_cycles[0].contract_count, 1)
+        self.assertEqual(repository.completed_cycles[0].hot_count, 1)
 
 
 class TestOptionsLaneNormalization(TestCase):

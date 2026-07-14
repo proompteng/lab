@@ -44,7 +44,8 @@ def load_live_subscription_candidates(session: Session) -> list[dict[str, object
             FROM torghut_options_subscription_state AS subs
             JOIN torghut_options_contract_catalog AS catalog
               ON catalog.contract_symbol = subs.contract_symbol
-            WHERE subs.tier IN ('hot', 'warm')
+            WHERE catalog.status = 'active'
+              AND subs.tier IN ('hot', 'warm')
             ORDER BY subs.ranking_score DESC, catalog.contract_symbol ASC
             """
         )
@@ -144,6 +145,8 @@ def reconcile_subscription_state(
                       EXCLUDED.desired_channels,
                       EXCLUDED.provider_cap_generation
                     )
+                    -- Per-row freshness means material assignment change. Successful
+                    -- cycle freshness is recorded once in the catalog watermark.
                     """
                 ),
                 {

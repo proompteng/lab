@@ -15,6 +15,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.options_lane.catalog_watermark_repository import (
+    CatalogCycleSummary,
+    record_catalog_cycle_success,
+)
 from app.options_lane.subscription_state_repository import (
     SubscriptionReconcileResult,
     load_live_subscription_candidates,
@@ -517,16 +521,26 @@ class OptionsRepository:
             rows = session.execute(
                 text(
                     """
-                    SELECT contract_symbol
-                    FROM torghut_options_subscription_state
-                    WHERE tier = 'hot'
-                    ORDER BY ranking_score DESC, contract_symbol ASC
+                    SELECT subscriptions.contract_symbol
+                    FROM torghut_options_subscription_state AS subscriptions
+                    JOIN torghut_options_contract_catalog AS catalog
+                      ON catalog.contract_symbol = subscriptions.contract_symbol
+                    WHERE subscriptions.tier = 'hot'
+                      AND catalog.status = 'active'
+                    ORDER BY subscriptions.ranking_score DESC,
+                             subscriptions.contract_symbol ASC
                     LIMIT :limit
                     """
                 ),
                 {"limit": limit},
             )
             return [cast(str, row[0]) for row in rows]
+
+    def record_catalog_cycle_success(self, summary: CatalogCycleSummary) -> None:
+        """Persist complete-cycle freshness in one watermark row."""
+
+        with self.session() as session:
+            record_catalog_cycle_success(session, summary)
 
     def get_due_snapshot_contracts(
         self,

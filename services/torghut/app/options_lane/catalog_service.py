@@ -13,6 +13,7 @@ from typing import Any, cast
 from fastapi import FastAPI, HTTPException
 
 from .alpaca import AlpacaApiError, AlpacaOptionsClient, normalize_contract_record
+from .catalog_watermark_repository import CatalogCycleSummary
 from .kafka import OptionsKafkaProducer, SequenceGenerator, build_envelope
 from .options_status import build_status_payload
 from .repository import (
@@ -374,14 +375,28 @@ def _run_discovery_cycle() -> None:
         deactivated_count=final_reconcile_result.deactivated_count,
         observed_at=observed_at,
     )
+    hot_count = sum(1 for row in ranked_rows if row["tier"] == "hot")
+    warm_count = sum(1 for row in ranked_rows if row["tier"] == "warm")
+    cycle_summary = CatalogCycleSummary(
+        observed_at=observed_at,
+        page_count=page_count,
+        contract_count=contract_count,
+        catalog_changed_count=changed_count,
+        transition_count=len(transition_rows),
+        hot_count=hot_count,
+        warm_count=warm_count,
+        subscription_changed_count=final_reconcile_result.changed_count,
+        subscription_deactivated_count=final_reconcile_result.deactivated_count,
+    )
+    _repository.record_catalog_cycle_success(cycle_summary)
     logger.info(
         "options catalog discovery cycle completed pages=%s contracts=%s changed=%s transitions=%s hot=%s warm=%s subscription_changes=%s subscription_deactivations=%s",
         page_count,
         contract_count,
         changed_count,
         len(transition_rows),
-        sum(1 for row in ranked_rows if row["tier"] == "hot"),
-        sum(1 for row in ranked_rows if row["tier"] == "warm"),
+        hot_count,
+        warm_count,
         final_reconcile_result.changed_count,
         final_reconcile_result.deactivated_count,
     )
