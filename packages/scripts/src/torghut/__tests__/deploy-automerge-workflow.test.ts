@@ -125,6 +125,13 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).not.toContain('deadline=$((SECONDS + 2700))')
   })
 
+  test('waits for the consolidated pull-request validation checks', () => {
+    expect(deployAutomergeWorkflow).toContain("'CI|PR validation (argo-lint)'")
+    expect(deployAutomergeWorkflow).toContain("'CI|PR validation (kubeconform)'")
+    expect(deployAutomergeWorkflow).not.toContain("'argo-lint|lint'")
+    expect(deployAutomergeWorkflow).not.toContain("'kubeconform|validate'")
+  })
+
   test('squash-merges generated release PRs after explicit gates instead of enabling brittle automerge', () => {
     expect(deployAutomergeWorkflow).toContain('name: Squash merge release PR')
     expect(deployAutomergeWorkflow).toContain('--json state,mergeStateStatus,isDraft')
