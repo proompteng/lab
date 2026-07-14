@@ -1,23 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Duration, Effect, Layer, ManagedRuntime, pipe } from 'effect'
 
-import { Atlas, AtlasLive } from '~/server/atlas'
-import { resolveAtlasRuntimeConfig } from '~/server/atlas-config'
-import { DEFAULT_REF, MAX_SEARCH_LIMIT, parseAtlasSearchInput } from '~/server/atlas-http'
-import type { AtlasSearchMatch } from '~/server/atlas-store'
-
-type AtlasSearchItem = {
-  fileVersionId?: string
-  repository?: string
-  ref?: string
-  commit?: string
-  path?: string
-  contentHash?: string
-  updatedAt?: string
-  score?: number
-  summary?: string | null
-  tags?: string[]
-}
+import { postCodeSearchHandler } from './code-search'
 
 export const Route = createFileRoute('/api/search')({
   server: {
@@ -27,8 +10,6 @@ export const Route = createFileRoute('/api/search')({
     },
   },
 })
-
-const handlerRuntime = ManagedRuntime.make(Layer.mergeAll(AtlasLive))
 
 const jsonResponse = (payload: unknown, status = 200) => {
   const body = JSON.stringify(payload)
@@ -41,156 +22,50 @@ const jsonResponse = (payload: unknown, status = 200) => {
   })
 }
 
-const errorResponse = (message: string, status = 500) => jsonResponse({ ok: false, message, error: message }, status)
-
-const resolveServiceError = (message: string) => {
-  const normalized = message.toLowerCase()
-  if (message.includes('DATABASE_URL')) return errorResponse(message, 503)
-  if (message.includes('OPENAI_API_KEY')) return errorResponse(message, 503)
-  if (
-    normalized.includes('econnrefused') ||
-    normalized.includes('connection terminated unexpectedly') ||
-    normalized.includes('server closed the connection unexpectedly') ||
-    normalized.includes('terminating connection')
-  ) {
-    return errorResponse(message, 503)
+const readJson = async (response: Response) => {
+  try {
+    return (await response.json()) as Record<string, unknown>
+  } catch {
+    return null
   }
-  if (normalized.includes('timed out') || normalized.includes('timeout')) {
-    return errorResponse(message, 504)
-  }
-  return errorResponse(message, 500)
 }
-
-const splitList = (values: string[]) =>
-  values
-    .flatMap((value) => value.split(','))
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
-
-const mapMatchToItem = (match: AtlasSearchMatch): AtlasSearchItem => ({
-  fileVersionId: match.fileVersion.id,
-  repository: match.repository.name,
-  ref: match.fileVersion.repositoryRef,
-  commit: match.fileVersion.repositoryCommit ?? undefined,
-  path: match.fileKey.path,
-  contentHash: match.fileVersion.contentHash,
-  updatedAt: match.fileVersion.updatedAt,
-  score: match.enrichment.distance,
-  summary: match.enrichment.summary,
-  tags: match.enrichment.tags.length ? match.enrichment.tags : undefined,
-})
-
-const rankFiles = (matches: AtlasSearchMatch[], limit: number) => {
-  const ranked = new Map<string, AtlasSearchItem>()
-
-  for (const match of matches) {
-    const key = match.fileVersion.id
-    const next = mapMatchToItem(match)
-    const existing = ranked.get(key)
-
-    if (!existing) {
-      ranked.set(key, next)
-      continue
-    }
-
-    if (typeof next.score === 'number' && (existing.score ?? Number.POSITIVE_INFINITY) > next.score) {
-      const merged: AtlasSearchItem = { ...next }
-      if (!merged.summary && existing.summary) {
-        merged.summary = existing.summary
-      }
-      if (existing.tags && existing.tags.length > 0) {
-        const combined = new Set([...(merged.tags ?? []), ...existing.tags])
-        merged.tags = Array.from(combined)
-      }
-      ranked.set(key, merged)
-      continue
-    }
-
-    let updated = false
-    const merged: AtlasSearchItem = { ...existing }
-    if (!merged.summary && next.summary) {
-      merged.summary = next.summary
-      updated = true
-    }
-    if (next.tags && next.tags.length > 0) {
-      const combined = new Set([...(merged.tags ?? []), ...next.tags])
-      merged.tags = Array.from(combined)
-      updated = true
-    }
-    if (updated) {
-      ranked.set(key, merged)
-    }
-  }
-
-  return Array.from(ranked.values())
-    .sort((a, b) => (a.score ?? Number.POSITIVE_INFINITY) - (b.score ?? Number.POSITIVE_INFINITY))
-    .slice(0, limit)
-}
-
-export const getSearchHandlerEffect = (request: Request) =>
-  pipe(
-    Effect.gen(function* () {
-      const url = new URL(request.url)
-      const payload = {
-        query: url.searchParams.get('query') ?? '',
-        limit: url.searchParams.get('limit') ?? undefined,
-        repository: url.searchParams.get('repository') ?? undefined,
-        ref: url.searchParams.get('ref') ?? undefined,
-        pathPrefix: url.searchParams.get('pathPrefix') ?? undefined,
-        tags: splitList(url.searchParams.getAll('tags')),
-        kinds: splitList(url.searchParams.getAll('kinds')),
-      }
-
-      const parsed = parseAtlasSearchInput(payload)
-      if (!parsed.ok) return errorResponse(parsed.message, 400)
-
-      if (parsed.value.ref && parsed.value.ref !== DEFAULT_REF) {
-        return errorResponse('Atlas search is limited to the main branch.', 400)
-      }
-
-      const requestedLimit = parsed.value.limit ?? 10
-      const searchLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), MAX_SEARCH_LIMIT)
-      const searchInput = { ...parsed.value, ref: DEFAULT_REF, limit: searchLimit }
-
-      const atlas = yield* Atlas
-
-      let matches: AtlasSearchMatch[]
-      let total: number
-      try {
-        ;[matches, total] = yield* Effect.all([atlas.search(searchInput), atlas.searchCount(searchInput)], {
-          concurrency: 'unbounded',
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const normalized = message.toLowerCase()
-        const looksLikeTransientDbBlip =
-          normalized.includes('econnrefused') ||
-          normalized.includes('connection terminated unexpectedly') ||
-          normalized.includes('server closed the connection unexpectedly')
-
-        if (!looksLikeTransientDbBlip) throw error
-
-        // Port-forwards can briefly restart (local listener down for ~1s). Retry once.
-        yield* Effect.sleep(Duration.millis(750))
-        ;[matches, total] = yield* Effect.all([atlas.search(searchInput), atlas.searchCount(searchInput)], {
-          concurrency: 'unbounded',
-        })
-      }
-      const items = rankFiles(matches, requestedLimit)
-      return jsonResponse({ ok: true, matches, items, total })
-    }),
-    Effect.catchAll((error) => Effect.succeed(resolveServiceError(error.message))),
-  )
 
 export const getAtlasSearchHandler = async (request: Request) => {
-  const effectiveTimeoutMs = resolveAtlasRuntimeConfig(process.env).searchTimeoutMs
+  const url = new URL(request.url)
+  const query = url.searchParams.get('query')?.trim() ?? ''
+  if (!query) return jsonResponse({ ok: false, message: 'Query is required.', error: 'Query is required.' }, 400)
+  if (url.searchParams.has('tags') || url.searchParams.has('kinds')) {
+    const message = 'Atlas code search does not support legacy enrichment tag or kind filters.'
+    return jsonResponse({ ok: false, message, error: message }, 400)
+  }
 
-  return Promise.race([
-    handlerRuntime.runPromise(getSearchHandlerEffect(request)),
-    new Promise<Response>((resolve) => {
-      setTimeout(() => {
-        resolve(errorResponse(`atlas search timed out after ${effectiveTimeoutMs}ms`, 504))
-      }, effectiveTimeoutMs)
-    }),
-  ])
+  const payload = {
+    query,
+    limit: url.searchParams.get('limit') ?? undefined,
+    repository: url.searchParams.get('repository') || undefined,
+    ref: url.searchParams.get('ref') || undefined,
+    pathPrefix: url.searchParams.get('pathPrefix') || undefined,
+  }
+  const codeSearchRequest = new Request(new URL('/api/code-search', url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: request.signal,
+  })
+  const response = await postCodeSearchHandler(codeSearchRequest)
+  const result = await readJson(response)
+  if (!result || !response.ok) {
+    return jsonResponse(
+      result ?? { ok: false, message: `Atlas code search failed (${response.status})` },
+      response.status,
+    )
+  }
+
+  const items = Array.isArray(result.items) ? result.items : []
+  return jsonResponse({
+    ...result,
+    matches: items,
+    items,
+    total: items.length,
+  })
 }

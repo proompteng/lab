@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
+import { RoutingConfigUpdateState } from '@proompteng/temporal-bun-sdk/worker'
 
 import { __private } from '../sync-temporal-routing'
 
@@ -21,9 +22,10 @@ describe('sync-temporal-routing', () => {
       'jangar',
       '--deployment-name',
       'jangar-deployment',
+      '--build-id',
+      'jangar@new',
       '--migrate-stale-running',
       '--migrate-unversioned-running',
-      '--allow-no-versioned-pollers',
       '--dry-run',
       '--reason',
       'test',
@@ -33,46 +35,11 @@ describe('sync-temporal-routing', () => {
     expect(parsed.namespace).toBe('default')
     expect(parsed.taskQueue).toBe('jangar')
     expect(parsed.deploymentName).toBe('jangar-deployment')
+    expect(parsed.buildId).toBe('jangar@new')
     expect(parsed.migrateStaleRunning).toBe(true)
     expect(parsed.migrateUnversionedRunning).toBe(true)
-    expect(parsed.allowNoVersionedPollers).toBe(true)
     expect(parsed.dryRun).toBe(true)
     expect(parsed.reason).toBe('test')
-  })
-
-  it('extracts versioned workflow poller build IDs', () => {
-    const buildIds = __private.extractVersionedPollerBuildIds(
-      [
-        {
-          buildId: 'jangar-deployment:workflow-code@abc123',
-          taskQueueType: 'workflow',
-          identity: 'worker-1',
-        },
-        {
-          buildId: 'jangar-deployment:workflow-code@abc123',
-          taskQueueType: 'activity',
-          identity: 'worker-1',
-        },
-      ],
-      'jangar-deployment',
-    )
-
-    expect(buildIds).toEqual(['workflow-code@abc123'])
-  })
-
-  it('selects a single poller build ID and fails on multiple', () => {
-    expect(__private.selectTargetBuildId(['workflow-code@abc123'], 'jangar-deployment')).toBe('workflow-code@abc123')
-    expect(__private.selectTargetBuildId([], 'jangar-deployment', true)).toBeUndefined()
-    expect(() => __private.selectTargetBuildId([], 'jangar-deployment')).toThrow('No versioned workflow pollers found')
-
-    expect(() =>
-      __private.selectTargetBuildId(['workflow-code@abc123', 'workflow-code@def456'], 'jangar-deployment'),
-    ).toThrow('Multiple workflow poller build IDs detected')
-  })
-
-  it('strips deployment prefix from poller build ID', () => {
-    expect(__private.stripDeploymentPrefix('jangar-deployment:jangar@dev', 'jangar-deployment')).toBe('jangar@dev')
-    expect(__private.stripDeploymentPrefix('UNVERSIONED', 'jangar-deployment')).toBeUndefined()
   })
 
   it('classifies transient temporal connectivity failures', () => {
@@ -145,5 +112,97 @@ describe('sync-temporal-routing', () => {
     ).rejects.toThrow(/namespace not found/)
 
     expect(spawnCount).toBe(1)
+  })
+
+  it('uses an explicit SDK build ID and waits for routing propagation', async () => {
+    Bun.sleep = (async () => undefined) as typeof Bun.sleep
+
+    const responses = [
+      {
+        workerDeploymentInfo: {
+          routingConfig: { currentDeploymentVersion: { buildId: 'jangar@old' } },
+          routingConfigUpdateState: RoutingConfigUpdateState.COMPLETED,
+          versionSummaries: [
+            { deploymentVersion: { buildId: 'jangar@old' } },
+            { deploymentVersion: { buildId: 'jangar@new' } },
+          ],
+        },
+      },
+      {
+        workerDeploymentInfo: {
+          routingConfig: { currentDeploymentVersion: { buildId: 'jangar@new' } },
+          routingConfigUpdateState: RoutingConfigUpdateState.COMPLETED,
+          versionSummaries: [],
+        },
+      },
+    ]
+    const setRequests: unknown[] = []
+    const client = {
+      deployments: {
+        describeWorkerDeployment: async () => responses.shift() as never,
+        setWorkerDeploymentCurrentVersion: async (request: unknown) => {
+          setRequests.push(request)
+          return {} as never
+        },
+      },
+    }
+
+    const options = __private.resolveOptions({
+      address: 'temporal.example:7233',
+      namespace: 'default',
+      taskQueue: 'jangar',
+      deploymentName: 'jangar-deployment',
+      buildId: 'jangar@new',
+    })
+    const result = await __private.syncCurrentVersion(options, client as never)
+
+    expect(result).toMatchObject({
+      changed: true,
+      previousBuildId: 'jangar@old',
+      targetBuildId: 'jangar@new',
+    })
+    expect(setRequests).toEqual([
+      {
+        deploymentName: 'jangar-deployment',
+        buildId: 'jangar@new',
+        allowNoPollers: false,
+        ignoreMissingTaskQueues: false,
+        identity: `sync-temporal-routing/${process.pid}`,
+      },
+    ])
+  })
+
+  it('verifies the worker-selected current build without a Temporal CLI fallback', async () => {
+    const client = {
+      deployments: {
+        describeWorkerDeployment: async () =>
+          ({
+            workerDeploymentInfo: {
+              routingConfig: { currentDeploymentVersion: { buildId: 'jangar@current' } },
+              routingConfigUpdateState: RoutingConfigUpdateState.COMPLETED,
+              versionSummaries: [{ deploymentVersion: { buildId: 'jangar@current' } }],
+            },
+          }) as never,
+        setWorkerDeploymentCurrentVersion: async () => {
+          throw new Error('should not set routing')
+        },
+      },
+    }
+
+    const result = await __private.syncCurrentVersion(
+      __private.resolveOptions({
+        address: 'temporal.example:7233',
+        namespace: 'default',
+        taskQueue: 'jangar',
+        deploymentName: 'jangar-deployment',
+      }),
+      client as never,
+    )
+
+    expect(result).toMatchObject({
+      changed: false,
+      previousBuildId: 'jangar@current',
+      targetBuildId: 'jangar@current',
+    })
   })
 })

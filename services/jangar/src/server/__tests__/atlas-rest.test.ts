@@ -86,7 +86,7 @@ describe('atlas REST handlers', () => {
     expect(json.message).toContain('DATABASE_URL')
   })
 
-  it('queues enrich requests', async () => {
+  it('rejects direct file writes', async () => {
     const request = new Request('http://localhost/api/enrich', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'idempotency-key': 'abc123' },
@@ -94,38 +94,36 @@ describe('atlas REST handlers', () => {
     })
 
     const response = await postEnrichHandler(request)
-    expect(response.status).toBe(202)
+    expect(response.status).toBe(409)
 
     const json = await response.json()
-    expect(json.ok).toBe(true)
-    expect(json.request.path).toBe('README.md')
-    expect(json.request.commit).toBeTruthy()
-    expect(json.request.contentHash).toBeTruthy()
+    expect(json.ok).toBe(false)
+    expect(json.message).toContain('Direct Atlas file writes are disabled')
   })
 
-  it('rejects enrich requests without a path', async () => {
+  it('does not pretend to queue reconciliation without configured services', async () => {
     const request = new Request('http://localhost/api/enrich', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ repository: 'proompteng/lab', ref: 'main' }),
+      body: JSON.stringify({ mode: 'repository', repository: 'proompteng/lab', ref: 'main' }),
     })
 
     const response = await postEnrichHandler(request)
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(503)
 
     const json = await response.json()
-    expect(json.message).toContain('path')
+    expect(json.message).toContain('configured Postgres and Temporal')
   })
 
-  it('returns 404 for unknown refs', async () => {
+  it('rejects non-main repository reconciliation', async () => {
     const request = new Request('http://localhost/api/enrich', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ repository: 'proompteng/lab', ref: 'nope', path: 'README.md' }),
+      body: JSON.stringify({ mode: 'repository', repository: 'proompteng/lab', ref: 'feature' }),
     })
 
     const response = await postEnrichHandler(request)
-    expect(response.status).toBe(404)
+    expect(response.status).toBe(409)
   })
 
   it('returns path suggestions', async () => {

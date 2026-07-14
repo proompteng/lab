@@ -1,376 +1,117 @@
 # Code Search Primitive (Atlas)
 
+Status: Current implementation contract. Live trust remains gated by the Definition of Done in
+[`docs/atlas/production-code-search-design.md`](../../atlas/production-code-search-design.md).
+
 ## Purpose
 
-The Code Search primitive provides a durable, queryable index over one or more Git repositories so agents can:
+Atlas gives agents reproducible source-code pointers from one exact `proompteng/lab` `main` snapshot. It supports
+intent, identifier, path, and lexical retrieval while preserving commit, path, line, and content-hash provenance.
 
-- Find the right code to read or modify (with precise file + line pointers).
-- Search by intent (semantic) and by identifiers (lexical) with strong recall.
-- Filter results by repo/ref/path/language and remain access-controlled by Jangar.
+Atlas is a Git-derived cache, not a narrative memory store and not a source of truth. Material findings must be opened
+from the returned commit.
 
-Jangar is the control plane for all Code Search resources and APIs.
+## Runtime Contract
 
-## Grounding In The Current Platform (As Of 2026-02-09)
+- PostgreSQL database: Jangar application database.
+- Schema: the existing `atlas` schema.
+- Source ref: only `main`.
+- Writer: Bumba workflow `reconcileAtlasRepository`.
+- Reader: `services/jangar/src/server/atlas-code-search.ts`.
+- Embedding model: `qwen3-embedding-saigak:8b`.
+- Atlas embedding output: 1,024 dimensions.
+- Search availability: only when the complete stored corpus is `ready` and its configuration and counts agree.
 
-This repository already has an Atlas-backed indexing pipeline that writes into the `jangar-db` CNPG cluster:
+Bumba reconciles the complete `origin/main` tree in bounded, persisted batches. Temporal heartbeat state and a database
+build lease make the one writer resumable and fenced. It does not accept partial file lists as corpus authority, and it
+does not keep another schema online. See [`docs/atlas-indexing.md`](../../atlas-indexing.md) for the data-flow contract.
 
-- CNPG cluster: `jangar/jangar-db` (Postgres 17, healthy)
-- Database: `jangar`
-- Schema: `atlas`
+## Retrieval Contract
 
-Observed table state:
+The single Jangar implementation searches all current chunks with four signals:
 
-- `atlas.file_versions`: ~24.9k rows
-- `atlas.enrichments` (`kind=model_enrichment`): ~19.3k rows
-- `atlas.embeddings`: ~19.2k rows (dominantly `qwen3-embedding-saigak:0.6b`, 1024d)
-- `atlas.tree_sitter_facts`: ~1.78M rows
-- `atlas.file_chunks`: 0 rows (exists but not used yet)
+1. exact path and identifier matches;
+2. PostgreSQL full-text lexical matches;
+3. trigram path and source-content matches;
+4. pgvector HNSW cosine matches over 1,024-dimensional chunk embeddings.
 
-Implication:
+It merges and deduplicates those candidates. Every result includes:
 
-- Today, semantic search is effectively file-level (embedding/enrichment per file), not function/class-level.
-- Tree-sitter facts are available and can be leveraged to produce stable, syntax-aware chunks.
+- repository and ref;
+- exact indexed commit;
+- path and source line range;
+- file content hash;
+- normalized score and contributing signals;
+- retrieval mode and explicit degradation state;
+- source snippet.
 
-Related design doc (existing): `docs/atlas-indexing.md`
+Source preview resolves the returned commit with Git and verifies the content hash. Mutable local `main` is never the
+preview authority.
 
-## Goals
+## Supported Interfaces
 
-- Add chunk-level indexing (functions/classes/config blocks) while preserving existing file-level indexing.
-- Provide a single agent-friendly API for retrieval with stable pointers (`path`, `commit`, `start_line`, `end_line`).
-- Implement hybrid retrieval (vector + lexical) with predictable filtering and access control.
-- Support incremental updates (webhooks/changed files) and backfills (full repository refs).
-- Keep model-heavy work isolated from the rest of the platform (dedicated workers/task queues).
+### MCP
 
-## Non-Goals
-
-- A full cross-repo dependency graph (nice-to-have, not required for search MVP).
-- Replacing memories; code search is a retrieval tool, not a durable narrative store.
-- Perfect reranking on day 1; start with hybrid recall + heuristic rerank, then iterate.
-
-## Primitive Contract
-
-### CodeIndex (claim)
-
-Namespace-scoped claim for an indexed codebase. This is a platform primitive like Memory/Agent/Orchestration.
-
-```yaml
-apiVersion: atlas.proompteng.ai/v1alpha1
-kind: CodeIndex
-metadata:
-  name: lab-main
-  namespace: jangar
-spec:
-  providerRef:
-    name: postgres-default
-  repository:
-    nameWithOwner: proompteng/lab
-  ref:
-    type: branch
-    name: main
-  indexing:
-    mode: incremental
-    chunking:
-      enabled: true
-      strategy: tree-sitter
-      fallback:
-        type: fixed_lines
-        linesPerChunk: 80
-    embeddings:
-      enabled: true
-      model: qwen3-embedding-saigak:0.6b
-      dimension: 1024
-    lexical:
-      enabled: true
-      tokenizer: postgres_tsvector
-  access:
-    readerRole: atlas_reader
-    writerRole: atlas_writer
-```
-
-Notes:
-
-- `providerRef` keeps the primitive provider-decoupled. The first provider is Postgres/pgvector in `jangar-db`.
-- `ref` must support both “main branch” and “commit SHA” indexing. Agents frequently need commit-specific retrieval.
-
-### CodeIndexStore (internal)
-
-Composite/internal resource binding the claim to a concrete provider dataset (similar to `MemoryStore`).
-
-## Data Model
-
-See `docs/atlas-indexing.md` for the baseline schema. This document focuses on the delta required to make the index
-agent-grade.
-
-### Current Model (Already In Use)
-
-- `file_versions`: versioned snapshots keyed by repo ref + commit + hash.
-- `enrichments`: model output per file version.
-- `embeddings`: vector embeddings attached to enrichments.
-- `tree_sitter_facts`: structured AST matches (high volume).
-
-### Required Additions For Chunk-Level Retrieval
-
-1. Persist chunks into `atlas.file_chunks`.
-
-`atlas.file_chunks` already exists, but currently has 0 rows. The ingestion pipeline should populate it for each
-indexed `file_version`.
-
-2. Add chunk-level embeddings.
-
-Add a new table:
-
-```sql
--- New table (recommended) to avoid overloading atlas.embeddings with mixed identity types.
-CREATE TABLE atlas.chunk_embeddings (
-  chunk_id uuid PRIMARY KEY REFERENCES atlas.file_chunks(id) ON DELETE CASCADE,
-  model text NOT NULL,
-  dimension int NOT NULL,
-  embedding vector(1024) NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-```
-
-Add a vector index (this repo currently uses `ivfflat`):
-
-```sql
-CREATE INDEX atlas_chunk_embeddings_embedding_idx
-  ON atlas.chunk_embeddings
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
-```
-
-3. Add lexical search support for chunks.
-
-Add a `tsvector` column (stored or computed) and a `GIN` index:
-
-```sql
-ALTER TABLE atlas.file_chunks
-  ADD COLUMN text_tsvector tsvector;
-
-CREATE INDEX file_chunks_text_tsvector_gin
-  ON atlas.file_chunks
-  USING gin (text_tsvector);
-```
-
-Populate `text_tsvector` on write using `to_tsvector('simple', content)` and optionally include symbol names from
-metadata.
-
-## Current Implementation (2026-02-09)
-
-This repository now implements the “chunk-level retrieval” parts of this design.
-
-### Jangar API
-
-- HTTP endpoint: `POST /api/code-search`
-- MCP tool: `atlas_code_search` (alias: `atlas.code_search`)
-
-The search is hybrid:
-
-- Lexical: `websearch_to_tsquery` + `ts_rank_cd` over `atlas.file_chunks.text_tsvector`
-- Semantic: `pgvector` cosine distance over `atlas.chunk_embeddings.embedding`
-
-### Bumba Indexing (Chunk Indexing)
-
-Bumba writes chunks and chunk embeddings as part of the `enrichFile` workflow, after file-level enrichment/embedding
-and facts persistence.
-
-Chunk indexing is feature-flagged:
-
-- `BUMBA_ATLAS_CHUNK_INDEXING=true` enables writing to `atlas.file_chunks` and `atlas.chunk_embeddings`.
-- When disabled (default), Bumba will return a `{ skipped: true, reason: 'disabled' }` result and continue.
-
-Chunk extraction tuning env vars (defaults in code):
-
-- `BUMBA_ATLAS_CHUNK_LINES` (default 80)
-- `BUMBA_ATLAS_MIN_CHUNK_LINES` (default 3)
-- `BUMBA_ATLAS_MAX_CHUNK_LINES` (default 220)
-- `BUMBA_ATLAS_MAX_CHUNKS` (default 250)
-
-## Agent Usage
-
-Agents should treat Code Search like “Memories, but for code pointers”: use it to find the right place to read/edit,
-then fetch the exact file content using existing file-read primitives.
-
-### MCP: `atlas_code_search`
-
-Input:
+Use `atlas_code_search`:
 
 ```json
 {
-  "query": "where do we set the bumba Temporal model task queue?",
+  "query": "where is Temporal worker routing aligned before Bumba readiness",
   "repository": "proompteng/lab",
   "ref": "main",
   "pathPrefix": "services/bumba",
+  "language": "typescript",
   "limit": 8
 }
 ```
 
-Output matches include:
+The only other Atlas MCP operation is read-only `atlas_stats`. There is no MCP index operation or legacy enrichment
+search operation.
 
-- `repository`, `ref`, `commit`
-- `path`
-- `startLine`, `endLine`
-- `score` (normalized hybrid score)
-- `highlights` (optional short snippets)
+### HTTP
 
-Workflow:
-
-1. Call `atlas_code_search` with a specific query and `pathPrefix` whenever possible.
-2. Open the returned file(s) and read the chunk region (`startLine..endLine`).
-3. If results are too broad, re-run with tighter `pathPrefix` or more identifier-heavy queries.
-
-### HTTP: `POST /api/code-search`
-
-Example:
+`POST /api/code-search` is canonical:
 
 ```bash
-curl -sS \\
-  -X POST \\
-  -H 'content-type: application/json' \\
-  http://localhost:3000/api/code-search \\
-  -d '{\"query\":\"indexFileChunks\",\"repository\":\"proompteng/lab\",\"pathPrefix\":\"services/bumba\",\"limit\":5}'
+curl -sS -X POST \
+  -H 'content-type: application/json' \
+  http://localhost:3000/api/code-search \
+  -d '{"query":"reconcileAtlasRepository","repository":"proompteng/lab","ref":"main","limit":5}'
 ```
 
-## Ingestion And Freshness
+`GET /api/search` exists only for the Jangar UI and calls the same handler. Legacy enrichment `tags` and `kinds` filters
+are rejected instead of selecting a second search system.
 
-### Incremental indexing (default)
+### Repository CLI
 
-Trigger on GitHub webhook (or equivalent) with a file list:
-
-1. Upsert repository, file key, and file version.
-2. Extract tree-sitter facts (already working today).
-3. Persist `file_chunks` for the file version (new).
-4. Generate:
-   - File-level enrichment + embedding (keep existing behavior).
-   - Chunk-level embeddings (new).
-
-Idempotency rules:
-
-- Use `file_versions.content_hash` to skip work for unchanged file content.
-- Use `(file_version_id, chunk_index)` + a chunk content hash (in `file_chunks.metadata`) to skip chunk recompute.
-
-### Backfill indexing
-
-Backfill is required because `file_chunks` is currently empty. A backfill workflow should:
-
-- Iterate `atlas.file_versions` for `(repo_ref, repo_commit)` pairs.
-- Populate chunks and chunk embeddings for each file version.
-- Be rate limited by GPU capacity (prefer dedicated task queues/workers).
-
-## Query API (What Agents Use)
-
-Agents should not query Postgres directly. They call Jangar.
-
-### Endpoint
-
-`POST /api/code-search`
-
-Request:
-
-```json
-{
-  "repository": "proompteng/lab",
-  "ref": "main",
-  "query": "where is TEMPORAL_TASK_QUEUE set for bumba workers?",
-  "filters": {
-    "pathPrefix": "argocd/applications/bumba",
-    "language": null,
-    "chunkType": null
-  },
-  "k": 12
-}
-```
-
-Response (shape):
-
-```json
-{
-  "results": [
-    {
-      "repository": "proompteng/lab",
-      "ref": "main",
-      "commit": "91a766394ea8d8469071d8463ec8979f7da80956",
-      "path": "argocd/applications/bumba/deployment.yaml",
-      "startLine": 35,
-      "endLine": 75,
-      "symbol": null,
-      "score": 0.83,
-      "signals": {
-        "semanticScore": 0.83,
-        "lexicalScore": 0.22,
-        "matchedIdentifiers": ["TEMPORAL_TASK_QUEUE"]
-      },
-      "snippet": "...\n- name: TEMPORAL_TASK_QUEUE\n  value: bumba\n..."
-    }
-  ]
-}
-```
-
-### Retrieval algorithm (MVP)
-
-Hybrid retrieval with deterministic filtering:
-
-1. Vector candidates: search `atlas.chunk_embeddings` (and optionally file-level embeddings for fallback).
-2. Lexical candidates: search `atlas.file_chunks.text_tsvector`.
-3. Merge + rerank:
-   - Boost exact identifier hits (from query tokens).
-   - Boost path matches if `pathPrefix` is present.
-   - Prefer smaller spans (chunk hits) over whole-file hits when scores are similar.
-
-### Access control
-
-- Jangar authorizes `(caller, repository, ref/commit)` before returning any snippet.
-- In multi-tenant mode, enforce row-level filtering at query time.
-
-## Agent Usage Guide
-
-### When to use Code Search
-
-- Before changing code, run Code Search to locate the best edit site.
-- When asked “where is X implemented?”, start with Code Search, then open the files and read the surrounding context.
-
-### Query tips (practical)
-
-- Include identifiers when you have them: `"TEMPORAL_TASK_QUEUE"` or `enrichWithModel`.
-- If you’re not sure, ask conceptually: “where is the Temporal task queue configured for bumba model worker”.
-- Use `pathPrefix` early to cut noise when you know the area.
-
-### Minimal agent loop (recommended)
-
-1. `code_search(query, repo, ref, filters)`
-2. Open top 3-8 snippets in the workspace.
-3. Only then reason/implement changes.
-
-This avoids guessing and reduces the number of “search -> wrong file -> search again” cycles.
-
-## Operational Notes
-
-- Keep model-heavy enrichment isolated (dedicated workers/task queues). Do not let model latency starve the rest of
-  the indexing pipeline.
-- Track:
-  - ingestion backlog by task queue
-  - embedding latency p50/p95
-  - query latency p50/p95
-  - recall proxies (how often agents open top-k results)
-- Backfills should be throttled; start with 1 embedding worker and scale cautiously.
-
-## Debugging With kubectl + CNPG (Current State)
-
-List top atlas tables:
-
-````bash
-kubectl cnpg psql -n jangar jangar-db -- -d jangar -c \\\n  \"SELECT nspname AS schema, relname AS table, pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size\\\n   FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace\\\n   WHERE c.relkind='r' AND nspname NOT IN ('pg_catalog','information_schema')\\\n   ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 30;\"\n```
-
-Check whether chunk indexing is enabled (it is not today):
+Agents use the same API through:
 
 ```bash
-kubectl cnpg psql -n jangar jangar-db -- -d jangar -c \\\n  \"SELECT count(*) FROM atlas.file_chunks;\"\n```
+bun run atlas:code-search \
+  --query "reconcile complete main tree" \
+  --repository proompteng/lab \
+  --path-prefix services/bumba \
+  --limit 10
+```
 
-## Rollout Plan (Recommended)
+The command is navigation. Operators use `atlas:rebuild` for the only write path and `atlas:verify` for complete live
+proof. Partial backfills and per-file production writers are intentionally absent.
 
-1. Ship schema changes (chunk embeddings + tsvector) behind a feature flag.
-2. Update ingestion to write `atlas.file_chunks` and `atlas.chunk_embeddings` for new ingestions.
-3. Enable the Code Search API endpoint (hybrid retrieval) and integrate it as an agent tool.
-4. Backfill existing `file_versions` with rate limiting.
-5. Iterate on chunking and reranking based on real agent usage.
-````
+## Failure Semantics
+
+- `maintenance`, `building`, or `failed` corpus state returns service unavailable.
+- A stored/model/dimension/count mismatch returns service unavailable.
+- Missing query embeddings never produce a falsely healthy semantic result.
+- Request deadlines cancel PostgreSQL work rather than leaving it running.
+- A stale or unavailable Git commit makes source preview fail closed.
+
+No interface may silently search an old corpus, downgrade to a different search implementation, or report readiness
+from a sample.
+
+## Agent Workflow
+
+1. Search with repository and a useful path prefix when known.
+2. Open the returned exact commit and line range.
+3. Treat a miss for a known current symbol, a deleted/stale path, a commit mismatch, or semantic degradation as an Atlas
+   defect and report it.
+4. Until the production live gates pass, do not use Atlas health or plausible results as corpus-completeness proof.

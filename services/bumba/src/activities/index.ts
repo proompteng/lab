@@ -8,6 +8,8 @@ import * as TSemaphore from 'effect/TSemaphore'
 import { Language, Parser } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
+import { currentActivityContext } from '@proompteng/temporal-bun-sdk/worker'
+
 import { shouldSkipAtlasPath } from '../atlas/file-eligibility'
 import {
   type AtlasCurrentFile,
@@ -250,6 +252,8 @@ const DEFAULT_REPO_SYNC_INTERVAL_MS = 120_000
 const DEFAULT_MAX_REPO_FILES = 5_000
 const MAX_REPO_FILES = 20_000
 const ATLAS_CHUNKER_VERSION = 'atlas-chunker-v2'
+const ATLAS_RECONCILIATION_HEARTBEAT_INTERVAL_MS = 15_000
+const ATLAS_RECONCILIATION_LEASE_MS = 5 * 60_000
 
 const logActivity = (
   level: 'info' | 'error',
@@ -2718,6 +2722,16 @@ type PreparedAtlasFile = {
   chunks: Array<ExtractedFileChunk & { embedding: number[] }>
 }
 
+type AtlasReconciliationProgress = {
+  version: 1
+  buildId: string
+  commit: string
+  preparedFiles: number
+  changedFiles: number
+  deletedFiles: number
+  unchangedFiles: number
+}
+
 const asMetadataRecord = (value: unknown): Record<string, unknown> => {
   if (typeof value === 'string') {
     try {
@@ -2810,35 +2824,138 @@ const loadAtlasRepositoryState = async (db: SQL, repository: string) => {
   return { repository: repositoryRow, files }
 }
 
-const updateAtlasRepositoryState = async (db: SQL, repository: string, patch: Record<string, unknown>) => {
-  const serialized = JSON.stringify(patch)
-  await db`
-    INSERT INTO atlas.repositories (name, default_ref, metadata)
-    VALUES (${repository}, ${'main'}, ${serialized}::text::jsonb)
-    ON CONFLICT (name) DO UPDATE
-    SET default_ref = 'main',
-        metadata = COALESCE(atlas.repositories.metadata, '{}'::jsonb) || EXCLUDED.metadata,
-        updated_at = now();
-  `
+const readAtlasReconciliationProgress = (value: unknown): AtlasReconciliationProgress | null => {
+  const record = asMetadataRecord(value)
+  const integer = (field: string) => {
+    const candidate = record[field]
+    return typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0 ? candidate : null
+  }
+  const buildId = typeof record.buildId === 'string' ? record.buildId : ''
+  const commit = typeof record.commit === 'string' ? record.commit : ''
+  const preparedFiles = integer('preparedFiles')
+  const changedFiles = integer('changedFiles')
+  const deletedFiles = integer('deletedFiles')
+  const unchangedFiles = integer('unchangedFiles')
+  if (
+    record.version !== 1 ||
+    !buildId ||
+    !/^[0-9a-f]{40}$/i.test(commit) ||
+    preparedFiles === null ||
+    changedFiles === null ||
+    deletedFiles === null ||
+    unchangedFiles === null
+  ) {
+    return null
+  }
+  return { version: 1, buildId, commit, preparedFiles, changedFiles, deletedFiles, unchangedFiles }
 }
 
-const markAtlasRepositoryFailed = async (
-  db: SQL,
-  repository: string,
-  baseIndexedCommit: string | null,
-  error: unknown,
-) => {
+const beginAtlasReconciliation = async (input: {
+  db: SQL
+  repository: string
+  commit: string
+  manifest: Awaited<ReturnType<typeof loadAtlasGitManifest>>
+  baseIndexedCommit: string | null
+  buildId: string
+  embeddingModel: string
+  embeddingDimension: number
+}) => {
+  const { db, repository, commit, manifest, baseIndexedCommit, buildId, embeddingModel, embeddingDimension } = input
+  const manifestPaths = manifest.files.map((file) => file.path)
+  const now = new Date()
+  const metadataPatch = JSON.stringify({
+    indexStatus: 'building',
+    buildId,
+    targetCommit: commit,
+    gitHead: commit,
+    treeHash: manifest.treeHash,
+    expectedFiles: manifest.files.length,
+    targetEligibilityVersion: manifest.eligibilityVersion,
+    targetChunkerVersion: ATLAS_CHUNKER_VERSION,
+    targetEmbeddingModel: embeddingModel,
+    targetEmbeddingDimension: embeddingDimension,
+    lastError: null,
+    failedAt: null,
+    buildStartedAt: now.toISOString(),
+    buildHeartbeatAt: now.toISOString(),
+  })
+
+  await db.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`atlas:${repository}`}, 0));`
+    await tx`
+      INSERT INTO atlas.repositories (name, default_ref, metadata)
+      VALUES (${repository}, ${'main'}, '{}'::jsonb)
+      ON CONFLICT (name) DO NOTHING;
+    `
+    const rows = (await tx`
+      SELECT id, metadata
+      FROM atlas.repositories
+      WHERE name = ${repository}
+      FOR UPDATE;
+    `) as AtlasRepositoryStateRow[]
+    const row = rows[0]
+    if (!row) throw new Error(`Atlas repository state disappeared for ${repository}`)
+    const metadata = asMetadataRecord(row.metadata)
+    const indexedCommit =
+      typeof metadata.indexedCommit === 'string' && metadata.indexedCommit.length > 0 ? metadata.indexedCommit : null
+    if (indexedCommit !== baseIndexedCommit) {
+      throw createRetryableError(
+        `Atlas reconciliation was superseded: prepared from ${baseIndexedCommit ?? 'empty'}, current is ${indexedCommit ?? 'empty'}`,
+      )
+    }
+
+    const activeBuildId = typeof metadata.buildId === 'string' ? metadata.buildId : null
+    const heartbeatAt =
+      typeof metadata.buildHeartbeatAt === 'string' ? Date.parse(metadata.buildHeartbeatAt) : Number.NaN
+    const activeLease =
+      metadata.indexStatus === 'building' &&
+      activeBuildId &&
+      activeBuildId !== buildId &&
+      Number.isFinite(heartbeatAt) &&
+      now.getTime() - heartbeatAt < ATLAS_RECONCILIATION_LEASE_MS
+    if (activeLease) {
+      throw createRetryableError(`Atlas reconciliation ${activeBuildId} is already active for ${repository}`)
+    }
+
+    await tx`
+      UPDATE atlas.repositories
+      SET default_ref = 'main',
+          metadata = COALESCE(metadata, '{}'::jsonb) || ${metadataPatch}::text::jsonb,
+          updated_at = now()
+      WHERE id = ${row.id};
+    `
+
+    if (manifestPaths.length > 0) {
+      await tx`
+        INSERT INTO atlas.file_keys (repository_id, path)
+        SELECT ${row.id}, path
+        FROM UNNEST(${tx.array(manifestPaths, 'text')}) AS manifest(path)
+        ON CONFLICT (repository_id, path) DO UPDATE SET path = EXCLUDED.path;
+      `
+      await tx`
+        DELETE FROM atlas.file_keys
+        WHERE repository_id = ${row.id}
+          AND NOT (path = ANY(${tx.array(manifestPaths, 'text')}));
+      `
+    } else {
+      await tx`DELETE FROM atlas.file_keys WHERE repository_id = ${row.id};`
+    }
+  })
+}
+
+const markAtlasRepositoryFailed = async (db: SQL, repository: string, buildId: string, error: unknown) => {
   const patch = JSON.stringify({
     indexStatus: 'failed',
     lastError: truncateMetadataError(error),
     failedAt: new Date().toISOString(),
+    buildHeartbeatAt: new Date().toISOString(),
   })
   await db`
     UPDATE atlas.repositories
     SET metadata = COALESCE(metadata, '{}'::jsonb) || ${patch}::text::jsonb,
         updated_at = now()
     WHERE name = ${repository}
-      AND NULLIF(metadata->>'indexedCommit', '') IS NOT DISTINCT FROM ${baseIndexedCommit};
+      AND metadata->>'buildId' = ${buildId};
   `
 }
 
@@ -2885,11 +3002,14 @@ const applyAtlasReconciliation = async (input: {
   commit: string
   manifest: Awaited<ReturnType<typeof loadAtlasGitManifest>>
   preparedFiles: PreparedAtlasFile[]
-  baseIndexedCommit: string | null
+  buildId: string
+  preparedFileCount: number
+  totalChangedFiles: number
   deletedFiles: number
   unchangedFiles: number
-}): Promise<ReconcileAtlasRepositoryOutput> => {
-  const { db, repository, ref, commit, manifest, preparedFiles, baseIndexedCommit } = input
+  finalize: boolean
+}): Promise<ReconcileAtlasRepositoryOutput | null> => {
+  const { db, repository, ref, commit, manifest, preparedFiles, buildId } = input
   const embeddingConfig = loadAtlasCodeSearchEmbeddingConfig()
   const manifestPaths = manifest.files.map((file) => file.path)
   const manifestObjectIds = manifest.files.map((file) => file.objectId)
@@ -2907,30 +3027,19 @@ const applyAtlasReconciliation = async (input: {
     const lockedRepository = lockedRows[0]
     if (!lockedRepository) throw new Error(`Atlas repository state disappeared for ${repository}`)
     const lockedMetadata = asMetadataRecord(lockedRepository.metadata)
-    const lockedIndexedCommit =
-      typeof lockedMetadata.indexedCommit === 'string' && lockedMetadata.indexedCommit.length > 0
-        ? lockedMetadata.indexedCommit
-        : null
-    if (lockedIndexedCommit !== baseIndexedCommit) {
-      throw new Error(
-        `Atlas reconciliation was superseded: prepared from ${baseIndexedCommit ?? 'empty'}, current is ${lockedIndexedCommit ?? 'empty'}`,
-      )
+    if (lockedMetadata.buildId !== buildId || lockedMetadata.targetCommit !== commit) {
+      throw createRetryableError(`Atlas reconciliation ${buildId} no longer owns ${repository} at ${commit}`)
     }
 
-    const fileKeyRows = (await tx`
-      INSERT INTO atlas.file_keys (repository_id, path)
-      SELECT ${lockedRepository.id}, path
-      FROM UNNEST(${tx.array(manifestPaths, 'text')}) AS manifest(path)
-      ON CONFLICT (repository_id, path) DO UPDATE SET path = EXCLUDED.path
-      RETURNING id, path;
-    `) as Array<{ id: string; path: string }>
+    const fileKeyRows = preparedPaths.length
+      ? ((await tx`
+          SELECT id, path
+          FROM atlas.file_keys
+          WHERE repository_id = ${lockedRepository.id}
+            AND path = ANY(${tx.array(preparedPaths, 'text')});
+        `) as Array<{ id: string; path: string }>)
+      : []
     const fileKeyIdByPath = new Map(fileKeyRows.map((row) => [row.path, row.id]))
-
-    await tx`
-      DELETE FROM atlas.file_keys
-      WHERE repository_id = ${lockedRepository.id}
-        AND NOT (path = ANY(${tx.array(manifestPaths, 'text')}));
-    `
 
     if (preparedPaths.length > 0) {
       await tx`
@@ -3013,25 +3122,27 @@ const applyAtlasReconciliation = async (input: {
       }
     }
 
-    await tx`
-      UPDATE atlas.file_versions fv
-      SET repository_ref = ${ref},
-          repository_commit = ${commit},
-          metadata = COALESCE(fv.metadata, '{}'::jsonb) || jsonb_build_object(
-            'gitObjectId', manifest.object_id,
-            'indexedCommit', ${commit}::text,
-            'eligibilityVersion', ${manifest.eligibilityVersion}::text,
-            'chunkerVersion', ${ATLAS_CHUNKER_VERSION}::text
-          ),
-          updated_at = now()
-      FROM atlas.file_keys fk
-      JOIN UNNEST(
-        ${tx.array(manifestPaths, 'text')},
-        ${tx.array(manifestObjectIds, 'text')}
-      ) AS manifest(path, object_id) ON manifest.path = fk.path
-      WHERE fv.file_key_id = fk.id
-        AND fk.repository_id = ${lockedRepository.id};
-    `
+    if (input.finalize) {
+      await tx`
+        UPDATE atlas.file_versions fv
+        SET repository_ref = ${ref},
+            repository_commit = ${commit},
+            metadata = COALESCE(fv.metadata, '{}'::jsonb) || jsonb_build_object(
+              'gitObjectId', manifest.object_id,
+              'indexedCommit', ${commit}::text,
+              'eligibilityVersion', ${manifest.eligibilityVersion}::text,
+              'chunkerVersion', ${ATLAS_CHUNKER_VERSION}::text
+            ),
+            updated_at = now()
+        FROM atlas.file_keys fk
+        JOIN UNNEST(
+          ${tx.array(manifestPaths, 'text')},
+          ${tx.array(manifestObjectIds, 'text')}
+        ) AS manifest(path, object_id) ON manifest.path = fk.path
+        WHERE fv.file_key_id = fk.id
+          AND fk.repository_id = ${lockedRepository.id};
+      `
+    }
 
     const preparedChunks = preparedFiles.flatMap((file) => {
       const fileVersionId = fileVersionIdByPath.get(file.git.path)
@@ -3150,6 +3261,20 @@ const applyAtlasReconciliation = async (input: {
       `
     }
 
+    if (!input.finalize) {
+      const progressMetadata = JSON.stringify({
+        buildHeartbeatAt: new Date().toISOString(),
+        preparedFiles: input.preparedFileCount,
+      })
+      await tx`
+        UPDATE atlas.repositories
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || ${progressMetadata}::text::jsonb,
+            updated_at = now()
+        WHERE id = ${lockedRepository.id};
+      `
+      return null
+    }
+
     const indexedRows = (await tx`
       SELECT
         fk.path,
@@ -3221,7 +3346,18 @@ const applyAtlasReconciliation = async (input: {
     await tx`
       UPDATE atlas.repositories
       SET default_ref = 'main',
-          metadata = COALESCE(metadata, '{}'::jsonb) || ${readyMetadata}::text::jsonb,
+          metadata = (
+            COALESCE(metadata, '{}'::jsonb)
+            - 'buildId'
+            - 'targetCommit'
+            - 'buildStartedAt'
+            - 'buildHeartbeatAt'
+            - 'preparedFiles'
+            - 'targetEligibilityVersion'
+            - 'targetChunkerVersion'
+            - 'targetEmbeddingModel'
+            - 'targetEmbeddingDimension'
+          ) || ${readyMetadata}::text::jsonb,
           updated_at = now()
       WHERE id = ${lockedRepository.id};
     `
@@ -3234,7 +3370,7 @@ const applyAtlasReconciliation = async (input: {
       expectedFiles: manifest.files.length,
       indexedFiles: indexedRows.length,
       deletedFiles: input.deletedFiles,
-      changedFiles: preparedFiles.length,
+      changedFiles: input.totalChangedFiles,
       unchangedFiles: input.unchangedFiles,
       chunks,
       embeddings,
@@ -3265,6 +3401,23 @@ export const activities = {
       typeof initialMetadata.indexedCommit === 'string' && initialMetadata.indexedCommit.length > 0
         ? initialMetadata.indexedCommit
         : null
+    const activityContext = currentActivityContext()
+    let buildId: string = randomUUID()
+    let progress: AtlasReconciliationProgress | null = null
+    let heartbeatFailure: unknown = null
+    let heartbeatInFlight = false
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+    const sendHeartbeat = async () => {
+      if (!activityContext || !progress) return
+      await activityContext.heartbeat(progress)
+      activityContext.throwIfCancelled()
+    }
+
+    const assertHeartbeatHealthy = () => {
+      activityContext?.throwIfCancelled()
+      if (heartbeatFailure) throw heartbeatFailure
+    }
 
     logActivity('info', 'started', 'reconcileAtlasRepository', {
       repository,
@@ -3278,60 +3431,122 @@ export const activities = {
       const manifest = await loadAtlasGitManifest(repoRoot, commit)
       const embeddingConfig = loadAtlasCodeSearchEmbeddingConfig()
       const planned = planAtlasFileChanges(manifest, initialState.files)
-      const configurationMatches =
+      const previousProgress = readAtlasReconciliationProgress(activityContext?.info.lastHeartbeatDetails[0])
+      const readyConfigurationMatches =
         initialMetadata.eligibilityVersion === manifest.eligibilityVersion &&
         initialMetadata.chunkerVersion === ATLAS_CHUNKER_VERSION &&
         initialMetadata.embeddingModel === embeddingConfig.model &&
         initialMetadata.embeddingDimension === embeddingConfig.dimension
+      const resumedConfigurationMatches =
+        previousProgress?.commit === commit &&
+        initialMetadata.buildId === previousProgress.buildId &&
+        initialMetadata.targetEligibilityVersion === manifest.eligibilityVersion &&
+        initialMetadata.targetChunkerVersion === ATLAS_CHUNKER_VERSION &&
+        initialMetadata.targetEmbeddingModel === embeddingConfig.model &&
+        initialMetadata.targetEmbeddingDimension === embeddingConfig.dimension
+      const configurationMatches = readyConfigurationMatches || resumedConfigurationMatches
       const changedFiles = configurationMatches ? planned.changed : manifest.files
       const unchangedFiles = configurationMatches ? planned.unchanged : []
+      if (previousProgress?.commit === commit) buildId = previousProgress.buildId
+      const totalChangedFiles =
+        previousProgress?.commit === commit
+          ? Math.max(previousProgress.changedFiles, changedFiles.length)
+          : changedFiles.length
+      const deletedFiles = previousProgress?.commit === commit ? previousProgress.deletedFiles : planned.deleted.length
+      const originalUnchangedFiles =
+        previousProgress?.commit === commit ? previousProgress.unchangedFiles : unchangedFiles.length
+      let preparedFileCount = Math.max(0, totalChangedFiles - changedFiles.length)
+      progress = {
+        version: 1,
+        buildId,
+        commit,
+        preparedFiles: preparedFileCount,
+        changedFiles: totalChangedFiles,
+        deletedFiles,
+        unchangedFiles: originalUnchangedFiles,
+      }
 
-      await updateAtlasRepositoryState(db, repository, {
-        indexStatus: 'building',
-        targetCommit: commit,
-        gitHead: commit,
-        treeHash: manifest.treeHash,
-        expectedFiles: manifest.files.length,
-        eligibilityVersion: manifest.eligibilityVersion,
-        chunkerVersion: ATLAS_CHUNKER_VERSION,
+      await beginAtlasReconciliation({
+        db,
+        repository,
+        commit,
+        manifest,
+        baseIndexedCommit,
+        buildId,
         embeddingModel: embeddingConfig.model,
         embeddingDimension: embeddingConfig.dimension,
-        lastError: null,
-        buildStartedAt: new Date().toISOString(),
       })
+      await sendHeartbeat()
+      heartbeatTimer = setInterval(() => {
+        if (heartbeatInFlight) return
+        heartbeatInFlight = true
+        void sendHeartbeat()
+          .catch((error) => {
+            heartbeatFailure ??= error
+          })
+          .finally(() => {
+            heartbeatInFlight = false
+          })
+      }, ATLAS_RECONCILIATION_HEARTBEAT_INTERVAL_MS)
 
       const prepareConcurrency = clampNumber(Number.parseInt(process.env.BUMBA_ATLAS_PREPARE_CONCURRENCY ?? '', 10), 4)
-      const preparedFiles: PreparedAtlasFile[] = []
+      let nextProgressLog = Math.floor(preparedFileCount / 100) * 100 + 100
       for (const batch of batchValues(changedFiles, prepareConcurrency)) {
-        preparedFiles.push(...(await Promise.all(batch.map((file) => prepareAtlasFile(repoRoot, commit, file)))))
-        if (preparedFiles.length % 100 === 0 || preparedFiles.length === changedFiles.length) {
+        assertHeartbeatHealthy()
+        const preparedFiles = await Promise.all(batch.map((file) => prepareAtlasFile(repoRoot, commit, file)))
+        assertHeartbeatHealthy()
+        preparedFileCount += preparedFiles.length
+        const partial = await applyAtlasReconciliation({
+          db,
+          repository,
+          ref,
+          commit,
+          manifest,
+          preparedFiles,
+          buildId,
+          preparedFileCount,
+          totalChangedFiles,
+          deletedFiles,
+          unchangedFiles: originalUnchangedFiles,
+          finalize: false,
+        })
+        if (partial !== null) throw new Error('Atlas partial reconciliation unexpectedly finalized')
+        progress = { ...progress, preparedFiles: preparedFileCount }
+        await sendHeartbeat()
+        if (preparedFileCount >= nextProgressLog || preparedFileCount === totalChangedFiles) {
           logActivity('info', 'progress', 'reconcileAtlasRepository', {
             repository,
             commit,
-            preparedFiles: preparedFiles.length,
-            changedFiles: changedFiles.length,
+            preparedFiles: preparedFileCount,
+            changedFiles: totalChangedFiles,
           })
+          nextProgressLog = Math.floor(preparedFileCount / 100) * 100 + 100
         }
       }
 
+      assertHeartbeatHealthy()
       const result = await applyAtlasReconciliation({
         db,
         repository,
         ref,
         commit,
         manifest,
-        preparedFiles,
-        baseIndexedCommit,
-        deletedFiles: planned.deleted.length,
-        unchangedFiles: unchangedFiles.length,
+        preparedFiles: [],
+        buildId,
+        preparedFileCount,
+        totalChangedFiles,
+        deletedFiles,
+        unchangedFiles: originalUnchangedFiles,
+        finalize: true,
       })
+      if (!result) throw new Error('Atlas reconciliation did not produce a final result')
       logActivity('info', 'completed', 'reconcileAtlasRepository', {
         ...result,
         durationMs: Date.now() - startedAt,
       })
       return result
     } catch (error) {
-      await markAtlasRepositoryFailed(db, repository, baseIndexedCommit, error).catch((stateError) => {
+      await markAtlasRepositoryFailed(db, repository, buildId, error).catch((stateError) => {
         logActivity('error', 'failed', 'markAtlasRepositoryFailed', {
           repository,
           error: formatActivityError(stateError),
@@ -3345,6 +3560,8 @@ export const activities = {
         error: formatActivityError(error),
       })
       throw error
+    } finally {
+      if (heartbeatTimer) clearInterval(heartbeatTimer)
     }
   },
 
@@ -4107,9 +4324,15 @@ export const activities = {
       const repositoryId = repositoryRows[0]?.id
       if (!repositoryId) throw new Error('failed to upsert repository')
       const repositoryMetadata = asMetadataRecord(repositoryRows[0]?.metadata)
+      const indexStatus = typeof repositoryMetadata.indexStatus === 'string' ? repositoryMetadata.indexStatus : null
       const indexedCommit =
         typeof repositoryMetadata.indexedCommit === 'string' ? repositoryMetadata.indexedCommit : null
-      if (indexedCommit && repositoryCommit !== indexedCommit) {
+      if (indexStatus !== 'ready' || !indexedCommit) {
+        throw new Error(
+          `Atlas file enrichment is unavailable while the authoritative corpus is ${indexStatus ?? 'uninitialized'}`,
+        )
+      }
+      if (repositoryCommit !== indexedCommit) {
         throw new Error(
           `Atlas file write commit ${repositoryCommit ?? 'unknown'} does not match ready corpus ${indexedCommit}`,
         )
@@ -4975,4 +5198,10 @@ export const __test__ = {
   },
 }
 
-export default activities
+export const productionActivities = {
+  publishMainMergeMemoryNote: activities.publishMainMergeMemoryNote,
+  reconcileAtlasRepository: activities.reconcileAtlasRepository,
+  upsertIngestion: activities.upsertIngestion,
+}
+
+export default productionActivities

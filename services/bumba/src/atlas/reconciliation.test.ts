@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
-import { computeAtlasTreeHash, parseAtlasGitTree, planAtlasFileChanges } from './reconciliation'
+import {
+  buildAtlasReconciliationWorkflowId,
+  computeAtlasTreeHash,
+  parseAtlasGitTree,
+  planAtlasFileChanges,
+} from './reconciliation'
 
 describe('Atlas Git reconciliation', () => {
   const tree = [
@@ -9,6 +14,15 @@ describe('Atlas Git reconciliation', () => {
     '100644 blob cccccccccccccccccccccccccccccccccccccccc 30\timage.png',
     '',
   ].join('\0')
+
+  it('uses one stable workflow ID per repository', () => {
+    expect(buildAtlasReconciliationWorkflowId('proompteng/lab')).toBe(
+      buildAtlasReconciliationWorkflowId(' PROOMPTENG/LAB '),
+    )
+    expect(buildAtlasReconciliationWorkflowId('proompteng/lab')).not.toBe(
+      buildAtlasReconciliationWorkflowId('proompteng/other'),
+    )
+  })
 
   it('builds a sorted, eligibility-filtered manifest and stable tree hash', () => {
     const manifest = parseAtlasGitTree(tree)

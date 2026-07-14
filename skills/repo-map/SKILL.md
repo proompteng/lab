@@ -21,7 +21,7 @@ Use `rg` to search code and identify the correct area to edit. Check READMEs in 
 ## Find a service
 
 ```bash
-rg -n "enrichRepository" services/bumba
+rg -n "reconcileAtlasRepository" services/bumba
 rg --files -g "*bumba*"
 ```
 

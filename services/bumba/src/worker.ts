@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
-import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
+import { alignWorkerDeploymentRouting, createWorker } from '@proompteng/temporal-bun-sdk/worker'
 
 import activities from './activities/index'
 import { createGithubEventConsumer } from './event-consumer'
@@ -197,11 +197,6 @@ const main = async () => {
   const eventConsumer = createGithubEventConsumer(config)
   const consumerRequired = parseBooleanEnv(process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED, true)
   health.setConsumerState(consumerRequired, false)
-  await eventConsumer.start()
-  health.setConsumerState(consumerRequired, eventConsumer.isRunning())
-  if (consumerRequired && !eventConsumer.isRunning()) {
-    throw new Error('GitHub event consumer did not start while it is required')
-  }
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}. Shutting down worker...`)
@@ -216,13 +211,30 @@ const main = async () => {
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
 
+  const workerRunPromise = worker.run()
+  const workerExitDuringStartup = workerRunPromise.then(
+    () => Promise.reject(new Error('Temporal worker stopped during startup')),
+    (error) => Promise.reject(error),
+  )
+
   try {
+    await Promise.race([
+      alignWorkerDeploymentRouting(config, { identity: `bumba-worker/${process.pid}` }),
+      workerExitDuringStartup,
+    ])
+    await eventConsumer.start()
+    health.setConsumerState(consumerRequired, eventConsumer.isRunning())
+    if (consumerRequired && !eventConsumer.isRunning()) {
+      throw new Error('GitHub event consumer did not start while it is required')
+    }
+
     health.setRunning(true)
-    await worker.run()
+    await workerRunPromise
   } finally {
     health.setRunning(false)
     await eventConsumer.stop()
     health.setConsumerState(consumerRequired, false)
+    await worker.shutdown().catch(() => undefined)
     await health.stop()
   }
 }

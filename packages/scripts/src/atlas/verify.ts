@@ -450,7 +450,14 @@ const main = async () => {
         errors.push(`exact gold query did not rank expected path first: ${fixture.query}`)
       }
       for (const item of result.payload.items ?? []) {
-        if (item.commit !== gitHead) errors.push(`search result used wrong commit for ${item.path ?? 'unknown path'}`)
+        const path = item.path ?? ''
+        const indexed = indexedByPath.get(path)
+        if (!indexed) errors.push(`search returned a path outside the indexed manifest: ${path || 'unknown path'}`)
+        if (item.commit !== gitHead) errors.push(`search result used wrong commit for ${path || 'unknown path'}`)
+        if (item.contentHash !== indexed?.content_hash) {
+          errors.push(`search result used wrong content hash for ${path || 'unknown path'}`)
+        }
+        if (!item.retrievalMode) errors.push(`search result omitted retrieval mode for ${path || 'unknown path'}`)
         if (item.degradation) errors.push(`search degraded for ${fixture.query}: ${item.degradation}`)
       }
       if (result.payload.indexHealth?.status !== 'ok' || result.payload.indexHealth.indexedCommit !== gitHead) {

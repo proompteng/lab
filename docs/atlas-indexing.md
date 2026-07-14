@@ -1,415 +1,121 @@
-# Atlas Indexing & Semantic Search (Design Doc)
+# Atlas Indexing and Search
 
-## Summary
+Status: Current operating contract. The detailed repair, rollout, and acceptance gates live in
+[`docs/atlas/production-code-search-design.md`](atlas/production-code-search-design.md).
 
-This document defines the `atlas` schema and indexing pipeline for file‑level semantic search. The goal is a generic, agent‑friendly retrieval layer that can index code files (and derived context like AST facts and model summaries) and serve fast semantic queries.
+Atlas is a disposable search cache of the exact current `proompteng/lab` `origin/main` tree. Git is authoritative. The
+existing `atlas` PostgreSQL schema is the only corpus: there is no backup corpus, shadow schema, dual writer, or search
+fallback.
 
-## Goals
+## Ownership
 
-- Provide a dedicated, Jangar‑owned schema (`atlas`) for code indexing and retrieval.
-- Support multi‑source enrichments (AST facts, summaries, notes, etc.).
-- Enable fast semantic search with filtering by repo/ref/path/tags.
-- Keep ingestion flexible (Temporal workflows + reusable activities).
-- Expose generic REST + MCP endpoints (no service‑specific names).
-- Ensure webhook‑driven workflows are idempotent and safe to retry.
+- Bumba is the only corpus writer. Its only corpus workflow is `reconcileAtlasRepository`.
+- Jangar owns migrations, fail-closed health, source preview, HTTP search, and MCP search.
+- `atlas.file_keys` is the complete eligible-path manifest.
+- Each file key has exactly one current `atlas.file_versions` row and its current chunks and embeddings.
+- `atlas.repositories.default_ref` remains `main`. Repository metadata identifies the indexed commit, exact build,
+  corpus counts, chunker, embedding model, dimension, progress, and failure state.
 
-## Non‑Goals
+The operational states are `maintenance`, `building`, `ready`, and `failed`. All search surfaces are unavailable unless
+the repository is exactly `ready` and its stored counts and embedding configuration agree with the database.
 
-- Full code graph or cross‑repo dependency graph.
-- Replacing `memories` or retrofitting existing memories data.
-- Real‑time indexing on every commit (initially on‑demand).
-
-## Architecture Overview
+## One Reconciliation
 
 ```mermaid
 flowchart LR
-  UI[Jangar UI] -->|select file| API[Jangar REST + MCP]
-  API --> TC[Temporal Client]
-  TC --> WF[bumba workflow]
-  WF --> ACT1[Read file + metadata]
-  WF --> ACT2[Tree‑sitter extraction]
-  WF --> ACT3[Model enrichment]
-  WF --> ACT4[Embedding]
-  ACT4 --> DB[(Postgres: atlas schema)]
-  API --> DB
+  Git["origin/main Git tree"] --> Bumba["Bumba reconcileAtlasRepository"]
+  Bumba --> Manifest["atlas.file_keys manifest"]
+  Manifest --> Versions["one current file version per path"]
+  Versions --> Chunks["covered source chunks"]
+  Chunks --> Embeddings["one 1024d embedding per chunk"]
+  Embeddings --> Gate["complete-corpus final transaction"]
+  Gate --> Search["Jangar code search"]
 ```
 
-## Data Model (atlas schema)
+Reconciliation always resolves the complete current `origin/main` tree; event path lists are traceability, not corpus
+authority. It diffs that tree against the manifest, treats renames as delete plus add, and converges duplicate or
+out-of-order events to the newest tree.
 
-### Entities
+The writer fences the repository with a build ID and target commit before mutation. It prepares at most
+`BUMBA_ATLAS_PREPARE_CONCURRENCY` files at once, commits that bounded batch directly into the existing schema, and sends
+Temporal heartbeats with the build ID and persisted progress. A retry resumes the same build from committed database
+state. Every manual, UI, and event start uses the same repository-scoped Temporal workflow ID, so Temporal rejects a
+second active reconciliation. A database lease supplies a second ownership fence, and repository events are serialized
+per repository.
 
-- `repositories`: tracked repos + default refs.
-- `file_keys`: stable file identity per repo+path.
-- `file_versions`: versioned snapshots (ref/commit/hash).
-- `file_chunks`: optional chunk records (future‑proofing).
-- `enrichments`: semantic units (summary, AST facts, completion notes).
-- `embeddings`: vector storage by model + dimension.
-- `tree_sitter_facts`: structured AST matches.
-- `symbols` + `symbol_defs` + `symbol_refs`: cross‑file definition/reference graph.
-- `file_edges`: explicit file‑to‑file relationships for traversal.
-- `github_events`: webhook delivery log for idempotency.
-- `ingestions`: workflow runs tied to webhook events.
-- `event_files`: map webhook events to file keys.
-- `ingestion_targets`: map workflow runs to indexed file versions.
+Only the final transaction may publish `ready`. It verifies the exact path manifest, current file version count, chunk
+coverage, and embedding coverage before it records the canonical commit and model configuration. A failed or killed
+attempt may leave disposable partial rows in the same schema, but search remains unavailable and the next reconciliation
+resumes or replaces them.
 
-```mermaid
-erDiagram
-  REPOSITORIES ||--o{ FILE_KEYS : contains
-  FILE_KEYS ||--o{ FILE_VERSIONS : versions
-  FILE_VERSIONS ||--o{ FILE_CHUNKS : splits
-  FILE_VERSIONS ||--o{ ENRICHMENTS : has
-  FILE_CHUNKS ||--o{ ENRICHMENTS : has
-  ENRICHMENTS ||--o{ EMBEDDINGS : embeds
-  FILE_VERSIONS ||--o{ TREE_SITTER_FACTS : matches
-  REPOSITORIES ||--o{ SYMBOLS : owns
-  SYMBOLS ||--o{ SYMBOL_DEFS : defines
-  SYMBOLS ||--o{ SYMBOL_REFS : references
-  FILE_VERSIONS ||--o{ SYMBOL_DEFS : in_file
-  FILE_VERSIONS ||--o{ SYMBOL_REFS : in_file
-  FILE_VERSIONS ||--o{ FILE_EDGES : from_file
-  FILE_VERSIONS ||--o{ FILE_EDGES : to_file
-  GITHUB_EVENTS ||--o{ INGESTIONS : triggers
-  GITHUB_EVENTS ||--o{ EVENT_FILES : touches
-  FILE_KEYS ||--o{ EVENT_FILES : file_key
-  INGESTIONS ||--o{ INGESTION_TARGETS : indexes
-  FILE_VERSIONS ||--o{ INGESTION_TARGETS : file_version
+## Existing Schema Contract
 
-  REPOSITORIES {
-    uuid id
-    text name
-    text default_ref
-    jsonb metadata
-    timestamptz created_at
-    timestamptz updated_at
-  }
+- `repositories`: stable repository identity, `default_ref`, and build/readiness metadata.
+- `file_keys`: exactly one row per eligible current path.
+- `file_versions`: exactly one current blob per file key.
+- `file_chunks`: covered current source regions with chunker and content-hash metadata.
+- `chunk_embeddings`: one current embedding per chunk.
+- `github_events` and `ingestions`: operational event history, preserved across a corpus reset.
+- `enrichments`, `embeddings`, `tree_sitter_facts`, and symbol tables: derived or historical features; they are not a
+  second code-search corpus.
 
-  FILE_KEYS {
-    uuid id
-    uuid repository_id
-    text path
-    timestamptz created_at
-  }
+The current migration is `services/jangar/src/server/migrations/20260714_atlas_current_corpus.ts`. It repairs these
+existing tables in place, enforces one file version per file key, creates path/content trigram indexes, and creates a
+cosine HNSW index on `atlas.chunk_embeddings.embedding`.
 
-  FILE_VERSIONS {
-    uuid id
-    uuid file_key_id
-    text repository_ref
-    text repository_commit
-    text content_hash
-    text language
-    int byte_size
-    int line_count
-    jsonb metadata
-    timestamptz source_timestamp
-    timestamptz created_at
-    timestamptz updated_at
-  }
+## Embedding Contract
 
-  FILE_CHUNKS {
-    uuid id
-    uuid file_version_id
-    int chunk_index
-    int start_line
-    int end_line
-    text content
-    int token_count
-    jsonb metadata
-    timestamptz created_at
-  }
+Atlas uses the existing `qwen3-embedding-saigak:8b` model with a 1,024-dimensional Matryoshka output:
 
-  ENRICHMENTS {
-    uuid id
-    uuid file_version_id
-    uuid chunk_id
-    text kind
-    text source
-    text content
-    text summary
-    text[] tags
-    jsonb metadata
-    timestamptz created_at
-  }
-
-  EMBEDDINGS {
-    uuid id
-    uuid enrichment_id
-    text model
-    int dimension
-    vector embedding
-    timestamptz created_at
-  }
-
-  TREE_SITTER_FACTS {
-    uuid id
-    uuid file_version_id
-    text node_type
-    text match_text
-    int start_line
-    int end_line
-    jsonb metadata
-    timestamptz created_at
-  }
-
-  SYMBOLS {
-    uuid id
-    uuid repository_id
-    text name
-    text normalized_name
-    text kind
-    text signature
-    jsonb metadata
-    timestamptz created_at
-  }
-
-  SYMBOL_DEFS {
-    uuid id
-    uuid symbol_id
-    uuid file_version_id
-    int start_line
-    int end_line
-    jsonb metadata
-    timestamptz created_at
-  }
-
-  SYMBOL_REFS {
-    uuid id
-    uuid symbol_id
-    uuid file_version_id
-    int start_line
-    int end_line
-    jsonb metadata
-    timestamptz created_at
-  }
-
-  FILE_EDGES {
-    uuid id
-    uuid from_file_version_id
-    uuid to_file_version_id
-    text kind
-    jsonb metadata
-    timestamptz created_at
-  }
-
-  GITHUB_EVENTS {
-    uuid id
-    uuid repository_id
-    text delivery_id
-    text event_type
-    text repository
-    text installation_id
-    text sender_login
-    jsonb payload
-    timestamptz received_at
-    timestamptz processed_at
-  }
-
-  INGESTIONS {
-    uuid id
-    uuid event_id
-    text workflow_id
-    text status
-    text error
-    timestamptz started_at
-    timestamptz finished_at
-  }
-
-  EVENT_FILES {
-    uuid id
-    uuid event_id
-    uuid file_key_id
-    text change_type
-  }
-
-  INGESTION_TARGETS {
-    uuid id
-    uuid ingestion_id
-    uuid file_version_id
-    text kind
-  }
+```text
+ATLAS_CODE_SEARCH_EMBEDDING_MODEL=qwen3-embedding-saigak:8b
+ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION=1024
 ```
 
-### Indexing Strategy
+Bumba and Jangar must use the same two values. Query embeddings use the Qwen retrieval instruction; document chunks do
+not. A dimension or model mismatch, or any missing eligible chunk embedding, makes the index unavailable. Changing these
+values requires truncating and rebuilding the disposable corpus; it must never silently mix embeddings.
 
-- `atlas.file_keys` + `atlas.file_versions`:
-  - `path` index for prefix searches.
-  - `(repository_ref, repository_commit)` for exact snapshots.
-  - GIN index on `metadata` for filters.
-- `atlas.enrichments`:
-  - `kind`, `tags`, `metadata` indexes for filtering.
-- `atlas.embeddings`:
-  - IVF‑Flat index on `embedding` with cosine ops.
-- `atlas.symbols` + `atlas.symbol_defs` + `atlas.symbol_refs`:
-  - `normalized_name` + `kind` for symbol lookups.
-  - `file_version_id` for traversal from a file.
-- `atlas.file_edges`:
-  - `(from_file_version_id, kind)` and `(to_file_version_id, kind)` for graph traversal.
+## One Search Implementation
 
-### Embedding Dimension
+`services/jangar/src/server/atlas-code-search.ts` is the search authority. It combines exact path/identifier, lexical,
+trigram, and HNSW semantic candidates across the complete current corpus, then deduplicates and ranks them.
 
-The `embedding` column uses a fixed dimension from `OPENAI_EMBEDDING_DIMENSION`. If the configured dimension changes, a migration or regeneration is required.
+All supported entrypoints call that implementation:
 
-## Ingestion Workflow (bumba)
+- `POST /api/code-search`
+- `GET /api/search` as a UI compatibility adapter
+- MCP tool `atlas_code_search`
+- repository command `bun run atlas:code-search`
 
-```mermaid
-sequenceDiagram
-  participant UI as Jangar UI
-  participant API as Jangar API
-  participant TC as Temporal Client
-  participant WF as bumba Workflow
-  participant ACT as Activities
-  participant DB as Postgres (atlas)
+There is no direct MCP indexing tool, per-file production writer, partial backfill command, legacy enrichment search, or
+silent lexical fallback. Results identify repository, `main`, indexed commit, path, line range, content hash, retrieval
+mode, and any degradation. Source preview reads `git show <indexedCommit>:<path>` and verifies the content hash.
 
-  UI->>API: POST /api/enrich {file}
-  API->>TC: Start workflow (file payload)
-  TC->>WF: enrichFile
-  WF->>ACT: Read file + metadata
-  WF->>ACT: Extract Tree‑sitter facts
-  WF->>ACT: Call model (completion)
-  WF->>ACT: Create embeddings
-  ACT->>DB: Upsert repository, file_key, file_version, enrichment, embedding
-  ACT->>DB: Record webhook event + ingestion status (idempotent)
-  ACT->>DB: Record event_files + ingestion_targets for file traceability
-  API-->>UI: 202 Accepted + workflow id
+## Operator Workflow
+
+Keep the GitHub event consumer disabled during a repair or destructive reset. Start exactly one full reconciliation:
+
+```bash
+bun run atlas:rebuild --repository proompteng/lab --ref main
 ```
 
-### Ingestion Tracking Details
+Then independently prove Git, PostgreSQL, source preview, search correctness, cancellation, and latency:
 
-- Jangar records webhook deliveries in `atlas.github_events`.
-- Bumba consumes pending GitHub events from `atlas.github_events` and starts workflows.
-- Bumba workflows create or update `atlas.ingestions` using the workflow ID and the GitHub delivery id.
-- `atlas.ingestions.status` is updated to `running` → `completed` (or `failed`/`skipped`) by the workflow itself.
-- `atlas.event_files` is populated when a file is indexed, keyed to the webhook delivery id + file key.
-- `atlas.ingestion_targets` is populated for each indexed file version with `kind = model_enrichment`.
-
-These links allow full traceability from webhook event → workflow run → file keys → file versions.
-
-### Change Summary (Dec 2025)
-
-- Workflow inputs now accept an explicit `eventDeliveryId`, so webhook deliveries and workflow runs share the same
-  primary linkage key across Jangar and bumba.
-- Jangar records ingestions with the **actual Temporal workflow ID** returned by `startWorkflow`, and bumba updates
-  the ingestion row as it progresses (`running` → `completed`/`failed`/`skipped`) with `started_at`/`finished_at`.
-- `event_files` (event → file key) and `ingestion_targets` (ingestion → file version) are both written during
-  indexing so that any file can be traced back to a webhook delivery and a specific workflow run.
-- Repository refs are normalized before persistence to prevent duplicate `file_versions` for `refs/heads/*` vs `main`
-  or tag prefixes; this keeps dedupe logic stable across webhook sources.
-- When Tree-sitter yields no useful nodes, facts fall back to a plain-text scan to avoid empty `tree_sitter_facts`
-  for simple formats (notably JSON) while keeping deterministic output.
-
-### Data Quality Guardrails
-
-- Repository refs are normalized before persistence (e.g., `refs/heads/main` → `main`) to avoid duplicate file_versions.
-- When Tree‑sitter yields no interesting nodes, facts fall back to a plain‑text parser so `tree_sitter_facts` isn’t empty for simple formats (e.g., JSON).
-
-## API Surface (generic)
-
-### REST
-
-- `POST /api/enrich`
-  - Input: `{ repository, ref, commit?, path, contentHash?, metadata? }`
-  - Returns: workflow id or indexing result.
-- `GET /api/search`
-  - Input: `query`, `limit`, optional `repository`, `ref`, `pathPrefix`, `tags[]`, `kinds[]`.
-  - Returns: ranked enrichment results + file metadata.
-
-### MCP
-
-- `atlas.index`
-- `atlas.search`
-- `atlas.stats`
-
-## Operational Considerations
-
-- Schema and extensions are created lazily on first use.
-- Embedding dimension mismatch causes a clear error until migrated.
-- Index build uses `ivfflat` lists = 100 (tunable).
-- Bumba workflows are reusable and activity‑based for future pipelines.
-- Webhook deliveries are idempotent via `github_events.delivery_id` and `ingestions` records.
-- Index updates are idempotent by `(file_key_id, repository_ref, repository_commit, content_hash)`.
-- Event and ingestion link tables provide traceability from webhook → files → indexed versions.
-- Graph traversal is supported by `symbol_defs`/`symbol_refs` (for symbol‑level joins) and `file_edges` (for direct file‑to‑file edges).
-
-## Security Notes
-
-- All indexing is scoped to known repo mounts (Jangar PVC).
-- Embedding calls use OpenAI‑compatible endpoints (self‑hosted on `190`).
-- Inputs are normalized and size‑bounded to avoid model abuse.
-
-## Open Questions
-
-- Whether to chunk files immediately or only when size exceeds a threshold.
-- Backfill policy from existing `memories` content (likely no).
-- How to version Tree‑sitter grammars or extraction rules and link them in metadata.
-- How to normalize symbols consistently across languages (e.g., module‑qualified names).
-
-## Implementation Task Slices (Argo/Codex)
-
-Use these slices to create one GitHub issue per task (Codex workflow friendly).
-
-1. Atlas schema + Jangar store layer
-   - Scope: create `atlas` schema and Jangar store/service.
-   - Touch: `services/jangar/src/server/atlas-store.ts`, `services/jangar/src/server/atlas.ts`, tests.
-   - Output: auto‑create tables + idempotent upserts.
-
-2. REST + MCP endpoints (generic)
-   - Scope: `POST /api/enrich`, `GET /api/search`, MCP tools `atlas.index|search|stats`.
-   - Touch: `services/jangar/src/routes/api/enrich.ts`, `services/jangar/src/routes/api/search.ts`, MCP handler.
-   - Depends on: task 1 interface.
-
-3. Bumba workflow activities (Tree‑sitter + model + embedding)
-   - Scope: workflow activities + idempotent orchestration.
-   - Touch: `services/bumba/src/activities/*`, `services/bumba/src/workflows/index.ts`.
-   - Depends on: task 1 schema.
-
-4. Jangar UI + sidebar entry
-   - Scope: atlas page with indexed file table + search + enrich trigger.
-   - Touch: `services/jangar/src/components/app-sidebar.tsx`, `services/jangar/src/routes/atlas.tsx`.
-   - Depends on: task 2 endpoints.
-
-5. Script helpers for agents
-   - Scope: bun script that queries `/api/search`.
-   - Touch: `packages/scripts/src/atlas/search.ts`, root script `atlas:search`.
-   - Depends on: task 2 endpoints.
-
-6. Froussard webhook integration
-   - Scope: GitHub webhook -> `/api/enrich` with idempotency.
-   - Touch: `services/froussard/**`.
-   - Depends on: task 2 endpoints + atlas event tables.
-
-## Tree‑sitter Extraction (per file)
-
-We normalize Tree‑sitter output into a stable facts schema:
-
-- Parse file with the language grammar.
-- Walk the AST and emit facts like `{ node_type, match_text, start_line, end_line, metadata }`.
-- Store those facts in `atlas.tree_sitter_facts` and/or append to `enrichments` metadata.
-- Emit symbols + refs + file edges for cross‑file navigation.
-
-Pseudocode example (activity):
-
-```ts
-const parser = new Parser()
-parser.setLanguage(lang)
-const tree = parser.parse(source)
-const facts = []
-walk(tree.rootNode, (node) => {
-  if (isInteresting(node)) {
-    facts.push({
-      node_type: node.type,
-      match_text: source.slice(node.startIndex, node.endIndex),
-      start_line: node.startPosition.row + 1,
-      end_line: node.endPosition.row + 1,
-      metadata: { field: node.fieldName },
-    })
-  }
-  if (isSymbolDef(node)) {
-    emitSymbolDef(node)
-  }
-  if (isSymbolRef(node)) {
-    emitSymbolRef(node)
-  }
-  if (isImportEdge(node)) {
-    emitFileEdge(node)
-  }
-})
+```bash
+bun run atlas:verify \
+  --repository proompteng/lab \
+  --ref main \
+  --database-url "$DATABASE_URL" \
+  --base-url "$ATLAS_BASE_URL"
 ```
+
+If `origin/main` advances, reconcile and verify again. Re-enable the same event consumer through GitOps only after the
+live verifier exits zero, then prove that one later main change converges. Pod health, Argo health, corpus percentages,
+or a few plausible searches are not completeness evidence.
+
+## Agent Trust Rule
+
+Until the live Definition of Done in the production design is recorded as passed, Atlas results are navigation leads.
+Verify every material path and claim against the exact Git ref and report misses, stale paths, unavailable semantic
+search, or fallback behavior instead of hiding the defect with a narrower query.

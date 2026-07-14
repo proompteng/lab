@@ -42,8 +42,7 @@ describe('enrich event dispatch', () => {
     } as unknown as AtlasService
 
     const bumbaService: BumbaWorkflowsService = {
-      startEnrichFile: vi.fn(() => Effect.fail(new Error('should not be called'))),
-      startEnrichRepository: vi.fn(() => Effect.fail(new Error('should not be called'))),
+      startAtlasReconciliation: vi.fn(() => Effect.fail(new Error('should not be called'))),
     }
 
     const request = new Request('http://localhost/api/enrich', {
@@ -55,7 +54,7 @@ describe('enrich event dispatch', () => {
           event: 'push',
           identifiers: { repositoryFullName: 'proompteng/lab' },
           payload: {
-            repository: { full_name: 'proompteng/lab', default_branch: 'main' },
+            repository: { full_name: 'proompteng/lab', default_branch: 'feature' },
             after: 'abc123',
             commits: [{ added: ['src/a.ts'], modified: [] }],
           },
@@ -73,8 +72,88 @@ describe('enrich event dispatch', () => {
     expect(json.workflows).toEqual([])
 
     expect(atlasService.upsertRepository).toHaveBeenCalledTimes(1)
+    expect(atlasService.upsertRepository).toHaveBeenCalledWith({
+      name: 'proompteng/lab',
+      defaultRef: 'main',
+    })
     expect(atlasService.upsertGithubEvent).toHaveBeenCalledTimes(1)
-    expect(bumbaService.startEnrichFile).not.toHaveBeenCalled()
-    expect(bumbaService.startEnrichRepository).not.toHaveBeenCalled()
+    expect(bumbaService.startAtlasReconciliation).not.toHaveBeenCalled()
+  })
+
+  it('rejects direct file writes without touching Atlas or Temporal', async () => {
+    const atlasService = {
+      upsertRepository: vi.fn(() => Effect.fail(new Error('should not be called'))),
+    } as unknown as AtlasService
+    const bumbaService: BumbaWorkflowsService = {
+      startAtlasReconciliation: vi.fn(() => Effect.fail(new Error('should not be called'))),
+    }
+
+    const response = await run(
+      new Request('http://localhost/api/enrich', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repository: 'proompteng/lab',
+          ref: 'feature',
+          path: 'services/jangar/src/server/mcp.ts',
+          commit: 'abc123',
+        }),
+      }),
+      atlasService,
+      bumbaService,
+    )
+
+    expect(response.status).toBe(409)
+    expect(atlasService.upsertRepository).not.toHaveBeenCalled()
+    expect(bumbaService.startAtlasReconciliation).not.toHaveBeenCalled()
+  })
+
+  it('routes a full main request to the authoritative reconciliation workflow', async () => {
+    const repository = {
+      id: 'repo-1',
+      name: 'proompteng/lab',
+      defaultRef: 'main',
+      metadata: { indexStatus: 'ready' },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    const atlasService = {
+      getRepositoryByName: vi.fn(() => Effect.succeed(repository)),
+      upsertRepository: vi.fn(() => Effect.fail(new Error('should not be called'))),
+    } as unknown as AtlasService
+    const startAtlasReconciliation = vi.fn(() =>
+      Effect.succeed({
+        workflowId: 'bumba-atlas-reconcile-1',
+        runId: 'run-1',
+        taskQueue: 'bumba',
+        repoRoot: '/workspace/lab',
+      }),
+    )
+    const bumbaService: BumbaWorkflowsService = {
+      startAtlasReconciliation,
+    }
+
+    const response = await run(
+      new Request('http://localhost/api/enrich', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'repository',
+          repository: 'proompteng/lab',
+          ref: 'main',
+          commit: 'dbbb0c561ace177647e8226e94ff454bfbdefa74',
+        }),
+      }),
+      atlasService,
+      bumbaService,
+    )
+
+    expect(response.status).toBe(202)
+    expect(atlasService.upsertRepository).not.toHaveBeenCalled()
+    expect(startAtlasReconciliation).toHaveBeenCalledWith({
+      repository: 'proompteng/lab',
+      ref: 'main',
+      commit: 'dbbb0c561ace177647e8226e94ff454bfbdefa74',
+    })
   })
 })

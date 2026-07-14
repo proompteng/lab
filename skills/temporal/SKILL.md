@@ -1,120 +1,93 @@
 ---
 name: temporal
-description: 'Operate Temporal workflows in this repo: start/list/inspect workflows, fetch history, debug nondeterminism, reset/cancel/terminate, and check task queues via Temporal CLI.'
+description: 'Operate Temporal workflows in this repo: start, list, inspect, debug, cancel, terminate, and verify Worker Deployment routing.'
 ---
 
 # Temporal
-
-## Overview
-
-Operate workflows with explicit namespace, address, and task queue. Use repo scripts for starting workflows, then use the CLI to inspect and control them.
 
 ## Connection
 
 ```bash
 export TEMPORAL_ADDRESS=temporal-grpc.ide-newton.ts.net:7233
 export TEMPORAL_NAMESPACE=default
-export TEMPORAL_TASK_QUEUE=bumba
 ```
 
-Validate connectivity:
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow list --limit 5
-```
-
-## From UI URL to CLI args
-
-Example UI URL:
-
-```
-http://temporal/namespaces/default/workflows/bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88/019b7788-e535-752c-8a4a-2ee44de7065e/history
-```
-
-Derive:
-
-```bash
-export WORKFLOW_ID=bumba-repo-0e6476cd-6df7-4ee3-8184-95029cd50c88
-export RUN_ID=019b7788-e535-752c-8a4a-2ee44de7065e
-```
+Always pass the namespace and address explicitly.
 
 ## Inspect workflows
 
-Describe:
-
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow describe   --workflow-id "$WORKFLOW_ID"   --run-id "$RUN_ID"
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" workflow list --limit 20
+
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" workflow describe \
+  --workflow-id "$WORKFLOW_ID" --run-id "$RUN_ID"
+
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" workflow show \
+  --workflow-id "$WORKFLOW_ID" --run-id "$RUN_ID" --output json > /tmp/workflow-history.json
 ```
 
-History (JSON):
+For Atlas, the only ingestion workflow type is `reconcileAtlasRepository`:
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow show   --workflow-id "$WORKFLOW_ID"   --run-id "$RUN_ID"   --output json > /tmp/workflow-history.json
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" workflow list \
+  --query 'WorkflowType="reconcileAtlasRepository" and ExecutionStatus="Running"'
 ```
 
-Trace:
+## Start Atlas reconciliation
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow trace   --workflow-id "$WORKFLOW_ID"   --run-id "$RUN_ID"
+bun run atlas:rebuild --repository proompteng/lab --ref main
 ```
 
-## List and filter
+This starts one full current-main reconciliation and waits for its result. Per-file and partial-repository workflow
+entrypoints no longer exist. Do not start a second rebuild while a live one can still write.
+
+## Verify Worker Deployment routing
 
 ```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow list --limit 20
-
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow list   --query 'WorkflowType="enrichFile" and ExecutionStatus="Running"'
-
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow list   --query 'WorkflowType="enrichRepository" and ExecutionStatus="Failed"'
+bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
+  --address "$TEMPORAL_ADDRESS" \
+  --namespace "$TEMPORAL_NAMESPACE" \
+  --task-queue bumba \
+  --deployment-name bumba-deployment \
+  --dry-run
 ```
 
-## Start workflows (repo scripts)
+Bumba and Jangar start their poller, select their exact configured build, and wait for
+`routingConfigUpdateState=COMPLETED` before readiness. The repository's pinned Temporal CLI predates Worker Deployment
+poller APIs; use the SDK-backed sync command for routing. The CLI remains valid for workflow inspection and migration.
 
-`enrichRepository`:
+Delete a stale Worker Deployment version only after proving that it is not current or ramping, is drained, and has zero
+pinned workflows. Never bypass the propagation gate.
+
+## Cancel or terminate
+
+Cancel cooperative work:
 
 ```bash
-bun run packages/scripts/src/bumba/enrich-repository.ts   --path-prefix services/bumba   --max-files 50   --wait
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" workflow cancel \
+  --workflow-id "$WORKFLOW_ID"
 ```
 
-`enrichFile`:
+Terminate only when the exact run must stop and the reason is documented:
 
 ```bash
-bun run packages/scripts/src/bumba/enrich-file.ts   --file services/bumba/src/worker.ts   --wait
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" workflow terminate \
+  --workflow-id "$WORKFLOW_ID" --run-id "$RUN_ID" --reason '<incident reason>'
 ```
 
-## Reset nondeterminism
+## Failure interpretation
 
-1. Use `workflow show` to locate the last good event ID.
-2. Reset to `FirstWorkflowTask` or the safe event.
-3. Confirm the new run replays deterministically.
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow reset   --workflow-id "$WORKFLOW_ID"   --run-id "$RUN_ID"   --reason "reset to known-good event"   --event-id 31   --reset-type FirstWorkflowTask
-```
-
-## Cancel / terminate
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow cancel --workflow-id "$WORKFLOW_ID"
-
-temporal --namespace "$TEMPORAL_NAMESPACE" workflow terminate   --workflow-id "$WORKFLOW_ID"   --reason "manual cleanup"
-```
-
-## Task queues / workers
-
-```bash
-temporal --namespace "$TEMPORAL_NAMESPACE" task-queue describe   --task-queue "$TEMPORAL_TASK_QUEUE"
-```
-
-## Worker logs
-
-```bash
-kubectl logs -n jangar deploy/bumba --tail=200
-```
+- No workflow-task start: routing or poller failure.
+- `ScheduleToStart` timeout: task-queue routing failure.
+- Heartbeat timeout after worker exit: crash detection; the activity should retry with its last details.
+- Running activity with heartbeat timeout `0` after a worker death: pre-hardening dead attempt; prove it is dead, terminate
+  that exact run, deploy the current worker, and start one reconciliation.
+- Nondeterminism: inspect history and `docs/temporal-nondeterminism.md`; reset only to a proven safe event.
 
 ## Resources
 
 - Reference: `references/temporal-cli.md`
 - Runner: `scripts/temporal-run.sh`
 - Triage template: `assets/temporal-triage.md`
-- Nondeterminism failure mode: `docs/temporal-nondeterminism.md`
+- Bumba incidents: `docs/runbooks/bumba-temporal-failure-modes.md`

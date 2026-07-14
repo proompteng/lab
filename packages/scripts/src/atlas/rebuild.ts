@@ -1,12 +1,10 @@
 #!/usr/bin/env bun
 
-import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
-
+import { buildAtlasReconciliationWorkflowId } from '@proompteng/bumba/atlas/reconciliation'
 import { createTemporalClient } from '@proompteng/temporal-bun-sdk'
-import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
+import { VersioningBehavior, WorkflowIdReusePolicy } from '@proompteng/temporal-bun-sdk/worker'
 
-import { repoRoot as defaultRepoRoot, fatal } from '../shared/cli'
+import { fatal } from '../shared/cli'
 
 type Options = {
   repoRoot: string
@@ -16,11 +14,10 @@ type Options = {
   taskQueue: string
   namespace: string
   temporalAddress: string
-  workflowId?: string
 }
 
 const defaults: Options = {
-  repoRoot: process.env.BUMBA_WORKSPACE_ROOT ?? defaultRepoRoot,
+  repoRoot: process.env.BUMBA_WORKER_REPO_ROOT ?? '/workspace/lab',
   repository: process.env.REPOSITORY ?? 'proompteng/lab',
   ref: process.env.BUMBA_ATLAS_DEFAULT_REF ?? 'main',
   taskQueue: process.env.TEMPORAL_TASK_QUEUE ?? 'bumba',
@@ -34,14 +31,13 @@ Usage:
   bun run atlas:rebuild [options]
 
 Options:
-      --repo-root <path>        Git checkout used by the Bumba activity
+      --repo-root <path>        Git checkout inside the Bumba worker (default: /workspace/lab)
       --repository <owner/repo> Repository slug (default: proompteng/lab)
       --ref <ref>               Authoritative origin ref (default: main)
       --commit <sha>            Event commit for traceability; origin/<ref> remains authoritative
       --task-queue <name>       Temporal task queue (default: bumba)
       --namespace <name>        Temporal namespace (default: default)
       --temporal-address <addr> Temporal frontend address
-      --workflow-id <id>        Workflow ID override
   -h, --help                    Show this help
 
 The command waits for the reconciliation result and exits nonzero on workflow failure.
@@ -63,7 +59,6 @@ const parseArgs = (argv: string[]): Options => {
     '--task-queue': 'taskQueue',
     '--namespace': 'namespace',
     '--temporal-address': 'temporalAddress',
-    '--workflow-id': 'workflowId',
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -92,34 +87,39 @@ const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
   process.env.TEMPORAL_ADDRESS = options.temporalAddress
   const { client } = await createTemporalClient({ namespace: options.namespace })
-  const workflowId = options.workflowId ?? `bumba-atlas-rebuild-${randomUUID()}`
-  const started = await client.workflow.start({
-    workflowId,
-    workflowType: 'reconcileAtlasRepository',
-    taskQueue: options.taskQueue,
-    versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
-    args: [
-      {
-        repoRoot: resolve(options.repoRoot),
-        repository: options.repository,
-        ref: options.ref,
-        commit: options.commit,
-      },
-    ],
-  })
-  const result = await client.workflow.result(started.handle)
-  console.log(
-    JSON.stringify(
-      {
-        workflowId: started.workflowId,
-        runId: started.runId,
-        namespace: started.namespace,
-        result,
-      },
-      null,
-      2,
-    ),
-  )
+  try {
+    const workflowId = buildAtlasReconciliationWorkflowId(options.repository)
+    const started = await client.workflow.start({
+      workflowId,
+      workflowType: 'reconcileAtlasRepository',
+      taskQueue: options.taskQueue,
+      workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
+      versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
+      args: [
+        {
+          repoRoot: options.repoRoot,
+          repository: options.repository,
+          ref: options.ref,
+          commit: options.commit,
+        },
+      ],
+    })
+    const result = await client.workflow.result(started.handle)
+    console.log(
+      JSON.stringify(
+        {
+          workflowId: started.workflowId,
+          runId: started.runId,
+          namespace: started.namespace,
+          result,
+        },
+        null,
+        2,
+      ),
+    )
+  } finally {
+    await client.shutdown()
+  }
 }
 
 if (import.meta.main) {

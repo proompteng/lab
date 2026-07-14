@@ -1,53 +1,58 @@
-# bumba
+# Bumba
 
-Temporal worker that enriches repository files using AST context + self-hosted models and stores embeddings in the Jangar database.
+Bumba is the Temporal worker that reconciles the one Atlas code-search corpus from the exact current
+`origin/main` Git tree. Jangar owns the existing `atlas` schema; Bumba is its only code-corpus writer.
 
-Atlas ingestion correctness, production rollout, and agent verification requirements are defined in
-`../../docs/atlas/production-code-search-design.md`.
+The production contract and acceptance gates are in `../../docs/atlas/production-code-search-design.md`.
 
-## Notes
+## Atlas ingestion contract
 
-- Schema is owned by Jangar; this service only reads/writes through shared tables.
-- Configure Temporal connection via `TEMPORAL_*` env vars.
-- Mount the Jangar workspace PVC at `/workspace` for file access.
-- `enrichWithModel` uses the same Temporal task queue as the workflow (`TEMPORAL_TASK_QUEUE`); do not run a separate model queue.
-- The worker can consume pending `atlas.github_events` and start `enrichFile` workflows directly. Controls:
-  `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED`, `BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS`,
-  `BUMBA_GITHUB_EVENT_BATCH_SIZE`, `BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS`,
-  `BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES`, `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED`.
-- Event-consumer orchestration, external requests, and merge-note synthesis run as Effect programs; Promise conversion is
-  limited to the worker's public lifecycle boundary. Temporal workflow definitions use the same Effect runtime model.
-- `BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS` is a per-tick dispatch budget. Events with more eligible files remain pending
-  and continue across later ticks; individual start failures are retried and never cause the event to be marked complete.
-- After every fully terminal push to `main`, the consumer loads the completed per-file enrichments and a bounded
-  diff from the mounted repository clone and asks Flamingo whether the merge contains durable, non-obvious operational
-  knowledge. Routine promotions, dependency bumps, generated output, and diff restatements are skipped; useful decisions,
-  invariants, failure modes, hidden dependencies, and production validation signals are written to the Agents
-  `/v1/memory-notes` endpoint. Note delivery runs in its own deterministic Temporal workflow with bounded
-  long-lived activity retries, so Flamingo or Agents outages do not keep an otherwise complete GitHub event pending.
-  Commit and delivery fields are stored only as provenance metadata.
-  Set `AGENTS_SERVICE_BASE_URL` only when the in-cluster default is not appropriate. Merge-note synthesis disables
-  reasoning by default so the structured response fits the completion budget; override it with
-  `BUMBA_MERGE_NOTE_REASONING_EFFORT`.
-- When routing alignment is enabled, the event-consumer waits to confirm/set Temporal worker deployment
-  routing to the active `TEMPORAL_WORKER_BUILD_ID` before dispatching new event workflows. This avoids
-  unversioned workflow starts when the deployment current version drifts.
-- Enrichment skips directory paths; model completion failures (including timeouts) fail the workflow to avoid placeholders.
-- Repository listing sync can be tuned with `BUMBA_REPO_SYNC_INTERVAL_MS` (set `0` to disable periodic origin fetches).
-- Performance knobs: `OPENAI_API_BASE_URL`, `OPENAI_COMPLETION_TIMEOUT_MS`, `OPENAI_COMPLETION_MAX_OUTPUT_TOKENS`, `BUMBA_MODEL_CONCURRENCY`,
-  `OPENAI_EMBEDDING_API_BASE_URL` (set to Ollama `/api` for batching), `OPENAI_EMBEDDING_BATCH_SIZE`, `OPENAI_EMBEDDING_KEEP_ALIVE`,
-  `OPENAI_EMBEDDING_TRUNCATE` (defaults to false for quality), and `OPENAI_EMBEDDING_TIMEOUT_MS`.
-- Self-hosted Qwen tuning knobs: `OPENAI_COMPLETION_REASONING_EFFORT` (set to `none` for structured extraction),
-  `OPENAI_COMPLETION_TEMPERATURE`, `OPENAI_COMPLETION_TOP_P`, and `OPENAI_EMBEDDING_DIMENSION`.
-- Resilience knobs: `BUMBA_COMPLETION_CONCURRENCY`, `BUMBA_EMBEDDING_CONCURRENCY`, `OPENAI_COMPLETION_MAX_ATTEMPTS`,
-  `OPENAI_COMPLETION_RETRY_INITIAL_MS`, `OPENAI_COMPLETION_RETRY_MAX_MS`, `OPENAI_COMPLETION_RETRY_BACKOFF`,
-  `OPENAI_COMPLETION_REPAIR_OUTPUT_CHARS`, `OPENAI_EMBEDDING_MAX_ATTEMPTS`, `OPENAI_EMBEDDING_RETRY_INITIAL_MS`,
-  `OPENAI_EMBEDDING_RETRY_MAX_MS`, `OPENAI_EMBEDDING_RETRY_BACKOFF`, `OPENAI_EMBEDDING_BATCH_WINDOW_MS`,
-  `OPENAI_EMBEDDING_MAX_BATCH_CHARS`.
-- `enrichRepository` keeps 24 child workflows in flight by default; if `maxFiles` is set it becomes the default concurrency. Override via `childWorkflowConcurrency` input or `--child-workflow-concurrency` in the CLI.
-- Incident runbook: `docs/runbooks/bumba-temporal-failure-modes.md`.
+- The only Atlas ingestion workflow is `reconcileAtlasRepository`.
+- A GitHub push supplies traceability, but the worker always fetches and resolves the current `origin/main`; webhook
+  changed-file lists are never treated as the corpus manifest.
+- `atlas.file_keys` is the exact eligible-path manifest. Each path has one current file version and its current chunks
+  and 1,024-dimensional embeddings.
+- Reconciliation sets `repositories.metadata.indexStatus=building`, which makes every search surface fail closed.
+- Files are prepared and committed in bounded batches to the existing tables. The worker never retains a whole-repository
+  embedding set in memory and never writes a shadow schema or replacement corpus.
+- Each batch is fenced by a build ID and exact target commit. Manual, UI, and event callers share one
+  repository-scoped Temporal workflow ID, and GitHub events are serialized per repository.
+- The activity has a 90-second Temporal heartbeat timeout and sends progress every 15 seconds. A worker crash therefore
+  becomes a retry instead of leaving a dead 24-hour activity. Retries reuse heartbeat state and already committed batches.
+- The final transaction verifies every path, Git object ID, commit, chunk, and configured embedding before changing the
+  repository to `ready`. Any failure leaves Atlas unavailable with an explicit error; there is no fallback corpus.
 
-## CLI helpers
+The event consumer is controlled by `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED`. Keep it `false` during a destructive rebuild.
+After live `atlas:verify` passes, enable the same consumer through GitOps. Relevant tuning controls are
+`BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS`, `BUMBA_GITHUB_EVENT_BATCH_SIZE`,
+`BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK`, `BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES`,
+`BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS`, and `BUMBA_ATLAS_PREPARE_CONCURRENCY`.
 
-- `bun run packages/scripts/src/bumba/enrich-file.ts --file <path> --wait`
-- `bun run packages/scripts/src/bumba/enrich-repository.ts --path-prefix <dir> --max-files <n> --wait`
+## Worker deployment routing
+
+The worker starts its Temporal poller, aligns the Worker Deployment to its configured `TEMPORAL_WORKER_BUILD_ID`, and
+waits for `routingConfigUpdateState=COMPLETED`. Only then does it report ready or start the GitHub event consumer. Routing
+alignment has no bypass toggle.
+
+If propagation is stuck, inspect the Worker Deployment. Delete a stale version only when it is not current or ramping, is
+drained, and Temporal reports zero pinned workflows. Do not relax the `COMPLETED` gate. See
+`../../docs/runbooks/bumba-temporal-failure-modes.md`.
+
+## Operator command
+
+```bash
+bun run atlas:rebuild --repository proompteng/lab --ref main
+```
+
+This starts exactly one full-main reconciliation and waits for its Temporal result. Per-file and partial-repository Atlas
+CLI entrypoints have been removed.
+
+## Other worker behavior
+
+`publishMainMergeMemoryNote` is independent from Atlas indexing. After a terminal main-branch event, it evaluates a
+bounded Git diff and may write durable engineering knowledge through the Agents memory-note API. Its failure does not
+change Atlas corpus readiness.
+
+Temporal connection uses `TEMPORAL_*`. The worker-local repository is normally `/workspace/lab`. Embedding configuration
+uses `ATLAS_CODE_SEARCH_EMBEDDING_MODEL` and `ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION`; generic model settings must not
+override the Atlas-specific contract.

@@ -649,7 +649,9 @@ function AtlasSearchPage() {
                           </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {item.summary?.trim() ? item.summary : 'No summary available yet for this file.'}
+                          {item.summary?.trim()
+                            ? item.summary
+                            : 'No matching source snippet is available for this file.'}
                         </p>
                         {item.tags && item.tags.length > 0 ? (
                           <div className="flex flex-wrap items-center gap-2">
