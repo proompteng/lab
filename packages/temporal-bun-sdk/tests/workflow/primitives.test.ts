@@ -164,6 +164,7 @@ test('Nexus schedule defaults reuse headerless replay operation ids', async () =
           operation: 'charge',
           operationId: 'nexus-42',
           input: { amount: 100 },
+          nexusHeader: {},
         },
       },
     ],
@@ -187,7 +188,7 @@ test('Nexus schedule defaults reuse headerless replay operation ids', async () =
   expect(intent?.kind).toBe('schedule-nexus-operation')
   if (intent?.kind === 'schedule-nexus-operation') {
     expect(intent.operationId).toBe('nexus-42')
-    expect(intent.nexusHeader).toBeUndefined()
+    expect(intent.nexusHeader).toEqual({})
   }
 })
 

@@ -651,15 +651,16 @@ const buildScheduleNexusOperationIntent = (
   const previous = ctx.previousIntent(sequence)
   const previousSchedule = previous?.kind === 'schedule-nexus-operation' ? previous : undefined
   const operationId = options.operationId ?? previousSchedule?.operationId ?? `nexus-${sequence}`
+  const reusingPreviousHeader = options.nexusHeader === undefined && previousSchedule !== undefined
   const nexusHeader =
     options.nexusHeader !== undefined
       ? { ...options.nexusHeader }
-      : previousSchedule?.nexusHeader
+      : previousSchedule?.nexusHeader !== undefined
         ? { ...previousSchedule.nexusHeader }
         : previousSchedule
           ? undefined
           : { [NEXUS_OPERATION_ID_HEADER]: operationId }
-  if (nexusHeader && !nexusHeader[NEXUS_OPERATION_ID_HEADER]) {
+  if (!reusingPreviousHeader && nexusHeader && !nexusHeader[NEXUS_OPERATION_ID_HEADER]) {
     nexusHeader[NEXUS_OPERATION_ID_HEADER] = operationId
   }
   return {
