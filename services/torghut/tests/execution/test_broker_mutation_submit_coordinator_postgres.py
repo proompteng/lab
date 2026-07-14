@@ -14,6 +14,7 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import select, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -66,6 +67,29 @@ from tests.execution.decision_submission_claims_postgres_support import (
     drop_schema,
     insert_decision,
 )
+
+
+def _upgrade_validation_submit_schema(
+    alembic: AlembicConfig,
+    schema_engine: Engine,
+) -> None:
+    """Apply the accelerated receipt lineage with its historical catalog prerequisite."""
+
+    command.stamp(alembic, "0057_generic_multifactor_machine")
+    command.upgrade(alembic, "0061_linked_submission_terminal")
+    command.stamp(alembic, "0065_strategy_capital_compat")
+    with schema_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE torghut_options_contract_catalog (
+                    contract_symbol TEXT PRIMARY KEY,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+        )
+    command.upgrade(alembic, "0068_validation_submit")
 
 
 @pytest.mark.skipif(
@@ -396,10 +420,7 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
     try:
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0061_linked_submission_terminal")
-        command.stamp(alembic, "0065_strategy_capital_compat")
-        command.upgrade(alembic, "0068_validation_submit")
+        _upgrade_validation_submit_schema(alembic, schema_engine)
 
         def run(component: str) -> str:
             with sessions() as session:
@@ -553,10 +574,7 @@ def test_postgres_validation_authority_rejects_forged_or_incomplete_intents(
     try:
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0061_linked_submission_terminal")
-        command.stamp(alembic, "0065_strategy_capital_compat")
-        command.upgrade(alembic, "0068_validation_submit")
+        _upgrade_validation_submit_schema(alembic, schema_engine)
 
         base_document = json.loads(intent.canonical_intent_json)
         forged_documents: list[dict[str, object]] = []
@@ -656,10 +674,7 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         monkeypatch.setattr(settings, "trading_kill_switch_enabled", False)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0061_linked_submission_terminal")
-        command.stamp(alembic, "0065_strategy_capital_compat")
-        command.upgrade(alembic, "0068_validation_submit")
+        _upgrade_validation_submit_schema(alembic, schema_engine)
         with schema_engine.begin() as connection:
             connection.execute(
                 text(
