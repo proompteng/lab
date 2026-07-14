@@ -12,7 +12,12 @@ from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException
 
-from .alpaca import AlpacaApiError, AlpacaOptionsClient, normalize_contract_record
+from .alpaca import (
+    AlpacaApiError,
+    AlpacaOptionsClient,
+    OptionsContractsQuery,
+    normalize_contract_record,
+)
 from .catalog_scope import OptionsCatalogScope
 from .catalog_watermark_repository import CatalogCycleSummary
 from .kafka import OptionsKafkaProducer, SequenceGenerator, build_envelope
@@ -287,12 +292,14 @@ def _run_discovery_cycle() -> None:
             if _state.stop_event.wait(1.0):
                 return
         contracts, page_token = _client.list_contracts(
-            status="active",
-            limit=settings.options_contract_discovery_page_limit,
+            query=OptionsContractsQuery(
+                status="active",
+                limit=settings.options_contract_discovery_page_limit,
+                expiration_date_gte=expiration_start,
+                expiration_date_lte=expiration_end,
+                page_token=page_token,
+            ),
             underlying_symbols=list(scope.underlying_symbols),
-            expiration_date_gte=expiration_start,
-            expiration_date_lte=expiration_end,
-            page_token=page_token,
         )
         page_count += 1
         normalized_contracts = _normalize_contracts_in_scope(

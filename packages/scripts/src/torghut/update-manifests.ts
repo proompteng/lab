@@ -26,6 +26,7 @@ const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbe
 const defaultHyperliquidRuntimeManifestPath = 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
 const defaultHyperliquidRuntimeMigrationManifestPath =
   'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
+const defaultOptionsArchiveManifestPath = 'argocd/applications/torghut-options/archive/deployment.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 const defaultRequiredImagePlatforms = 'linux/amd64,linux/arm64'
@@ -52,6 +53,7 @@ type UpdateManifestsOptions = {
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
   includeOptionsManifests?: boolean
+  optionsArchiveManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -78,6 +80,7 @@ type CliOptions = {
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
   includeOptionsManifests?: boolean
+  optionsArchiveManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -348,6 +351,14 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     ? [
         updateVersionedDeploymentManifest(
           options,
+          options.optionsArchiveManifestPath ?? defaultOptionsArchiveManifestPath,
+          'torghut-options-archive',
+          'TORGHUT_OPTIONS_VERSION',
+          'TORGHUT_OPTIONS_COMMIT',
+          'torghut-options-archive image reference',
+        ),
+        updateVersionedDeploymentManifest(
+          options,
           options.optionsCatalogManifestPath ?? defaultOptionsCatalogManifestPath,
           'torghut-options-catalog',
           'TORGHUT_OPTIONS_VERSION',
@@ -419,6 +430,7 @@ Options:
   --hyperliquid-runtime-manifest-path <path>
   --hyperliquid-runtime-migration-manifest-path <path>
   --include-options-manifests
+  --options-archive-manifest-path <path>
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
       process.exit(0)
@@ -506,6 +518,9 @@ Options:
       case '--include-options-manifests':
         options.includeOptionsManifests = true
         break
+      case '--options-archive-manifest-path':
+        options.optionsArchiveManifestPath = value
+        break
       case '--options-catalog-manifest-path':
         options.optionsCatalogManifestPath = value
         break
@@ -573,6 +588,7 @@ const main = (cliOptions?: CliOptions) => {
       parsed.hyperliquidRuntimeMigrationManifestPath ?? process.env.TORGHUT_HYPERLIQUID_RUNTIME_MIGRATION_MANIFEST_PATH,
     includeOptionsManifests:
       parsed.includeOptionsManifests ?? parseOptionalBooleanEnv(process.env.TORGHUT_INCLUDE_OPTIONS_MANIFESTS),
+    optionsArchiveManifestPath: parsed.optionsArchiveManifestPath ?? process.env.TORGHUT_OPTIONS_ARCHIVE_MANIFEST_PATH,
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,

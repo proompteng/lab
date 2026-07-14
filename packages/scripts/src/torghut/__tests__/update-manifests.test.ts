@@ -21,6 +21,7 @@ const createFixture = () => {
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const hyperliquidRuntimeManifestPath = join(dir, 'hyperliquid-runtime-deployment.yaml')
   const hyperliquidRuntimeMigrationManifestPath = join(dir, 'hyperliquid-runtime-db-migrations-job.yaml')
+  const optionsArchiveManifestPath = join(dir, 'options-archive-deployment.yaml')
   const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
   const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
@@ -135,7 +136,12 @@ spec:
       'utf8',
     )
   }
-  for (const path of [optionsCatalogManifestPath, optionsEnricherManifestPath]) {
+  const optionsManifests = [
+    { path: optionsArchiveManifestPath, container: 'torghut-options-archive' },
+    { path: optionsCatalogManifestPath, container: 'torghut-options-catalog' },
+    { path: optionsEnricherManifestPath, container: 'torghut-options-enricher' },
+  ]
+  for (const { path, container } of optionsManifests) {
     writeFileSync(
       path,
       `apiVersion: apps/v1
@@ -144,7 +150,7 @@ spec:
   template:
     spec:
       containers:
-        - name: torghut-options-${path === optionsCatalogManifestPath ? 'catalog' : 'enricher'}
+        - name: ${container}
           image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
           env:
             - name: TORGHUT_OPTIONS_VERSION
@@ -206,6 +212,7 @@ spec:
     tigerBeetleSmokeManifestPath,
     hyperliquidRuntimeManifestPath,
     hyperliquidRuntimeMigrationManifestPath,
+    optionsArchiveManifestPath,
     optionsCatalogManifestPath,
     optionsEnricherManifestPath,
   }
@@ -235,6 +242,7 @@ const updateOptionsForFixture = (
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
   hyperliquidRuntimeManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeManifestPath),
   hyperliquidRuntimeMigrationManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeMigrationManifestPath),
+  optionsArchiveManifestPath: relative(repoRoot, fixture.optionsArchiveManifestPath),
   optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
   optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
   ...overrides,
@@ -296,6 +304,7 @@ describe('update-manifests', () => {
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const hyperliquidRuntimeManifest = readFileSync(fixture.hyperliquidRuntimeManifestPath, 'utf8')
     const hyperliquidRuntimeMigrationManifest = readFileSync(fixture.hyperliquidRuntimeMigrationManifestPath, 'utf8')
+    const optionsArchiveManifest = readFileSync(fixture.optionsArchiveManifestPath, 'utf8')
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
@@ -347,7 +356,7 @@ describe('update-manifests', () => {
     }
     expect(hyperliquidRuntimeManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeMigrationManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
-    for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
+    for (const manifest of [optionsArchiveManifest, optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
       )
@@ -358,7 +367,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(15)
+    expect(result.changedPaths.length).toBe(16)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -370,10 +379,11 @@ describe('update-manifests', () => {
         includeOptionsManifests: false,
       }),
     )
+    const optionsArchiveManifest = readFileSync(fixture.optionsArchiveManifestPath, 'utf8')
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
 
-    for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
+    for (const manifest of [optionsArchiveManifest, optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111',
       )

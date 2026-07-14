@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-options-archive
+  namespace: torghut
+  labels:
+    app: torghut-options-archive
+spec:
+  # Activated after the first image promotion runs migration 0062. Keeping the
+  # initial source merge scaled down avoids starting an entrypoint absent from
+  # the previously promoted image.
+  replicas: 0
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-options-archive
+  template:
+    metadata:
+      labels:
+        app: torghut-options-archive
+    spec:
+      terminationGracePeriodSeconds: 45
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      serviceAccountName: torghut-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-options-archive
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:929fb34236555d86e17b473996e8ff19a8779cb0c9b3f7a2845718f7b09a2556
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - app.options_lane.archive_service:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
+          envFrom:
+            - configMapRef:
+                name: torghut-options-archive-config
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+            - name: ALPACA_OPTIONS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_KEY_ID
+            - name: ALPACA_OPTIONS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_SECRET_KEY
+            - name: APCA_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_BASE_URL
+            - name: TORGHUT_OPTIONS_VERSION
+              value: v0.596.0-1868-g298c9b856
+            - name: TORGHUT_OPTIONS_COMMIT
+              value: 298c9b856eb00705acfd703952ec920144df274c
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
