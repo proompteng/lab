@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -16,7 +17,8 @@ from app.trading.infrastructure_validation_submit import (
 def _new_race_state() -> _SubmissionRaceState:
     return _SubmissionRaceState(
         broker_started=threading.Event(),
-        contender_finished=threading.Event(),
+        contender_resolved=threading.Event(),
+        contender_fenced=threading.Event(),
         call_counter=_BrokerCallCounter(),
     )
 
@@ -29,7 +31,10 @@ def test_contender_failure_does_not_open_broker_gate() -> None:
         if component == "validation-contender":
             raise RuntimeError("contender_database_failure")
         state.broker_started.set()
-        if state.contender_finished.wait(timeout=0.1):
+        if (
+            state.contender_resolved.wait(timeout=0.1)
+            and state.contender_fenced.is_set()
+        ):
             broker_gate_opened.set()
         return _WorkerResult("submitted")
 
@@ -40,7 +45,8 @@ def test_contender_failure_does_not_open_broker_gate() -> None:
             timeout_seconds=0.1,
         )
 
-    assert not state.contender_finished.is_set()
+    assert state.contender_resolved.is_set()
+    assert not state.contender_fenced.is_set()
     assert not broker_gate_opened.is_set()
 
 
@@ -51,21 +57,31 @@ def test_contender_timeout_does_not_open_broker_gate() -> None:
 
     def submit(component: str) -> _WorkerResult:
         if component == "validation-contender":
-            hold_contender.wait(timeout=0.1)
+            hold_contender.wait(timeout=0.5)
             return _WorkerResult("deferred")
         state.broker_started.set()
-        if state.contender_finished.wait(timeout=0.1):
+        if (
+            state.contender_resolved.wait(timeout=0.1)
+            and state.contender_fenced.is_set()
+        ):
             broker_gate_opened.set()
         return _WorkerResult("submitted")
 
-    with pytest.raises(TimeoutError):
-        _race_validation_submissions(
-            submit,
-            state=state,
-            timeout_seconds=0.01,
-        )
+    started_at = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            _race_validation_submissions(
+                submit,
+                state=state,
+                timeout_seconds=0.01,
+            )
+    finally:
+        hold_contender.set()
+    elapsed = time.monotonic() - started_at
 
-    assert not state.contender_finished.is_set()
+    assert elapsed < 0.25
+    assert state.contender_resolved.is_set()
+    assert not state.contender_fenced.is_set()
     assert not broker_gate_opened.is_set()
 
 

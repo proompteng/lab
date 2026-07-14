@@ -152,7 +152,8 @@ class _ValidationPreflight:
 @dataclass(frozen=True, slots=True)
 class _SubmissionRaceState:
     broker_started: threading.Event
-    contender_finished: threading.Event
+    contender_resolved: threading.Event
+    contender_fenced: threading.Event
     call_counter: _BrokerCallCounter
 
 
@@ -311,7 +312,8 @@ def _run_submission_race(
 ) -> _SubmissionRaceProof:
     state = _SubmissionRaceState(
         broker_started=threading.Event(),
-        contender_finished=threading.Event(),
+        contender_resolved=threading.Event(),
+        contender_fenced=threading.Event(),
         call_counter=_BrokerCallCounter(),
     )
     callbacks = _build_submission_callbacks(
@@ -359,8 +361,10 @@ def _build_submission_callbacks(
         with broker_call_lock:
             state.call_counter.value += 1
         state.broker_started.set()
-        if not state.contender_finished.wait(timeout=context.race_timeout_seconds):
+        if not state.contender_resolved.wait(timeout=context.race_timeout_seconds):
             raise RuntimeError("infrastructure_validation_race_contender_timeout")
+        if not state.contender_fenced.is_set():
+            raise RuntimeError("infrastructure_validation_race_contender_not_fenced")
         return preflight.firewall.submit_verified_infrastructure_validation_order(
             permit,
             plan,
@@ -410,16 +414,24 @@ def _race_validation_submissions(
     state: _SubmissionRaceState,
     timeout_seconds: float,
 ) -> tuple[_WorkerResult, _WorkerResult]:
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    deadline = time.monotonic() + timeout_seconds
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
         winner = executor.submit(submit, "validation-primary")
-        if not state.broker_started.wait(timeout=timeout_seconds):
+        if not state.broker_started.wait(timeout=max(0.0, deadline - time.monotonic())):
             raise RuntimeError("infrastructure_validation_broker_boundary_timeout")
         contender = executor.submit(submit, "validation-contender")
-        contender_result = contender.result(timeout=timeout_seconds)
+        contender_result = contender.result(
+            timeout=max(0.0, deadline - time.monotonic())
+        )
         if contender_result.outcome != "deferred":
             raise RuntimeError("infrastructure_validation_race_contender_not_fenced")
-        state.contender_finished.set()
-        winner_result = winner.result(timeout=timeout_seconds)
+        state.contender_fenced.set()
+        state.contender_resolved.set()
+        winner_result = winner.result(timeout=max(0.0, deadline - time.monotonic()))
+    finally:
+        state.contender_resolved.set()
+        executor.shutdown(wait=False, cancel_futures=True)
     return winner_result, contender_result
 
 
