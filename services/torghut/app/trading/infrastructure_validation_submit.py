@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -43,7 +43,7 @@ from .broker_mutation_submit_coordinator import (
     InfrastructureValidationOrderSubmission,
     UnlinkedOrderSubmissionCallbacks,
 )
-from .firewall import OrderFirewall
+from .firewall import OrderFirewall, OrderFirewallBrokerClient
 from .infrastructure_validation import (
     InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
@@ -66,18 +66,18 @@ class _ValidationAlpacaClient(Protocol):
     endpoint_class: str
     endpoint_url: str
 
-    def get_account(self) -> dict[str, Any]: ...
+    def get_account(self) -> dict[str, object]: ...
 
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None: ...
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, object] | None: ...
 
     def get_order_by_client_order_id_strict(
         self,
         client_order_id: str,
     ) -> dict[str, object] | None: ...
 
-    def list_open_orders(self) -> list[dict[str, Any]]: ...
+    def list_open_orders(self) -> list[dict[str, object]]: ...
 
-    def list_positions(self) -> list[dict[str, Any]]: ...
+    def list_positions(self) -> list[dict[str, object]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +181,10 @@ def run_infrastructure_validation_submit(
     if preflight_positions or preflight_orders:
         raise RuntimeError("infrastructure_validation_account_not_known_null")
 
-    firewall = OrderFirewall(cast(Any, client), account_label=account_label)
+    firewall = OrderFirewall(
+        cast(OrderFirewallBrokerClient, client),
+        account_label=account_label,
+    )
     if firewall.status().kill_switch_enabled:
         raise RuntimeError("infrastructure_validation_kill_switch_enabled")
     request = InfrastructureValidationOrderSubmission(
@@ -399,10 +402,10 @@ def _wait_for_known_null_account(
     client: _ValidationAlpacaClient,
     *,
     timeout_seconds: float,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     deadline = time.monotonic() + timeout_seconds
-    positions: list[dict[str, Any]] = []
-    orders: list[dict[str, Any]] = []
+    positions: list[dict[str, object]] = []
+    orders: list[dict[str, object]] = []
     while time.monotonic() < deadline:
         positions = client.list_positions()
         orders = client.list_open_orders()

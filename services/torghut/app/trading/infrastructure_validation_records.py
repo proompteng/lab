@@ -7,7 +7,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -88,12 +88,15 @@ def load_infrastructure_validation_evidence(
 def tag_infrastructure_validation_event(
     raw_event: object,
     evidence: InfrastructureValidationEvidence,
-) -> Any:
+) -> object:
     """Attach a database-proven non-promotable marker to one broker event."""
 
     coerced = coerce_json_payload(raw_event)
     payload = (
-        {str(key): value for key, value in cast(Mapping[object, Any], coerced).items()}
+        {
+            str(key): value
+            for key, value in cast(Mapping[object, object], coerced).items()
+        }
         if isinstance(coerced, Mapping)
         else {"payload": coerced}
     )
@@ -117,10 +120,10 @@ def is_non_promotable_validation_event(raw_event: object) -> bool:
     coerced = coerce_json_payload(raw_event)
     if not isinstance(coerced, Mapping):
         return False
-    evidence = cast(Mapping[object, Any], coerced).get(_EVIDENCE_KEY)
+    evidence = cast(Mapping[object, object], coerced).get(_EVIDENCE_KEY)
     if not isinstance(evidence, Mapping):
         return False
-    values = cast(Mapping[object, Any], evidence)
+    values = cast(Mapping[object, object], evidence)
     return (
         values.get("schema_version") == _EVIDENCE_SCHEMA_VERSION
         and values.get("provenance") == _EVIDENCE_TAG

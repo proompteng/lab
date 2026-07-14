@@ -120,7 +120,7 @@ def alpaca_submit_request_payload(request: AlpacaSubmitRequest) -> dict[str, obj
     }
 
 
-class _OrderFirewallBrokerClient(Protocol):
+class OrderFirewallBrokerClient(Protocol):
     """Broker methods the order firewall is allowed to call."""
 
     def submit_order(
@@ -165,7 +165,7 @@ class OrderFirewall:
 
     def __init__(
         self,
-        client: _OrderFirewallBrokerClient,
+        client: OrderFirewallBrokerClient,
         *,
         account_label: str | None = None,
     ) -> None:
