@@ -5,11 +5,6 @@ on:
     paths:
       - 'services/jangar/**'
       - 'packages/scripts/src/jangar/**'
-      - 'packages/scripts/src/atlas/**'
-      - 'docs/atlas/**'
-      - 'package.json'
-      - 'packages/scripts/package.json'
-      - 'bun.lock'
       - 'argocd/applications/jangar/**'
 
 concurrency:
@@ -23,10 +18,10 @@ jobs:
       bun-version: 1.3.14
       node-version: 24.11.1
       install-command: ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/jangar --filter @proompteng/bumba --filter @proompteng/codex --filter @proompteng/cx-tools --filter @proompteng/design --filter @proompteng/discord --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build && cd services/jangar && bun install --frozen-lockfile --ignore-scripts
-      lint-command: bunx oxfmt --check services/jangar packages/scripts/src/jangar packages/scripts/src/atlas argocd/applications/jangar
+      lint-command: bunx oxfmt --check services/jangar packages/scripts/src/jangar argocd/applications/jangar
       oxlint-command: bun run --cwd services/jangar lint:oxlint
       oxlint-type-command: bun run --cwd services/jangar lint:oxlint:type
-      test-command: bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json && cd services/jangar && bun run test && bunx tsc --noEmit --project tsconfig.paths.json && bun run docs:inventory:check && bun run check:module-sizes
+      test-command: cd services/jangar && bun run test && bunx tsc --noEmit --project tsconfig.paths.json && bun run docs:inventory:check && bun run check:module-sizes
       build-command: bun run --cwd services/jangar build
 
   atlas-search-integration:
@@ -57,4 +52,4 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/jangar --filter @proompteng/bumba --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk
       - run: bun run --filter @proompteng/otel build
       - run: bun run --filter @proompteng/temporal-bun-sdk build
-      - run: bunx vitest run --config services/jangar/vitest.config.ts services/jangar/src/server/__tests__/atlas-code-search.integration.test.ts
+      - run: cd services/jangar && bunx vitest run --config vitest.config.ts src/server/__tests__/atlas-code-search.integration.test.ts
