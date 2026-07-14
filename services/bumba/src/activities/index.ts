@@ -2782,7 +2782,12 @@ const batchValues = <T>(values: T[], size: number) => {
   return batches
 }
 
-const resolveAtlasTargetCommit = async (repoRoot: string, ref: string, requestedCommit: string | null) => {
+const resolveAtlasTargetCommit = async (
+  repoRoot: string,
+  ref: string,
+  requestedCommit: string | null,
+  resumeCommit: string | null,
+) => {
   const fetched = await fetchFromOrigin(repoRoot, ref)
   if (!fetched) {
     throw new Error(`failed to fetch the authoritative origin/${ref} ref`)
@@ -2793,17 +2798,22 @@ const resolveAtlasTargetCommit = async (repoRoot: string, ref: string, requested
     repoRoot,
     { GIT_TERMINAL_PROMPT: '0' },
   )
-  const targetCommit = remoteCommit
-  if (!targetCommit || !/^[0-9a-f]{40}$/i.test(targetCommit)) {
+  if (!remoteCommit || !/^[0-9a-f]{40}$/i.test(remoteCommit)) {
     throw new Error(`unable to resolve an exact 40-character origin/${ref} commit`)
   }
+  const targetCommit = resumeCommit ?? remoteCommit
   if (!(await commitExistsLocally(repoRoot, targetCommit))) {
     const fetched = await fetchCommitFromOrigin(repoRoot, targetCommit)
     if (!fetched || !(await commitExistsLocally(repoRoot, targetCommit))) {
       throw new Error(`target commit ${targetCommit} is not available in the repository`)
     }
   }
-  if (requestedCommit && requestedCommit !== targetCommit) {
+  if (resumeCommit && resumeCommit !== remoteCommit) {
+    logActivity('info', 'resumed', 'reconcileAtlasRepository', {
+      resumeCommit,
+      currentCommit: remoteCommit,
+    })
+  } else if (requestedCommit && requestedCommit !== targetCommit) {
     logActivity('info', 'superseded', 'reconcileAtlasRepository', {
       requestedCommit,
       targetCommit,
@@ -2883,8 +2893,19 @@ const beginAtlasReconciliation = async (input: {
   buildId: string
   embeddingModel: string
   embeddingDimension: number
+  preparedFiles: number
 }) => {
-  const { db, repository, commit, manifest, baseIndexedCommit, buildId, embeddingModel, embeddingDimension } = input
+  const {
+    db,
+    repository,
+    commit,
+    manifest,
+    baseIndexedCommit,
+    buildId,
+    embeddingModel,
+    embeddingDimension,
+    preparedFiles,
+  } = input
   const manifestPaths = manifest.files.map((file) => file.path)
   const now = new Date()
   const metadataPatch = JSON.stringify({
@@ -2898,6 +2919,7 @@ const beginAtlasReconciliation = async (input: {
     targetChunkerVersion: ATLAS_CHUNKER_VERSION,
     targetEmbeddingModel: embeddingModel,
     targetEmbeddingDimension: embeddingDimension,
+    preparedFiles,
     lastError: null,
     failedAt: null,
     buildStartedAt: now.toISOString(),
@@ -3426,6 +3448,7 @@ export const activities = {
         ? initialMetadata.indexedCommit
         : null
     const activityContext = currentActivityContext()
+    const previousProgress = readAtlasReconciliationProgress(activityContext?.info.lastHeartbeatDetails[0])
     let buildId: string = randomUUID()
     let progress: AtlasReconciliationProgress | null = null
     let heartbeatFailure: unknown = null
@@ -3451,11 +3474,10 @@ export const activities = {
     })
 
     try {
-      const commit = await resolveAtlasTargetCommit(repoRoot, ref, requestedCommit)
+      const commit = await resolveAtlasTargetCommit(repoRoot, ref, requestedCommit, previousProgress?.commit ?? null)
       const manifest = await loadAtlasGitManifest(repoRoot, commit)
       const embeddingConfig = loadAtlasCodeSearchEmbeddingConfig()
       const planned = planAtlasFileChanges(manifest, initialState.files)
-      const previousProgress = readAtlasReconciliationProgress(activityContext?.info.lastHeartbeatDetails[0])
       const readyConfigurationMatches =
         initialMetadata.eligibilityVersion === manifest.eligibilityVersion &&
         initialMetadata.chunkerVersion === ATLAS_CHUNKER_VERSION &&
@@ -3463,7 +3485,6 @@ export const activities = {
         initialMetadata.embeddingDimension === embeddingConfig.dimension
       const resumedConfigurationMatches =
         previousProgress?.commit === commit &&
-        initialMetadata.buildId === previousProgress.buildId &&
         initialMetadata.targetEligibilityVersion === manifest.eligibilityVersion &&
         initialMetadata.targetChunkerVersion === ATLAS_CHUNKER_VERSION &&
         initialMetadata.targetEmbeddingModel === embeddingConfig.model &&
@@ -3499,6 +3520,7 @@ export const activities = {
         buildId,
         embeddingModel: embeddingConfig.model,
         embeddingDimension: embeddingConfig.dimension,
+        preparedFiles: preparedFileCount,
       })
       await sendHeartbeat()
       heartbeatTimer = setInterval(() => {

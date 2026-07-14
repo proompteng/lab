@@ -397,6 +397,10 @@ integrationTest(
       changedFiles: failedRows[0]?.expected_files,
     })
 
+    await writeFile(join(checkout, 'recovery', 'advanced-main.ts'), 'export const advancedMain = true\n')
+    const advancedCommit = await commitAndPush('advance main while reconciliation retries')
+    expect(advancedCommit).not.toBe(commit)
+
     failEmbeddingAfterRequest = null
     const recovered = await runWithActivityContext(activityContext(lastHeartbeatDetails), () =>
       activities.reconcileAtlasRepository({
