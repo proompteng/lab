@@ -201,10 +201,13 @@ Replace the global buffer with independent table buffers. Initial policies are:
 
 | Table class                | Size threshold | Maximum age |
 | -------------------------- | -------------: | ----------: |
-| BBO                        |     5,000 rows |   5 seconds |
+| BBO                        |     1,000 rows |  10 seconds |
 | Candles                    |       100 rows |  30 seconds |
 | Asset contexts and funding |       100 rows |  30 seconds |
 | Market catalog and status  |       100 rows |  30 seconds |
+
+The BBO policy is anchored to the observed roughly 100-row-per-second input rate: it should normally reach the 1,000-row
+size threshold while the age limit bounds persistence latency at ten seconds.
 
 Thresholds are typed configuration with validation. Each flush records table, rows, bytes, duration, attempt, and
 flush reason. Shutdown drains all acknowledged buffers within a bounded grace period.
