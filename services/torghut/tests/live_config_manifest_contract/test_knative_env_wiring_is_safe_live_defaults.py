@@ -446,7 +446,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_FEED"),
-            "sip",
+            "iex",
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS"),
@@ -519,7 +519,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(
             live_env.get("TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS"), "1000"
         )
-        self.assertEqual(live_env.get("TRADING_ALPACA_QUOTE_FEED"), "sip")
+        self.assertEqual(live_env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")
         self.assertTrue(_manifest_bool(live_env, "TRADING_EMERGENCY_STOP_ENABLED"))
         self.assertTrue(
             _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
