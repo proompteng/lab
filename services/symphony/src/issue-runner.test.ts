@@ -5,6 +5,7 @@ import * as Stream from 'effect/Stream'
 
 import { CodexSessionService, type CodexSessionOptions } from './codex-app-session'
 import { DeliveryService, createEmptyDeliveryTransaction } from './delivery-service'
+import { WorkspaceError } from './errors'
 import { makeIssueRunnerLayer, IssueRunnerService } from './issue-runner'
 import { createLogger } from './logger'
 import { makeTestConfig } from './test-fixtures'
@@ -161,6 +162,91 @@ describe('issue runner runtime tools', () => {
       } else {
         process.env.GH_TOKEN = previousGhToken
       }
+      await runtime.dispose()
+    }
+  })
+
+  test('runs after_run when before_run fails', async () => {
+    const config = makeTestConfig({ agent: { maxTurns: 1 } })
+    let afterRunCalls = 0
+
+    const runtime = ManagedRuntime.make(
+      makeIssueRunnerLayer(createLogger({ test: 'issue-runner-hook-cleanup' })).pipe(
+        Layer.provide(
+          Layer.succeed(WorkflowService, {
+            current: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            config: Effect.succeed(config),
+            reload: Effect.succeed({
+              definition: { config: {}, promptTemplate: 'Work on {{issue.identifier}}' },
+              config,
+            }),
+            changes: Stream.empty,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(TrackerService, {
+            fetchCandidateIssues: Effect.succeed([]),
+            fetchIssuesByStates: () => Effect.succeed([]),
+            fetchIssueStatesByIds: () => Effect.succeed([issue]),
+            executeLinearGraphql: () => Effect.succeed({ data: { ok: true } }),
+            handoffIssue: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(DeliveryService, {
+            createPullRequest: () => Effect.die('not used'),
+            getPullRequest: () => Effect.die('not used'),
+            mergePullRequest: () => Effect.die('not used'),
+            inspectRequiredChecks: () => Effect.die('not used'),
+            getWorkflowRun: () => Effect.die('not used'),
+            refreshIssueDelivery: (record) => Effect.succeed(record.delivery ?? createEmptyDeliveryTransaction()),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(WorkspaceService, {
+            createForIssue: (identifier: string) =>
+              Effect.succeed({
+                path: `/tmp/${identifier}`,
+                workspaceKey: identifier,
+                createdNow: false,
+              }),
+            runBeforeRun: () =>
+              Effect.fail(new WorkspaceError('workspace_hook_error', 'before_run failed for regression test')),
+            runAfterRun: () =>
+              Effect.sync(() => {
+                afterRunCalls += 1
+              }),
+            removeWorkspace: () => Effect.void,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(CodexSessionService, {
+            createSession: () =>
+              Effect.succeed({
+                runTurn: () => Effect.die('runTurn must not execute after before_run fails'),
+              }),
+          }),
+        ),
+      ),
+    )
+
+    try {
+      const exit = await runtime.runPromiseExit(
+        Effect.gen(function* () {
+          const runner = yield* IssueRunnerService
+          return yield* runner.runAttempt(issue, null, {
+            onEvent: () => Effect.void,
+            onWorkspacePath: () => Effect.void,
+          })
+        }),
+      )
+
+      expect(exit._tag).toBe('Failure')
+      expect(afterRunCalls).toBe(1)
+    } finally {
       await runtime.dispose()
     }
   })
