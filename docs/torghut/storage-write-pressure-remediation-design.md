@@ -378,7 +378,11 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 - Options reconciliation: revert the service image; preserve the last valid subscription rows and compare the saved
   hot/warm snapshot.
 - Discovery: stop the archival reconciler without affecting the last completed live-universe watermark.
-- ClickHouse batching: revert the writer image; uncommitted Kafka offsets remain replayable.
+- Direct-sink batching: stop the rollout and keep the current feed pod running until every per-table pending-record gauge
+  reaches zero, then revert the feed image. This path owns only in-memory retry batches; it must not claim Kafka consumer
+  offset replay. If the pod is lost before draining, mark the affected ClickHouse interval incomplete and backfill the
+  corresponding retained Kafka record set with a validated replay consumer before restoring parity.
+- Kafka writer before cutover: stop the writer; its uncommitted consumer offsets remain replayable.
 - Writer cutover: re-enable the direct sink only at a recorded Kafka offset boundary.
 - PostgreSQL/Ceph settings: revert one parameter at a time through GitOps.
 - Kafka timeout cleanup: restore the previous values only as temporary containment while reopening the storage incident;
