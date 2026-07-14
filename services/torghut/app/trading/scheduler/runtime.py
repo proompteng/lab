@@ -960,8 +960,8 @@ class TradingScheduler(
         try:
             if self._pipeline is None:
                 raise RuntimeError("trading_pipeline_not_initialized")
-            await asyncio.to_thread(self._run_autonomous_cycle)
             self._set_autonomy_iteration_error(None)
+            await asyncio.to_thread(self._run_autonomous_cycle)
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="autonomy", error=exc)
             logger.exception("Autonomous loop failed: %s", exc)
