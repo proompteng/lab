@@ -56,6 +56,10 @@ class HyperliquidConfigTest {
           "CLICKHOUSE_ENABLED_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
           "CLICKHOUSE_READY_TABLES" to "hyperliquid_raw,hyperliquid_candles,hyperliquid_bbo",
           "CLICKHOUSE_FRESHNESS_CHECK_MS" to "5000",
+          "CLICKHOUSE_QUEUE_CAPACITY" to "12000",
+          "CLICKHOUSE_RETRY_INITIAL_MS" to "100",
+          "CLICKHOUSE_RETRY_MAX_MS" to "2000",
+          "CLICKHOUSE_SHUTDOWN_FLUSH_TIMEOUT_MS" to "15000",
           "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,candle",
           "HYPERLIQUID_READY_EVENT_MAX_AGE_MS" to "120000",
           "HYPERLIQUID_WS_READ_IDLE_TIMEOUT_MS" to "240000",
@@ -71,6 +75,10 @@ class HyperliquidConfigTest {
     assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.enabledTables)
     assertEquals(setOf("hyperliquid_raw", "hyperliquid_candles", "hyperliquid_bbo"), config.clickHouse.readyTables)
     assertEquals(5_000, config.clickHouse.freshnessCheckMs)
+    assertEquals(12_000, config.clickHouse.queueCapacity)
+    assertEquals(100, config.clickHouse.retryInitialMs)
+    assertEquals(2_000, config.clickHouse.retryMaxMs)
+    assertEquals(15_000, config.clickHouse.shutdownFlushTimeoutMs)
     assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
     assertEquals(120_000, config.readyEventMaxAgeMs)
     assertEquals(240_000, config.wsReadIdleTimeoutMs)
@@ -103,6 +111,29 @@ class HyperliquidConfigTest {
 
     assertEquals(120_000, config.clickHouse.readyMaxAgeMs)
     assertEquals(300_000, config.clickHouse.tableReadyMaxAgeMs)
+    assertEquals(ClickHouseBatchPolicy(1_000, 30_000), config.clickHouse.batchPolicyFor("hyperliquid_bbo"))
+  }
+
+  @Test
+  fun `builds independent clickhouse batch policies`() {
+    val config =
+      HyperliquidConfig.fromEnv(
+        mapOf(
+          "KAFKA_SASL_PASSWORD" to "secret",
+          "CLICKHOUSE_BBO_BATCH_SIZE" to "1200",
+          "CLICKHOUSE_BBO_FLUSH_MS" to "9000",
+          "CLICKHOUSE_SPARSE_BATCH_SIZE" to "80",
+          "CLICKHOUSE_SPARSE_FLUSH_MS" to "25000",
+        ),
+      )
+
+    assertEquals(ClickHouseBatchPolicy(1_200, 9_000), config.clickHouse.batchPolicyFor("hyperliquid_bbo"))
+    assertEquals(ClickHouseBatchPolicy(80, 25_000), config.clickHouse.batchPolicyFor("hyperliquid_candles"))
+    assertEquals(ClickHouseBatchPolicy(80, 25_000), config.clickHouse.batchPolicyFor("hyperliquid_status"))
+    assertEquals(
+      ClickHouseBatchPolicy(config.clickHouse.batchSize, config.clickHouse.flushMs),
+      config.clickHouse.batchPolicyFor("hyperliquid_raw"),
+    )
   }
 
   @Test

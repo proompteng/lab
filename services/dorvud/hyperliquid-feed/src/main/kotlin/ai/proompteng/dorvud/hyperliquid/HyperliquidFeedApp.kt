@@ -17,12 +17,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -106,10 +109,10 @@ class HyperliquidFeedApp(
           clickHouseTableEventLagMs = update.tableEventLagMs
           clickHouseTableEventFutureSkewMs = update.tableEventFutureSkewMs
           clickHouseTableFresh.set(update.tableFreshnessReady)
-          if (update.ready) {
-            clickHouseLastSuccessMs.set(observedAt)
-          } else {
-            clickHouseLastFailureMs.set(observedAt)
+          when (update.writeSucceeded) {
+            true -> clickHouseLastSuccessMs.set(observedAt)
+            false -> clickHouseLastFailureMs.set(observedAt)
+            null -> Unit
           }
           clickHouseReady.set(update.ready)
           updateReady()
@@ -143,6 +146,7 @@ class HyperliquidFeedApp(
         alive.set(false)
         markReady(false)
         wsReady.set(false)
+        withContext(NonCancellable) { clickHouseJob.cancelAndJoin() }
         runCatching { producer.flush() }
         runCatching { producer.close() }
         runCatching { httpClient.close() }
