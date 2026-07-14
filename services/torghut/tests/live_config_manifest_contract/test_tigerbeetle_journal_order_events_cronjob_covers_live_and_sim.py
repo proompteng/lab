@@ -290,7 +290,7 @@ class TestTorghutScheduledMaintenance(_TestLiveConfigManifestContractBase):
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY"), "0.50")
         self.assertEqual(env.get("TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS"), "1000")
         self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
-        self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "sip")
+        self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS"), "20")
         self.assertTrue(
             _manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED")
