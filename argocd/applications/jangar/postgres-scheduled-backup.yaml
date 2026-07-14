@@ -4,7 +4,8 @@ metadata:
   name: jangar-db-daily
   namespace: jangar
 spec:
-  schedule: "0 0 11 * * *"
+  # Start after the smaller Torghut backup; the bandwidth cap protects the shared path for the full run.
+  schedule: "0 0 4 * * *"
   backupOwnerReference: self
   method: barmanObjectStore
   cluster:
