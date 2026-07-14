@@ -197,7 +197,8 @@ def test_missing_contract_transition_is_scoped_to_exact_completed_scan() -> None
     }
     transition_sql, transition_parameters = session.calls[2]
     assert "catalog.underlying_symbol = ANY(:underlying_symbols)" in transition_sql
-    assert "catalog.expiration_date BETWEEN" in transition_sql
+    assert "catalog.expiration_date <= :expiration_date_lte" in transition_sql
+    assert "catalog.expiration_date < :expiration_date_gte" in transition_sql
     assert "NOT EXISTS" in transition_sql
     assert "last_seen_ts <" not in transition_sql
     assert transition_parameters == {

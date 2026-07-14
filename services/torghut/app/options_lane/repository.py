@@ -401,11 +401,14 @@ class OptionsRepository:
                         last_seen_ts = :observed_at
                     WHERE catalog.status = 'active'
                       AND catalog.underlying_symbol = ANY(:underlying_symbols)
-                      AND catalog.expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM options_catalog_seen_contracts AS seen
-                        WHERE seen.contract_symbol = catalog.contract_symbol
+                      AND catalog.expiration_date <= :expiration_date_lte
+                      AND (
+                        catalog.expiration_date < :expiration_date_gte
+                        OR NOT EXISTS (
+                          SELECT 1
+                          FROM options_catalog_seen_contracts AS seen
+                          WHERE seen.contract_symbol = catalog.contract_symbol
+                        )
                       )
                     RETURNING catalog.*
                     """
