@@ -37,6 +37,7 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
     'alert: CephStorageMetricsMissing',
     'alert: CephClusterHealthWarning',
     'alert: CephClusterHealthError',
+    'alert: CephSlowOps',
     'alert: CephOsdCommitLatencyHigh',
     'alert: CephOsdCommitLatencyCritical',
     'alert: CephScrubDebt',

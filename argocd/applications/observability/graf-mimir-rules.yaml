@@ -292,6 +292,17 @@ data:
               summary: Ceph cluster reports HEALTH_ERR
               description: Ceph has reported HEALTH_ERR continuously for 5 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephSlowOps
+            expr: ceph_healthcheck_slow_ops{job="ceph-storage"} > 0
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph reports slow operations
+              description: Ceph has reported one or more slow operations continuously for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
