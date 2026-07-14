@@ -8,9 +8,9 @@ metadata:
   labels:
     app: torghut-hyperliquid-clickhouse-writer
 spec:
-  # Activated only after the new image, staging schema, and consumer-group
-  # lineage checks are live. The direct sink remains authoritative meanwhile.
-  replicas: 0
+  # Shadow-writes Kafka records into suffixed staging tables. The direct sink
+  # remains authoritative until the bounded parity gate passes.
+  replicas: 1
   revisionHistoryLimit: 2
   strategy:
     type: Recreate
