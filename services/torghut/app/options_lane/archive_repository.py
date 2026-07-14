@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-import hashlib
-import json
 import threading
 from typing import cast
 
@@ -19,10 +16,27 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import Executable
 
 from .archive_model import ARCHIVE_COMPONENT, ARCHIVE_SCOPE_TYPE, ArchiveShard
+from .archive_repository_types import (
+    ArchiveCheckpoint,
+    ArchiveCompletion,
+    ArchiveFailure,
+    ArchiveResetRequest,
+    as_date as _as_date,
+    as_datetime as _as_datetime,
+    as_int as _as_int,
+    metadata_from_value as _metadata,
+    metadata_json as _metadata_json,
+)
+from .archive_status import (
+    ACTIVE_CATALOG_VIEW,
+    ARCHIVE_STATUS_RECONCILE_LOCK_ID,
+    ARCHIVE_STATUS_TABLE,
+    DEFAULT_ARCHIVE_LOCK_NAME,
+    archive_advisory_lock_id,
+)
 
 
 ARCHIVE_MEMBERSHIP_TABLE = "torghut_options_archive_membership"
-DEFAULT_ARCHIVE_LOCK_NAME = "torghut:options-catalog-archive"
 _IN_PROGRESS_STATUSES = frozenset({"running", "retry", "finalizing"})
 
 
@@ -32,119 +46,6 @@ class ArchiveStateError(RuntimeError):
 
 class ArchiveLeaseLostError(ArchiveStateError):
     """Raised when the singleton archive lease is no longer held."""
-
-
-@dataclass(frozen=True, slots=True)
-class ArchiveCheckpoint:
-    shard: ArchiveShard
-    query_fingerprint: str
-    status: str
-    cursor: str | None
-    page_count: int
-    seen_count: int
-    retry_count: int
-    next_eligible_at: datetime | None
-    last_success_at: datetime | None
-    finalize_after_expiration_date: date | None = None
-    finalize_after_contract_symbol: str | None = None
-    transitioned_count: int = 0
-
-    def due(self, now: datetime) -> bool:
-        return self.next_eligible_at is None or self.next_eligible_at <= now
-
-
-@dataclass(frozen=True, slots=True)
-class ArchiveCompletion:
-    checkpoint: ArchiveCheckpoint
-    transitioned_count: int
-    batch_scanned_count: int = 0
-    batch_transitioned_count: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class ArchiveFailure:
-    error_code: str
-    error_detail: str
-    retry_base_seconds: int
-    retry_max_seconds: int
-
-
-@dataclass(frozen=True, slots=True)
-class ArchiveResetRequest:
-    shard: ArchiveShard
-    query_fingerprint: str
-    observed_at: datetime
-    reason: str
-    last_success_at: datetime | None
-
-
-def archive_advisory_lock_id(
-    name: str = DEFAULT_ARCHIVE_LOCK_NAME,
-) -> int:
-    """Return a stable signed 64-bit PostgreSQL advisory-lock identifier."""
-
-    digest = hashlib.sha256(name.encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], byteorder="big", signed=True)
-
-
-def _metadata(value: object) -> dict[str, object]:
-    if isinstance(value, dict):
-        raw = cast(dict[object, object], value)
-        return {str(key): item for key, item in raw.items()}
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(parsed, dict):
-            raw = cast(dict[object, object], parsed)
-            return {str(key): item for key, item in raw.items()}
-    return {}
-
-
-def _metadata_json(
-    checkpoint: ArchiveCheckpoint,
-    *,
-    extra: Mapping[str, object] | None = None,
-) -> str:
-    payload: dict[str, object] = {
-        "expiration_date_gte": checkpoint.shard.start.isoformat(),
-        "expiration_date_lte": checkpoint.shard.end.isoformat(),
-        "page_count": checkpoint.page_count,
-        "query_fingerprint": checkpoint.query_fingerprint,
-        "seen_count": checkpoint.seen_count,
-        "status": checkpoint.status,
-        "finalize_after_expiration_date": (
-            checkpoint.finalize_after_expiration_date.isoformat()
-            if checkpoint.finalize_after_expiration_date is not None
-            else None
-        ),
-        "finalize_after_contract_symbol": checkpoint.finalize_after_contract_symbol,
-        "transitioned_count": checkpoint.transitioned_count,
-    }
-    if extra:
-        payload.update(extra)
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _as_int(value: object, default: int = 0) -> int:
-    try:
-        return int(cast(int | float | str, value))
-    except (TypeError, ValueError, ArithmeticError):
-        return default
-
-
-def _as_date(value: object) -> date | None:
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, str):
-        try:
-            return date.fromisoformat(value)
-        except ValueError:
-            return None
-    return None
 
 
 class OptionsArchiveRepository:
@@ -290,9 +191,9 @@ class OptionsArchiveRepository:
         with self.session() as session:
             value = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT min(expiration_date)
-                    FROM torghut_options_contract_catalog
+                    FROM {ACTIVE_CATALOG_VIEW}
                     WHERE status = 'active'
                       AND expiration_date < :before
                     """
@@ -336,6 +237,11 @@ class OptionsArchiveRepository:
                     != (checkpoint.finalize_after_contract_symbol is None)
                 ):
                     reset_reason = "invalid_finalization_cursor"
+                elif (
+                    checkpoint.status == "finalizing"
+                    and checkpoint.finalize_snapshot_at is None
+                ):
+                    reset_reason = "missing_finalization_snapshot"
                 elif checkpoint.status in _IN_PROGRESS_STATUSES:
                     membership_count = self._membership_count(
                         session,
@@ -459,6 +365,7 @@ class OptionsArchiveRepository:
                 retry_count=0,
                 next_eligible_at=None,
                 last_success_at=current.last_success_at,
+                finalize_snapshot_at=(observed_at if status == "finalizing" else None),
             )
             session.execute(
                 text(
@@ -521,6 +428,7 @@ class OptionsArchiveRepository:
                 retry_count=retry_count,
                 next_eligible_at=next_eligible_at,
                 last_success_at=current.last_success_at,
+                finalize_snapshot_at=current.finalize_snapshot_at,
                 finalize_after_expiration_date=(current.finalize_after_expiration_date),
                 finalize_after_contract_symbol=(current.finalize_after_contract_symbol),
                 transitioned_count=current.transitioned_count,
@@ -594,10 +502,16 @@ class OptionsArchiveRepository:
             has_finalize_symbol = current.finalize_after_contract_symbol is not None
             if has_finalize_date != has_finalize_symbol:
                 raise ArchiveStateError("archive finalization cursor is incomplete")
+            if current.finalize_snapshot_at is None:
+                raise ArchiveStateError("archive finalization snapshot is missing")
 
             session.execute(text(f"SET LOCAL lock_timeout = {lock_timeout_ms}"))
             session.execute(
                 text(f"SET LOCAL statement_timeout = {statement_timeout_ms}")
+            )
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": ARCHIVE_STATUS_RECONCILE_LOCK_ID},
             )
 
             if not has_finalize_date:
@@ -616,12 +530,11 @@ class OptionsArchiveRepository:
                         self._execute_cancellable(
                             session,
                             text(
-                                """
+                                f"""
                                 SELECT EXISTS (
                                   SELECT 1
-                                  FROM torghut_options_contract_catalog
-                                  WHERE status = 'active'
-                                    AND expiration_date BETWEEN :start_date AND :end_date
+                                  FROM {ACTIVE_CATALOG_VIEW}
+                                  WHERE expiration_date BETWEEN :start_date AND :end_date
                                 )
                                 """
                             ),
@@ -670,7 +583,6 @@ class OptionsArchiveRepository:
                               {cursor_predicate}
                             ORDER BY catalog.expiration_date, catalog.contract_symbol
                             LIMIT :batch_size
-                            FOR UPDATE OF catalog
                             """
                         ),
                         parameters,
@@ -692,6 +604,7 @@ class OptionsArchiveRepository:
                     retry_count=0,
                     next_eligible_at=next_eligible_at,
                     last_success_at=observed_at,
+                    finalize_snapshot_at=current.finalize_snapshot_at,
                     transitioned_count=current.transitioned_count,
                 )
                 session.execute(
@@ -742,17 +655,27 @@ class OptionsArchiveRepository:
                         CAST(:candidate_symbols AS TEXT[])
                       ) AS candidate(expiration_date, contract_symbol)
                     )
-                    UPDATE torghut_options_contract_catalog AS catalog
-                    SET status = CASE
-                          WHEN catalog.expiration_date < CAST(:observed_at AS DATE)
-                            THEN 'expired'
-                          ELSE 'inactive'
-                        END,
-                        last_seen_ts = :observed_at
+                    INSERT INTO {ARCHIVE_STATUS_TABLE} (
+                      contract_symbol,
+                      effective_status,
+                      query_fingerprint,
+                      shard_key,
+                      observed_at
+                    )
+                    SELECT catalog.contract_symbol,
+                           CASE
+                             WHEN catalog.expiration_date < CAST(:observed_at AS DATE)
+                               THEN 'expired'
+                             ELSE 'inactive'
+                           END,
+                           :query_fingerprint,
+                           :shard_key,
+                           :finalize_snapshot_at
                     FROM candidates
-                    WHERE catalog.expiration_date = candidates.expiration_date
+                    JOIN torghut_options_contract_catalog AS catalog
+                      ON catalog.expiration_date = candidates.expiration_date
                       AND catalog.contract_symbol = candidates.contract_symbol
-                      AND catalog.status = 'active'
+                    WHERE catalog.status = 'active'
                       AND NOT EXISTS (
                         SELECT 1
                         FROM {ARCHIVE_MEMBERSHIP_TABLE} AS membership
@@ -761,10 +684,31 @@ class OptionsArchiveRepository:
                           AND membership.shard_key = :shard_key
                           AND membership.contract_symbol = catalog.contract_symbol
                       )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM torghut_options_subscription_state AS subscription
+                        WHERE subscription.contract_symbol = catalog.contract_symbol
+                          AND subscription.tier IS DISTINCT FROM 'off'
+                      )
+                    ON CONFLICT (contract_symbol) DO UPDATE
+                    SET effective_status = EXCLUDED.effective_status,
+                        query_fingerprint = EXCLUDED.query_fingerprint,
+                        shard_key = EXCLUDED.shard_key,
+                        observed_at = EXCLUDED.observed_at
+                    WHERE (
+                      {ARCHIVE_STATUS_TABLE}.effective_status,
+                      {ARCHIVE_STATUS_TABLE}.query_fingerprint,
+                      {ARCHIVE_STATUS_TABLE}.shard_key
+                    ) IS DISTINCT FROM (
+                      EXCLUDED.effective_status,
+                      EXCLUDED.query_fingerprint,
+                      EXCLUDED.shard_key
+                    )
                         """
                     ),
                     {
                         "observed_at": observed_at,
+                        "finalize_snapshot_at": current.finalize_snapshot_at,
                         "candidate_expiration_dates": candidate_expiration_dates,
                         "candidate_symbols": candidate_symbols,
                         "component": ARCHIVE_COMPONENT,
@@ -786,6 +730,7 @@ class OptionsArchiveRepository:
                 retry_count=0,
                 next_eligible_at=None,
                 last_success_at=current.last_success_at,
+                finalize_snapshot_at=current.finalize_snapshot_at,
                 finalize_after_expiration_date=cast(
                     date, last_candidate["expiration_date"]
                 ),
@@ -830,6 +775,7 @@ class OptionsArchiveRepository:
                 text(
                     """
                     SELECT cursor,
+                           last_event_ts,
                            last_success_ts,
                            next_eligible_ts,
                            retry_count,
@@ -974,6 +920,14 @@ class OptionsArchiveRepository:
             retry_count=_as_int(row.get("retry_count")),
             next_eligible_at=cast(datetime | None, row.get("next_eligible_ts")),
             last_success_at=cast(datetime | None, row.get("last_success_ts")),
+            finalize_snapshot_at=(
+                _as_datetime(metadata.get("finalize_snapshot_at"))
+                or (
+                    cast(datetime | None, row.get("last_event_ts"))
+                    if str(metadata.get("status") or "") == "finalizing"
+                    else None
+                )
+            ),
             finalize_after_expiration_date=_as_date(
                 metadata.get("finalize_after_expiration_date")
             ),

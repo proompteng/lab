@@ -15,6 +15,11 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.options_lane.archive_status import (
+    ACTIVE_CATALOG_VIEW,
+    ARCHIVE_STATUS_RECONCILE_LOCK_ID,
+    ARCHIVE_STATUS_TABLE,
+)
 from app.options_lane.catalog_watermark_repository import (
     CatalogCycleSummary,
     record_catalog_cycle_success,
@@ -215,14 +220,21 @@ class OptionsRepository:
         published_rows: list[dict[str, Any]] = []
 
         with self.session() as session, session.begin():
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": ARCHIVE_STATUS_RECONCILE_LOCK_ID},
+            )
             existing_rows = {
                 row["contract_symbol"]: dict(row)
                 for row in session.execute(
                     text(
-                        """
-                        SELECT *
-                        FROM torghut_options_contract_catalog
-                        WHERE contract_symbol = ANY(:symbols)
+                        f"""
+                        SELECT catalog.*,
+                               archive_status.contract_symbol AS archive_status_symbol
+                        FROM torghut_options_contract_catalog AS catalog
+                        LEFT JOIN {ARCHIVE_STATUS_TABLE} AS archive_status
+                          ON archive_status.contract_symbol = catalog.contract_symbol
+                        WHERE catalog.contract_symbol = ANY(:symbols)
                         """
                     ),
                     {"symbols": list(seen_symbols) or [""]},
@@ -245,8 +257,12 @@ class OptionsRepository:
                     current=current,
                     payload=payload,
                 )
-                if changed:
+                effective_status_changed = bool(
+                    current and current.get("archive_status_symbol")
+                )
+                if changed or effective_status_changed:
                     published_rows.append(payload)
+                if changed:
                     upsert_rows.append(payload)
 
             if upsert_rows:
@@ -254,6 +270,15 @@ class OptionsRepository:
                     CATALOG_PAGE_UPSERT,
                     {"rows": _coerce_json(upsert_rows)},
                 )
+            session.execute(
+                text(
+                    f"""
+                    DELETE FROM {ARCHIVE_STATUS_TABLE}
+                    WHERE contract_symbol = ANY(:symbols)
+                    """
+                ),
+                {"symbols": list(seen_symbols) or [""]},
+            )
 
         return published_rows
 
@@ -271,6 +296,10 @@ class OptionsRepository:
             raise ValueError("complete options catalog scan must contain contracts")
 
         with self.session() as session, session.begin():
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": ARCHIVE_STATUS_RECONCILE_LOCK_ID},
+            )
             session.execute(
                 text(
                     """
@@ -309,6 +338,11 @@ class OptionsRepository:
                         FROM options_catalog_seen_contracts AS seen
                         WHERE seen.contract_symbol = catalog.contract_symbol
                       )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM torghut_options_contract_archive_status AS archive_status
+                        WHERE archive_status.contract_symbol = catalog.contract_symbol
+                      )
                     RETURNING catalog.*
                     """
                     ),
@@ -325,6 +359,11 @@ class OptionsRepository:
                           WHERE catalog.status = 'active'
                             AND catalog.underlying_symbol = ANY(:underlying_symbols)
                             AND catalog.expiration_date < :expiration_date_gte
+                            AND NOT EXISTS (
+                              SELECT 1
+                              FROM torghut_options_contract_archive_status AS archive_status
+                              WHERE archive_status.contract_symbol = catalog.contract_symbol
+                            )
                           LIMIT :expired_cleanup_limit
                           FOR UPDATE SKIP LOCKED
                         )
@@ -364,7 +403,7 @@ class OptionsRepository:
         with self.session() as session:
             rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT catalog.contract_symbol,
                            catalog.status,
                            catalog.underlying_symbol,
@@ -372,8 +411,8 @@ class OptionsRepository:
                            catalog.strike_price,
                            catalog.close_price,
                            catalog.open_interest,
-                           COALESCE(subs.ranking_inputs, '{}'::JSONB) AS ranking_inputs
-                    FROM torghut_options_contract_catalog AS catalog
+                           COALESCE(subs.ranking_inputs, '{{}}'::JSONB) AS ranking_inputs
+                    FROM {ACTIVE_CATALOG_VIEW} AS catalog
                     LEFT JOIN torghut_options_subscription_state AS subs
                       ON subs.contract_symbol = catalog.contract_symbol
                     WHERE catalog.status = 'active'
@@ -389,7 +428,7 @@ class OptionsRepository:
         with self.session() as session:
             rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT catalog.contract_symbol,
                            catalog.status,
                            catalog.underlying_symbol,
@@ -397,8 +436,8 @@ class OptionsRepository:
                            catalog.strike_price,
                            catalog.close_price,
                            catalog.open_interest,
-                           COALESCE(subs.ranking_inputs, '{}'::JSONB) AS ranking_inputs
-                    FROM torghut_options_contract_catalog AS catalog
+                           COALESCE(subs.ranking_inputs, '{{}}'::JSONB) AS ranking_inputs
+                    FROM {ACTIVE_CATALOG_VIEW} AS catalog
                     LEFT JOIN torghut_options_subscription_state AS subs
                       ON subs.contract_symbol = catalog.contract_symbol
                     WHERE catalog.status = 'active'
@@ -454,10 +493,10 @@ class OptionsRepository:
         with self.session() as session:
             rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT subscriptions.contract_symbol
                     FROM torghut_options_subscription_state AS subscriptions
-                    JOIN torghut_options_contract_catalog AS catalog
+                    JOIN {ACTIVE_CATALOG_VIEW} AS catalog
                       ON catalog.contract_symbol = subscriptions.contract_symbol
                     WHERE subscriptions.tier = 'hot'
                       AND catalog.status = 'active'
@@ -490,7 +529,7 @@ class OptionsRepository:
         with self.session() as session:
             rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT catalog.contract_symbol,
                            catalog.underlying_symbol,
                            catalog.expiration_date,
@@ -499,7 +538,7 @@ class OptionsRepository:
                            subs.tier,
                            watermarks.last_success_ts
                     FROM torghut_options_subscription_state AS subs
-                    JOIN torghut_options_contract_catalog AS catalog
+                    JOIN {ACTIVE_CATALOG_VIEW} AS catalog
                       ON catalog.contract_symbol = subs.contract_symbol
                     LEFT JOIN torghut_options_watermarks AS watermarks
                       ON watermarks.component = 'enricher'
@@ -617,9 +656,7 @@ class OptionsRepository:
             return None
 
     def count_active_contracts(self) -> int | None:
-        return self._bounded_count(
-            "SELECT COUNT(*) FROM torghut_options_contract_catalog WHERE status = 'active'"
-        )
+        return self._bounded_count(f"SELECT COUNT(*) FROM {ACTIVE_CATALOG_VIEW}")
 
     def count_hot_contracts(self) -> int | None:
         return self._bounded_count(
@@ -631,9 +668,9 @@ class OptionsRepository:
             return int(
                 session.execute(
                     text(
-                        """
+                        f"""
                         SELECT COALESCE(MAX(open_interest), 0)
-                        FROM torghut_options_contract_catalog
+                        FROM {ACTIVE_CATALOG_VIEW}
                         WHERE status = 'active'
                           AND underlying_symbol = ANY(:underlying_symbols)
                           AND expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
@@ -650,15 +687,24 @@ class OptionsRepository:
         with self.session() as session:
             rows = session.execute(
                 text(
-                    """
-                    SELECT *
-                    FROM torghut_options_contract_catalog
-                    WHERE contract_symbol = ANY(:symbols)
+                    f"""
+                    SELECT catalog.*,
+                           COALESCE(archive_status.effective_status, catalog.status)
+                             AS effective_status
+                    FROM torghut_options_contract_catalog AS catalog
+                    LEFT JOIN {ARCHIVE_STATUS_TABLE} AS archive_status
+                      ON archive_status.contract_symbol = catalog.contract_symbol
+                    WHERE catalog.contract_symbol = ANY(:symbols)
                     """
                 ),
                 {"symbols": symbols},
             ).mappings()
-            return {cast(str, row["contract_symbol"]): dict(row) for row in rows}
+            result: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                payload = dict(row)
+                payload["status"] = payload.pop("effective_status")
+                result[cast(str, row["contract_symbol"])] = payload
+            return result
 
 
 def ranked_contract_rows(

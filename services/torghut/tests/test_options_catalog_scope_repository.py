@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.options_lane.alpaca import normalize_contract_record
+from app.options_lane.archive_status import ARCHIVE_STATUS_RECONCILE_LOCK_ID
 from app.options_lane.catalog_scope import OptionsCatalogScope
 from app.options_lane.repository import OptionsRepository
 
@@ -44,7 +45,7 @@ class _CatalogSession:
     def execute(self, statement: object, parameters: object = None) -> _RowsResult:
         sql = str(statement)
         self.calls.append((sql, parameters))
-        if "SELECT *" in sql and "contract_symbol = ANY" in sql:
+        if "SELECT catalog.*" in sql and "contract_symbol = ANY" in sql:
             return _RowsResult(self.existing_rows)
         if "WITH expired_batch AS" in sql:
             return _RowsResult(self.expired_transition_rows)
@@ -144,8 +145,34 @@ def test_unchanged_catalog_page_performs_no_upsert_or_publication() -> None:
         repository.sync_contract_catalog_page([contract], observed_at=observed_at) == []
     )
 
-    assert len(session.calls) == 1
-    assert "SELECT *" in session.calls[0][0]
+    assert len(session.calls) == 3
+    assert "pg_advisory_xact_lock" in session.calls[0][0]
+    assert "SELECT catalog.*" in session.calls[1][0]
+    assert "DELETE FROM torghut_options_contract_archive_status" in session.calls[2][0]
+
+
+def test_seen_catalog_row_clears_archive_overlay_and_publishes_reactivation() -> None:
+    observed_at = datetime(2026, 7, 14, 15, tzinfo=UTC)
+    contract = _contract(
+        "AAPL260717C00200000", observed_at=observed_at, open_interest=42
+    )
+    existing = _persisted_contract_row(contract)
+    existing["first_seen_ts"] = observed_at - timedelta(days=1)
+    existing["last_seen_ts"] = observed_at - timedelta(minutes=5)
+    existing["archive_status_symbol"] = contract["contract_symbol"]
+    session = _CatalogSession(existing_rows=[existing])
+    repository = _CatalogRepository(session)
+
+    changed_rows = repository.sync_contract_catalog_page(
+        [contract], observed_at=observed_at
+    )
+
+    assert [row["contract_symbol"] for row in changed_rows] == ["AAPL260717C00200000"]
+    assert changed_rows[0]["status"] == "active"
+    assert not any("jsonb_to_recordset" in sql for sql, _ in session.calls)
+    delete_sql, delete_parameters = session.calls[-1]
+    assert "DELETE FROM torghut_options_contract_archive_status" in delete_sql
+    assert delete_parameters == {"symbols": ["AAPL260717C00200000"]}
 
 
 def test_catalog_upserts_changed_rows_in_stable_order_with_database_guard() -> None:
@@ -165,7 +192,7 @@ def test_catalog_upserts_changed_rows_in_stable_order_with_database_guard() -> N
         "AAPL260717C00200000",
         "MSFT260717C00400000",
     ]
-    insert_sql, insert_parameters = session.calls[1]
+    insert_sql, insert_parameters = session.calls[2]
     assert "jsonb_to_recordset" in insert_sql
     assert "IS DISTINCT FROM" in insert_sql
     assert isinstance(insert_parameters, dict)
@@ -204,25 +231,34 @@ def test_missing_contract_transition_is_scoped_to_exact_completed_scan() -> None
 
     assert rows[0]["catalog_status_reason"] == "not_seen_in_active_discovery_run"
     assert rows[1]["catalog_status_reason"] == "expired_below_live_discovery_window"
+    assert "pg_advisory_xact_lock" in session.calls[0][0]
+    assert session.calls[0][1] == {"lock_id": ARCHIVE_STATUS_RECONCILE_LOCK_ID}
     assert (
-        "CREATE TEMPORARY TABLE options_catalog_seen_contracts" in session.calls[0][0]
+        "CREATE TEMPORARY TABLE options_catalog_seen_contracts" in session.calls[1][0]
     )
-    assert session.calls[1][1] == {
+    assert session.calls[2][1] == {
         "seen_symbols": ["AAPL260717C00200000", "MSFT260717C00400000"]
     }
-    transition_sql, transition_parameters = session.calls[2]
+    transition_sql, transition_parameters = session.calls[3]
     assert "catalog.underlying_symbol = ANY(:underlying_symbols)" in transition_sql
     assert "catalog.expiration_date BETWEEN :expiration_date_gte" in transition_sql
     assert "AND :expiration_date_lte" in transition_sql
     assert "catalog.expiration_date < :expiration_date_gte" not in transition_sql
     assert "NOT EXISTS" in transition_sql
+    assert (
+        "FROM torghut_options_contract_archive_status AS archive_status"
+        in transition_sql
+    )
     assert "last_seen_ts <" not in transition_sql
     assert transition_parameters == {
         "observed_at": observed_at,
         **_scope().query_parameters,
     }
-    expired_sql, expired_parameters = session.calls[3]
+    expired_sql, expired_parameters = session.calls[4]
     assert "WITH expired_batch AS" in expired_sql
+    assert (
+        "FROM torghut_options_contract_archive_status AS archive_status" in expired_sql
+    )
     assert "LIMIT :expired_cleanup_limit" in expired_sql
     assert "FOR UPDATE SKIP LOCKED" in expired_sql
     assert expired_parameters == {
