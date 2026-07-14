@@ -8,6 +8,10 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 2
+  # The catalog is a singleton database reconciler. Recreate prevents old and
+  # new revisions from scanning and writing the same universe concurrently.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: torghut-options-catalog

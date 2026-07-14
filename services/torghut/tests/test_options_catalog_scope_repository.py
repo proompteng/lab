@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, date, datetime, timedelta
+import json
 from typing import cast
 
 import pytest
@@ -30,9 +31,11 @@ class _CatalogSession:
         *,
         existing_rows: Sequence[Mapping[str, object]] = (),
         transition_rows: Sequence[Mapping[str, object]] = (),
+        expired_transition_rows: Sequence[Mapping[str, object]] = (),
     ) -> None:
         self.existing_rows = existing_rows
         self.transition_rows = transition_rows
+        self.expired_transition_rows = expired_transition_rows
         self.calls: list[tuple[str, object]] = []
 
     def begin(self) -> object:
@@ -43,6 +46,8 @@ class _CatalogSession:
         self.calls.append((sql, parameters))
         if "SELECT *" in sql and "contract_symbol = ANY" in sql:
             return _RowsResult(self.existing_rows)
+        if "WITH expired_batch AS" in sql:
+            return _RowsResult(self.expired_transition_rows)
         if "RETURNING catalog.*" in sql:
             return _RowsResult(self.transition_rows)
         return _RowsResult()
@@ -161,9 +166,11 @@ def test_catalog_upserts_changed_rows_in_stable_order_with_database_guard() -> N
         "MSFT260717C00400000",
     ]
     insert_sql, insert_parameters = session.calls[1]
+    assert "jsonb_to_recordset" in insert_sql
     assert "IS DISTINCT FROM" in insert_sql
-    assert isinstance(insert_parameters, list)
-    assert [row["contract_symbol"] for row in insert_parameters] == [
+    assert isinstance(insert_parameters, dict)
+    serialized_rows = json.loads(str(insert_parameters["rows"]))
+    assert [row["contract_symbol"] for row in serialized_rows] == [
         "AAPL260717C00200000",
         "MSFT260717C00400000",
     ]
@@ -178,7 +185,14 @@ def test_missing_contract_transition_is_scoped_to_exact_completed_scan() -> None
                 "status": "inactive",
                 "expiration_date": date(2026, 7, 17),
             }
-        ]
+        ],
+        expired_transition_rows=[
+            {
+                "contract_symbol": "AAPL260710P00190000",
+                "status": "expired",
+                "expiration_date": date(2026, 7, 10),
+            }
+        ],
     )
     repository = _CatalogRepository(session)
 
@@ -189,6 +203,7 @@ def test_missing_contract_transition_is_scoped_to_exact_completed_scan() -> None
     )
 
     assert rows[0]["catalog_status_reason"] == "not_seen_in_active_discovery_run"
+    assert rows[1]["catalog_status_reason"] == "expired_below_live_discovery_window"
     assert (
         "CREATE TEMPORARY TABLE options_catalog_seen_contracts" in session.calls[0][0]
     )
@@ -197,13 +212,24 @@ def test_missing_contract_transition_is_scoped_to_exact_completed_scan() -> None
     }
     transition_sql, transition_parameters = session.calls[2]
     assert "catalog.underlying_symbol = ANY(:underlying_symbols)" in transition_sql
-    assert "catalog.expiration_date <= :expiration_date_lte" in transition_sql
-    assert "catalog.expiration_date < :expiration_date_gte" in transition_sql
+    assert "catalog.expiration_date BETWEEN :expiration_date_gte" in transition_sql
+    assert "AND :expiration_date_lte" in transition_sql
+    assert "catalog.expiration_date < :expiration_date_gte" not in transition_sql
     assert "NOT EXISTS" in transition_sql
     assert "last_seen_ts <" not in transition_sql
     assert transition_parameters == {
         "observed_at": observed_at,
         **_scope().query_parameters,
+    }
+    expired_sql, expired_parameters = session.calls[3]
+    assert "WITH expired_batch AS" in expired_sql
+    assert "LIMIT :expired_cleanup_limit" in expired_sql
+    assert "FOR UPDATE SKIP LOCKED" in expired_sql
+    assert expired_parameters == {
+        "observed_at": observed_at,
+        "underlying_symbols": ["AAPL", "MSFT"],
+        "expiration_date_gte": date(2026, 7, 14),
+        "expired_cleanup_limit": 1000,
     }
 
 
