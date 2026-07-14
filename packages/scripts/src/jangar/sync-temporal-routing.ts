@@ -8,7 +8,11 @@ import {
   type TemporalClient,
   temporalCallOptions,
 } from '@proompteng/temporal-bun-sdk'
-import { RoutingConfigUpdateState } from '@proompteng/temporal-bun-sdk/worker'
+import {
+  extractCurrentDeploymentBuildId,
+  normalizeWorkerDeploymentBuildId,
+  RoutingConfigUpdateState,
+} from '@proompteng/temporal-bun-sdk/worker'
 
 import { ensureCli, fatal } from '../shared/cli'
 
@@ -304,24 +308,21 @@ const updateRunningWorkflowsToAutoUpgrade = async (
 
 type WorkerDeploymentResponse = Awaited<ReturnType<TemporalClient['deployments']['describeWorkerDeployment']>>
 
-const extractCurrentDeploymentBuildId = (deployment: WorkerDeploymentResponse): string | undefined =>
-  deployment.workerDeploymentInfo?.routingConfig?.currentDeploymentVersion?.buildId?.trim() ||
-  deployment.workerDeploymentInfo?.routingConfig?.currentVersion?.trim() ||
-  undefined
-
 const extractDeploymentBuildIds = (deployment: WorkerDeploymentResponse, deploymentName: string): string[] =>
   (deployment.workerDeploymentInfo?.versionSummaries ?? [])
     .map((entry) => {
       const buildId = entry.deploymentVersion?.buildId?.trim()
       if (buildId) return buildId
-      const legacyVersion = entry.version?.trim()
-      const legacyPrefix = `${deploymentName}.`
-      return legacyVersion?.startsWith(legacyPrefix) ? legacyVersion.slice(legacyPrefix.length) : legacyVersion
+      return normalizeWorkerDeploymentBuildId(deploymentName, entry.version)
     })
     .filter((value): value is string => Boolean(value))
 
-const routingPropagationComplete = (deployment: WorkerDeploymentResponse, buildId: string): boolean =>
-  extractCurrentDeploymentBuildId(deployment) === buildId &&
+const routingPropagationComplete = (
+  deployment: WorkerDeploymentResponse,
+  deploymentName: string,
+  buildId: string,
+): boolean =>
+  extractCurrentDeploymentBuildId(deployment, deploymentName) === buildId &&
   deployment.workerDeploymentInfo?.routingConfigUpdateState === RoutingConfigUpdateState.COMPLETED
 
 const waitForRoutingPropagation = async (
@@ -340,7 +341,7 @@ const waitForRoutingPropagation = async (
       { deploymentName },
       temporalCallOptions({ timeoutMs: defaultRoutingRpcTimeoutMs }),
     )
-    if (routingPropagationComplete(deployment, buildId)) {
+    if (routingPropagationComplete(deployment, deploymentName, buildId)) {
       return
     }
     await Bun.sleep(Math.min(pollMs, Math.max(deadline - now(), 0)))
@@ -356,7 +357,7 @@ const syncCurrentVersion = async (options: ResolvedOptions, client: TemporalClie
     { deploymentName: options.deploymentName },
     temporalCallOptions({ timeoutMs: defaultRoutingRpcTimeoutMs }),
   )
-  const currentBuildId = extractCurrentDeploymentBuildId(deployment)
+  const currentBuildId = extractCurrentDeploymentBuildId(deployment, options.deploymentName)
   const targetBuildId = options.buildId ?? currentBuildId
   const deploymentBuildIds = extractDeploymentBuildIds(deployment, options.deploymentName)
   if (!targetBuildId) {
@@ -365,7 +366,10 @@ const syncCurrentVersion = async (options: ResolvedOptions, client: TemporalClie
     )
   }
 
-  if (currentBuildId === targetBuildId && routingPropagationComplete(deployment, targetBuildId)) {
+  if (
+    currentBuildId === targetBuildId &&
+    routingPropagationComplete(deployment, options.deploymentName, targetBuildId)
+  ) {
     console.log(`Temporal routing already aligned: ${options.deploymentName} -> ${targetBuildId}`)
     return { changed: false, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
   }

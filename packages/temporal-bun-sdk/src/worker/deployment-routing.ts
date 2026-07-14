@@ -52,11 +52,19 @@ export const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig) => {
   )
 }
 
+export const normalizeWorkerDeploymentBuildId = (deploymentName: string, value: unknown) => {
+  const normalized = normalizeOptionalText(value)
+  if (!normalized) return undefined
+  const legacyPrefix = `${deploymentName}.`
+  return normalized.startsWith(legacyPrefix) ? normalizeOptionalText(normalized.slice(legacyPrefix.length)) : normalized
+}
+
 export const extractCurrentDeploymentBuildId = (
   response: Awaited<ReturnType<DeploymentClient['describeWorkerDeployment']>>,
+  deploymentName: string,
 ) =>
   normalizeOptionalText(response.workerDeploymentInfo?.routingConfig?.currentDeploymentVersion?.buildId) ??
-  normalizeOptionalText(response.workerDeploymentInfo?.routingConfig?.currentVersion)
+  normalizeWorkerDeploymentBuildId(deploymentName, response.workerDeploymentInfo?.routingConfig?.currentVersion)
 
 export const isRoutingUpdateComplete = (response: Awaited<ReturnType<DeploymentClient['describeWorkerDeployment']>>) =>
   response.workerDeploymentInfo?.routingConfigUpdateState === RoutingConfigUpdateState.COMPLETED
@@ -118,7 +126,7 @@ export const alignWorkerDeploymentRouting = async (
           { deploymentName },
           temporalCallOptions({ timeoutMs: rpcTimeoutMs }),
         )
-        const currentBuildId = extractCurrentDeploymentBuildId(deployment) ?? null
+        const currentBuildId = extractCurrentDeploymentBuildId(deployment, deploymentName) ?? null
         if (!previousResolved) {
           previousBuildId = currentBuildId
           previousResolved = true

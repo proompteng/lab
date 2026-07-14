@@ -38,11 +38,42 @@ const deployment = (buildId: string, state: RoutingConfigUpdateState) =>
     },
   }) as never
 
+const legacyDeployment = (buildId: string, state: RoutingConfigUpdateState) =>
+  ({
+    workerDeploymentInfo: {
+      routingConfig: {
+        currentVersion: `bumba-deployment.${buildId}`,
+      },
+      routingConfigUpdateState: state,
+    },
+  }) as never
+
 test('worker routing reports an already-propagated current build without changing it', async () => {
   let setCalls = 0
   const result = await alignWorkerDeploymentRouting(config, {
     deployments: {
       describeWorkerDeployment: async () => deployment('bumba@new', RoutingConfigUpdateState.COMPLETED),
+      setWorkerDeploymentCurrentVersion: async () => {
+        setCalls += 1
+        return {} as never
+      },
+    },
+  })
+
+  expect(result).toEqual({
+    deploymentName: 'bumba-deployment',
+    previousBuildId: 'bumba@new',
+    buildId: 'bumba@new',
+    changed: false,
+  })
+  expect(setCalls).toBe(0)
+})
+
+test('worker routing normalizes the legacy deployment-prefixed current version', async () => {
+  let setCalls = 0
+  const result = await alignWorkerDeploymentRouting(config, {
+    deployments: {
+      describeWorkerDeployment: async () => legacyDeployment('bumba@new', RoutingConfigUpdateState.COMPLETED),
       setWorkerDeploymentCurrentVersion: async () => {
         setCalls += 1
         return {} as never
@@ -124,7 +155,8 @@ test('worker routing retries no-poller errors and fails closed at its deadline',
 test('worker routing resolves deployment name and propagation state explicitly', () => {
   process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME = 'override-deployment'
   expect(resolveWorkerDeploymentName(config)).toBe('override-deployment')
-  expect(extractCurrentDeploymentBuildId(deployment('bumba@new', 2))).toBe('bumba@new')
+  expect(extractCurrentDeploymentBuildId(deployment('bumba@new', 2), 'bumba-deployment')).toBe('bumba@new')
+  expect(extractCurrentDeploymentBuildId(legacyDeployment('bumba@new', 2), 'bumba-deployment')).toBe('bumba@new')
   expect(isRoutingUpdateComplete(deployment('bumba@new', 2))).toBe(true)
   expect(isRoutingUpdateComplete(deployment('bumba@new', 1))).toBe(false)
   expect(isTransientRoutingAlignmentError(new Error('permission denied'))).toBe(false)

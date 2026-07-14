@@ -205,4 +205,43 @@ describe('sync-temporal-routing', () => {
       targetBuildId: 'jangar@current',
     })
   })
+
+  it('normalizes legacy deployment versions before selecting stale builds', async () => {
+    const client = {
+      deployments: {
+        describeWorkerDeployment: async () =>
+          ({
+            workerDeploymentInfo: {
+              routingConfig: { currentVersion: 'jangar-deployment.jangar@current' },
+              routingConfigUpdateState: RoutingConfigUpdateState.COMPLETED,
+              versionSummaries: [
+                { version: 'jangar-deployment.jangar@old' },
+                { version: 'jangar-deployment.jangar@current' },
+              ],
+            },
+          }) as never,
+        setWorkerDeploymentCurrentVersion: async () => {
+          throw new Error('should not set routing')
+        },
+      },
+    }
+
+    const result = await __private.syncCurrentVersion(
+      __private.resolveOptions({
+        address: 'temporal.example:7233',
+        namespace: 'default',
+        taskQueue: 'jangar',
+        deploymentName: 'jangar-deployment',
+      }),
+      client as never,
+    )
+
+    expect(result).toMatchObject({
+      changed: false,
+      previousBuildId: 'jangar@current',
+      targetBuildId: 'jangar@current',
+      deploymentBuildIds: ['jangar@old', 'jangar@current'],
+    })
+    expect(result.deploymentBuildIds.filter((buildId) => buildId !== result.targetBuildId)).toEqual(['jangar@old'])
+  })
 })

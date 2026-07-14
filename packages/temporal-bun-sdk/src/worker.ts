@@ -24,6 +24,7 @@ export {
   extractCurrentDeploymentBuildId,
   isRoutingUpdateComplete,
   isTransientRoutingAlignmentError,
+  normalizeWorkerDeploymentBuildId,
   resolveWorkerDeploymentName,
   type WorkerRoutingAlignment,
   type WorkerRoutingAlignmentOptions,
