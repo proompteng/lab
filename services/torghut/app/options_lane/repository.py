@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 import heapq
-from itertools import chain
 import json
 import logging
 from typing import Any, Iterator, cast
@@ -15,6 +14,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+
+from app.options_lane.catalog_watermark_repository import (
+    CatalogCycleSummary,
+    record_catalog_cycle_success,
+)
+from app.options_lane.subscription_state_repository import (
+    SubscriptionReconcileResult,
+    load_cold_subscription_symbols,
+    load_live_subscription_candidates,
+    load_non_off_subscription_symbols,
+    reconcile_subscription_state,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -479,93 +490,64 @@ class OptionsRepository:
                 for row in batch:
                     yield dict(row)
 
+    def list_live_subscription_candidates(self) -> list[dict[str, Any]]:
+        """Return only the persisted hot/warm candidate seed."""
+
+        with self.session() as session:
+            return load_live_subscription_candidates(session)
+
+    def list_non_off_subscription_symbols(self) -> set[str]:
+        """Return every symbol eligible for final-cycle cleanup."""
+
+        with self.session() as session:
+            return load_non_off_subscription_symbols(session)
+
+    def list_cold_subscription_symbols(self) -> frozenset[str]:
+        """Return rows that only final reconciliation may retier or deactivate."""
+
+        with self.session() as session:
+            return load_cold_subscription_symbols(session)
+
     def write_subscription_state(
         self,
         *,
         ranked_rows: list[dict[str, Any]],
+        deactivate_symbols: Iterable[str],
         observed_at: datetime,
-    ) -> tuple[int, int]:
-        hot_count = 0
-        warm_count = 0
-        with self.session() as session, session.begin():
-            for row in ranked_rows:
-                tier = cast(str, row["tier"])
-                if tier == "hot":
-                    hot_count += 1
-                elif tier == "warm":
-                    warm_count += 1
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO torghut_options_subscription_state (
-                          contract_symbol,
-                          ranking_score,
-                          ranking_inputs,
-                          tier,
-                          desired_channels,
-                          subscribed_channels,
-                          provider_cap_generation,
-                          last_ranked_ts
-                        ) VALUES (
-                          :contract_symbol,
-                          :ranking_score,
-                          CAST(:ranking_inputs AS JSONB),
-                          :tier,
-                          :desired_channels,
-                          ARRAY[]::TEXT[],
-                          :provider_cap_generation,
-                          :last_ranked_ts
-                        )
-                        ON CONFLICT (contract_symbol) DO UPDATE
-                        SET ranking_score = EXCLUDED.ranking_score,
-                            ranking_inputs = EXCLUDED.ranking_inputs,
-                            tier = EXCLUDED.tier,
-                            desired_channels = EXCLUDED.desired_channels,
-                            provider_cap_generation = EXCLUDED.provider_cap_generation,
-                            last_ranked_ts = EXCLUDED.last_ranked_ts
-                        """
-                    ),
-                    {
-                        "contract_symbol": row["contract_symbol"],
-                        "ranking_score": row["ranking_score"],
-                        "ranking_inputs": _coerce_json(row["ranking_inputs"]),
-                        "tier": tier,
-                        "desired_channels": row["desired_channels"],
-                        "provider_cap_generation": row["provider_cap_generation"],
-                        "last_ranked_ts": observed_at,
-                    },
-                )
-            session.execute(
-                text(
-                    """
-                    UPDATE torghut_options_subscription_state
-                    SET tier = 'off',
-                        last_ranked_ts = :last_ranked_ts
-                    WHERE contract_symbol <> ALL(:symbols)
-                    """
-                ),
-                {
-                    "symbols": [row["contract_symbol"] for row in ranked_rows] or [""],
-                    "last_ranked_ts": observed_at,
-                },
+    ) -> SubscriptionReconcileResult:
+        with self.session() as session:
+            return reconcile_subscription_state(
+                session,
+                ranked_rows=ranked_rows,
+                deactivate_symbols=deactivate_symbols,
+                observed_at=observed_at,
             )
-        return hot_count, warm_count
 
     def get_hot_symbols(self, limit: int) -> list[str]:
         with self.session() as session:
             rows = session.execute(
                 text(
                     """
-                    SELECT contract_symbol
-                    FROM torghut_options_subscription_state
-                    WHERE tier = 'hot'
-                    ORDER BY ranking_score DESC, contract_symbol ASC
+                    SELECT subscriptions.contract_symbol
+                    FROM torghut_options_subscription_state AS subscriptions
+                    JOIN torghut_options_contract_catalog AS catalog
+                      ON catalog.contract_symbol = subscriptions.contract_symbol
+                    WHERE subscriptions.tier = 'hot'
+                      AND catalog.status = 'active'
+                    ORDER BY subscriptions.ranking_score DESC,
+                             subscriptions.contract_symbol ASC
                     LIMIT :limit
                     """
                 ),
                 {"limit": limit},
             )
             return [cast(str, row[0]) for row in rows]
+
+    def record_catalog_cycle_success(self, summary: CatalogCycleSummary) -> None:
+        """Persist complete-cycle freshness in one watermark row."""
+
+        with self.session() as session:
+            record_catalog_cycle_success(session, summary)
 
     def get_due_snapshot_contracts(
         self,
@@ -778,7 +760,7 @@ def ranked_contract_rows(
     ranked.sort(
         key=lambda row: (-float(row["ranking_score"]), str(row["contract_symbol"]))
     )
-    hot_count, warm_count = _tier_limits(
+    hot_count, warm_count = subscription_tier_limits(
         hot_cap=hot_cap,
         warm_cap=warm_cap,
         provider_cap_bootstrap=provider_cap_bootstrap,
@@ -805,7 +787,7 @@ def top_ranked_contract_rows(
 ) -> list[dict[str, Any]]:
     """Rank only the hot and warm candidates while streaming the active universe."""
 
-    hot_count, warm_count = _tier_limits(
+    hot_count, warm_count = subscription_tier_limits(
         hot_cap=hot_cap,
         warm_cap=warm_cap,
         provider_cap_bootstrap=provider_cap_bootstrap,
@@ -858,8 +840,20 @@ def merge_top_ranked_contract_rows(
 ) -> list[dict[str, Any]]:
     """Merge new contract rows into the current hot/warm candidate set."""
 
+    rows_by_symbol = {
+        str(row["contract_symbol"]): row
+        for row in ranked_rows
+        if row.get("contract_symbol")
+    }
+    rows_by_symbol.update(
+        {
+            str(row["contract_symbol"]): row
+            for row in contracts
+            if row.get("contract_symbol")
+        }
+    )
     return top_ranked_contract_rows(
-        iter(chain(ranked_rows, contracts)),
+        iter(rows_by_symbol.values()),
         observed_at=observed_at,
         hot_cap=hot_cap,
         warm_cap=warm_cap,
@@ -869,7 +863,7 @@ def merge_top_ranked_contract_rows(
     )
 
 
-def _tier_limits(
+def subscription_tier_limits(
     *, hot_cap: int, warm_cap: int, provider_cap_bootstrap: int
 ) -> tuple[int, int]:
     hot_count = min(hot_cap, max(int(provider_cap_bootstrap * 0.8), 0))
