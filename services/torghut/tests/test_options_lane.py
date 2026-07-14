@@ -186,6 +186,28 @@ class _PartialCatalogClient:
         )
 
 
+class _CompleteCatalogClient:
+    def list_contracts(self, **_: object) -> tuple[list[dict[str, object]], None]:
+        return (
+            [
+                {
+                    "id": "contract-aapl",
+                    "symbol": "AAPL260717C00200000",
+                    "status": "active",
+                    "expiration_date": "2026-07-17",
+                    "root_symbol": "AAPL",
+                    "underlying_symbol": "AAPL",
+                    "type": "call",
+                    "style": "american",
+                    "strike_price": "200",
+                    "size": "100",
+                    "open_interest": "100",
+                }
+            ],
+            None,
+        )
+
+
 class _SeededCycleRepository:
     def __init__(self) -> None:
         self.reconciliations: list[tuple[list[str], set[str]]] = []
@@ -219,10 +241,34 @@ class _SeededCycleRepository:
     def acquire_rate_bucket(self, *_: object) -> bool:
         return True
 
+    def list_non_off_subscription_symbols(self) -> set[str]:
+        return {
+            "AAPL260717C00200000",
+            "ARCHIVE260717P00100000",
+        }
+
     def sync_contract_catalog_page(
         self, *_: object, **__: object
     ) -> list[dict[str, object]]:
         return []
+
+    def mark_contracts_missing_from_cycle(self, **_: object) -> list[dict[str, object]]:
+        return []
+
+    def iter_active_contracts_for_ranking(self) -> Iterator[dict[str, object]]:
+        yield {
+            "contract_symbol": "AAPL260717C00200000",
+            "status": "active",
+            "underlying_symbol": "AAPL",
+            "expiration_date": date(2026, 7, 17),
+            "strike_price": 200.0,
+            "close_price": 200.0,
+            "open_interest": 100,
+            "ranking_inputs": {},
+        }
+
+    def max_active_open_interest(self) -> int:
+        return 100
 
     def write_subscription_state(
         self,
@@ -513,6 +559,27 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertEqual(snapshot["subscription_reconciliations_total"], 1)
         self.assertEqual(snapshot["subscription_rows_changed_total"], 2)
         self.assertEqual(snapshot["subscription_rows_deactivated_total"], 0)
+
+    def test_complete_catalog_cycle_deactivates_cold_rows_only_at_final_cleanup(
+        self,
+    ) -> None:
+        service = cast(
+            Any,
+            self._import_service("app.options_lane.catalog_service"),
+        )
+        repository = _SeededCycleRepository()
+        service._repository = repository
+        service._client = _CompleteCatalogClient()
+
+        service._run_discovery_cycle()
+
+        self.assertEqual(len(repository.reconciliations), 2)
+        provisional_symbols, provisional_deactivations = repository.reconciliations[0]
+        final_symbols, final_deactivations = repository.reconciliations[1]
+        self.assertEqual(provisional_symbols, ["AAPL260717C00200000"])
+        self.assertEqual(provisional_deactivations, set())
+        self.assertEqual(final_symbols, ["AAPL260717C00200000"])
+        self.assertEqual(final_deactivations, {"ARCHIVE260717P00100000"})
 
 
 class TestOptionsLaneNormalization(TestCase):

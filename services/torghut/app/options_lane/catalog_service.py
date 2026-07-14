@@ -201,9 +201,7 @@ def _run_discovery_cycle() -> None:
     changed_count = 0
     persisted_subscription_rows = _repository.list_live_subscription_candidates()
     live_seed_rows = [
-        row
-        for row in persisted_subscription_rows
-        if row.get("tier") in {"hot", "warm"}
+        row for row in persisted_subscription_rows if row.get("tier") in {"hot", "warm"}
     ]
     persisted_symbols = {str(row["contract_symbol"]) for row in live_seed_rows}
     active_seed_rows = [row for row in live_seed_rows if row.get("status") == "active"]
@@ -336,10 +334,7 @@ def _run_discovery_cycle() -> None:
         underlying_priority=settings.underlying_priority_set,
     )
     final_symbols = {str(row["contract_symbol"]) for row in ranked_rows}
-    current_non_off_symbols = {
-        str(row["contract_symbol"])
-        for row in _repository.list_live_subscription_candidates()
-    }
+    current_non_off_symbols = _repository.list_non_off_subscription_symbols()
     final_reconcile_result = _repository.write_subscription_state(
         ranked_rows=ranked_rows,
         deactivate_symbols=current_non_off_symbols - final_symbols,

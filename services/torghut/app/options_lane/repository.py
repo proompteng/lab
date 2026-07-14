@@ -516,6 +516,21 @@ class OptionsRepository:
             ).mappings()
             return [dict(row) for row in rows]
 
+    def list_non_off_subscription_symbols(self) -> set[str]:
+        """Return every symbol eligible for final-cycle cleanup."""
+
+        with self.session() as session:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT contract_symbol
+                    FROM torghut_options_subscription_state
+                    WHERE tier IS DISTINCT FROM 'off'
+                    """
+                )
+            )
+            return {cast(str, row[0]) for row in rows}
+
     def write_subscription_state(
         self,
         *,
