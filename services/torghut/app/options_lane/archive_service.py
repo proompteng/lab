@@ -53,6 +53,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         stop_event.set()
+        archive_repository.cancel_active_work()
         worker_thread.join(timeout=35)
         archive_repository.close()
         catalog_repository.close()

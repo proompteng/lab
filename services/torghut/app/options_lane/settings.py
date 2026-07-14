@@ -129,6 +129,30 @@ class OptionsLaneSettings(BaseSettings):
         ge=300,
         validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_REFRESH_SEC"),
     )
+    options_contract_archive_finalize_batch_size: int = Field(
+        1000,
+        ge=1,
+        le=10000,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_FINALIZE_BATCH_SIZE"),
+    )
+    options_contract_archive_finalize_interval_ms: int = Field(
+        250,
+        ge=0,
+        le=10000,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_FINALIZE_INTERVAL_MS"),
+    )
+    options_contract_archive_statement_timeout_ms: int = Field(
+        30000,
+        ge=1000,
+        le=120000,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_STATEMENT_TIMEOUT_MS"),
+    )
+    options_contract_archive_lock_timeout_ms: int = Field(
+        5000,
+        ge=100,
+        le=30000,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_LOCK_TIMEOUT_MS"),
+    )
     options_contract_archive_retry_base_sec: int = Field(
         30,
         ge=1,
@@ -267,6 +291,13 @@ class OptionsLaneSettings(BaseSettings):
             < self.options_contract_archive_retry_base_sec
         ):
             raise ValueError("archive retry max must be at least retry base")
+        if (
+            self.options_contract_archive_lock_timeout_ms
+            >= self.options_contract_archive_statement_timeout_ms
+        ):
+            raise ValueError(
+                "archive lock timeout must be below archive statement timeout"
+            )
         return self
 
     @property

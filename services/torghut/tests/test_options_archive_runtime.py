@@ -66,6 +66,10 @@ def _settings(**overrides: object) -> OptionsLaneSettings:
         "options_contract_archive_lock_name": "archive-lock",
         "options_contract_archive_page_limit": 10_000,
         "options_contract_archive_refresh_sec": 86_400,
+        "options_contract_archive_finalize_batch_size": 1_000,
+        "options_contract_archive_finalize_interval_ms": 0,
+        "options_contract_archive_statement_timeout_ms": 30_000,
+        "options_contract_archive_lock_timeout_ms": 5_000,
         "options_contract_archive_requests_per_second": 0.1,
         "options_contract_archive_retry_base_sec": 30,
         "options_contract_archive_retry_max_sec": 900,
@@ -143,6 +147,20 @@ def test_archive_repository_constructs_and_disposes_without_opening_a_connection
     repository.close()
 
 
+def test_archive_repository_cancels_the_inflight_driver_statement() -> None:
+    repository = OptionsArchiveRepository(
+        "postgresql+psycopg://unused:unused@localhost/unused"
+    )
+    driver_connection = MagicMock()
+    repository._active_driver_connection = driver_connection
+
+    assert repository.cancel_active_work()
+
+    driver_connection.cancel.assert_called_once_with()
+    repository._active_driver_connection = None
+    repository.close()
+
+
 def test_run_pass_processes_every_shard_and_bounds_idle_time() -> None:
     repository = MagicMock(spec=OptionsArchiveRepository)
     repository.oldest_active_expiration_date.return_value = date(2026, 7, 1)
@@ -208,6 +226,38 @@ def test_process_shard_resumes_finalization() -> None:
         assert worker._process_shard(_shard()) == checkpoint
 
     finalize.assert_called_once_with(checkpoint)
+
+
+def test_runtime_state_exposes_durable_finalization_progress() -> None:
+    state = ArchiveRuntimeState()
+    checkpoint = ArchiveCheckpoint(
+        shard=_shard(),
+        query_fingerprint="f" * 64,
+        status="finalizing",
+        cursor=None,
+        page_count=4,
+        seen_count=2_000,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+        finalize_after_expiration_date=date(2026, 7, 17),
+        finalize_after_contract_symbol="MSFT-CONTRACT",
+        transitioned_count=731,
+    )
+
+    state.update(
+        ArchiveStateUpdate(
+            phase="finalizing",
+            observed_at=NOW,
+            checkpoint=checkpoint,
+        )
+    )
+
+    snapshot = state.snapshot()
+    assert snapshot["finalization_cursor_present"] is True
+    assert snapshot["finalize_after_expiration_date"] == "2026-07-17"
+    assert snapshot["finalize_after_contract_symbol"] == "MSFT-CONTRACT"
+    assert snapshot["transitioned_count"] == 731
 
 
 @pytest.mark.parametrize(
@@ -288,10 +338,61 @@ def test_scan_pages_persists_page_then_finalizes() -> None:
         checkpoint=finalizing,
         observed_at=NOW,
         refresh_seconds=86_400,
+        batch_size=1_000,
+        statement_timeout_ms=30_000,
+        lock_timeout_ms=5_000,
     )
     snapshot = state.snapshot()
     assert snapshot["phase"] == "complete"
     assert snapshot["last_success_ts"] == NOW.isoformat()
+
+
+def test_finalize_runs_committed_batches_until_an_empty_scan_completes() -> None:
+    repository = MagicMock(spec=OptionsArchiveRepository)
+    state = ArchiveRuntimeState()
+    initial = _checkpoint(status="finalizing")
+    progressed = ArchiveCheckpoint(
+        shard=initial.shard,
+        query_fingerprint=initial.query_fingerprint,
+        status="finalizing",
+        cursor=None,
+        page_count=initial.page_count,
+        seen_count=initial.seen_count,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+        finalize_after_expiration_date=date(2026, 7, 17),
+        finalize_after_contract_symbol="MSFT-CONTRACT",
+        transitioned_count=700,
+    )
+    completed = ArchiveCheckpoint(
+        shard=initial.shard,
+        query_fingerprint=initial.query_fingerprint,
+        status="complete",
+        cursor=None,
+        page_count=initial.page_count,
+        seen_count=initial.seen_count,
+        retry_count=0,
+        next_eligible_at=NOW + timedelta(days=1),
+        last_success_at=NOW,
+        transitioned_count=700,
+    )
+    repository.finalize_shard.side_effect = (
+        ArchiveCompletion(
+            checkpoint=progressed,
+            transitioned_count=700,
+            batch_scanned_count=1_000,
+            batch_transitioned_count=700,
+        ),
+        ArchiveCompletion(checkpoint=completed, transitioned_count=700),
+    )
+    worker = _worker(archive_repository=repository, state=state)
+
+    assert worker._finalize(initial) == completed
+
+    assert repository.finalize_shard.call_count == 2
+    assert state.snapshot()["phase"] == "complete"
+    assert state.snapshot()["transitioned_count"] == 700
 
 
 def test_record_failure_uses_bounded_retry_settings_and_updates_state() -> None:
@@ -391,6 +492,7 @@ def test_archive_service_lifecycle_and_health_surfaces() -> None:
     asyncio.run(exercise_lifespan())
 
     archive_repository.close.assert_called_once_with()
+    archive_repository.cancel_active_work.assert_called_once_with()
     catalog_repository.close.assert_called_once_with()
     with pytest.raises(HTTPException) as unhealthy:
         service.healthz()
