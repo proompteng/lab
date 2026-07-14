@@ -307,7 +307,8 @@ data:
               team: platform
             annotations:
               summary: CloudNativePG WAL archive backlog is growing
-              description: {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
+              description: |
+                {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: PersistentVolumeFreeLowWarning
             expr: |
@@ -335,7 +336,8 @@ data:
               team: platform
             annotations:
               summary: Persistent volume free space is low
-              description: {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 15% free space for 30 minutes.
+              description: |
+                {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 15% free space for 30 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: PersistentVolumeFreeLowCritical
             expr: |
@@ -352,7 +354,8 @@ data:
               team: platform
             annotations:
               summary: Persistent volume free space is critically low
-              description: {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
+              description: |
+                {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
             expr: ceph_health_status{job="ceph-storage"} == 1

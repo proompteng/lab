@@ -71,4 +71,5 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
   expect(rules).toContain(
     'sum(\n                increase(\n                  cnpg_pg_stat_checkpointer_checkpoints_req{',
   )
+  expect(rules).not.toMatch(/^\s+(description|summary): \{\{/m)
 })
