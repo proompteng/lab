@@ -298,6 +298,22 @@ class TestAnalyzeHistoricalSimulation(TestCase):
             )
         )
 
+    def test_decision_fallback_does_not_override_mismatched_execution_link(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            _resolve_scoped_execution_id(
+                {
+                    "execution_id": "execution-other",
+                    "trade_decision_id": "decision-scoped",
+                },
+                execution_ids={"execution-scoped"},
+                execution_ids_by_decision={
+                    "decision-scoped": ["execution-scoped"],
+                },
+            )
+        )
+
     def test_fifo_trade_pnl_computes_realized_and_unrealized(self) -> None:
         executions = [
             {
@@ -553,7 +569,15 @@ class TestAnalyzeHistoricalSimulation(TestCase):
 
             self.assertEqual(report["verdict"]["status"], "WARN")
             self.assertEqual(report["funnel"]["trade_decisions"], 1)
+            self.assertEqual(report["funnel"]["execution_order_events_total"], 2)
+            self.assertEqual(report["funnel"]["execution_order_events_unlinked"], 0)
             self.assertEqual(report["execution_quality"]["adapter_mismatch_count"], 1)
+            self.assertEqual(
+                report["execution_quality"]["unlinked_order_event_count"], 0
+            )
+            self.assertEqual(
+                report["execution_quality"]["unlinked_order_event_ratio"], 0.0
+            )
             self.assertEqual(report["llm"]["tokens"]["total"], 15)
             self.assertEqual(report["pnl"]["realized_pnl"], "3")
             self.assertTrue((report_dir / "simulation-report.json").exists())

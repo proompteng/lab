@@ -556,8 +556,8 @@ def _resolve_scoped_execution_id(
 ) -> str | None:
     """Resolve an order event to one scoped execution without guessing."""
     execution_id = str(event.get("execution_id") or "")
-    if execution_id in execution_ids:
-        return execution_id
+    if execution_id:
+        return execution_id if execution_id in execution_ids else None
 
     decision_id = str(event.get("trade_decision_id") or "")
     candidates = execution_ids_by_decision.get(decision_id, [])

@@ -133,15 +133,15 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "FROM execution_order_events ORDER BY created_at ASC",
         )
         order_events_total = len(order_events_all)
-        order_events_unlinked = sum(
-            1 for row in order_events_all if row.get("execution_id") is None
-        )
         order_events = _filter_rows_by_any_scope_id(
             order_events_all,
             scope_ids_by_foreign_key={
                 "execution_id": execution_ids,
                 "trade_decision_id": decision_ids,
             },
+        )
+        order_events_unlinked = sum(
+            1 for row in order_events if row.get("execution_id") is None
         )
 
         tca_all = _query_rows(
@@ -500,7 +500,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "unlinked_order_event_count": order_events_unlinked,
         "unlinked_order_event_ratio": (
-            (order_events_unlinked / order_events_total) if order_events_total else 0.0
+            (order_events_unlinked / len(order_events)) if order_events else 0.0
         ),
         "latency_ms": {
             "signal_to_decision_p50": _percentile(signal_to_decision_ms, 50),
@@ -645,7 +645,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     if len(executions) > 0 and executions_with_events == 0:
         warn_reasons.append("execution_order_events_missing")
-    if len(executions) > 0 and executions_with_events == 0 and order_events_total > 0:
+    if (
+        len(executions) > 0
+        and executions_with_events == 0
+        and order_events_unlinked > 0
+    ):
         warn_reasons.append("execution_order_events_unlinked")
     if execution_quality["adapter_mismatch_ratio"] > 0:
         warn_reasons.append("execution_adapter_mismatch_detected")
