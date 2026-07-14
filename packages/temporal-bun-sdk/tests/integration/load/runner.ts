@@ -600,35 +600,40 @@ const driveWorkflowUpdates = async (
   const terminationEvents = await Promise.all(
     submissions.map(async ({ handle }) => {
       const workflowHandle = { workflowId: handle.workflowId, runId: handle.runId }
-      for (let index = 0; index < config.updatesPerWorkflow; index += 1) {
+      const requestedAt = new Date().toISOString()
+      let phase: 'updates' | 'termination' = 'updates'
+      try {
+        for (let index = 0; index < config.updatesPerWorkflow; index += 1) {
+          await client.workflow.update(workflowHandle, {
+            updateName: 'workerLoad.setStatus',
+            args: [{ status: `phase-${index}` }],
+            waitForStage: 'completed',
+          })
+        }
         await client.workflow.update(workflowHandle, {
-          updateName: 'workerLoad.setStatus',
-          args: [{ status: `phase-${index}` }],
+          updateName: 'workerLoad.delayedSetStatus',
+          args: [{ status: 'delayed', delayMs: config.updateDelayMs }],
           waitForStage: 'completed',
         })
-      }
-      await client.workflow.update(workflowHandle, {
-        updateName: 'workerLoad.delayedSetStatus',
-        args: [{ status: 'delayed', delayMs: config.updateDelayMs }],
-        waitForStage: 'completed',
-      })
-      try {
+        try {
+          await client.workflow.update(workflowHandle, {
+            updateName: 'workerLoad.guardStatus',
+            args: [{ level: -1 }],
+            waitForStage: 'completed',
+          })
+        } catch (error) {
+          if (isWorkflowAlreadyCompletedForTermination(error)) {
+            throw error
+          }
+          // Intentionally provoke a validation failure to exercise rejection paths.
+        }
         await client.workflow.update(workflowHandle, {
           updateName: 'workerLoad.guardStatus',
-          args: [{ level: -1 }],
+          args: [{ level: 1 }],
           waitForStage: 'completed',
         })
-      } catch {
-        // Intentionally provoke a validation failure to exercise rejection paths.
-      }
-      await client.workflow.update(workflowHandle, {
-        updateName: 'workerLoad.guardStatus',
-        args: [{ level: 1 }],
-        waitForStage: 'completed',
-      })
-      // After exercising update flows, terminate to keep the load suite bounded.
-      const requestedAt = new Date().toISOString()
-      try {
+        // After exercising update flows, terminate to keep the load suite bounded.
+        phase = 'termination'
         await client.workflow.terminate(workflowHandle, { reason: 'worker-load-finish' })
         return {
           workflowId: handle.workflowId,
@@ -648,7 +653,7 @@ const driveWorkflowUpdates = async (
             error: error instanceof Error ? error.message : String(error),
           }
         }
-        if (isTransientWorkflowTerminationCleanupFailure(error)) {
+        if (phase === 'termination' && isTransientWorkflowTerminationCleanupFailure(error)) {
           return {
             workflowId: handle.workflowId,
             runId: handle.runId,
@@ -1159,6 +1164,7 @@ export const __workerLoadTestHooks = {
   calculateLoadCompletionBudgetMs,
   calculateWorkerLoadTestTimeoutBudgetMs,
   cleanupSubmittedWorkflows,
+  driveWorkflowUpdates,
   isWorkflowAlreadyCompletedForTermination,
   isTransientWorkflowTerminationCleanupFailure,
   normalizeWorkflowStatus,
