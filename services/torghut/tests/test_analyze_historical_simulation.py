@@ -14,6 +14,7 @@ from scripts.historical_simulation_analysis.report_builder import _build_report
 from scripts.historical_simulation_analysis.report_helpers import (
     _build_last_price_map,
     _extract_run_scope_decisions,
+    _filter_rows_by_any_scope_id,
     _filter_rows_by_scope_ids,
     _fifo_trade_pnl,
     _query_rows,
@@ -217,10 +218,17 @@ class TestAnalyzeHistoricalSimulation(TestCase):
         self.assertEqual(scoped_decisions, [])
         self.assertEqual(executions, [])
         self.assertEqual(
-            _filter_rows_by_scope_ids(
-                [{"execution_id": "execution-other"}],
-                foreign_key="execution_id",
-                scope_ids=execution_ids,
+            _filter_rows_by_any_scope_id(
+                [
+                    {
+                        "execution_id": "execution-other",
+                        "trade_decision_id": "decision-other",
+                    }
+                ],
+                scope_ids_by_foreign_key={
+                    "execution_id": execution_ids,
+                    "trade_decision_id": decision_ids,
+                },
             ),
             [],
         )
@@ -231,6 +239,34 @@ class TestAnalyzeHistoricalSimulation(TestCase):
                 scope_ids=decision_ids,
             ),
             [],
+        )
+
+    def test_order_events_accept_scoped_decision_without_execution_link(self) -> None:
+        scoped = _filter_rows_by_any_scope_id(
+            [
+                {
+                    "execution_id": None,
+                    "trade_decision_id": "decision-scoped",
+                },
+                {
+                    "execution_id": "execution-other",
+                    "trade_decision_id": "decision-other",
+                },
+            ],
+            scope_ids_by_foreign_key={
+                "execution_id": set(),
+                "trade_decision_id": {"decision-scoped"},
+            },
+        )
+
+        self.assertEqual(
+            scoped,
+            [
+                {
+                    "execution_id": None,
+                    "trade_decision_id": "decision-scoped",
+                }
+            ],
         )
 
     def test_fifo_trade_pnl_computes_realized_and_unrealized(self) -> None:

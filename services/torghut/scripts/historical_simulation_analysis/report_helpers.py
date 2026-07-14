@@ -532,6 +532,22 @@ def _realized_by_symbol_payload(state: _FifoPnlState) -> list[dict[str, Any]]:
     ]
 
 
+def _filter_rows_by_any_scope_id(
+    rows: list[dict[str, Any]],
+    *,
+    scope_ids_by_foreign_key: Mapping[str, set[str]],
+) -> list[dict[str, Any]]:
+    """Keep rows linked through any explicitly scoped parent reference."""
+    return [
+        row
+        for row in rows
+        if any(
+            str(row.get(foreign_key) or "") in scope_ids
+            for foreign_key, scope_ids in scope_ids_by_foreign_key.items()
+        )
+    ]
+
+
 def _csv_write(path: Path, rows_payload: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows_payload:
@@ -669,6 +685,7 @@ __all__ = [
     "_extract_signal_event_ts",
     "_extract_run_scope_decisions",
     "_filter_rows_by_scope_ids",
+    "_filter_rows_by_any_scope_id",
     "_build_last_price_map",
     "_last_prices_from_clickhouse",
     "_last_prices_from_clickhouse_field",

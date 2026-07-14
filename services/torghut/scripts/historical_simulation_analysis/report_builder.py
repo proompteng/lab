@@ -37,6 +37,7 @@ from .report_helpers import (
     _decimal_to_str,
     _extract_run_scope_decisions,
     _extract_signal_event_ts,
+    _filter_rows_by_any_scope_id,
     _filter_rows_by_scope_ids,
     _fifo_trade_pnl,
     _json_default,
@@ -119,16 +120,19 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
         order_events_all = _query_rows(
             conn,
-            "SELECT execution_id, event_ts, created_at, status, event_type FROM execution_order_events ORDER BY created_at ASC",
+            "SELECT execution_id, trade_decision_id, event_ts, created_at, status, event_type "
+            "FROM execution_order_events ORDER BY created_at ASC",
         )
         order_events_total = len(order_events_all)
         order_events_unlinked = sum(
             1 for row in order_events_all if row.get("execution_id") is None
         )
-        order_events = _filter_rows_by_scope_ids(
+        order_events = _filter_rows_by_any_scope_id(
             order_events_all,
-            foreign_key="execution_id",
-            scope_ids=execution_ids,
+            scope_ids_by_foreign_key={
+                "execution_id": execution_ids,
+                "trade_decision_id": decision_ids,
+            },
         )
 
         tca_all = _query_rows(
