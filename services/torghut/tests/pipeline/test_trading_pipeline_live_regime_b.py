@@ -47,7 +47,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_kill_switch_enabled = False
@@ -68,6 +67,13 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="paper",
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -86,6 +92,7 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
             )
+            self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
                 order_firewall=OrderFirewall(alpaca_client),
@@ -137,7 +144,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
             self.assertNotEqual(alpaca_client.submitted, [])
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_enabled = original[
                 "trading_autonomy_enabled"
@@ -260,7 +266,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_mode = "paper"
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -277,6 +282,8 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(session, strategy=strategy)
                 session.commit()
                 session.refresh(strategy)
 
@@ -306,6 +313,7 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
+            self._prime_test_capital_state(pipeline.state)
 
             pipeline.run_once()
             pipeline.run_once()
@@ -319,7 +327,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                 self.assertEqual(len(alpaca_client.submitted), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"

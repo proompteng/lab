@@ -305,6 +305,14 @@ def build_source_proof_census(
         "daily": daily,
         "runtime_authority": {
             "final_authority_ok": ledger_report["final_authority_ok"],
+            "evidence_admissible": ledger_report["evidence_admissible"],
+            "evidence_collection_stage": ledger_report["evidence_collection_stage"],
+            "strategy_capital_authority_allowed": ledger_report[
+                "strategy_capital_authority_allowed"
+            ],
+            "strategy_capital_authority_blockers": ledger_report[
+                "strategy_capital_authority_blockers"
+            ],
             "blockers": ledger_report["blockers"],
             "aggregate": ledger_report["aggregate"],
         },

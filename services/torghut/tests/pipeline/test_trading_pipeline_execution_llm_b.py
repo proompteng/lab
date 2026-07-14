@@ -66,7 +66,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -86,6 +85,8 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(session, strategy=strategy)
                 session.commit()
 
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -142,6 +143,7 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                         limit_price=Decimal("101.5"),
                     ),
                 )
+                self._prime_test_capital_state(pipeline.state)
 
                 pipeline.run_once()
 
@@ -158,7 +160,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                     self.assertEqual(decision_json["llm_adjusted_decision"]["qty"], "8")
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
@@ -231,6 +232,8 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(session, strategy=strategy)
                 session.commit()
 
             signal = SignalEnvelope(
@@ -244,7 +247,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 timeframe="1Min",
             )
 
-            config.settings.trading_mode = "paper"
             config.settings.trading_mode = "paper"
             alpaca_client = FakeAlpacaClient()
             pipeline = TradingPipeline(
@@ -262,6 +264,7 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(error=RuntimeError("boom")),
             )
+            self._prime_test_capital_state(pipeline.state)
             pipeline.run_once()
 
             with self.session_local() as session:
@@ -308,8 +311,18 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 )
 
             config.settings.trading_mode = "live"
-            config.settings.trading_mode = "live"
             config.settings.trading_autonomy_allow_live_promotion = True
+            with self.session_local() as session:
+                strategy = session.execute(
+                    select(Strategy).where(Strategy.name == "demo")
+                ).scalar_one()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
+                session.commit()
             live_signal = SignalEnvelope(
                 event_ts=datetime.now(timezone.utc),
                 symbol="AAPL",
@@ -336,6 +349,7 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(error=RuntimeError("boom")),
             )
+            self._prime_test_capital_state(pipeline_live.state)
             pipeline_live._is_market_session_open = lambda _now=None: True
             self._seed_promotion_certificate_evidence()
             pipeline_live.run_once()
@@ -347,7 +361,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 self.assertEqual(decisions[-1].status, "submitted")
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"

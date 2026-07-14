@@ -636,8 +636,14 @@ class TestRuntimeWindowDailySummary(_TestRuntimeWindowImportBase):
         self.assertEqual(
             [window.capital_stage for window in windows], ["shadow", "shadow"]
         )
-        self.assertEqual(decision.allowed, False)
+        self.assertEqual(decision.state, "shadow")
+        self.assertEqual(decision.allowed, True)
+        self.assertEqual(
+            decision.reason_summary,
+            "runtime_evidence_thresholds_satisfied",
+        )
         assert decision.payload_json is not None
+        self.assertEqual(decision.payload_json["evidence_blocking_reasons"], [])
         self.assertIn(
             "runtime_ledger_observed_trading_day_count_below_authority_minimum",
             decision.payload_json["promotion_blocking_reasons"],

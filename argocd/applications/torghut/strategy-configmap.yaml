@@ -20,6 +20,11 @@ data:
         universe_type: microbar_cross_sectional_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-microbar-volume-continuation-long-top2-chip-v1-safe-v1
+          strategy_ref: microbar-volume-continuation-long-top2-chip-v1
+          stage: shadow_allowed
+          blockers: [p0_capital_freeze, paper_probation_not_issued]
         params:
           entry_minute_after_open: "235"
           entry_window_minutes: "30"
@@ -41,6 +46,11 @@ data:
         universe_type: microbar_cross_sectional_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-microbar-prev-day-open45-reversal-long-top1-chip-v1-safe-v1
+          strategy_ref: microbar-prev-day-open45-reversal-long-top1-chip-v1
+          stage: shadow_allowed
+          blockers: [p0_capital_freeze, paper_probation_not_issued]
         params:
           entry_minute_after_open: "60"
           entry_window_minutes: "30"
@@ -62,6 +72,11 @@ data:
         universe_type: intraday_tsmom_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.125
+        capital_authority:
+          authority_id: catalog-intraday-tsmom-profit-v3-safe-v1
+          strategy_ref: intraday-tsmom-profit-v3
+          stage: shadow_allowed
+          blockers: [p0_capital_freeze, paper_probation_not_issued]
         params:
           capital_profile: feedback_consistency_guard_cash_constrained_1x
           feedback_remediation_profile: consistency_guard_feedback_escape
@@ -100,6 +115,11 @@ data:
         universe_type: momentum_pullback_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-momentum-pullback-long-v1-safe-v1
+          strategy_ref: momentum-pullback-long-v1
+          stage: disabled
+          blockers: [strategy_disabled]
         params:
           bullish_hist_min: "0.030"
           bullish_hist_cap: "0.060"
@@ -150,6 +170,11 @@ data:
         universe_type: breakout_continuation_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-breakout-continuation-long-v1-safe-v1
+          strategy_ref: breakout-continuation-long-v1
+          stage: research_only
+          blockers: [p0_capital_freeze, research_only]
         params:
           bullish_hist_min: "0.003"
           min_bull_rsi: "54"
@@ -230,6 +255,11 @@ data:
         universe_type: mean_reversion_rebound_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-mean-reversion-rebound-long-v1-safe-v1
+          strategy_ref: mean-reversion-rebound-long-v1
+          stage: research_only
+          blockers: [p0_capital_freeze, research_only]
         params:
           bullish_hist_min: "0.003"
           bullish_hist_cap: "0.030"
@@ -283,6 +313,11 @@ data:
         universe_type: mean_reversion_exhaustion_short_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-mean-reversion-exhaustion-short-v1-safe-v1
+          strategy_ref: mean-reversion-exhaustion-short-v1
+          stage: research_only
+          blockers: [p0_capital_freeze, research_only]
         params:
           min_price_vs_session_open_bps: "20"
           min_opening_window_return_bps: "5"
@@ -350,6 +385,11 @@ data:
         universe_type: washout_rebound_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-washout-rebound-long-v1-safe-v1
+          strategy_ref: washout-rebound-long-v1
+          stage: research_only
+          blockers: [p0_capital_freeze, research_only]
         params:
           min_session_open_selloff_bps: "24"
           max_session_open_selloff_bps: "120"
@@ -425,6 +465,11 @@ data:
         universe_type: microbar_cross_sectional_pairs_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-microbar-cross-sectional-pairs-v1-safe-v1
+          strategy_ref: microbar-cross-sectional-pairs-v1
+          stage: research_only
+          blockers: [p0_capital_freeze, research_only]
         params:
           entry_minute_after_open: "60"
           exit_minute_after_open: "120"
@@ -456,6 +501,11 @@ data:
         universe_type: microbar_cross_sectional_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-microbar-volume-continuation-long-top2-v11-safe-v1
+          strategy_ref: microbar-volume-continuation-long-top2-v11
+          stage: disabled
+          blockers: [strategy_disabled]
         params:
           entry_minute_after_open: "235"
           exit_minute_after_open: "265"
@@ -476,6 +526,11 @@ data:
         universe_type: microbar_cross_sectional_short_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-microbar-prev-day-open60-short-top1-breadth-gated-v11-safe-v1
+          strategy_ref: microbar-prev-day-open60-short-top1-breadth-gated-v11
+          stage: disabled
+          blockers: [strategy_disabled]
         params:
           entry_minute_after_open: "0"
           exit_minute_after_open: "45"
@@ -498,6 +553,11 @@ data:
         universe_type: microbar_cross_sectional_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-microbar-prev-day-open45-reversal-long-top1-v11-safe-v1
+          strategy_ref: microbar-prev-day-open45-reversal-long-top1-v11
+          stage: disabled
+          blockers: [strategy_disabled]
         params:
           entry_minute_after_open: "60"
           exit_minute_after_open: "270"
@@ -518,6 +578,11 @@ data:
         universe_type: late_day_continuation_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-late-day-continuation-long-v1-safe-v1
+          strategy_ref: late-day-continuation-long-v1
+          stage: research_only
+          blockers: [p0_capital_freeze, research_only]
         params:
           bullish_hist_min: "0.004"
           bullish_hist_cap: "0.060"
@@ -593,6 +658,11 @@ data:
         universe_type: end_of_day_reversal_long_v1
         universe_symbols: ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "SNDK", "WDC"]
         max_position_pct_equity: 0.5
+        capital_authority:
+          authority_id: catalog-end-of-day-reversal-long-v1-safe-v1
+          strategy_ref: end-of-day-reversal-long-v1
+          stage: disabled
+          blockers: [strategy_disabled]
         params:
           min_bull_rsi: "34"
           max_bull_rsi: "48"

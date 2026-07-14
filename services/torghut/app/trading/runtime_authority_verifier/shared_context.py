@@ -44,9 +44,8 @@ from app.trading.runtime_ledger_source_authority import (
     runtime_ledger_promotion_source_authority_blockers,
     runtime_ledger_source_window_present,
 )
-from app.trading.promotion_authority import (
-    capital_allowed_authority,
-    capital_blocked_authority,
+from app.trading.evidence_collection_policy import (
+    evidence_admissibility_policy,
 )
 
 
@@ -423,12 +422,7 @@ def build_runtime_authority_report(
         policy=policy,
         evidence_read_error=evidence_read_error,
     )
-    final_authority_ok = not blockers
-    authority = (
-        capital_allowed_authority()
-        if final_authority_ok
-        else capital_blocked_authority(blockers=blockers)
-    )
+    evidence_policy = evidence_admissibility_policy(blockers=blockers)
     return {
         "schema_version": HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION,
         "mode": proof_mode,
@@ -437,8 +431,8 @@ def build_runtime_authority_report(
             "writes_performed": False,
             "synthetic_or_replay_only_authority_allowed": False,
         },
-        "authority_allowed": final_authority_ok,
-        **authority.as_target_fields(),
+        "authority_allowed": False,
+        **evidence_policy.as_target_fields(),
         "identity": {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,

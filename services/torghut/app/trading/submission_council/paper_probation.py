@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
 
-from app.trading.promotion_authority import (
-    paper_probation_authority,
-    source_collection_authority,
+from app.trading.evidence_collection_policy import (
+    paper_probation_policy,
+    source_collection_policy,
 )
 
 from .common import (
@@ -273,7 +273,7 @@ def runtime_ledger_paper_probation_candidates(
             "proof_mode": "probation",
             "canary_collection_authorized": True,
             "paper_probation_satisfied_for_bounded_live_paper_collection": True,
-            **paper_probation_authority(
+            **paper_probation_policy(
                 blockers=_RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS,
                 bounded_live_paper_collection_authorized=True,
             ).as_target_fields(),
@@ -414,7 +414,7 @@ def runtime_ledger_source_collection_candidates(
             "proof_mode": "probation",
             "paper_probation_satisfied_for_bounded_live_paper_collection": False,
             "canary_collection_authorized": False,
-            **source_collection_authority(
+            **source_collection_policy(
                 blockers=_RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS,
                 bounded_live_paper_collection_authorized=False,
             ).as_target_fields(),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tests.runtime_window_import.support import (
     Decimal,
+    StrategyCapitalAllocation,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     _runtime_ledger_bucket,
@@ -135,8 +136,17 @@ class TestRuntimeWindowPromotionQuality(_TestRuntimeWindowImportBase):
             )
             session.commit()
             decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+            allocation = session.execute(select(StrategyCapitalAllocation)).scalar_one()
+            windows = (
+                session.execute(select(StrategyHypothesisMetricWindow)).scalars().all()
+            )
 
-        self.assertEqual(summary["promotion_allowed"], True)
+        self.assertEqual(summary["promotion_allowed"], False)
+        self.assertEqual(summary["capital_promotion_allowed"], False)
+        self.assertEqual(summary["evidence_admissible"], True)
+        self.assertEqual(allocation.stage, "shadow")
+        self.assertEqual(allocation.capital_multiplier, "0")
+        self.assertEqual({window.capital_stage for window in windows}, {"shadow"})
         self.assertEqual(summary["runtime_ledger_observed_trading_day_count"], 20)
         self.assertEqual(
             summary["runtime_ledger_mean_daily_net_pnl_after_costs"], "600"
@@ -679,7 +689,12 @@ class TestRuntimeWindowPromotionQuality(_TestRuntimeWindowImportBase):
                 "queue_ahead_depletion_sample_count": 44,
             },
         )
-        self.assertEqual(decision.allowed, False)
+        self.assertEqual(decision.allowed, True)
+        self.assertEqual(
+            decision.reason_summary,
+            "runtime_evidence_thresholds_satisfied",
+        )
+        self.assertEqual(decision.payload_json["evidence_blocking_reasons"], [])
         self.assertEqual(
             decision.payload_json["delay_adjusted_depth_stress"],
             summary["delay_adjusted_depth_stress"],

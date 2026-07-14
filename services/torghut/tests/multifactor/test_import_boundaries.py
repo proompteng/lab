@@ -17,7 +17,6 @@ FORBIDDEN_IMPORT_FAMILIES = (
     "app.trading.proof_floor",
     "app.trading.tigerbeetle",
     "app.trading.empirical",
-    "app.trading.promotion_authority",
     "autoresearch",
     "bounded_route",
     "empirical",

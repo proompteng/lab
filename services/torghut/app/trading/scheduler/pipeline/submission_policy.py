@@ -10,9 +10,7 @@ from typing import Any, Optional, cast
 from sqlalchemy.orm import Session
 
 from ....config import settings
-from ....models import (
-    TradeDecision,
-)
+from ....models import TradeDecision
 from ...models import StrategyDecision
 from ...pair_intent import is_pair_entry
 from ...prices import MarketSnapshot
@@ -35,7 +33,10 @@ from .contexts import (
     OrderSubmissionRequest,
     RiskVerdictRequest,
 )
-from .shared import TradingPipelineRuntime
+from .strategy_capital_submission import (
+    TradingPipelineStrategyCapitalAuthorityMixin,
+    decision_execution_notional as _decision_execution_notional,
+)
 from .support import (
     allocator_rejection_reasons,
     autonomy_gate_report_is_saturated_fail_sentinel,
@@ -61,37 +62,9 @@ def _equity_limit(equity: Decimal | None, fraction: Decimal | None) -> Decimal |
     return equity * fraction
 
 
-def _decision_execution_notional(decision: StrategyDecision) -> Decimal:
-    portfolio_sizing = decision.params.get("portfolio_sizing")
-    if isinstance(portfolio_sizing, Mapping):
-        portfolio_sizing_map = cast(Mapping[str, Any], portfolio_sizing)
-        output = portfolio_sizing_map.get("output")
-        if isinstance(output, Mapping):
-            output_map = cast(Mapping[str, Any], output)
-            final_notional = optional_decimal(output_map.get("final_notional"))
-            if final_notional is not None and final_notional > 0:
-                return final_notional
-    for key in (
-        "notional",
-        "notional_usd",
-        "target_notional",
-        "target_notional_usd",
-        "final_notional",
-    ):
-        value = optional_decimal(decision.params.get(key))
-        if value is not None and value > 0:
-            return value
-    price = (
-        optional_decimal(decision.params.get("price"))
-        or decision.limit_price
-        or decision.stop_price
-    )
-    if price is not None and price > 0 and decision.qty > 0:
-        return decision.qty * price
-    return Decimal("0")
-
-
-class TradingPipelineSubmissionPolicyMixin(TradingPipelineRuntime):
+class TradingPipelineSubmissionPolicyMixin(
+    TradingPipelineStrategyCapitalAuthorityMixin
+):
     def _prepare_decision_for_submission(
         self,
         *,
@@ -796,11 +769,12 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineRuntime):
     def _submit_decision_execution(
         self,
         *,
-        session: Session,
+        context: DecisionSubmissionContext,
         decision: StrategyDecision,
-        decision_row: TradeDecision,
         policy_outcome: Any,
     ) -> bool:
+        session = context.session
+        decision_row = context.decision_row
         execution_client = self._execution_client_for_symbol(decision.symbol)
         selected_adapter_name = self._execution_client_name(execution_client)
         self._maybe_record_lean_strategy_shadow(
@@ -825,6 +799,12 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineRuntime):
                 }
             },
         )
+        if not self._strategy_capital_authority_allows_submission(
+            context,
+            decision,
+            selected_adapter_name,
+        ):
+            return False
         self.state.metrics.record_execution_submit_attempt(
             adapter=selected_adapter_name,
             side=decision.action,

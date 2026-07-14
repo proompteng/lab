@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from app.trading.scheduler.pipeline.submission_policy import (
+    _decision_execution_notional,
+)
+
 from tests.pipeline.trading_pipeline_base import (
     Decimal,
     DecisionEngine,
@@ -30,6 +34,24 @@ from tests.pipeline.trading_pipeline_base import (
 
 
 class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
+    def test_authority_notional_uses_final_executable_quantity_and_price(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime.now(timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("8"),
+            order_type="limit",
+            limit_price=Decimal("101.5"),
+            params={
+                "price": "100",
+                "portfolio_sizing": {"output": {"final_notional": "1000"}},
+            },
+        )
+
+        self.assertEqual(_decision_execution_notional(decision), Decimal("812.0"))
+
     def test_pipeline_continues_when_feature_quality_has_warning_only_null_rate(
         self,
     ) -> None:
@@ -46,7 +68,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
         }
         config.settings.trading_enabled = True
-        config.settings.trading_mode = "paper"
         config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL,MSFT"
@@ -66,6 +87,8 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(session, strategy=strategy)
                 session.commit()
 
             valid_signal = SignalEnvelope(
@@ -99,6 +122,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             execution_adapter = FakeAlpacaClient()
             ingestor = FakeIngestor([valid_signal, incomplete_signal])
             state = TradingState()
+            self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
                 order_firewall=OrderFirewall(alpaca_client),
@@ -133,7 +157,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             self.assertEqual(alpaca_client.submitted[0]["symbol"], "AAPL")
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
@@ -348,7 +371,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             )
             time_source_module._TIME_SOURCE._cache_by_account.clear()
 
-    def test_live_shadow_stage_does_not_block_operational_submission(self) -> None:
+    def test_global_live_gate_cannot_bypass_missing_strategy_authority(self) -> None:
         from app import config
 
         original = {
@@ -363,7 +386,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
         config.settings.trading_enabled = True
-        config.settings.trading_mode = "live"
         config.settings.trading_mode = "live"
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
@@ -427,16 +449,18 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 decision_rows = session.execute(select(TradeDecision)).scalars().all()
                 self.assertEqual(len(decision_rows), 1)
                 decision_row = decision_rows[0]
-                self.assertEqual(decision_row.status, "submitted")
+                self.assertEqual(decision_row.status, "blocked")
                 decision_json = decision_row.decision_json
                 assert isinstance(decision_json, dict)
-                self.assertNotEqual(
+                self.assertEqual(
                     decision_json.get("submission_stage"),
-                    "blocked_capital_stage_shadow",
+                    "blocked_strategy_capital_authority",
                 )
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
                 assert isinstance(control_plane_snapshot, dict)
-                self.assertEqual(control_plane_snapshot.get("capital_stage"), "live")
+                self.assertEqual(
+                    control_plane_snapshot.get("capital_stage"), "quarantined"
+                )
                 self.assertEqual(
                     control_plane_snapshot.get("trading_autonomy_allow_live_promotion"),
                     False,
@@ -450,15 +474,25 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     live_submission_gate.get("reason"),
                     "operational_submission_ready",
                 )
+                strategy_authority = decision_json.get("strategy_capital_authority")
+                assert isinstance(strategy_authority, dict)
+                self.assertEqual(
+                    strategy_authority.get("reason_codes"), ["authority_missing"]
+                )
+                self.assertFalse(decision_row.strategy_capital_authority_allowed)
+                self.assertIsNone(decision_row.strategy_capital_authority_id)
+                self.assertIsNone(decision_row.strategy_capital_authority_digest)
+                self.assertIsNotNone(
+                    decision_row.strategy_capital_authority_evaluated_at
+                )
 
-            self.assertNotEqual(alpaca_client.submitted, [])
-            self.assertIsNone(
-                state.metrics.submission_block_total.get("capital_stage_shadow")
+            self.assertEqual(alpaca_client.submitted, [])
+            self.assertEqual(
+                state.metrics.submission_block_total.get("authority_missing"), 1
             )
-            self.assertEqual(state.metrics.decision_state_total.get("submitted"), 1)
+            self.assertEqual(state.metrics.decision_state_total.get("blocked"), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_enabled = original[
                 "trading_autonomy_enabled"
@@ -475,6 +509,117 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
             ]
+
+    def test_matching_bounded_strategy_authority_allows_live_submission(self) -> None:
+        from app import config
+
+        original = {
+            "trading_enabled": config.settings.trading_enabled,
+            "trading_mode": config.settings.trading_mode,
+            "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
+            "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
+            "trading_universe_source": config.settings.trading_universe_source,
+            "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
+        }
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "live"
+        config.settings.trading_autonomy_enabled = False
+        config.settings.trading_autonomy_allow_live_promotion = False
+        config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+
+        try:
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name="bounded-live",
+                    description="exact strategy authority",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+                session.add(strategy)
+                session.flush()
+                authority = self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
+                session.commit()
+
+            signal = SignalEnvelope(
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                timeframe="1Min",
+                payload={
+                    "macd": {"macd": 1.2, "signal": 0.4},
+                    "rsi14": 25,
+                    "price": 100,
+                },
+            )
+            alpaca_client = FakeAlpacaClient()
+            state = TradingState()
+            self._prime_test_capital_state(state)
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca_client,
+                order_firewall=OrderFirewall(alpaca_client),
+                ingestor=FakeIngestor([signal]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=alpaca_client,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="live",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True
+
+            with patch(
+                "app.trading.submission_council._alpaca_broker_available",
+                return_value=True,
+            ):
+                pipeline.run_once()
+
+            with self.session_local() as session:
+                decision_row = session.execute(select(TradeDecision)).scalar_one()
+                self.assertEqual(decision_row.status, "submitted")
+                authority_payload = decision_row.decision_json.get("params", {}).get(
+                    "strategy_capital_authority"
+                )
+                assert isinstance(authority_payload, dict)
+                self.assertTrue(authority_payload["allowed"])
+                self.assertEqual(
+                    authority_payload["authority_id"], authority.authority_id
+                )
+                self.assertEqual(
+                    authority_payload["authority_digest"], authority.digest
+                )
+                self.assertTrue(decision_row.strategy_capital_authority_allowed)
+                self.assertEqual(
+                    decision_row.strategy_capital_authority_id,
+                    authority.authority_id,
+                )
+                self.assertEqual(
+                    decision_row.strategy_capital_authority_digest,
+                    authority.digest,
+                )
+                self.assertIsNotNone(
+                    decision_row.strategy_capital_authority_evaluated_at
+                )
+            self.assertEqual(len(alpaca_client.submitted), 1)
+        finally:
+            for name, value in original.items():
+                setattr(config.settings, name, value)
 
     def test_live_submission_allows_autonomy_eligible_canary_without_static_flag(
         self,
@@ -493,7 +638,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
         config.settings.trading_enabled = True
-        config.settings.trading_mode = "live"
         config.settings.trading_mode = "live"
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
@@ -516,6 +660,13 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
                 session.add(
                     StrategyHypothesisMetricWindow(
                         run_id="run-1",
@@ -595,6 +746,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
             )
+            self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
                 order_firewall=OrderFirewall(alpaca_client),
@@ -644,7 +796,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_enabled = original[
                 "trading_autonomy_enabled"
             ]
@@ -685,7 +836,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
         config.settings.trading_kill_switch_enabled = False
@@ -706,6 +856,13 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     max_notional_per_trade=Decimal("1000"),
                 )
                 session.add(strategy)
+                session.flush()
+                self._activate_test_capital_authority(
+                    session,
+                    strategy=strategy,
+                    account_mode="live",
+                    account_label="live",
+                )
                 session.commit()
 
             signal = SignalEnvelope(
@@ -724,6 +881,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
             )
+            self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
                 order_firewall=OrderFirewall(alpaca_client),
@@ -773,7 +931,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             self.assertNotEqual(alpaca_client.submitted, [])
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
-            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_enabled = original[
                 "trading_autonomy_enabled"

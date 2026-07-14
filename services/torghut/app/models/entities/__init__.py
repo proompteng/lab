@@ -4,6 +4,7 @@ from .broker_mutation_records import (
     BrokerMutationReceipt,
     BrokerMutationReceiptEvent,
 )
+from .model_mixins import CreatedAtMixin, TimestampMixin
 from .research_records import (
     ResearchAttempt,
     ResearchCandidate,
@@ -45,18 +46,17 @@ from .strategy_evidence import (
     WhitepaperDocument,
     WhitepaperDocumentVersion,
 )
+from .strategy_capital_records import StrategyCapitalAuthorityRecord
+from .tigerbeetle_reconciliation_records import TigerBeetleReconciliationRun
 from .trading_records import (
     MARKET_SYMBOL_MAX_LENGTH,
-    CreatedAtMixin,
     Execution,
     ExecutionOrderEvent,
     OrderFeedConsumerCursor,
     OrderFeedSourceWindow,
     Strategy,
     TigerBeetleAccountRef,
-    TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
-    TimestampMixin,
     TradeDecision,
     TradeDecisionSubmissionClaim,
 )
@@ -127,6 +127,7 @@ __all__ = [
     "SimulationRunProgress",
     "SimulationRuntimeContext",
     "Strategy",
+    "StrategyCapitalAuthorityRecord",
     "StrategyCapitalAllocation",
     "StrategyHypothesis",
     "StrategyHypothesisMetricWindow",

@@ -751,9 +751,10 @@ def test_load_runtime_authority_rows_filters_and_normalizes_bucket() -> None:
 def test_positive_20_day_source_backed_distribution_passes_thresholds() -> None:
     report = build_runtime_authority_report([_row(day) for day in range(20)])
 
-    assert report["final_authority_ok"] is True
-    assert report["authority_allowed"] is True
-    assert report["capital_promotion_allowed"] is True
+    assert report["evidence_admissible"] is True
+    assert report["final_authority_ok"] is False
+    assert report["authority_allowed"] is False
+    assert report["capital_promotion_allowed"] is False
     assert report["blockers"] == []
     assert report["next_actions"] == []
     assert report["aggregate"]["trading_day_count"] == 20
@@ -870,7 +871,9 @@ def test_cli_emits_read_only_report_from_session_fixture(
     session_local.assert_called_once_with()
     load_rows.assert_called_once()
     payload = json.loads(capsys.readouterr().out)
-    assert payload["final_authority_ok"] is True
+    assert payload["evidence_admissible"] is True
+    assert payload["final_authority_ok"] is False
+    assert payload["capital_promotion_allowed"] is False
 
 
 def test_cli_parses_window_arguments_and_fails_on_blockers(

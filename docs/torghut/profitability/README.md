@@ -33,6 +33,8 @@ readback. The audit snapshot records what was observed at its stated time.
   authority boundaries, economic ledger, execution, data, risk, and proof contracts.
 - [Research validation and promotion design](research-validation-and-promotion-design.md): objective function, KPI
   dictionary, causal data rules, statistical validation, capacity/TCA methodology, strategy queue, and capital ladder.
+- [Strategy capital authority](strategy-capital-authority.md): immutable per-strategy grant, immediate pre-broker
+  enforcement, evidence separation, catalog baseline, and live proof contract.
 - [Implementation roadmap](implementation-roadmap.md): ordered PR-sized delivery slices, tests, rollout proof,
   dependencies, and rollback posture.
 

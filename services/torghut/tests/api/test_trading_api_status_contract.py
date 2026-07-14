@@ -54,6 +54,14 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 side_effect=(
                     {"ok": True},
                     {"status": "current"},
+                    {
+                        "schema_version": "torghut.strategy-capital-authority-status.v1",
+                        "stage_counts": {
+                            "shadow_allowed": 1,
+                            "research_only": 1,
+                        },
+                        "strategies": [],
+                    },
                     {"status": "current"},
                     None,
                 ),
@@ -95,6 +103,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "shorting_metadata",
                 "tigerbeetle_ledger",
                 "runtime_ledger",
+                "strategy_capital_authorities",
                 "tca",
                 "metrics",
                 "llm",
@@ -109,6 +118,10 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
             "scheduler_startup_failed:SchedulerLeadershipError",
         )
         self.assertEqual(payload["live_submission_gate"], gate)
+        self.assertEqual(
+            payload["strategy_capital_authorities"]["stage_counts"],
+            {"shadow_allowed": 1, "research_only": 1},
+        )
         self.assertFalse(payload["action_authority"]["entry_allowed"])
         self.assertFalse(payload["action_authority"]["reduce_only_allowed"])
         self.assertFalse(payload["broker_mutation_safety"]["runtime_wired"])

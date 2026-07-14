@@ -515,7 +515,6 @@ def _promotion_state(plan: PersistencePlan) -> PromotionState:
             proof_status,
             proof_blockers,
             evidence_blocking_reasons,
-            promotion_allowed,
         ),
     )
 

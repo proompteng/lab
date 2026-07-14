@@ -299,10 +299,11 @@ def test_source_backed_rows_with_fills_and_costs_produce_evidence_fields() -> No
     assert (
         report["aggregate_summary"]["explicit_cost_coverage"]["coverage_ratio"] == "1"
     )
-    assert (
-        report["truths"]["final_500_day_profitability_proof"]["authority_proof_passed"]
-        is True
-    )
+    final_proof = report["truths"]["final_500_day_profitability_proof"]
+    assert final_proof["evidence_admissible"] is True
+    assert final_proof["authority_proof_passed"] is False
+    assert final_proof["strategy_capital_authority_required"] is True
+    assert "strategy_capital_authority_required" in final_proof["blockers"]
     assert report["profitability_claimed"] is False
 
 
