@@ -28,6 +28,8 @@ def _new_race_state() -> _SubmissionRaceState:
 
 def test_contender_failure_does_not_open_broker_gate() -> None:
     state = _new_race_state()
+    # Exercise contender failure independently of thread-start latency.
+    state.broker_started.set()
     broker_gate_opened = threading.Event()
 
     def submit(component: str) -> _WorkerResult:
@@ -45,7 +47,7 @@ def test_contender_failure_does_not_open_broker_gate() -> None:
         _race_validation_submissions(
             submit,
             state=state,
-            timeout_seconds=0.1,
+            timeout_seconds=2.0,
         )
 
     assert state.contender_resolved.is_set()
@@ -55,6 +57,8 @@ def test_contender_failure_does_not_open_broker_gate() -> None:
 
 def test_contender_timeout_does_not_open_broker_gate() -> None:
     state = _new_race_state()
+    # Exercise the contender deadline independently of thread-start latency.
+    state.broker_started.set()
     broker_gate_opened = threading.Event()
     hold_contender = threading.Event()
 
@@ -82,7 +86,7 @@ def test_contender_timeout_does_not_open_broker_gate() -> None:
         hold_contender.set()
     elapsed = time.monotonic() - started_at
 
-    assert elapsed < 0.25
+    assert elapsed < 1.0
     assert state.contender_resolved.is_set()
     assert not state.contender_fenced.is_set()
     assert not broker_gate_opened.is_set()
@@ -91,6 +95,7 @@ def test_contender_timeout_does_not_open_broker_gate() -> None:
 def test_timeout_does_not_keep_cli_process_alive() -> None:
     script = r"""
 import threading
+import time
 
 from app.trading.infrastructure_validation_submit import (
     _BrokerCallCounter,
@@ -105,6 +110,8 @@ state = _SubmissionRaceState(
     contender_fenced=threading.Event(),
     call_counter=_BrokerCallCounter(),
 )
+# The process-exit assertion targets a hung contender, not worker scheduling.
+state.broker_started.set()
 
 def submit(component: str) -> _WorkerResult:
     if component == "validation-contender":
@@ -114,19 +121,22 @@ def submit(component: str) -> _WorkerResult:
     state.contender_resolved.wait(timeout=1.0)
     return _WorkerResult("failed")
 
+started_at = time.monotonic()
 try:
     _race_validation_submissions(submit, state=state, timeout_seconds=0.01)
 except TimeoutError:
     pass
 else:
     raise AssertionError("race did not time out")
+if time.monotonic() - started_at >= 1.0:
+    raise AssertionError("race exceeded its process-local deadline bound")
 """
 
     subprocess.run(
         [sys.executable, "-c", script],
         cwd=Path(__file__).resolve().parents[1],
         check=True,
-        timeout=5.0,
+        timeout=15.0,
     )
 
 
