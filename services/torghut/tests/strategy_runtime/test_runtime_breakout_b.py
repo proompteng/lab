@@ -555,7 +555,7 @@ class TestStrategyRuntimeBreakoutB(TestCase):
         )
 
         feature_contract = normalize_feature_vector_v3(signal)
-        runtime = StrategyRuntime()
+        runtime = StrategyRuntime(trace_enabled=True)
         decision = runtime.evaluate(strategy, feature_contract, timeframe="1Sec")
 
         self.assertIsNotNone(decision)
@@ -563,6 +563,11 @@ class TestStrategyRuntimeBreakoutB(TestCase):
         self.assertEqual(decision.intent.action, "sell")
         self.assertEqual(decision.plugin_id, "breakout_continuation_long")
         self.assertIn("breakout_failed", decision.intent.rationale)
+        self.assertIsNotNone(decision.trace)
+        assert decision.trace is not None
+        exit_gate = decision.trace.gates[-1]
+        self.assertTrue(exit_gate.passed)
+        self.assertTrue(exit_gate.context["reasons"]["breakout_failure_confirmed"])
 
     def test_breakout_continuation_plugin_does_not_exit_on_momentum_rollover_above_structure(
         self,
