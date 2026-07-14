@@ -9,6 +9,91 @@ prometheus.remote_write "mimir" {
   }
 }
 
+discovery.kubernetes "torghut_cnpg_pods" {
+  role = "pod"
+
+  namespaces {
+    names = ["torghut"]
+  }
+
+  selectors {
+    role  = "pod"
+    label = "cnpg.io/cluster=torghut-db"
+  }
+}
+
+discovery.relabel "torghut_cnpg_metrics" {
+  targets = discovery.kubernetes.torghut_cnpg_pods.targets
+
+  rule {
+    action        = "keep"
+    source_labels = ["__meta_kubernetes_pod_container_port_name"]
+    regex         = "metrics"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_cnpg_io_cluster"]
+    target_label  = "cluster"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_role"]
+    target_label  = "role"
+  }
+}
+
+prometheus.relabel "torghut_cnpg_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__", "name"]
+    regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_wal_size|min_wal_size)"
+  }
+}
+
+prometheus.scrape "torghut_cnpg" {
+  job_name        = "torghut-postgres"
+  targets         = discovery.relabel.torghut_cnpg_metrics.output
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.relabel.torghut_cnpg_metrics.receiver]
+}
+
+prometheus.relabel "ceph_storage_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__"]
+    regex         = "up|ceph_health_status|ceph_health_detail|ceph_healthcheck_slow_ops|ceph_osd_(apply|commit)_latency_ms|ceph_osd_flag_(nobackfill|nodeep_scrub|norebalance|norecover|noscrub)|ceph_osd_(in|metadata|up)|ceph_pg_(active|backfill_toofull|backfill_unfound|backfill_wait|backfilling|clean|deep|degraded|down|forced_backfill|forced_recovery|incomplete|peering|recovering|recovery_toofull|recovery_unfound|recovery_wait|scrubbing|stale|total|undersized|unknown)|ceph_pool_(avail_raw|bytes_used|max_avail|metadata|percent_used|rd|rd_bytes|recovering_bytes_per_sec|recovering_objects_per_sec|wr|wr_bytes)|ceph_cluster_total_(bytes|used_bytes|used_raw_bytes)"
+  }
+}
+
+prometheus.scrape "ceph_storage" {
+  job_name = "ceph-storage"
+  targets = [
+    {
+      "__address__" = "rook-ceph-mgr.rook-ceph.svc.cluster.local:9283",
+      "namespace"   = "rook-ceph",
+      "service"     = "rook-ceph-mgr",
+    },
+  ]
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.relabel.ceph_storage_metrics.receiver]
+}
+
 prometheus.relabel "arc_resource_metrics" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 
