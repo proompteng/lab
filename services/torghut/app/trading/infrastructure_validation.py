@@ -1,11 +1,13 @@
-"""Fail-closed schema for non-promotable broker infrastructure exercises."""
+"""Fail-closed authority for non-promotable broker infrastructure exercises."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Mapping
 
 from pydantic import (
     AnyHttpUrl,
@@ -18,11 +20,14 @@ from pydantic import (
 )
 
 _MAX_PERMIT_LIFETIME = timedelta(minutes=15)
+_MAX_SUBMIT_PROOF_NOTIONAL_USD = Decimal("1")
 _VALIDATION_HOSTS = {
     "alpaca": "paper-api.alpaca.markets",
     "hyperliquid": "api.hyperliquid-testnet.xyz",
 }
 _Digest = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+_EXPECTED_TERMINAL_STATE = "no_open_orders_no_positions_no_unsettled_claims"
+_EXPECTED_TERMINAL_SCHEMA_VERSION = "torghut.infrastructure-validation-terminal.v1"
 
 
 class InfrastructureValidationPermit(BaseModel):
@@ -30,13 +35,14 @@ class InfrastructureValidationPermit(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["torghut.infrastructure-validation-permit.v1"]
+    schema_version: Literal["torghut.infrastructure-validation-permit.v2"]
     permit_id: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     purpose: Literal["control_plane_validation"]
     venue: Literal["alpaca", "hyperliquid"]
+    asset_class: Literal["equity", "crypto", "perpetual"]
     account_mode: Literal["paper", "sandbox"]
     market_session: Literal["regular", "continuous"]
-    account_label: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    account_label: Annotated[str, StringConstraints(min_length=1, max_length=64)]
     broker_base_url: AnyHttpUrl
     symbols: tuple[str, ...] = Field(min_length=1, max_length=20)
     sides: tuple[Literal["buy", "sell"], ...] = Field(min_length=1, max_length=2)
@@ -68,14 +74,11 @@ class InfrastructureValidationPermit(BaseModel):
     @field_validator("symbols")
     @classmethod
     def _normalize_symbols(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(value.strip().upper() for value in values)
+        normalized = tuple(value.strip() for value in values)
         if (
             not normalized
-            or len(set(normalized)) != len(normalized)
-            or any(
-                re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,31}", value) is None
-                for value in normalized
-            )
+            or len({value.casefold() for value in normalized}) != len(normalized)
+            or any(not value for value in normalized)
         ):
             raise ValueError("validation_symbols_must_be_unique_and_nonempty")
         return normalized
@@ -108,13 +111,62 @@ class InfrastructureValidationPermit(BaseModel):
         if self.max_loss_usd > self.max_notional_usd:
             raise ValueError("validation_permit_loss_exceeds_notional")
         expected_mode_and_session = {
-            "alpaca": ("paper", "regular"),
-            "hyperliquid": ("sandbox", "continuous"),
-        }[self.venue]
+            ("alpaca", "equity"): ("paper", "regular"),
+            ("alpaca", "crypto"): ("paper", "continuous"),
+            ("hyperliquid", "perpetual"): ("sandbox", "continuous"),
+        }.get((self.venue, self.asset_class))
+        if expected_mode_and_session is None:
+            raise ValueError("validation_permit_asset_class_boundary_mismatch")
         if (self.account_mode, self.market_session) != expected_mode_and_session:
             raise ValueError("validation_permit_venue_boundary_mismatch")
+        if any(
+            not _valid_symbol_for_asset_class(symbol, self.asset_class)
+            for symbol in self.symbols
+        ):
+            raise ValueError("validation_permit_symbol_asset_class_mismatch")
         _validate_endpoint(self.venue, str(self.broker_base_url))
         return self
+
+
+class InfrastructureValidationOrderPlan(BaseModel):
+    """One known-null Alpaca IOC submit plan bound into a validation permit."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["torghut.infrastructure-validation-order-plan.v1"]
+    venue: Literal["alpaca"]
+    asset_class: Literal["crypto"]
+    symbol: Annotated[str, StringConstraints(min_length=1, max_length=32)]
+    side: Literal["buy"]
+    qty: Decimal = Field(gt=0)
+    order_type: Literal["limit"]
+    time_in_force: Literal["ioc"]
+    limit_price: Decimal = Field(gt=0)
+    stop_price: None = None
+
+    @field_validator("symbol")
+    @classmethod
+    def _normalize_symbol(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @field_validator("qty", "limit_price")
+    @classmethod
+    def _require_finite_order_decimal(cls, value: Decimal) -> Decimal:
+        if not value.is_finite():
+            raise ValueError("infrastructure_validation_order_decimal_not_finite")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_asset_symbol(self) -> "InfrastructureValidationOrderPlan":
+        if not _valid_symbol_for_asset_class(self.symbol, self.asset_class):
+            raise ValueError("infrastructure_validation_order_symbol_invalid")
+        if not (self.qty * self.limit_price).is_finite():
+            raise ValueError("infrastructure_validation_order_notional_not_finite")
+        return self
+
+    @property
+    def notional_usd(self) -> Decimal:
+        return self.qty * self.limit_price
 
 
 def authorize_infrastructure_validation(
@@ -139,6 +191,132 @@ def authorize_infrastructure_validation(
         raise ValueError("infrastructure_validation_account_mismatch")
     _validate_endpoint(permit.venue, broker_base_url)
     return permit
+
+
+def authorize_infrastructure_validation_order(
+    permit: InfrastructureValidationPermit,
+    plan: InfrastructureValidationOrderPlan,
+    *,
+    account_label: str,
+    account_mode: str,
+    broker_base_url: str,
+    now: datetime,
+) -> InfrastructureValidationPermit:
+    """Bind one deterministic known-null IOC plan to one non-live account."""
+
+    authorize_infrastructure_validation(
+        permit,
+        account_label=account_label,
+        account_mode=account_mode,
+        broker_base_url=broker_base_url,
+        now=now,
+    )
+    if permit.venue != "alpaca" or plan.venue != permit.venue:
+        raise ValueError("infrastructure_validation_order_venue_mismatch")
+    if plan.asset_class != permit.asset_class:
+        raise ValueError("infrastructure_validation_order_asset_class_mismatch")
+    if permit.max_orders != 1 or permit.max_outstanding_intents != 1:
+        raise ValueError("infrastructure_validation_submit_requires_single_intent")
+    if plan.symbol not in permit.symbols:
+        raise ValueError("infrastructure_validation_order_symbol_out_of_bounds")
+    if plan.side not in permit.sides:
+        raise ValueError("infrastructure_validation_order_side_out_of_bounds")
+    if plan.order_type not in permit.order_types:
+        raise ValueError("infrastructure_validation_order_type_out_of_bounds")
+    if (
+        permit.symbols != (plan.symbol,)
+        or permit.sides != (plan.side,)
+        or permit.order_types != (plan.order_type,)
+    ):
+        raise ValueError("infrastructure_validation_submit_bounds_not_exact")
+    if plan.notional_usd > permit.max_notional_usd:
+        raise ValueError("infrastructure_validation_order_notional_out_of_bounds")
+    if plan.notional_usd > permit.max_loss_usd:
+        raise ValueError("infrastructure_validation_order_loss_out_of_bounds")
+    if (
+        permit.max_notional_usd > _MAX_SUBMIT_PROOF_NOTIONAL_USD
+        or permit.max_loss_usd > _MAX_SUBMIT_PROOF_NOTIONAL_USD
+        or plan.notional_usd > _MAX_SUBMIT_PROOF_NOTIONAL_USD
+    ):
+        raise ValueError("infrastructure_validation_submit_exceeds_absolute_cap")
+    if infrastructure_validation_order_plan_sha256(plan) != permit.test_plan_digest:
+        raise ValueError("infrastructure_validation_order_plan_digest_mismatch")
+    if (
+        infrastructure_validation_terminal_state_sha256()
+        != permit.expected_terminal_state_digest
+    ):
+        raise ValueError("infrastructure_validation_terminal_digest_mismatch")
+    return permit
+
+
+def infrastructure_validation_order_plan_sha256(
+    plan: InfrastructureValidationOrderPlan,
+) -> str:
+    return _canonical_model_sha256(plan)
+
+
+def infrastructure_validation_terminal_state_payload() -> dict[str, str]:
+    return {
+        "schema_version": _EXPECTED_TERMINAL_SCHEMA_VERSION,
+        "state": _EXPECTED_TERMINAL_STATE,
+    }
+
+
+def infrastructure_validation_terminal_state_sha256() -> str:
+    payload = infrastructure_validation_terminal_state_payload()
+    return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def infrastructure_validation_permit_sha256(
+    permit: InfrastructureValidationPermit,
+) -> str:
+    return _canonical_model_sha256(permit)
+
+
+def infrastructure_validation_client_order_id(
+    permit: InfrastructureValidationPermit,
+    plan: InfrastructureValidationOrderPlan,
+) -> str:
+    """Return the sole broker identity available to this immutable permit."""
+
+    identity = hashlib.sha256(
+        (
+            f"{permit.permit_id}\x1f{infrastructure_validation_permit_sha256(permit)}"
+            f"\x1f{infrastructure_validation_order_plan_sha256(plan)}"
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"ivp-{identity[:44]}"
+
+
+def infrastructure_validation_request_payload(
+    permit: InfrastructureValidationPermit,
+    plan: InfrastructureValidationOrderPlan,
+) -> dict[str, object]:
+    """Build the exact non-promotable envelope sealed into the durable intent."""
+
+    client_order_id = infrastructure_validation_client_order_id(permit, plan)
+    permit_payload = permit.model_dump(mode="json")
+    plan_payload = plan.model_dump(mode="json")
+    return {
+        "broker_request": {
+            "symbol": plan.symbol,
+            "side": plan.side,
+            "qty": str(plan.qty),
+            "order_type": plan.order_type,
+            "time_in_force": plan.time_in_force,
+            "limit_price": str(plan.limit_price),
+            "stop_price": None,
+            "extra_params": {"client_order_id": client_order_id},
+        },
+        "infrastructure_validation": {
+            "permit": permit_payload,
+            "permit_sha256": infrastructure_validation_permit_sha256(permit),
+            "test_plan": plan_payload,
+            "test_plan_sha256": infrastructure_validation_order_plan_sha256(plan),
+            "expected_terminal_state": infrastructure_validation_terminal_state_payload(),
+            "expected_terminal_state_sha256": infrastructure_validation_terminal_state_sha256(),
+        },
+    }
 
 
 def _validate_endpoint(venue: str, endpoint: str) -> None:
@@ -166,7 +344,41 @@ def _parse_endpoint(endpoint: str) -> AnyHttpUrl:
     return parsed
 
 
+def _valid_symbol_for_asset_class(symbol: str, asset_class: str) -> bool:
+    patterns = {
+        "equity": r"[A-Z][A-Z0-9.-]{0,31}",
+        "crypto": r"[A-Z0-9][A-Z0-9.-]{0,15}/[A-Z0-9][A-Z0-9.-]{0,15}",
+        "perpetual": r"(?:[A-Z0-9][A-Z0-9.-]{0,31}|[a-z][a-z0-9-]{0,15}:[A-Z0-9][A-Z0-9.-]{0,31})",
+    }
+    pattern = patterns.get(asset_class)
+    return pattern is not None and re.fullmatch(pattern, symbol) is not None
+
+
+def _canonical_model_sha256(model: BaseModel) -> str:
+    return hashlib.sha256(
+        _canonical_json(model.model_dump(mode="json")).encode("utf-8")
+    ).hexdigest()
+
+
+def _canonical_json(payload: Mapping[str, object]) -> str:
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
 __all__ = [
     "InfrastructureValidationPermit",
+    "InfrastructureValidationOrderPlan",
     "authorize_infrastructure_validation",
+    "authorize_infrastructure_validation_order",
+    "infrastructure_validation_client_order_id",
+    "infrastructure_validation_order_plan_sha256",
+    "infrastructure_validation_permit_sha256",
+    "infrastructure_validation_request_payload",
+    "infrastructure_validation_terminal_state_payload",
+    "infrastructure_validation_terminal_state_sha256",
 ]

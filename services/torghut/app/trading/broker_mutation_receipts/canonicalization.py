@@ -69,6 +69,7 @@ _PURPOSES: tuple[BrokerMutationPurpose, ...] = (
     "closeout",
     "flatten",
     "operator",
+    "control_plane_validation",
 )
 _TARGET_KINDS: tuple[BrokerMutationTargetKind, ...] = (
     "order",
@@ -616,8 +617,17 @@ def _validate_operation_contract(
             and risk_class == "risk_increasing"
             and purpose == "initial_submission"
         )
+        alpaca_validation_valid = (
+            broker_route == "alpaca"
+            and submission_claim_id is None
+            and risk_class == "risk_neutral"
+            and purpose == "control_plane_validation"
+        )
         if target.kind != "order" or not (
-            linked_claim_valid or alpaca_closeout_valid or hyperliquid_entry_valid
+            linked_claim_valid
+            or alpaca_closeout_valid
+            or hyperliquid_entry_valid
+            or alpaca_validation_valid
         ):
             raise BrokerMutationReceiptValidationError(
                 "submit_order_route_claim_contract_invalid"

@@ -15,6 +15,9 @@ from ...models import (
     ExecutionOrderEvent,
     OrderFeedSourceWindow,
 )
+from ..infrastructure_validation_records import (
+    load_infrastructure_validation_evidence,
+)
 from ..tca import upsert_execution_tca_metric
 
 
@@ -215,6 +218,15 @@ def repair_order_feed_execution_links(
     for event in events:
         if counters["events_linked"] >= bounded_limit:
             break
+        if (
+            load_infrastructure_validation_evidence(
+                session,
+                account_label=event.alpaca_account_label,
+                client_order_id=event.client_order_id,
+            )
+            is not None
+        ):
+            continue
         event_client_order_id = _order_event_client_identity(event)
         event_correlation_id = _order_event_execution_correlation_identity(event)
         execution_linkage = _resolve_execution_linkage_for_identity(

@@ -393,7 +393,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
             label="paper-x",
             api_key="k",
             secret_key="s",
-            base_url="https://api.example.invalid",
+            base_url="https://paper-api.alpaca.markets",
             enabled=True,
         )
         pipeline = scheduler._build_pipeline_for_account(lane)

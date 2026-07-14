@@ -213,14 +213,25 @@ paper probation. Those tests use one typed `InfrastructureValidationPermit`, not
 The permit is valid only when all of these are encoded and enforced:
 
 - purpose is exactly `control_plane_validation`, with no strategy/candidate promotion identity;
+- schema `torghut.infrastructure-validation-permit.v2` includes the asset class; v1 is rejected because adding that
+  required field changed the authority contract;
 - venue and account are a dedicated paper or exchange sandbox identity allowlisted as non-live at configuration and
-  broker-adapter boundaries;
+  broker-adapter boundaries; for Alpaca, the configured label must equal the broker-returned `account_number`;
+- the venue, asset, account, and session matrix is exact: Alpaca equity is paper/regular, Alpaca crypto is
+  paper/continuous, and Hyperliquid perpetual is sandbox/continuous;
 - symbols, sides, order types, maximum order/notional/loss, maximum outstanding intents, session, issuer, and a short
   expiry are explicit;
 - a known-null test plan and expected terminal economic state are immutable inputs;
 - every decision, order, activity, fill, ledger row, and report is tagged `non_promotable_validation` and excluded from
   candidate statistics, PnL targets, trial selection, and promotion evidence;
 - the permit cannot be converted, inherited, or mapped to `paper_probation` or a real-capital stage.
+
+The Slice 4 Alpaca submit exercise is narrower than the reusable permit: continuous-session crypto only, one buy limit
+IOC, one outstanding intent, one order, and at most `$1` notional and loss. The client validates the exact paper
+endpoint, broker account status, crypto status, asset class, and known-null account before I/O. The database rejects
+widened or promotable canonical intents. Broker order events resolve their validation receipt before persistence,
+receive an explicit non-promotable evidence marker, remain unlinked from executions and trade decisions, and are
+excluded from TigerBeetle and repair relinking.
 
 Issuance requires explicit infrastructure-owner approval. A research agent, candidate, global live flag, account name,
 or healthy route cannot issue it. Any attempt to target a live account, omit the non-promotable tag, exceed a bound, or

@@ -120,7 +120,8 @@ receipt or unresolved state afterward.
 - Deliverable: route all production submit entry points through one mutation coordinator using deterministic idempotency
   keys and transactional claim state.
 - Primary surfaces: broker adapters and order-routing entry points under `services/torghut/app/**`, claim migrations,
-  `services/torghut/tests/test_broker_mutation_receipts_unwired.py`, and readiness metrics.
+  `services/torghut/tests/test_broker_mutation_receipts_unwired.py`, readiness metrics, and the
+  [infrastructure-validation runbook](infrastructure-validation-runbook.md).
 - Tests: process death before claim, after claim, during broker timeout, after broker acceptance, and before receipt
   persistence; duplicate request and concurrent-leader property tests.
 - Runtime proof: fault-injected submissions under a short-lived `InfrastructureValidationPermit` produce one dedicated

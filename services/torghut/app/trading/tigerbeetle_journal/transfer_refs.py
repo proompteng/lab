@@ -22,6 +22,9 @@ from app.models import (
     TigerBeetleTransferRef,
     coerce_json_payload,
 )
+from app.trading.infrastructure_validation_records import (
+    load_infrastructure_validation_evidence,
+)
 from app.trading.tigerbeetle_ids import stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
     ACCOUNT_CODE_CASH_CONTROL,
@@ -427,6 +430,15 @@ def build_order_event_transfer_plan(
     settings_obj: Settings = settings,
     prefer_pending_ref: bool = True,
 ) -> TigerBeetleOrderEventTransferPlan | None:
+    if (
+        load_infrastructure_validation_evidence(
+            session,
+            account_label=event.alpaca_account_label,
+            client_order_id=event.client_order_id,
+        )
+        is not None
+    ):
+        return None
     transfer_kind = transfer_kind_for_event(event.event_type, event.status)
     if transfer_kind is None:
         return None

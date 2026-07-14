@@ -22,6 +22,10 @@ from ...models import (
 )
 from ..tca import upsert_execution_tca_metric
 from ..tigerbeetle_journal import TigerBeetleLedgerJournal
+from ..infrastructure_validation_records import (
+    load_infrastructure_validation_evidence,
+    tag_infrastructure_validation_event,
+)
 
 
 from .shared_context import (
@@ -360,12 +364,27 @@ def persist_order_event(
 ) -> tuple[ExecutionOrderEvent, bool]:
     """Persist a normalized event and link it to execution/trade_decision rows."""
 
+    validation_evidence = load_infrastructure_validation_evidence(
+        session,
+        account_label=event.alpaca_account_label,
+        client_order_id=event.client_order_id,
+    )
     existing = session.execute(
         select(ExecutionOrderEvent).where(
             ExecutionOrderEvent.event_fingerprint == event.event_fingerprint
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if validation_evidence is not None:
+            existing.raw_event = tag_infrastructure_validation_event(
+                existing.raw_event,
+                validation_evidence,
+            )
+            existing.execution_id = None
+            existing.trade_decision_id = None
+            session.add(existing)
+            if existing.source_window_id is not None:
+                _refresh_source_window_linkage_counts(session, existing)
         if existing.source_window_id is None and source_window_id is not None:
             existing.source_window_id = source_window_id
             session.add(existing)
@@ -376,45 +395,51 @@ def persist_order_event(
     filled_qty_delta, filled_notional_delta, fill_quantity_basis = _fill_delta_fields(
         session, event
     )
-    execution_linkage = _resolve_execution_linkage_for_identity(
-        session,
-        account_label=event.alpaca_account_label,
-        alpaca_order_id=event.alpaca_order_id,
-        client_order_id=event.client_order_id,
-        execution_correlation_id=event.execution_correlation_id,
-    )
-    execution = execution_linkage.execution
+    execution = None
     raw_event = event.raw_event
     trade_decision_id = None
-    if execution is not None:
-        trade_decision_id = execution.trade_decision_id
-    elif not execution_linkage.blockers:
-        decision_linkage = _resolve_trade_decision_linkage_for_identity(
-            session,
-            account_label=event.alpaca_account_label,
-            client_order_id=event.client_order_id,
-        )
-        if decision_linkage.trade_decision is not None:
-            trade_decision_id = decision_linkage.trade_decision.id
-        linkage_blockers = list(
-            _missing_linkage_blockers(
-                execution_missing=True,
-                decision_missing=decision_linkage.trade_decision is None
-                and not decision_linkage.blockers,
-            )
-        )
-        linkage_blockers.extend(decision_linkage.blockers)
-        raw_event = _raw_event_with_linkage_blockers(
+    if validation_evidence is not None:
+        raw_event = tag_infrastructure_validation_event(
             event.raw_event,
-            linkage_blockers,
+            validation_evidence,
         )
     else:
-        raw_event = _raw_event_with_linkage_blockers(
-            event.raw_event,
-            execution_linkage.blockers,
+        execution_linkage = _resolve_execution_linkage_for_identity(
+            session,
+            account_label=event.alpaca_account_label,
+            alpaca_order_id=event.alpaca_order_id,
+            client_order_id=event.client_order_id,
+            execution_correlation_id=event.execution_correlation_id,
         )
-    if execution is not None:
-        raw_event = _raw_event_with_linkage_blockers(event.raw_event, ())
+        execution = execution_linkage.execution
+        if execution is not None:
+            trade_decision_id = execution.trade_decision_id
+            raw_event = _raw_event_with_linkage_blockers(event.raw_event, ())
+        elif not execution_linkage.blockers:
+            decision_linkage = _resolve_trade_decision_linkage_for_identity(
+                session,
+                account_label=event.alpaca_account_label,
+                client_order_id=event.client_order_id,
+            )
+            if decision_linkage.trade_decision is not None:
+                trade_decision_id = decision_linkage.trade_decision.id
+            linkage_blockers = list(
+                _missing_linkage_blockers(
+                    execution_missing=True,
+                    decision_missing=decision_linkage.trade_decision is None
+                    and not decision_linkage.blockers,
+                )
+            )
+            linkage_blockers.extend(decision_linkage.blockers)
+            raw_event = _raw_event_with_linkage_blockers(
+                event.raw_event,
+                linkage_blockers,
+            )
+        else:
+            raw_event = _raw_event_with_linkage_blockers(
+                event.raw_event,
+                execution_linkage.blockers,
+            )
 
     row = ExecutionOrderEvent(
         event_fingerprint=event.event_fingerprint,
@@ -721,6 +746,15 @@ def link_order_events_to_execution(
     linked = 0
     latest_event: ExecutionOrderEvent | None = None
     for event in events:
+        if (
+            load_infrastructure_validation_evidence(
+                session,
+                account_label=event.alpaca_account_label,
+                client_order_id=event.client_order_id,
+            )
+            is not None
+        ):
+            continue
         event_execution_linkage = _resolve_execution_linkage_for_identity(
             session,
             account_label=execution.alpaca_account_label,

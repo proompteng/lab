@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
@@ -24,6 +25,13 @@ from .broker_mutation_receipts import (
     BrokerMutationIoPermitExpectation,
     consume_broker_mutation_io_permit,
     fingerprint_broker_endpoint,
+)
+from .infrastructure_validation import (
+    InfrastructureValidationOrderPlan,
+    InfrastructureValidationPermit,
+    authorize_infrastructure_validation_order,
+    infrastructure_validation_client_order_id,
+    infrastructure_validation_request_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -321,6 +329,58 @@ class OrderFirewall:
             ),
         )
         return self._submit_payload(request_payload, normalized_request.extra_params)
+
+    def submit_verified_infrastructure_validation_order(
+        self,
+        permit: InfrastructureValidationPermit,
+        plan: InfrastructureValidationOrderPlan,
+        *,
+        mutation_permit: BrokerMutationIoPermit,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Submit one exact paper IOC whose evidence can never promote capital."""
+
+        evaluated_at = now or datetime.now(timezone.utc)
+        authorize_infrastructure_validation_order(
+            permit,
+            plan,
+            account_label=self.account_label,
+            account_mode="paper",
+            broker_base_url=self.broker_endpoint_url,
+            now=evaluated_at,
+        )
+        client_order_id = infrastructure_validation_client_order_id(permit, plan)
+        request = AlpacaSubmitRequest(
+            symbol=plan.symbol,
+            side=plan.side,
+            qty=plan.qty,
+            order_type=plan.order_type,
+            time_in_force=plan.time_in_force,
+            limit_price=plan.limit_price,
+            stop_price=None,
+            extra_params={"client_order_id": client_order_id},
+        )
+        broker_request = alpaca_submit_request_payload(request)
+        status = self.status()
+        if status.kill_switch_enabled:
+            raise OrderFirewallBlocked(status.reason)
+        consume_broker_mutation_io_permit(
+            mutation_permit,
+            expectation=BrokerMutationIoPermitExpectation(
+                broker_route="alpaca",
+                operation="submit_order",
+                risk_class="risk_neutral",
+                account_label=self.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self.broker_endpoint_url
+                ),
+                request_payload=infrastructure_validation_request_payload(
+                    permit,
+                    plan,
+                ),
+            ),
+        )
+        return self._submit_payload(broker_request, request.extra_params)
 
     def _submit_payload(
         self,

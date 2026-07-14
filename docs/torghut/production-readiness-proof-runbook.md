@@ -101,11 +101,13 @@ python services/torghut/scripts/verify_quant_readiness.py \
   ...
 ```
 
-### 3. Live paper broker proof (blocked until mutation fencing is wired)
+### 3. Live paper broker proof
 
-Do not execute a broker mutation while `broker_mutation_safety.runtime_wired=false`. After the mutation coordinator,
-recovery worker, and reduction fencing are deployed, execute the production-real Alpaca paper proof on the next live US
-equities session only through Torghut's normal coordinator under a short-lived `InfrastructureValidationPermit`.
+Do not execute a broker mutation while `broker_mutation_safety.runtime_wired=false`. Once the bounded validation submit
+path reports wired, follow the [infrastructure-validation runbook](profitability/infrastructure-validation-runbook.md)
+exactly. Use Torghut's dedicated coordinator path and a short-lived `InfrastructureValidationPermit`; direct
+script-to-broker submission is not admissible. The continuous Alpaca crypto exercise does not need a US equities
+session. If broker I/O becomes ambiguous, do not retry: preserve the receipt for the Slice 5 recovery path.
 
 Required outcome:
 
@@ -113,9 +115,9 @@ Required outcome:
 - pre-submit validation succeeds
 - order submit succeeds
 - readback succeeds
-- terminal cancel or fill is observed
-
-Direct script-to-broker submission is not admissible proof.
+- terminal cancel, expiry, or rejection with zero filled quantity is observed
+- the account returns to zero positions and zero open orders
+- the receipt and any asynchronous order event remain explicitly non-promotable and unlinked from candidate evidence
 
 ### 4. Session readiness proof
 

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from alpaca.common.exceptions import APIError
@@ -241,13 +242,16 @@ class TorghutAlpacaClient:
         base = _normalize_alpaca_base_url(base_url or settings.apca_api_base_url)
         data_base = _normalize_alpaca_base_url(settings.apca_data_api_base_url)
 
-        use_paper = paper if paper is not None else settings.trading_mode != "live"
-        self.endpoint_class = "paper" if use_paper else "live"
         self.endpoint_url = base or (
             "https://paper-api.alpaca.markets"
-            if use_paper
+            if (paper if paper is not None else settings.trading_mode != "live")
             else "https://api.alpaca.markets"
         )
+        endpoint_class = _classify_alpaca_trading_endpoint(self.endpoint_url)
+        if paper is not None and endpoint_class != ("paper" if paper else "live"):
+            raise ValueError("alpaca_endpoint_paper_mode_mismatch")
+        self.endpoint_class = endpoint_class
+        use_paper = endpoint_class == "paper"
 
         # Broker mutations use a dedicated single-attempt client so an ambiguous
         # response cannot cause a hidden resubmission. Reads keep the SDK's retry
@@ -542,6 +546,26 @@ def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
     if trimmed.endswith("/v2"):
         return trimmed[:-3]
     return trimmed
+
+
+def _classify_alpaca_trading_endpoint(endpoint_url: str) -> str:
+    parsed = urlsplit(endpoint_url)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or parsed.port
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("alpaca_trading_endpoint_invalid")
+    if host == "paper-api.alpaca.markets":
+        return "paper"
+    if host == "api.alpaca.markets":
+        return "live"
+    raise ValueError("alpaca_trading_endpoint_unrecognized")
 
 
 __all__ = [

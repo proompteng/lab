@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest import TestCase
 
@@ -11,6 +12,13 @@ from app.trading.firewall import (
     OrderFirewall,
     OrderFirewallBlocked,
 )
+from app.trading.infrastructure_validation import (
+    InfrastructureValidationOrderPlan,
+    InfrastructureValidationPermit,
+    infrastructure_validation_order_plan_sha256,
+    infrastructure_validation_request_payload,
+    infrastructure_validation_terminal_state_sha256,
+)
 from tests.broker_mutation_test_support import (
     alpaca_broker_mutation_test_permit,
     broker_mutation_test_permit,
@@ -18,6 +26,8 @@ from tests.broker_mutation_test_support import (
 
 
 class FakeAlpacaClient:
+    endpoint_url = "https://paper-api.alpaca.markets"
+
     def __init__(self) -> None:
         self.submissions: list[dict[str, Any]] = []
         self.cancel_all_calls = 0
@@ -148,6 +158,54 @@ class TestOrderFirewall(TestCase):
 
         self.assertEqual(response["symbol"], "AAPL")
         self.assertEqual(len(client.submissions), 1)
+
+    def test_validation_submit_requires_exact_non_promotable_permit(self) -> None:
+        settings.trading_kill_switch_enabled = False
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client, account_label="dedicated-validation-paper")
+        now = datetime(2026, 7, 14, 21, 30, tzinfo=timezone.utc)
+        permit, plan = _infrastructure_validation_fixture(now)
+        mutation_permit = broker_mutation_test_permit(
+            request_payload=infrastructure_validation_request_payload(permit, plan),
+            broker_route="alpaca",
+            risk_class="risk_neutral",
+            account_label=firewall.account_label,
+            endpoint_url=firewall.broker_endpoint_url,
+        )
+
+        response = firewall.submit_verified_infrastructure_validation_order(
+            permit,
+            plan,
+            mutation_permit=mutation_permit,
+            now=now,
+        )
+
+        self.assertEqual(response["symbol"], "BTC/USD")
+        self.assertEqual(len(client.submissions), 1)
+
+    def test_validation_submit_rejects_wrong_mutation_class(self) -> None:
+        settings.trading_kill_switch_enabled = False
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client, account_label="dedicated-validation-paper")
+        now = datetime(2026, 7, 14, 21, 30, tzinfo=timezone.utc)
+        permit, plan = _infrastructure_validation_fixture(now)
+        mutation_permit = broker_mutation_test_permit(
+            request_payload=infrastructure_validation_request_payload(permit, plan),
+            broker_route="alpaca",
+            risk_class="risk_increasing",
+            account_label=firewall.account_label,
+            endpoint_url=firewall.broker_endpoint_url,
+        )
+
+        with self.assertRaises(BrokerMutationReceiptValidationError):
+            firewall.submit_verified_infrastructure_validation_order(
+                permit,
+                plan,
+                mutation_permit=mutation_permit,
+                now=now,
+            )
+
+        self.assertEqual(client.submissions, [])
 
     def test_local_request_validation_precedes_permit_consumption(self) -> None:
         settings.trading_kill_switch_enabled = False
@@ -368,3 +426,52 @@ class TestOrderFirewall(TestCase):
         self.assertEqual(client.asset_calls, ["AAPL"])
         self.assertEqual(client.order_lookup_calls, ["order-123"])
         self.assertEqual(client.client_order_lookup_calls, ["client-123"])
+
+
+def _infrastructure_validation_fixture(
+    now: datetime,
+) -> tuple[InfrastructureValidationPermit, InfrastructureValidationOrderPlan]:
+    plan = InfrastructureValidationOrderPlan.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-order-plan.v1",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "symbol": "BTC/USD",
+            "side": "buy",
+            "qty": "1",
+            "order_type": "limit",
+            "time_in_force": "ioc",
+            "limit_price": "1",
+            "stop_price": None,
+        }
+    )
+    permit = InfrastructureValidationPermit.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-permit.v2",
+            "permit_id": "ivp-firewall-test",
+            "purpose": "control_plane_validation",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "account_mode": "paper",
+            "market_session": "continuous",
+            "account_label": "dedicated-validation-paper",
+            "broker_base_url": "https://paper-api.alpaca.markets",
+            "symbols": ["BTC/USD"],
+            "sides": ["buy"],
+            "order_types": ["limit"],
+            "max_orders": 1,
+            "max_outstanding_intents": 1,
+            "max_notional_usd": "1",
+            "max_loss_usd": "1",
+            "issued_by": "infrastructure-owner",
+            "approved_by": "independent-infrastructure-owner",
+            "issued_at": now - timedelta(seconds=1),
+            "expires_at": now + timedelta(minutes=5),
+            "test_plan_digest": infrastructure_validation_order_plan_sha256(plan),
+            "expected_terminal_state": "no_open_orders_no_positions_no_unsettled_claims",
+            "expected_terminal_state_digest": infrastructure_validation_terminal_state_sha256(),
+            "evidence_tag": "non_promotable_validation",
+            "promotable": False,
+        }
+    )
+    return permit, plan
