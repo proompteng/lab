@@ -31,7 +31,10 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 `torghut-quant-control-plane.rules` plus upstream signal chain groups (`torghut-ws.rules`,
 `torghut-clickhouse.guardrails.rules`).
 
-- **TorghutQuantDecisionsStalledDuringMarketHours**: No trading decisions for 15 minutes during market hours.
+- **TorghutQuantDecisionsStalledDuringMarketHours**: No trading decisions, strategy evaluation events, or executable
+  quote-quality rejections for 15 minutes during market hours.
+- **TorghutExecutableQuoteCoverageDegradedDuringMarketHours**: At least ten candidate signals fail executable quote
+  validation in ten minutes while no decision is produced.
 - **TorghutAutonomyNoSignalStreakDuringMarketHours**: Autonomy has consecutive no-signal windows in market hours.
 - **TorghutAutonomyCursorAheadOfStreamDuringMarketHours**: Autonomy repeatedly reports cursor_ahead_of_stream in market hours.
 - **TorghutSignalContinuityActionableDuringMarketHours**: Continuity classifier is actionable for sustained windows in market hours.
@@ -204,6 +207,18 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
     ClickHouse config changed.
   - Avoid broad `max()` scans on large tables; use bounded UTC-window queries and exporter gauges first.
   - Keep monitoring on low-memory mode until fallback rate returns to zero.
+- If `TorghutExecutableQuoteCoverageDegradedDuringMarketHours` is active:
+  - Compare `increase(torghut_trading_rejected_signal_reason_total{reason=~"missing_executable_quote|spread_bps_exceeded"}[10m])`
+    with `increase(torghut_trading_strategy_events_total[10m])` and `increase(torghut_trading_decisions_total[10m])`.
+  - Inspect the latest quote source, timestamp, bid, ask, and spread for the rejected symbols. A running strategy loop
+    with fresh TA and sustained quote-quality rejects is market-data coverage degradation, not a scheduler stall.
+  - Alpaca IEX is a single-exchange feed and is not equivalent to consolidated SIP/NBBO coverage. Recent SIP latest
+    quotes require the corresponding account entitlement. Keep `TRADING_ALPACA_QUOTE_FEED=iex` until that entitlement
+    is verified; setting `sip` without entitlement produces provider errors instead of executable quotes. Confirm the
+    account tier against Alpaca's [market-data feed documentation](https://docs.alpaca.markets/us/docs/about-market-data-api)
+    and [market-data FAQ](https://docs.alpaca.markets/us/docs/market-data-faq) before changing the feed.
+  - Do not synthesize bid/ask values, use delayed SIP as a live quote, widen the executable spread bound, or expand quote
+    age to make the alert clear. Restore an entitled real-time consolidated quote source and prove fresh, bounded spreads.
 - If reject rate is high with `alpaca_order_rejected code=40310000`:
   - Compare open sell order qty vs current position qty (`qty_available` / held inventory).
   - Cancel stale duplicate sell orders; verify new rejects shift to local precheck (`precheck_sell_qty_exceeds_available`) instead of broker reject.
