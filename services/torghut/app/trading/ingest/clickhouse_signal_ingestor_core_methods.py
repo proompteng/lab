@@ -563,6 +563,7 @@ class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
                 cursor_seq=cursor_seq,
                 cursor_symbol=cursor_symbol,
                 latest_signal_at=latest_signal_at,
+                time_column=time_column,
                 poll_started_at=poll_started_at,
                 query_window_end=query_end,
                 no_signal_reason=no_signal_reason,
@@ -619,6 +620,7 @@ class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
         cursor_seq: Optional[int],
         cursor_symbol: Optional[str],
         latest_signal_at: Optional[datetime],
+        time_column: str,
         poll_started_at: datetime,
         query_window_end: datetime,
         no_signal_reason: str,
@@ -640,7 +642,9 @@ class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
                 no_signal_reason,
                 signal_lag_seconds,
             )
-        if cursor_seq is not None or cursor_symbol is not None:
+        if self._supports_seq_for_time_column(time_column) and (
+            cursor_seq is not None or cursor_symbol is not None
+        ):
             return (
                 cursor_at,
                 cursor_seq,
