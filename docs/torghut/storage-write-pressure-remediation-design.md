@@ -116,13 +116,22 @@ flowchart LR
 
 ### Seeded provisional state
 
-At cycle start, load only the current `hot` and `warm` subscription rows and seed the bounded candidate set. This
-preserves the last known-good live set while the new provider scan is incomplete. `cold` rows created by snapshot
-enrichment are neither candidates nor provisional deactivation targets. Explicit provisional cleanup tracks only the
-previously persisted hot/warm symbols. A separate final-cleanup read includes every non-off tier, including `cold`, so a
-complete successful scan preserves the existing stale-row cleanup semantics without admitting archival rows into live
-ranking. Newly observed candidates compete with the hot/warm seed. Only a candidate that enters, leaves, or materially
-changes the top-K produces a mutation.
+At cycle start, load only the current `hot` and `warm` subscription rows and freeze their symbols as the protected seed
+for the entire incomplete scan. A provisional flush must not deactivate a protected symbol or change its tier. This
+preserves the last known-good live set even when the scanned provider prefix contains candidates that would otherwise
+displace it.
+
+Provisional candidates may use only the unfilled capacity remaining in each effective tier after the protected seed is
+counted. Candidates first introduced by the current incomplete cycle may replace or deactivate one another as ranking
+improves; provisional cleanup is limited to that cycle-owned set. If the protected seed already fills a tier, membership
+changes for that tier wait for the final successful scan. On bootstrap the protected set is empty, so provisional
+reconciliation may fill the full bounded capacity.
+
+`cold` rows created by snapshot enrichment are neither candidates nor provisional deactivation targets. A separate
+final-cleanup read includes every non-off tier, including `cold`, so a complete successful scan preserves the existing
+stale-row cleanup semantics without admitting archival rows into live ranking. Only a cycle-owned candidate that enters,
+leaves, or materially changes the provisional top-K produces a mutation; the final reconciliation may replace protected
+rows after the full universe has been scanned successfully.
 
 The candidate limit continues to come from `_tier_limits()`. With the current provider cap of 200, the effective limits
 are 160 hot and 800 warm contracts.
@@ -244,6 +253,21 @@ The final ingestion boundary is a dedicated Kafka consumer:
    contiguous retained offsets. For `compact,delete` topics, require every offset still present in the captured Kafka
    record set to exist exactly once in ClickHouse while allowing numeric offsets removed by compaction.
 
+The direct-sink thresholds above apply only before the Kafka-writer cutover because that sink aggregates all records for
+a table. The writer shards every buffer by Kafka partition, so it uses partition-scoped policies sized from the observed
+post-shard rate:
+
+| Writer table class         | Size threshold | Maximum age |
+| -------------------------- | -------------: | ----------: |
+| BBO per topic partition    |     1,000 rows |   5 minutes |
+| Sparse per topic partition |       100 rows |   5 minutes |
+
+At the observed aggregate BBO rate of roughly 34-40 rows per second across 12 partitions, each partition receives only
+about 2.8-3.3 rows per second. Reusing the direct sink's 30-second age would therefore recreate roughly 85-100-row parts.
+The writer flushes on size during catch-up and on size or age in steady state. Its ClickHouse freshness budget is at
+least 360 seconds so the five-minute age bound does not falsely fail readiness. Size-triggered and age-triggered part
+sizes are measured separately.
+
 The writer first runs against staging tables. Cutover disables direct feed-to-ClickHouse writes while the writer catches
 up from Kafka, so a deployment gap is replayed rather than lost.
 
@@ -339,7 +363,9 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 - Subscription updates fall at least 95%; steady target is below 10 per second outside actual membership changes.
 - Torghut PostgreSQL WAL falls below 0.25 MiB per second during discovery.
 - Hot/warm membership remains within provider limits and snapshot freshness remains healthy.
-- BBO median part size is at least 1,000 rows.
+- During direct-sink batching, BBO median part size is at least 1,000 rows. After partition-scoped writer cutover,
+  size-triggered BBO parts contain 1,000 rows, age-triggered parts are reported separately, and the aggregate `NewPart`
+  reduction remains at least 80%.
 - ClickHouse `NewPart` and `MergeParts` rates fall at least 80%.
 - ClickHouse and Kafka row/offset reconciliation reports no unexplained gaps under the delete-only or compacted-topic
   contract above.
