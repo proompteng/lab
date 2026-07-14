@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 
 import { parseAtlasGitTree, type AtlasGitManifest } from '@proompteng/bumba/atlas/reconciliation'
@@ -285,6 +285,98 @@ const runWithConcurrency = async <T, R>(items: T[], concurrency: number, task: (
   return output
 }
 
+const buildColdPerformanceQueries = (queries: GoldQuery[], runs: number, nonce: string = randomUUID()) =>
+  Array.from({ length: runs }, (_, run) =>
+    queries.map((fixture, index) => `${fixture.query}\nAtlas latency probe ${nonce}-${run}-${index}`),
+  ).flat()
+
+const activeAtlasQueryCount = async (db: SQL) => {
+  const rows = (await db`
+    SELECT count(*)::bigint AS active
+    FROM pg_stat_activity
+    WHERE state = 'active'
+      AND query ILIKE '%atlas.chunk_embeddings%'
+      AND pid <> pg_backend_pid();
+  `) as Array<{ active: unknown }>
+  return count(rows[0]?.active)
+}
+
+const runCancellationProbe = async (input: {
+  db: SQL
+  baseUrl: string
+  repository: string
+  ref: string
+  concurrency: number
+}) => {
+  const query = `Atlas cancellation probe ${randomUUID()}`
+
+  // Populate only this query's server-side embedding cache so the canceled requests are guaranteed to reach SQL.
+  await search(input.baseUrl, input.repository, input.ref, query)
+
+  let markLockReady: () => void = () => undefined
+  let releaseLock: () => void = () => undefined
+  const lockReady = new Promise<void>((resolve) => {
+    markLockReady = resolve
+  })
+  const lockRelease = new Promise<void>((resolve) => {
+    releaseLock = resolve
+  })
+  const lockTask = input.db.begin(async (transaction) => {
+    await transaction`LOCK TABLE atlas.chunk_embeddings IN ACCESS EXCLUSIVE MODE;`
+    markLockReady()
+    await lockRelease
+  })
+
+  let reachedDatabase = false
+  let observedBlockedQueries = 0
+  let lingeringQueries = 0
+  try {
+    await Promise.race([
+      lockReady,
+      lockTask.then(() => {
+        throw new Error('Atlas cancellation probe lock transaction ended before acquiring the lock')
+      }),
+      Bun.sleep(5_000).then(() => {
+        throw new Error('timed out acquiring the Atlas cancellation probe lock')
+      }),
+    ])
+
+    const controllers = Array.from({ length: input.concurrency }, () => new AbortController())
+    const requests = controllers.map((controller) =>
+      fetch(`${input.baseUrl}/api/code-search`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query, repository: input.repository, ref: input.ref }),
+        signal: controller.signal,
+      })
+        .then((response) => response.arrayBuffer())
+        .catch(() => undefined),
+    )
+
+    const observeDeadline = Date.now() + 750
+    while (Date.now() < observeDeadline) {
+      observedBlockedQueries = Math.max(observedBlockedQueries, await activeAtlasQueryCount(input.db))
+      if (observedBlockedQueries > 0) {
+        reachedDatabase = true
+        break
+      }
+      await Bun.sleep(25)
+    }
+
+    for (const controller of controllers) controller.abort(new Error('Atlas live cancellation probe'))
+    await Promise.all(requests)
+    await Bun.sleep(1_000)
+    lingeringQueries = await activeAtlasQueryCount(input.db)
+  } finally {
+    releaseLock()
+    await lockTask
+  }
+
+  return { reachedDatabase, observedBlockedQueries, lingeringQueries }
+}
+
+export const __private = { buildColdPerformanceQueries }
+
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
   const gold = (await Bun.file(resolve(options.goldSetPath)).json()) as GoldSet
@@ -483,9 +575,9 @@ const main = async () => {
         errors.push(`source preview hash mismatch for ${path}`)
     }
 
-    const performanceInputs = Array.from({ length: options.performanceRuns }, () => gold.queries).flat()
-    const performance = await runWithConcurrency(performanceInputs, options.concurrency, (fixture) =>
-      search(options.baseUrl, options.repository, options.ref, fixture.query),
+    const performanceInputs = buildColdPerformanceQueries(gold.queries, options.performanceRuns)
+    const performance = await runWithConcurrency(performanceInputs, options.concurrency, (query) =>
+      search(options.baseUrl, options.repository, options.ref, query),
     )
     const latencies = performance.map((result) => result.durationMs)
     const p95Ms = percentile(latencies, 0.95)
@@ -493,32 +585,15 @@ const main = async () => {
     if (p95Ms >= 1_000) errors.push(`search p95 ${p95Ms.toFixed(1)}ms is not below 1000ms`)
     if (p99Ms >= 2_000) errors.push(`search p99 ${p99Ms.toFixed(1)}ms is not below 2000ms`)
 
-    const aborts = Array.from({ length: options.concurrency }, (_, index) => {
-      const controller = new AbortController()
-      const promise = fetch(`${options.baseUrl}/api/code-search`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          query: `cancellation probe ${index} ${Date.now()}`,
-          repository: options.repository,
-          ref: options.ref,
-        }),
-        signal: controller.signal,
-      }).catch(() => undefined)
-      setTimeout(() => controller.abort(), 5)
-      return promise
+    const cancellation = await runCancellationProbe({
+      db,
+      baseUrl: options.baseUrl,
+      repository: options.repository,
+      ref: options.ref,
+      concurrency: options.concurrency,
     })
-    await Promise.all(aborts)
-    await Bun.sleep(1_000)
-    const activeRows = (await db`
-      SELECT count(*)::bigint AS active
-      FROM pg_stat_activity
-      WHERE state = 'active'
-        AND query ILIKE '%atlas.chunk_embeddings%'
-        AND pid <> pg_backend_pid()
-        AND query_start < now() - interval '1 second';
-    `) as Array<{ active: unknown }>
-    const lingeringCanceledQueries = count(activeRows[0]?.active)
+    if (!cancellation.reachedDatabase) errors.push('cancellation probe did not reach PostgreSQL')
+    const lingeringCanceledQueries = cancellation.lingeringQueries
     if (lingeringCanceledQueries) errors.push(`${lingeringCanceledQueries} canceled Atlas queries remained active`)
 
     const report = {
@@ -547,7 +622,18 @@ const main = async () => {
       schema,
       processedEventsWithUnfinishedIngestions,
       goldSet: { version: gold.version, queries: goldResults },
-      performance: { requests: latencies.length, concurrency: options.concurrency, p95Ms, p99Ms },
+      performance: {
+        requests: latencies.length,
+        concurrency: options.concurrency,
+        queryEmbeddingCache: 'cold-unique-query',
+        p95Ms,
+        p99Ms,
+      },
+      cancellation: {
+        reachedDatabase: cancellation.reachedDatabase,
+        observedBlockedQueries: cancellation.observedBlockedQueries,
+        lingeringQueries: cancellation.lingeringQueries,
+      },
       lingeringCanceledQueries,
       errors,
     }
