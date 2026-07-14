@@ -32,9 +32,38 @@ spec:
         runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: await-options-schema
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /schema-gate/await-options-schema.py
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+          volumeMounts:
+            - name: options-schema-gate
+              mountPath: /schema-gate
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: torghut-options-enricher
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:80b173524e1a0307f8a5a61900bb437b8aecfbdb2eaa443cc66df72d14bde674
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
@@ -77,9 +106,9 @@ spec:
                   name: torghut-options-alpaca
                   key: APCA_API_BASE_URL
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-1924-g756d79651
+              value: v0.596.0-1932-g3cd1df85c
             - name: TORGHUT_OPTIONS_COMMIT
-              value: 756d79651464414fc3147a7852197e6197e9f007
+              value: 3cd1df85c59599c2901940ad13b0a503c1c8f635
           ports:
             - name: http
               containerPort: 8080
@@ -107,3 +136,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+      volumes:
+        - name: options-schema-gate
+          configMap:
+            name: torghut-options-schema-gate

@@ -555,13 +555,13 @@ describe('Torghut manifest scheduling', () => {
   it('bounds options archive finalization writes and rolls ConfigMap changes', () => {
     const config = parseManifest('argocd/applications/torghut-options/archive/configmap.yaml')
     const data = getAtPath(config, ['data'])
-    expect(data.OPTIONS_CONTRACT_ARCHIVE_FINALIZE_BATCH_SIZE).toBe('10')
-    expect(data.OPTIONS_CONTRACT_ARCHIVE_FINALIZE_INTERVAL_MS).toBe('2000')
+    expect(data.OPTIONS_CONTRACT_ARCHIVE_FINALIZE_BATCH_SIZE).toBe('100')
+    expect(data.OPTIONS_CONTRACT_ARCHIVE_FINALIZE_INTERVAL_MS).toBe('1000')
     expect(data.OPTIONS_CONTRACT_ARCHIVE_STATEMENT_TIMEOUT_MS).toBe('30000')
 
     const deployment = parseManifest('argocd/applications/torghut-options/archive/deployment.yaml')
     expect(getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'archive-finalize-write-budget-20260714b',
+      'proompteng.ai/config-revision': 'archive-overlay-write-budget-20260714a',
     })
   })
 

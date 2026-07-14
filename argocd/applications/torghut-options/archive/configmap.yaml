@@ -8,12 +8,11 @@ data:
   OPTIONS_CONTRACT_ARCHIVE_PAGE_LIMIT: "10000"
   OPTIONS_CONTRACT_ARCHIVE_REQUESTS_PER_SECOND: "0.1"
   OPTIONS_CONTRACT_ARCHIVE_REFRESH_SEC: "86400"
-  # Keep each catalog status transaction inside the current Ceph-backed
-  # PostgreSQL write budget. A 1,000-row batch exceeded the existing 30s
-  # statement timeout; 100-row batches completed but still produced sustained
-  # wal_buffers_full pressure. Use 10-row writes with a 2s recovery interval.
-  OPTIONS_CONTRACT_ARCHIVE_FINALIZE_BATCH_SIZE: "10"
-  OPTIONS_CONTRACT_ARCHIVE_FINALIZE_INTERVAL_MS: "2000"
+  # Migration 0067 records archive state in a narrow overlay instead of
+  # rewriting the wide catalog rows. Keep the first live rollout bounded to
+  # 100 inserts per transaction with a one-second recovery interval.
+  OPTIONS_CONTRACT_ARCHIVE_FINALIZE_BATCH_SIZE: "100"
+  OPTIONS_CONTRACT_ARCHIVE_FINALIZE_INTERVAL_MS: "1000"
   OPTIONS_CONTRACT_ARCHIVE_STATEMENT_TIMEOUT_MS: "30000"
   OPTIONS_CONTRACT_ARCHIVE_LOCK_TIMEOUT_MS: "5000"
   OPTIONS_CONTRACT_ARCHIVE_RETRY_BASE_SEC: "30"

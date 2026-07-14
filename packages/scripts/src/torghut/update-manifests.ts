@@ -265,6 +265,11 @@ const updateVersionedDeploymentManifest = (
     `$1${imageRef}`,
     label,
   )
+  updated = replaceAllIfPresent(
+    updated,
+    new RegExp(`(\\n\\s*image:\\s*)${escapeRegex(options.imageName)}(?:@sha256:[0-9a-f]{64}|:[^\\s\\n]+)?`, 'g'),
+    `$1${imageRef}`,
+  )
   updated = replaceSingle(
     updated,
     new RegExp(`(- name:\\s*${escapeRegex(versionEnvName)}\\s*\\n\\s*value:\\s*)([^\\n]+)`),
@@ -286,19 +291,6 @@ const updateVersionedDeploymentManifest = (
     manifestPath,
     imageRef,
     changed: updated !== source,
-  }
-}
-
-const activateDeploymentManifest = (result: ReturnType<typeof updateVersionedDeploymentManifest>) => {
-  const source = readFileSync(result.manifestPath, 'utf8')
-  if (/^  replicas:\s*1\s*$/m.test(source)) {
-    return result
-  }
-  const updated = replaceSingle(source, /^  replicas:\s*0\s*$/m, '  replicas: 1', 'options archive replica activation')
-  writeFileSync(result.manifestPath, updated, 'utf8')
-  return {
-    ...result,
-    changed: true,
   }
 }
 
@@ -362,15 +354,13 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
   const includeOptionsManifests = options.includeOptionsManifests ?? true
   const optionalResults = includeOptionsManifests
     ? [
-        activateDeploymentManifest(
-          updateVersionedDeploymentManifest(
-            options,
-            options.optionsArchiveManifestPath ?? defaultOptionsArchiveManifestPath,
-            'torghut-options-archive',
-            'TORGHUT_OPTIONS_VERSION',
-            'TORGHUT_OPTIONS_COMMIT',
-            'torghut-options-archive image reference',
-          ),
+        updateVersionedDeploymentManifest(
+          options,
+          options.optionsArchiveManifestPath ?? defaultOptionsArchiveManifestPath,
+          'torghut-options-archive',
+          'TORGHUT_OPTIONS_VERSION',
+          'TORGHUT_OPTIONS_COMMIT',
+          'torghut-options-archive image reference',
         ),
         updateVersionedDeploymentManifest(
           options,

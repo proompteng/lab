@@ -6,9 +6,9 @@ metadata:
   labels:
     app: torghut-options-archive
 spec:
-  # Keep the regressed archive contained until the fixed image promotion activates
-  # this replica. The startup gate below also requires migration 0063's valid index.
-  replicas: 1
+  # Image promotion and schema migration must not activate this write workload.
+  # A separate gated Git change enables it after the shared storage path is healthy.
+  replicas: 0
   revisionHistoryLimit: 2
   strategy:
     type: Recreate
@@ -22,7 +22,7 @@ spec:
       annotations:
         # Bump with archive ConfigMap changes so GitOps starts a pod with the
         # new write budget instead of leaving the existing env snapshot alive.
-        proompteng.ai/config-revision: archive-finalize-write-budget-20260714b
+        proompteng.ai/config-revision: archive-overlay-write-budget-20260714a
     spec:
       terminationGracePeriodSeconds: 45
       nodeSelector:
@@ -34,70 +34,46 @@ spec:
         runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
-      containers:
-        - name: torghut-options-archive
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:80b173524e1a0307f8a5a61900bb437b8aecfbdb2eaa443cc66df72d14bde674
+      initContainers:
+        - name: await-options-schema
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb
           imagePullPolicy: IfNotPresent
           command:
-            - /bin/sh
-            - -ec
-          args:
-            - |
-              python - <<'PY'
-              import os
-              import time
-
-              from sqlalchemy import create_engine, text
-              from sqlalchemy.exc import SQLAlchemyError
-
-              raw_dsn = os.environ["DB_DSN"]
-              if raw_dsn.startswith("postgresql://"):
-                  dsn = "postgresql+psycopg://" + raw_dsn.removeprefix("postgresql://")
-              elif raw_dsn.startswith("postgres://"):
-                  dsn = "postgresql+psycopg://" + raw_dsn.removeprefix("postgres://")
-              else:
-                  dsn = raw_dsn
-              deadline = time.monotonic() + 900
-              attempts = 0
-              while True:
-                  attempts += 1
-                  try:
-                      engine = create_engine(dsn, pool_pre_ping=True)
-                      try:
-                          with engine.connect() as connection:
-                              ready = connection.execute(
-                                  text(
-                                      """
-                                      SELECT
-                                        to_regclass('public.torghut_options_archive_membership') IS NOT NULL
-                                        AND COALESCE(
-                                          (
-                                            SELECT index_entry.indisvalid AND index_entry.indisready
-                                            FROM pg_index AS index_entry
-                                            WHERE index_entry.indexrelid = to_regclass(
-                                              'public.ix_options_catalog_active_expiration_symbol'
-                                            )
-                                          ),
-                                          FALSE
-                                        )
-                                      """
-                                  )
-                              ).scalar_one()
-                      finally:
-                          engine.dispose()
-                      if ready:
-                          print(f"options archive migration gate ready after {attempts} attempt(s)")
-                          break
-                  except SQLAlchemyError as error:
-                      print(
-                          "waiting for options archive migration: "
-                          f"attempt={attempts} last_error={type(error).__name__}"
-                      )
-                  if time.monotonic() >= deadline:
-                      raise SystemExit("options archive migrations through 0063 were not ready within 900 seconds")
-                  time.sleep(5)
-              PY
-              exec uvicorn app.options_lane.archive_service:app --host 0.0.0.0 --port 8080
+            - python
+            - /schema-gate/await-options-schema.py
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+          volumeMounts:
+            - name: options-schema-gate
+              mountPath: /schema-gate
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: torghut-options-archive
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - app.options_lane.archive_service:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8080"
           envFrom:
             - configMapRef:
                 name: torghut-options-archive-config
@@ -125,9 +101,9 @@ spec:
                   name: torghut-options-alpaca
                   key: APCA_API_BASE_URL
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-1924-g756d79651
+              value: v0.596.0-1932-g3cd1df85c
             - name: TORGHUT_OPTIONS_COMMIT
-              value: 756d79651464414fc3147a7852197e6197e9f007
+              value: 3cd1df85c59599c2901940ad13b0a503c1c8f635
           ports:
             - name: http
               containerPort: 8080
@@ -161,3 +137,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+      volumes:
+        - name: options-schema-gate
+          configMap:
+            name: torghut-options-schema-gate
