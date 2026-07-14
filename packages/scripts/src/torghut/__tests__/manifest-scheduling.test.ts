@@ -306,6 +306,8 @@ describe('Torghut manifest scheduling', () => {
     expect(data.CLICKHOUSE_WRITER_HIGH_THROUGHPUT_MAX_AGE_MS).toBe('300000')
     expect(data.CLICKHOUSE_WRITER_SPARSE_BATCH_SIZE).toBe('100')
     expect(data.CLICKHOUSE_WRITER_SPARSE_MAX_AGE_MS).toBe('300000')
+    expect(data.CLICKHOUSE_WRITER_AUTO_OFFSET_RESET).toBe('earliest')
+    expect(data.CLICKHOUSE_WRITER_DESTINATION_SUFFIX).toBe('_kafka_staging')
     expect(data.CLICKHOUSE_WRITER_REQUEST_TIMEOUT_MS).toBe('10000')
     expect(data.CLICKHOUSE_PARITY_REQUEST_TIMEOUT_MS).toBe('120000')
     expect(data.CLICKHOUSE_WRITER_KAFKA_OPERATION_TIMEOUT_MS).toBe('10000')
@@ -348,7 +350,7 @@ describe('Torghut manifest scheduling', () => {
 
     const writer = parseManifest('argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml')
     const writerContainer = getAtPath(writer, ['spec', 'template', 'spec', 'containers', 0])
-    expect(getAtPath(writer, ['spec']).replicas).toBe(0)
+    expect(getAtPath(writer, ['spec']).replicas).toBe(1)
     expect(getAtPath(writer, ['spec', 'strategy']).type).toBe('Recreate')
     expect(String(writerContainer.image)).toMatch(
       /^registry\.ide-newton\.ts\.net\/lab\/torghut-hyperliquid-feed@sha256:[0-9a-f]{64}$/,
@@ -359,6 +361,7 @@ describe('Torghut manifest scheduling', () => {
     const parityJob = getAtPath(parity, ['spec', 'jobTemplate', 'spec'])
     const parityPod = getAtPath(parityJob, ['template', 'spec'])
     const parityContainer = getAtPath(parityPod, ['containers', 0])
+    expect(getAtPath(parity, ['metadata', 'annotations'])['argocd.argoproj.io/ignore-healthcheck']).toBe('true')
     expect(getAtPath(parity, ['spec']).suspend).toBe(true)
     expect(getAtPath(parity, ['spec']).concurrencyPolicy).toBe('Forbid')
     expect(parityJob.backoffLimit).toBe(0)
