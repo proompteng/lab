@@ -145,6 +145,34 @@ def test_empty_fetch_preserves_event_cursor_tiebreakers_at_stream_tail() -> None
     assert batch.cursor_seq == 42
 
 
+def test_empty_fetch_does_not_advance_seq_aware_cursor() -> None:
+    cursor_at = datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc)
+    poll_started_at = cursor_at + timedelta(minutes=5)
+    ingestor = ClickHouseSignalIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://clickhouse.test",
+        fast_forward_stale_cursor=False,
+    )
+    ingestor.empty_batch_advance_seconds = 60
+
+    batch = ingestor._empty_fetch_batch(
+        cursor_at=cursor_at,
+        cursor_seq=42,
+        cursor_symbol="MSFT",
+        latest_signal_at=cursor_at + timedelta(minutes=1),
+        time_column="event_ts",
+        query_start=cursor_at,
+        query_end=poll_started_at,
+        poll_started_at=poll_started_at,
+    )
+
+    assert batch.no_signal_reason == "no_signals_in_window"
+    assert batch.cursor_at == cursor_at
+    assert batch.cursor_symbol == "MSFT"
+    assert batch.cursor_seq == 42
+
+
 def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)

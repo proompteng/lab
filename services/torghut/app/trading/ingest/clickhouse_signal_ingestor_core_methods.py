@@ -640,6 +640,14 @@ class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
                 no_signal_reason,
                 signal_lag_seconds,
             )
+        if cursor_seq is not None or cursor_symbol is not None:
+            return (
+                cursor_at,
+                cursor_seq,
+                cursor_symbol,
+                no_signal_reason,
+                signal_lag_seconds,
+            )
 
         cursor_advance = poll_started_at - timedelta(
             seconds=self.empty_batch_advance_seconds
