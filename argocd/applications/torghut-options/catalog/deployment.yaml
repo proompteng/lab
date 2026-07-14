@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-options-catalog
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:39b0cb77216374026b0115da1966391e4fc687a7c98df639e63c45f11bd61f87
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:2ef8e103875c4a13832a4e769433846ee3a4f72b441bb58949971c3f82db6f2f
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
@@ -77,9 +77,9 @@ spec:
                   name: torghut-ws-config
                   key: SYMBOLS_ALLOWLIST
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-1871-g0a637d4e7
+              value: v0.596.0-1876-gf94e0d809
             - name: TORGHUT_OPTIONS_COMMIT
-              value: 0a637d4e7836b4eeeab2f020cc2dfda5e22f5b0e
+              value: f94e0d809bdc8af9af91bf85c60180651427e08f
           ports:
             - name: http
               containerPort: 8080
