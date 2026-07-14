@@ -193,7 +193,7 @@ data:
                 rate(
                   cnpg_collector_wal_bytes{
                     cluster="torghut-db",
-                    job="torghut-postgres",
+                    job="cnpg-postgres",
                     role="primary"
                   }[5m]
                 )
@@ -204,7 +204,7 @@ data:
                 rate(
                   cnpg_pg_stat_checkpointer_checkpoints_req{
                     cluster="torghut-db",
-                    job="torghut-postgres",
+                    job="cnpg-postgres",
                     role="primary"
                   }[1h]
                 )
@@ -214,7 +214,7 @@ data:
                   rate(
                     cnpg_pg_stat_checkpointer_checkpoints_req{
                       cluster="torghut-db",
-                      job="torghut-postgres",
+                      job="cnpg-postgres",
                       role="primary"
                     }[1h]
                   )
@@ -223,7 +223,7 @@ data:
                   rate(
                     cnpg_pg_stat_checkpointer_checkpoints_timed{
                       cluster="torghut-db",
-                      job="torghut-postgres",
+                      job="cnpg-postgres",
                       role="primary"
                     }[1h]
                   )
@@ -246,8 +246,8 @@ data:
         rules:
           - alert: TorghutPostgresMetricsMissing
             expr: |
-              min(up{job="torghut-postgres"}) < 1 or
-              absent(up{job="torghut-postgres"})
+              min(up{cluster="torghut-db",job="cnpg-postgres"}) < 1 or
+              absent(up{cluster="torghut-db",job="cnpg-postgres"})
             for: 10m
             labels:
               severity: warning
@@ -269,6 +269,23 @@ data:
             annotations:
               summary: Ceph storage metrics are missing
               description: The Rook Ceph manager metrics endpoint has been absent or failing for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CloudNativePgWalArchiveBacklog
+            expr: |
+              max by (namespace, cluster) (
+                cnpg_collector_pg_wal_archive_status{
+                  job="cnpg-postgres",
+                  value="ready"
+                }
+              ) > 4
+            for: 15m
+            labels:
+              severity: warning
+              service: cnpg-postgres
+              team: platform
+            annotations:
+              summary: CloudNativePG WAL archive backlog is growing
+              description: {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: CephClusterHealthWarning
             expr: ceph_health_status{job="ceph-storage"} == 1
@@ -364,7 +381,7 @@ data:
               increase(
                 cnpg_pg_stat_checkpointer_checkpoints_req{
                   cluster="torghut-db",
-                  job="torghut-postgres",
+                  job="cnpg-postgres",
                   role="primary"
                 }[1h]
               ) >= 4
@@ -382,7 +399,7 @@ data:
               increase(
                 cnpg_collector_wal_buffers_full{
                   cluster="torghut-db",
-                  job="torghut-postgres",
+                  job="cnpg-postgres",
                   role="primary"
                 }[15m]
               ) > 0

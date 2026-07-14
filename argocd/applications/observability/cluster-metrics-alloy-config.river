@@ -9,21 +9,17 @@ prometheus.remote_write "mimir" {
   }
 }
 
-discovery.kubernetes "torghut_cnpg_pods" {
+discovery.kubernetes "cnpg_pods" {
   role = "pod"
-
-  namespaces {
-    names = ["torghut"]
-  }
 
   selectors {
     role  = "pod"
-    label = "cnpg.io/cluster=torghut-db"
+    label = "cnpg.io/cluster"
   }
 }
 
-discovery.relabel "torghut_cnpg_metrics" {
-  targets = discovery.kubernetes.torghut_cnpg_pods.targets
+discovery.relabel "cnpg_metrics" {
+  targets = discovery.kubernetes.cnpg_pods.targets
 
   rule {
     action        = "keep"
@@ -52,22 +48,22 @@ discovery.relabel "torghut_cnpg_metrics" {
   }
 }
 
-prometheus.relabel "torghut_cnpg_metrics" {
+prometheus.relabel "cnpg_metrics" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 
   rule {
     action        = "keep"
     source_labels = ["__name__", "name"]
-    regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_wal_size|min_wal_size)"
+    regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_wal_size|min_wal_size)"
   }
 }
 
-prometheus.scrape "torghut_cnpg" {
-  job_name        = "torghut-postgres"
-  targets         = discovery.relabel.torghut_cnpg_metrics.output
+prometheus.scrape "cnpg" {
+  job_name        = "cnpg-postgres"
+  targets         = discovery.relabel.cnpg_metrics.output
   scrape_interval = "30s"
   scrape_timeout  = "10s"
-  forward_to      = [prometheus.relabel.torghut_cnpg_metrics.receiver]
+  forward_to      = [prometheus.relabel.cnpg_metrics.receiver]
 }
 
 prometheus.relabel "ceph_storage_metrics" {
