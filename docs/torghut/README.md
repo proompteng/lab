@@ -23,6 +23,7 @@ Trust these surfaces in order:
 - Profitability architecture, audit, research gates, and implementation handoff:
   `docs/torghut/profitability/README.md`
 - Torghut app GitOps and TA replay: `argocd/applications/torghut/README.md`
+- Storage write-pressure remediation design: `docs/torghut/storage-write-pressure-remediation-design.md`
 - Trading service local development: `services/torghut/README.md`
 - Current source-state map: `docs/torghut/current-source-state.md`
 - DB migrations: `services/torghut/migrations/README.md`
