@@ -16,6 +16,7 @@ const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
   'BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS',
   'BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED',
+  'BUMBA_ATLAS_DEFAULT_REF',
   'TEMPORAL_TASK_QUEUE',
   'TEMPORAL_WORKER_DEPLOYMENT_NAME',
   'BUMBA_WORKSPACE_ROOT',
@@ -92,6 +93,7 @@ const eventConsumerConfig = (overrides: Record<string, unknown> = {}) =>
     routingAlignmentEnabled: false,
     taskQueue: 'bumba',
     repoRoot: '/workspace/lab',
+    defaultRef: 'main',
     ...overrides,
   }) as never
 
@@ -118,127 +120,59 @@ const ingestionCounts = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   }) as never
 
-test('processEvent retries a failed target when another target already has an ingestion', async () => {
-  const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
-  const started = new Set(['src/a.ts'])
-  let failB = true
-
-  const dependencies = {
-    getCounts: async () =>
-      ingestionCounts({ total: 1, terminal: 0, nonterminal: 1, oldestNonterminalStartedAt: Date.now() }),
-    getWorkflowIds: async () => new Set<string>(),
-    startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
-      if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
-      if (filePath === 'src/b.ts' && failB) throw new Error('deadline exceeded')
-      started.add(filePath)
-      return {} as never
-    },
-  }
-
-  const first = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, dependencies)
-  expect(first).toMatchObject({ dispatchAlreadyStarted: 1, dispatchFailed: 1, dispatchStarted: 0 })
-
-  failB = false
-  const second = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, dependencies)
-  expect(second).toMatchObject({ dispatchAlreadyStarted: 1, dispatchFailed: 0, dispatchStarted: 1 })
-  expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts']))
-})
-
-test('processEvent dispatches oversized events across ticks without dropping targets', async () => {
+test('processEvent starts one repository reconciliation regardless of changed-file payload size', async () => {
   const event = githubPushEvent(['src/a.ts', 'src/b.ts', 'src/c.ts'])
-  const started = new Set<string>()
-  const dependencies = {
+  const starts: Array<{ ref: string; commit: string }> = []
+  const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
     getCounts: async () => ingestionCounts(),
-    getWorkflowIds: async () =>
-      new Set(Array.from(started, (filePath) => __test__.buildEventWorkflowId(event.delivery_id, filePath))),
-    startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
-      if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
-      started.add(filePath)
+    getWorkflowIds: async () => new Set<string>(),
+    startWorkflow: async (_client, _config, _event, ref, commit) => {
+      starts.push({ ref, commit })
       return {} as never
     },
-  }
-  const config = eventConsumerConfig({ maxEventFileTargets: 2 })
+  })
 
-  const first = await __test__.processEvent({} as never, {} as never, config, event, dependencies)
-  expect(first).toMatchObject({ dispatchStarted: 2, dispatchAlreadyStarted: 0 })
-  expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts']))
-
-  const second = await __test__.processEvent({} as never, {} as never, config, event, dependencies)
-  expect(second).toMatchObject({ dispatchStarted: 1, dispatchAlreadyStarted: 2 })
-  expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts', 'src/c.ts']))
+  expect(result).toMatchObject({ dispatchStarted: 1, dispatchAlreadyStarted: 0, dispatchFailed: 0 })
+  expect(starts).toEqual([{ ref: 'main', commit: 'abcdef1234567890' }])
 })
 
-test('processEvent skips ingestion-backed workflow IDs and advances to missing targets', async () => {
-  const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
-  const knownWorkflowId = __test__.buildEventWorkflowId(event.delivery_id, 'src/a.ts')
-  const started: string[] = []
-
-  const result = await __test__.processEvent(
-    {} as never,
-    {} as never,
-    eventConsumerConfig({ maxEventFileTargets: 1 }),
-    event,
-    {
-      getCounts: async () => ingestionCounts(),
-      getWorkflowIds: async () => new Set([knownWorkflowId]),
-      startWorkflow: async (_client, _config, _event, filePath) => {
-        started.push(filePath)
-        return {} as never
-      },
+test('processEvent ignores non-default-branch pushes', async () => {
+  const event = githubPushEvent(['src/a.ts'], 'refs/heads/feature')
+  let starts = 0
+  let processed = 0
+  const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
+    startWorkflow: async () => {
+      starts += 1
+      return {} as never
     },
-  )
-
-  expect(result).toMatchObject({ dispatchStarted: 1, dispatchAlreadyStarted: 1, dispatchFailed: 0 })
-  expect(started).toEqual(['src/b.ts'])
-})
-
-test('processEvent bounds failed Temporal start attempts per tick', async () => {
-  const event = githubPushEvent(['src/a.ts', 'src/b.ts', 'src/c.ts'])
-  const attempted: string[] = []
-
-  const result = await __test__.processEvent(
-    {} as never,
-    {} as never,
-    eventConsumerConfig({ maxEventFileTargets: 2 }),
-    event,
-    {
-      getCounts: async () => ingestionCounts(),
-      getWorkflowIds: async () => new Set<string>(),
-      startWorkflow: async (_client, _config, _event, filePath) => {
-        attempted.push(filePath)
-        throw new Error('Temporal unavailable')
-      },
+    markProcessed: async () => {
+      processed += 1
     },
-  )
+  })
 
-  expect(result.dispatchFailed).toBe(2)
-  expect(attempted).toEqual(['src/a.ts', 'src/b.ts'])
+  expect(result.processed).toBe(true)
+  expect(starts).toBe(0)
+  expect(processed).toBe(1)
 })
 
-test('processEvent counts Temporal AlreadyStarted responses against the per-tick attempt budget', async () => {
-  const event = githubPushEvent(['src/a.ts', 'src/b.ts', 'src/c.ts'])
-  const attempted: string[] = []
-
-  const result = await __test__.processEvent(
-    {} as never,
-    {} as never,
-    eventConsumerConfig({ maxEventFileTargets: 2 }),
-    event,
-    {
-      getCounts: async () => ingestionCounts(),
-      getWorkflowIds: async () => new Set<string>(),
-      startWorkflow: async (_client, _config, _event, filePath) => {
-        attempted.push(filePath)
-        throw new Error('WorkflowExecutionAlreadyStarted')
-      },
+test('processEvent does not duplicate a reconciliation already recorded for the event', async () => {
+  const event = githubPushEvent(['src/a.ts'])
+  const workflowId = __test__.buildReconciliationWorkflowId(event.delivery_id)
+  let starts = 0
+  const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
+    getCounts: async () => ingestionCounts({ total: 1, nonterminal: 1, oldestNonterminalStartedAt: Date.now() }),
+    getWorkflowIds: async () => new Set([workflowId]),
+    startWorkflow: async () => {
+      starts += 1
+      return {} as never
     },
-  )
+  })
 
-  expect(result.dispatchAlreadyStarted).toBe(2)
-  expect(attempted).toEqual(['src/a.ts', 'src/b.ts'])
+  expect(result).toMatchObject({ waitingOnIngestion: true, dispatchStarted: 0, dispatchAlreadyStarted: 1 })
+  expect(starts).toBe(0)
 })
 
-test('startEventWorkflow reuses failed but not completed deterministic workflow IDs', async () => {
+test('startEventWorkflow reuses a failed deterministic reconciliation ID', async () => {
   let options: Record<string, unknown> | undefined
   const client = {
     workflow: {
@@ -250,16 +184,19 @@ test('startEventWorkflow reuses failed but not completed deterministic workflow 
   }
   const event = githubPushEvent(['src/a.ts'])
 
-  await __test__.startEventWorkflow(
-    client as never,
-    eventConsumerConfig(),
-    event,
-    'src/a.ts',
-    'refs/heads/main',
-    'abcdef1234567890',
-  )
+  await __test__.startEventWorkflow(client as never, eventConsumerConfig(), event, 'main', 'abcdef1234567890')
 
-  expect(options?.workflowId).toBe(__test__.buildEventWorkflowId(event.delivery_id, 'src/a.ts'))
+  expect(options?.workflowId).toBe(__test__.buildReconciliationWorkflowId(event.delivery_id))
+  expect(options?.workflowType).toBe('reconcileAtlasRepository')
+  expect(options?.args).toEqual([
+    {
+      repoRoot: '/workspace/lab',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      commit: 'abcdef1234567890',
+      eventDeliveryId: 'delivery-1',
+    },
+  ])
   expect(options?.workflowIdReusePolicy).toBe(2)
 })
 
@@ -292,7 +229,7 @@ test('processEvent schedules the main merge note workflow before marking a fully
   const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
   const calls: string[] = []
   const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
-    getCounts: async () => ingestionCounts({ total: 2, terminal: 2 }),
+    getCounts: async () => ingestionCounts({ total: 1, terminal: 1 }),
     getWorkflowIds: async () => new Set<string>(),
     startWorkflow: async () => {
       throw new Error('WorkflowExecutionAlreadyStarted')
@@ -306,7 +243,7 @@ test('processEvent schedules the main merge note workflow before marking a fully
   })
 
   expect(result.processed).toBe(true)
-  expect(calls).toEqual(['note:delivery-1:refs/heads/main:abcdef1234567890', 'processed:delivery-1'])
+  expect(calls).toEqual(['note:delivery-1:main:abcdef1234567890', 'processed:delivery-1'])
 })
 
 test('main branch and memory namespace helpers are stable', () => {
@@ -764,6 +701,7 @@ test('runEventConsumerTick scans past waiting rows before applying dispatch limi
       routingAlignmentEnabled: false,
       taskQueue: 'bumba',
       repoRoot: '/workspace/lab',
+      defaultRef: 'main',
     },
     inFlightDeliveries: new Set(),
     dispatchFailureCounts: new Map(),
@@ -841,6 +779,7 @@ test('runEventConsumerTick does not count already-started rows against dispatch 
       routingAlignmentEnabled: false,
       taskQueue: 'bumba',
       repoRoot: '/workspace/lab',
+      defaultRef: 'main',
     },
     inFlightDeliveries: new Set(),
     dispatchFailureCounts: failureCounts,

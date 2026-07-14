@@ -6,11 +6,21 @@ on:
       - main
     paths:
       - 'services/bumba/**'
+      - 'packages/scripts/src/atlas/**'
+      - 'docs/atlas/**'
+      - 'package.json'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
   pull_request:
     paths:
       - 'services/bumba/**'
+      - 'packages/scripts/src/atlas/**'
+      - 'docs/atlas/**'
+      - 'package.json'
+      - 'packages/scripts/package.json'
+      - 'bun.lock'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
   workflow_dispatch:
@@ -27,11 +37,41 @@ jobs:
       bun-version: 1.3.14
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build
-      lint-command: bunx oxfmt --check services/bumba packages/scripts/src/bumba argocd/applications/bumba
+      lint-command: bunx oxfmt --check services/bumba packages/scripts/src/bumba packages/scripts/src/atlas argocd/applications/bumba
       oxlint-command: bun run --cwd services/bumba lint:oxlint
       oxlint-type-command: bun run --cwd services/bumba lint:oxlint:type
-      test-command: bun run --cwd services/bumba tsc && bun run --cwd services/bumba test
+      test-command: bun run --cwd services/bumba tsc && bunx tsc --noEmit --project packages/scripts/tsconfig.atlas.json && bun run --cwd services/bumba test
     secrets: inherit
+
+  atlas-integration:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: mirror.gcr.io/pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atlas -d atlas_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ATLAS_INTEGRATION_DATABASE_URL: postgresql://atlas:atlas@127.0.0.1:5432/atlas_test?sslmode=disable
+      ATLAS_REQUIRE_INTEGRATION_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
+      - run: bun run --filter @proompteng/temporal-bun-sdk build
+      - run: bun test services/bumba/src/atlas/reconciliation.integration.test.ts
 
   nix-image:
     if: >-

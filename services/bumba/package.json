@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./atlas/file-eligibility": "./src/atlas/file-eligibility.ts",
+    "./atlas/reconciliation": "./src/atlas/reconciliation.ts"
+  },
   "scripts": {
     "dev": "bun --hot src/worker.ts",
     "start": "bun src/worker.ts",

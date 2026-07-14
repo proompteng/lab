@@ -481,8 +481,7 @@ const upsertEmbeddings = async (db: SQL, rows: ChunkRow[], embeddings: number[][
 
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
-  const databaseUrl = normalizeNonEmpty(process.env.DATABASE_URL)
-  if (!databaseUrl) fatal('DATABASE_URL is required')
+  const databaseUrl = normalizeNonEmpty(process.env.DATABASE_URL) ?? fatal('DATABASE_URL is required')
 
   const config = resolveEmbeddingConfig(options)
   if (options.apply && config.hosted && !config.apiKey) {

@@ -12,6 +12,7 @@ import { SQL } from 'bun'
 import { Effect } from 'effect'
 
 import { runCommandIsolated } from './command-runner'
+import { shouldSkipAtlasPath } from './atlas/file-eligibility'
 
 const DEFAULT_TASK_QUEUE = 'bumba'
 const DEFAULT_REF = 'main'
@@ -25,66 +26,6 @@ const DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS = 5_000
 const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
 const MAX_MERGE_DIFF_CHARS = 36_000
 const MERGE_DIFF_GIT_TIMEOUT_MS = 30_000
-
-const LOCK_FILENAMES = new Set([
-  'bun.lock',
-  'composer.lock',
-  'cargo.lock',
-  'gemfile.lock',
-  'package-lock.json',
-  'pnpm-lock.yaml',
-  'pnpm-lock.yml',
-  'poetry.lock',
-  'pipfile.lock',
-  'yarn.lock',
-  'npm-shrinkwrap.json',
-])
-
-const BINARY_EXTENSIONS = new Set([
-  '.7z',
-  '.avi',
-  '.avif',
-  '.bmp',
-  '.bz2',
-  '.class',
-  '.db',
-  '.dll',
-  '.dylib',
-  '.eot',
-  '.exe',
-  '.flac',
-  '.gif',
-  '.gz',
-  '.ico',
-  '.icns',
-  '.jar',
-  '.jpeg',
-  '.jpg',
-  '.mkv',
-  '.mov',
-  '.mp3',
-  '.mp4',
-  '.ogg',
-  '.otf',
-  '.pdf',
-  '.png',
-  '.psd',
-  '.rar',
-  '.so',
-  '.sqlite',
-  '.sqlite3',
-  '.tar',
-  '.tgz',
-  '.ttf',
-  '.wav',
-  '.webp',
-  '.woff',
-  '.woff2',
-  '.xz',
-  '.zip',
-  '.wasm',
-  '.bin',
-])
 
 const TERMINAL_INGESTION_STATUSES = new Set(['completed', 'failed', 'skipped'])
 
@@ -108,6 +49,7 @@ type IngestionCountsRow = {
 
 type GithubEventConsumerConfig = {
   enabled: boolean
+  defaultRef: string
   pollIntervalMs: number
   batchSize: number
   maxDispatchEventsPerTick: number
@@ -216,6 +158,7 @@ const resolveConsumerConfig = (): GithubEventConsumerConfig => {
   const batchSize = parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE, DEFAULT_BATCH_SIZE)
   return {
     enabled: parseBoolean(process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED, true),
+    defaultRef: normalizeOptionalText(process.env.BUMBA_ATLAS_DEFAULT_REF) ?? DEFAULT_REF,
     pollIntervalMs: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS),
     batchSize,
     maxDispatchEventsPerTick: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK, batchSize),
@@ -263,20 +206,7 @@ const withDefaultSslMode = (rawUrl: string) => {
   return url.toString()
 }
 
-const shouldSkipFilePath = (filePath: string) => {
-  const normalized = filePath.trim()
-  if (normalized.length === 0) return true
-
-  const lower = normalized.toLowerCase()
-  const base = lower.split('/').pop() ?? lower
-  const extension = base.includes('.') ? `.${base.split('.').pop()}` : ''
-
-  if (LOCK_FILENAMES.has(base)) return true
-  if (extension === '.lock') return true
-  if (BINARY_EXTENSIONS.has(extension)) return true
-
-  return false
-}
+const shouldSkipFilePath = shouldSkipAtlasPath
 
 const normalizePathList = (value: unknown) => {
   if (!Array.isArray(value)) return [] as string[]
@@ -391,6 +321,17 @@ const buildEventWorkflowId = (deliveryId: string, filePath: string) => {
   const deliveryHash = shortHash(deliveryId)
   const pathHash = shortHash(filePath)
   return `bumba-event-${deliveryHash}-${pathHash}`
+}
+
+const buildReconciliationWorkflowId = (deliveryId: string) => `bumba-atlas-reconcile-${shortHash(deliveryId)}`
+
+const resolvePayloadDefaultBranch = (payload: Record<string, unknown>, fallback: string) =>
+  normalizeOptionalText(asRecord(payload.repository)?.default_branch) ?? fallback
+
+const isDefaultBranchPush = (payload: Record<string, unknown>, fallback: string) => {
+  const defaultBranch = resolvePayloadDefaultBranch(payload, fallback)
+  const eventRef = resolveEventRef(payload)
+  return eventRef === defaultBranch || eventRef === `refs/heads/${defaultBranch}`
 }
 
 const isMainBranchRef = (ref: string) => ref === 'main' || ref === 'refs/heads/main'
@@ -996,22 +937,20 @@ const startEventWorkflow = async (
   client: TemporalClient,
   config: GithubEventConsumerConfig,
   event: GithubEventRow,
-  filePath: string,
   ref: string,
   commit: string,
 ) => {
-  const workflowId = buildEventWorkflowId(event.delivery_id, filePath)
+  const workflowId = buildReconciliationWorkflowId(event.delivery_id)
 
   return await client.workflow.start({
     workflowId,
     workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
-    workflowType: 'enrichFile',
+    workflowType: 'reconcileAtlasRepository',
     taskQueue: config.taskQueue,
     versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
     args: [
       {
         repoRoot: config.repoRoot,
-        filePath,
         repository: event.repository,
         ref,
         commit,
@@ -1082,11 +1021,12 @@ const processEvent = async (
     }
   }
 
-  const files = extractEventFilePaths(payload)
-  if (files.length === 0) {
-    console.info('[bumba][event-consumer] skipping push event without indexable files', {
+  if (!isDefaultBranchPush(payload, config.defaultRef)) {
+    console.info('[bumba][event-consumer] ignoring non-default-branch push', {
       deliveryId: event.delivery_id,
       repository: event.repository,
+      ref: resolveEventRef(payload),
+      defaultRef: resolvePayloadDefaultBranch(payload, config.defaultRef),
     })
     await markProcessed(db, event.delivery_id)
     return {
@@ -1120,49 +1060,35 @@ const processEvent = async (
     }
   }
 
-  const ref = resolveEventRef(payload)
+  const ref = resolvePayloadDefaultBranch(payload, config.defaultRef)
   const ingestionWorkflowIds = await getWorkflowIds(db, event.id)
-
+  const workflowId = buildReconciliationWorkflowId(event.delivery_id)
   let started = 0
-  let alreadyStarted = 0
+  let alreadyStarted = ingestionWorkflowIds.has(workflowId) ? 1 : 0
   let failed = 0
-  let scanned = 0
-  let startAttempts = 0
 
-  for (const filePath of files) {
-    const workflowId = buildEventWorkflowId(event.delivery_id, filePath)
-    if (ingestionWorkflowIds.has(workflowId)) {
-      alreadyStarted += 1
-      scanned += 1
-      continue
-    }
-    if (startAttempts >= config.maxEventFileTargets) break
-    scanned += 1
-    startAttempts += 1
+  if (alreadyStarted === 0) {
     try {
-      await startWorkflow(client, config, event, filePath, ref, commit)
-      started += 1
+      await startWorkflow(client, config, event, ref, commit)
+      started = 1
     } catch (error) {
       if (isWorkflowAlreadyStartedError(error)) {
-        alreadyStarted += 1
-        continue
+        alreadyStarted = 1
+      } else {
+        failed = 1
+        console.warn('[bumba][event-consumer] failed to start Atlas reconciliation workflow', {
+          deliveryId: event.delivery_id,
+          repository: event.repository,
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
-
-      failed += 1
-      console.warn('[bumba][event-consumer] failed to start enrichFile workflow', {
-        deliveryId: event.delivery_id,
-        repository: event.repository,
-        filePath,
-        error: error instanceof Error ? error.message : String(error),
-      })
     }
   }
 
-  const allTargetsDispatched = scanned === files.length && failed === 0
   ingestionCounts = await getCounts(db, event.id)
-  if (allTargetsDispatched && ingestionCounts.total >= files.length) {
+  if (ingestionCounts.total >= 1) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
-      if (isMainBranchRef(ref)) {
+      if (ingestionCounts.failed === 0) {
         await startMergeNoteWorkflow(client, config, {
           eventId: event.id,
           deliveryId: event.delivery_id,
@@ -1197,7 +1123,6 @@ const processEvent = async (
       started,
       alreadyStarted,
       failed,
-      files: files.length,
     })
     return {
       processed: false,
@@ -1211,7 +1136,6 @@ const processEvent = async (
   console.warn('[bumba][event-consumer] no workflows dispatched for event', {
     deliveryId: event.delivery_id,
     repository: event.repository,
-    files: files.length,
   })
 
   return {
@@ -1326,7 +1250,7 @@ export const createGithubEventConsumer = (
 ): GithubEventConsumer => {
   const config: GithubEventConsumerConfig = {
     ...resolveConsumerConfig(),
-    ...(configOverride ?? {}),
+    ...configOverride,
   }
 
   let db: SqlClient | null = null
@@ -1501,6 +1425,7 @@ export const createGithubEventConsumer = (
 export const __test__ = {
   buildAuthenticatedGitArgs,
   buildEventWorkflowId,
+  buildReconciliationWorkflowId,
   buildMainMergeNoteWorkflowId,
   extractEventFilePaths,
   resolveEventCommit,

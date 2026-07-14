@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: bumba
   namespace: jangar
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
   labels:
     app.kubernetes.io/name: bumba
     app.kubernetes.io/part-of: lab
@@ -132,6 +134,15 @@ spec:
               value: "2"
             - name: BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS
               value: "30000"
+            # Keep event ingestion stopped through the destructive Atlas rebuild. Re-enable only after atlas:verify.
+            - name: BUMBA_GITHUB_EVENT_CONSUMER_ENABLED
+              value: "false"
+            - name: BUMBA_ATLAS_DEFAULT_REF
+              value: main
+            - name: BUMBA_ATLAS_PREPARE_CONCURRENCY
+              value: "2"
+            - name: ATLAS_MAX_FILE_BYTES
+              value: "2000000"
             - name: REPOSITORY
               value: proompteng/lab
             - name: GITHUB_TOKEN
@@ -174,6 +185,10 @@ spec:
               value: qwen3-embedding-saigak:8b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "4096"
+            - name: ATLAS_CODE_SEARCH_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
+              value: "1024"
             - name: OPENAI_EMBEDDING_API_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_EMBEDDING_BATCH_SIZE

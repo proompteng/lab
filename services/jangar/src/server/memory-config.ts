@@ -5,6 +5,7 @@ const DEFAULT_OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
 const DEFAULT_OPENAI_EMBEDDING_DIMENSION = 1536
 const DEFAULT_SELF_HOSTED_EMBEDDING_MODEL = 'qwen3-embedding-saigak:8b'
 const DEFAULT_SELF_HOSTED_EMBEDDING_DIMENSION = 4096
+const DEFAULT_ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION = 1024
 const DEFAULT_OPENAI_EMBEDDING_TIMEOUT_MS = 15_000
 const DEFAULT_OPENAI_EMBEDDING_MAX_INPUT_CHARS = 60_000
 const DEFAULT_MEMORIES_IVFFLAT_PROBES = 10
@@ -78,6 +79,19 @@ export const resolveEmbeddingConfig = (env: EnvSource = process.env): EmbeddingC
     hosted: isHostedOpenAiBaseUrl(apiBaseUrl),
     hasExplicitBaseUrl: explicitBaseUrl != null,
     allowDevFallback: env.NODE_ENV !== 'production',
+  }
+}
+
+export const resolveAtlasCodeSearchEmbeddingConfig = (env: EnvSource = process.env): EmbeddingConfig => {
+  const base = resolveEmbeddingConfig(env)
+  return {
+    ...base,
+    model: normalizeNonEmpty(env.ATLAS_CODE_SEARCH_EMBEDDING_MODEL) ?? base.model,
+    dimension: parsePositiveInt(
+      'ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION',
+      env.ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION,
+      DEFAULT_ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION,
+    ),
   }
 }
 

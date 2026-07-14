@@ -15,7 +15,36 @@ import type { Database } from '../db'
 
 type SqlCall = { sql: string; params: readonly unknown[] }
 
-type FakeDbOptions = { extensions?: string[]; embeddingType?: string | null; selectRows?: unknown[] }
+type FakeDbOptions = {
+  extensions?: string[]
+  embeddingType?: string | null
+  selectRows?: unknown[]
+  exactRows?: unknown[]
+  lexicalRows?: unknown[]
+  semanticRows?: unknown[]
+  repositoryRows?: unknown[]
+}
+
+const readyRepositoryRow = {
+  repository_name: 'proompteng/lab',
+  repository_default_ref: 'main',
+  repository_metadata: {
+    indexStatus: 'ready',
+    indexedCommit: 'deadbeef',
+    gitHead: 'deadbeef',
+    treeHash: 'tree-hash',
+    embeddingModel: 'test-embedding',
+    embeddingDimension: 3,
+    expectedFiles: 1,
+    indexedFiles: 1,
+    missingPaths: 0,
+    stalePaths: 0,
+    hashMismatches: 0,
+    uncoveredLines: 0,
+    indexedChunks: 1,
+    embeddedChunks: 1,
+  },
+}
 
 const makeCodeSearchRow = (overrides: Partial<Record<string, unknown>> = {}) => {
   const now = new Date('2020-01-01T00:00:00.000Z')
@@ -68,7 +97,7 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
       const now = new Date('2020-01-01T00:00:00.000Z')
 
       if (normalized.includes('select extname from pg_extension')) {
-        const extensions = options.extensions ?? ['vector', 'pgcrypto']
+        const extensions = options.extensions ?? ['vector', 'pgcrypto', 'pg_trgm']
         return { rows: extensions.map((ext) => ({ extname: ext })) as R[] }
       }
 
@@ -154,6 +183,22 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
         return { rows: [] as R[] }
       }
 
+      if (normalized.includes('from "atlas"."repositories"')) {
+        return { rows: (options.repositoryRows ?? [readyRepositoryRow]) as R[] }
+      }
+
+      if (normalized.includes(' as exact_rank')) {
+        return { rows: (options.exactRows ?? options.selectRows ?? []) as R[] }
+      }
+
+      if (normalized.includes(' as lexical_rank')) {
+        return { rows: (options.lexicalRows ?? options.selectRows ?? []) as R[] }
+      }
+
+      if (normalized.includes('from atlas.chunk_embeddings as chunk_embeddings')) {
+        return { rows: (options.semanticRows ?? options.selectRows ?? []) as R[] }
+      }
+
       if (normalized.includes('from "atlas"."file_chunks"')) {
         return { rows: (options.selectRows ?? []) as R[] }
       }
@@ -208,6 +253,8 @@ describe('atlas store', () => {
       'OPENAI_EMBEDDING_MODEL',
       'OPENAI_EMBEDDING_DIMENSION',
       'OPENAI_EMBEDDING_TIMEOUT_MS',
+      'ATLAS_CODE_SEARCH_EMBEDDING_MODEL',
+      'ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION',
       'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
       'ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS',
       'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
@@ -220,8 +267,13 @@ describe('atlas store', () => {
     process.env.OPENAI_EMBEDDING_MODEL = 'test-embedding'
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
     process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '1000'
+    process.env.ATLAS_CODE_SEARCH_EMBEDDING_MODEL = 'test-embedding'
+    process.env.ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION = '3'
     process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = '1000'
     process.env.ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = '1'
+    globalThis.fetch = vi.fn(async () =>
+      Response.json({ data: [{ embedding: [0.1, 0.2, 0.3] }] }),
+    ) as unknown as typeof fetch
   })
 
   afterEach(() => {
@@ -305,7 +357,7 @@ describe('atlas store', () => {
     ).rejects.toThrow(/embedding dimension mismatch/i)
   })
 
-  it('uses partial null-commit conflict target for file version upserts', async () => {
+  it('replaces the one current file version when content changes', async () => {
     const { db, calls } = makeFakeDb()
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
@@ -327,36 +379,9 @@ describe('atlas store', () => {
     const sql = calls.find((call) => call.sql.toLowerCase().includes('insert into "atlas"."file_versions"'))?.sql
     expect(sql).toBeTruthy()
     const normalized = String(sql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).toContain(
-      'on conflict ("file_key_id", "repository_ref", "content_hash") where "repository_commit" is null do update',
-    )
-  })
-
-  it('uses commit-aware conflict target for file version upserts with commit', async () => {
-    const { db, calls } = makeFakeDb()
-    const store = createPostgresAtlasStore({
-      url: 'postgresql://user:pass@localhost:5432/db',
-      createDb: () => db,
-    })
-
-    await store.upsertFileVersion({
-      fileKeyId: 'file-key-1',
-      repositoryRef: 'main',
-      repositoryCommit: 'deadbeef',
-      contentHash: 'abc123',
-      language: 'typescript',
-      byteSize: 42,
-      lineCount: 3,
-      metadata: {},
-      sourceTimestamp: null,
-    })
-
-    const sql = calls.find((call) => call.sql.toLowerCase().includes('insert into "atlas"."file_versions"'))?.sql
-    expect(sql).toBeTruthy()
-    const normalized = String(sql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).toContain(
-      'on conflict ("file_key_id", "repository_ref", "repository_commit", "content_hash") do update',
-    )
+    expect(normalized).toContain('on conflict ("file_key_id") do update')
+    expect(normalized).toContain('"repository_commit" = excluded.repository_commit')
+    expect(normalized).toContain('"content_hash" = excluded.content_hash')
   })
 
   it('uses the embedding-specific base URL for semantic code-search query embeddings', async () => {
@@ -386,9 +411,13 @@ describe('atlas store', () => {
           ? firstCall[0].toString()
           : firstCall[0].url
     expect(requestUrl).toBe('http://embedding.local/v1/embeddings')
+    const body = JSON.parse(String(firstCall[1]?.body)) as { input: string }
+    expect(body.input).toBe(
+      'Instruct: Given a query, retrieve relevant source-code chunks from the repository\nQuery: where is source search implemented',
+    )
   })
 
-  it('keeps the default semantic code-search candidate set bounded', async () => {
+  it('searches chunk embeddings directly through the full ANN index contract', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({
         data: [{ embedding: [0.1, 0.2, 0.3] }],
@@ -404,17 +433,31 @@ describe('atlas store', () => {
 
     await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
 
-    const semanticSql = calls.find((call) => call.sql.toLowerCase().includes('with candidate_chunks'))
+    const semanticSql = calls.find((call) =>
+      call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings'),
+    )
     expect(semanticSql).toBeDefined()
-    expect(semanticSql?.params).toContain(100)
-    expect(semanticSql?.params).not.toContain(5_000)
+    expect(semanticSql?.sql.toLowerCase()).not.toContain('candidate_chunks')
+    expect(semanticSql?.sql.toLowerCase()).toContain('order by chunk_embeddings.embedding <=> $')
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))).toBe(true)
   })
 
-  it('reports sampled semantic code-search coverage health', async () => {
-    const { db } = makeFakeDb({
-      selectRows: [
-        { chunk_id: 'chunk-1', embedded_chunk_id: 'chunk-1' },
-        { chunk_id: 'chunk-2', embedded_chunk_id: null },
+  it('reports complete reconciliation metadata without sampling rows', async () => {
+    const { db, calls } = makeFakeDb({
+      repositoryRows: [
+        {
+          ...readyRepositoryRow,
+          repository_metadata: {
+            ...readyRepositoryRow.repository_metadata,
+            indexStatus: 'failed',
+            expectedFiles: 12,
+            indexedFiles: 11,
+            missingPaths: 1,
+            indexedChunks: 20,
+            embeddedChunks: 19,
+            lastError: 'missing path',
+          },
+        },
       ],
     })
     const store = createPostgresAtlasStore({
@@ -426,53 +469,60 @@ describe('atlas store', () => {
       repository: 'proompteng/lab',
       ref: 'main',
       pathPrefix: 'services/jangar',
-      minSemanticCoverage: 0.75,
-      healthSampleLimit: 2,
     })
 
-    expect(health.status).toBe('degraded')
-    expect(health.sample).toMatchObject({ chunks: 2, embedded: 1, missing: 1, coverage: 0.5 })
+    expect(health.status).toBe('critical')
+    expect(health.indexStatus).toBe('failed')
+    expect(health.corpus).toMatchObject({ expectedFiles: 12, indexedFiles: 11, missingPaths: 1 })
+    expect(health.sample).toMatchObject({ limit: 20, chunks: 20, embedded: 19, missing: 1, coverage: 0.95 })
+    expect(health.lastError).toBe('missing path')
     expect(health.model).toBe('test-embedding')
     expect(health.dimension).toBe(3)
+    expect(
+      calls.some((call) => {
+        const normalized = call.sql.toLowerCase()
+        return normalized.includes('select') && normalized.includes('from atlas.file_chunks')
+      }),
+    ).toBe(false)
   })
 
-  it('keeps default semantic code-search health sampling bounded', async () => {
-    const { db, calls } = makeFakeDb({
-      selectRows: [{ chunk_id: 'chunk-1', embedded_chunk_id: 'chunk-1' }],
+  it('rejects search unless the complete corpus is ready', async () => {
+    const { db } = makeFakeDb({
+      repositoryRows: [
+        {
+          ...readyRepositoryRow,
+          repository_metadata: { ...readyRepositoryRow.repository_metadata, indexStatus: 'building' },
+        },
+      ],
     })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
       createDb: () => db,
     })
 
-    const health = await store.codeSearchHealth({
-      repository: 'proompteng/lab',
-      ref: 'main',
-      pathPrefix: 'services/jangar',
-    })
-
-    const healthSql = calls.find((call) => call.sql.toLowerCase().includes('left join "atlas"."chunk_embeddings"'))
-    expect(health.sample.limit).toBe(50)
-    expect(healthSql?.params).toContain(50)
-    expect(healthSql?.params).not.toContain(500)
+    await expect(store.codeSearch({ query: 'source search', repository: 'proompteng/lab' })).rejects.toThrow(
+      /not ready.*building/i,
+    )
   })
 
   it('ranks exact identifier matches above weaker lexical-only matches', async () => {
+    const weak = makeCodeSearchRow({
+      chunk_id: 'weak-chunk',
+      chunk_content: 'const flag = process.env.otherValue',
+      lexical_rank: 0.9,
+      file_key_path: 'weak.ts',
+    })
+    const exact = makeCodeSearchRow({
+      chunk_id: 'exact-chunk',
+      chunk_content: 'const flag = process.env.BUMBA_ATLAS_CHUNK_INDEXING',
+      exact_rank: 0.95,
+      lexical_rank: 0.1,
+      file_key_path: 'exact.ts',
+    })
     const { db } = makeFakeDb({
-      selectRows: [
-        makeCodeSearchRow({
-          chunk_id: 'weak-chunk',
-          chunk_content: 'const flag = process.env.otherValue',
-          lexical_rank: 0.9,
-          file_key_path: 'weak.ts',
-        }),
-        makeCodeSearchRow({
-          chunk_id: 'exact-chunk',
-          chunk_content: 'const flag = process.env.BUMBA_ATLAS_CHUNK_INDEXING',
-          lexical_rank: 0.1,
-          file_key_path: 'exact.ts',
-        }),
-      ],
+      exactRows: [exact],
+      lexicalRows: [weak, exact],
+      semanticRows: [],
     })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
@@ -490,7 +540,7 @@ describe('atlas store', () => {
     expect(matches[0]?.signals.matchedIdentifiers).toEqual(['BUMBA_ATLAS_CHUNK_INDEXING'])
   })
 
-  it('applies indexed latest file version filter in code search queries', async () => {
+  it('queries only the ready current commit and requested filters', async () => {
     const now = new Date('2020-01-01T00:00:00.000Z')
     const lexicalRow = {
       chunk_id: 'chunk-1',
@@ -527,7 +577,7 @@ describe('atlas store', () => {
       lexical_rank: 0.42,
     }
 
-    const { db, calls } = makeFakeDb({ selectRows: [lexicalRow] })
+    const { db, calls } = makeFakeDb({ exactRows: [], lexicalRows: [lexicalRow], semanticRows: [] })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
       createDb: () => db,
@@ -543,20 +593,16 @@ describe('atlas store', () => {
     })
 
     expect(matches).toHaveLength(1)
-    const lexicalSql = calls.find((call) => call.sql.toLowerCase().includes('from "atlas"."file_chunks"'))?.sql
+    const lexicalSql = calls.find((call) => call.sql.toLowerCase().includes(' as lexical_rank'))?.sql
     expect(lexicalSql).toBeTruthy()
 
     const normalized = String(lexicalSql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).toContain('not exists ( select 1 from atlas.file_versions as newer_file_versions')
-    expect(normalized).toContain('newer_file_versions.file_key_id = file_versions.file_key_id')
-    expect(normalized).toContain('newer_file_versions.repository_ref = file_versions.repository_ref')
-    expect(normalized).toContain('newer_file_versions.language =')
-    expect(normalized).toContain(
-      '( newer_file_versions.updated_at, newer_file_versions.created_at, newer_file_versions.id ) >',
-    )
-    expect(normalized).toContain('"repositories"."name" =')
-    expect(normalized).toContain('"file_versions"."repository_ref" =')
-    expect(normalized).toContain('"file_keys"."path" like')
-    expect(normalized).toContain('"file_versions"."language" =')
+    expect(normalized).not.toContain('newer_file_versions')
+    expect(normalized).toContain("repositories.metadata->>'indexstatus' = 'ready'")
+    expect(normalized).toContain("file_versions.repository_commit = repositories.metadata->>'indexedcommit'")
+    expect(normalized).toContain('repositories.name =')
+    expect(normalized).toContain('file_versions.repository_ref =')
+    expect(normalized).toContain('file_keys.path like')
+    expect(normalized).toContain('file_versions.language =')
   })
 })

@@ -2,6 +2,9 @@
 
 Temporal worker that enriches repository files using AST context + self-hosted models and stores embeddings in the Jangar database.
 
+Atlas ingestion correctness, production rollout, and agent verification requirements are defined in
+`../../docs/atlas/production-code-search-design.md`.
+
 ## Notes
 
 - Schema is owned by Jangar; this service only reads/writes through shared tables.

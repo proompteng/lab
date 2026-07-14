@@ -105,6 +105,28 @@ describe('bumba ast extraction', () => {
   })
 })
 
+describe('Atlas chunk coverage', () => {
+  it('indexes exported arrow functions and covers every nonblank source line', async () => {
+    const source = [
+      "import { sql } from 'kysely'",
+      '',
+      '// Repository-wide code search handler.',
+      'export const createAtlasCodeSearchHandlers = ({ db }: { db: unknown }) => {',
+      "  const mode = 'ready'",
+      '  return { db, mode }',
+      '}',
+      '',
+      'const trailingConfiguration = { enabled: true }',
+    ].join('\n')
+
+    const chunks = await __test__.extractFileChunks(source, 'services/jangar/src/server/atlas-code-search.ts')
+
+    expect(chunks.some((chunk) => chunk.content.includes('createAtlasCodeSearchHandlers'))).toBe(true)
+    expect(chunks.every((chunk) => chunk.metadata.chunkerVersion === __test__.ATLAS_CHUNKER_VERSION)).toBe(true)
+    expect(() => __test__.assertChunkCoverage(source, chunks)).not.toThrow()
+  })
+})
+
 describe('bumba readRepoFile', () => {
   it('reads file content from git objects when commit is available', async () => {
     const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-'))

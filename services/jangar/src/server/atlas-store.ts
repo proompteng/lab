@@ -9,7 +9,7 @@ import {
   type AtlasCodeSearchInput,
   type AtlasCodeSearchMatch,
 } from './atlas-code-search'
-import { resolveEmbeddingConfig } from './memory-config'
+import { resolveAtlasCodeSearchEmbeddingConfig, resolveEmbeddingConfig } from './memory-config'
 
 export type {
   AtlasCodeSearchHealth,
@@ -405,6 +405,16 @@ const loadEmbeddingConfig = () => {
   return config
 }
 
+const loadAtlasCodeSearchEmbeddingConfig = () => {
+  const config = resolveAtlasCodeSearchEmbeddingConfig(process.env)
+  if (config.hosted && !config.apiKey) {
+    throw new Error(
+      'missing OPENAI_API_KEY; set it or point OPENAI_API_BASE_URL at an OpenAI-compatible endpoint (e.g. Ollama)',
+    )
+  }
+  return config
+}
+
 const embedText = async (
   text: string,
   config: ReturnType<typeof loadEmbeddingConfig> = loadEmbeddingConfig(),
@@ -449,7 +459,7 @@ const parseDate = (value?: string | Date | null) => {
   return trimmed.length > 0 ? trimmed : null
 }
 
-const parseMetadata = (metadata?: Record<string, unknown>) => JSON.stringify(metadata ?? {})
+const parseMetadata = (metadata?: Record<string, unknown>) => metadata ?? {}
 
 const toIso = (value: string | Date | null | undefined) => {
   if (!value) return null
@@ -465,6 +475,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   const db = resolved.db
   let schemaReady: Promise<void> | null = null
   const expectedEmbeddingDimension = resolveEmbeddingConfig(process.env).dimension
+  const expectedChunkEmbeddingDimension = resolveAtlasCodeSearchEmbeddingConfig(process.env).dimension
 
   const ensureEmbeddingDimensionMatches = async () => {
     const { rows } = await sql<{ embedding_type: string | null }>`
@@ -515,11 +526,11 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const actualDimension = match ? Number.parseInt(match[1] ?? '', 10) : null
     if (!actualDimension || !Number.isFinite(actualDimension)) return
 
-    if (actualDimension !== expectedEmbeddingDimension) {
+    if (actualDimension !== expectedChunkEmbeddingDimension) {
       throw new Error(
         `embedding dimension mismatch in Postgres schema: atlas.chunk_embeddings.embedding is ${embeddingType} ` +
-          `but OPENAI_EMBEDDING_DIMENSION is ${expectedEmbeddingDimension}. ` +
-          'Update OPENAI_EMBEDDING_DIMENSION or migrate the column type to match.',
+          `but ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION is ${expectedChunkEmbeddingDimension}. ` +
+          'Update ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION or migrate the column type to match.',
       )
     }
   }
@@ -547,7 +558,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       .values({
         name: resolvedName,
         default_ref: resolvedDefaultRef,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.column('name').doUpdateSet({
@@ -666,6 +677,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedCommit = normalizeOptionalNullableText(repositoryCommit)
     const resolvedHash = normalizeOptionalText(contentHash)
 
+    if (resolvedRepositoryRef !== 'main') throw new Error('Atlas stores only the current main corpus')
     if (!resolvedCommit && !resolvedHash) {
       throw new Error('repositoryCommit or contentHash is required for file versions')
     }
@@ -673,45 +685,32 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedMetadata = parseMetadata(metadata)
     const resolvedSourceTimestamp = parseDate(sourceTimestamp)
 
-    const fileVersionInsert = db.insertInto('atlas.file_versions').values({
-      file_key_id: resolvedFileKeyId,
-      repository_ref: resolvedRepositoryRef,
-      repository_commit: resolvedCommit,
-      content_hash: resolvedHash,
-      language: normalizeOptionalNullableText(language),
-      byte_size: byteSize ?? null,
-      line_count: lineCount ?? null,
-      metadata: sql`${resolvedMetadata}::jsonb`,
-      source_timestamp: resolvedSourceTimestamp,
-    })
-
-    const fileVersionUpsert =
-      resolvedCommit === null
-        ? fileVersionInsert.onConflict((oc) =>
-            oc
-              .columns(['file_key_id', 'repository_ref', 'content_hash'])
-              .where('repository_commit', 'is', null)
-              .doUpdateSet({
-                language: sql`excluded.language`,
-                byte_size: sql`excluded.byte_size`,
-                line_count: sql`excluded.line_count`,
-                metadata: sql`excluded.metadata`,
-                source_timestamp: sql`excluded.source_timestamp`,
-                updated_at: sql`now()`,
-              }),
-          )
-        : fileVersionInsert.onConflict((oc) =>
-            oc.columns(['file_key_id', 'repository_ref', 'repository_commit', 'content_hash']).doUpdateSet({
-              language: sql`excluded.language`,
-              byte_size: sql`excluded.byte_size`,
-              line_count: sql`excluded.line_count`,
-              metadata: sql`excluded.metadata`,
-              source_timestamp: sql`excluded.source_timestamp`,
-              updated_at: sql`now()`,
-            }),
-          )
-
-    const row = await fileVersionUpsert
+    const row = await db
+      .insertInto('atlas.file_versions')
+      .values({
+        file_key_id: resolvedFileKeyId,
+        repository_ref: resolvedRepositoryRef,
+        repository_commit: resolvedCommit,
+        content_hash: resolvedHash,
+        language: normalizeOptionalNullableText(language),
+        byte_size: byteSize ?? null,
+        line_count: lineCount ?? null,
+        metadata: resolvedMetadata,
+        source_timestamp: resolvedSourceTimestamp,
+      })
+      .onConflict((oc) =>
+        oc.column('file_key_id').doUpdateSet({
+          repository_ref: sql`excluded.repository_ref`,
+          repository_commit: sql`excluded.repository_commit`,
+          content_hash: sql`excluded.content_hash`,
+          language: sql`excluded.language`,
+          byte_size: sql`excluded.byte_size`,
+          line_count: sql`excluded.line_count`,
+          metadata: sql`excluded.metadata`,
+          source_timestamp: sql`excluded.source_timestamp`,
+          updated_at: sql`now()`,
+        }),
+      )
       .returning([
         'id',
         'file_key_id',
@@ -759,7 +758,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedCommit = normalizeOptionalText(repositoryCommit)
     const resolvedHash = normalizeOptionalText(contentHash)
 
-    const row = await db
+    let query = db
       .selectFrom('atlas.file_versions')
       .select([
         'id',
@@ -777,10 +776,9 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       ])
       .where('file_key_id', '=', resolvedFileKeyId)
       .where('repository_ref', '=', resolvedRepositoryRef)
-      .where('repository_commit', '=', resolvedCommit)
-      .where('content_hash', '=', resolvedHash)
-      .limit(1)
-      .executeTakeFirst()
+    if (resolvedCommit) query = query.where('repository_commit', '=', resolvedCommit)
+    if (resolvedHash) query = query.where('content_hash', '=', resolvedHash)
+    const row = await query.limit(1).executeTakeFirst()
 
     if (!row) return null
 
@@ -826,7 +824,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         content: content ?? null,
         text_tsvector: sql`to_tsvector('simple', ${content ?? ''})`,
         token_count: tokenCount ?? null,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.columns(['file_version_id', 'chunk_index']).doUpdateSet({
@@ -899,7 +897,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         content: resolvedContent,
         summary: resolvedSummary,
         tags: sql`${sql.value(resolvedTags)}::text[]`,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .returning([
         'id',
@@ -1025,7 +1023,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         match_text: resolvedMatchText,
         start_line: startLine ?? null,
         end_line: endLine ?? null,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.columns(['file_version_id', 'node_type', 'match_text', 'start_line', 'end_line']).doUpdateSet({
@@ -1083,7 +1081,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         normalized_name: resolvedNormalizedName,
         kind: resolvedKind,
         signature: resolvedSignature,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.columns(['repository_id', 'normalized_name', 'kind', 'signature']).doUpdateSet({
@@ -1128,7 +1126,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         file_version_id: resolvedFileVersionId,
         start_line: startLine ?? null,
         end_line: endLine ?? null,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.columns(['symbol_id', 'file_version_id', 'start_line', 'end_line']).doUpdateSet({
@@ -1171,7 +1169,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         file_version_id: resolvedFileVersionId,
         start_line: startLine ?? null,
         end_line: endLine ?? null,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.columns(['symbol_id', 'file_version_id', 'start_line', 'end_line']).doUpdateSet({
@@ -1213,7 +1211,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         from_file_version_id: resolvedFrom,
         to_file_version_id: resolvedTo,
         kind: resolvedKind,
-        metadata: sql`${resolvedMetadata}::jsonb`,
+        metadata: resolvedMetadata,
       })
       .onConflict((oc) =>
         oc.columns(['from_file_version_id', 'to_file_version_id', 'kind']).doUpdateSet({
@@ -1265,7 +1263,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
         repository: resolvedRepository,
         installation_id: normalizeOptionalNullableText(installationId),
         sender_login: normalizeOptionalNullableText(senderLogin),
-        payload: sql`${resolvedPayload}::jsonb`,
+        payload: resolvedPayload,
         received_at: sql`COALESCE(${resolvedReceivedAt}, now())`,
         processed_at: resolvedProcessedAt,
       })
@@ -1720,7 +1718,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   const { codeSearch, codeSearchHealth } = createAtlasCodeSearchHandlers({
     db,
     ensureSchema,
-    loadEmbeddingConfig,
+    loadEmbeddingConfig: loadAtlasCodeSearchEmbeddingConfig,
     embedText,
     normalizeText,
   })

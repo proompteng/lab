@@ -12,6 +12,8 @@ import type {
   PersistEnrichmentRecordOutput,
   PersistFileVersionOutput,
   ReadRepoFileOutput,
+  ReconcileAtlasRepositoryInput,
+  ReconcileAtlasRepositoryOutput,
   UpsertIngestionOutput,
 } from '../activities/index'
 import type { MainMergeMemoryNoteInput } from '../event-consumer'
@@ -256,6 +258,14 @@ const MainMergeMemoryNoteWorkflowInput = Schema.Struct({
   commit: Schema.String,
 })
 
+const ReconcileAtlasRepositoryWorkflowInput = Schema.Struct({
+  repoRoot: Schema.String,
+  repository: Schema.String,
+  ref: Schema.optional(Schema.String),
+  commit: Schema.optional(Schema.String),
+  eventDeliveryId: Schema.optional(Schema.String),
+})
+
 const ChildWorkflowCompletionSignal = Schema.Struct({
   workflowId: Schema.String,
   runId: Schema.optional(Schema.String),
@@ -298,6 +308,58 @@ export const workflows = [
         runId: info.runId,
         deliveryId: input.deliveryId,
       })
+    }),
+  ),
+  defineWorkflow('reconcileAtlasRepository', ReconcileAtlasRepositoryWorkflowInput, ({ input, activities, info }) =>
+    Effect.gen(function* () {
+      const eventDeliveryId = input.eventDeliveryId
+      if (eventDeliveryId) {
+        yield* activities.schedule(
+          'upsertIngestion',
+          [{ deliveryId: eventDeliveryId, workflowId: info.workflowId, status: 'running' }],
+          { ...upsertIngestionTimeouts, retry: activityRetry },
+        )
+      }
+
+      const reconcile = activities.schedule('reconcileAtlasRepository', [input as ReconcileAtlasRepositoryInput], {
+        startToCloseTimeoutMs: 24 * 60 * 60 * 1_000,
+        scheduleToCloseTimeoutMs: 3 * 24 * 60 * 60 * 1_000,
+        retry: {
+          initialIntervalMs: 30_000,
+          backoffCoefficient: 2,
+          maximumIntervalMs: 15 * 60 * 1_000,
+          maximumAttempts: 3,
+        },
+      }) as Effect.Effect<ReconcileAtlasRepositoryOutput, unknown, never>
+
+      const result = yield* Effect.catchAllCause(reconcile, (cause) =>
+        Effect.gen(function* () {
+          if (eventDeliveryId) {
+            yield* activities.schedule(
+              'upsertIngestion',
+              [
+                {
+                  deliveryId: eventDeliveryId,
+                  workflowId: info.workflowId,
+                  status: 'failed',
+                  error: getCauseError(cause)?.message,
+                },
+              ],
+              { ...upsertIngestionTimeouts, retry: activityRetry },
+            )
+          }
+          return yield* Effect.failCause(cause)
+        }),
+      )
+
+      if (eventDeliveryId) {
+        yield* activities.schedule(
+          'upsertIngestion',
+          [{ deliveryId: eventDeliveryId, workflowId: info.workflowId, status: 'completed' }],
+          { ...upsertIngestionTimeouts, retry: activityRetry },
+        )
+      }
+      return result
     }),
   ),
   defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities, info, determinism }) => {

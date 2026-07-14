@@ -91,6 +91,21 @@ describe('migration registration', () => {
     expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
     expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
   })
+
+  it('keeps the Atlas migration a destructive single-corpus 1024-dimensional HNSW reset', () => {
+    const migrationPath = new URL('../migrations/20260714_atlas_current_corpus.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('truncate table atlas.repositories cascade')
+    expect(normalized).toContain('alter column embedding type vector(${sql.raw(string(atlas_embedding_dimension))})')
+    expect(normalized).toContain('const atlas_embedding_dimension = 1024')
+    expect(normalized).toContain('using hnsw (embedding vector_cosine_ops)')
+    expect(normalized).toContain('create unique index atlas_file_versions_file_key_id_unique_idx')
+    expect(normalized).toContain('using gin (path gin_trgm_ops)')
+    expect(normalized).toContain("check (jsonb_typeof(metadata) = 'object')")
+    expect(normalized).not.toContain('backup')
+    expect(normalized).not.toContain('create table')
+  })
 })
 
 describe('resolveAllowUnorderedMigrations', () => {

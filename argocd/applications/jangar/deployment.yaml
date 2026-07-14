@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
+    argocd.argoproj.io/sync-wave: "0"
     deploy.knative.dev/rollout: 2026-07-14T07:16:33Z
 spec:
   replicas: 1
@@ -350,10 +351,12 @@ spec:
               value: "4096"
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
               value: "60000"
-            - name: ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT
-              value: "100"
-            - name: ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT
-              value: "50"
+            - name: ATLAS_CODE_SEARCH_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
+              value: "1024"
+            - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
+              value: "750"
             - name: JANGAR_SOURCE_CI_RUN_ID
               value: "29313232070"
             - name: JANGAR_SOURCE_CI_CONCLUSION
