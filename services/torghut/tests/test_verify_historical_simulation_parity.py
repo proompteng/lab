@@ -55,6 +55,30 @@ class TestVerifyHistoricalSimulationParity(TestCase):
             self.assertFalse(report["passed"])
             self.assertIn("parity_hash_mismatch:run-b", report["failed_reasons"])
 
+    def test_fails_when_any_run_is_missing_dump_sha(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_a = _write_run(
+                root=root,
+                run_name="run-a",
+                trade_decisions=10,
+                executions=4,
+                net_pnl="12.5",
+            )
+            run_b = _write_run(
+                root=root,
+                run_name="run-b",
+                trade_decisions=10,
+                executions=4,
+                net_pnl="12.5",
+                dump_sha256="",
+            )
+
+            report = build_historical_parity_report(run_dirs=[run_a, run_b])
+
+            self.assertFalse(report["passed"])
+            self.assertIn("dump_sha256_missing:run-b", report["failed_reasons"])
+
 
 def _write_run(
     *,
@@ -63,6 +87,7 @@ def _write_run(
     trade_decisions: int,
     executions: int,
     net_pnl: str,
+    dump_sha256: str = "dump-sha",
 ) -> Path:
     run_dir = root / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -71,7 +96,7 @@ def _write_run(
             {
                 "run_id": run_name,
                 "replay": {
-                    "dump_sha256": "dump-sha",
+                    "dump_sha256": dump_sha256,
                 },
                 "monitor": {
                     "activity_classification": "success",
