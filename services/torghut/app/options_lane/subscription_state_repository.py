@@ -12,6 +12,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
+_DEACTIVATION_BATCH_SIZE = 1_000
+
+
 @dataclass(frozen=True)
 class SubscriptionReconcileResult:
     hot_count: int
@@ -149,7 +152,8 @@ def reconcile_subscription_state(
                 },
             )
             changed_count = max(int(getattr(result, "rowcount", 0) or 0), 0)
-        if explicit_deactivations:
+        for offset in range(0, len(explicit_deactivations), _DEACTIVATION_BATCH_SIZE):
+            symbols = explicit_deactivations[offset : offset + _DEACTIVATION_BATCH_SIZE]
             result = session.execute(
                 text(
                     """
@@ -161,11 +165,11 @@ def reconcile_subscription_state(
                     """
                 ),
                 {
-                    "symbols": explicit_deactivations,
+                    "symbols": symbols,
                     "last_ranked_ts": observed_at,
                 },
             )
-            deactivated_count = max(int(getattr(result, "rowcount", 0) or 0), 0)
+            deactivated_count += max(int(getattr(result, "rowcount", 0) or 0), 0)
     return SubscriptionReconcileResult(
         hot_count=hot_count,
         warm_count=warm_count,
