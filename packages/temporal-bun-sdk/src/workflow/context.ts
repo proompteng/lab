@@ -648,9 +648,18 @@ const buildScheduleNexusOperationIntent = (
   options: ScheduleNexusOperationOptions,
 ): ScheduleNexusOperationCommandIntent => {
   const sequence = ctx.nextSequence()
-  const operationId = options.operationId ?? `nexus-${sequence}`
-  const nexusHeader = { ...(options.nexusHeader ?? {}) }
-  if (!nexusHeader[NEXUS_OPERATION_ID_HEADER]) {
+  const previous = ctx.previousIntent(sequence)
+  const previousSchedule = previous?.kind === 'schedule-nexus-operation' ? previous : undefined
+  const operationId = options.operationId ?? previousSchedule?.operationId ?? `nexus-${sequence}`
+  const nexusHeader =
+    options.nexusHeader !== undefined
+      ? { ...options.nexusHeader }
+      : previousSchedule?.nexusHeader
+        ? { ...previousSchedule.nexusHeader }
+        : previousSchedule
+          ? undefined
+          : { [NEXUS_OPERATION_ID_HEADER]: operationId }
+  if (nexusHeader && !nexusHeader[NEXUS_OPERATION_ID_HEADER]) {
     nexusHeader[NEXUS_OPERATION_ID_HEADER] = operationId
   }
   return {
