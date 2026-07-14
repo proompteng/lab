@@ -131,6 +131,12 @@ alertmanager:
     storageClass: rook-ceph-block
     size: 5Gi
 
+kafka:
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClassName: rook-ceph-block
+
 metaMonitoring:
   dashboards:
     enabled: false

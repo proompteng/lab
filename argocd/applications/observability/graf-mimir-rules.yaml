@@ -184,6 +184,304 @@ data:
               description: |
                 Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
                 ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
+      - name: torghut-storage-baseline.rules
+        interval: 30s
+        rules:
+          - record: torghut_postgres:wal_bytes_per_second:rate5m
+            expr: |
+              max(
+                rate(
+                  cnpg_collector_wal_bytes{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[5m]
+                )
+              )
+          - record: torghut_postgres:requested_checkpoint_ratio:rate1h
+            expr: |
+              sum(
+                rate(
+                  cnpg_pg_stat_checkpointer_checkpoints_req{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[1h]
+                )
+              ) /
+              clamp_min(
+                sum(
+                  rate(
+                    cnpg_pg_stat_checkpointer_checkpoints_req{
+                      cluster="torghut-db",
+                      job="cnpg-postgres",
+                      role="primary"
+                    }[1h]
+                  )
+                ) +
+                sum(
+                  rate(
+                    cnpg_pg_stat_checkpointer_checkpoints_timed{
+                      cluster="torghut-db",
+                      job="cnpg-postgres",
+                      role="primary"
+                    }[1h]
+                  )
+                ),
+                0.000001
+              )
+          - record: ceph_storage:osd_commit_latency_ms:max
+            expr: max(ceph_osd_commit_latency_ms{job="ceph-storage"})
+          - record: ceph_storage:osd_apply_latency_ms:max
+            expr: max(ceph_osd_apply_latency_ms{job="ceph-storage"})
+          - record: ceph_storage:pool_write_bytes_per_second:rate5m
+            expr: sum(rate(ceph_pool_wr_bytes{job="ceph-storage"}[5m]))
+          - record: ceph_storage:pool_read_bytes_per_second:rate5m
+            expr: sum(rate(ceph_pool_rd_bytes{job="ceph-storage"}[5m]))
+          - record: ceph_storage:scrubbing_pgs:sum
+            expr: |
+              sum(ceph_pg_scrubbing{job="ceph-storage"}) +
+              sum(ceph_pg_deep{job="ceph-storage"})
+          - record: ceph_storage:rbd_pod_write_bytes_per_second:rate5m
+            expr: |
+              sum by (namespace, pod, device) (
+                rate(
+                  container_fs_writes_bytes_total{
+                    container="",
+                    device=~"/dev/rbd[0-9]+",
+                    pod!=""
+                  }[5m]
+                )
+              )
+          - record: ceph_storage:rbd_pod_write_iops:rate5m
+            expr: |
+              sum by (namespace, pod, device) (
+                rate(
+                  container_fs_writes_total{
+                    container="",
+                    device=~"/dev/rbd[0-9]+",
+                    pod!=""
+                  }[5m]
+                )
+              )
+      - name: torghut-storage-alerts.rules
+        rules:
+          - alert: TorghutPostgresMetricsMissing
+            expr: |
+              min(up{cluster="torghut-db",job="cnpg-postgres"}) < 1 or
+              absent(up{cluster="torghut-db",job="cnpg-postgres"})
+            for: 10m
+            labels:
+              severity: warning
+              service: torghut-postgres
+              team: platform
+            annotations:
+              summary: Torghut PostgreSQL storage metrics are missing
+              description: CloudNativePG metrics for torghut-db have been absent or failing for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephStorageMetricsMissing
+            expr: |
+              min(up{job="ceph-storage"}) < 1 or
+              absent(up{job="ceph-storage"})
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph storage metrics are missing
+              description: The Rook Ceph manager metrics endpoint has been absent or failing for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CloudNativePgWalArchiveBacklog
+            expr: |
+              max by (namespace, cluster) (
+                cnpg_collector_pg_wal_archive_status{
+                  job="cnpg-postgres",
+                  value="ready"
+                }
+              ) > 4
+            for: 15m
+            labels:
+              severity: warning
+              service: cnpg-postgres
+              team: platform
+            annotations:
+              summary: CloudNativePG WAL archive backlog is growing
+              description: |
+                {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: PersistentVolumeFreeLowWarning
+            expr: |
+              (
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) /
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+                )
+              ) < 0.15
+              and
+              (
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+                ) /
+                min by (namespace, persistentvolumeclaim) (
+                  kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+                )
+              ) >= 0.05
+            for: 30m
+            labels:
+              severity: warning
+              service: kubernetes-storage
+              team: platform
+            annotations:
+              summary: Persistent volume free space is low
+              description: |
+                {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 15% free space for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: PersistentVolumeFreeLowCritical
+            expr: |
+              min by (namespace, persistentvolumeclaim) (
+                kubelet_volume_stats_available_bytes{persistentvolumeclaim!=""}
+              ) /
+              min by (namespace, persistentvolumeclaim) (
+                kubelet_volume_stats_capacity_bytes{persistentvolumeclaim!=""}
+              ) < 0.05
+            for: 10m
+            labels:
+              severity: critical
+              service: kubernetes-storage
+              team: platform
+            annotations:
+              summary: Persistent volume free space is critically low
+              description: |
+                {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free space for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephClusterHealthWarning
+            expr: ceph_health_status{job="ceph-storage"} == 1
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph cluster reports HEALTH_WARN
+              description: Ceph has reported HEALTH_WARN continuously for 10 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephClusterHealthError
+            expr: ceph_health_status{job="ceph-storage"} >= 2
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph cluster reports HEALTH_ERR
+              description: Ceph has reported HEALTH_ERR continuously for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephSlowOps
+            expr: ceph_healthcheck_slow_ops{job="ceph-storage"} > 0
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph reports slow operations
+              description: Ceph has reported one or more slow operations continuously for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephOsdCommitLatencyHigh
+            expr: ceph_storage:osd_commit_latency_ms:max > 75
+            for: 15m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph OSD commit latency exceeds 75 ms
+              description: The slowest Ceph OSD has sustained commit latency above 75 ms for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephOsdCommitLatencyCritical
+            expr: ceph_storage:osd_commit_latency_ms:max > 150
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph OSD commit latency exceeds 150 ms
+              description: The slowest Ceph OSD has sustained commit latency above 150 ms for 5 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephScrubDebt
+            expr: |
+              max(
+                ceph_health_detail{
+                  job="ceph-storage",
+                  name=~"PG_NOT_(DEEP_)?SCRUBBED"
+                }
+              ) > 0
+            for: 30m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph scrub debt is overdue
+              description: Ceph has reported overdue scrub or deep-scrub placement groups for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephScrubbingDisabled
+            expr: |
+              max(ceph_osd_flag_noscrub{job="ceph-storage"}) > 0 or
+              max(ceph_osd_flag_nodeep_scrub{job="ceph-storage"}) > 0
+            for: 30m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph scrub protection flags remain enabled
+              description: noscrub or nodeep-scrub has remained set for 30 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: TorghutPostgresForcedCheckpointsHigh
+            expr: |
+              torghut_postgres:requested_checkpoint_ratio:rate1h > 0.25
+              and
+              sum(
+                increase(
+                  cnpg_pg_stat_checkpointer_checkpoints_req{
+                    cluster="torghut-db",
+                    job="cnpg-postgres",
+                    role="primary"
+                  }[1h]
+                )
+              ) >= 4
+            for: 30m
+            labels:
+              severity: warning
+              service: torghut-postgres
+              team: platform
+            annotations:
+              summary: Torghut PostgreSQL is forcing checkpoints
+              description: More than 25% of checkpoints were requested and at least four were forced in the last hour.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: TorghutPostgresWalBuffersFull
+            expr: |
+              increase(
+                cnpg_collector_wal_buffers_full{
+                  cluster="torghut-db",
+                  job="cnpg-postgres",
+                  role="primary"
+                }[15m]
+              ) > 0
+            for: 15m
+            labels:
+              severity: warning
+              service: torghut-postgres
+              team: platform
+            annotations:
+              summary: Torghut PostgreSQL WAL buffers are saturating
+              description: PostgreSQL has exhausted WAL buffers during every evaluation for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
       - name: torghut-clickhouse.guardrails.rules
         rules:
           - alert: TorghutClickHouseDiskFreeLowWarning

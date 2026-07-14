@@ -9,6 +9,87 @@ prometheus.remote_write "mimir" {
   }
 }
 
+discovery.kubernetes "cnpg_pods" {
+  role = "pod"
+
+  selectors {
+    role  = "pod"
+    label = "cnpg.io/cluster"
+  }
+}
+
+discovery.relabel "cnpg_metrics" {
+  targets = discovery.kubernetes.cnpg_pods.targets
+
+  rule {
+    action        = "keep"
+    source_labels = ["__meta_kubernetes_pod_container_port_name"]
+    regex         = "metrics"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_cnpg_io_cluster"]
+    target_label  = "cluster"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_role"]
+    target_label  = "role"
+  }
+}
+
+prometheus.relabel "cnpg_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__", "name"]
+    regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_wal_size|min_wal_size)"
+  }
+}
+
+prometheus.scrape "cnpg" {
+  job_name        = "cnpg-postgres"
+  targets         = discovery.relabel.cnpg_metrics.output
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.relabel.cnpg_metrics.receiver]
+}
+
+prometheus.relabel "ceph_storage_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__"]
+    regex         = "up|ceph_health_status|ceph_health_detail|ceph_healthcheck_slow_ops|ceph_osd_(apply|commit)_latency_ms|ceph_osd_flag_(nobackfill|nodeep_scrub|norebalance|norecover|noscrub)|ceph_osd_(in|metadata|up)|ceph_pg_(active|backfill_toofull|backfill_unfound|backfill_wait|backfilling|clean|deep|degraded|down|forced_backfill|forced_recovery|incomplete|peering|recovering|recovery_toofull|recovery_unfound|recovery_wait|scrubbing|stale|total|undersized|unknown)|ceph_pool_(avail_raw|bytes_used|max_avail|metadata|percent_used|rd|rd_bytes|recovering_bytes_per_sec|recovering_objects_per_sec|wr|wr_bytes)|ceph_cluster_total_(bytes|used_bytes|used_raw_bytes)"
+  }
+}
+
+prometheus.scrape "ceph_storage" {
+  job_name = "ceph-storage"
+  targets = [
+    {
+      "__address__" = "rook-ceph-mgr.rook-ceph.svc.cluster.local:9283",
+      "namespace"   = "rook-ceph",
+      "service"     = "rook-ceph-mgr",
+    },
+  ]
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.relabel.ceph_storage_metrics.receiver]
+}
+
 prometheus.relabel "arc_resource_metrics" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 
@@ -16,6 +97,16 @@ prometheus.relabel "arc_resource_metrics" {
     action        = "keep"
     source_labels = ["__name__"]
     regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_deployment_spec_replicas|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kube_service_info|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes"
+  }
+}
+
+prometheus.relabel "rbd_client_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__", "device", "container", "pod"]
+    regex         = "container_fs_(reads|writes)(_bytes)?_total;/dev/rbd[0-9]+;;.+"
   }
 }
 
@@ -89,7 +180,10 @@ prometheus.scrape "kubelet_cadvisor" {
   scrape_interval   = "30s"
   scrape_timeout    = "10s"
   bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-  forward_to        = [prometheus.relabel.arc_resource_metrics.receiver]
+  forward_to = [
+    prometheus.relabel.arc_resource_metrics.receiver,
+    prometheus.relabel.rbd_client_metrics.receiver,
+  ]
 
   tls_config {
     ca_file     = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
