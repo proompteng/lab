@@ -20,6 +20,8 @@ Trust these surfaces in order:
 
 ## Current Runbooks
 
+- Profitability architecture, audit, research gates, and implementation handoff:
+  `docs/torghut/profitability/README.md`
 - Torghut app GitOps and TA replay: `argocd/applications/torghut/README.md`
 - Trading service local development: `services/torghut/README.md`
 - Current source-state map: `docs/torghut/current-source-state.md`
