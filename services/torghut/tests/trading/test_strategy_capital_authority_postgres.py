@@ -438,3 +438,67 @@ def test_postgres_authority_migration_lock_timeout_is_retry_safe(
         with admin_engine.begin() as connection:
             connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         admin_engine.dispose()
+
+
+@pytest.mark.skipif(
+    not POSTGRES_DSN,
+    reason="set TORGHUT_TEST_POSTGRES_DSN for the opt-in authority migration test",
+)
+def test_released_0063_strategy_capital_revision_upgrades_to_merged_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert POSTGRES_DSN is not None
+    schema = f"strategy_authority_compat_{uuid.uuid4().hex}"
+    admin_engine = create_engine(POSTGRES_DSN, future=True)
+    schema_url = make_url(POSTGRES_DSN).update_query_dict(
+        {"options": f"-csearch_path={schema}"}
+    )
+    schema_engine = create_engine(schema_url, future=True)
+    try:
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        _create_pre_migration_schema(schema_engine)
+        monkeypatch.setattr(
+            settings,
+            "db_dsn",
+            schema_url.render_as_string(hide_password=False),
+        )
+        alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
+        command.stamp(alembic, "0062_options_archive_members")
+        command.upgrade(alembic, "0064_strategy_capital_authority")
+
+        with schema_engine.begin() as connection:
+            connection.execute(
+                text("DROP INDEX ix_options_catalog_active_expiration_symbol")
+            )
+            connection.execute(text("DELETE FROM alembic_version"))
+            connection.execute(
+                text(
+                    "INSERT INTO alembic_version (version_num) "
+                    "VALUES ('0063_strategy_capital_authority')"
+                )
+            )
+
+        command.upgrade(alembic, "heads")
+
+        with schema_engine.connect() as connection:
+            revisions = set(
+                connection.execute(text("SELECT version_num FROM alembic_version"))
+                .scalars()
+                .all()
+            )
+            archive_index = connection.execute(
+                text(
+                    "SELECT indisvalid FROM pg_index "
+                    "WHERE indexrelid = "
+                    "'ix_options_catalog_active_expiration_symbol'::regclass"
+                )
+            ).scalar_one()
+        assert revisions == {"0065_strategy_capital_compat"}
+        assert archive_index is True
+        assert inspect(schema_engine).has_table("strategy_capital_authorities")
+    finally:
+        schema_engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        admin_engine.dispose()
