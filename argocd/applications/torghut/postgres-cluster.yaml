@@ -6,6 +6,11 @@ metadata:
 spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
+  postgresql:
+    parameters:
+      # The automatic 4 MiB allocation exhausted repeatedly under short write bursts.
+      # Keep durability intact and absorb those bursts with a bounded 16 MiB buffer.
+      wal_buffers: "16MB"
   storage:
     storageClass: rook-ceph-block
     size: 50Gi
