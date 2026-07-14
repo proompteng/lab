@@ -14,6 +14,12 @@ test('Jangar base backups cannot saturate the shared Ceph path', () => {
   expect(cluster).toContain('wal:\n        compression: snappy\n        maxParallel: 2')
 })
 
+test('Jangar database volumes retain operating headroom', () => {
+  const cluster = readRepoFile('argocd/applications/jangar/postgres-cluster.yaml')
+
+  expect(cluster).toContain('storageClass: rook-ceph-block\n    size: 300Gi')
+})
+
 test('Jangar backup has an isolated start window after the Torghut backup', () => {
   const scheduledBackup = readRepoFile('argocd/applications/jangar/postgres-scheduled-backup.yaml')
 

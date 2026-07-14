@@ -7,7 +7,7 @@ spec:
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
-    size: 200Gi
+    size: 300Gi
   bootstrap:
     initdb:
       database: jangar
