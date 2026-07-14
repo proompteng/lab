@@ -12,7 +12,7 @@ from app.models import StrategyCapitalAuthorityRecord, TradeDecision
 from tests.migration_testing import load_migration_module
 
 
-MIGRATION_FILENAME = "0063_strategy_capital_authority.py"
+MIGRATION_FILENAME = "0064_strategy_capital_authority.py"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -43,8 +43,8 @@ class TestStrategyCapitalAuthorityMigration(TestCase):
     def test_revision_extends_options_archive_membership(self) -> None:
         module = load_migration_module(MIGRATION_FILENAME)
 
-        self.assertEqual(module.revision, "0063_strategy_capital_authority")
-        self.assertEqual(module.down_revision, "0062_options_archive_members")
+        self.assertEqual(module.revision, "0064_strategy_capital_authority")
+        self.assertEqual(module.down_revision, "0063_options_archive_final_idx")
         self.assertLessEqual(len(module.revision), 32)
         self.assertLessEqual(
             len(Path(module.__file__ or "").read_text(encoding="utf-8").splitlines()),

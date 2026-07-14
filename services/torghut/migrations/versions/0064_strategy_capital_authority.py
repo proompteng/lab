@@ -1,8 +1,8 @@
 """Add immutable strategy-scoped capital authorities.
 
-Revision ID: 0063_strategy_capital_authority
-Revises: 0062_options_archive_members
-Create Date: 2026-07-13 00:00:00.000000
+Revision ID: 0064_strategy_capital_authority
+Revises: 0063_options_archive_final_idx
+Create Date: 2026-07-14 02:00:00.000000
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import conv
 
 
-revision = "0063_strategy_capital_authority"
-down_revision = "0062_options_archive_members"
+revision = "0064_strategy_capital_authority"
+down_revision = "0063_options_archive_final_idx"
 branch_labels = None
 depends_on = None
 

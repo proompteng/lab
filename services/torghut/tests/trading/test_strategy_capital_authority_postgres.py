@@ -66,6 +66,28 @@ def _create_pre_migration_schema(
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE torghut_options_contract_catalog (
+                    contract_symbol TEXT PRIMARY KEY,
+                    expiration_date DATE NOT NULL,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO torghut_options_contract_catalog (
+                    contract_symbol, expiration_date, status
+                ) VALUES
+                    ('ACTIVE', DATE '2026-07-18', 'active'),
+                    ('INACTIVE', DATE '2026-07-18', 'inactive')
+                """
+            )
+        )
         if historical_strategy_id is None or historical_decision_id is None:
             return
         connection.execute(
@@ -118,7 +140,7 @@ def test_postgres_authority_history_is_database_immutable(
         )
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
         command.stamp(alembic, "0062_options_archive_members")
-        command.upgrade(alembic, "0063_strategy_capital_authority")
+        command.upgrade(alembic, "0064_strategy_capital_authority")
         assert inspect(schema_engine).has_table("strategy_capital_authorities")
         with schema_engine.begin() as connection:
             connection.execute(
@@ -136,8 +158,22 @@ def test_postgres_authority_history_is_database_immutable(
                     """
                 )
             )
+            connection.execute(
+                text("DROP INDEX ix_options_catalog_active_expiration_symbol")
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX ix_options_catalog_active_expiration_symbol
+                    ON torghut_options_contract_catalog (
+                        expiration_date,
+                        contract_symbol
+                    )
+                    """
+                )
+            )
         command.stamp(alembic, "0062_options_archive_members")
-        command.upgrade(alembic, "0063_strategy_capital_authority")
+        command.upgrade(alembic, "0064_strategy_capital_authority")
 
         expected_constraints = {
             "ck_trade_decisions_capital_authority_evaluated",
@@ -176,6 +212,19 @@ def test_postgres_authority_history_is_database_immutable(
             assert "strategy_capital_authority_allowed IS TRUE" in str(
                 usage_index.predicate
             )
+
+            archive_index = connection.execute(
+                text(
+                    """
+                    SELECT indisvalid, pg_get_expr(indpred, indrelid) AS predicate
+                    FROM pg_index
+                    WHERE indexrelid =
+                        'ix_options_catalog_active_expiration_symbol'::regclass
+                    """
+                )
+            ).one()
+            assert archive_index.indisvalid is True
+            assert "status = 'active'::text" in str(archive_index.predicate)
 
             historical_authority = connection.execute(
                 text(
@@ -358,7 +407,7 @@ def test_postgres_authority_migration_lock_timeout_is_retry_safe(
             blocker.execute(text("LOCK TABLE trade_decisions IN ROW EXCLUSIVE MODE"))
             started_at = monotonic()
             with pytest.raises(DBAPIError) as timed_out:
-                command.upgrade(alembic, "0063_strategy_capital_authority")
+                command.upgrade(alembic, "0064_strategy_capital_authority")
             elapsed = monotonic() - started_at
 
         assert getattr(timed_out.value.orig, "sqlstate", None) == "55P03"
@@ -368,19 +417,19 @@ def test_postgres_authority_migration_lock_timeout_is_retry_safe(
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0062_options_archive_members"
+        assert revision == "0063_options_archive_final_idx"
         decision_columns = {
             column["name"]
             for column in inspect(schema_engine).get_columns("trade_decisions")
         }
         assert "strategy_capital_authority_id" not in decision_columns
 
-        command.upgrade(alembic, "0063_strategy_capital_authority")
+        command.upgrade(alembic, "0064_strategy_capital_authority")
         with schema_engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0063_strategy_capital_authority"
+        assert revision == "0064_strategy_capital_authority"
     finally:
         schema_engine.dispose()
         with admin_engine.begin() as connection:

@@ -65,7 +65,7 @@ not accepted.
 
 ## Persistence
 
-Migration `0063_strategy_capital_authority` creates `strategy_capital_authorities` and
+Migration `0064_strategy_capital_authority` creates `strategy_capital_authorities` and
 `strategies.active_capital_authority_id`. It also adds the exact authority ID, digest, decision, and evaluation time to
 each `trade_decisions` row. These columns are the durable pre-broker reservation used for rate limits; event time and
 accepted executions are not substitutes for an attempted broker mutation.
@@ -93,7 +93,7 @@ authority must be independently issued and selected before any legacy evidence c
 
 ### Production migration safety
 
-Revision `0063` is an online, retry-safe migration because `trade_decisions` is a live multi-gigabyte table. The
+Revision `0064` is an online, retry-safe migration because `trade_decisions` is a live multi-gigabyte table. The
 migration contract is:
 
 - run each revision in its own Alembic transaction and put the online DDL in an explicit autocommit block; Alembic
@@ -121,6 +121,13 @@ These choices follow the production PostgreSQL 17 major version's documented
 [`lock_timeout`](https://www.postgresql.org/docs/17/runtime-config-client.html) behavior, plus Alembic's
 [`autocommit_block`](https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.migration.MigrationContext.autocommit_block)
 transaction warning. A green unit test that only inspects emitted method calls is not release evidence.
+
+The immediate predecessor, `0063_options_archive_final_idx`, follows the same autocommit, timeout, structural-index
+verification, invalid-index cleanup, and retry contract. The pre-cutover live readback was approximately 6.0 GiB and
+3.97 million planner-estimated rows for `torghut_options_contract_catalog`, plus 1.9 GiB and 154,339 exact rows for
+`trade_decisions`. The GitOps migration Job therefore has a one-hour active deadline; its former 15-minute deadline
+could terminate a healthy 45-minute concurrent index statement. This changes only the failure budget for the PreSync
+hook. It does not bypass migration failure, permit direct deployment, or increase capital authority.
 
 ## Immediate Pre-Broker Evaluation
 

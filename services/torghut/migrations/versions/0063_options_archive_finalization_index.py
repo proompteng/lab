@@ -21,34 +21,63 @@ INDEX_NAME = "ix_options_catalog_active_expiration_symbol"
 TABLE_NAME = "torghut_options_contract_catalog"
 
 
+def _index_is_current() -> bool | None:
+    value = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                """
+                SELECT COALESCE((
+                    indisvalid
+                    AND indisready
+                    AND NOT indisunique
+                    AND indnkeyatts = 2
+                    AND pg_get_indexdef(indexrelid, 1, true) = 'expiration_date'
+                    AND pg_get_indexdef(indexrelid, 2, true) = 'contract_symbol'
+                    AND pg_get_expr(indpred, indrelid) =
+                        '(status = ''active''::text)'
+                ), false) AS is_current
+                FROM pg_index
+                WHERE indexrelid = to_regclass(:index_name)
+                """
+            ),
+            {"index_name": INDEX_NAME},
+        )
+        .scalar_one_or_none()
+    )
+    if value is None:
+        return None
+    return bool(value)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     if getattr(getattr(bind, "dialect", None), "name", "") != "postgresql":
         return
 
-    index_valid = bind.execute(
-        sa.text(
-            """
-            SELECT index_entry.indisvalid AND index_entry.indisready
-            FROM pg_index AS index_entry
-            WHERE index_entry.indexrelid = to_regclass(:index_name)
-            """
-        ),
-        {"index_name": f"public.{INDEX_NAME}"},
-    ).scalar_one_or_none()
     with op.get_context().autocommit_block():
-        if index_valid is False:
-            op.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX_NAME}"))
-        if index_valid is not True:
+        op.execute(sa.text("SET lock_timeout = '5s'"))
+        op.execute(sa.text("SET statement_timeout = '45min'"))
+        try:
+            state = _index_is_current()
+            if state is True:
+                return
+            if state is False:
+                op.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX_NAME}"))
             op.execute(
                 sa.text(
                     f"""
-                    CREATE INDEX CONCURRENTLY {INDEX_NAME}
+                    CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX_NAME}
                     ON {TABLE_NAME} (expiration_date, contract_symbol)
                     WHERE status = 'active'
                     """
                 )
             )
+            if _index_is_current() is not True:
+                raise RuntimeError(f"{INDEX_NAME} was not created as a valid index")
+        finally:
+            op.execute(sa.text("RESET statement_timeout"))
+            op.execute(sa.text("RESET lock_timeout"))
 
 
 def downgrade() -> None:
