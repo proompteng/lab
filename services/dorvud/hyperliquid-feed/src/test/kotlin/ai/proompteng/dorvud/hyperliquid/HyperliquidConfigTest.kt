@@ -111,6 +111,7 @@ class HyperliquidConfigTest {
 
     assertEquals(120_000, config.clickHouse.readyMaxAgeMs)
     assertEquals(300_000, config.clickHouse.tableReadyMaxAgeMs)
+    assertEquals(ClickHouseBatchPolicy(1_000, 30_000), config.clickHouse.batchPolicyFor("hyperliquid_bbo"))
   }
 
   @Test

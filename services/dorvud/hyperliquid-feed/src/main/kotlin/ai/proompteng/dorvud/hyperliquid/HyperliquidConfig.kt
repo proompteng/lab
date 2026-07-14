@@ -190,7 +190,7 @@ data class HyperliquidConfig(
       val clickHouseBboPolicy =
         ClickHouseBatchPolicy(
           batchSize = intEnv(mergedEnv, "CLICKHOUSE_BBO_BATCH_SIZE", 1_000).coerceIn(1, 5_000),
-          flushMs = longEnv(mergedEnv, "CLICKHOUSE_BBO_FLUSH_MS", 10_000).coerceIn(250, 300_000),
+          flushMs = longEnv(mergedEnv, "CLICKHOUSE_BBO_FLUSH_MS", 30_000).coerceIn(250, 300_000),
         )
       val clickHouseSparsePolicy =
         ClickHouseBatchPolicy(
