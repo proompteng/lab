@@ -6,6 +6,10 @@ const workflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-post-deploy-verify.yml', import.meta.url),
   'utf8',
 )
+const dbMigrationJob = readFileSync(
+  new URL('../../../../../argocd/applications/torghut/db-migrations-job.yaml', import.meta.url),
+  'utf8',
+)
 const agentsCiClusterRbac = readFileSync(
   new URL('../../../../../argocd/applications/agents-ci/runner-rbac-cluster.yaml', import.meta.url),
   'utf8',
@@ -224,8 +228,14 @@ describe('torghut post-deploy verifier workflow', () => {
   })
 
   it('bounds Argo convergence waits and prints resource diagnostics on timeout', () => {
-    expect(workflow).toContain('ARGO_SYNC_POLL_ATTEMPTS=150')
+    const syncTimeoutSeconds = Number(workflow.match(/ARGO_SYNC_TIMEOUT_SECONDS=(\d+)/)?.[1])
+    const migrationDeadlineSeconds = Number(dbMigrationJob.match(/activeDeadlineSeconds:\s*(\d+)/)?.[1])
+
+    expect(syncTimeoutSeconds).toBeGreaterThanOrEqual(migrationDeadlineSeconds + 300)
     expect(workflow).toContain('ARGO_SYNC_POLL_INTERVAL_SECONDS=2')
+    expect(workflow).toContain(
+      'ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))',
+    )
     expect(workflow).toContain('for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do')
     expect(workflow).toContain('sleep "${ARGO_SYNC_POLL_INTERVAL_SECONDS}"')
     expect(workflow).toContain(

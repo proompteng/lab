@@ -472,7 +472,7 @@ describe('torghut build-push workflow', () => {
     expect(postgresJobStart).toBeGreaterThan(-1)
     expect(postgresJobEnd).toBeGreaterThan(postgresJobStart)
     expect(postgresJobBody).toContain('name: PostgreSQL mutation fencing CAS')
-    expect(postgresJobBody).toContain('image: postgres:18-trixie')
+    expect(postgresJobBody).toContain('image: postgres:17-bookworm')
     expect(postgresJobBody).toContain('--health-cmd "pg_isready -U torghut -d torghut_test"')
     expect(postgresJobBody).toContain(
       'TORGHUT_TEST_POSTGRES_DSN: postgresql+psycopg://torghut:torghut@127.0.0.1:5432/torghut_test',
