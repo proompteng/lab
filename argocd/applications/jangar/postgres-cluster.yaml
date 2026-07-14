@@ -18,6 +18,7 @@ spec:
         - CREATE EXTENSION IF NOT EXISTS pgcrypto;
         - CREATE EXTENSION IF NOT EXISTS vector;
   backup:
+    target: prefer-standby
     barmanObjectStore:
       destinationPath: s3://cnpg
       serverName: jangar-db-live
@@ -29,8 +30,15 @@ spec:
         secretAccessKey:
           name: cnpg-jangar-db
           key: AWS_SECRET_ACCESS_KEY
+      data:
+        compression: snappy
+        jobs: 1
+        additionalCommandArgs:
+          - --max-bandwidth
+          - 8MB
       wal:
-        maxParallel: 8
+        compression: snappy
+        maxParallel: 2
     retentionPolicy: "14d"
   inheritedMetadata:
     annotations:
