@@ -66,7 +66,69 @@ class ClickHouseSinkTest {
       }
 
       assertEquals(false, readySignals.last().ready)
+      assertEquals(false, readySignals.last().writeSucceeded)
       assertEquals(false, readySignals.last().tableFreshnessReady)
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
+  fun `optional table failure does not report a successful write`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            val query = queryParam(request.url)
+            when {
+              query.startsWith("INSERT") && query.contains("hyperliquid_raw") ->
+                respond(content = "replica unavailable", status = HttpStatusCode.InternalServerError)
+              query.startsWith("INSERT") -> respond(content = "", status = HttpStatusCode.OK)
+              else ->
+                respond(
+                  content =
+                    """
+                    {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":9900}
+                    """.trimIndent(),
+                  status = HttpStatusCode.OK,
+                )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config =
+            clickHouseConfig(
+              readyMaxAgeMs = 1_000,
+              enabledTables = setOf("hyperliquid_raw", "hyperliquid_candles"),
+              readyTables = setOf("hyperliquid_candles"),
+              retryInitialMs = 10,
+              retryMaxMs = 10,
+            ),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord())
+      withTimeout(1_000) {
+        while (readySignals.none { it.writeSucceeded == true }) {
+          delay(10)
+        }
+      }
+      sink.enqueue(rawRecord())
+      withTimeout(1_000) {
+        while (readySignals.none { it.writeSucceeded == false }) {
+          delay(10)
+        }
+      }
+
+      val failure = readySignals.last { it.writeSucceeded == false }
+      assertEquals(true, failure.ready)
+      assertEquals(false, failure.writeSucceeded)
       job.cancelAndJoin()
       client.close()
     }
@@ -114,6 +176,7 @@ class ClickHouseSinkTest {
       }
 
       assertEquals(1, insertBodies.size)
+      assertEquals(true, readySignals.last().writeSucceeded)
       assertEquals(
         3,
         insertBodies
@@ -262,6 +325,7 @@ class ClickHouseSinkTest {
       }
 
       assertEquals(1, insertAttempts)
+      assertEquals(false, readySignals.last().writeSucceeded)
       assertTrue(job.isActive)
       job.cancelAndJoin()
       client.close()
@@ -328,6 +392,7 @@ class ClickHouseSinkTest {
 
       assertEquals(2, insertAttempts)
       assertEquals(insertBodies[0], insertBodies[1])
+      assertEquals(true, readySignals.last().writeSucceeded)
       assertEquals(
         1.0,
         registry

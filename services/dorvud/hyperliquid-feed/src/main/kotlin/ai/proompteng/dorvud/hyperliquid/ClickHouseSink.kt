@@ -47,6 +47,7 @@ private val clickHouseIdentifierPattern = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
 data class ClickHouseReadinessUpdate(
   val ready: Boolean,
+  val writeSucceeded: Boolean? = null,
   val tableFreshnessReady: Boolean = ready,
   val tableIngestLagMs: Map<String, Long?>,
   val tableEventLagMs: Map<String, Long?>,
@@ -202,7 +203,7 @@ class ClickHouseSink(
           metrics.recordClickHouseError(table)
           metrics.recordClickHouseRetry(table)
           metrics.setClickHouseReady(ready)
-          emitReadiness(ready = ready, tableFreshnessReady = freshnessReady)
+          emitReadiness(ready = ready, tableFreshnessReady = freshnessReady, writeSucceeded = false)
         }.onFailure { metricsError ->
           clickHouseLogger.warn(metricsError) { "clickhouse retry metric recording failed table=$table" }
         }
@@ -237,7 +238,7 @@ class ClickHouseSink(
     val freshnessReady = refreshTableFreshnessIfDue()
     val ready = !hasRequiredFailures() && freshnessReady
     metrics.setClickHouseReady(ready)
-    emitReadiness(ready = ready, tableFreshnessReady = freshnessReady)
+    emitReadiness(ready = ready, tableFreshnessReady = freshnessReady, writeSucceeded = true)
   }
 
   private fun hasRequiredFailures(): Boolean = failedTables.any { it in config.readyTables }
@@ -408,10 +409,12 @@ class ClickHouseSink(
   private fun emitReadiness(
     ready: Boolean,
     tableFreshnessReady: Boolean,
+    writeSucceeded: Boolean? = null,
   ) {
     onReady(
       ClickHouseReadinessUpdate(
         ready = ready,
+        writeSucceeded = writeSucceeded,
         tableFreshnessReady = tableFreshnessReady,
         tableIngestLagMs = latestTableIngestLagMs,
         tableEventLagMs = latestTableEventLagMs,

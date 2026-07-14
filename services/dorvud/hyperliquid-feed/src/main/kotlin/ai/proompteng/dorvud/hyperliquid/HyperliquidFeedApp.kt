@@ -109,10 +109,10 @@ class HyperliquidFeedApp(
           clickHouseTableEventLagMs = update.tableEventLagMs
           clickHouseTableEventFutureSkewMs = update.tableEventFutureSkewMs
           clickHouseTableFresh.set(update.tableFreshnessReady)
-          if (update.ready) {
-            clickHouseLastSuccessMs.set(observedAt)
-          } else {
-            clickHouseLastFailureMs.set(observedAt)
+          when (update.writeSucceeded) {
+            true -> clickHouseLastSuccessMs.set(observedAt)
+            false -> clickHouseLastFailureMs.set(observedAt)
+            null -> Unit
           }
           clickHouseReady.set(update.ready)
           updateReady()
