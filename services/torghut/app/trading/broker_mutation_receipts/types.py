@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
+import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Mapping, TypeAlias
 
@@ -14,6 +18,8 @@ from ..decision_submission_claims.types import (
 from .validation import (
     RECEIPT_DEFAULT_LEASE_SECONDS,
     BrokerMutationReceiptValidationError,
+    canonical_broker_request_sha256,
+    canonical_broker_request_sha256_from_intent_json,
 )
 
 
@@ -96,6 +102,10 @@ CanonicalJsonValue: TypeAlias = (
 )
 CanonicalRequestPayload: TypeAlias = Mapping[str, object]
 
+_IO_PERMIT_SIGNING_KEY = secrets.token_bytes(32)
+_IO_PERMIT_CONSUMPTION_LOCK = threading.Lock()
+_CONSUMED_IO_PERMIT_TAGS: set[str] = set()
+
 
 @dataclass(frozen=True, slots=True)
 class BrokerMutationTarget:
@@ -137,6 +147,12 @@ class BrokerMutationIntent:
     intent_schema_version: str
     canonical_intent_json: str
     canonical_intent_sha256: str
+
+    @property
+    def canonical_request_sha256(self) -> str:
+        return canonical_broker_request_sha256_from_intent_json(
+            self.canonical_intent_json
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,9 +299,208 @@ class BrokerMutationIoPermit:
     primary_token: uuid.UUID
     primary_epoch: int
     event_sequence_no: int
+    broker_route: BrokerMutationRoute
+    operation: BrokerMutationOperation
+    risk_class: BrokerMutationRiskClass
+    account_label: str
+    endpoint_fingerprint: str
+    canonical_intent_sha256: str
+    canonical_request_sha256: str
     submission_claim_id: uuid.UUID | None
     submission_claim_token: uuid.UUID | None
     submission_claim_fencing_epoch: int | None
+    authorization_tag: str = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationIoPermitIssueRequest:
+    receipt_id: uuid.UUID
+    primary_token: uuid.UUID
+    primary_epoch: int
+    event_sequence_no: int
+    broker_route: BrokerMutationRoute
+    operation: BrokerMutationOperation
+    risk_class: BrokerMutationRiskClass
+    account_label: str
+    endpoint_fingerprint: str
+    canonical_intent_sha256: str
+    canonical_request_sha256: str
+    submission_claim_id: uuid.UUID | None
+    submission_claim_token: uuid.UUID | None
+    submission_claim_fencing_epoch: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationIoPermitExpectation:
+    broker_route: BrokerMutationRoute | None = None
+    operation: BrokerMutationOperation | None = None
+    risk_class: BrokerMutationRiskClass | None = None
+    account_label: str | None = None
+    endpoint_fingerprint: str | None = None
+    request_payload: Mapping[str, object] | None = None
+
+
+def issue_broker_mutation_io_permit(
+    request: BrokerMutationIoPermitIssueRequest,
+) -> BrokerMutationIoPermit:
+    """Issue a process-local capability after the durable I/O boundary commits."""
+
+    fields = (
+        request.receipt_id,
+        request.primary_token,
+        request.primary_epoch,
+        request.event_sequence_no,
+        request.broker_route,
+        request.operation,
+        request.risk_class,
+        request.account_label,
+        request.endpoint_fingerprint,
+        request.canonical_intent_sha256,
+        request.canonical_request_sha256,
+        request.submission_claim_id,
+        request.submission_claim_token,
+        request.submission_claim_fencing_epoch,
+    )
+    return BrokerMutationIoPermit(
+        receipt_id=request.receipt_id,
+        primary_token=request.primary_token,
+        primary_epoch=request.primary_epoch,
+        event_sequence_no=request.event_sequence_no,
+        broker_route=request.broker_route,
+        operation=request.operation,
+        risk_class=request.risk_class,
+        account_label=request.account_label,
+        endpoint_fingerprint=request.endpoint_fingerprint,
+        canonical_intent_sha256=request.canonical_intent_sha256,
+        canonical_request_sha256=request.canonical_request_sha256,
+        submission_claim_id=request.submission_claim_id,
+        submission_claim_token=request.submission_claim_token,
+        submission_claim_fencing_epoch=request.submission_claim_fencing_epoch,
+        authorization_tag=_broker_mutation_io_permit_tag(fields),
+    )
+
+
+def validate_broker_mutation_io_permit(
+    permit: object,
+    *,
+    expectation: BrokerMutationIoPermitExpectation | None = None,
+) -> BrokerMutationIoPermit:
+    """Reject forged or malformed broker-I/O capabilities at adapter boundaries."""
+
+    if not isinstance(permit, BrokerMutationIoPermit):
+        raise BrokerMutationReceiptValidationError("broker_mutation_io_permit_required")
+    required = expectation or BrokerMutationIoPermitExpectation()
+    fields = (
+        permit.receipt_id,
+        permit.primary_token,
+        permit.primary_epoch,
+        permit.event_sequence_no,
+        permit.broker_route,
+        permit.operation,
+        permit.risk_class,
+        permit.account_label,
+        permit.endpoint_fingerprint,
+        permit.canonical_intent_sha256,
+        permit.canonical_request_sha256,
+        permit.submission_claim_id,
+        permit.submission_claim_token,
+        permit.submission_claim_fencing_epoch,
+    )
+    expected_tag = _broker_mutation_io_permit_tag(fields)
+    if not hmac.compare_digest(permit.authorization_tag, expected_tag):
+        raise BrokerMutationReceiptValidationError("broker_mutation_io_permit_invalid")
+    if (
+        permit.primary_epoch <= 0
+        or permit.event_sequence_no <= 0
+        or permit.broker_route not in {"alpaca", "hyperliquid"}
+        or permit.operation
+        not in {
+            "submit_order",
+            "replace_order",
+            "cancel_order",
+            "cancel_all_orders",
+            "close_position",
+            "close_all_positions",
+        }
+        or permit.risk_class not in {"risk_increasing", "risk_reducing", "risk_neutral"}
+        or not permit.account_label
+        or len(permit.endpoint_fingerprint) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in permit.endpoint_fingerprint
+        )
+        or len(permit.canonical_intent_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in permit.canonical_intent_sha256
+        )
+        or len(permit.canonical_request_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in permit.canonical_request_sha256
+        )
+        or (
+            required.broker_route is not None
+            and permit.broker_route != required.broker_route
+        )
+        or (required.operation is not None and permit.operation != required.operation)
+        or (
+            required.risk_class is not None and permit.risk_class != required.risk_class
+        )
+        or (
+            required.account_label is not None
+            and permit.account_label != required.account_label
+        )
+        or (
+            required.endpoint_fingerprint is not None
+            and permit.endpoint_fingerprint != required.endpoint_fingerprint
+        )
+        or (
+            required.request_payload is not None
+            and permit.canonical_request_sha256
+            != canonical_broker_request_sha256(required.request_payload)
+        )
+    ):
+        raise BrokerMutationReceiptValidationError("broker_mutation_io_permit_invalid")
+    claim_fields = (
+        permit.submission_claim_id,
+        permit.submission_claim_token,
+        permit.submission_claim_fencing_epoch,
+    )
+    if any(value is None for value in claim_fields) and any(
+        value is not None for value in claim_fields
+    ):
+        raise BrokerMutationReceiptValidationError("broker_mutation_io_permit_invalid")
+    return permit
+
+
+def consume_broker_mutation_io_permit(
+    permit: object,
+    *,
+    expectation: BrokerMutationIoPermitExpectation,
+) -> BrokerMutationIoPermit:
+    """Validate and atomically consume one exact broker-I/O capability."""
+
+    validated = validate_broker_mutation_io_permit(
+        permit,
+        expectation=expectation,
+    )
+    with _IO_PERMIT_CONSUMPTION_LOCK:
+        if validated.authorization_tag in _CONSUMED_IO_PERMIT_TAGS:
+            raise BrokerMutationReceiptValidationError(
+                "broker_mutation_io_permit_already_consumed"
+            )
+        _CONSUMED_IO_PERMIT_TAGS.add(validated.authorization_tag)
+    return validated
+
+
+def _broker_mutation_io_permit_tag(fields: tuple[object, ...]) -> str:
+    payload = "\x1f".join("" if value is None else str(value) for value in fields)
+    return hmac.new(
+        _IO_PERMIT_SIGNING_KEY,
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,6 +597,8 @@ __all__ = [
     "BrokerMutationIntent",
     "BrokerMutationIntentRequest",
     "BrokerMutationIoPermit",
+    "BrokerMutationIoPermitExpectation",
+    "BrokerMutationIoPermitIssueRequest",
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
     "BrokerMutationLinkedSubmissionSettlementRequest",

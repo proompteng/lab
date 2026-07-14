@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import hashlib
+import json
 import posixpath
 import re
 import unicodedata
@@ -55,6 +57,55 @@ class BrokerMutationReceiptFenceError(BrokerMutationReceiptError):
 
 class BrokerMutationReceiptConflictError(BrokerMutationReceiptError):
     """Durable receipt truth conflicts with the requested mutation."""
+
+
+class BrokerMutationBrokerIoError(RuntimeError):
+    """A known broker dependency failed after durable I/O authorization."""
+
+
+def canonical_broker_request_sha256(payload: Mapping[str, object]) -> str:
+    """Hash one normalized broker request independently from its receipt metadata."""
+
+    normalized = canonical_json_value(payload, path="request", depth=0)
+    encoded = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    if len(encoded) > MAX_CANONICAL_INTENT_BYTES:
+        raise BrokerMutationReceiptValidationError(
+            f"canonical_intent_too_large:{MAX_CANONICAL_INTENT_BYTES}"
+        )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def canonical_broker_request_sha256_from_intent_json(
+    canonical_intent_json: str,
+) -> str:
+    """Extract and hash the request already sealed inside a canonical intent."""
+
+    try:
+        document = json.loads(canonical_intent_json, parse_float=Decimal)
+    except (TypeError, ValueError) as exc:
+        raise BrokerMutationReceiptValidationError(
+            "canonical_intent_json_invalid"
+        ) from exc
+    if not isinstance(document, Mapping):
+        raise BrokerMutationReceiptValidationError("canonical_intent_document_invalid")
+    request_payload = cast(Mapping[object, object], document).get("request")
+    if not isinstance(request_payload, Mapping):
+        raise BrokerMutationReceiptValidationError("canonical_intent_document_invalid")
+    request_mapping = cast(Mapping[object, object], request_payload)
+    normalized_request: dict[str, object] = {}
+    for key, value in request_mapping.items():
+        if not isinstance(key, str):
+            raise BrokerMutationReceiptValidationError(
+                "canonical_intent_document_invalid"
+            )
+        normalized_request[key] = value
+    return canonical_broker_request_sha256(normalized_request)
 
 
 def normalize_endpoint_url(endpoint_url: str) -> str:
@@ -341,6 +392,8 @@ __all__ = [
     "BrokerMutationReceiptError",
     "BrokerMutationReceiptFenceError",
     "BrokerMutationReceiptValidationError",
+    "canonical_broker_request_sha256",
+    "canonical_broker_request_sha256_from_intent_json",
     "as_utc_datetime",
     "as_uuid",
     "bounded_seconds",

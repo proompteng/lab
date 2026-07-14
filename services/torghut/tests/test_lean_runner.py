@@ -9,7 +9,6 @@ from app.trading.lean_runtime import (
     get_backtest,
     lean_authority_status,
     evaluate_strategy_shadow,
-    shadow_simulate,
     submit_backtest,
 )
 
@@ -19,7 +18,6 @@ class TestLeanRuntime(TestCase):
         self.original_backtest_upstream_url = (
             settings.trading_lean_backtest_upstream_url
         )
-        self.original_shadow_upstream_url = settings.trading_lean_shadow_upstream_url
         self.original_strategy_shadow_upstream_url = (
             settings.trading_lean_strategy_shadow_upstream_url
         )
@@ -30,7 +28,6 @@ class TestLeanRuntime(TestCase):
         settings.trading_lean_backtest_upstream_url = (
             self.original_backtest_upstream_url
         )
-        settings.trading_lean_shadow_upstream_url = self.original_shadow_upstream_url
         settings.trading_lean_strategy_shadow_upstream_url = (
             self.original_strategy_shadow_upstream_url
         )
@@ -79,21 +76,3 @@ class TestLeanRuntime(TestCase):
         self.assertEqual(payload["parity_status"], SCAFFOLD_BLOCKED_STATUS)
         self.assertIn("governance", payload)
         self.assertFalse(payload["governance"]["promotion_ready"])
-
-    def test_shadow_simulate_is_fail_closed_without_empirical_replay(self) -> None:
-        settings.trading_lean_shadow_upstream_url = None
-
-        payload = shadow_simulate(
-            symbol="BTC/USD",
-            side="buy",
-            qty=1,
-            intent_price=100.0,
-            correlation_id="corr-1",
-        )
-
-        self.assertEqual(payload["parity_status"], SCAFFOLD_BLOCKED_STATUS)
-        self.assertEqual(
-            payload["failure_taxonomy"],
-            "missing_empirical_shadow_replay",
-        )
-        self.assertFalse(payload["promotion_authority_eligible"])

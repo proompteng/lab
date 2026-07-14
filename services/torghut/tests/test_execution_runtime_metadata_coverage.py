@@ -5,14 +5,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
-
-from app.models import Base, Execution, LeanExecutionShadowEvent, TradeDecision
+from app.models import Execution, TradeDecision
 from app.trading.execution.order_executor_core_support import (
     apply_execution_status,
     extract_execution_metadata,
-    persist_lean_shadow_event,
 )
 from app.trading.execution.order_executor_submission_methods import (
     json_default,
@@ -197,55 +193,3 @@ class TestExecutionRuntimeMetadataCoverage(TestCase):
             decision_row.executed_at,
             datetime(2026, 2, 10, 15, 30, tzinfo=timezone.utc),
         )
-
-    def test_persist_lean_shadow_event_records_unknown_parity_status(self) -> None:
-        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-        Base.metadata.create_all(engine)
-        try:
-            with Session(engine) as session:
-                execution = Execution(
-                    alpaca_account_label="paper",
-                    alpaca_order_id="lean-shadow-order",
-                    client_order_id="lean-shadow",
-                    symbol="AAPL",
-                    side="buy",
-                    order_type="market",
-                    time_in_force="day",
-                    submitted_qty=Decimal("2"),
-                    filled_qty=Decimal("2"),
-                    status="filled",
-                    raw_order={},
-                )
-                session.add(execution)
-                session.flush()
-
-                decision = StrategyDecision(
-                    strategy_id="strategy-1",
-                    symbol="AAPL",
-                    event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
-                    timeframe="1Min",
-                    action="buy",
-                    qty=Decimal("2.0"),
-                    params={"price": Decimal("100")},
-                )
-
-                persist_lean_shadow_event(
-                    session,
-                    execution=execution,
-                    order_payload={
-                        "_execution_correlation_id": "corr-lean",
-                        "_lean_shadow": {
-                            "intent_notional": "200",
-                            "parity_status": "   ",
-                        },
-                    },
-                    decision=decision,
-                )
-                session.commit()
-
-                event = session.execute(select(LeanExecutionShadowEvent)).scalar_one()
-                self.assertEqual(event.correlation_id, "corr-lean")
-                self.assertEqual(event.parity_status, "unknown")
-                self.assertEqual(event.intent_notional, Decimal("200"))
-        finally:
-            engine.dispose()

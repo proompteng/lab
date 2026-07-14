@@ -336,7 +336,7 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             live_alpaca = FakeAlpacaClient()
             pipeline_live = TradingPipeline(
                 alpaca_client=live_alpaca,
-                order_firewall=OrderFirewall(live_alpaca),
+                order_firewall=OrderFirewall(live_alpaca, account_label="live"),
                 ingestor=FakeIngestor([live_signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),

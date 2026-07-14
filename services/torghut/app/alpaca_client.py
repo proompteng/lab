@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -72,6 +72,73 @@ _ALLOWED_ORDER_EXTRA_PARAMS = frozenset(
         "take_profit",
     }
 )
+
+AlpacaOrderRequest = (
+    MarketOrderRequest | LimitOrderRequest | StopOrderRequest | StopLimitOrderRequest
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AlpacaSubmitRequest:
+    symbol: object
+    side: object
+    qty: object
+    order_type: object
+    time_in_force: object
+    limit_price: object = None
+    stop_price: object = None
+    extra_params: Mapping[str, object] | None = None
+
+
+def build_alpaca_order_request(request: AlpacaSubmitRequest) -> AlpacaOrderRequest:
+    """Validate and build the exact SDK request before broker I/O begins."""
+
+    order_extra_params = dict(request.extra_params or {})
+    reserved_extra_params = sorted(
+        _RESERVED_ORDER_EXTRA_PARAMS.intersection(order_extra_params)
+    )
+    if reserved_extra_params:
+        raise ValueError(
+            "alpaca_order_extra_params_reserved:" + ",".join(reserved_extra_params)
+        )
+    unsupported_extra_params = sorted(
+        set(order_extra_params).difference(_ALLOWED_ORDER_EXTRA_PARAMS)
+    )
+    if unsupported_extra_params:
+        raise ValueError(
+            "alpaca_order_extra_params_unsupported:"
+            + ",".join(unsupported_extra_params)
+        )
+    payload: dict[str, Any] = {
+        "symbol": str(request.symbol),
+        "qty": float(str(request.qty)),
+        "side": OrderSide(str(request.side).lower()),
+        "time_in_force": TimeInForce(str(request.time_in_force).lower()),
+    }
+    payload.update(order_extra_params)
+
+    order_type_lower = str(request.order_type).lower()
+    if order_type_lower == "market":
+        return MarketOrderRequest(**payload)
+    if order_type_lower == "limit":
+        if request.limit_price is None:
+            raise ValueError("limit_price is required for limit orders")
+        return LimitOrderRequest(limit_price=float(str(request.limit_price)), **payload)
+    if order_type_lower == "stop":
+        if request.stop_price is None:
+            raise ValueError("stop_price is required for stop orders")
+        return StopOrderRequest(stop_price=float(str(request.stop_price)), **payload)
+    if order_type_lower == "stop_limit":
+        if request.stop_price is None or request.limit_price is None:
+            raise ValueError(
+                "stop_limit orders require both stop_price and limit_price"
+            )
+        return StopLimitOrderRequest(
+            stop_price=float(str(request.stop_price)),
+            limit_price=float(str(request.limit_price)),
+            **payload,
+        )
+    raise ValueError(f"Unsupported order_type: {request.order_type}")
 
 
 class _ReadOnlyTradingClientLike(Protocol):
@@ -176,6 +243,11 @@ class TorghutAlpacaClient:
 
         use_paper = paper if paper is not None else settings.trading_mode != "live"
         self.endpoint_class = "paper" if use_paper else "live"
+        self.endpoint_url = base or (
+            "https://paper-api.alpaca.markets"
+            if use_paper
+            else "https://api.alpaca.markets"
+        )
 
         # Broker mutations use a dedicated single-attempt client so an ambiguous
         # response cannot cause a hidden resubmission. Reads keep the SDK's retry
@@ -298,54 +370,18 @@ class TorghutAlpacaClient:
     ) -> Dict[str, Any]:
         self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
-        order_extra_params = dict(extra_params or {})
-        reserved_extra_params = sorted(
-            _RESERVED_ORDER_EXTRA_PARAMS.intersection(order_extra_params)
+        request = build_alpaca_order_request(
+            AlpacaSubmitRequest(
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                order_type=order_type,
+                time_in_force=time_in_force,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                extra_params=extra_params,
+            )
         )
-        if reserved_extra_params:
-            raise ValueError(
-                "alpaca_order_extra_params_reserved:" + ",".join(reserved_extra_params)
-            )
-        unsupported_extra_params = sorted(
-            set(order_extra_params).difference(_ALLOWED_ORDER_EXTRA_PARAMS)
-        )
-        if unsupported_extra_params:
-            raise ValueError(
-                "alpaca_order_extra_params_unsupported:"
-                + ",".join(unsupported_extra_params)
-            )
-        side_enum = OrderSide(side.lower())
-        tif_enum = TimeInForce(time_in_force.lower())
-        payload = {
-            "symbol": symbol,
-            "qty": qty,
-            "side": side_enum,
-            "time_in_force": tif_enum,
-        }
-        payload.update(order_extra_params)
-
-        order_type_lower = order_type.lower()
-        if order_type_lower == "market":
-            request = MarketOrderRequest(**payload)
-        elif order_type_lower == "limit":
-            if limit_price is None:
-                raise ValueError("limit_price is required for limit orders")
-            request = LimitOrderRequest(limit_price=limit_price, **payload)
-        elif order_type_lower == "stop":
-            if stop_price is None:
-                raise ValueError("stop_price is required for stop orders")
-            request = StopOrderRequest(stop_price=stop_price, **payload)
-        elif order_type_lower == "stop_limit":
-            if stop_price is None or limit_price is None:
-                raise ValueError(
-                    "stop_limit orders require both stop_price and limit_price"
-                )
-            request = StopLimitOrderRequest(
-                stop_price=stop_price, limit_price=limit_price, **payload
-            )
-        else:
-            raise ValueError(f"Unsupported order_type: {order_type}")
-
         order = self._trading.submit_order(request)
         return self._model_to_dict(order)
 

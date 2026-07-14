@@ -29,6 +29,7 @@ from app.hyperliquid_execution.models import (
     RuntimeDependencyStatus,
     Signal,
 )
+from tests import broker_mutation_test_support as mutation_support
 from app.hyperliquid_execution.repository import HyperliquidExecutionRepository
 from app.hyperliquid_execution.runtime_details import _string_list_detail
 from app.hyperliquid_execution.service import (
@@ -303,6 +304,9 @@ def test_repository_cooldowns_repeated_broker_rejects() -> None:
         )
 
 
+_SUBMIT_COORDINATOR = mutation_support.PassthroughBrokerMutationSubmitCoordinator()
+
+
 def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
@@ -318,6 +322,7 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -364,6 +369,7 @@ def test_service_selects_only_fresh_execution_markets() -> None:
         config=config,
         feed=_PartialFeatureServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -398,6 +404,7 @@ def test_service_reports_blocked_signal_reasons() -> None:
         config=config,
         feed=_SellServiceFeed(now),
         exchange=_ServiceExchange(now),
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -657,7 +664,7 @@ class _ServiceExchange:
             details={"selected": [market.coin for market in markets]},
         )
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult:
+    def submit_order(self, intent: OrderIntent, **_kwargs: object) -> OrderResult:
         assert intent.tif == "Ioc"
         self.submitted_coins.append(intent.coin)
         return OrderResult("filled", "456", {"filled": {"oid": 456}})
@@ -871,13 +878,8 @@ class _FakeResult:
     def __init__(self, rows: Iterable[Mapping[str, object]]) -> None:
         self.rows = [dict(row) for row in rows]
 
-    def mappings(self) -> "_FakeRows":
-        return _FakeRows(self.rows)
-
-
-class _FakeRows:
-    def __init__(self, rows: list[dict[str, object]]) -> None:
-        self.rows = rows
+    def mappings(self) -> "_FakeResult":
+        return self
 
     def __iter__(self) -> Iterable[dict[str, object]]:
         return iter(self.rows)

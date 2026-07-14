@@ -322,11 +322,6 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         )
 
         session = Mock()
-        execution_client = Mock()
-        execution_client.evaluate_strategy_shadow.return_value = {
-            "run_id": "run-1",
-            "parity_status": "blocked_missing_empirical_authority",
-        }
         decision = SimpleNamespace(
             strategy_id="strategy-1",
             symbol="AAPL",
@@ -345,8 +340,6 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
                 pipeline,
                 session=session,
                 decision=decision,
-                execution_client=execution_client,
-                selected_adapter_name="lean",
             )
         finally:
             config.settings.trading_lean_strategy_shadow_enabled = original_enabled
@@ -491,7 +484,7 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         finally:
             Path(gate_path).unlink(missing_ok=True)
 
-    def test_submit_order_retries_sell_inventory_conflict_after_cancel(self) -> None:
+    def test_submit_order_blocks_sell_inventory_conflict_without_cancel(self) -> None:
         client = SellInventoryConflictRetryClient()
         order_firewall = OrderFirewall(client)
         pipeline = TradingPipeline(
@@ -543,24 +536,15 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
                     decision=decision,
                     decision_row=decision_row,
                     selected_adapter_name="alpaca",
-                    retry_delays=[],
                 )
             )
 
-            self.assertFalse(rejected)
-            self.assertIsNotNone(execution)
-            self.assertEqual(client.cancel_calls, ["open-sell-1"])
-            self.assertEqual(len(client.submitted), 1)
-            self.assertEqual(Decimal(client.submitted[0]["qty"]), Decimal("1"))
+            self.assertTrue(rejected)
+            self.assertIsNone(execution)
+            self.assertEqual(client.cancel_calls, [])
+            self.assertEqual(len(client.submitted), 0)
             session.refresh(decision_row)
-            broker_precheck_recovery = decision_row.decision_json.get(
-                "broker_precheck_recovery", {}
-            )
-            self.assertEqual(
-                broker_precheck_recovery.get("code"),
-                "sell_inventory_conflict_retried_after_cancel",
-            )
-            self.assertEqual(broker_precheck_recovery.get("status"), "cleared")
+            self.assertNotIn("broker_precheck_recovery", decision_row.decision_json)
 
     def test_runtime_uncertainty_gate_does_not_bypass_kill_switch_precedence(
         self,

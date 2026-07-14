@@ -279,7 +279,6 @@ class OrderSubmissionRequest:
     decision: StrategyDecision
     decision_row: TradeDecision
     selected_adapter_name: str
-    retry_delays: list[int]
 
 
 @dataclass(frozen=True)

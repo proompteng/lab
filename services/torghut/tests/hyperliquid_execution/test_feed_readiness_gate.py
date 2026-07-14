@@ -21,6 +21,7 @@ from app.hyperliquid_execution.models import (
     PositionSnapshot,
     RuntimeDependencyStatus,
 )
+from app.trading.broker_mutation_receipts import BrokerMutationIoPermit
 from app.hyperliquid_execution.service import HyperliquidExecutionService
 
 
@@ -333,7 +334,13 @@ class _Exchange:
             details={"selected": [market.coin for market in markets]},
         )
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult:
+    def submit_order(
+        self,
+        intent: OrderIntent,
+        *,
+        mutation_permit: BrokerMutationIoPermit,
+    ) -> OrderResult:
+        del mutation_permit
         self.submitted_coins.append(intent.coin)
         return OrderResult("filled", "456", {"filled": {"oid": 456}})
 

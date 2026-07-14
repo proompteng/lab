@@ -9,7 +9,17 @@ import pytest
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
-from app.hyperliquid_execution.models import OrderIntent
+from app.hyperliquid_execution.models import OrderIntent, OrderResult
+from tests.broker_mutation_test_support import (
+    hyperliquid_broker_mutation_test_permit,
+)
+
+
+def _submit(exchange: _FakeExchange, intent: OrderIntent) -> OrderResult:
+    return exchange.submit_order(
+        intent,
+        mutation_permit=hyperliquid_broker_mutation_test_permit(exchange, intent),
+    )
 
 
 def test_exchange_rejects_reduce_only_entry_submission() -> None:
@@ -23,7 +33,7 @@ def test_exchange_rejects_reduce_only_entry_submission() -> None:
         sdk=_FakeSdk(),
     )
 
-    result = exchange.submit_order(_intent(reduce_only=True))
+    result = _submit(exchange, _intent(reduce_only=True))
 
     assert result.rejection_reason == "reduce_only_entry_orders_unsupported"
 
@@ -41,7 +51,7 @@ def test_exchange_rejects_non_positive_order_price_before_market_open() -> None:
     )
 
     with pytest.raises(ValueError, match="order_price_must_be_positive"):
-        exchange.submit_order(_intent(limit_price=Decimal("0")))
+        _submit(exchange, _intent(limit_price=Decimal("0")))
 
     assert sdk.market_opens == []
 
@@ -58,7 +68,7 @@ def test_exchange_passes_hip3_scope_and_executable_price_to_market_open() -> Non
         sdk=sdk,
     )
 
-    result = exchange.submit_order(_intent())
+    result = _submit(exchange, _intent())
 
     assert result.status == "accepted"
     assert sdk.market_opens == [
@@ -85,8 +95,9 @@ def test_exchange_does_not_double_scope_pre_scoped_market_name() -> None:
         sdk=sdk,
     )
 
-    result = exchange.submit_order(
-        _intent(coin="xyz:NVDA", market_id="hl:perp:xyz:xyz:NVDA")
+    result = _submit(
+        exchange,
+        _intent(coin="xyz:NVDA", market_id="hl:perp:xyz:xyz:NVDA"),
     )
 
     assert result.status == "accepted"
@@ -105,8 +116,9 @@ def test_exchange_leaves_default_dex_market_name_unscoped() -> None:
         sdk=sdk,
     )
 
-    result = exchange.submit_order(
-        _intent(dex="default", market_id="hl:perp:default:NVDA")
+    result = _submit(
+        exchange,
+        _intent(dex="default", market_id="hl:perp:default:NVDA"),
     )
 
     assert result.status == "accepted"

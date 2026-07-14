@@ -7,13 +7,32 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any, Optional, Protocol, cast
 from uuid import uuid4
 
+from sqlalchemy.orm import Session
+
 from ...alpaca_client import TorghutAlpacaClient
-from ..firewall import OrderFirewall
+from ..broker_mutation_receipts import (
+    BrokerMutationIntentRequest,
+    BrokerMutationSettlement,
+    BrokerMutationSettlementRequest,
+    BrokerMutationTarget,
+    build_broker_mutation_intent,
+    build_broker_mutation_settlement,
+    fingerprint_broker_endpoint,
+)
+from ..broker_mutation_submit_coordinator import (
+    BrokerMutationSubmitCoordinator,
+    UnlinkedOrderSubmissionCallbacks,
+)
+from ..firewall import (
+    AlpacaSubmitRequest,
+    OrderFirewall,
+    alpaca_submit_request_payload,
+)
 from ..simulation_progress import active_simulation_runtime_context
 from ..time_source import trading_now
 
@@ -120,6 +139,12 @@ class ExecutionAdapter(Protocol):
         /,
     ) -> dict[str, Any]: ...
 
+    def submit_risk_reducing_order(
+        self,
+        request: OrderSubmission,
+        /,
+    ) -> dict[str, Any]: ...
+
     def cancel_order(self, order_id: str) -> bool: ...
 
     def cancel_all_orders(self) -> list[dict[str, Any]]: ...
@@ -135,24 +160,73 @@ class ExecutionAdapter(Protocol):
     def list_positions(self) -> list[dict[str, Any]] | None: ...
 
 
+def _alpaca_closeout_settlement(
+    response: Mapping[str, object],
+    *,
+    client_order_id: str,
+) -> BrokerMutationSettlement:
+    status = str(response.get("status") or "accepted").strip().lower()
+    if not status:
+        status = "accepted"
+    rejected = status in {"cancelled", "canceled", "expired", "rejected"}
+    broker_reference = str(response.get("id") or response.get("order_id") or "").strip()
+    if not rejected and not broker_reference:
+        raise ValueError("alpaca_closeout_response_order_id_required")
+    return build_broker_mutation_settlement(
+        BrokerMutationSettlementRequest(
+            source="primary",
+            outcome="rejected" if rejected else "acknowledged",
+            broker_reference=None if rejected else broker_reference,
+            execution_id=None,
+            evidence_payload={
+                "schema_version": "torghut.alpaca-closeout-submit-terminal.v1",
+                "client_order_id": client_order_id,
+                "broker_status": status,
+            },
+        )
+    )
+
+
 class AlpacaExecutionAdapter:
-    """Default adapter that mutates via OrderFirewall and reads via TorghutAlpacaClient."""
+    """Alpaca reads plus explicitly classified risk-reduction submission."""
 
     name = "alpaca"
 
     def __init__(
-        self, *, firewall: OrderFirewall, read_client: TorghutAlpacaClient
+        self,
+        *,
+        firewall: OrderFirewall,
+        read_client: TorghutAlpacaClient,
+        session_factory: Callable[[], Session],
+        account_label: str,
+        endpoint_url: str,
+        submit_coordinator: BrokerMutationSubmitCoordinator | None = None,
     ) -> None:
         self._firewall = firewall
         self._read_client = read_client
+        self._session_factory = session_factory
+        self._account_label = account_label.strip()
+        self._endpoint_url = endpoint_url.strip()
+        if not self._account_label or not self._endpoint_url:
+            raise ValueError("alpaca_execution_adapter_identity_required")
+        self._submit_coordinator = (
+            submit_coordinator or BrokerMutationSubmitCoordinator("alpaca-closeout")
+        )
         self.last_route = self.name
 
     def submit_order(
         self,
+        _request: OrderSubmission,
+        /,
+    ) -> dict[str, Any]:
+        raise RuntimeError("alpaca_entry_submit_requires_durable_order_firewall")
+
+    def submit_risk_reducing_order(
+        self,
         request: OrderSubmission,
         /,
     ) -> dict[str, Any]:
-        payload = self._firewall.submit_order(
+        alpaca_request = AlpacaSubmitRequest(
             symbol=request.symbol,
             side=request.side,
             qty=request.qty,
@@ -162,8 +236,50 @@ class AlpacaExecutionAdapter:
             stop_price=request.stop_price,
             extra_params=request.extra_params,
         )
+        request_payload = alpaca_submit_request_payload(alpaca_request)
+        raw_extra_params = request_payload["extra_params"]
+        extra_params: Mapping[str, object] = (
+            cast(Mapping[str, object], raw_extra_params)
+            if isinstance(raw_extra_params, Mapping)
+            else {}
+        )
+        client_order_id = str(extra_params.get("client_order_id") or "").strip()
+        if not client_order_id:
+            raise ValueError("risk_reduction_client_order_id_required")
+        intent = build_broker_mutation_intent(
+            BrokerMutationIntentRequest(
+                broker_route="alpaca",
+                account_label=self._account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(self._endpoint_url),
+                operation="submit_order",
+                risk_class="risk_reducing",
+                purpose="closeout",
+                workflow_id=client_order_id,
+                client_request_id=client_order_id,
+                target=BrokerMutationTarget(kind="order", key=client_order_id),
+                request_payload=request_payload,
+            )
+        )
+        with self._session_factory() as session:
+            payload = self._submit_coordinator.submit_unlinked_order(
+                session,
+                intent=intent,
+                callbacks=UnlinkedOrderSubmissionCallbacks(
+                    broker_call=lambda permit: (
+                        self._firewall.submit_verified_risk_reducing_order(
+                            alpaca_request,
+                            mutation_permit=permit,
+                        )
+                    ),
+                    persist_terminal=lambda _payload: None,
+                    build_settlement=lambda response: _alpaca_closeout_settlement(
+                        response,
+                        client_order_id=client_order_id,
+                    ),
+                ),
+            )
         self.last_route = self.name
-        return payload
+        return dict(payload)
 
     def cancel_order(self, order_id: str) -> bool:
         self.last_route = self.name
@@ -321,6 +437,13 @@ class SimulationExecutionAdapter:
             order, event_type=draft.trade_update_event, event_ts=draft.event_ts
         )
         return dict(order)
+
+    def submit_risk_reducing_order(
+        self,
+        request: OrderSubmission,
+        /,
+    ) -> dict[str, Any]:
+        return self.submit_order(request)
 
     def _simulation_order_draft(self, request: OrderSubmission) -> SimulationOrderDraft:
         payload = dict(request.extra_params or {})

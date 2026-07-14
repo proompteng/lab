@@ -780,15 +780,23 @@ class TradingPipelineSubmissionPolicyMixin(
         self._maybe_record_lean_strategy_shadow(
             session=session,
             decision=decision,
-            execution_client=execution_client,
-            selected_adapter_name=selected_adapter_name,
         )
         self.state.metrics.record_execution_request(selected_adapter_name)
-        self.executor.update_decision_json(
-            session,
-            decision_row,
-            self._decision_lifecycle_metadata(submission_stage="submit_requested"),
+        raw_existing_decision = decision_row.decision_json
+        existing_decision = (
+            cast(Mapping[str, object], raw_existing_decision)
+            if isinstance(raw_existing_decision, Mapping)
+            else None
         )
+        if not (
+            existing_decision is not None
+            and existing_decision.get("submission_stage") == "broker_io_unresolved"
+        ):
+            self.executor.update_decision_json(
+                session,
+                decision_row,
+                self._decision_lifecycle_metadata(submission_stage="submit_requested"),
+            )
         self.executor.update_decision_params(
             session,
             decision_row,
@@ -818,7 +826,6 @@ class TradingPipelineSubmissionPolicyMixin(
                 decision=decision,
                 decision_row=decision_row,
                 selected_adapter_name=selected_adapter_name,
-                retry_delays=policy_outcome.retry_delays,
             )
         )
         if rejected:
@@ -835,7 +842,6 @@ class TradingPipelineSubmissionPolicyMixin(
             )
         )
         if execution is None:
-            self._sync_lean_observability(execution_client)
             self._record_simulation_position_state(
                 execution_client=execution_client,
                 symbol=decision.symbol,
@@ -892,8 +898,6 @@ class TradingPipelineSubmissionPolicyMixin(
                 actual_adapter_name=actual_adapter_name,
             )
         )
-        self._record_lean_shadow_from_execution(execution)
-        self._sync_lean_observability(execution_client)
         self._record_simulation_position_state(
             execution_client=execution_client,
             symbol=decision.symbol,

@@ -8,10 +8,25 @@ from typing import Any
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
-from app.hyperliquid_execution.models import ExecutionMarket, OpenOrder, OrderIntent
+from app.hyperliquid_execution.models import (
+    ExecutionMarket,
+    OpenOrder,
+    OrderIntent,
+    OrderResult,
+)
 from app.hyperliquid_execution.reconciliation_keys import (
     market_id_by_reconciliation_coin,
 )
+from tests.broker_mutation_test_support import (
+    hyperliquid_broker_mutation_test_permit,
+)
+
+
+def _submit(exchange: _FakeExchange, intent: OrderIntent) -> OrderResult:
+    return exchange.submit_order(
+        intent,
+        mutation_permit=hyperliquid_broker_mutation_test_permit(exchange, intent),
+    )
 
 
 def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None:
@@ -45,7 +60,7 @@ def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None
     sdk.next_order_response = {
         "response": {"data": {"statuses": [{"error": "Trading is halted."}]}}
     }
-    halted = exchange.submit_order(halted_intent)
+    halted = _submit(exchange, halted_intent)
     assert halted.status == "rejected"
 
     selected_after_halt, status_after_halt = exchange.filter_supported_markets(markets)
@@ -151,8 +166,8 @@ def test_exchange_reconciles_spot_state_fallback_paths() -> None:
 def test_exchange_rejects_unsupported_tif_missing_key_and_local_cancel() -> None:
     exchange = _FakeExchange(HyperliquidExecutionConfig.from_env({}), sdk=_FakeSdk())
 
-    unsupported_tif = exchange.submit_order(_intent("NVDA", tif="Alo"))
-    missing_key = exchange.submit_order(_intent("NVDA", tif="Ioc"))
+    unsupported_tif = _submit(exchange, _intent("NVDA", tif="Alo"))
+    missing_key = _submit(exchange, _intent("NVDA", tif="Ioc"))
     local_cancel = exchange.cancel_order(
         OpenOrder(
             order_id="order",

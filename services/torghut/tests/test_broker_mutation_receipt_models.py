@@ -32,7 +32,9 @@ def test_receipt_header_encodes_the_exact_broker_mutation_contract() -> None:
     assert "'submit_order', 'replace_order', 'cancel_order'" in checks
     assert "'inventory_conflict', 'opposite_side_cleanup'" in checks
     assert "'order', 'position', 'account'" in checks
-    assert "submission_claim_id IS NOT NULL" in checks
+    assert "purpose IN ('closeout', 'flatten')" in checks
+    assert "risk_class = 'risk_reducing'" in checks
+    assert "broker_route = 'hyperliquid' AND submission_claim_id IS NULL" in checks
     assert "target_key = account_label" in checks
 
     client_identity = next(

@@ -47,6 +47,7 @@ def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     assert config.validation_errors() == []
     assert config.market_data_network == "mainnet"
     assert config.execution_network == "testnet"
+    assert config.account_label == "hyperliquid-testnet"
     assert config.trade_coins == ("xyz:NVDA", "xyz:AMD")
     assert config.excluded_coins == ("SPX",)
     assert config.allow_short_entries is False

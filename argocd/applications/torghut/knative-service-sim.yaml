@@ -127,10 +127,6 @@ spec:
               value: "10"
             - name: TRADING_ENABLED
               value: "false"
-            - name: TRADING_ORDER_MAX_ATTEMPTS
-              value: "1"
-            - name: TRADING_EXECUTION_MAX_RETRIES
-              value: "0"
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
@@ -287,20 +283,8 @@ spec:
               value: "false"
             - name: TRADING_LEAN_BACKTEST_ENABLED
               value: "true"
-            - name: TRADING_LEAN_SHADOW_EXECUTION_ENABLED
-              value: "false"
             - name: TRADING_LEAN_STRATEGY_SHADOW_ENABLED
               value: "false"
-            - name: TRADING_LEAN_LIVE_CANARY_ENABLED
-              value: "false"
-            - name: TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY
-              value: "false"
-            - name: TRADING_LEAN_LIVE_CANARY_SYMBOLS
-              value: BTC/USD,ETH/USD,SOL/USD
-            - name: TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT
-              value: "0.25"
-            - name: TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED
-              value: "true"
             - name: TRADING_LEAN_LANE_DISABLE_SWITCH
               value: "true"
             - name: TRADING_STRATEGY_CONFIG_PATH

@@ -110,8 +110,15 @@ class BrokerMutationReceipt(Base):
             name="required_text",
         ),
         CheckConstraint(
-            "((operation IN ('submit_order', 'replace_order') "
-            "AND target_kind = 'order' AND submission_claim_id IS NOT NULL "
+            "((operation = 'submit_order' AND target_kind = 'order' AND "
+            "((broker_route = 'alpaca' AND (submission_claim_id IS NOT NULL OR "
+            "(submission_claim_id IS NULL AND risk_class = 'risk_reducing' "
+            "AND purpose IN ('closeout', 'flatten')))) OR "
+            "(broker_route = 'hyperliquid' AND submission_claim_id IS NULL "
+            "AND risk_class = 'risk_increasing' "
+            "AND purpose = 'initial_submission'))) OR "
+            "(operation = 'replace_order' AND target_kind = 'order' "
+            "AND submission_claim_id IS NOT NULL "
             ") OR "
             "(operation = 'cancel_order' AND target_kind = 'order' "
             "AND submission_claim_id IS NULL) OR "

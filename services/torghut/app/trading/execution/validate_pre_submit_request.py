@@ -7,13 +7,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, cast
 
-from sqlalchemy.orm import Session
-
 from ...models import (
     Execution,
-    LeanExecutionShadowEvent,
     TradeDecision,
-    coerce_json_payload,
 )
 from ..models import ExecutionRequest, StrategyDecision
 from ..quantity_rules import (
@@ -475,38 +471,6 @@ def _apply_execution_status(
         decision_row.executed_at = trading_now(account_label=account_label)
 
 
-def _persist_lean_shadow_event(
-    session: Session,
-    *,
-    execution: Execution,
-    order_payload: Mapping[str, Any],
-    decision: StrategyDecision,
-) -> None:
-    raw_shadow = order_payload.get("_lean_shadow")
-    if not isinstance(raw_shadow, Mapping):
-        return
-    shadow = cast(Mapping[str, Any], raw_shadow)
-
-    parity_status = str(shadow.get("parity_status") or "unknown").strip() or "unknown"
-    event = LeanExecutionShadowEvent(
-        correlation_id=str(order_payload.get("_execution_correlation_id") or "").strip()
-        or None,
-        trade_decision_id=execution.trade_decision_id,
-        execution_id=execution.id,
-        symbol=decision.symbol,
-        side=decision.action,
-        qty=decision.qty,
-        intent_notional=_optional_decimal(shadow.get("intent_notional")),
-        simulated_fill_price=_optional_decimal(shadow.get("simulated_fill_price")),
-        simulated_slippage_bps=_optional_decimal(shadow.get("simulated_slippage_bps")),
-        parity_delta_bps=_optional_decimal(shadow.get("parity_delta_bps")),
-        parity_status=parity_status,
-        failure_taxonomy=(str(shadow.get("failure_taxonomy") or "").strip() or None),
-        simulation_json=coerce_json_payload(dict(shadow)),
-    )
-    session.add(event)
-
-
 def _optional_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
@@ -532,7 +496,6 @@ extract_execution_advice_provenance = _extract_execution_advice_provenance
 extract_execution_metadata = _extract_execution_metadata
 extract_execution_policy_context = _extract_execution_policy_context
 optional_decimal = _optional_decimal
-persist_lean_shadow_event = _persist_lean_shadow_event
 resolve_submission_simulation_context = _resolve_submission_simulation_context
 validate_pre_submit_request = _validate_pre_submit_request
 
@@ -543,7 +506,6 @@ __all__ = (
     "extract_execution_metadata",
     "extract_execution_policy_context",
     "optional_decimal",
-    "persist_lean_shadow_event",
     "resolve_submission_simulation_context",
     "validate_pre_submit_request",
 )

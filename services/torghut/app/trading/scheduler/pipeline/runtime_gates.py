@@ -8,17 +8,18 @@ from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 from alpaca.common.exceptions import APIError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ....config import settings
-from ....models import (
-    TradeDecision,
-)
 from ...firewall import OrderFirewallBlocked
-from ...execution.order_lifecycle import OrderLifecycleSafetyError
+from ...broker_mutation_submit_coordinator import (
+    BrokerMutationSubmissionDeferred,
+)
+from ...lean_runtime import evaluate_strategy_shadow
 from ...models import StrategyDecision
 from ...regime_hmm import (
     HMMRegimeContext,
@@ -318,44 +319,32 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
         *,
         session: Session,
         decision: StrategyDecision,
-        execution_client: Any,
-        selected_adapter_name: str,
     ) -> None:
-        if selected_adapter_name != "lean":
-            return
         if not settings.trading_lean_strategy_shadow_enabled:
             return
         if settings.trading_lean_lane_disable_switch:
             return
-        evaluator = getattr(execution_client, "evaluate_strategy_shadow", None)
-        if not callable(evaluator):
-            return
+        intent = {
+            "action": decision.action,
+            "qty": str(decision.qty),
+            "order_type": decision.order_type,
+            "time_in_force": decision.time_in_force,
+        }
         try:
-            strategy_shadow = evaluator(
-                {
-                    "strategy_id": decision.strategy_id,
-                    "symbol": decision.symbol,
-                    "action": decision.action,
-                    "qty": str(decision.qty),
-                    "order_type": decision.order_type,
-                    "time_in_force": decision.time_in_force,
-                }
+            strategy_shadow = evaluate_strategy_shadow(
+                strategy_id=decision.strategy_id,
+                symbol=decision.symbol,
+                intent=intent,
+                correlation_id=f"torghut-shadow-{uuid4().hex[:18]}",
             )
-            if not isinstance(strategy_shadow, Mapping):
-                return
-            shadow_map = cast(Mapping[str, Any], strategy_shadow)
+            shadow_map: Mapping[str, Any] = strategy_shadow
             parity_status = str(shadow_map.get("parity_status") or "unknown")
             self.state.metrics.record_lean_strategy_shadow(parity_status)
             self.lean_lane_manager.record_strategy_shadow(
                 session,
                 strategy_id=decision.strategy_id,
                 symbol=decision.symbol,
-                intent={
-                    "action": decision.action,
-                    "qty": str(decision.qty),
-                    "order_type": decision.order_type,
-                    "time_in_force": decision.time_in_force,
-                },
+                intent=intent,
                 shadow_result=shadow_map,
             )
         except Exception as exc:
@@ -380,7 +369,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
         request: OrderSubmissionRequest,
     ) -> tuple[Any | None, bool]:
         try:
-            retry_delays_seconds = [float(delay) for delay in request.retry_delays]
             execution = self.executor.submit_order(
                 request.session,
                 request.execution_client,
@@ -388,7 +376,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                 request.decision_row,
                 self.account_label,
                 execution_expected_adapter=request.selected_adapter_name,
-                retry_delays=retry_delays_seconds,
             )
             terminal_reason = terminal_unfilled_execution_reason(execution)
             if terminal_reason is not None:
@@ -403,6 +390,8 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                 request=request,
                 exc=exc,
             )
+        except BrokerMutationSubmissionDeferred as exc:
+            return self._handle_broker_mutation_deferred(request=request, exc=exc)
         except (
             APIError,
             OSError,
@@ -504,8 +493,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
         request: OrderSubmissionRequest,
         exc: Exception,
     ) -> tuple[None, bool]:
-        if isinstance(exc, OrderLifecycleSafetyError):
-            self.capital_safety.trigger_flatten(str(exc))
         self.state.metrics.orders_rejected_total += 1
         self.state.metrics.record_decision_state("rejected")
         self.state.metrics.record_decision_rejection_reasons(
@@ -513,7 +500,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
         )
         payload = extract_json_error_payload(exc) or {}
         self._record_local_pre_submit_rejection_metrics(request.decision, payload)
-        self._cancel_conflicting_precheck_order(request.decision_row, payload)
         reason = format_order_submit_rejection(exc)
         self.executor.mark_rejected(
             request.session,
@@ -545,6 +531,51 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
             request.decision.symbol,
             exc,
             payload,
+        )
+        return None, True
+
+    def _handle_broker_mutation_deferred(
+        self,
+        *,
+        request: OrderSubmissionRequest,
+        exc: BrokerMutationSubmissionDeferred,
+    ) -> tuple[None, bool]:
+        reason = str(exc)
+        stage = (
+            "broker_io_unresolved"
+            if "unresolved" in reason
+            else "broker_mutation_deferred"
+        )
+        raw_existing_decision = request.decision_row.decision_json
+        existing_decision = (
+            cast(Mapping[str, object], raw_existing_decision)
+            if isinstance(raw_existing_decision, Mapping)
+            else None
+        )
+        if (
+            existing_decision is not None
+            and existing_decision.get("submission_stage") == "broker_io_unresolved"
+        ):
+            stage = "broker_io_unresolved"
+        self.executor.update_decision_json(
+            request.session,
+            request.decision_row,
+            self._decision_lifecycle_metadata(
+                submission_stage=stage,
+                extra={"broker_mutation_deferred_reason": reason},
+            ),
+        )
+        self.state.metrics.record_execution_submit_result(
+            status="deferred",
+            adapter=request.selected_adapter_name,
+        )
+        logger.error(
+            "Order submission deferred for durable reconciliation strategy_id=%s "
+            "decision_id=%s symbol=%s reason=%s",
+            request.decision.strategy_id,
+            request.decision_row.id,
+            request.decision.symbol,
+            reason,
         )
         return None, True
 
@@ -583,33 +614,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
         )
         if _execution_quantity_resolution_mismatched(decision, resolution_map):
             self.state.metrics.execution_validation_mismatch_total += 1
-
-    def _cancel_conflicting_precheck_order(
-        self,
-        decision_row: TradeDecision,
-        payload: Mapping[str, Any],
-    ) -> None:
-        existing_order_id = payload.get("existing_order_id")
-        existing_order_code = str(payload.get("code") or "").strip().lower()
-        existing_order_reason = str(payload.get("reject_reason") or "").strip().lower()
-        if not existing_order_id or not (
-            existing_order_code == "precheck_opposite_side_open_order"
-            or "opposite side market/stop order exists" in existing_order_reason
-        ):
-            return
-        try:
-            self.order_firewall.cancel_order(str(existing_order_id))
-            logger.info(
-                "Canceled conflicting Alpaca order decision_id=%s existing_order_id=%s",
-                decision_row.id,
-                existing_order_id,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to cancel conflicting Alpaca order decision_id=%s existing_order_id=%s",
-                decision_row.id,
-                existing_order_id,
-            )
 
     def _record_simulation_position_state(
         self,
@@ -672,9 +676,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                 },
             )
         )
-        self._evaluate_lean_canary_guard(
-            request.session, symbol=request.decision.symbol
-        )
         self.executor.update_decision_params(
             request.session,
             request.decision_row,
@@ -685,29 +686,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                     "symbol": request.decision.symbol,
                 }
             },
-        )
-
-    def _record_lean_shadow_from_execution(self, execution: Any) -> None:
-        raw_order_payload = getattr(execution, "raw_order", None)
-        if not isinstance(raw_order_payload, Mapping):
-            return
-        raw_order_source = cast(Mapping[object, Any], raw_order_payload)
-        raw_order: dict[str, Any] = {
-            str(key): value for key, value in raw_order_source.items()
-        }
-        shadow_event = raw_order.get("_lean_shadow")
-        if not isinstance(shadow_event, Mapping):
-            return
-        shadow_map = cast(Mapping[str, Any], shadow_event)
-        parity_status = str(shadow_map.get("parity_status") or "unknown")
-        failure_taxonomy = (
-            str(shadow_map.get("failure_taxonomy")).strip()
-            if shadow_map.get("failure_taxonomy") is not None
-            else None
-        )
-        self.state.metrics.record_lean_shadow(
-            parity_status=parity_status,
-            failure_taxonomy=failure_taxonomy,
         )
 
     def _resolve_runtime_uncertainty_gate_components(

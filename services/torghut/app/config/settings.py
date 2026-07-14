@@ -265,16 +265,6 @@ class SettingsAccessorsMixin(SettingsNormalizationMixin):
         return enabled_lanes
 
     @property
-    def trading_lean_live_canary_symbols(self) -> set[str]:
-        if not self.trading_lean_live_canary_symbols_raw:
-            return set()
-        return {
-            symbol.strip()
-            for symbol in self.trading_lean_live_canary_symbols_raw.split(",")
-            if symbol.strip()
-        }
-
-    @property
     def trading_signal_staleness_alert_critical_reasons(self) -> set[str]:
         if not self.trading_signal_staleness_alert_critical_reasons_raw:
             return set()

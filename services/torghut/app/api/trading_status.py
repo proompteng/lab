@@ -17,7 +17,8 @@ from app.config import settings
 from app.db import SessionLocal
 from app.trading.action_authority import reduce_runtime_action_authority
 from app.trading.broker_mutation_receipts.runtime_status import (
-    build_broker_mutation_runtime_status,
+    load_broker_mutation_runtime_status,
+    unavailable_broker_mutation_runtime_status,
 )
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.scheduler import TradingScheduler
@@ -137,7 +138,10 @@ def trading_status() -> dict[str, object] | Response:
         state,
         clickhouse_ta_status=accepted_source,
     )
-    broker_mutation = build_broker_mutation_runtime_status()
+    broker_mutation = _read_with_session(
+        load_broker_mutation_runtime_status,
+        unavailable=unavailable_broker_mutation_runtime_status(),
+    )
     action_authority = reduce_runtime_action_authority(
         service_status=scheduler_readiness_payload(scheduler),
         live_submission_gate=live_gate,

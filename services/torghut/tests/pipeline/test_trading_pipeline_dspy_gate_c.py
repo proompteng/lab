@@ -136,7 +136,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
 
             pipeline = TradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
-                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                order_firewall=OrderFirewall(FakeAlpacaClient(), account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -311,7 +311,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
 
             pipeline = TradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
-                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                order_firewall=OrderFirewall(FakeAlpacaClient(), account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -708,7 +708,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             engine = CountingLLMReviewEngine()
             pipeline = TradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
-                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                order_firewall=OrderFirewall(FakeAlpacaClient(), account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -835,7 +835,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
 
             pipeline = TradingPipeline(
                 alpaca_client=FakeAlpacaClient(),
-                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                order_firewall=OrderFirewall(FakeAlpacaClient(), account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),

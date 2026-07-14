@@ -143,15 +143,13 @@ TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY=0.05
 TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET=15:30:00
 TRADING_FLATTEN_START_TIME_ET=15:45:00
 TRADING_FLAT_CONFIRMATION_TIME_ET=15:50:00
-TRADING_ORDER_REPRICE_SECONDS=2
-TRADING_ORDER_MAX_ATTEMPTS=1
-TRADING_EXECUTION_MAX_RETRIES=0
-TRADING_ORDER_SLIPPAGE_BPS=8
+TRADING_PAIR_DELTA_TOLERANCE_BPS=8
 ```
 
-Keep decision submissions at one lifecycle attempt and zero transport retries until every broker submit/cancel step has
-a durable mutation receipt. Read-only recovery still scans the historical `-r2` and `-r3` broker idempotency keys
-without authorizing new attempts. Emergency reduce-only closeout attempts remain a separate risk-control contract.
+Decision submissions make exactly one broker call after their durable I/O boundary. No runtime retry or repricing
+configuration exists. Read-only recovery still scans the historical `-r2` and `-r3` broker idempotency keys without
+authorizing new attempts. Emergency closeout submissions also require durable unlinked, risk-reducing receipts and a
+fresh broker-position check; cancel, replace, and recovery fencing remain unavailable until their roadmap slices.
 
 Do not add fixed live notional, paper probe, target-plan, proof-floor, or configured-collection settings. Historical
 simulation may retain deterministic fixed sizing for replay compatibility, but those values must not enter live order

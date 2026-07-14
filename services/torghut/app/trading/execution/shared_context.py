@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 
 from ...models import (
     Execution,
-    LeanExecutionShadowEvent,
     Strategy,
     TradeDecision,
     coerce_json_payload,
@@ -25,7 +24,6 @@ from ...models import (
 from ...config import settings
 from ...snapshots import sync_order_to_db
 from ..route_metadata import resolve_order_route_metadata
-from ..execution_policy import should_retry_order_error
 from ..models import ExecutionRequest, StrategyDecision, decision_hash
 from ..quantity_rules import (
     QuantityResolution,
@@ -123,20 +121,6 @@ class _OrderExecutorContract(Protocol):
     _asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]]
     _shorting_metadata_status: dict[str, Any]
 
-    def _retry_sell_inventory_conflict_after_cancel(
-        self,
-        *,
-        execution_client: Any,
-        request: ExecutionRequest,
-        conflict: Mapping[str, Any],
-        fractional_equities_enabled: bool,
-    ) -> tuple[
-        ExecutionRequest,
-        dict[str, Any] | None,
-        dict[str, Any] | None,
-        dict[str, Any] | None,
-    ]: ...
-
     @classmethod
     def _remaining_order_qty(cls, order: Mapping[str, Any]) -> Decimal: ...
 
@@ -222,7 +206,6 @@ __all__: tuple[str, ...] = (
     "IntegrityError",
     "LINEAGE_HASH_KEYS",
     "LINEAGE_PAYLOAD_KEYS",
-    "LeanExecutionShadowEvent",
     "Mapping",
     "NamedTuple",
     "Optional",
@@ -265,7 +248,6 @@ __all__: tuple[str, ...] = (
     "resolve_simulation_context",
     "select",
     "settings",
-    "should_retry_order_error",
     "simulation_context_enabled",
     "sync_order_to_db",
     "time",

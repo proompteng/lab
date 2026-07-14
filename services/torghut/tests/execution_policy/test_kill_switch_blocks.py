@@ -486,19 +486,12 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
         self.assertTrue(outcome.approved)
         self.assertNotIn("shorts_not_allowed", outcome.reasons)
 
-    def test_retry_backoff_schedule_sanitized_and_capped(self) -> None:
-        policy = ExecutionPolicy(
-            config=_config(
-                max_retries=4,
-                backoff_base_seconds=-1.0,
-                backoff_multiplier=0.5,
-                backoff_max_seconds=0.25,
-            )
-        )
+    def test_execution_policy_exposes_no_broker_retry_authority(self) -> None:
+        policy = ExecutionPolicy(config=_config())
         outcome = policy.evaluate(
             _decision(), strategy=None, positions=[], market_snapshot=None
         )
-        self.assertEqual(outcome.retry_delays, [0.1, 0.1, 0.1, 0.1])
+        self.assertNotIn("retry_delays", outcome.params_update()["execution_policy"])
 
     def test_impact_assumptions_recorded(self) -> None:
         policy = ExecutionPolicy(config=_config(prefer_limit=True))

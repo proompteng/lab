@@ -181,8 +181,10 @@ def _normalize_intent_request(
         ),
     )
     _validate_operation_contract(
+        broker_route=normalized.broker_route,
         operation=normalized.operation,
         risk_class=normalized.risk_class,
+        purpose=normalized.purpose,
         account_label=normalized.account_label,
         target=normalized.target,
         submission_claim_id=normalized.submission_claim_id,
@@ -590,16 +592,41 @@ def _normalize_target(target: BrokerMutationTarget) -> BrokerMutationTarget:
 
 def _validate_operation_contract(
     *,
+    broker_route: BrokerMutationRoute,
     operation: BrokerMutationOperation,
     risk_class: BrokerMutationRiskClass,
+    purpose: BrokerMutationPurpose,
     account_label: str,
     target: BrokerMutationTarget,
     submission_claim_id: uuid.UUID | None,
 ) -> None:
-    if operation in {"submit_order", "replace_order"}:
+    if operation == "submit_order":
+        linked_claim_valid = (
+            broker_route == "alpaca" and submission_claim_id is not None
+        )
+        alpaca_closeout_valid = (
+            broker_route == "alpaca"
+            and submission_claim_id is None
+            and risk_class == "risk_reducing"
+            and purpose in {"closeout", "flatten"}
+        )
+        hyperliquid_entry_valid = (
+            broker_route == "hyperliquid"
+            and submission_claim_id is None
+            and risk_class == "risk_increasing"
+            and purpose == "initial_submission"
+        )
+        if target.kind != "order" or not (
+            linked_claim_valid or alpaca_closeout_valid or hyperliquid_entry_valid
+        ):
+            raise BrokerMutationReceiptValidationError(
+                "submit_order_route_claim_contract_invalid"
+            )
+        return
+    if operation == "replace_order":
         if target.kind != "order" or submission_claim_id is None:
             raise BrokerMutationReceiptValidationError(
-                f"{operation}_requires_order_target_and_submission_claim"
+                "replace_order_requires_order_target_and_submission_claim"
             )
         return
     if submission_claim_id is not None:

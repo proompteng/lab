@@ -52,6 +52,20 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
             patch(
                 "app.api.trading_status._read_with_session",
                 side_effect=(
+                    {
+                        "schema_version": "torghut.broker-mutation-runtime-status.v1",
+                        "runtime_wired": True,
+                        "entry_fencing_proven": True,
+                        "reduction_fencing_proven": False,
+                        "recovery_worker_wired": False,
+                        "recovery_degraded": True,
+                        "database_status": "current",
+                        "unresolved_receipt_count": 0,
+                        "reason_codes": [
+                            "broker_mutation_reduction_fencing_unproven",
+                            "broker_mutation_recovery_unproven",
+                        ],
+                    },
                     {"ok": True},
                     {"status": "current"},
                     {
@@ -124,7 +138,13 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
         )
         self.assertFalse(payload["action_authority"]["entry_allowed"])
         self.assertFalse(payload["action_authority"]["reduce_only_allowed"])
-        self.assertFalse(payload["broker_mutation_safety"]["runtime_wired"])
+        self.assertTrue(payload["broker_mutation_safety"]["runtime_wired"])
+        self.assertTrue(payload["broker_mutation_safety"]["entry_fencing_proven"])
+        self.assertFalse(payload["broker_mutation_safety"]["reduction_fencing_proven"])
+        self.assertFalse(payload["broker_mutation_safety"]["recovery_worker_wired"])
+        self.assertEqual(
+            payload["broker_mutation_safety"]["database_status"], "current"
+        )
         self.assertEqual(payload["capital_controls"]["gross_limit"], 4.0)
         self.assertEqual(payload["capital_controls"]["net_limit"], 0.5)
         self.assertEqual(payload["capital_controls"]["symbol_limit"], 0.5)

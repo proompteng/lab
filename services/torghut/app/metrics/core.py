@@ -121,46 +121,11 @@ SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
-    "lean_request_total": (
-        "torghut_trading_lean_request_total",
-        "Count of LEAN runner requests by operation.",
-        "counter",
-        "operation",
-        "int",
-    ),
-    "lean_latency_ms": (
-        "torghut_trading_lean_latency_ms",
-        "Average LEAN request latency by operation.",
-        "gauge",
-        "operation",
-        "number",
-    ),
-    "lean_shadow_parity_total": (
-        "torghut_trading_lean_shadow_parity_total",
-        "Count of LEAN shadow execution parity outcomes.",
-        "counter",
-        "status",
-        "int",
-    ),
-    "lean_shadow_failure_total": (
-        "torghut_trading_lean_shadow_failure_total",
-        "Count of LEAN shadow execution failures by taxonomy.",
-        "counter",
-        "taxonomy",
-        "int",
-    ),
     "lean_strategy_shadow_total": (
         "torghut_trading_lean_strategy_shadow_total",
         "Count of LEAN strategy shadow evaluations by parity status.",
         "counter",
         "status",
-        "int",
-    ),
-    "lean_canary_breach_total": (
-        "torghut_trading_lean_canary_breach_total",
-        "Count of LEAN canary gate breaches by type.",
-        "counter",
-        "breach_type",
         "int",
     ),
     "no_signal_reason_total": (
@@ -569,28 +534,6 @@ def render_execution_fallback_total_map(values: Mapping[str, object]) -> list[st
             render_labeled_metric(
                 metric_name=metric_name,
                 labels={"from": expected_adapter, "to": actual_adapter},
-                value=count,
-            )
-        )
-    return lines
-
-
-def render_lean_failure_taxonomy_total_map(values: Mapping[str, object]) -> list[str]:
-    metric_name = "torghut_trading_lean_failure_taxonomy_total"
-    lines = metric_headers(
-        metric_name,
-        "Count of LEAN failures by operation and taxonomy.",
-        "counter",
-    )
-    for label, count in sorted_metric_items(values, numeric_kind="int"):
-        operation = "unknown"
-        taxonomy = "unknown"
-        if ":" in label:
-            operation, taxonomy = label.split(":", 1)
-        lines.extend(
-            render_labeled_metric(
-                metric_name=metric_name,
-                labels={"operation": operation, "taxonomy": taxonomy},
                 value=count,
             )
         )

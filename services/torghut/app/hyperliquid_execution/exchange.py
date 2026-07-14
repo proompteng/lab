@@ -8,9 +8,16 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
+from ..trading.broker_mutation_receipts import (
+    BrokerMutationIoPermit,
+    BrokerMutationIoPermitExpectation,
+    consume_broker_mutation_io_permit,
+    fingerprint_broker_endpoint,
+)
 from .config import HyperliquidExecutionConfig
 from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
 from .sdk_aliases import register_sdk_market_alias as _register_sdk_market_alias
+from .sdk_submission import MarketOpenRequest, submit_market_open
 from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
@@ -42,6 +49,24 @@ _BOOK_UNAVAILABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
 )
 
 
+def hyperliquid_submit_request_payload(intent: OrderIntent) -> dict[str, object]:
+    """Build the exact normalized request sealed before SDK market-open I/O."""
+
+    return {
+        "market_id": intent.market_id,
+        "coin": intent.coin,
+        "dex": intent.dex,
+        "side": intent.side,
+        "size": intent.size,
+        "limit_price": intent.limit_price,
+        "notional_usd": intent.notional_usd,
+        "cloid": intent.cloid,
+        "tif": intent.tif,
+        "reduce_only": intent.reduce_only,
+        "slippage": Decimal("0"),
+    }
+
+
 class HyperliquidExecutionExchange(Protocol):
     """Exchange surface required by v2 service loop."""
 
@@ -55,7 +80,12 @@ class HyperliquidExecutionExchange(Protocol):
         markets: tuple[ExecutionMarket, ...],
     ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]: ...
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult: ...
+    def submit_order(
+        self,
+        intent: OrderIntent,
+        *,
+        mutation_permit: BrokerMutationIoPermit,
+    ) -> OrderResult: ...
 
     def cancel_order(self, order: OpenOrder) -> OrderResult: ...
 
@@ -95,6 +125,14 @@ class HyperliquidSdkExecutionExchange:
         self._size_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
         self._max_leverage_by_dex_coin: dict[str, dict[str, Decimal]] = {}
         self._latest_metadata_details: dict[str, object] = {}
+
+    @property
+    def account_label(self) -> str:
+        return self._config.account_label
+
+    @property
+    def broker_endpoint_url(self) -> str:
+        return self._config.exchange_api_url
 
     def filter_supported_markets(
         self,
@@ -218,8 +256,27 @@ class HyperliquidSdkExecutionExchange:
         if sell_not_crossable:
             raise ValueError("order_not_crossable:sell")
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult:
-        if intent.tif not in _SUPPORTED_LIMIT_TIFS:
+    def submit_order(
+        self,
+        intent: OrderIntent,
+        *,
+        mutation_permit: BrokerMutationIoPermit,
+    ) -> OrderResult:
+        normalized = self.normalize_order_intent(intent)
+        consume_broker_mutation_io_permit(
+            mutation_permit,
+            expectation=BrokerMutationIoPermitExpectation(
+                broker_route="hyperliquid",
+                operation="submit_order",
+                risk_class="risk_increasing",
+                account_label=self._config.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self._config.exchange_api_url
+                ),
+                request_payload=hyperliquid_submit_request_payload(normalized),
+            ),
+        )
+        if normalized.tif not in _SUPPORTED_LIMIT_TIFS:
             return OrderResult(
                 status="rejected",
                 exchange_order_id=None,
@@ -233,25 +290,23 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "api_wallet_private_key_missing"},
                 rejection_reason="api_wallet_private_key_missing",
             )
-        if intent.reduce_only:
+        if normalized.reduce_only:
             return OrderResult(
                 status="rejected",
                 exchange_order_id=None,
                 raw_response={"error": "reduce_only_entry_orders_unsupported"},
                 rejection_reason="reduce_only_entry_orders_unsupported",
             )
-        normalized = self.normalize_order_intent(intent)
         sdk_name = _sdk_market_name(normalized.coin, normalized.dex)
         exchange = self._exchange()
         _register_sdk_market_alias(exchange, sdk_name, normalized.coin)
-        response = cast(
-            dict[str, object],
-            exchange.market_open(
-                name=sdk_name,
+        response = submit_market_open(
+            exchange,
+            MarketOpenRequest(
+                market_name=sdk_name,
                 is_buy=normalized.side == "buy",
-                sz=float(normalized.size),
-                px=float(normalized.limit_price),
-                slippage=0.0,
+                size=float(normalized.size),
+                limit_price=float(normalized.limit_price),
                 cloid=self._cloid(normalized.cloid),
             ),
         )

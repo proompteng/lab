@@ -1,7 +1,4 @@
-"""Canonical, durable broker-mutation receipt contracts.
-
-This package is intentionally not wired into broker runtimes yet.
-"""
+"""Canonical, durable broker-mutation receipt contracts."""
 
 from .acquisition import acquire_broker_mutation_receipt
 from .canonicalization import (
@@ -43,6 +40,7 @@ from .types import (
     BrokerMutationIntent,
     BrokerMutationIntentRequest,
     BrokerMutationIoPermit,
+    BrokerMutationIoPermitExpectation,
     BrokerMutationIoStartOutcome,
     BrokerMutationIoStartResult,
     BrokerMutationLinkedSubmissionSettlementRequest,
@@ -69,8 +67,11 @@ from .types import (
     BrokerMutationSettlementSource,
     BrokerMutationTarget,
     broker_mutation_runtime_result,
+    consume_broker_mutation_io_permit,
+    validate_broker_mutation_io_permit,
 )
 from .validation import (
+    BrokerMutationBrokerIoError,
     BrokerMutationReceiptConflictError,
     BrokerMutationReceiptError,
     BrokerMutationReceiptFenceError,
@@ -84,12 +85,14 @@ __all__ = [
     "BrokerMutationIntent",
     "BrokerMutationIntentRequest",
     "BrokerMutationIoPermit",
+    "BrokerMutationIoPermitExpectation",
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
     "BrokerMutationLinkedSubmissionSettlementRequest",
     "BrokerMutationLinkedSubmissionTerminalResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",
+    "BrokerMutationBrokerIoError",
     "BrokerMutationReceiptConflictError",
     "BrokerMutationReceiptAcquireOptions",
     "BrokerMutationReceiptAcquireResult",
@@ -121,6 +124,7 @@ __all__ = [
     "build_broker_mutation_recovery_observation",
     "build_broker_mutation_settlement",
     "canonicalize_broker_mutation_evidence",
+    "consume_broker_mutation_io_permit",
     "fingerprint_broker_endpoint",
     "get_broker_mutation_receipt",
     "get_broker_mutation_receipt_history",
@@ -138,4 +142,5 @@ __all__ = [
     "verify_broker_mutation_recovery_observation",
     "verify_broker_mutation_settlement",
     "verify_broker_mutation_intent",
+    "validate_broker_mutation_io_permit",
 ]

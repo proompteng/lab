@@ -53,6 +53,7 @@ class HyperliquidExecutionConfig:
     market_data_network: str
     execution_network: str
     exchange_api_url: str
+    account_label: str
     account_address: str | None
     api_wallet_private_key: str | None
     poll_interval_seconds: int
@@ -112,6 +113,7 @@ class HyperliquidExecutionConfig:
                 "EXCHANGE_API_URL",
                 "https://api.hyperliquid-testnet.xyz",
             ),
+            account_label=_text(source, "ACCOUNT_LABEL", "hyperliquid-testnet"),
             account_address=_optional_text(source, "ACCOUNT_ADDRESS"),
             api_wallet_private_key=_optional_text(source, "API_WALLET_PRIVATE_KEY"),
             poll_interval_seconds=_int(source, "POLL_INTERVAL_SECONDS", 15),

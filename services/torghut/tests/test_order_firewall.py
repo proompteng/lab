@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from unittest import TestCase
 
 from app.config import settings
-from app.trading.firewall import OrderFirewall, OrderFirewallBlocked
+from app.trading.broker_mutation_receipts import BrokerMutationReceiptValidationError
+from app.trading.firewall import (
+    AlpacaSubmitRequest,
+    OrderFirewall,
+    OrderFirewallBlocked,
+)
+from tests.broker_mutation_test_support import (
+    alpaca_broker_mutation_test_permit,
+    broker_mutation_test_permit,
+)
 
 
 class FakeAlpacaClient:
@@ -97,12 +107,21 @@ class TestOrderFirewall(TestCase):
         self.assertEqual(firewall.status().reason, "kill_switch_enabled")
 
         with self.assertRaises(OrderFirewallBlocked):
+            permit = alpaca_broker_mutation_test_permit(
+                firewall,
+                symbol="AAPL",
+                side="buy",
+                qty=1,
+                order_type="market",
+                time_in_force="day",
+            )
             firewall.submit_order(
                 symbol="AAPL",
                 side="buy",
                 qty=1,
                 order_type="market",
                 time_in_force="day",
+                mutation_permit=permit,
             )
 
     def test_firewall_allows_submit_when_clear(self) -> None:
@@ -110,7 +129,32 @@ class TestOrderFirewall(TestCase):
         client = FakeAlpacaClient()
         firewall = OrderFirewall(client)
 
+        permit = alpaca_broker_mutation_test_permit(
+            firewall,
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            order_type="market",
+            time_in_force="day",
+        )
         response = firewall.submit_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            order_type="market",
+            time_in_force="day",
+            mutation_permit=permit,
+        )
+
+        self.assertEqual(response["symbol"], "AAPL")
+        self.assertEqual(len(client.submissions), 1)
+
+    def test_local_request_validation_precedes_permit_consumption(self) -> None:
+        settings.trading_kill_switch_enabled = False
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+        permit = alpaca_broker_mutation_test_permit(
+            firewall,
             symbol="AAPL",
             side="buy",
             qty=1,
@@ -118,7 +162,175 @@ class TestOrderFirewall(TestCase):
             time_in_force="day",
         )
 
-        self.assertEqual(response["symbol"], "AAPL")
+        with self.assertRaisesRegex(ValueError, "limit_price is required"):
+            firewall.submit_order(
+                symbol="AAPL",
+                side="buy",
+                qty=1,
+                order_type="limit",
+                time_in_force="day",
+                mutation_permit=permit,
+            )
+
+        response = firewall.submit_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            order_type="market",
+            time_in_force="day",
+            mutation_permit=permit,
+        )
+        self.assertEqual(response["id"], "order-1")
+        self.assertEqual(len(client.submissions), 1)
+
+    def test_firewall_rejects_forged_or_cross_route_permits_before_broker_io(
+        self,
+    ) -> None:
+        settings.trading_kill_switch_enabled = False
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+        request = {
+            "symbol": "AAPL",
+            "side": "buy",
+            "qty": 1,
+            "order_type": "market",
+            "time_in_force": "day",
+        }
+        valid = alpaca_broker_mutation_test_permit(firewall, **request)
+        forged = replace(valid, authorization_tag="0" * 64)
+
+        for permit in (
+            forged,
+            broker_mutation_test_permit(
+                request_payload={
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "qty": 1,
+                    "order_type": "market",
+                    "time_in_force": "day",
+                    "limit_price": None,
+                    "stop_price": None,
+                    "extra_params": {},
+                }
+            ),
+        ):
+            with self.assertRaises(BrokerMutationReceiptValidationError):
+                firewall.submit_order(
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1,
+                    order_type="market",
+                    time_in_force="day",
+                    mutation_permit=permit,
+                )
+
+        self.assertEqual(client.submissions, [])
+
+    def test_fenced_closeout_allows_only_broker_observed_reduction(
+        self,
+    ) -> None:
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+
+        permit = alpaca_broker_mutation_test_permit(
+            firewall,
+            symbol="AAPL",
+            side="sell",
+            qty=1,
+            order_type="limit",
+            time_in_force="day",
+            limit_price=100,
+            linked=False,
+            risk_class="risk_reducing",
+        )
+        response = firewall.submit_verified_risk_reducing_order(
+            AlpacaSubmitRequest(
+                symbol="AAPL",
+                side="sell",
+                qty=1,
+                order_type="limit",
+                time_in_force="day",
+                limit_price=100,
+            ),
+            mutation_permit=permit,
+        )
+
+        self.assertEqual(response["side"], "sell")
+        for symbol, side, qty in (
+            ("AAPL", "buy", 1),
+            ("AAPL", "sell", 2),
+            ("MSFT", "sell", 1),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "risk_reduction"):
+                invalid_permit = alpaca_broker_mutation_test_permit(
+                    firewall,
+                    symbol=symbol,
+                    side=side,
+                    qty=qty,
+                    order_type="limit",
+                    time_in_force="day",
+                    limit_price=100,
+                    linked=False,
+                    risk_class="risk_reducing",
+                )
+                firewall.submit_verified_risk_reducing_order(
+                    AlpacaSubmitRequest(
+                        symbol=symbol,
+                        side=side,
+                        qty=qty,
+                        order_type="limit",
+                        time_in_force="day",
+                        limit_price=100,
+                    ),
+                    mutation_permit=invalid_permit,
+                )
+
+        self.assertEqual(len(client.submissions), 1)
+
+    def test_permit_is_request_bound_and_single_use(self) -> None:
+        settings.trading_kill_switch_enabled = False
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+        permit = alpaca_broker_mutation_test_permit(
+            firewall,
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            order_type="market",
+            time_in_force="day",
+        )
+
+        with self.assertRaises(BrokerMutationReceiptValidationError):
+            firewall.submit_order(
+                symbol="AAPL",
+                side="buy",
+                qty=2,
+                order_type="market",
+                time_in_force="day",
+                mutation_permit=permit,
+            )
+        self.assertEqual(client.submissions, [])
+
+        firewall.submit_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            order_type="market",
+            time_in_force="day",
+            mutation_permit=permit,
+        )
+        with self.assertRaisesRegex(
+            BrokerMutationReceiptValidationError,
+            "already_consumed",
+        ):
+            firewall.submit_order(
+                symbol="AAPL",
+                side="buy",
+                qty=1,
+                order_type="market",
+                time_in_force="day",
+                mutation_permit=replace(permit),
+            )
         self.assertEqual(len(client.submissions), 1)
 
     def test_kill_switch_noop_when_disabled(self) -> None:

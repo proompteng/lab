@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol, cast
 
+from ..trading.broker_mutation_submit_coordinator import (
+    BrokerMutationSubmitCoordinator,
+)
 from .config import HyperliquidExecutionConfig
 from .entry_processing import process_features
 from .exchange import HyperliquidExecutionExchange
@@ -48,10 +51,14 @@ class HyperliquidExecutionService:
         config: HyperliquidExecutionConfig,
         feed: HyperliquidExecutionFeed,
         exchange: HyperliquidExecutionExchange,
+        submit_coordinator: BrokerMutationSubmitCoordinator | None = None,
     ) -> None:
         self._config = config
         self._feed = feed
         self._exchange = exchange
+        self._submit_coordinator = (
+            submit_coordinator or BrokerMutationSubmitCoordinator("hyperliquid-submit")
+        )
 
     def run_once(self, session: _Session) -> CycleResult:
         started_at = datetime.now(timezone.utc)
@@ -174,6 +181,7 @@ class HyperliquidExecutionService:
             exchange=self._exchange,
             context=context,
             counts=counts,
+            submit_coordinator=self._submit_coordinator,
         )
 
     def _cycle_record(

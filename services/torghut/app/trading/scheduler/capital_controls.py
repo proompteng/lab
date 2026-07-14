@@ -156,7 +156,7 @@ class CapitalSafetyController:
         tolerance = max(
             Decimal("1"),
             max(long_delta, short_delta)
-            * Decimal(str(settings.trading_order_slippage_bps))
+            * Decimal(str(settings.trading_pair_delta_tolerance_bps))
             / Decimal("10000"),
         )
         return abs(long_delta - short_delta) <= tolerance
@@ -341,7 +341,7 @@ class CapitalSafetyController:
                         now=now,
                         attempt=attempt,
                     )
-                    self.execution_adapter.submit_order(submission)
+                    self.execution_adapter.submit_risk_reducing_order(submission)
                 self.state.capital_closeout_attempts = attempt
                 self.sleep(max(0.0, settings.trading_closeout_reprice_seconds))
 

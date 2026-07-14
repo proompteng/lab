@@ -12,6 +12,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _LowEdgeServiceFeed,
     _ServiceExchange,
     _ServiceFeed,
+    _SUBMIT_COORDINATOR,
     _TwoExecutableServiceFeed,
     _account_state,
     _now,
@@ -34,6 +35,7 @@ def test_service_cycle_submits_at_most_one_order() -> None:
         config=config,
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -62,6 +64,7 @@ def test_service_blocks_low_after_cost_edge_before_exchange_submission() -> None
         config=config,
         feed=_LowEdgeServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -93,6 +96,7 @@ def test_service_blocks_low_after_cost_flip_before_reduce_only_close() -> None:
         config=config,
         feed=_LowEdgeServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -125,6 +129,7 @@ def test_service_closes_opposite_position_reduce_only_before_new_entry() -> None
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -160,6 +165,7 @@ def test_service_closes_scoped_opposite_position_reduce_only() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -191,6 +197,7 @@ def test_service_stops_cycle_after_submitted_reduce_only_close() -> None:
         config=config,
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -232,6 +239,7 @@ def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)

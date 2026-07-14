@@ -570,7 +570,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
-                order_firewall=OrderFirewall(alpaca_client),
+                order_firewall=OrderFirewall(alpaca_client, account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -749,7 +749,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
-                order_firewall=OrderFirewall(alpaca_client),
+                order_firewall=OrderFirewall(alpaca_client, account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),
@@ -884,7 +884,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             self._prime_test_capital_state(state)
             pipeline = TradingPipeline(
                 alpaca_client=alpaca_client,
-                order_firewall=OrderFirewall(alpaca_client),
+                order_firewall=OrderFirewall(alpaca_client, account_label="live"),
                 ingestor=FakeIngestor([signal]),
                 decision_engine=DecisionEngine(),
                 risk_engine=RiskEngine(),

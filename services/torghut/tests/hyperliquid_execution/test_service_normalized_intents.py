@@ -7,11 +7,13 @@ from decimal import Decimal
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.models import OrderIntent, OrderResult
+from app.trading.broker_mutation_receipts import BrokerMutationIoPermit
 from app.hyperliquid_execution.service import HyperliquidExecutionService
 from tests.hyperliquid_execution.test_runtime_surfaces import (
     _FakeSession,
     _ServiceExchange,
     _ServiceFeed,
+    _SUBMIT_COORDINATOR,
     _now,
 )
 
@@ -32,6 +34,7 @@ def test_service_persists_exchange_normalized_order_intent() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)
@@ -73,9 +76,14 @@ class _NormalizingServiceExchange(_ServiceExchange):
             notional_usd=Decimal("20.200000"),
         )
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult:
+    def submit_order(
+        self,
+        intent: OrderIntent,
+        *,
+        mutation_permit: BrokerMutationIoPermit,
+    ) -> OrderResult:
         self.submitted_intents.append(intent)
-        return super().submit_order(intent)
+        return super().submit_order(intent, mutation_permit=mutation_permit)
 
     def validate_order_intent_crossability(self, intent: OrderIntent) -> None:
         self.validated_intents.append(intent)

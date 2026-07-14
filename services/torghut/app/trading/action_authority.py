@@ -237,6 +237,18 @@ def _mutation_authority_reasons(
 ) -> tuple[str, ...]:
     if not _valid_mutation_status(status):
         return ("broker_mutation_status_contract_invalid",)
+    if required_field == "entry_fencing_proven":
+        if status.get("database_status") != "current":
+            return ("broker_mutation_database_status_not_current",)
+        unresolved_count = status.get("unresolved_receipt_count")
+        if (
+            not isinstance(unresolved_count, int)
+            or isinstance(unresolved_count, bool)
+            or unresolved_count < 0
+        ):
+            return ("broker_mutation_status_contract_invalid",)
+        if unresolved_count > 0:
+            return ("broker_mutation_submit_unresolved",)
     if status.get("runtime_wired") is True and status.get(required_field) is True:
         return ()
     return _strings(status.get("reason_codes")) or (fallback_reason,)

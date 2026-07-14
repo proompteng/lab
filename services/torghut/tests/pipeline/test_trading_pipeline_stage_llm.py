@@ -30,19 +30,12 @@ from tests.pipeline.trading_pipeline_base import (
 from app.trading.scheduler.pipeline.llm_review import TradingPipelineReviewMixin
 
 
-class _RouteNameClient:
-    name = "session_router"
-
-    @staticmethod
-    def current_route() -> str:
-        return "testnet"
-
-
 class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
-    def test_execution_client_name_prefers_current_route(self) -> None:
+    def test_execution_client_name_uses_declared_adapter(self) -> None:
         mixin = object.__new__(TradingPipelineReviewMixin)
+        client = type("DeclaredAdapter", (), {"name": "simulation"})()
 
-        self.assertEqual(mixin._execution_client_name(_RouteNameClient()), "testnet")
+        self.assertEqual(mixin._execution_client_name(client), "simulation")
 
     def test_pipeline_stage1_live_uses_mode_consistent_fail_mode(self) -> None:
         from app import config

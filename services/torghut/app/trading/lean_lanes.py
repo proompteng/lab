@@ -5,8 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -15,8 +14,6 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import (
     LeanBacktestRun,
-    LeanCanaryIncident,
-    LeanExecutionShadowEvent,
     LeanStrategyShadowEvaluation,
     coerce_json_payload,
 )
@@ -169,78 +166,6 @@ class LeanLaneManager:
         except Exception:
             session.rollback()
             raise
-        session.refresh(row)
-        return row
-
-    def parity_summary(
-        self, session: Session, *, lookback_hours: int = 24
-    ) -> dict[str, Any]:
-        since = datetime.now(timezone.utc) - timedelta(hours=max(lookback_hours, 1))
-        rows = (
-            session.execute(
-                select(LeanExecutionShadowEvent).where(
-                    LeanExecutionShadowEvent.created_at >= since
-                )
-            )
-            .scalars()
-            .all()
-        )
-        total = len(rows)
-        drift = sum(1 for row in rows if row.parity_status != "pass")
-        failure_counts: dict[str, int] = {}
-        avg_delta_bps = Decimal("0")
-        counted_delta = 0
-        for row in rows:
-            if row.failure_taxonomy:
-                failure_counts[row.failure_taxonomy] = (
-                    failure_counts.get(row.failure_taxonomy, 0) + 1
-                )
-            if row.parity_delta_bps is not None:
-                avg_delta_bps += row.parity_delta_bps
-                counted_delta += 1
-        average = (avg_delta_bps / counted_delta) if counted_delta > 0 else Decimal("0")
-        return {
-            "lookback_hours": lookback_hours,
-            "events_total": total,
-            "drift_events": drift,
-            "drift_ratio": (drift / total) if total > 0 else 0.0,
-            "avg_parity_delta_bps": float(average),
-            "failure_classes": failure_counts,
-        }
-
-    def record_canary_incident(
-        self,
-        session: Session,
-        *,
-        incident_key: str,
-        breach_type: str,
-        severity: str,
-        symbols: list[str],
-        evidence: Mapping[str, Any],
-        rollback_triggered: bool,
-    ) -> LeanCanaryIncident:
-        row = session.execute(
-            select(LeanCanaryIncident).where(
-                LeanCanaryIncident.incident_key == incident_key
-            )
-        ).scalar_one_or_none()
-        if row is None:
-            row = LeanCanaryIncident(
-                incident_key=incident_key,
-                breach_type=breach_type,
-                severity=severity,
-                symbols=coerce_json_payload(symbols),
-                evidence_json=coerce_json_payload(dict(evidence)),
-                rollback_triggered=rollback_triggered,
-            )
-        else:
-            row.breach_type = breach_type
-            row.severity = severity
-            row.symbols = coerce_json_payload(symbols)
-            row.evidence_json = coerce_json_payload(dict(evidence))
-            row.rollback_triggered = rollback_triggered
-        session.add(row)
-        session.commit()
         session.refresh(row)
         return row
 

@@ -9,10 +9,36 @@ from decimal import Decimal
 from typing import Protocol, cast
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from ..trading.broker_mutation_receipts import (
+    BrokerMutationIntentRequest,
+    BrokerMutationSettlement,
+    BrokerMutationSettlementRequest,
+    BrokerMutationTarget,
+    build_broker_mutation_intent,
+    build_broker_mutation_settlement,
+    fingerprint_broker_endpoint,
+)
+from ..trading.broker_mutation_submit_coordinator import (
+    BrokerMutationSubmissionAlreadyProcessed,
+    BrokerMutationSubmitCoordinator,
+    UnlinkedOrderSubmissionCallbacks,
+)
 
 from .config import HyperliquidExecutionConfig
-from .exchange import HyperliquidExecutionExchange
-from .models import FeatureSnapshot, OrderIntent, RiskState, RiskVerdict, Signal
+from .exchange import (
+    HyperliquidExecutionExchange,
+    hyperliquid_submit_request_payload,
+)
+from .models import (
+    FeatureSnapshot,
+    OrderIntent,
+    OrderResult,
+    RiskState,
+    RiskVerdict,
+    Signal,
+)
 from .order_policy import build_order_intent
 from .profitability import (
     ProfitabilityGateResult,
@@ -79,6 +105,7 @@ class _EntryRuntime:
     exchange: HyperliquidExecutionExchange
     context: FeatureProcessingContext
     counts: CycleCountsWriter
+    submit_coordinator: BrokerMutationSubmitCoordinator
 
 
 def process_features(
@@ -88,8 +115,16 @@ def process_features(
     exchange: HyperliquidExecutionExchange,
     context: FeatureProcessingContext,
     counts: CycleCountsWriter,
+    submit_coordinator: BrokerMutationSubmitCoordinator,
 ) -> None:
-    runtime = _EntryRuntime(repository, config, exchange, context, counts)
+    runtime = _EntryRuntime(
+        repository,
+        config,
+        exchange,
+        context,
+        counts,
+        submit_coordinator,
+    )
     for feature in context.features:
         submitted = _process_feature(runtime, feature)
         if submitted:
@@ -199,10 +234,57 @@ def _submit_order(
         )
         intent = _normalize_order_intent(runtime.exchange, intent)
         _validate_order_intent_crossability(runtime.exchange, intent)
-        result = runtime.exchange.submit_order(intent)
+        mutation_intent = build_broker_mutation_intent(
+            BrokerMutationIntentRequest(
+                broker_route="hyperliquid",
+                account_label=runtime.config.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    runtime.config.exchange_api_url
+                ),
+                operation="submit_order",
+                risk_class="risk_increasing",
+                purpose="initial_submission",
+                workflow_id=f"hyperliquid-submit/{intent.cloid}",
+                client_request_id=intent.cloid,
+                target=BrokerMutationTarget(kind="order", key=intent.cloid),
+                request_payload=hyperliquid_submit_request_payload(intent),
+            )
+        )
+        runtime.submit_coordinator.submit_unlinked_order(
+            cast(Session, runtime.repository.session),
+            intent=mutation_intent,
+            callbacks=UnlinkedOrderSubmissionCallbacks(
+                broker_call=lambda permit: runtime.exchange.submit_order(
+                    intent,
+                    mutation_permit=permit,
+                ),
+                persist_terminal=lambda terminal: _persist_hyperliquid_terminal(
+                    runtime,
+                    intent,
+                    terminal,
+                    verdict,
+                ),
+                build_settlement=lambda terminal: _hyperliquid_settlement(
+                    intent,
+                    terminal,
+                ),
+            ),
+        )
+    except BrokerMutationSubmissionAlreadyProcessed:
+        return False
     except _ORDER_SUBMISSION_ERRORS as exc:
         runtime.counts.record_order_error(type(exc).__name__)
         return False
+    runtime.counts.orders_submitted += 1
+    return True
+
+
+def _persist_hyperliquid_terminal(
+    runtime: _EntryRuntime,
+    intent: OrderIntent,
+    result: OrderResult,
+    verdict: RiskVerdict,
+) -> None:
     runtime.repository.insert_order(intent, result)
     runtime.repository.insert_multifactor_execution_intent(
         run_id=runtime.context.cycle_id,
@@ -215,8 +297,28 @@ def _submit_order(
         rejection_reason=result.rejection_reason,
         config=runtime.config,
     )
-    runtime.counts.orders_submitted += 1
-    return True
+
+
+def _hyperliquid_settlement(
+    intent: OrderIntent,
+    result: OrderResult,
+) -> BrokerMutationSettlement:
+    rejected = result.status.strip().lower() == "rejected"
+    return build_broker_mutation_settlement(
+        BrokerMutationSettlementRequest(
+            source="primary",
+            outcome="rejected" if rejected else "acknowledged",
+            broker_reference=result.exchange_order_id,
+            execution_id=None,
+            evidence_payload={
+                "route": "hyperliquid",
+                "client_order_id": intent.cloid,
+                "market_id": intent.market_id,
+                "status": result.status,
+                "rejection_reason": result.rejection_reason,
+            },
+        )
+    )
 
 
 def _normalize_order_intent(

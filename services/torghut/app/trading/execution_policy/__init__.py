@@ -5,7 +5,6 @@ from __future__ import annotations
 from .order_rules import (
     near_touch_limit_price,
     should_keep_market_order_for_high_conviction_entry,
-    should_retry_order_error,
 )
 from .policy import ExecutionPolicy
 from .policy_types import (
@@ -75,5 +74,4 @@ __all__ = [
     "ExecutionPolicyOutcome",
     "near_touch_limit_price",
     "should_keep_market_order_for_high_conviction_entry",
-    "should_retry_order_error",
 ]

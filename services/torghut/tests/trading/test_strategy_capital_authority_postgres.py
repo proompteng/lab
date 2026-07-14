@@ -444,7 +444,7 @@ def test_postgres_authority_migration_lock_timeout_is_retry_safe(
     not POSTGRES_DSN,
     reason="set TORGHUT_TEST_POSTGRES_DSN for the opt-in authority migration test",
 )
-def test_released_0063_strategy_capital_revision_upgrades_to_merged_head(
+def test_released_0063_strategy_capital_revision_upgrades_to_merge_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert POSTGRES_DSN is not None
@@ -479,7 +479,11 @@ def test_released_0063_strategy_capital_revision_upgrades_to_merged_head(
                 )
             )
 
-        command.upgrade(alembic, "heads")
+        # This fixture intentionally models only the strategy-capital and
+        # options-archive tables. Stop at the compatibility merge instead of
+        # pretending it is a complete 0062 schema that can run later,
+        # unrelated migrations.
+        command.upgrade(alembic, "0065_strategy_capital_compat")
 
         with schema_engine.connect() as connection:
             revisions = set(

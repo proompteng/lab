@@ -33,9 +33,13 @@ def build_trading_pipeline_for_account(
         secret_key=lane.secret_key,
         base_url=lane.base_url,
     )
-    order_firewall = OrderFirewall(alpaca_client)
+    order_firewall = OrderFirewall(alpaca_client, account_label=lane.label)
     execution_adapter = build_execution_adapter(
-        alpaca_client=alpaca_client, order_firewall=order_firewall
+        alpaca_client=alpaca_client,
+        order_firewall=order_firewall,
+        session_factory=SessionLocal,
+        account_label=lane.label,
+        endpoint_url=order_firewall.broker_endpoint_url,
     )
     executor = OrderExecutor()
     executor.prime_shorting_metadata_cache(alpaca_client)

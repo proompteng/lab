@@ -15,7 +15,6 @@ from .policy_types import (
     ADAPTIVE_EXECUTION_SECONDS_MIN,
     AdaptiveExecutionApplication,
     DEFAULT_EXECUTION_SECONDS,
-    ExecutionPolicyConfig,
     HIGH_CONVICTION_BREAKOUT_CONTINUATION_RANK_MIN,
     HIGH_CONVICTION_BREAKOUT_MICROPRICE_BPS_MIN,
     HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX,
@@ -256,42 +255,6 @@ def _tick_size_for_price(price: Decimal) -> Decimal:
     if price.copy_abs() < Decimal("1"):
         return Decimal("0.0001")
     return Decimal("0.01")
-
-
-def build_retry_delays(config: ExecutionPolicyConfig) -> list[float]:
-    if config.max_retries <= 0:
-        return []
-    delays: list[float] = []
-    delay = config.backoff_base_seconds
-    for _ in range(config.max_retries):
-        delays.append(min(delay, config.backoff_max_seconds))
-        delay *= config.backoff_multiplier
-    return delays
-
-
-def should_retry_order_error(error: Exception) -> bool:
-    name = type(error).__name__.lower()
-    if "timeout" in name or "connection" in name:
-        return True
-    message = str(error).lower()
-    retryable_tokens = (
-        "timeout",
-        "temporarily",
-        "try again",
-        "connection",
-        "503",
-        "rate limit",
-    )
-    non_retryable_tokens = (
-        "reject",
-        "insufficient",
-        "invalid",
-        "unknown symbol",
-        "not allowed",
-    )
-    if any(token in message for token in non_retryable_tokens):
-        return False
-    return any(token in message for token in retryable_tokens)
 
 
 def build_impact_inputs(
@@ -565,5 +528,4 @@ def stringify_decimal(value: Optional[Decimal]) -> Optional[str]:
 __all__ = [
     "near_touch_limit_price",
     "should_keep_market_order_for_high_conviction_entry",
-    "should_retry_order_error",
 ]

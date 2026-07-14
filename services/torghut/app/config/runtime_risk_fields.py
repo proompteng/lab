@@ -273,25 +273,10 @@ class RuntimeRiskSettingsFields(BaseSettings):
         alias="TRADING_FLAT_CONFIRMATION_TIME_ET",
     )
 
-    trading_order_reprice_seconds: float = Field(
-        default=2.0,
-        alias="TRADING_ORDER_REPRICE_SECONDS",
-        description="Seconds between live marketable-limit status checks and repricing.",
-    )
-
-    trading_order_max_attempts: int = Field(
-        default=1,
-        alias="TRADING_ORDER_MAX_ATTEMPTS",
-        description=(
-            "Maximum live marketable-limit submissions for one decision. "
-            "Keep at one until every submit/cancel mutation has a durable receipt."
-        ),
-    )
-
-    trading_order_slippage_bps: float = Field(
+    trading_pair_delta_tolerance_bps: float = Field(
         default=8.0,
-        alias="TRADING_ORDER_SLIPPAGE_BPS",
-        description="Maximum adverse repricing from the initial marketable limit.",
+        alias="TRADING_PAIR_DELTA_TOLERANCE_BPS",
+        description="Maximum notional imbalance accepted after paired execution.",
     )
 
     trading_closeout_reprice_seconds: float = Field(

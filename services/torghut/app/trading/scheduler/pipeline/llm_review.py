@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import logging
-import hashlib
-import json
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, Sequence, cast
 
@@ -166,91 +163,17 @@ class TradingPipelineReviewMixin(TradingPipelineRuntime):
         symbol: str,
     ) -> Any:
         _ = symbol
-        if getattr(self.execution_adapter, "name", None) in {
-            "simulation",
-            "session_router",
-        }:
+        if getattr(self.execution_adapter, "name", None) == "simulation":
             return self.execution_adapter
         return self.order_firewall
 
     def _execution_client_name(self, client: Any) -> str:
-        current_route = getattr(client, "current_route", None)
-        if callable(current_route):
-            route = str(current_route() or "").strip()
-            if route:
-                return route
         raw_name = getattr(client, "name", None)
         if raw_name:
             return str(raw_name)
         if isinstance(client, OrderFirewall):
             return "alpaca"
         return type(client).__name__
-
-    def _sync_lean_observability(self, execution_client: Any) -> None:
-        snapshot_getter = getattr(execution_client, "get_observability_snapshot", None)
-        if not callable(snapshot_getter):
-            return
-        try:
-            snapshot = snapshot_getter()
-        except Exception as exc:
-            logger.warning("Failed to read LEAN observability snapshot: %s", exc)
-            return
-        if isinstance(snapshot, Mapping):
-            self.state.metrics.record_lean_observability(
-                cast(Mapping[str, Any], snapshot)
-            )
-
-    def _evaluate_lean_canary_guard(self, session: Session, *, symbol: str) -> None:
-        if settings.trading_mode != "live":
-            return
-        if not settings.trading_lean_live_canary_enabled:
-            return
-        if settings.trading_lean_lane_disable_switch:
-            return
-
-        lean_total = self.state.metrics.execution_requests_total.get("lean", 0)
-        fallback_total = self.state.metrics.execution_fallback_total.get(
-            "lean->alpaca", 0
-        )
-        if lean_total <= 0:
-            return
-        ratio = fallback_total / lean_total
-        if ratio <= settings.trading_lean_live_canary_fallback_ratio_limit:
-            return
-
-        self.state.metrics.record_lean_canary_breach("fallback_ratio_exceeded")
-        evidence = {
-            "symbol": symbol,
-            "fallback_ratio": ratio,
-            "fallback_total": fallback_total,
-            "lean_total": lean_total,
-            "threshold": settings.trading_lean_live_canary_fallback_ratio_limit,
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
-        }
-        incident_key = hashlib.sha256(
-            json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()[:24]
-        incident = self.lean_lane_manager.record_canary_incident(
-            session,
-            incident_key=incident_key,
-            breach_type="fallback_ratio_exceeded",
-            severity="critical",
-            symbols=[symbol],
-            evidence=evidence,
-            rollback_triggered=settings.trading_lean_live_canary_hard_rollback_enabled,
-        )
-        self.state.rollback_incidents_total += 1
-        self.state.rollback_incident_evidence_path = (
-            f"postgres://lean_canary_incidents/{incident.incident_key}"
-        )
-
-        if not settings.trading_lean_live_canary_hard_rollback_enabled:
-            return
-        self.state.emergency_stop_active = True
-        self.state.emergency_stop_reason = (
-            f"lean_canary_breach:fallback_ratio_exceeded:{ratio:.4f}"
-        )
-        self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
 
     def _apply_portfolio_sizing(
         self,

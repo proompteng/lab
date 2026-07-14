@@ -80,7 +80,6 @@ class ExecutionPolicySizing:
 @dataclass(frozen=True)
 class ExecutionPolicyImpact:
     participation_rate: Decimal | None
-    retry_delays: list[float]
     impact_assumptions: dict[str, Any]
 
 

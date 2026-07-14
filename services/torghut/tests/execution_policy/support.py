@@ -21,10 +21,6 @@ def _config(**overrides: object) -> ExecutionPolicyConfig:
         allow_shorts=False,
         kill_switch_enabled=False,
         prefer_limit=False,
-        max_retries=0,
-        backoff_base_seconds=0.1,
-        backoff_multiplier=2.0,
-        backoff_max_seconds=1.0,
     )
     return replace(base, **overrides)
 
