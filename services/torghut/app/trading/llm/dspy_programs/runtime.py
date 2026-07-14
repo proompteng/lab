@@ -277,7 +277,7 @@ class DSPyReviewRuntime:
 
     def _load_manifest_from_db(self, artifact_hash: str) -> DSPyArtifactManifest | None:
         try:
-            from sqlalchemy import select
+            from sqlalchemy import case, select
 
             from ....db import SessionLocal
             from ....models import LLMDSPyWorkflowArtifact
@@ -291,7 +291,16 @@ class DSPyReviewRuntime:
                 session.execute(
                     select(LLMDSPyWorkflowArtifact)
                     .where(LLMDSPyWorkflowArtifact.artifact_hash == artifact_hash)
-                    .order_by(LLMDSPyWorkflowArtifact.created_at.desc())
+                    .order_by(
+                        case(
+                            (
+                                LLMDSPyWorkflowArtifact.gate_compatibility == "pass",
+                                0,
+                            ),
+                            else_=1,
+                        ),
+                        LLMDSPyWorkflowArtifact.created_at.desc(),
+                    )
                 )
                 .scalars()
                 .first()

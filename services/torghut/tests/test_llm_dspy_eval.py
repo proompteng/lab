@@ -23,7 +23,13 @@ class TestLLMDSPyEval(TestCase):
                 signature_versions={"trade_review": "v1"},
                 optimizer="miprov2",
                 dataset_payload={"rows": [{"rowId": "row-1", "split": "train"}]},
-                metric_bundle={"schema_valid_rate": 1.0},
+                metric_bundle={
+                    "schemaValidRate": 1.0,
+                    "vetoAlignmentRate": 1.0,
+                    "falseVetoRate": 0.0,
+                    "latencyP95Ms": 1,
+                    "fallbackRate": 0.0,
+                },
                 compiled_prompt_payload={
                     "promptTemplate": "torghut.dspy.trade-review.v1"
                 },
