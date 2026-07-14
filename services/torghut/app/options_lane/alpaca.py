@@ -110,16 +110,23 @@ class AlpacaOptionsClient:
         *,
         status: str,
         limit: int,
+        underlying_symbols: list[str],
         expiration_date_gte: date,
         expiration_date_lte: date,
         page_token: str | None = None,
     ) -> tuple[list[JsonObject], str | None]:
+        normalized_underlyings = sorted(
+            {symbol.strip().upper() for symbol in underlying_symbols if symbol.strip()}
+        )
+        if not normalized_underlyings:
+            raise ValueError("options contract request requires underlying symbols")
         payload = self._request_json(
             self._contracts_base_url,
             "/v2/options/contracts",
             {
                 "status": status,
                 "limit": limit,
+                "underlying_symbols": ",".join(normalized_underlyings),
                 "expiration_date_gte": expiration_date_gte.isoformat(),
                 "expiration_date_lte": expiration_date_lte.isoformat(),
                 "page_token": page_token,

@@ -13,6 +13,7 @@ from typing import Any, cast
 from fastapi import FastAPI, HTTPException
 
 from .alpaca import AlpacaApiError, AlpacaOptionsClient, normalize_contract_record
+from .catalog_scope import OptionsCatalogScope
 from .catalog_watermark_repository import CatalogCycleSummary
 from .kafka import OptionsKafkaProducer, SequenceGenerator, build_envelope
 from .options_status import build_status_payload
@@ -195,18 +196,54 @@ def _discovery_interval_seconds() -> int:
     return settings.options_contract_discovery_offsession_interval_sec
 
 
+def _normalize_contracts_in_scope(
+    contracts: list[dict[str, object]],
+    *,
+    observed_at: datetime,
+    scope: OptionsCatalogScope,
+) -> list[dict[str, object]]:
+    normalized_contracts: list[dict[str, object]] = []
+    rejected_count = 0
+    for contract in contracts:
+        if not str(contract.get("symbol") or "").strip():
+            rejected_count += 1
+            continue
+        normalized = normalize_contract_record(contract, observed_at=observed_at)
+        if not scope.contains(normalized):
+            rejected_count += 1
+            continue
+        normalized_contracts.append(normalized)
+    if rejected_count:
+        logger.warning(
+            "options catalog rejected out-of-scope provider rows count=%s",
+            rejected_count,
+        )
+    return sorted(
+        normalized_contracts,
+        key=lambda row: cast(str, row["contract_symbol"]),
+    )
+
+
 def _run_discovery_cycle() -> None:
     observed_at = utc_now()
     expiration_start = observed_at.date()
     expiration_end = expiration_start + timedelta(
         days=settings.options_contract_expiration_horizon_days
     )
+    scope = OptionsCatalogScope(
+        underlying_symbols=tuple(settings.options_live_underlying_symbols),
+        expiration_date_gte=expiration_start,
+        expiration_date_lte=expiration_end,
+    )
     page_token: str | None = None
     page_count = 0
     contract_count = 0
     changed_count = 0
-    persisted_subscription_rows = _repository.list_live_subscription_candidates()
-    cold_symbols = _repository.list_cold_subscription_symbols()
+    seen_symbols: set[str] = set()
+    persisted_subscription_rows = _repository.list_live_subscription_candidates(
+        scope=scope
+    )
+    cold_symbols = _repository.list_cold_subscription_symbols(scope=scope)
     live_seed_rows = [
         row for row in persisted_subscription_rows if row.get("tier") in {"hot", "warm"}
     ]
@@ -252,16 +289,20 @@ def _run_discovery_cycle() -> None:
         contracts, page_token = _client.list_contracts(
             status="active",
             limit=settings.options_contract_discovery_page_limit,
+            underlying_symbols=list(scope.underlying_symbols),
             expiration_date_gte=expiration_start,
             expiration_date_lte=expiration_end,
             page_token=page_token,
         )
         page_count += 1
-        normalized_contracts = [
-            normalize_contract_record(contract, observed_at=observed_at)
-            for contract in contracts
-            if str(contract.get("symbol") or "").strip()
-        ]
+        normalized_contracts = _normalize_contracts_in_scope(
+            contracts,
+            observed_at=observed_at,
+            scope=scope,
+        )
+        seen_symbols.update(
+            cast(str, contract["contract_symbol"]) for contract in normalized_contracts
+        )
         contract_count += len(normalized_contracts)
         max_open_interest = max(
             max_open_interest,
@@ -350,18 +391,22 @@ def _run_discovery_cycle() -> None:
         if not page_token:
             break
 
+    if not seen_symbols:
+        raise RuntimeError("options live catalog scan returned no in-scope contracts")
     transition_rows = _repository.mark_contracts_missing_from_cycle(
         observed_at=observed_at,
+        scope=scope,
+        seen_symbols=seen_symbols,
     )
     for row in transition_rows:
         _publish_contract_row(row, observed_at=observed_at)
 
     ranked_rows = top_ranked_contract_rows(
-        _repository.iter_active_contracts_for_ranking(),
+        _repository.iter_active_contracts_for_ranking(scope=scope),
         observed_at=observed_at,
         hot_cap=settings.options_subscription_hot_cap,
         warm_cap=settings.options_subscription_warm_cap,
-        max_open_interest=_repository.max_active_open_interest(),
+        max_open_interest=_repository.max_active_open_interest(scope=scope),
         provider_cap_bootstrap=settings.options_provider_cap_bootstrap,
         underlying_priority=settings.underlying_priority_set,
     )
@@ -480,7 +525,17 @@ def readyz() -> dict[str, Any]:
 
 @app.get("/v1/options/hot-set")
 def hot_set() -> dict[str, Any]:
-    symbols = _repository.get_hot_symbols(settings.options_subscription_hot_cap)
+    observed_at = utc_now()
+    scope = OptionsCatalogScope(
+        underlying_symbols=tuple(settings.options_live_underlying_symbols),
+        expiration_date_gte=observed_at.date(),
+        expiration_date_lte=observed_at.date()
+        + timedelta(days=settings.options_contract_expiration_horizon_days),
+    )
+    symbols = _repository.get_hot_symbols(
+        settings.options_subscription_hot_cap,
+        scope=scope,
+    )
     return {
         "symbols": symbols,
         "count": len(symbols),

@@ -188,7 +188,11 @@ class _PartialCatalogClient:
 
 
 class _CompleteCatalogClient:
-    def list_contracts(self, **_: object) -> tuple[list[dict[str, object]], None]:
+    def __init__(self) -> None:
+        self.request: dict[str, object] = {}
+
+    def list_contracts(self, **request: object) -> tuple[list[dict[str, object]], None]:
+        self.request = request
         return (
             [
                 {
@@ -214,7 +218,7 @@ class _SeededCycleRepository:
         self.reconciliations: list[tuple[list[str], set[str]]] = []
         self.completed_cycles: list[CatalogCycleSummary] = []
 
-    def list_live_subscription_candidates(self) -> list[dict[str, object]]:
+    def list_live_subscription_candidates(self, **_: object) -> list[dict[str, object]]:
         return [
             {
                 "contract_symbol": "AAPL260717C00200000",
@@ -249,7 +253,7 @@ class _SeededCycleRepository:
             "ARCHIVE260717P00100000",
         }
 
-    def list_cold_subscription_symbols(self) -> frozenset[str]:
+    def list_cold_subscription_symbols(self, **_: object) -> frozenset[str]:
         return frozenset({"ARCHIVE260717P00100000"})
 
     def sync_contract_catalog_page(
@@ -260,7 +264,9 @@ class _SeededCycleRepository:
     def mark_contracts_missing_from_cycle(self, **_: object) -> list[dict[str, object]]:
         return []
 
-    def iter_active_contracts_for_ranking(self) -> Iterator[dict[str, object]]:
+    def iter_active_contracts_for_ranking(
+        self, **_: object
+    ) -> Iterator[dict[str, object]]:
         yield {
             "contract_symbol": "AAPL260717C00200000",
             "status": "active",
@@ -272,7 +278,7 @@ class _SeededCycleRepository:
             "ranking_inputs": {},
         }
 
-    def max_active_open_interest(self) -> int:
+    def max_active_open_interest(self, **_: object) -> int:
         return 100
 
     def write_subscription_state(
@@ -353,6 +359,7 @@ class TestOptionsLaneSettings(TestCase):
             "ALPACA_OPTIONS_KEY_ID": "key-id",
             "ALPACA_OPTIONS_SECRET_KEY": "secret-key",
             "OPTIONS_MARKET_HOLIDAYS": "",
+            "OPTIONS_LIVE_UNDERLYING_SYMBOLS": "nvda,AMD,nvda",
             "OPTIONS_UNDERLYING_PRIORITY_SYMBOLS": "",
         },
         clear=True,
@@ -365,6 +372,10 @@ class TestOptionsLaneSettings(TestCase):
             "postgresql+psycopg://torghut:torghut@localhost:5432/torghut",
         )
         self.assertEqual(settings.options_contract_discovery_page_limit, 10000)
+        self.assertEqual(settings.options_contract_expiration_horizon_days, 120)
+        self.assertEqual(
+            settings.options_live_underlying_symbols, ["NVDA", "AMD", "NVDA"]
+        )
         self.assertEqual(settings.options_market_holidays, [])
         self.assertEqual(settings.options_underlying_priority_symbols, [])
 
@@ -505,6 +516,7 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
             "ALPACA_OPTIONS_KEY_ID": "key-id",
             "ALPACA_OPTIONS_SECRET_KEY": "secret-key",
             "OPTIONS_MARKET_HOLIDAYS": "",
+            "OPTIONS_LIVE_UNDERLYING_SYMBOLS": "AAPL,MSFT",
             "OPTIONS_UNDERLYING_PRIORITY_SYMBOLS": "",
         }
         with (
@@ -590,7 +602,8 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         )
         repository = _SeededCycleRepository()
         service._repository = repository
-        service._client = _CompleteCatalogClient()
+        client = _CompleteCatalogClient()
+        service._client = client
 
         service._run_discovery_cycle()
 
@@ -601,6 +614,8 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertEqual(len(repository.completed_cycles), 1)
         self.assertEqual(repository.completed_cycles[0].contract_count, 1)
         self.assertEqual(repository.completed_cycles[0].hot_count, 1)
+        self.assertEqual(client.request["underlying_symbols"], ["AAPL", "MSFT"])
+        self.assertEqual(client.request["limit"], 10000)
 
 
 class TestOptionsLaneNormalization(TestCase):
@@ -628,6 +643,7 @@ class TestOptionsLaneNormalization(TestCase):
             contracts, _ = client.list_contracts(
                 status="active",
                 limit=1,
+                underlying_symbols=["AA"],
                 expiration_date_gte=date(2026, 3, 8),
                 expiration_date_lte=date(2026, 3, 15),
             )
@@ -665,6 +681,7 @@ class TestOptionsLaneNormalization(TestCase):
             contracts, _ = client.list_contracts(
                 status="active",
                 limit=1,
+                underlying_symbols=["AA"],
                 expiration_date_gte=date(2026, 3, 8),
                 expiration_date_lte=date(2026, 3, 15),
             )
@@ -672,8 +689,26 @@ class TestOptionsLaneNormalization(TestCase):
         self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
         self.assertEqual(
             requests[0],
-            "https://paper-api.alpaca.markets/v2/options/contracts?status=active&limit=1&expiration_date_gte=2026-03-08&expiration_date_lte=2026-03-15",
+            "https://paper-api.alpaca.markets/v2/options/contracts?status=active&limit=1&underlying_symbols=AA&expiration_date_gte=2026-03-08&expiration_date_lte=2026-03-15",
         )
+
+    def test_alpaca_client_rejects_unbounded_contract_request(self) -> None:
+        client = AlpacaOptionsClient(
+            key_id="key-id",
+            secret_key="secret-key",
+            contracts_base_url="https://paper-api.alpaca.markets",
+            data_base_url="https://data.alpaca.markets",
+            feed="indicative",
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires underlying symbols"):
+            client.list_contracts(
+                status="active",
+                limit=100,
+                underlying_symbols=[],
+                expiration_date_gte=date(2026, 3, 8),
+                expiration_date_lte=date(2026, 3, 15),
+            )
 
     def test_normalize_contract_record_maps_required_fields(self) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)

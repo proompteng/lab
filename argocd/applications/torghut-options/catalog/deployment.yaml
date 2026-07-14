@@ -71,6 +71,11 @@ spec:
                 secretKeyRef:
                   name: torghut-options-alpaca
                   key: APCA_API_BASE_URL
+            - name: OPTIONS_LIVE_UNDERLYING_SYMBOLS
+              valueFrom:
+                configMapKeyRef:
+                  name: torghut-ws-config
+                  key: SYMBOLS_ALLOWLIST
             - name: TORGHUT_OPTIONS_VERSION
               value: v0.596.0-1864-g161522624
             - name: TORGHUT_OPTIONS_COMMIT
@@ -80,7 +85,7 @@ spec:
               containerPort: 8080
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 5

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import cast
 
 from sqlalchemy.orm import Session
 
+from app.options_lane.catalog_scope import OptionsCatalogScope
 from app.options_lane.subscription_state_repository import (
     load_live_subscription_candidates,
     reconcile_subscription_state,
@@ -39,9 +40,13 @@ class _EmptyMappingResult:
 class _CandidateSession:
     def __init__(self) -> None:
         self.statement = ""
+        self.parameters: Mapping[str, object] = {}
 
-    def execute(self, statement: object) -> _EmptyMappingResult:
+    def execute(
+        self, statement: object, parameters: Mapping[str, object]
+    ) -> _EmptyMappingResult:
         self.statement = str(statement)
+        self.parameters = parameters
         return _EmptyMappingResult()
 
 
@@ -65,7 +70,15 @@ def test_reconcile_chunks_large_deactivation_sets() -> None:
 
 def test_live_seed_excludes_inactive_catalog_rows() -> None:
     session = _CandidateSession()
+    scope = OptionsCatalogScope(
+        underlying_symbols=("NVDA", "AMD"),
+        expiration_date_gte=date(2026, 7, 14),
+        expiration_date_lte=date(2026, 11, 11),
+    )
 
-    assert load_live_subscription_candidates(cast(Session, session)) == []
+    assert load_live_subscription_candidates(cast(Session, session), scope=scope) == []
 
     assert "catalog.status = 'active'" in session.statement
+    assert "catalog.underlying_symbol = ANY(:underlying_symbols)" in session.statement
+    assert "catalog.expiration_date BETWEEN" in session.statement
+    assert session.parameters == scope.query_parameters

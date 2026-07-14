@@ -11,6 +11,8 @@ from typing import cast
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.options_lane.catalog_scope import OptionsCatalogScope
+
 
 _DEACTIVATION_BATCH_SIZE = 1_000
 
@@ -23,7 +25,9 @@ class SubscriptionReconcileResult:
     deactivated_count: int
 
 
-def load_live_subscription_candidates(session: Session) -> list[dict[str, object]]:
+def load_live_subscription_candidates(
+    session: Session, *, scope: OptionsCatalogScope
+) -> list[dict[str, object]]:
     """Return only persisted hot/warm rows eligible to seed live ranking."""
 
     rows = session.execute(
@@ -46,9 +50,12 @@ def load_live_subscription_candidates(session: Session) -> list[dict[str, object
               ON catalog.contract_symbol = subs.contract_symbol
             WHERE catalog.status = 'active'
               AND subs.tier IN ('hot', 'warm')
+              AND catalog.underlying_symbol = ANY(:underlying_symbols)
+              AND catalog.expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
             ORDER BY subs.ranking_score DESC, catalog.contract_symbol ASC
             """
-        )
+        ),
+        scope.query_parameters,
     ).mappings()
     return [dict(row) for row in rows]
 
@@ -68,17 +75,24 @@ def load_non_off_subscription_symbols(session: Session) -> set[str]:
     return {cast(str, row[0]) for row in rows}
 
 
-def load_cold_subscription_symbols(session: Session) -> frozenset[str]:
+def load_cold_subscription_symbols(
+    session: Session, *, scope: OptionsCatalogScope
+) -> frozenset[str]:
     """Return the pre-existing cold set that provisional scans must preserve."""
 
     rows = session.execute(
         text(
             """
-            SELECT contract_symbol
-            FROM torghut_options_subscription_state
-            WHERE tier = 'cold'
+            SELECT subscriptions.contract_symbol
+            FROM torghut_options_subscription_state AS subscriptions
+            JOIN torghut_options_contract_catalog AS catalog
+              ON catalog.contract_symbol = subscriptions.contract_symbol
+            WHERE subscriptions.tier = 'cold'
+              AND catalog.underlying_symbol = ANY(:underlying_symbols)
+              AND catalog.expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
             """
-        )
+        ),
+        scope.query_parameters,
     )
     return frozenset(cast(str, row[0]) for row in rows)
 
