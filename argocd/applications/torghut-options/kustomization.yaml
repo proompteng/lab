@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: torghut
 resources:
   - sealed-secrets.yaml
+  - schema-gate-configmap.yaml
   - archive
   - catalog
   - ws

@@ -31,6 +31,35 @@ spec:
         runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: await-options-schema
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /schema-gate/await-options-schema.py
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+          volumeMounts:
+            - name: options-schema-gate
+              mountPath: /schema-gate
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: torghut-options-catalog
           image: registry.ide-newton.ts.net/lab/torghut@sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb
@@ -111,3 +140,7 @@ spec:
             capabilities:
               drop:
                 - ALL
+      volumes:
+        - name: options-schema-gate
+          configMap:
+            name: torghut-options-schema-gate

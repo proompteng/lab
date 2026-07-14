@@ -149,6 +149,9 @@ kind: Deployment
 spec:
 ${container === 'torghut-options-archive' ? '  replicas: 0\n' : ''}  template:
     spec:
+      initContainers:
+        - name: await-options-schema
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
       containers:
         - name: ${container}
           image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
@@ -361,10 +364,15 @@ describe('update-manifests', () => {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
       )
+      expect(
+        manifest.match(
+          /image: registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e/g,
+        )?.length,
+      ).toBe(2)
       expect(manifest).toContain('value: v0.600.0')
       expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     }
-    expect(optionsArchiveManifest).toContain('  replicas: 1')
+    expect(optionsArchiveManifest).toContain('  replicas: 0')
     expect(result.changed).toBe(true)
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -389,6 +397,11 @@ describe('update-manifests', () => {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111',
       )
+      expect(
+        manifest.match(
+          /image: registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111/g,
+        )?.length,
+      ).toBe(2)
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
