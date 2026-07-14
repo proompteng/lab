@@ -20,10 +20,10 @@ from app.options_lane.alpaca import (
 )
 from app.options_lane.catalog_watermark_repository import CatalogCycleSummary
 from app.options_lane.options_status import build_status_payload
+from app.options_lane.catalog_change_detection import contract_catalog_row_changed
 from app.options_lane.repository import (
     OptionsRepository,
     SubscriptionReconcileResult,
-    _contract_catalog_row_changed,
     merge_top_ranked_contract_rows,
     ranked_contract_rows,
     top_ranked_contract_rows,
@@ -393,9 +393,7 @@ class TestOptionsRepositoryStatusCounts(TestCase):
         }
         payload = {**current, "underlying_asset_id": "provider-asset-1"}
 
-        self.assertFalse(
-            _contract_catalog_row_changed(current=current, payload=payload)
-        )
+        self.assertFalse(contract_catalog_row_changed(current=current, payload=payload))
 
     def test_count_active_contracts_uses_bounded_statement_timeout(self) -> None:
         session = _FakeCountSession(value=42)

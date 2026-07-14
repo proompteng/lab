@@ -26,6 +26,7 @@ from app.options_lane.subscription_state_repository import (
     load_non_off_subscription_symbols,
     reconcile_subscription_state,
 )
+from .catalog_change_detection import contract_catalog_row_changed
 
 
 logger = logging.getLogger(__name__)
@@ -229,26 +230,9 @@ class OptionsRepository:
                 payload = dict(contract)
                 payload["first_seen_ts"] = first_seen_ts
 
-                changed = current is None or any(
-                    payload.get(field) != current.get(field)
-                    for field in (
-                        "contract_id",
-                        "status",
-                        "tradable",
-                        "expiration_date",
-                        "root_symbol",
-                        "underlying_symbol",
-                        "underlying_asset_id",
-                        "option_type",
-                        "style",
-                        "strike_price",
-                        "contract_size",
-                        "open_interest",
-                        "open_interest_date",
-                        "close_price",
-                        "close_price_date",
-                        "provider_updated_ts",
-                    )
+                changed = contract_catalog_row_changed(
+                    current=current,
+                    payload=payload,
                 )
                 upsert_rows.append(
                     {
