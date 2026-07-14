@@ -267,7 +267,7 @@ describe('update-manifests', () => {
     const migrationManifest = readFileSync(join(repoRoot, 'argocd/applications/torghut/db-migrations-job.yaml'), 'utf8')
 
     expect(migrationManifest).toContain('backoffLimit: 6')
-    expect(migrationManifest).toContain('activeDeadlineSeconds: 900')
+    expect(migrationManifest).toContain('activeDeadlineSeconds: 3600')
     expect(migrationManifest).toContain('wait_for_database()')
     expect(migrationManifest).toContain("connection.execute(text('select 1'))")
     expect(migrationManifest).toContain('wait_for_database "torghut app database" "${DB_DSN}" 300')
