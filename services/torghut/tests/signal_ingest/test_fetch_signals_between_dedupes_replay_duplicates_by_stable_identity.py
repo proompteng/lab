@@ -24,6 +24,50 @@ from tests.signal_ingest.support import (
 class TestFetchSignalsBetweenDedupesReplayDuplicatesByStableIdentity(
     _TestSignalIngestBase
 ):
+    def test_fetch_signals_between_prefers_latest_ingest_timestamp_for_exact_duplicates(
+        self,
+    ) -> None:
+        rows = [
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-06T14:50:01Z",
+                "symbol": "AAPL",
+                "payload": {"rsi14": 30},
+                "seq": 100,
+                "source": "ta",
+                "window_size": "PT1S",
+            },
+            {
+                "event_ts": "2026-03-06T14:50:00Z",
+                "ingest_ts": "2026-03-06T14:50:02Z",
+                "symbol": "AAPL",
+                "payload": {"rsi14": 30},
+                "seq": 100,
+                "source": "ta",
+                "window_size": "PT1S",
+            },
+        ]
+
+        class DuplicateEnvelopeIngestor(ClickHouseSignalIngestor):
+            def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
+                return rows
+
+        ingestor = DuplicateEnvelopeIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+        )
+        signals = ingestor.fetch_signals_between(
+            start=datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
+            end=datetime(2026, 3, 6, 14, 51, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(
+            signals[0].ingest_ts,
+            datetime(2026, 3, 6, 14, 50, 2, tzinfo=timezone.utc),
+        )
+
     def test_fetch_signals_between_dedupes_replay_duplicates_by_stable_identity(
         self,
     ) -> None:
