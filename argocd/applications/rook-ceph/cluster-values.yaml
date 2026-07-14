@@ -47,6 +47,9 @@ cephClusterSpec:
       # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
       osd_scrub_auto_repair: "true"
       osd_scrub_auto_repair_num_errors: "5"
+      # Keep client fsync latency ahead of maintenance on the shared two-host HDD path.
+      # Scrub-debt alerts remain enabled, so deferred work cannot accumulate silently.
+      osd_max_scrubs: "1"
     # Per-OSD mClock HDD IOPS capacity, measured with Ceph's documented 4 KiB OSD bench path on 2026-07-07.
     osd.0:
       osd_mclock_max_capacity_iops_hdd: "210"
