@@ -1,6 +1,6 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-14 13:50 UTC**
+Last updated: **2026-07-14 15:03 UTC**
 
 Status: **in progress**
 
@@ -14,19 +14,23 @@ physical network upgrade remain external constraints defined by the accepted des
 
 ## Delivered changes
 
-| Slice                                                 | Pull request   | Production state                                                               |
-| ----------------------------------------------------- | -------------- | ------------------------------------------------------------------------------ |
-| Accepted design and source map                        | #12403         | Merged                                                                         |
-| Delta-only options subscription reconciliation        | #12407         | Merged and live                                                                |
-| Per-table Hyperliquid ClickHouse batching             | #12409, #12410 | Merged and live                                                                |
-| Bounded live discovery                                | #12421, #12432 | Merged and live                                                                |
-| Set-based options persistence                         | #12435, #12437 | Merged and live                                                                |
-| Resumable archival reconciliation                     | #12438, #12439 | Merged; archive worker contained at zero replicas pending finalizer correction |
-| Bounded archive finalization                          | #12441, #12449 | Source and image promoted; composite-key correction #12452 pending             |
-| Released migration revision compatibility             | #12454         | PostgreSQL 17 proof complete; merge and image promotion pending                |
-| Shared CNPG, Ceph, and RBD-client observability       | #12443         | Merged and live                                                                |
-| Ceph scrub concurrency and count correction           | #12453         | Runtime containment live; GitOps merge pending                                 |
-| Bilig PostgreSQL capacity and logical-WAL containment | #12447         | Merged and live                                                                |
+| Slice                                                 | Pull request    | Production state                                                               |
+| ----------------------------------------------------- | --------------- | ------------------------------------------------------------------------------ |
+| Accepted design and source map                        | #12403          | Merged                                                                         |
+| Delta-only options subscription reconciliation        | #12407          | Merged and live                                                                |
+| Per-table Hyperliquid ClickHouse batching             | #12409, #12410  | Merged and live                                                                |
+| Options TA ClickHouse batching                        | #12455          | Source review rerun pending; digest-pinned activation PR follows publication   |
+| Kafka-backed Hyperliquid ClickHouse writer            | #12440          | CI green; current-head source review pending; staged at zero replicas          |
+| Kafka/ClickHouse retained-record parity gate          | local 92cce1849 | Validated dependent slice; publish after #12440 lands                          |
+| Bounded live discovery                                | #12421, #12432  | Merged and live                                                                |
+| Set-based options persistence                         | #12435, #12437  | Merged and live                                                                |
+| Resumable archival reconciliation                     | #12438, #12439  | Merged; archive worker contained at zero replicas pending finalizer correction |
+| Bounded archive finalization                          | #12441, #12449  | Source and image promoted; composite-key correction #12452 pending             |
+| Released migration revision compatibility             | #12454          | PostgreSQL 17 proof complete; merge and image promotion pending                |
+| Shared CNPG, Ceph, and RBD-client observability       | #12443          | Merged and live                                                                |
+| Ceph scrub concurrency and count correction           | #12453          | Runtime containment live; GitOps merge pending                                 |
+| Bilig PostgreSQL capacity and logical-WAL containment | #12447          | Merged and live                                                                |
+| Torghut PostgreSQL WAL-buffer containment             | #12457          | 16 MiB setting validated; current-head review and scrub-safe restart pending   |
 
 ## Live proof
 
@@ -47,6 +51,20 @@ ClickHouse `system.part_log` shows the production transition at 07:00 UTC:
 
 Sparse tables flush on the 30-second age limit when they cannot reach 100 rows. They are evaluated separately from the
 size-triggered BBO gate.
+
+### Options TA direct-sink diagnosis
+
+The next dominant ClickHouse writer was traced to the Options Flink JDBC sinks rather than the Hyperliquid feed. In a
+15-minute production sample, `options_contract_features`, `options_contract_bars_1s`, and `options_surface_features`
+created 5,359 new parts at only 19-43 rows per part. The live Flink graph showed all three JDBC sinks at parallelism
+four, the client flushed every 250 milliseconds, and shared code capped the requested batch at 100 rows.
+
+PR #12455 adds a live-Options-specific 1,000-row ceiling and configurable sink parallelism while preserving the
+100-row full-day replay guardrail. Its current head intentionally leaves the immutable deployment image and GitOps
+values unchanged. After that source image is published, a separate digest-pinned activation PR will set one writer per
+destination table and a bounded 30-second age flush under the existing 120-second ClickHouse freshness SLO. The live
+rollout must reduce aggregate Options `NewPart` and `MergeParts` rates by at least 80% without freshness, checkpoint, or
+Kafka-source regression.
 
 ### Options archival containment
 
@@ -85,6 +103,33 @@ At 13:31 UTC, OSD 5 was primary for three simultaneous scrub operations while Ka
 limit authoritative in GitOps and corrects the recording rule that counted every deep-scrubbing PG twice. This direct
 config-database change is the only current Ceph drift and must disappear after Argo reconciles the PR.
 
+At 14:02 UTC, three deep scrubs were still active on three different primary OSDs. This is expected with
+`osd_max_scrubs=1`: the setting is per OSD, not a cluster-wide cap. Controller 2 completed 305 events at an average of
+1.39 seconds, with the slowest `writeNoOpRecord` taking 8.07 seconds. The cap removed the prior same-OSD concurrency but
+does not replace the accepted low-traffic scrub window.
+
+At 14:46 UTC, one regular scrub in the RGW bucket-data pool overlapped roughly 12.8 MiB/s of RBD-pool writes and OSD
+commit/apply latency peaks of 99-279 ms. Controller 2 completed 363 events at an average of 863 ms, and its slowest
+`writeNoOpRecord` took 8.52 seconds. The scrub then finished and Ceph returned to 601 active+clean PGs, but controller
+events continued reaching 2-4 seconds while the queue drained; the one-minute average fell to 297 ms by 14:49 UTC.
+Kafka remained available and all 37 managed topics stayed ready. This is improvement after containment, not evidence
+that controller durability is safe at default timeouts.
+
+The 14:46 RBD breakdown identifies the application pressure precisely: the two Torghut ClickHouse replicas wrote
+about 7.26 MiB/s at 440 IOPS, Torghut PostgreSQL wrote 1.23 MiB/s at 53 IOPS, and the Jangar primary and replica wrote
+1.99 MiB/s at 135 IOPS. Kafka controller PVCs wrote only about 2 IOPS each, but those synchronous metadata writes share
+the latency tail created by the much larger ClickHouse, PostgreSQL, Jangar, and scrub workload.
+
+The cluster started three more scrub operations on distinct primary OSDs by 14:51 UTC, including one deep scrub.
+Controller 2 then completed 332 events at a 1.58-second average and hit an 11.91-second `writeNoOpRecord`. This confirms
+that `osd_max_scrubs=1` prevents same-OSD concurrency but cannot impose a cluster-wide maintenance limit. The PostgreSQL
+restart and Kafka timeout cleanup must not run while scrubs are active; a measured scrub window remains mandatory.
+
+The seven-day window gate cannot yet be evaluated from Mimir: the raw Ceph series and new recording rules first became
+available with today's observability rollout at 13:00 UTC. Historical Mimir queries for unrelated metrics still work,
+so this is a new-series baseline rather than general retention loss. No scrub-hour window will be guessed from an
+assumed clock. Collection continues through at least 2026-07-21; Ceph remains `HEALTH_OK` with no scrub debt warning.
+
 Kafka remained `Ready` with version 4.3.0, metadata `4.3-IV0`, three controller pods, three broker pods, and no
 not-ready KafkaTopic resources. That status does not establish controller durability: controller 2 continued logging
 2-7.5 second `writeNoOpRecord`, broker-heartbeat, and stale-broker-fencing events, while controllers 0 and 1 repeatedly
@@ -96,12 +141,33 @@ must not be removed yet.
 Torghut PostgreSQL has a 50 GiB PVC with 29 GiB available and a 19 GiB database. Current settings remain the PostgreSQL
 defaults: `wal_buffers=4MB`, `max_wal_size=1GB`, `checkpoint_timeout=5min`, and `wal_compression=off`.
 
-The `TorghutPostgresWalBuffersFull` warning is currently pending. In the latest 15-minute sample PostgreSQL generated
-about 13.9 MiB of WAL, only 0.015 MiB/s and well below the 0.25 MiB/s gate, but still reported about 1,976
-WAL-buffer-full events. Since the statistics reset on 2026-07-03, 62.2% of checkpoints have been requested rather than
-timed (`2,681` requested versus `1,628` timed). This supports a later bounded increase in WAL buffers and checkpoint
-headroom after the archive load is proven; it is not a reason to weaken `fsync`, `full_page_writes`, or
-`synchronous_commit`.
+The `TorghutPostgresWalBuffersFull` warning is firing. In the latest 15-minute sample PostgreSQL generated only about
+0.019 MiB/s of WAL, well below the 0.25 MiB/s gate, but still reported about 2,450 WAL-buffer-full events. Since the
+statistics reset on 2026-07-03, 62.2% of checkpoints have been requested rather than timed (`2,681` requested versus
+`1,636` timed), although the latest hour had zero requested checkpoints. PR #12457 sets `wal_buffers` to 16 MiB while
+preserving `fsync`, `full_page_writes`, and `synchronous_commit`. Because `wal_buffers` is a postmaster setting and
+Torghut has one CNPG instance, the change carries a brief expected database interruption. CI is green, but the
+current-head automatic review has not arrived. The latest preflight found Ceph `HEALTH_OK` with one active deep scrub,
+so merge and restart remain gated. Checkpoint and WAL-size changes still wait for the post-application baseline.
+
+The separate `TorghutWSRestartsOrOOM` alert at 13:59 UTC was caused by the liveness controller intentionally restarting
+the forwarder after market-data channels remained starved for two minutes. Kafka and Alpaca-session gates stayed true,
+the new process restored all channels, readiness returned true, and the 10-minute restart-window alert resolved without
+changing a timeout or suppressing the alert.
+
+### Torghut decision-stall incident
+
+`TorghutQuantDecisionsStalledDuringMarketHours` fired at 14:51 UTC after the last persisted decision at 14:30 UTC. The
+scheduler remained ready, its accepted TA source was current, and all ten configured symbols had fresh signal rows. The
+new scheduler process evaluated 126 signals but safely rejected 85 for missing executable quotes and 41 for spreads
+above the existing quality ceiling.
+
+The executable-quote fallback was configured for Alpaca `sip`, while the account is not entitled to recent SIP data.
+Every fallback attempt returned HTTP 403 with the provider's subscription error. A read-only production probe against
+the same credentials returned fresh HTTP 200 IEX quotes for NVDA, CRDO, SNDK, and WDC, matching the IEX feed already
+used by the websocket forwarder. PR #12461 changes only the live service and scheduler fallback feed to `iex`; quote
+age, spread, session, and provider-backoff gates remain unchanged. Resolution requires the GitOps rollout followed by
+real decision traffic, not an alert silence.
 
 ### Jangar backup containment
 
@@ -117,12 +183,16 @@ is accepted as proof.
    Merge and promote migration-graph compatibility #12454 so databases parked on the released strategy-capital 0063
    revision can reach the sole 0065 head.
 2. Merge and publish the Kafka-backed writer with replicas at zero, then activate it against staging tables.
-3. Capture Kafka retained-record manifests and prove each retained offset exists exactly once in staging under the
-   delete-only and compacted-topic contracts before cutover.
+3. Publish the validated parity gate from local commit `92cce1849` after #12440 lands. It reads live topic cleanup
+   policy, captures fixed per-partition high watermarks, requires contiguous lineage for delete-only topics, enumerates
+   the retained record set for compacted topics, and fails unless every required staging offset exists exactly once.
 4. Merge the Jangar backup-pressure policy and prove a throttled backup does not destabilize Kafka or Ceph.
-5. Merge #12453, verify one-scrub-per-OSD convergence and scrub-debt health, then continue collecting the accepted
-   baseline before selecting a scrub-hour window or changing PostgreSQL.
-6. Remove the two Kafka timeout overrides only after controller events, quorum, ISR, and client traffic remain stable at
+5. Merge #12455, publish its TA image, activate it through a digest-pinned GitOps PR, and prove at least 80% fewer
+   Options ClickHouse parts before promoting the prepared 16 MiB PostgreSQL WAL-buffer change through its controlled
+   single-instance restart.
+6. Merge #12453, verify one-scrub-per-OSD convergence and scrub-debt health, then collect the accepted Ceph baseline
+   through at least 2026-07-21 before selecting a scrub-hour window.
+7. Remove the two Kafka timeout overrides only after controller events, quorum, ISR, and client traffic remain stable at
    default timeout behavior.
 
 ## Rollback boundaries
