@@ -116,9 +116,11 @@ flowchart LR
 
 ### Seeded provisional state
 
-At cycle start, load the current non-off subscription rows and seed the bounded candidate set. This preserves the last
-known-good hot/warm set while the new provider scan is incomplete. Newly observed candidates compete with that seed.
-Only a candidate that enters, leaves, or materially changes the top-K produces a mutation.
+At cycle start, load only the current `hot` and `warm` subscription rows and seed the bounded candidate set. This
+preserves the last known-good live set while the new provider scan is incomplete. `cold` rows created by snapshot
+enrichment are never candidates for this seed. The repository may read all non-off symbols separately for explicit
+cleanup, but those symbols do not enter ranking unless the live scan observes them. Newly observed candidates compete
+with the hot/warm seed. Only a candidate that enters, leaves, or materially changes the top-K produces a mutation.
 
 The candidate limit continues to come from `_tier_limits()`. With the current provider cap of 200, the effective limits
 are 160 hot and 800 warm contracts.
@@ -221,10 +223,15 @@ The final ingestion boundary is a dedicated Kafka consumer:
 
 1. Consume normalized topics with partition ordering.
 2. Batch by destination table.
-3. Insert with a deterministic deduplication token derived from topic, partition, and offset range.
-4. Commit offsets only after the insert is acknowledged.
-5. Retry an uncommitted range without changing its token.
-6. Confirm table engines and materialized views preserve the required deduplication semantics.
+3. Add nullable `kafka_topic`, `kafka_partition`, and `kafka_offset` lineage columns to every writer-owned destination
+   table; existing direct-sink rows remain null during migration.
+4. Populate those columns on every consumed row and insert with a deterministic deduplication token derived from topic,
+   partition, and offset range.
+5. Commit offsets only after the insert is acknowledged.
+6. Retry an uncommitted range without changing its token.
+7. Confirm table engines and materialized views preserve the required deduplication semantics.
+8. Reconcile contiguous offset coverage and duplicate `(topic, partition, offset)` tuples directly from ClickHouse
+   before and after cutover. An insert token alone is not accepted as durable lineage evidence.
 
 The writer first runs against staging tables. Cutover disables direct feed-to-ClickHouse writes while the writer catches
 up from Kafka, so a deployment gap is replayed rather than lost.
