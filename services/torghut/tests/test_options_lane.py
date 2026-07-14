@@ -6,7 +6,7 @@ import os
 import sys
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
-from typing import Any, Iterator, Protocol, cast
+from typing import Iterator, Protocol, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -273,7 +273,7 @@ class _SeededCycleRepository:
     def write_subscription_state(
         self,
         *,
-        ranked_rows: list[dict[str, Any]],
+        ranked_rows: list[dict[str, object]],
         deactivate_symbols: set[str],
         observed_at: datetime,
     ) -> SubscriptionReconcileResult:
@@ -301,6 +301,18 @@ class _CatalogStatusServiceModule(Protocol):
         error_code: str | None = None,
         error_detail: str | None = None,
     ) -> None: ...
+
+
+class _CatalogDiscoveryState(Protocol):
+    def snapshot(self) -> dict[str, object]: ...
+
+
+class _CatalogDiscoveryServiceModule(Protocol):
+    _repository: object
+    _client: object
+    _state: _CatalogDiscoveryState
+
+    def _run_discovery_cycle(self) -> None: ...
 
 
 class _EnricherStatusServiceModule(Protocol):
@@ -537,7 +549,7 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
 
     def test_partial_catalog_cycle_keeps_unseen_persisted_candidate(self) -> None:
         service = cast(
-            Any,
+            _CatalogDiscoveryServiceModule,
             self._import_service("app.options_lane.catalog_service"),
         )
         repository = _SeededCycleRepository()
@@ -564,7 +576,7 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self,
     ) -> None:
         service = cast(
-            Any,
+            _CatalogDiscoveryServiceModule,
             self._import_service("app.options_lane.catalog_service"),
         )
         repository = _SeededCycleRepository()
