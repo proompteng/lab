@@ -140,11 +140,16 @@ def _parse_args() -> argparse.Namespace:
         required=True,
         help="Path to the strategy autoresearch program YAML.",
     )
-    parser.add_argument(
+    run_destination = parser.add_mutually_exclusive_group(required=True)
+    run_destination.add_argument(
         "--output-dir",
         type=Path,
-        required=True,
         help="Directory that will receive a timestamped run folder.",
+    )
+    run_destination.add_argument(
+        "--resume-run-root",
+        type=Path,
+        help="Existing run folder whose last committed checkpoint should be resumed.",
     )
     parser.add_argument(
         "--strategy-configmap",

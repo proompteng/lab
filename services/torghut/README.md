@@ -174,6 +174,27 @@ PostgreSQL execution rows, TCA, and TigerBeetle-derived ledger records agree.
 The optional whitepaper Kafka worker is started inside the service only when its workflow settings are enabled. It has
 no HTTP route and no authority over live order sizing or submission.
 
+## Strategy Autoresearch
+
+The strategy autoresearch loop is research-only and cannot grant live capital. A candidate satisfies the research
+objective only after terminal validation. A discarded, vetoed, malformed, or duplicate candidate may record that its
+raw metrics crossed the target, but it cannot set `objective_met=true` or stop the search.
+
+Every run writes `search-decisions.jsonl` with the reason for each continuation or stop and atomically updates
+`checkpoint.json` after committed setup and frontier boundaries. Resume an interrupted or failed run with the same
+program and data-affecting arguments, replacing `--output-dir` with the existing run folder:
+
+```bash
+uv run --frozen python scripts/run_strategy_autoresearch_loop.py \
+  --program <program.yaml> \
+  --resume-run-root <run-root> \
+  <original-data-arguments>
+```
+
+Resume refuses a corrupt checkpoint, a changed program, or a changed execution contract before running another
+frontier. A completed checkpoint returns its existing summary without replaying work. Credentials are supplied again
+through arguments or environment variables and are never persisted in the checkpoint.
+
 ## Deployment
 
 Torghut is deployed only through GitHub Actions and Argo CD:

@@ -480,6 +480,8 @@ def _persist_run_outputs(
     proposal_scores: list[ProposalScore],
     worklist: list[WorkItem],
     status: str,
+    search_decisions: list[dict[str, Any]] | None = None,
+    termination: Mapping[str, Any] | None = None,
     selected_for_replay: ProposalSelectionEntry | None = None,
     selected_descriptor: MlxCandidateDescriptor | None = None,
     closure_execution_context: RuntimeClosureExecutionContext | None = None,
@@ -491,7 +493,12 @@ def _persist_run_outputs(
     summary_path = run_root / "summary.json"
     promotion_readiness_path = run_root / "promotion_readiness.json"
     snapshot_manifest_path = run_root / "mlx-snapshot-manifest.json"
+    search_decisions_path = run_root / "search-decisions.jsonl"
+    checkpoint_path = run_root / "checkpoint.json"
+    resolved_search_decisions = search_decisions or []
+    resume_supported = search_decisions is not None
     _write_history_jsonl(history_path, history)
+    _write_history_jsonl(search_decisions_path, resolved_search_decisions)
     _write_results_tsv(results_tsv_path, history)
     research_dossier_path.write_text(
         json.dumps(program_payload, indent=2, sort_keys=True),
@@ -532,6 +539,14 @@ def _persist_run_outputs(
         "research_dossier_path": str(research_dossier_path),
         "promotion_readiness_path": str(promotion_readiness_path),
         "snapshot_manifest_path": str(snapshot_manifest_path),
+        "search_decisions_path": str(search_decisions_path),
+        "checkpoint_path": str(checkpoint_path) if resume_supported else None,
+        "resume_supported": resume_supported,
+        "search_decision_count": len(resolved_search_decisions),
+        "last_search_decision": (
+            resolved_search_decisions[-1] if resolved_search_decisions else None
+        ),
+        "termination": dict(termination or {}),
         "exact_replay_ledger_ranking_path": exact_replay_ledger_ranking["path"],
         "exact_replay_ledger_ranking": exact_replay_ledger_ranking["report"],
         "exact_replay_ledger_remediation_path": exact_replay_ledger_remediation["path"],
