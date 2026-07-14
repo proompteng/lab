@@ -7,11 +7,17 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from urllib.parse import urlsplit, unquote
 
-from app.trading.llm.dspy_compile.compiler import compile_dspy_program_artifacts
+from app.trading.llm.dspy_compile.compiler import (
+    _percentile_disc,
+    compile_dspy_program_artifacts,
+)
 from app.trading.llm.dspy_compile.hashing import canonical_json
 
 
 class TestLLMDSPyCompiler(TestCase):
+    def test_percentile_disc_selects_upper_tail_for_two_samples(self) -> None:
+        self.assertEqual(_percentile_disc([110, 190], percentile=0.95), 190)
+
     @staticmethod
     def _normalize_ref(ref: str) -> str:
         parsed = urlsplit(ref)
@@ -401,7 +407,7 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertEqual(metric_bundle["vetoAlignmentRate"], 1.0)
             self.assertEqual(metric_bundle["falseVetoRate"], 1.0)
             self.assertEqual(metric_bundle["fallbackRate"], 2 / 3)
-            self.assertEqual(metric_bundle["latencyP95Ms"], 110)
+            self.assertEqual(metric_bundle["latencyP95Ms"], 190)
 
     def test_compile_rejects_partial_observed_metrics(self) -> None:
         with TemporaryDirectory() as tmp:
