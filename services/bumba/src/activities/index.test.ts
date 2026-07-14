@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Language } from 'web-tree-sitter'
+import { Language, type Tree } from 'web-tree-sitter'
 
 import productionActivities, { __test__, activities, parseCompletionOutput } from './index'
 
@@ -132,6 +132,75 @@ describe('Atlas chunk coverage', () => {
     expect(chunks.some((chunk) => chunk.content.includes('createAtlasCodeSearchHandlers'))).toBe(true)
     expect(chunks.every((chunk) => chunk.metadata.chunkerVersion === __test__.ATLAS_CHUNKER_VERSION)).toBe(true)
     expect(() => __test__.assertChunkCoverage(source, chunks)).not.toThrow()
+  })
+})
+
+describe('tree-sitter resource lifecycle', () => {
+  const language = {} as Language
+
+  it('deletes the syntax tree and parser after reading a tree', () => {
+    let treeDeletes = 0
+    let parserDeletes = 0
+    const tree = { delete: () => (treeDeletes += 1) } as unknown as Tree
+    const parser = {
+      setLanguage: () => parser,
+      parse: () => tree,
+      delete: () => (parserDeletes += 1),
+    }
+
+    expect(
+      __test__.withParsedTree(
+        language,
+        'const value = 1',
+        () => 'read',
+        () => parser,
+      ),
+    ).toBe('read')
+    expect(treeDeletes).toBe(1)
+    expect(parserDeletes).toBe(1)
+  })
+
+  it('deletes the syntax tree and parser when reading throws', () => {
+    let treeDeletes = 0
+    let parserDeletes = 0
+    const tree = { delete: () => (treeDeletes += 1) } as unknown as Tree
+    const parser = {
+      setLanguage: () => parser,
+      parse: () => tree,
+      delete: () => (parserDeletes += 1),
+    }
+
+    expect(() =>
+      __test__.withParsedTree(
+        language,
+        'const value = 1',
+        () => {
+          throw new Error('read failed')
+        },
+        () => parser,
+      ),
+    ).toThrow('read failed')
+    expect(treeDeletes).toBe(1)
+    expect(parserDeletes).toBe(1)
+  })
+
+  it('deletes the parser when parsing returns no tree', () => {
+    let parserDeletes = 0
+    const parser = {
+      setLanguage: () => parser,
+      parse: () => null,
+      delete: () => (parserDeletes += 1),
+    }
+
+    expect(
+      __test__.withParsedTree(
+        language,
+        'const value = 1',
+        () => 'unreachable',
+        () => parser,
+      ),
+    ).toBeNull()
+    expect(parserDeletes).toBe(1)
   })
 })
 
