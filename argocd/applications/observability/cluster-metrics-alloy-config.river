@@ -54,7 +54,7 @@ prometheus.relabel "cnpg_metrics" {
   rule {
     action        = "keep"
     source_labels = ["__name__", "name"]
-    regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_wal_size|min_wal_size)"
+    regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size)"
   }
 }
 
