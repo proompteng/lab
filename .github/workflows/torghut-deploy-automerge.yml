@@ -364,8 +364,8 @@ jobs:
           required_checks=(
             'Semantic Commits|Lint commit messages'
             'Semantic Pull Request|Validate PR title'
-            'argo-lint|lint'
-            'kubeconform|validate'
+            'CI|PR validation (argo-lint)'
+            'CI|PR validation (kubeconform)'
           )
           if [ "${RELEASE_LANE}" != 'hyperliquid-feed' ]; then
             required_checks+=('torghut-ci|Release manifest changes')
