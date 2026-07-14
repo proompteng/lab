@@ -118,9 +118,11 @@ flowchart LR
 
 At cycle start, load only the current `hot` and `warm` subscription rows and seed the bounded candidate set. This
 preserves the last known-good live set while the new provider scan is incomplete. `cold` rows created by snapshot
-enrichment are neither candidates nor deactivation targets for live reconciliation; their lifecycle remains owned by
-snapshot enrichment. Explicit cleanup tracks only the previously persisted hot/warm symbols. Newly observed candidates
-compete with that seed. Only a candidate that enters, leaves, or materially changes the top-K produces a mutation.
+enrichment are neither candidates nor provisional deactivation targets. Explicit provisional cleanup tracks only the
+previously persisted hot/warm symbols. A separate final-cleanup read includes every non-off tier, including `cold`, so a
+complete successful scan preserves the existing stale-row cleanup semantics without admitting archival rows into live
+ranking. Newly observed candidates compete with the hot/warm seed. Only a candidate that enters, leaves, or materially
+changes the top-K produces a mutation.
 
 The candidate limit continues to come from `_tier_limits()`. With the current provider cap of 200, the effective limits
 are 160 hot and 800 warm contracts.
@@ -162,9 +164,9 @@ This keeps provisional readiness below the existing 300-second SLO while boundin
 
 ### Final reconciliation
 
-Only a complete, successful scan may perform final deactivation. The final statement is still conditional and touches
-only rows whose tier actually changes. Provider errors, shutdown, an invalid cursor, or a partial shard preserve the
-last completed state.
+Only a complete, successful scan may perform final deactivation. Its explicit displacement set is computed from all
+currently non-off rows, including `cold`; the final statement remains conditional and touches only rows whose tier
+actually changes. Provider errors, shutdown, an invalid cursor, or a partial shard preserve the last completed state.
 
 ### Freshness semantics
 
@@ -225,16 +227,22 @@ flush reason. Shutdown drains all acknowledged buffers within a bounded grace pe
 The final ingestion boundary is a dedicated Kafka consumer:
 
 1. Consume normalized topics with partition ordering.
-2. Batch by destination table.
+2. Buffer and flush by `(destination table, Kafka topic, Kafka partition)`; one insert never mixes partitions.
 3. Add nullable `kafka_topic`, `kafka_partition`, and `kafka_offset` lineage columns to every writer-owned destination
    table; existing direct-sink rows remain null during migration.
-4. Populate those columns on every consumed row and insert with a deterministic deduplication token derived from topic,
-   partition, and offset range.
+4. Populate those columns on every consumed row and insert with a deterministic partition-scoped deduplication token
+   derived from topic, partition, and the exact offset range. Retries within a writer process reuse the immutable batch
+   body and token.
 5. Commit offsets only after the insert is acknowledged.
 6. Retry an uncommitted range without changing its token.
-7. Confirm table engines and materialized views preserve the required deduplication semantics.
-8. Reconcile contiguous offset coverage and duplicate `(topic, partition, offset)` tuples directly from ClickHouse
-   before and after cutover. An insert token alone is not accepted as durable lineage evidence.
+7. Make `(kafka_topic, kafka_partition, kafka_offset)` the logical uniqueness key of the writer-owned tables. On restart,
+   compare an uncommitted range with persisted row lineage before inserting missing offsets, so a crash cannot create a
+   second logical row merely because the new process chose a different batch boundary.
+8. Confirm table engines and materialized views preserve that lineage-based uniqueness; an insert token alone is not
+   accepted as durable deduplication or lineage evidence.
+9. At the cutover high watermark, capture the source record-set manifest per partition. Delete-only topics require
+   contiguous retained offsets. For `compact,delete` topics, require every offset still present in the captured Kafka
+   record set to exist exactly once in ClickHouse while allowing numeric offsets removed by compaction.
 
 The writer first runs against staging tables. Cutover disables direct feed-to-ClickHouse writes while the writer catches
 up from Kafka, so a deployment gap is replayed rather than lost.
@@ -333,7 +341,8 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 - Hot/warm membership remains within provider limits and snapshot freshness remains healthy.
 - BBO median part size is at least 1,000 rows.
 - ClickHouse `NewPart` and `MergeParts` rates fall at least 80%.
-- ClickHouse and Kafka row/offset reconciliation reports no unexplained gaps.
+- ClickHouse and Kafka row/offset reconciliation reports no unexplained gaps under the delete-only or compacted-topic
+  contract above.
 - Kafka has three stable voters, full ISR, zero offline partitions, and no fencing.
 - Ceph is `HEALTH_OK` or has only understood, bounded maintenance warnings.
 - Torghut feed `/readyz` returns 200 with Kafka and ClickHouse true; trading runtime remains ready.
