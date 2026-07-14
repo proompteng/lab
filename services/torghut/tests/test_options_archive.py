@@ -624,6 +624,92 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("batch_size", "statement_timeout_ms", "lock_timeout_ms", "message"),
+    (
+        (0, 30_000, 5_000, "batch size"),
+        (1_000, 999, 500, "statement timeout"),
+        (1_000, 30_000, 30_000, "lock timeout"),
+    ),
+)
+def test_finalize_rejects_unsafe_write_bounds(
+    batch_size: int,
+    statement_timeout_ms: int,
+    lock_timeout_ms: int,
+    message: str,
+) -> None:
+    checkpoint = ArchiveCheckpoint(
+        shard=_shard(),
+        query_fingerprint="f" * 64,
+        status="finalizing",
+        cursor=None,
+        page_count=1,
+        seen_count=1,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+    )
+    repository = _ArchiveRepository(row={}, membership_count=1)
+
+    with pytest.raises(ValueError, match=message):
+        repository.finalize_shard(
+            checkpoint=checkpoint,
+            observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+            refresh_seconds=86400,
+            batch_size=batch_size,
+            statement_timeout_ms=statement_timeout_ms,
+            lock_timeout_ms=lock_timeout_ms,
+        )
+
+
+@pytest.mark.parametrize(
+    ("seen_count", "membership_count", "finalize_date", "finalize_symbol", "message"),
+    (
+        (1, 1, date(2026, 7, 17), None, "cursor is incomplete"),
+        (2, 1, None, None, "membership count changed"),
+    ),
+)
+def test_finalize_fails_closed_on_inconsistent_durable_state(
+    seen_count: int,
+    membership_count: int,
+    finalize_date: date | None,
+    finalize_symbol: str | None,
+    message: str,
+) -> None:
+    fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
+    repository = _ArchiveRepository(
+        row=_watermark_row(
+            fingerprint=fingerprint,
+            status="finalizing",
+            page_count=1,
+            seen_count=seen_count,
+            finalize_after_expiration_date=finalize_date,
+            finalize_after_contract_symbol=finalize_symbol,
+        ),
+        membership_count=membership_count,
+    )
+
+    with pytest.raises(ArchiveStateError, match=message):
+        repository.finalize_shard(
+            checkpoint=ArchiveCheckpoint(
+                shard=_shard(),
+                query_fingerprint=fingerprint,
+                status="finalizing",
+                cursor=None,
+                page_count=1,
+                seen_count=seen_count,
+                retry_count=0,
+                next_eligible_at=None,
+                last_success_at=None,
+            ),
+            observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+            refresh_seconds=86400,
+            batch_size=1000,
+            statement_timeout_ms=30000,
+            lock_timeout_ms=5000,
+        )
+
+
 def test_finalize_completes_only_after_the_cursor_exhausts_candidates() -> None:
     fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
     session = _ArchiveSession(active_count=3)
