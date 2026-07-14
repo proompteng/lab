@@ -20,6 +20,7 @@ test('cluster Alloy collects bounded CloudNativePG and Ceph storage metrics', ()
   expect(config).toContain('cnpg_collector_pg_wal(_archive_status)?')
   expect(config).toContain('cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time)')
   expect(config).toContain('cnpg_pg_stat_checkpointer_')
+  expect(config).toContain('cnpg_pg_replication_slots_(active|pg_wal_lsn_diff)')
   expect(config).toContain('prometheus.scrape "ceph_storage"')
   expect(config).toContain('rook-ceph-mgr.rook-ceph.svc.cluster.local:9283')
   expect(config).toContain('ceph_osd_(apply|commit)_latency_ms')
@@ -50,6 +51,7 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
     'ceph_storage:rbd_pod_write_iops:rate5m',
     'alert: TorghutPostgresMetricsMissing',
     'alert: CloudNativePgWalArchiveBacklog',
+    'alert: CloudNativePgReplicationSlotWalRetentionHigh',
     'alert: PersistentVolumeFreeLowWarning',
     'alert: PersistentVolumeFreeLowCritical',
     'alert: CephStorageMetricsMissing',

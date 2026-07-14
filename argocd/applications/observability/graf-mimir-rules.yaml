@@ -310,6 +310,24 @@ data:
               description: |
                 {{ $labels.namespace }}/{{ $labels.cluster }} has more than four WAL segments waiting to archive for 15 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CloudNativePgReplicationSlotWalRetentionHigh
+            expr: |
+              max by (namespace, cluster, slot_name) (
+                cnpg_pg_replication_slots_pg_wal_lsn_diff{
+                  job="cnpg-postgres",
+                  slot_type="logical"
+                }
+              ) > 2147483648
+            for: 15m
+            labels:
+              severity: warning
+              service: cnpg-postgres
+              team: platform
+            annotations:
+              summary: CloudNativePG logical replication slot is retaining WAL
+              description: |
+                {{ $labels.namespace }}/{{ $labels.cluster }} slot {{ $labels.slot_name }} has retained more than 2 GiB of WAL for 15 minutes.
+              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
           - alert: PersistentVolumeFreeLowWarning
             expr: |
               (
