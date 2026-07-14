@@ -9,10 +9,11 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from multiprocessing import TimeoutError as MultiprocessingTimeoutError
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -415,23 +416,26 @@ def _race_validation_submissions(
     timeout_seconds: float,
 ) -> tuple[_WorkerResult, _WorkerResult]:
     deadline = time.monotonic() + timeout_seconds
-    executor = ThreadPoolExecutor(max_workers=2)
+    pool = ThreadPool(processes=2)
     try:
-        winner = executor.submit(submit, "validation-primary")
+        winner = pool.apply_async(submit, ("validation-primary",))
         if not state.broker_started.wait(timeout=max(0.0, deadline - time.monotonic())):
             raise RuntimeError("infrastructure_validation_broker_boundary_timeout")
-        contender = executor.submit(submit, "validation-contender")
-        contender_result = contender.result(
-            timeout=max(0.0, deadline - time.monotonic())
-        )
+        contender = pool.apply_async(submit, ("validation-contender",))
+        contender_result = contender.get(timeout=max(0.0, deadline - time.monotonic()))
         if contender_result.outcome != "deferred":
             raise RuntimeError("infrastructure_validation_race_contender_not_fenced")
         state.contender_fenced.set()
         state.contender_resolved.set()
-        winner_result = winner.result(timeout=max(0.0, deadline - time.monotonic()))
+        winner_result = winner.get(timeout=max(0.0, deadline - time.monotonic()))
+    except MultiprocessingTimeoutError as exc:
+        raise TimeoutError("infrastructure_validation_race_timeout") from exc
     finally:
         state.contender_resolved.set()
-        executor.shutdown(wait=False, cancel_futures=True)
+        # ThreadPool workers are daemons and terminate() does not join a hung task.
+        # ThreadPoolExecutor workers are joined at interpreter exit even after
+        # shutdown(wait=False), which cannot enforce this one-shot CLI deadline.
+        pool.terminate()
     return winner_result, contender_result
 
 

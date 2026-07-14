@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -83,6 +86,48 @@ def test_contender_timeout_does_not_open_broker_gate() -> None:
     assert state.contender_resolved.is_set()
     assert not state.contender_fenced.is_set()
     assert not broker_gate_opened.is_set()
+
+
+def test_timeout_does_not_keep_cli_process_alive() -> None:
+    script = r"""
+import threading
+
+from app.trading.infrastructure_validation_submit import (
+    _BrokerCallCounter,
+    _SubmissionRaceState,
+    _WorkerResult,
+    _race_validation_submissions,
+)
+
+state = _SubmissionRaceState(
+    broker_started=threading.Event(),
+    contender_resolved=threading.Event(),
+    contender_fenced=threading.Event(),
+    call_counter=_BrokerCallCounter(),
+)
+
+def submit(component: str) -> _WorkerResult:
+    if component == "validation-contender":
+        threading.Event().wait()
+        raise AssertionError("unreachable")
+    state.broker_started.set()
+    state.contender_resolved.wait(timeout=1.0)
+    return _WorkerResult("failed")
+
+try:
+    _race_validation_submissions(submit, state=state, timeout_seconds=0.01)
+except TimeoutError:
+    pass
+else:
+    raise AssertionError("race did not time out")
+"""
+
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+        timeout=5.0,
+    )
 
 
 @pytest.mark.parametrize("status", ["canceled", "cancelled", "expired", "rejected"])
