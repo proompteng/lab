@@ -23,6 +23,7 @@ class ProtectedSubscriptionSeed:
     warm_symbols: frozenset[str]
     hot_limit: int
     warm_limit: int
+    cold_symbols: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.hot_limit < 0 or self.warm_limit < 0:
@@ -37,7 +38,11 @@ def plan_provisional_subscription_reconciliation(
 ) -> ProvisionalSubscriptionPlan:
     """Fill only capacity not occupied by the cycle's immutable live seed."""
 
-    protected_symbols = protected_seed.hot_symbols | protected_seed.warm_symbols
+    protected_symbols = (
+        protected_seed.hot_symbols
+        | protected_seed.warm_symbols
+        | protected_seed.cold_symbols
+    )
     eligible_rows = [
         row
         for row in ranked_rows

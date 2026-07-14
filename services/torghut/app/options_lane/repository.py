@@ -21,6 +21,7 @@ from app.options_lane.catalog_watermark_repository import (
 )
 from app.options_lane.subscription_state_repository import (
     SubscriptionReconcileResult,
+    load_cold_subscription_symbols,
     load_live_subscription_candidates,
     load_non_off_subscription_symbols,
     reconcile_subscription_state,
@@ -500,6 +501,12 @@ class OptionsRepository:
 
         with self.session() as session:
             return load_non_off_subscription_symbols(session)
+
+    def list_cold_subscription_symbols(self) -> frozenset[str]:
+        """Return rows that only final reconciliation may retier or deactivate."""
+
+        with self.session() as session:
+            return load_cold_subscription_symbols(session)
 
     def write_subscription_state(
         self,

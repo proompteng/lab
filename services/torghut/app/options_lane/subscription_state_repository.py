@@ -68,6 +68,21 @@ def load_non_off_subscription_symbols(session: Session) -> set[str]:
     return {cast(str, row[0]) for row in rows}
 
 
+def load_cold_subscription_symbols(session: Session) -> frozenset[str]:
+    """Return the pre-existing cold set that provisional scans must preserve."""
+
+    rows = session.execute(
+        text(
+            """
+            SELECT contract_symbol
+            FROM torghut_options_subscription_state
+            WHERE tier = 'cold'
+            """
+        )
+    )
+    return frozenset(cast(str, row[0]) for row in rows)
+
+
 def reconcile_subscription_state(
     session: Session,
     *,

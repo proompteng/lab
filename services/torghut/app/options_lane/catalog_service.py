@@ -206,6 +206,7 @@ def _run_discovery_cycle() -> None:
     contract_count = 0
     changed_count = 0
     persisted_subscription_rows = _repository.list_live_subscription_candidates()
+    cold_symbols = _repository.list_cold_subscription_symbols()
     live_seed_rows = [
         row for row in persisted_subscription_rows if row.get("tier") in {"hot", "warm"}
     ]
@@ -225,6 +226,7 @@ def _run_discovery_cycle() -> None:
         warm_symbols=frozenset(protected_warm_symbols),
         hot_limit=hot_limit,
         warm_limit=warm_limit,
+        cold_symbols=cold_symbols,
     )
     cycle_owned_symbols: set[str] = set()
     active_seed_rows = [row for row in live_seed_rows if row.get("status") == "active"]

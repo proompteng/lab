@@ -249,6 +249,9 @@ class _SeededCycleRepository:
             "ARCHIVE260717P00100000",
         }
 
+    def list_cold_subscription_symbols(self) -> frozenset[str]:
+        return frozenset({"ARCHIVE260717P00100000"})
+
     def sync_contract_catalog_page(
         self, *_: object, **__: object
     ) -> list[dict[str, object]]:

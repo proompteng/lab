@@ -43,3 +43,29 @@ def test_provisional_plan_uses_full_capacity_during_bootstrap() -> None:
         ("C", "warm"),
     ]
     assert plan.deactivate_symbols == {"D"}
+
+
+def test_provisional_plan_never_owns_or_deactivates_preexisting_cold_rows() -> None:
+    seed = ProtectedSubscriptionSeed(
+        hot_symbols=frozenset(),
+        warm_symbols=frozenset(),
+        hot_limit=1,
+        warm_limit=0,
+        cold_symbols=frozenset({"COLD"}),
+    )
+
+    first_plan = plan_provisional_subscription_reconciliation(
+        [_ranked_row("COLD"), _ranked_row("FIRST")],
+        protected_seed=seed,
+        previously_owned_symbols=set(),
+    )
+    second_plan = plan_provisional_subscription_reconciliation(
+        [_ranked_row("COLD"), _ranked_row("SECOND")],
+        protected_seed=seed,
+        previously_owned_symbols=first_plan.owned_symbols,
+    )
+
+    assert first_plan.owned_symbols == {"FIRST"}
+    assert second_plan.owned_symbols == {"SECOND"}
+    assert second_plan.deactivate_symbols == {"FIRST"}
+    assert "COLD" not in second_plan.deactivate_symbols
