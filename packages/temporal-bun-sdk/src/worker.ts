@@ -11,7 +11,24 @@ import { WorkerRuntime } from './worker/runtime'
 import type { WorkflowDefinitions } from './workflow/definition'
 
 export { WorkerVersioningMode } from './proto/temporal/api/enums/v1/deployment_pb'
+export { RoutingConfigUpdateState } from './proto/temporal/api/enums/v1/task_queue_pb'
 export { VersioningBehavior, WorkflowIdReusePolicy } from './proto/temporal/api/enums/v1/workflow_pb'
+export {
+  currentActivityContext,
+  runWithActivityContext,
+  type ActivityContext,
+  type ActivityInfo,
+} from './worker/activity-context'
+export {
+  alignWorkerDeploymentRouting,
+  extractCurrentDeploymentBuildId,
+  isRoutingUpdateComplete,
+  isTransientRoutingAlignmentError,
+  normalizeWorkerDeploymentBuildId,
+  resolveWorkerDeploymentName,
+  type WorkerRoutingAlignment,
+  type WorkerRoutingAlignmentOptions,
+} from './worker/deployment-routing'
 
 export interface CreateWorkerOptions {
   config?: TemporalConfig

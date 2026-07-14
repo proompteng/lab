@@ -4,9 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Language } from 'web-tree-sitter'
 
-import { __test__, activities, parseCompletionOutput } from './index'
+import productionActivities, { __test__, activities, parseCompletionOutput } from './index'
 
 const activitiesSource = await Bun.file(import.meta.dir + '/index.ts').text()
+
+it('registers only the full-main writer and its required operational activities', () => {
+  expect(Object.keys(productionActivities).sort()).toEqual([
+    'publishMainMergeMemoryNote',
+    'reconcileAtlasRepository',
+    'upsertIngestion',
+  ])
+})
 
 const runGit = (args: string[], cwd: string) => {
   const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })

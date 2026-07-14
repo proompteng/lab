@@ -303,6 +303,20 @@ describe('atlas store', () => {
     expect(extensionQueries.some((query) => query.includes('vector') || query.includes('pgcrypto'))).toBe(false)
   })
 
+  it('does not let incidental repository upserts replace the authoritative ref or readiness metadata', async () => {
+    const { db, calls } = makeFakeDb()
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.upsertRepository({ name: 'acme', defaultRef: 'feature' })
+
+    const upsert = calls.find((call) => call.sql.toLowerCase().includes('insert into "atlas"."repositories"'))
+    expect(upsert?.sql).toContain('"default_ref" = atlas.repositories.default_ref')
+    expect(upsert?.sql).toContain('"metadata" = atlas.repositories.metadata')
+  })
+
   it('uses typed Postgres arrays for tags', async () => {
     const { db, calls } = makeFakeDb()
     const store = createPostgresAtlasStore({
@@ -475,8 +489,13 @@ describe('atlas store', () => {
 
     expect(health.status).toBe('critical')
     expect(health.indexStatus).toBe('failed')
-    expect(health.corpus).toMatchObject({ expectedFiles: 12, indexedFiles: 11, missingPaths: 1 })
-    expect(health.sample).toMatchObject({ limit: 20, chunks: 20, embedded: 19, missing: 1, coverage: 0.95 })
+    expect(health.corpus).toMatchObject({
+      expectedFiles: 12,
+      indexedFiles: 11,
+      missingPaths: 1,
+      chunks: 20,
+      embeddedChunks: 19,
+    })
     expect(health.lastError).toBe('missing path')
     expect(health.model).toBe('test-embedding')
     expect(health.dimension).toBe(3)

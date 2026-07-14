@@ -1,15 +1,16 @@
 # Atlas Code Search
 
-Status: Current operating entrypoint. The repair is implemented on `codex/atlas-code-search-repair`; Atlas is still
-untrusted until that change is merged, deployed, rebuilt, and every live acceptance gate passes.
+Status: Current operating entrypoint. The in-place repair is implemented, but Atlas remains untrusted until the
+production images are deployed, the one corpus is rebuilt from the then-current `origin/main`, and every live acceptance
+gate passes.
 
 Atlas is the repository ingestion, indexing, and search system used by Jangar, Bumba, Codex, and other agents. Its job
 is not merely to return plausible code. It must identify the exact indexed repository snapshot, search the complete
 eligible corpus, exclude deleted content, expose degradation honestly, and let an operator reproduce every result from
 Git and database evidence.
 
-The implementation plan repairs the existing Atlas schema and tables in place. The invalid corpus will be truncated and
-rebuilt from Git during a maintenance window.
+The implementation repairs the existing Atlas schema and tables in place. The invalid corpus is truncated once and
+rebuilt from Git during maintenance; retries continue in the same tables and never create a second corpus.
 
 ## Start Here
 
@@ -65,6 +66,15 @@ bun run atlas:verify \
 The GitOps manifest intentionally sets `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=false` during cutover. Leave it disabled
 until `atlas:verify` exits zero against the live image and indexed commit. If `origin/main` advances, run rebuild and
 verification again. Re-enable the same consumer in Git only after the final verification passes.
+
+The rebuild writes bounded file batches while repository status is `building`, so all search surfaces return unavailable
+until the final complete-manifest transaction changes the status to `ready`. Temporal heartbeats detect a dead worker in
+90 seconds and carry the build ID, commit, and persisted progress into the retry. A database build lease fences concurrent
+writers, and pending GitHub events are serialized per repository.
+
+Both MCP and `GET /api/search` use the same fail-closed code-search implementation. The only agent search tool is
+`atlas_code_search`; direct indexing tools, partial backfill CLIs, and the legacy enrichment-search tool are not production
+entrypoints.
 
 Jangar idempotently installs the trusted `pg_trgm` extension as the owner of its existing application database before
 validating extensions and running migrations. New clusters also install it through `postInitApplicationSQL`. PostgreSQL

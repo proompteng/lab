@@ -18,7 +18,7 @@ bun run --filter memories save-memory   --task-name bumba-enrich-repo   --conten
 ## Retrieve
 
 ```bash
-bun run --filter memories retrieve-memory   --query "enrichFile workflow"   --limit 5
+bun run --filter memories retrieve-memory   --query "Atlas reconciliation workflow"   --limit 5
 ```
 
 ## Environment

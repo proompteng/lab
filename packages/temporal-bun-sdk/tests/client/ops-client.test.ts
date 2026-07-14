@@ -6,6 +6,10 @@ import { createTemporalClient, temporalCallOptions } from '../../src/client'
 import { loadTemporalConfig } from '../../src/config'
 import { WorkflowExecutionAlreadyStartedFailureSchema } from '../../src/proto/temporal/api/errordetails/v1/message_pb'
 import {
+  HistoryEventSchema,
+  WorkflowExecutionCompletedEventAttributesSchema,
+} from '../../src/proto/temporal/api/history/v1/message_pb'
+import {
   SchedulePatchSchema,
   ScheduleSchema,
 } from '../../src/proto/temporal/api/schedule/v1/message_pb'
@@ -60,6 +64,46 @@ const lastCall = (calls: Map<string, CallRecord[]>, method: string): CallRecord 
   }
   return entries[entries.length - 1]
 }
+
+test('workflow result keeps polling after an empty long-poll response', async () => {
+  const config = await loadTemporalConfig()
+  type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
+  let attempts = 0
+
+  const workflowService = {
+    getWorkflowExecutionHistory: async () => {
+      attempts += 1
+      if (attempts === 1) {
+        return { history: { events: [] }, nextPageToken: new Uint8Array() }
+      }
+
+      return {
+        history: {
+          events: [
+            create(HistoryEventSchema, {
+              attributes: {
+                case: 'workflowExecutionCompletedEventAttributes',
+                value: create(WorkflowExecutionCompletedEventAttributesSchema, {}),
+              },
+            }),
+          ],
+        },
+        nextPageToken: new Uint8Array(),
+      }
+    },
+  } as unknown as WorkflowServiceClient
+
+  const { client } = await createTemporalClient({ config, workflowService })
+
+  try {
+    await expect(
+      client.workflow.result({ workflowId: 'long-poll-result', runId: 'run-1' }),
+    ).resolves.toBeUndefined()
+    expect(attempts).toBe(2)
+  } finally {
+    await client.shutdown()
+  }
+})
 
 test('startWorkflow uses one generated request id across retries', async () => {
   const config = await loadTemporalConfig()

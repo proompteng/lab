@@ -1,18 +1,14 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
-import {
-  createTemporalClient,
-  type TemporalClient,
-  type TemporalConfig,
-  temporalCallOptions,
-} from '@proompteng/temporal-bun-sdk'
+import { createTemporalClient, type TemporalClient, type TemporalConfig } from '@proompteng/temporal-bun-sdk'
 import { VersioningBehavior, WorkflowIdReusePolicy } from '@proompteng/temporal-bun-sdk/worker'
 import { SQL } from 'bun'
 import { Effect } from 'effect'
 
 import { runCommandIsolated } from './command-runner'
 import { shouldSkipAtlasPath } from './atlas/file-eligibility'
+import { buildAtlasReconciliationWorkflowId } from './atlas/reconciliation'
 
 const DEFAULT_TASK_QUEUE = 'bumba'
 const DEFAULT_REF = 'main'
@@ -21,8 +17,6 @@ const DEFAULT_BATCH_SIZE = 20
 const DEFAULT_MAX_EVENT_FILE_TARGETS = 200
 const DEFAULT_MAX_DISPATCH_FAILURES = 6
 const DEFAULT_NONTERMINAL_INGESTION_STALE_MS = 12 * 60 * 60 * 1000
-const DEFAULT_ROUTING_ALIGNMENT_ENABLED = true
-const DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS = 5_000
 const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
 const MAX_MERGE_DIFF_CHARS = 36_000
 const MERGE_DIFF_GIT_TIMEOUT_MS = 30_000
@@ -56,7 +50,6 @@ type GithubEventConsumerConfig = {
   maxEventFileTargets: number
   maxDispatchFailures: number
   nonterminalIngestionStaleMs: number
-  routingAlignmentEnabled: boolean
   taskQueue: string
   repoRoot: string
 }
@@ -120,7 +113,6 @@ type EventConsumerTickDependencies = {
   config: GithubEventConsumerConfig
   inFlightDeliveries: Set<string>
   dispatchFailureCounts: Map<string, number>
-  ensureRoutingAlignment: () => Promise<boolean>
   listPendingEvents?: typeof listPendingGithubEvents
   processPendingEvent?: typeof processEvent
 }
@@ -173,10 +165,6 @@ const resolveConsumerConfig = (): GithubEventConsumerConfig => {
     nonterminalIngestionStaleMs: parsePositiveInt(
       process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS,
       DEFAULT_NONTERMINAL_INGESTION_STALE_MS,
-    ),
-    routingAlignmentEnabled: parseBoolean(
-      process.env.BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED,
-      DEFAULT_ROUTING_ALIGNMENT_ENABLED,
     ),
     taskQueue: normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE,
     repoRoot: resolve(
@@ -316,14 +304,6 @@ const toEpochMs = (value: Date | string | number | null | undefined) => {
 }
 
 const shortHash = (value: string) => createHash('sha1').update(value).digest('hex').slice(0, 12)
-
-const buildEventWorkflowId = (deliveryId: string, filePath: string) => {
-  const deliveryHash = shortHash(deliveryId)
-  const pathHash = shortHash(filePath)
-  return `bumba-event-${deliveryHash}-${pathHash}`
-}
-
-const buildReconciliationWorkflowId = (deliveryId: string) => `bumba-atlas-reconcile-${shortHash(deliveryId)}`
 
 const resolvePayloadDefaultBranch = (payload: Record<string, unknown>, fallback: string) =>
   normalizeOptionalText(asRecord(payload.repository)?.default_branch) ?? fallback
@@ -811,46 +791,6 @@ export const publishMainMergeMemoryNoteActivity = async (input: MainMergeMemoryN
   }
 }
 
-const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig, taskQueue: string) => {
-  return (
-    normalizeOptionalText(process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME) ??
-    normalizeOptionalText(temporalConfig.workerDeploymentName) ??
-    `${taskQueue}-deployment`
-  )
-}
-
-const extractCurrentDeploymentBuildId = (
-  response: Awaited<ReturnType<TemporalClient['deployments']['describeWorkerDeployment']>>,
-) => {
-  return (
-    normalizeOptionalText(response.workerDeploymentInfo?.routingConfig?.currentDeploymentVersion?.buildId) ??
-    normalizeOptionalText(response.workerDeploymentInfo?.routingConfig?.currentVersion)
-  )
-}
-
-const isTransientRoutingAlignmentError = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  const normalized = message.toLowerCase()
-  return (
-    normalized.includes('no pollers') ||
-    normalized.includes('missing task queue') ||
-    normalized.includes('missing task queues') ||
-    normalized.includes('failed precondition') ||
-    normalized.includes('not found')
-  )
-}
-
-const isDeploymentApiUnavailableError = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error)
-  const normalized = message.toLowerCase()
-  return (
-    normalized.includes('unimplemented') ||
-    normalized.includes('unknown method') ||
-    normalized.includes('unknown service') ||
-    normalized.includes('method not found')
-  )
-}
-
 const isWorkflowAlreadyStartedError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
   const normalized = message.toLowerCase()
@@ -940,11 +880,11 @@ const startEventWorkflow = async (
   ref: string,
   commit: string,
 ) => {
-  const workflowId = buildReconciliationWorkflowId(event.delivery_id)
+  const workflowId = buildAtlasReconciliationWorkflowId(event.repository)
 
   return await client.workflow.start({
     workflowId,
-    workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+    workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
     workflowType: 'reconcileAtlasRepository',
     taskQueue: config.taskQueue,
     versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
@@ -1062,7 +1002,7 @@ const processEvent = async (
 
   const ref = resolvePayloadDefaultBranch(payload, config.defaultRef)
   const ingestionWorkflowIds = await getWorkflowIds(db, event.id)
-  const workflowId = buildReconciliationWorkflowId(event.delivery_id)
+  const workflowId = buildAtlasReconciliationWorkflowId(event.repository)
   let started = 0
   let alreadyStarted = ingestionWorkflowIds.has(workflowId) ? 1 : 0
   let failed = 0
@@ -1153,27 +1093,25 @@ const runEventConsumerTickEffect = ({
   config,
   inFlightDeliveries,
   dispatchFailureCounts,
-  ensureRoutingAlignment,
   listPendingEvents = listPendingGithubEvents,
   processPendingEvent = processEvent,
 }: EventConsumerTickDependencies): Effect.Effect<void, Error> =>
   Effect.gen(function* () {
-    const routingAligned = yield* Effect.tryPromise({
-      try: ensureRoutingAlignment,
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    })
-    if (!routingAligned) return
-
     const events = yield* Effect.tryPromise({
       try: () => listPendingEvents(db, config.batchSize),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     })
 
     let dispatchedEvents = 0
+    const blockedRepositories = new Set<string>()
     yield* Effect.forEach(
       events,
       (event) => {
-        if (dispatchedEvents >= config.maxDispatchEventsPerTick || inFlightDeliveries.has(event.delivery_id)) {
+        if (
+          dispatchedEvents >= config.maxDispatchEventsPerTick ||
+          inFlightDeliveries.has(event.delivery_id) ||
+          blockedRepositories.has(event.repository)
+        ) {
           return Effect.void
         }
 
@@ -1185,6 +1123,14 @@ const runEventConsumerTickEffect = ({
           Effect.tap((result) =>
             Effect.sync(() => {
               if (result.dispatchStarted > 0) dispatchedEvents += 1
+              if (
+                result.waitingOnIngestion ||
+                result.dispatchStarted > 0 ||
+                result.dispatchAlreadyStarted > 0 ||
+                result.dispatchFailed > 0
+              ) {
+                blockedRepositories.add(event.repository)
+              }
 
               if (result.dispatchFailed > 0) {
                 const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
@@ -1221,6 +1167,7 @@ const runEventConsumerTickEffect = ({
           ),
           Effect.catchAll((error) =>
             Effect.sync(() => {
+              blockedRepositories.add(event.repository)
               console.warn('[bumba][event-consumer] event processing failed; retaining event for retry', {
                 deliveryId: event.delivery_id,
                 repository: event.repository,
@@ -1260,76 +1207,6 @@ export const createGithubEventConsumer = (
   let tickPromise: Promise<void> = Promise.resolve()
   const inFlightDeliveries = new Set<string>()
   const dispatchFailureCounts = new Map<string, number>()
-  const workerBuildId = normalizeOptionalText(temporalConfig.workerBuildId)
-  const workerDeploymentName = resolveWorkerDeploymentName(temporalConfig, config.taskQueue)
-  let routingAligned = !config.routingAlignmentEnabled || !workerBuildId
-  let routingGuardFailOpen = false
-  let lastRoutingGuardLogAt = 0
-
-  const ensureRoutingAlignment = async () => {
-    if (!started || !client) return false
-    if (!config.routingAlignmentEnabled || !workerBuildId || routingAligned || routingGuardFailOpen) {
-      return true
-    }
-
-    try {
-      const deployment = await client.deployments.describeWorkerDeployment(
-        { deploymentName: workerDeploymentName },
-        temporalCallOptions({ timeoutMs: DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS }),
-      )
-      const currentBuildId = extractCurrentDeploymentBuildId(deployment)
-      if (currentBuildId === workerBuildId) {
-        routingAligned = true
-        console.info('[bumba][event-consumer] worker deployment routing already aligned', {
-          deploymentName: workerDeploymentName,
-          buildId: workerBuildId,
-        })
-        return true
-      }
-
-      await client.deployments.setWorkerDeploymentCurrentVersion(
-        {
-          deploymentName: workerDeploymentName,
-          buildId: workerBuildId,
-          allowNoPollers: false,
-          ignoreMissingTaskQueues: false,
-          identity: `bumba-event-consumer/${process.pid}`,
-        },
-        temporalCallOptions({ timeoutMs: DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS }),
-      )
-
-      routingAligned = true
-      console.warn('[bumba][event-consumer] aligned worker deployment routing to active build', {
-        deploymentName: workerDeploymentName,
-        previousBuildId: currentBuildId ?? null,
-        buildId: workerBuildId,
-      })
-      return true
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      if (isDeploymentApiUnavailableError(error)) {
-        routingGuardFailOpen = true
-        console.warn('[bumba][event-consumer] deployment routing APIs unavailable; continuing without startup guard', {
-          deploymentName: workerDeploymentName,
-          buildId: workerBuildId,
-          error: errorMessage,
-        })
-        return true
-      }
-
-      const now = Date.now()
-      if (now - lastRoutingGuardLogAt >= Math.max(config.pollIntervalMs * 3, 15_000)) {
-        const level = isTransientRoutingAlignmentError(error) ? 'warn' : 'error'
-        console[level]('[bumba][event-consumer] waiting for worker deployment routing alignment', {
-          deploymentName: workerDeploymentName,
-          buildId: workerBuildId,
-          error: errorMessage,
-        })
-        lastRoutingGuardLogAt = now
-      }
-      return false
-    }
-  }
 
   const runTick = async () => {
     if (!started || !db || !client) return
@@ -1339,7 +1216,6 @@ export const createGithubEventConsumer = (
       config,
       inFlightDeliveries,
       dispatchFailureCounts,
-      ensureRoutingAlignment,
     })
   }
 
@@ -1378,9 +1254,6 @@ export const createGithubEventConsumer = (
         maxDispatchFailures: config.maxDispatchFailures,
         maxDispatchEventsPerTick: config.maxDispatchEventsPerTick,
         nonterminalIngestionStaleMs: config.nonterminalIngestionStaleMs,
-        routingAlignmentEnabled: config.routingAlignmentEnabled,
-        workerDeploymentName,
-        workerBuildId: workerBuildId ?? null,
         taskQueue: config.taskQueue,
         repoRoot: config.repoRoot,
       })
@@ -1424,8 +1297,7 @@ export const createGithubEventConsumer = (
 
 export const __test__ = {
   buildAuthenticatedGitArgs,
-  buildEventWorkflowId,
-  buildReconciliationWorkflowId,
+  buildAtlasReconciliationWorkflowId,
   buildMainMergeNoteWorkflowId,
   extractEventFilePaths,
   resolveEventCommit,
@@ -1433,10 +1305,6 @@ export const __test__ = {
   resolveConsumerConfig,
   shouldSkipFilePath,
   isWorkflowAlreadyStartedError,
-  resolveWorkerDeploymentName,
-  extractCurrentDeploymentBuildId,
-  isTransientRoutingAlignmentError,
-  isDeploymentApiUnavailableError,
   runEventConsumerTick,
   processEvent,
   startEventWorkflow,

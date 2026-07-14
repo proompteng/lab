@@ -6,8 +6,6 @@ export type AtlasSearchParams = {
   repository?: string
   ref?: string
   pathPrefix?: string
-  tags?: string[]
-  kinds?: string[]
 }
 
 export type AtlasFileItem = {
@@ -42,27 +40,11 @@ export type AtlasSearchResult =
   | { ok: true; items: AtlasFileItem[]; raw: unknown; total?: number }
   | { ok: false; items: AtlasFileItem[]; message: string; raw?: unknown; total?: number }
 
-export type AtlasEnrichInput = {
-  repository: string
-  ref: string
-  path: string
-  commit?: string
-  contentHash?: string
-  metadata?: Record<string, unknown>
-}
-
 export type AtlasRepositoryEnrichInput = {
   repository: string
   ref: string
   commit?: string
-  pathPrefix?: string
-  maxFiles?: number
-  context?: string
 }
-
-export type AtlasEnrichResult =
-  | { ok: true; status: number; result: unknown }
-  | { ok: false; status?: number; message: string }
 
 export type AtlasRepositoryEnrichResult =
   | { ok: true; status: number; result: unknown }
@@ -201,12 +183,6 @@ export const searchAtlas = async (params: AtlasSearchParams): Promise<AtlasSearc
   if (params.repository) searchParams.set('repository', params.repository)
   if (params.ref) searchParams.set('ref', params.ref)
   if (params.pathPrefix) searchParams.set('pathPrefix', params.pathPrefix)
-  params.tags?.forEach((tag) => {
-    searchParams.append('tags', tag)
-  })
-  params.kinds?.forEach((kind) => {
-    searchParams.append('kinds', kind)
-  })
 
   const url = `/api/search${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
   const response = await fetch(url)
@@ -260,34 +236,6 @@ export const listAtlasIndexedFiles = async (
   }
 
   return { ok: true, items: extractAtlasItems(payload), raw: payload }
-}
-
-export const enrichAtlas = async (input: AtlasEnrichInput): Promise<AtlasEnrichResult> => {
-  const response = await fetch('/api/enrich', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'idempotency-key': randomUuid(),
-    },
-    body: JSON.stringify(input),
-  })
-
-  let payload: unknown = null
-  try {
-    payload = await response.json()
-  } catch {
-    payload = null
-  }
-
-  if (!response.ok) {
-    return {
-      ok: false,
-      status: response.status,
-      message: `Enrich failed (${response.status})`,
-    }
-  }
-
-  return { ok: true, status: response.status, result: payload }
 }
 
 export const enrichAtlasRepository = async (

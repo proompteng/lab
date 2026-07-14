@@ -24,6 +24,14 @@ export type AtlasCurrentFile = {
 
 const GIT_TREE_ENTRY = /^(\d{6})\s+(\w+)\s+([0-9a-f]+)\s+(\d+|-)\t([\s\S]+)$/i
 
+export const buildAtlasReconciliationWorkflowId = (repository: string) => {
+  const normalized = repository.trim().toLowerCase()
+  if (!normalized.includes('/')) throw new Error('Atlas repository must be an owner/name slug')
+  const readable = normalized.replace(/[^a-z0-9_.-]+/g, '-').slice(0, 120)
+  const digest = createHash('sha256').update(normalized).digest('hex').slice(0, 12)
+  return `bumba-atlas-reconcile-${readable}-${digest}`
+}
+
 export const computeAtlasTreeHash = (files: AtlasGitFile[]) => {
   const hash = createHash('sha256')
   for (const file of files) {

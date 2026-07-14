@@ -552,6 +552,10 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     const resolvedName = normalizeText(name, 'repository name')
     const resolvedDefaultRef = normalizeText(defaultRef ?? 'main', 'repository default ref', 'main')
     const resolvedMetadata = parseMetadata(metadata)
+    const conflictMetadata =
+      metadata === undefined
+        ? sql<Record<string, unknown>>`atlas.repositories.metadata`
+        : sql<Record<string, unknown>>`COALESCE(atlas.repositories.metadata, '{}'::jsonb) || excluded.metadata`
 
     const row = await db
       .insertInto('atlas.repositories')
@@ -562,8 +566,8 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       })
       .onConflict((oc) =>
         oc.column('name').doUpdateSet({
-          default_ref: sql`excluded.default_ref`,
-          metadata: sql`excluded.metadata`,
+          default_ref: sql`atlas.repositories.default_ref`,
+          metadata: conflictMetadata,
           updated_at: sql`now()`,
         }),
       )

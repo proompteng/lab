@@ -1467,7 +1467,10 @@ class TemporalClientImpl implements TemporalClient {
 
           const closeEvent = this.#extractCloseEvent(response)
           if (!closeEvent || !closeEvent.attributes) {
-            throw new Error('Workflow close event not found')
+            // Temporal long polls may return an empty history when their server-side
+            // poll interval expires before the Workflow closes. Keep polling until a
+            // close event arrives; an empty response is not a terminal condition.
+            continue
           }
 
           const attributes = closeEvent.attributes

@@ -2,6 +2,18 @@
 
 import process from 'node:process'
 
+import {
+  createTemporalClient,
+  loadTemporalConfig,
+  type TemporalClient,
+  temporalCallOptions,
+} from '@proompteng/temporal-bun-sdk'
+import {
+  extractCurrentDeploymentBuildId,
+  normalizeWorkerDeploymentBuildId,
+  RoutingConfigUpdateState,
+} from '@proompteng/temporal-bun-sdk/worker'
+
 import { ensureCli, fatal } from '../shared/cli'
 
 type CliOptions = {
@@ -9,9 +21,9 @@ type CliOptions = {
   namespace?: string
   taskQueue?: string
   deploymentName?: string
+  buildId?: string
   migrateStaleRunning?: boolean
   migrateUnversionedRunning?: boolean
-  allowNoVersionedPollers?: boolean
   reason?: string
   dryRun?: boolean
 }
@@ -21,9 +33,9 @@ type ResolvedOptions = {
   namespace: string
   taskQueue: string
   deploymentName: string
+  buildId?: string
   migrateStaleRunning: boolean
   migrateUnversionedRunning: boolean
-  allowNoVersionedPollers: boolean
   reason: string
   dryRun: boolean
 }
@@ -34,32 +46,11 @@ type CommandResult = {
   exitCode: number
 }
 
-type TaskQueueDescribePoller = {
-  buildId?: string
-  taskQueueType?: string
-  identity?: string
-}
-
-type TaskQueueDescribeResponse = {
-  pollers?: TaskQueueDescribePoller[]
-}
-
-type WorkerDeploymentDescribeResponse = {
-  routingConfig?: {
-    currentVersionBuildID?: string
-  }
-  versionSummaries?: Array<{
-    BuildID?: string
-    buildId?: string
-  }>
-}
-
 type SyncResult = {
   changed: boolean
   previousBuildId?: string
-  targetBuildId?: string
+  targetBuildId: string
   deploymentBuildIds: string[]
-  skippedReason?: string
 }
 
 const defaultAddress = 'temporal-frontend.temporal.svc.cluster.local:7233'
@@ -71,6 +62,9 @@ const defaultBatchRetryAttempts = 5
 const defaultTemporalRetryDelayMs = 2_000
 const defaultTemporalRetryAttempts = 5
 const defaultTemporalRetryMaxDelayMs = 10_000
+const defaultRoutingPropagationTimeoutMs = 120_000
+const defaultRoutingPropagationPollMs = 1_000
+const defaultRoutingRpcTimeoutMs = 5_000
 
 const transientTemporalErrorPatterns = [
   /context deadline exceeded/,
@@ -111,9 +105,9 @@ Options:
   --namespace <name>                    Temporal namespace (default: default)
   --task-queue <name>                   Task queue to inspect (default: jangar)
   --deployment-name <name>              Temporal worker deployment name (default: <task-queue>-deployment)
+  --build-id <id>                       Explicit build to select; otherwise verify the worker-selected current build
   --migrate-stale-running               Move stale pinned running workflows to auto_upgrade after routing update
   --migrate-unversioned-running         Move unversioned running workflows to auto_upgrade
-  --allow-no-versioned-pollers          Skip routing sync when no versioned workflow pollers exist
   --reason <text>                       Reason recorded in workflow update-options
   --dry-run                             Print intended actions without mutating Temporal`)
       process.exit(0)
@@ -125,10 +119,6 @@ Options:
     }
     if (arg === '--migrate-unversioned-running') {
       options.migrateUnversionedRunning = true
-      continue
-    }
-    if (arg === '--allow-no-versioned-pollers') {
-      options.allowNoVersionedPollers = true
       continue
     }
     if (arg === '--dry-run') {
@@ -162,6 +152,9 @@ Options:
       case '--deployment-name':
         options.deploymentName = value
         break
+      case '--build-id':
+        options.buildId = value
+        break
       case '--reason':
         options.reason = value
         break
@@ -183,9 +176,9 @@ const resolveOptions = (options: CliOptions): ResolvedOptions => {
     namespace: options.namespace?.trim() || process.env.TEMPORAL_NAMESPACE?.trim() || defaultNamespace,
     taskQueue,
     deploymentName,
+    buildId: options.buildId?.trim() || process.env.TEMPORAL_WORKER_BUILD_ID?.trim() || undefined,
     migrateStaleRunning: options.migrateStaleRunning ?? false,
     migrateUnversionedRunning: options.migrateUnversionedRunning ?? false,
-    allowNoVersionedPollers: options.allowNoVersionedPollers ?? false,
     reason: options.reason?.trim() || defaultReason,
     dryRun: options.dryRun ?? false,
   }
@@ -251,60 +244,6 @@ const parseJson = <T>(json: string, label: string): T => {
   }
 }
 
-const stripDeploymentPrefix = (pollerBuildId: string, deploymentName: string): string | undefined => {
-  const prefix = `${deploymentName}:`
-  if (!pollerBuildId.startsWith(prefix)) {
-    return undefined
-  }
-  return pollerBuildId.slice(prefix.length)
-}
-
-const extractVersionedPollerBuildIds = (
-  pollers: TaskQueueDescribePoller[] | undefined,
-  deploymentName: string,
-): string[] => {
-  if (!pollers || pollers.length === 0) {
-    return []
-  }
-
-  const workflowBuildIds = new Set<string>()
-  for (const poller of pollers) {
-    if (poller.taskQueueType !== 'workflow') {
-      continue
-    }
-    if (!poller.buildId) {
-      continue
-    }
-    const parsed = stripDeploymentPrefix(poller.buildId, deploymentName)
-    if (parsed) {
-      workflowBuildIds.add(parsed)
-    }
-  }
-
-  return [...workflowBuildIds]
-}
-
-const selectTargetBuildId = (
-  candidateBuildIds: string[],
-  deploymentName: string,
-  allowNoVersionedPollers = false,
-): string | undefined => {
-  if (candidateBuildIds.length === 0) {
-    if (allowNoVersionedPollers) {
-      return undefined
-    }
-    throw new Error(
-      `No versioned workflow pollers found for deployment '${deploymentName}'. Ensure worker pods are healthy before syncing routing.`,
-    )
-  }
-  if (candidateBuildIds.length > 1) {
-    throw new Error(
-      `Multiple workflow poller build IDs detected for deployment '${deploymentName}': ${candidateBuildIds.join(', ')}`,
-    )
-  }
-  return candidateBuildIds[0] as string
-}
-
 const countWorkflows = async (
   options: Pick<ResolvedOptions, 'address' | 'namespace'>,
   query: string,
@@ -367,123 +306,171 @@ const updateRunningWorkflowsToAutoUpgrade = async (
   return count
 }
 
-const syncCurrentVersion = async (options: ResolvedOptions): Promise<SyncResult> => {
-  const deploymentResponse = await runTemporal(options, [
-    'worker',
-    'deployment',
-    'describe',
-    '--name',
-    options.deploymentName,
-    '-o',
-    'json',
-  ])
-  const deployment = parseJson<WorkerDeploymentDescribeResponse>(
-    deploymentResponse.stdout,
-    'worker deployment describe output',
-  )
-  const currentBuildId = deployment.routingConfig?.currentVersionBuildID
+type WorkerDeploymentResponse = Awaited<ReturnType<TemporalClient['deployments']['describeWorkerDeployment']>>
 
-  const queueResponse = await runTemporal(options, [
-    'task-queue',
-    'describe',
-    '--task-queue',
-    options.taskQueue,
-    '--select-all-active',
-    '--select-unversioned',
-    '-o',
-    'json',
-  ])
-  const queueDetails = parseJson<TaskQueueDescribeResponse>(queueResponse.stdout, 'task-queue describe output')
-  const pollerBuildIds = extractVersionedPollerBuildIds(queueDetails.pollers, options.deploymentName)
-  const targetBuildId = selectTargetBuildId(pollerBuildIds, options.deploymentName, options.allowNoVersionedPollers)
-  const deploymentBuildIds = (deployment.versionSummaries ?? [])
-    .map((entry) => entry.BuildID ?? entry.buildId)
-    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+const extractDeploymentBuildIds = (deployment: WorkerDeploymentResponse, deploymentName: string): string[] =>
+  (deployment.workerDeploymentInfo?.versionSummaries ?? [])
+    .map((entry) => {
+      const buildId = entry.deploymentVersion?.buildId?.trim()
+      if (buildId) return buildId
+      return normalizeWorkerDeploymentBuildId(deploymentName, entry.version)
+    })
+    .filter((value): value is string => Boolean(value))
 
-  if (!targetBuildId) {
-    const skippedReason = 'no_versioned_workflow_pollers'
-    console.log(
-      `No versioned workflow pollers found for deployment '${options.deploymentName}'; skipping Temporal routing sync.`,
+const routingPropagationComplete = (
+  deployment: WorkerDeploymentResponse,
+  deploymentName: string,
+  buildId: string,
+): boolean =>
+  extractCurrentDeploymentBuildId(deployment, deploymentName) === buildId &&
+  deployment.workerDeploymentInfo?.routingConfigUpdateState === RoutingConfigUpdateState.COMPLETED
+
+const waitForRoutingPropagation = async (
+  client: TemporalClient,
+  deploymentName: string,
+  buildId: string,
+  options: { timeoutMs?: number; pollMs?: number; now?: () => number } = {},
+): Promise<void> => {
+  const timeoutMs = options.timeoutMs ?? defaultRoutingPropagationTimeoutMs
+  const pollMs = options.pollMs ?? defaultRoutingPropagationPollMs
+  const now = options.now ?? Date.now
+  const deadline = now() + timeoutMs
+
+  while (now() < deadline) {
+    const deployment = await client.deployments.describeWorkerDeployment(
+      { deploymentName },
+      temporalCallOptions({ timeoutMs: defaultRoutingRpcTimeoutMs }),
     )
-    return { changed: false, previousBuildId: currentBuildId, deploymentBuildIds, skippedReason }
+    if (routingPropagationComplete(deployment, deploymentName, buildId)) {
+      return
+    }
+    await Bun.sleep(Math.min(pollMs, Math.max(deadline - now(), 0)))
   }
 
-  if (currentBuildId === targetBuildId) {
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for Temporal routing propagation: ${deploymentName} -> ${buildId}`,
+  )
+}
+
+const syncCurrentVersion = async (options: ResolvedOptions, client: TemporalClient): Promise<SyncResult> => {
+  const deployment = await client.deployments.describeWorkerDeployment(
+    { deploymentName: options.deploymentName },
+    temporalCallOptions({ timeoutMs: defaultRoutingRpcTimeoutMs }),
+  )
+  const currentBuildId = extractCurrentDeploymentBuildId(deployment, options.deploymentName)
+  const targetBuildId = options.buildId ?? currentBuildId
+  const deploymentBuildIds = extractDeploymentBuildIds(deployment, options.deploymentName)
+  if (!targetBuildId) {
+    throw new Error(
+      `Temporal worker deployment '${options.deploymentName}' has no current build; wait for a healthy worker or pass --build-id explicitly.`,
+    )
+  }
+
+  if (
+    currentBuildId === targetBuildId &&
+    routingPropagationComplete(deployment, options.deploymentName, targetBuildId)
+  ) {
     console.log(`Temporal routing already aligned: ${options.deploymentName} -> ${targetBuildId}`)
     return { changed: false, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
   }
 
   if (options.dryRun) {
-    console.log(
-      `[dry-run] Would set current version: ${options.deploymentName} ${currentBuildId ?? '<none>'} -> ${targetBuildId}`,
-    )
-    return { changed: true, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
+    if (currentBuildId !== targetBuildId) {
+      console.log(
+        `[dry-run] Would set current version: ${options.deploymentName} ${currentBuildId ?? '<none>'} -> ${targetBuildId}`,
+      )
+      return { changed: true, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
+    }
   }
 
-  await runTemporal(options, [
-    'worker',
-    'deployment',
-    'set-current-version',
-    '--deployment-name',
-    options.deploymentName,
-    '--build-id',
-    targetBuildId,
-    '--yes',
-  ])
-  console.log(`Updated current version: ${options.deploymentName} ${currentBuildId ?? '<none>'} -> ${targetBuildId}`)
+  if (currentBuildId !== targetBuildId) {
+    await client.deployments.setWorkerDeploymentCurrentVersion(
+      {
+        deploymentName: options.deploymentName,
+        buildId: targetBuildId,
+        allowNoPollers: false,
+        ignoreMissingTaskQueues: false,
+        identity: `sync-temporal-routing/${process.pid}`,
+      },
+      temporalCallOptions({ timeoutMs: defaultRoutingRpcTimeoutMs }),
+    )
+    console.log(`Updated current version: ${options.deploymentName} ${currentBuildId ?? '<none>'} -> ${targetBuildId}`)
+  }
 
-  return { changed: true, previousBuildId: currentBuildId, targetBuildId, deploymentBuildIds }
+  await waitForRoutingPropagation(client, options.deploymentName, targetBuildId)
+  console.log(`Temporal routing propagation completed: ${options.deploymentName} -> ${targetBuildId}`)
+
+  return {
+    changed: currentBuildId !== targetBuildId,
+    previousBuildId: currentBuildId,
+    targetBuildId,
+    deploymentBuildIds,
+  }
 }
 
 export const main = async (cliOptions?: CliOptions) => {
-  ensureCli('temporal')
-
   const options = resolveOptions(cliOptions ?? parseArgs(process.argv.slice(2)))
-  const sync = await syncCurrentVersion(options)
-
-  let migratedStale = 0
-  let migratedUnversioned = 0
-
-  if (options.migrateStaleRunning && sync.targetBuildId) {
-    const staleBuildIds = [...new Set(sync.deploymentBuildIds)].filter((buildId) => buildId !== sync.targetBuildId)
-    for (const buildId of staleBuildIds) {
-      const query = `TaskQueue="${options.taskQueue}" and ExecutionStatus="Running" and TemporalWorkerDeploymentVersion="${options.deploymentName}:${buildId}"`
-      migratedStale += await updateRunningWorkflowsToAutoUpgrade(options, query, options.reason)
-    }
-    if (migratedStale > 0) {
-      console.log(
-        `${options.dryRun ? 'Would update' : 'Updated'} ${migratedStale} stale pinned workflow(s) to auto_upgrade`,
-      )
-    }
+  if (options.migrateStaleRunning || options.migrateUnversionedRunning) {
+    ensureCli('temporal')
   }
+  const loadedConfig = await loadTemporalConfig()
+  const { client } = await createTemporalClient({
+    config: {
+      ...loadedConfig,
+      address: options.address,
+      namespace: options.namespace,
+      taskQueue: options.taskQueue,
+    },
+  })
 
-  if (options.migrateUnversionedRunning) {
-    const query = `TaskQueue="${options.taskQueue}" and ExecutionStatus="Running" and TemporalWorkerDeploymentVersion is null`
-    migratedUnversioned = await updateRunningWorkflowsToAutoUpgrade(options, query, options.reason)
-    if (migratedUnversioned > 0) {
-      console.log(
-        `${options.dryRun ? 'Would update' : 'Updated'} ${migratedUnversioned} unversioned workflow(s) to auto_upgrade`,
-      )
+  try {
+    const sync = await syncCurrentVersion(options, client)
+
+    let migratedStale = 0
+    let migratedUnversioned = 0
+
+    if (options.migrateStaleRunning) {
+      const staleBuildIds = [...new Set(sync.deploymentBuildIds)].filter((buildId) => buildId !== sync.targetBuildId)
+      for (const buildId of staleBuildIds) {
+        const query = `TaskQueue="${options.taskQueue}" and ExecutionStatus="Running" and TemporalWorkerDeploymentVersion="${options.deploymentName}:${buildId}"`
+        migratedStale += await updateRunningWorkflowsToAutoUpgrade(options, query, options.reason)
+      }
+      if (migratedStale > 0) {
+        console.log(
+          `${options.dryRun ? 'Would update' : 'Updated'} ${migratedStale} stale pinned workflow(s) to auto_upgrade`,
+        )
+      }
     }
-  }
 
-  console.log(
-    JSON.stringify(
-      {
-        deploymentName: options.deploymentName,
-        taskQueue: options.taskQueue,
-        previousBuildId: sync.previousBuildId,
-        targetBuildId: sync.targetBuildId,
-        changed: sync.changed,
-        skippedReason: sync.skippedReason,
-        migratedStale,
-        migratedUnversioned,
-        dryRun: options.dryRun,
-      },
-      null,
-      2,
-    ),
-  )
+    if (options.migrateUnversionedRunning) {
+      const query = `TaskQueue="${options.taskQueue}" and ExecutionStatus="Running" and TemporalWorkerDeploymentVersion is null`
+      migratedUnversioned = await updateRunningWorkflowsToAutoUpgrade(options, query, options.reason)
+      if (migratedUnversioned > 0) {
+        console.log(
+          `${options.dryRun ? 'Would update' : 'Updated'} ${migratedUnversioned} unversioned workflow(s) to auto_upgrade`,
+        )
+      }
+    }
+
+    console.log(
+      JSON.stringify(
+        {
+          deploymentName: options.deploymentName,
+          taskQueue: options.taskQueue,
+          previousBuildId: sync.previousBuildId,
+          targetBuildId: sync.targetBuildId,
+          changed: sync.changed,
+          migratedStale,
+          migratedUnversioned,
+          dryRun: options.dryRun,
+        },
+        null,
+        2,
+      ),
+    )
+  } finally {
+    await client.shutdown()
+  }
 }
 
 if (import.meta.main) {
@@ -495,8 +482,10 @@ export const __private = {
   getTemporalRetryDelayMs,
   isTransientTemporalConnectivityError,
   runTemporal,
-  stripDeploymentPrefix,
-  extractVersionedPollerBuildIds,
-  selectTargetBuildId,
+  extractCurrentDeploymentBuildId,
+  extractDeploymentBuildIds,
+  routingPropagationComplete,
+  waitForRoutingPropagation,
+  syncCurrentVersion,
   resolveOptions,
 }

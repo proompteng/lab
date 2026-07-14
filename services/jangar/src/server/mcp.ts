@@ -1,7 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from 'effect'
 
 import { Atlas, AtlasLive } from './atlas'
-import { parseAtlasCodeSearchInput, parseAtlasIndexInput, parseAtlasSearchInput } from './atlas-http'
+import { parseAtlasCodeSearchInput } from './atlas-http'
 
 type JsonRpcId = string | number | null
 
@@ -63,8 +63,6 @@ const withMcpSessionHeaders = (request: Request, init: ResponseInit = {}): Respo
 }
 
 const TOOL_NAME_ALIASES: Record<string, string> = {
-  'atlas.index': 'atlas_index',
-  'atlas.search': 'atlas_search',
   'atlas.code_search': 'atlas_code_search',
   'atlas.stats': 'atlas_stats',
 }
@@ -73,41 +71,6 @@ const normalizeToolName = (name: string) => TOOL_NAME_ALIASES[name] ?? name
 
 const toolsListResult = {
   tools: [
-    {
-      name: 'atlas_index',
-      description: 'Request Atlas enrichment for a repository file path (indexed in Postgres).',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          repository: { type: 'string', description: 'Repository name (required).' },
-          ref: { type: 'string', description: 'Git ref (default main).' },
-          commit: { type: 'string', description: 'Commit SHA for the file.' },
-          path: { type: 'string', description: 'Path within the repository (required).' },
-          contentHash: { type: 'string', description: 'Content hash for the file.' },
-          metadata: { type: 'object', description: 'Optional metadata to attach to the file version.' },
-        },
-        required: ['repository', 'path'],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: 'atlas_search',
-      description: 'Search Atlas enrichments with semantic similarity and optional filters.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Search query (required).' },
-          limit: { type: 'integer', description: 'Max results (default 10, max 50).', minimum: 1, maximum: 50 },
-          repository: { type: 'string', description: 'Filter by repository name.' },
-          ref: { type: 'string', description: 'Filter by repository ref.' },
-          pathPrefix: { type: 'string', description: 'Filter by file path prefix.' },
-          tags: { type: 'array', items: { type: 'string' }, description: 'Filter by enrichment tags.' },
-          kinds: { type: 'array', items: { type: 'string' }, description: 'Filter by enrichment kinds.' },
-        },
-        required: ['query'],
-        additionalProperties: false,
-      },
-    },
     {
       name: 'atlas_code_search',
       description:
@@ -121,22 +84,6 @@ const toolsListResult = {
           ref: { type: 'string', description: 'Filter by repository ref.' },
           pathPrefix: { type: 'string', description: 'Filter by file path prefix.' },
           language: { type: 'string', description: 'Filter by language (e.g. typescript, go).' },
-          requireSemanticCoverage: {
-            type: 'boolean',
-            description: 'Fail the request when sampled chunk embedding coverage is below the threshold.',
-          },
-          minSemanticCoverage: {
-            type: 'number',
-            description: 'Minimum sampled chunk embedding coverage required when gating is enabled.',
-            minimum: 0,
-            maximum: 1,
-          },
-          healthSampleLimit: {
-            type: 'integer',
-            description: 'Number of latest chunks to sample for semantic coverage health.',
-            minimum: 1,
-            maximum: 5000,
-          },
         },
         required: ['query'],
         additionalProperties: false,
@@ -290,77 +237,6 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
         const toolName = normalizeToolName(parsed.name)
         const args = parsed.args
 
-        if (toolName === 'atlas_index') {
-          const parsed = parseAtlasIndexInput(args)
-          if (!parsed.ok) {
-            if (isNotification) return null
-            return invalidParams(id, parsed.message)
-          }
-
-          const indexResult = yield* Effect.either(
-            Effect.gen(function* () {
-              const repository = yield* atlas.upsertRepository({
-                name: parsed.value.repository,
-                defaultRef: parsed.value.ref,
-              })
-              const fileKey = yield* atlas.upsertFileKey({
-                repositoryId: repository.id,
-                path: parsed.value.path,
-              })
-              const fileVersion = yield* atlas.upsertFileVersion({
-                fileKeyId: fileKey.id,
-                repositoryRef: parsed.value.ref,
-                repositoryCommit: parsed.value.commit ?? null,
-                contentHash: parsed.value.contentHash ?? null,
-                metadata: parsed.value.metadata,
-              })
-
-              return { repository, fileKey, fileVersion }
-            }),
-          )
-
-          if (indexResult._tag === 'Left') {
-            if (isNotification) return null
-            return toolError(id, indexResult.left.message, { tool: toolName })
-          }
-          if (isNotification) return null
-          return asJsonRpcResponse(
-            id,
-            toTextToolResult(
-              JSON.stringify(
-                { ok: true, ...indexResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
-                null,
-                2,
-              ),
-            ),
-          )
-        }
-
-        if (toolName === 'atlas_search') {
-          const parsed = parseAtlasSearchInput(args)
-          if (!parsed.ok) {
-            if (isNotification) return null
-            return invalidParams(id, parsed.message)
-          }
-
-          const matchesResult = yield* Effect.either(atlas.search(parsed.value))
-          if (matchesResult._tag === 'Left') {
-            if (isNotification) return null
-            return toolError(id, matchesResult.left.message, { tool: toolName })
-          }
-          if (isNotification) return null
-          return asJsonRpcResponse(
-            id,
-            toTextToolResult(
-              JSON.stringify(
-                { ok: true, matches: matchesResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
-                null,
-                2,
-              ),
-            ),
-          )
-        }
-
         if (toolName === 'atlas_code_search') {
           const parsed = parseAtlasCodeSearchInput(args)
           if (!parsed.ok) {
@@ -374,8 +250,6 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
               ref: parsed.value.ref,
               pathPrefix: parsed.value.pathPrefix,
               language: parsed.value.language,
-              minSemanticCoverage: parsed.value.minSemanticCoverage,
-              healthSampleLimit: parsed.value.healthSampleLimit,
             }),
           )
           if (healthResult._tag === 'Left') {

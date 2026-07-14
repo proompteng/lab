@@ -45,41 +45,14 @@ const makeAtlasService = (): AtlasService => {
     metadata: {},
     createdAt: new Date().toISOString(),
   }
-  const enrichment = {
-    id: 'enrichment-1',
-    fileVersionId: 'file-version-1',
-    chunkId: 'chunk-1',
-    kind: 'note',
-    source: 'test',
-    content: 'Agents owns memory MCP.',
-    summary: null,
-    tags: ['agents'],
-    metadata: {},
-    createdAt: new Date().toISOString(),
-    distance: 0.1,
-  }
   return {
     upsertRepository: () => Effect.succeed(repository),
     getRepositoryByName: () => fail(),
-    upsertFileKey: () => Effect.succeed(fileKey),
     getFileKeyByPath: () => fail(),
-    upsertFileVersion: () => Effect.succeed(fileVersion),
     getFileVersionByKey: () => fail(),
-    upsertFileChunk: () => fail(),
-    upsertEnrichment: () => fail(),
-    upsertEmbedding: () => fail(),
-    upsertTreeSitterFact: () => fail(),
-    upsertSymbol: () => fail(),
-    upsertSymbolDef: () => fail(),
-    upsertSymbolRef: () => fail(),
-    upsertFileEdge: () => fail(),
     upsertGithubEvent: () => fail(),
-    upsertIngestion: () => fail(),
-    upsertEventFile: () => fail(),
-    upsertIngestionTarget: () => fail(),
     listIndexedFiles: () => fail(),
     getAstPreview: () => fail(),
-    search: () => Effect.succeed([{ enrichment, fileVersion, fileKey, repository }]),
     codeSearch: () =>
       Effect.succeed([
         {
@@ -109,7 +82,6 @@ const makeAtlasService = (): AtlasService => {
         gitHead: 'deadbeef',
         treeHash: 'tree-hash',
         filters: { repository: null, ref: null, pathPrefix: null, language: null },
-        sample: { limit: 500, chunks: 10, embedded: 10, missing: 0, coverage: 1 },
         corpus: {
           expectedFiles: 1,
           indexedFiles: 1,
@@ -121,10 +93,8 @@ const makeAtlasService = (): AtlasService => {
           embeddedChunks: 10,
         },
         lastError: null,
-        thresholds: { minSemanticCoverage: 1 },
         message: 'Atlas is ready at a fully reconciled commit',
       }),
-    searchCount: () => Effect.succeed(1),
     stats: () =>
       Effect.succeed({
         repositories: 1,
@@ -162,8 +132,6 @@ describe('Jangar Atlas MCP handler', () => {
     const list = await post({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
     expect(list.response.status).toBe(200)
     expect(list.json?.result?.tools?.map((tool: { name: string }) => tool.name)).toEqual([
-      'atlas_index',
-      'atlas_search',
       'atlas_code_search',
       'atlas_stats',
     ])
@@ -201,15 +169,6 @@ describe('Jangar Atlas MCP handler', () => {
     })
     expect(stats.response.status).toBe(200)
     expect(stats.json?.result?.content?.[0]?.text).toContain('"repositories": 1')
-
-    const search = await post({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/call',
-      params: { name: 'atlas.search', arguments: { query: 'agents', limit: 5 } },
-    })
-    expect(search.response.status).toBe(200)
-    expect(search.json?.result?.content?.[0]?.text).toContain('Agents owns memory MCP')
   })
 
   it('returns Atlas code-search index health with matches', async () => {
@@ -219,7 +178,7 @@ describe('Jangar Atlas MCP handler', () => {
       method: 'tools/call',
       params: {
         name: 'atlas_code_search',
-        arguments: { query: 'handleMcpRequest', requireSemanticCoverage: true },
+        arguments: { query: 'handleMcpRequest' },
       },
     })
 
@@ -235,7 +194,7 @@ describe('Jangar Atlas MCP handler', () => {
       jsonrpc: '2.0',
       id: 1,
       method: 'tools/call',
-      params: { name: 'atlas_search', arguments: {} },
+      params: { name: 'atlas_code_search', arguments: {} },
     })
     expect(search.response.status).toBe(200)
     expect(search.json?.error?.code).toBe(-32602)
@@ -255,7 +214,7 @@ describe('Jangar Atlas MCP handler', () => {
           jsonrpc: '2.0',
           id: 3,
           method: 'tools/call',
-          params: { name: 'atlas_search', arguments: {} },
+          params: { name: 'atlas_code_search', arguments: {} },
         },
       ],
       { 'Mcp-Session-Id': 'session-1' },

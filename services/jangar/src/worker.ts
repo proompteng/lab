@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import activities from '@proompteng/bumba/src/activities/index'
 import workflows from '@proompteng/bumba/src/workflows/index'
 import { createTemporalClient, type TemporalConfig, temporalCallOptions } from '@proompteng/temporal-bun-sdk'
-import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
+import { alignWorkerDeploymentRouting, createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import type { WorkflowDefinitions } from '@proompteng/temporal-bun-sdk/workflow'
 import { resolveWorkerRuntimeConfig } from './server/runtime-entry-config'
 
@@ -171,11 +171,22 @@ const main = async () => {
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
 
+  const workerRunPromise = worker.run()
+  const workerExitDuringStartup = workerRunPromise.then(
+    () => Promise.reject(new Error('Temporal worker stopped during startup')),
+    (error) => Promise.reject(error),
+  )
+
   try {
+    await Promise.race([
+      alignWorkerDeploymentRouting(config, { identity: `jangar-worker/${process.pid}` }),
+      workerExitDuringStartup,
+    ])
     health.setRunning(true)
-    await worker.run()
+    await workerRunPromise
   } finally {
     health.setRunning(false)
+    await worker.shutdown().catch(() => undefined)
     await health.stop()
   }
 }

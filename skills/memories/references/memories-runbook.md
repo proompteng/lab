@@ -21,5 +21,5 @@ export OPENAI_EMBEDDING_DIMENSION='4096'
 ## Example
 
 ```bash
-bun run --filter memories retrieve-memory   --query "bumba enrichRepository"   --limit 3
+bun run --filter memories retrieve-memory   --query "Bumba Atlas reconciliation"   --limit 3
 ```

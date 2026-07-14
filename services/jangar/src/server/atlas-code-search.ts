@@ -11,9 +11,6 @@ export type AtlasCodeSearchInput = {
   ref?: string
   pathPrefix?: string
   language?: string
-  requireSemanticCoverage?: boolean
-  minSemanticCoverage?: number
-  healthSampleLimit?: number
 }
 
 export type AtlasCodeSearchSignals = {
@@ -51,13 +48,6 @@ export type AtlasCodeSearchHealth = {
     pathPrefix: string | null
     language: string | null
   }
-  sample: {
-    limit: number
-    chunks: number
-    embedded: number
-    missing: number
-    coverage: number
-  }
   corpus: {
     expectedFiles: number
     indexedFiles: number
@@ -69,9 +59,6 @@ export type AtlasCodeSearchHealth = {
     embeddedChunks: number
   }
   lastError: string | null
-  thresholds: {
-    minSemanticCoverage: number
-  }
   message: string
 }
 
@@ -400,8 +387,6 @@ export const createAtlasCodeSearchHandlers = ({
     const indexedFiles = metadataCount(metadata, 'indexedFiles')
     const chunks = metadataCount(metadata, 'indexedChunks')
     const embedded = metadataCount(metadata, 'embeddedChunks')
-    const missing = Math.max(0, chunks - embedded)
-    const coverage = chunks === 0 ? (expectedFiles === 0 && indexStatus === 'ready' ? 1 : 0) : embedded / chunks
     const refMatches = !filters.ref || row?.repository_default_ref === filters.ref
     const configurationMatches =
       metadataString(metadata, 'embeddingModel') === embeddingConfig.model &&
@@ -451,13 +436,6 @@ export const createAtlasCodeSearchHandlers = ({
         pathPrefix: filters.pathPrefix || null,
         language: filters.language || null,
       },
-      sample: {
-        limit: chunks,
-        chunks,
-        embedded,
-        missing,
-        coverage,
-      },
       corpus: {
         expectedFiles,
         indexedFiles,
@@ -469,9 +447,6 @@ export const createAtlasCodeSearchHandlers = ({
         embeddedChunks: embedded,
       },
       lastError: metadataString(metadata, 'lastError'),
-      thresholds: {
-        minSemanticCoverage: 1,
-      },
       message,
     }
   }

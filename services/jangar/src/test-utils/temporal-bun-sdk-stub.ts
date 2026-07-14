@@ -39,3 +39,9 @@ export const createWorker = async (_options: Record<string, unknown> = {}) => ({
 export const VersioningBehavior = {
   AUTO_UPGRADE: 'AUTO_UPGRADE',
 }
+
+export const WorkflowIdReusePolicy = {
+  ALLOW_DUPLICATE: 1,
+  ALLOW_DUPLICATE_FAILED_ONLY: 2,
+  REJECT_DUPLICATE: 3,
+}

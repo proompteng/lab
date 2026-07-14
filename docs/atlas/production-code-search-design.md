@@ -1,7 +1,8 @@
 # Atlas Code Search Repair Plan
 
-Status: Implemented on `codex/atlas-code-search-repair`; Atlas is not production-proven until the live Definition of
-Done passes.
+Status: The initial in-place repair merged in PR #12459. Production hardening is implemented in the codebase, but Atlas
+is not production-proven until the hardened images run, a fresh current-main rebuild completes, and the live Definition
+of Done passes.
 
 Evidence baseline: 2026-07-13, repository commit `9f6487ada0cf9222b65cbb1ee9b10d50a09b216e`.
 
@@ -42,7 +43,8 @@ Use the tables as follows:
 
 - `atlas.repositories`: one row for `proompteng/lab`. Keep `default_ref = 'main'`. Store `indexStatus`, `indexedCommit`,
   `treeHash`, expected/indexed/embedded counts, chunker version, embedding configuration, and last error in its existing
-  JSON object metadata.
+  JSON object metadata. While building, store a fenced build ID, target configuration, target commit, and heartbeat
+  progress separately from the last ready configuration.
 - `atlas.file_keys`: exactly one row for every eligible path in the current `main` tree. This is the manifest.
 - `atlas.file_versions`: exactly one row per `file_key_id`. Add a unique index on `file_key_id`; replace the row when
   content changes.
@@ -104,18 +106,32 @@ Sources:
 In `services/bumba/src/event-consumer.ts` and `services/bumba/src/activities/index.ts`:
 
 - Accept only pushes to the configured default branch.
-- Resolve the exact `after` commit and enumerate its complete tree.
+- Treat the event's `after` commit as traceability, then fetch and resolve the exact current `origin/main` commit and
+  enumerate its complete tree.
 - Apply one versioned eligibility filter.
 - Diff eligible Git paths against `atlas.file_keys`.
 - Add new paths, replace changed file versions, leave unchanged paths alone, and delete removed `file_keys` rows.
 - Treat renames as delete plus add.
 - Never update `repositories.default_ref` from an event.
-- Bind metadata as JSON objects; never pass `JSON.stringify(...)` into JSONB parameters.
+- Bind metadata as JSON objects or explicitly cast serialized text to `jsonb`; verify `jsonb_typeof(...) = 'object'`.
 - Mark an event processed only after its required ingestion work is terminal.
 
-For a normal push, fetch/chunk/embed changed files before the database transaction. If preparation fails, leave the last
-verified corpus unchanged. When preparation succeeds, apply additions, replacements, deletions, and repository metadata
-in one transaction.
+Reconciliation is a bounded, resumable mutation of the one existing corpus:
+
+1. Fence the repository with a unique build ID and target commit, set `indexStatus=building`, materialize the exact
+   `file_keys` manifest, and make every reader fail closed.
+2. Prepare at most `BUMBA_ATLAS_PREPARE_CONCURRENCY` files at once and commit each bounded file/chunk/embedding batch to
+   the existing tables. Never retain the whole repository's vectors in worker memory.
+3. Heartbeat Temporal every 15 seconds with the build ID, commit, and persisted progress under a 90-second heartbeat
+   timeout. A replacement activity reuses that state and the already committed batches.
+4. Serialize GitHub events per repository and reject a second writer while the live database lease belongs to another
+   build. Manual, UI, and event starts use one repository-scoped Temporal workflow ID so a duplicate active rebuild is
+   rejected before it can become another activity.
+5. In the final transaction, update unchanged versions to the target commit, verify the entire manifest and embedding
+   coverage, and only then publish `indexStatus=ready` plus the canonical configuration.
+
+A failure may leave bounded partial rows in the same disposable schema, but search remains unavailable and the next
+idempotent reconciliation resumes or replaces them. There is no old corpus kept online and nothing to restore.
 
 ### 2. Chunking covers the source
 
@@ -139,6 +155,10 @@ In `services/jangar/src/server/atlas-code-search.ts`:
 
 Remove the `created_at DESC LIMIT 100` candidate query. Search joins only the one current file version for each
 `file_key`.
+
+MCP `atlas_code_search`, `POST /api/code-search`, and the `GET /api/search` UI compatibility route all use this same
+implementation. Remove the MCP enrichment-search tool, direct index tool, partial backfill CLI, and legacy search CLI so
+agents and operators cannot accidentally select a second search or write path.
 
 Embed queries as instructed Qwen inputs:
 
@@ -187,14 +207,20 @@ Use a temporary Git repository and real PostgreSQL/pgvector integration database
 10. Source preview commit and hash match the result.
 11. Metadata is a JSON object in PostgreSQL.
 12. A timed-out search cancels its database query.
+13. A forced embedding failure after one committed batch leaves Atlas unavailable, then a retry resumes from heartbeat
+    state and converges without a second schema.
+14. Worker startup stays unready until its exact Temporal Worker Deployment build is current and routing propagation is
+    `COMPLETED`.
 
 Add one command, `atlas:verify`, that runs the tree/path/hash audit and the fixed query set. Agents and operators use the
 same command; there is no separate proof path.
 
 ## Implementation and Rollout
 
-Do this in one implementation PR because the writer, schema constraints, rebuild command, and reader contract must land
-together.
+The initial writer, schema, reader, and verification repair landed together in PR #12459. The first production rebuild
+then exposed an OOM/heartbeat defect that local fixtures had not modeled, so the observed failure is addressed in one
+coherent hardening PR before another live rebuild. Do not split a writer change from its recovery, reader, or proof
+contract.
 
 1. Implement the code changes, migration, regression tests, `atlas:rebuild`, and `atlas:verify`.
 2. Pass focused Bumba/Jangar tests, real PostgreSQL integration tests, and CI.
@@ -214,6 +240,24 @@ together.
 
 If anything fails after truncation, Atlas stays in maintenance, the defect is fixed, and the idempotent rebuild resumes.
 There is nothing to restore.
+
+### Execution record: 2026-07-14
+
+- PR #12459 merged the initial repair; Jangar and Bumba images were promoted, the existing schema migration ran, the
+  derived corpus was truncated, and the one Bumba event consumer remained disabled.
+- The first live rebuild resolved 8,255 eligible files but was not accepted: Bumba accumulated prepared embeddings in
+  memory, was OOM-killed after about 3,600 files, and the activity lacked a heartbeat timeout, so Temporal continued to
+  report the dead attempt as running.
+- That workflow was terminated. It is failure evidence, not a successful rebuild.
+- The hardening described above bounds memory, persists progress, adds heartbeat recovery, serializes repository events,
+  removes remaining public legacy writers/search entrypoints, and makes both Bumba and Jangar wait for exact Temporal
+  routing propagation during startup.
+- The live worker registry now exposes only reconciliation plus its required ingestion bookkeeping, and manual, UI, and
+  event callers share one repository-scoped workflow ID. Local PostgreSQL/pgvector tests prove forced post-batch failure,
+  unavailable state, heartbeat resume, complete convergence, HNSW migration, hybrid search, and query cancellation. This
+  is pre-merge evidence, not production proof.
+- The Definition of Done remains open until this hardening is merged, promoted, and used for a fresh rebuild of the then
+  current `origin/main`.
 
 ## Definition of Done
 

@@ -8,9 +8,9 @@ services/bumba workflows
 
 - services/bumba/src/workflows/index.ts
 - services/bumba/src/activities/index.ts
-- packages/scripts/src/bumba/enrich-repository.ts
+- packages/scripts/src/atlas/rebuild.ts
 
 ## Commands run
 
-- rg -n "enrichRepository" services/bumba
-- bun run packages/scripts/src/bumba/enrich-repository.ts --path-prefix services/bumba --max-files 50 --wait
+- rg -n "reconcileAtlasRepository" services/bumba
+- bun run atlas:rebuild --repository proompteng/lab --ref main

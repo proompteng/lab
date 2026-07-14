@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { SQL } from 'bun'
 
+import { runWithActivityContext, type ActivityContext } from '@proompteng/temporal-bun-sdk/worker'
+
 import activities, { __test__ as activityTest } from '../activities/index'
 
 const databaseUrl = process.env.ATLAS_INTEGRATION_DATABASE_URL?.trim()
@@ -34,6 +36,8 @@ let origin = ''
 let checkout = ''
 let db: SQL | null = null
 let embeddingServer: ReturnType<typeof Bun.serve> | null = null
+let embeddingRequestCount = 0
+let failEmbeddingAfterRequest: number | null = null
 
 const git = async (cwd: string, args: string[]) => {
   const process = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
@@ -69,6 +73,10 @@ beforeAll(async () => {
   embeddingServer = Bun.serve({
     port: 0,
     fetch: async (request) => {
+      embeddingRequestCount += 1
+      if (failEmbeddingAfterRequest !== null && embeddingRequestCount > failEmbeddingAfterRequest) {
+        return Response.json({ error: 'intentional streaming-recovery failure' }, { status: 503 })
+      }
       const body = (await request.json()) as { input?: string | string[] }
       const inputs = Array.isArray(body.input) ? body.input : [body.input ?? '']
       return Response.json({
@@ -332,6 +340,87 @@ integrationTest(
         }),
       ),
     ).rejects.toThrow(/only main/)
+  },
+  120_000,
+)
+
+integrationTest(
+  'reconciliation persists bounded batches and resumes after an embedding failure',
+  async () => {
+    if (!db) throw new Error('integration database was not initialized')
+    await mkdir(join(checkout, 'recovery'), { recursive: true })
+    for (let index = 0; index < 6; index += 1) {
+      await writeFile(join(checkout, 'recovery', `${index}.ts`), `export const recovery${index} = ${index}\n`)
+    }
+    const commit = await commitAndPush('streaming recovery fixture')
+    let lastHeartbeatDetails: unknown[] = []
+    const activityContext = (heartbeatDetails: unknown[]): ActivityContext =>
+      ({
+        info: { lastHeartbeatDetails: heartbeatDetails },
+        cancellationSignal: new AbortController().signal,
+        isCancellationRequested: false,
+        heartbeat: async (...details: unknown[]) => {
+          lastHeartbeatDetails = details
+        },
+        throwIfCancelled: () => undefined,
+      }) as ActivityContext
+
+    failEmbeddingAfterRequest = embeddingRequestCount + 2
+    await expect(
+      runWithActivityContext(activityContext([]), () =>
+        activities.reconcileAtlasRepository({
+          repoRoot: checkout,
+          repository: 'proompteng/recovery',
+          ref: 'main',
+          commit,
+        }),
+      ),
+    ).rejects.toThrow(/embedding request failed/i)
+
+    const failedRows = (await db`
+      SELECT
+        r.metadata->>'indexStatus' AS status,
+        (r.metadata->>'expectedFiles')::int AS expected_files,
+        count(fv.id)::int AS indexed_files
+      FROM atlas.repositories r
+      LEFT JOIN atlas.file_keys fk ON fk.repository_id = r.id
+      LEFT JOIN atlas.file_versions fv ON fv.file_key_id = fk.id
+      WHERE r.name = 'proompteng/recovery'
+      GROUP BY r.id;
+    `) as Array<{ status: string; expected_files: number; indexed_files: number }>
+    expect(failedRows[0]?.status).toBe('failed')
+    expect(failedRows[0]?.indexed_files).toBeGreaterThan(0)
+    expect(failedRows[0]?.indexed_files).toBeLessThan(failedRows[0]?.expected_files ?? 0)
+    expect(lastHeartbeatDetails[0]).toMatchObject({
+      commit,
+      preparedFiles: failedRows[0]?.indexed_files,
+      changedFiles: failedRows[0]?.expected_files,
+    })
+
+    failEmbeddingAfterRequest = null
+    const recovered = await runWithActivityContext(activityContext(lastHeartbeatDetails), () =>
+      activities.reconcileAtlasRepository({
+        repoRoot: checkout,
+        repository: 'proompteng/recovery',
+        ref: 'main',
+        commit,
+      }),
+    )
+    expect(recovered).toMatchObject({
+      repository: 'proompteng/recovery',
+      commit,
+      expectedFiles: failedRows[0]?.expected_files,
+      indexedFiles: failedRows[0]?.expected_files,
+      changedFiles: failedRows[0]?.expected_files,
+      unchangedFiles: 0,
+    })
+
+    const readyRows = (await db`
+      SELECT metadata->>'indexStatus' AS status, metadata->>'indexedCommit' AS indexed_commit
+      FROM atlas.repositories
+      WHERE name = 'proompteng/recovery';
+    `) as Array<{ status: string; indexed_commit: string }>
+    expect(readyRows[0]).toEqual({ status: 'ready', indexed_commit: commit })
   },
   120_000,
 )

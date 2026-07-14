@@ -15,10 +15,8 @@ const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
   'BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS',
-  'BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED',
   'BUMBA_ATLAS_DEFAULT_REF',
   'TEMPORAL_TASK_QUEUE',
-  'TEMPORAL_WORKER_DEPLOYMENT_NAME',
   'BUMBA_WORKSPACE_ROOT',
   'CODEX_CWD',
   'DATABASE_URL',
@@ -90,7 +88,6 @@ const eventConsumerConfig = (overrides: Record<string, unknown> = {}) =>
     maxEventFileTargets: 200,
     maxDispatchFailures: 6,
     nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
-    routingAlignmentEnabled: false,
     taskQueue: 'bumba',
     repoRoot: '/workspace/lab',
     defaultRef: 'main',
@@ -157,7 +154,7 @@ test('processEvent ignores non-default-branch pushes', async () => {
 
 test('processEvent does not duplicate a reconciliation already recorded for the event', async () => {
   const event = githubPushEvent(['src/a.ts'])
-  const workflowId = __test__.buildReconciliationWorkflowId(event.delivery_id)
+  const workflowId = __test__.buildAtlasReconciliationWorkflowId(event.repository)
   let starts = 0
   const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
     getCounts: async () => ingestionCounts({ total: 1, nonterminal: 1, oldestNonterminalStartedAt: Date.now() }),
@@ -172,7 +169,7 @@ test('processEvent does not duplicate a reconciliation already recorded for the 
   expect(starts).toBe(0)
 })
 
-test('startEventWorkflow reuses a failed deterministic reconciliation ID', async () => {
+test('startEventWorkflow uses the one repository-scoped reconciliation ID', async () => {
   let options: Record<string, unknown> | undefined
   const client = {
     workflow: {
@@ -186,7 +183,7 @@ test('startEventWorkflow reuses a failed deterministic reconciliation ID', async
 
   await __test__.startEventWorkflow(client as never, eventConsumerConfig(), event, 'main', 'abcdef1234567890')
 
-  expect(options?.workflowId).toBe(__test__.buildReconciliationWorkflowId(event.delivery_id))
+  expect(options?.workflowId).toBe(__test__.buildAtlasReconciliationWorkflowId(event.repository))
   expect(options?.workflowType).toBe('reconcileAtlasRepository')
   expect(options?.args).toEqual([
     {
@@ -197,7 +194,7 @@ test('startEventWorkflow reuses a failed deterministic reconciliation ID', async
       eventDeliveryId: 'delivery-1',
     },
   ])
-  expect(options?.workflowIdReusePolicy).toBe(2)
+  expect(options?.workflowIdReusePolicy).toBe(1)
 })
 
 test('startMainMergeNoteWorkflow creates a delivery-scoped durable workflow', async () => {
@@ -608,15 +605,6 @@ test('resolveEventRef falls back to default branch then main', () => {
   expect(fromDefault).toBe('main')
 })
 
-test('buildEventWorkflowId is deterministic for event+path', () => {
-  const a = __test__.buildEventWorkflowId('delivery-1', 'src/a.ts')
-  const b = __test__.buildEventWorkflowId('delivery-1', 'src/a.ts')
-  const c = __test__.buildEventWorkflowId('delivery-1', 'src/b.ts')
-
-  expect(a).toBe(b)
-  expect(a).not.toBe(c)
-})
-
 test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED = 'false'
   process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS = '2500'
@@ -625,7 +613,6 @@ test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
   process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES = '3'
   process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS = '600000'
-  process.env.BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED = 'false'
   process.env.TEMPORAL_TASK_QUEUE = 'jangar'
   process.env.BUMBA_WORKSPACE_ROOT = '/workspace/lab'
 
@@ -638,7 +625,6 @@ test('resolveConsumerConfig reads environment overrides', () => {
   expect(config.maxEventFileTargets).toBe(55)
   expect(config.maxDispatchFailures).toBe(3)
   expect(config.nonterminalIngestionStaleMs).toBe(600000)
-  expect(config.routingAlignmentEnabled).toBe(false)
   expect(config.taskQueue).toBe('jangar')
   expect(config.repoRoot).toBe('/workspace/lab')
 })
@@ -653,7 +639,7 @@ test('resolveConsumerConfig defaults dispatch limit to scan batch size', () => {
   expect(config.maxDispatchEventsPerTick).toBe(17)
 })
 
-test('runEventConsumerTick scans past waiting rows before applying dispatch limit', async () => {
+test('runEventConsumerTick serializes reconciliation per repository while allowing another repository', async () => {
   const events = [
     {
       id: 'event-waiting-1',
@@ -673,14 +659,14 @@ test('runEventConsumerTick scans past waiting rows before applying dispatch limi
       id: 'event-dispatch-1',
       delivery_id: 'dispatch-1',
       event_type: 'push',
-      repository: 'proompteng/lab',
+      repository: 'proompteng/other',
       payload: {},
     },
     {
       id: 'event-dispatch-2',
       delivery_id: 'dispatch-2',
       event_type: 'push',
-      repository: 'proompteng/lab',
+      repository: 'proompteng/other',
       payload: {},
     },
   ]
@@ -698,14 +684,12 @@ test('runEventConsumerTick scans past waiting rows before applying dispatch limi
       maxEventFileTargets: 200,
       maxDispatchFailures: 6,
       nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
-      routingAlignmentEnabled: false,
       taskQueue: 'bumba',
       repoRoot: '/workspace/lab',
       defaultRef: 'main',
     },
     inFlightDeliveries: new Set(),
     dispatchFailureCounts: new Map(),
-    ensureRoutingAlignment: async () => true,
     listPendingEvents: async (_db, batchSize) => {
       expect(batchSize).toBe(events.length)
       return events
@@ -733,11 +717,11 @@ test('runEventConsumerTick scans past waiting rows before applying dispatch limi
     },
   })
 
-  expect(processedDeliveries).toEqual(['waiting-1', 'waiting-2', 'dispatch-1'])
+  expect(processedDeliveries).toEqual(['waiting-1', 'dispatch-1'])
   expect(dispatchedDeliveries).toEqual(['dispatch-1'])
 })
 
-test('runEventConsumerTick does not count already-started rows against dispatch limit', async () => {
+test('runEventConsumerTick blocks later events behind an already-started repository reconciliation', async () => {
   const events = [
     {
       id: 'event-duplicate',
@@ -776,14 +760,12 @@ test('runEventConsumerTick does not count already-started rows against dispatch 
       maxEventFileTargets: 200,
       maxDispatchFailures: 6,
       nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
-      routingAlignmentEnabled: false,
       taskQueue: 'bumba',
       repoRoot: '/workspace/lab',
       defaultRef: 'main',
     },
     inFlightDeliveries: new Set(),
     dispatchFailureCounts: failureCounts,
-    ensureRoutingAlignment: async () => true,
     listPendingEvents: async () => events,
     processPendingEvent: async (_db, _client, _config, event) => {
       processedDeliveries.push(event.delivery_id)
@@ -808,8 +790,8 @@ test('runEventConsumerTick does not count already-started rows against dispatch 
     },
   })
 
-  expect(processedDeliveries).toEqual(['duplicate-1', 'dispatch-1'])
-  expect(dispatchedDeliveries).toEqual(['dispatch-1'])
+  expect(processedDeliveries).toEqual(['duplicate-1'])
+  expect(dispatchedDeliveries).toEqual([])
   expect(failureCounts.has('duplicate-1')).toBe(false)
 })
 
@@ -823,7 +805,6 @@ test('runEventConsumerTick retains failure state for an incompletely dispatched 
     config: eventConsumerConfig({ batchSize: 1, maxDispatchFailures: 1 }),
     inFlightDeliveries: new Set(),
     dispatchFailureCounts: failureCounts,
-    ensureRoutingAlignment: async () => true,
     listPendingEvents: async () => [event],
     processPendingEvent: async () => ({
       processed: false,
@@ -839,7 +820,12 @@ test('runEventConsumerTick retains failure state for an incompletely dispatched 
 
 test('runEventConsumerTick continues after one event processing error', async () => {
   const first = githubPushEvent(['src/a.ts'])
-  const second = { ...githubPushEvent(['src/b.ts']), id: 'event-2', delivery_id: 'delivery-2' }
+  const second = {
+    ...githubPushEvent(['src/b.ts']),
+    id: 'event-2',
+    delivery_id: 'delivery-2',
+    repository: 'proompteng/other',
+  }
   const attempted: string[] = []
 
   await __test__.runEventConsumerTick({
@@ -848,7 +834,6 @@ test('runEventConsumerTick continues after one event processing error', async ()
     config: eventConsumerConfig({ batchSize: 2 }),
     inFlightDeliveries: new Set(),
     dispatchFailureCounts: new Map(),
-    ensureRoutingAlignment: async () => true,
     listPendingEvents: async () => [first, second],
     processPendingEvent: async (_db, _client, _config, event) => {
       attempted.push(event.delivery_id)
@@ -873,79 +858,6 @@ test('isWorkflowAlreadyStartedError recognizes Temporal already-started errors',
     __test__.isWorkflowAlreadyStartedError(new Error('[already_exists] Workflow execution is already running')),
   ).toBe(true)
   expect(__test__.isWorkflowAlreadyStartedError(new Error('deadline exceeded'))).toBe(false)
-})
-
-test('resolveWorkerDeploymentName uses env override then config default', () => {
-  process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME = 'override-deployment'
-  expect(
-    __test__.resolveWorkerDeploymentName(
-      {
-        address: 'temporal-frontend.temporal.svc.cluster.local:7233',
-        namespace: 'default',
-        workerDeploymentName: 'config-deployment',
-      } as TemporalConfig,
-      'bumba',
-    ),
-  ).toBe('override-deployment')
-
-  delete process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME
-  expect(
-    __test__.resolveWorkerDeploymentName(
-      {
-        address: 'temporal-frontend.temporal.svc.cluster.local:7233',
-        namespace: 'default',
-        workerDeploymentName: 'config-deployment',
-      } as TemporalConfig,
-      'bumba',
-    ),
-  ).toBe('config-deployment')
-
-  expect(
-    __test__.resolveWorkerDeploymentName(
-      {
-        address: 'temporal-frontend.temporal.svc.cluster.local:7233',
-        namespace: 'default',
-      } as TemporalConfig,
-      'bumba',
-    ),
-  ).toBe('bumba-deployment')
-})
-
-test('extractCurrentDeploymentBuildId reads current deployment version build id', () => {
-  expect(
-    __test__.extractCurrentDeploymentBuildId({
-      workerDeploymentInfo: {
-        routingConfig: {
-          currentDeploymentVersion: { buildId: 'bumba@abc123' },
-          currentVersion: '',
-        },
-      },
-    } as never),
-  ).toBe('bumba@abc123')
-
-  expect(
-    __test__.extractCurrentDeploymentBuildId({
-      workerDeploymentInfo: {
-        routingConfig: {
-          currentVersion: 'bumba@legacy',
-        },
-      },
-    } as never),
-  ).toBe('bumba@legacy')
-})
-
-test('routing alignment error classifiers are stable', () => {
-  expect(__test__.isTransientRoutingAlignmentError(new Error('failed precondition: no pollers for build id'))).toBe(
-    true,
-  )
-  expect(__test__.isTransientRoutingAlignmentError(new Error('Not Found: deployment missing'))).toBe(true)
-  expect(__test__.isTransientRoutingAlignmentError(new Error('permission denied'))).toBe(false)
-
-  expect(__test__.isDeploymentApiUnavailableError(new Error('unimplemented'))).toBe(true)
-  expect(__test__.isDeploymentApiUnavailableError(new Error('unknown service temporal.api.workflowservice.v1'))).toBe(
-    true,
-  )
-  expect(__test__.isDeploymentApiUnavailableError(new Error('failed precondition'))).toBe(false)
 })
 
 test('start fails fast when event consumer is enabled and DATABASE_URL is missing', async () => {

@@ -629,6 +629,10 @@ The CI/CD source of truth is `docs/jangar/build-contract.md`. The runtime contra
 `.output/server/index.mjs`, and manifest verification now reads image/digest expectations through the shared typed YAML
 manifest contract in `packages/scripts/src/jangar/manifest-contract.ts`.
 
+The Temporal worker starts polling, aligns its Worker Deployment to its exact configured build ID, and waits for routing
+propagation to report `COMPLETED` before readiness becomes true. The post-deploy verifier reads the worker-selected current
+build through the Temporal SDK; the pinned legacy CLI is used only for workflow migration commands.
+
 ## API Notes
 
 - `/openai/v1/chat/completions` supports both streaming SSE responses (`stream: true`) and OpenAI-style non-stream responses (`stream: false` or omitted).
@@ -660,12 +664,15 @@ Jangar exposes the Atlas MCP endpoint at `POST /mcp` (see `services/jangar/src/r
 Atlas search correctness, production rollout, and agent verification requirements are defined in
 `../../docs/atlas/production-code-search-design.md`.
 
-The Jangar MCP server provides Atlas indexing/search tools only:
+The Jangar MCP server is read-only and exposes one authoritative search path:
 
-- `atlas_index`: records repository file-version metadata for Atlas enrichment.
-- `atlas_search`: searches Atlas enrichments.
-- `atlas_code_search`: searches code chunks with file and line pointers.
-- `atlas_stats`: returns Atlas table counts and ingestion stats.
+- `atlas_code_search`: fail-closed hybrid search over the exact ready code corpus, with commit, path, lines, hash,
+  retrieval mode, and source pointers.
+- `atlas_stats`: operational table and ingestion counts; these counts do not prove corpus correctness.
+
+`GET /api/search` is a compatibility adapter over the same `/api/code-search` implementation used by MCP and the Atlas
+search UI. Legacy enrichment search and every direct Atlas write tool have been removed from the agent and operator
+surface. Bumba full-main reconciliation is the only code-corpus writer.
 
 Generic memory note persistence, retrieval, count, stats, and MCP tools are owned by the Agents service at `/v1/memory-notes*` and `/mcp`.
 

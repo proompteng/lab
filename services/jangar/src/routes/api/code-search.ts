@@ -13,9 +13,6 @@ type CodeSearchPayload = {
   ref?: string
   pathPrefix?: string
   language?: string
-  requireSemanticCoverage?: boolean
-  minSemanticCoverage?: number
-  healthSampleLimit?: number
 }
 
 export const Route = createFileRoute('/api/code-search')({
@@ -69,6 +66,7 @@ const parseJsonBody = async (request: Request): Promise<CodeSearchPayload> => {
 }
 
 const toItem = (match: AtlasCodeSearchMatch) => ({
+  fileVersionId: match.fileVersion.id,
   repository: match.repository.name,
   ref: match.fileVersion.repositoryRef,
   commit: match.fileVersion.repositoryCommit ?? undefined,
@@ -80,6 +78,7 @@ const toItem = (match: AtlasCodeSearchMatch) => ({
   degradation: match.degradation,
   signals: match.signals,
   contentHash: match.fileVersion.contentHash,
+  updatedAt: match.fileVersion.updatedAt,
   snippet: match.chunk.content,
 })
 
@@ -104,8 +103,6 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
         ref,
         pathPrefix: parsed.value.pathPrefix,
         language: parsed.value.language,
-        minSemanticCoverage: parsed.value.minSemanticCoverage,
-        healthSampleLimit: parsed.value.healthSampleLimit,
       })
 
       if (indexHealth.status !== 'ok') {

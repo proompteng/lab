@@ -41,6 +41,23 @@ integration('Atlas code search PostgreSQL integration', () => {
     db = createKyselyDb(databaseUrl)
     lockDb = createKyselyDb(databaseUrl)
     await sql`DROP SCHEMA IF EXISTS atlas CASCADE;`.execute(db)
+    await sql`
+      DO $$
+      BEGIN
+        IF to_regclass('public.kysely_migration') IS NOT NULL THEN
+          EXECUTE $migration$
+            DELETE FROM public.kysely_migration
+            WHERE name IN (
+              '20251228_init',
+              '20260209_atlas_chunk_search',
+              '20260531_atlas_code_search_performance_indexes',
+              '20260714_atlas_current_corpus'
+            )
+          $migration$;
+        END IF;
+      END
+      $$;
+    `.execute(db)
     await sql`CREATE SCHEMA atlas;`.execute(db)
     await sql`DROP EXTENSION IF EXISTS pg_trgm CASCADE;`.execute(db)
     await sql`CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;`.execute(db)

@@ -1,325 +1,184 @@
-# Bumba + Temporal Failure Modes Runbook
+# Bumba and Temporal failure modes
 
-Last updated: 2026-02-22
+Last updated: 2026-07-14
 
-## Scope
+## Healthy data flow
 
-This runbook covers recurring failure modes in:
+1. Jangar records a default-branch push in `atlas.github_events`.
+2. Bumba processes the oldest event for a repository and starts one `reconcileAtlasRepository` workflow.
+3. The activity fetches the current `origin/main`, marks the one corpus `building`, and writes bounded batches under a
+   fenced build ID.
+4. A final transaction proves the complete Git manifest and embedding coverage, then marks the corpus `ready`.
+5. The workflow makes the event's `atlas.ingestions` row terminal; only then may the consumer mark the event processed
+   and advance to the next event for that repository.
 
-- `services/bumba` (Temporal worker + GitHub event consumer)
-- Temporal worker deployments/task queue routing for `bumba`
-- Atlas tables used by Bumba (`atlas.github_events`, `atlas.ingestions`)
-- Related but separate noise from GitHub review worktree refresh failures in `services/jangar`
+Search is intentionally unavailable during `maintenance`, `building`, or `failed`. An available but stale corpus is not
+a recovery mode.
 
-## Data Flow (What Must Stay Healthy)
+All callers use one repository-scoped reconciliation workflow ID. A concurrent start must fail as already running; do
+not work around that fence with a second workflow ID.
 
-1. Jangar webhook ingest writes rows into `atlas.github_events` with `processed_at IS NULL`.
-2. Bumba event-consumer polls those rows and starts one `enrichFile` workflow per changed file path.
-3. Workflows update `atlas.ingestions` (`running` -> terminal `completed|failed|skipped`).
-4. Event-consumer marks `atlas.github_events.processed_at` once all ingestions are terminal.
-
-If any step stalls, new workflows appear to stop.
-
-## Fast Triage (5 Minutes)
-
-Set Temporal defaults:
+## Five-minute triage
 
 ```bash
 export TEMPORAL_ADDRESS=temporal-grpc.ide-newton.ts.net:7233
 export TEMPORAL_NAMESPACE=default
-```
 
-Check queue and pollers:
+kubectl -n jangar get deploy bumba
+kubectl -n jangar get pods -l app.kubernetes.io/name=bumba \
+  -o custom-columns=NAME:.metadata.name,RESTARTS:.status.containerStatuses[0].restartCount,REASON:.status.containerStatuses[0].lastState.terminated.reason
+kubectl -n jangar logs deploy/bumba --since=30m | tail -n 400
 
-```bash
-temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" \
-  task-queue describe --task-queue bumba --select-all-active --select-unversioned
-```
+bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
+  --address "$TEMPORAL_ADDRESS" \
+  --namespace "$TEMPORAL_NAMESPACE" \
+  --task-queue bumba \
+  --deployment-name bumba-deployment \
+  --dry-run
 
-If `UNVERSIONED` backlog is non-zero while workflow pollers are only versioned, new `AUTO_UPGRADE`
-workflows can stall at history length `2` (`WorkflowExecutionStarted` + `WorkflowTaskScheduled` only).
-
-Check deployment routing:
-
-```bash
-temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" \
-  worker deployment describe --name bumba-deployment -o json
-```
-
-Check pending events + nonterminal ingestions:
-
-```bash
 kubectl cnpg psql -n jangar jangar-db -- -d jangar -c "
-select count(*) as unprocessed from atlas.github_events where processed_at is null;
-select count(*) as nonterminal
+select name, default_ref, metadata
+from atlas.repositories
+where name = 'proompteng/lab';
+
+select count(*) as unprocessed, min(received_at) as oldest
+from atlas.github_events
+where processed_at is null;
+
+select status, count(*)
 from atlas.ingestions
-where status in ('accepted','running');
+group by status
+order by status;
 "
 ```
 
-Check Bumba logs:
+Use an explicit namespace for every Kubernetes command.
 
-```bash
-kubectl logs -n jangar deploy/bumba --since=30m | tail -n 400
-```
-
-## Failure Mode 1: Temporal Routing Drift
+## Routing is not complete
 
 Symptoms:
 
-- New workflows start but fail with activity `ScheduleToStart timeout`.
-- Queue has no backlog dispatch despite active workload.
-- Pollers are on one build ID, while `currentVersionBuildID` points to another.
-- `UNVERSIONED` workflow backlog grows even though no unversioned pollers exist.
-- Affected runs often stay `Running` with `HistoryLength=2` and no workflow task started.
+- Bumba or Jangar remains unready after its Temporal poller starts.
+- Logs report a current-build mismatch or routing propagation timeout.
+- `routingConfigUpdateState` is not `COMPLETED`.
+- New workflows remain scheduled without a workflow task start.
 
-How to confirm:
+The worker itself selects its exact configured `TEMPORAL_WORKER_BUILD_ID` and waits for propagation before readiness or
+event consumption. There is no bypass environment variable.
 
-1. `task-queue describe` shows poller build IDs for `workflow`/`activity`.
-2. `worker deployment describe` shows `routingConfig.currentVersionBuildID`.
-3. Values do not match, or current version is empty (`nil`) while versioned pollers exist.
-
-Immediate fix:
+To select a known deployed build explicitly:
 
 ```bash
 bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
+  --address "$TEMPORAL_ADDRESS" \
+  --namespace "$TEMPORAL_NAMESPACE" \
   --task-queue bumba \
   --deployment-name bumba-deployment \
-  --migrate-unversioned-running \
-  --reason "incident recovery: sync bumba routing"
+  --build-id '<build-id-from-the-running-worker-log>'
 ```
 
-Prevention:
+If propagation remains stuck, inspect Worker Deployment versions through the Temporal SDK or a current Temporal CLI.
+A stale version may be deleted only when all of the following are proven:
 
-- Run routing sync after every Bumba deploy.
-- Alert if `currentVersionBuildID` has no active pollers.
-- Keep `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED=true` so Bumba waits for routing alignment
-  before dispatching new event workflows.
+- it is neither current nor ramping;
+- its drainage state is `DRAINED`;
+- no pinned workflow references it;
+- a healthy poller exists on the intended current build.
 
-## Failure Mode 2: Activity Routing to Wrong Build (Historical SDK Bug)
+Deleting the stale version should cause routing propagation to become `COMPLETED`. Never weaken the startup gate or use
+the repository's pinned legacy CLI to infer Worker Deployment pollers; that CLI predates this API.
 
-Symptoms:
-
-- Workflow run is pinned/versioned, but activities still timeout with `ScheduleToStart`.
-- Unversioned activity queue has no pollers.
-
-Root cause:
-
-- Older Temporal Bun SDK builds could emit activity commands without forcing workflow build routing.
-
-Status:
-
-- Fixed in current code path (`packages/temporal-bun-sdk/src/workflow/commands.ts` uses `useWorkflowBuildId: true`).
-
-Actions:
-
-- Ensure deployed Bumba image contains the fixed SDK.
-- If old runs are stuck, sync routing and migrate running executions as needed.
-
-## Failure Mode 3: Event-Consumer Starvation on Nonterminal Ingestions
+## Rebuild activity is running after its worker died
 
 Symptoms:
 
-- `bumba` looks idle.
-- `atlas.github_events` has old `processed_at IS NULL` rows.
-- Few old events block newer events from dispatch.
+- The Bumba container was `OOMKilled` or restarted.
+- Temporal still reports a long-running `reconcileAtlasRepository` activity.
+- The pending activity reports heartbeat timeout `0`, or no heartbeat time advances.
+- Repository metadata remains `building` without increasing `preparedFiles`.
 
-Root cause:
+The hardened workflow schedules this activity with a 90-second heartbeat timeout. Its worker sends build ID, commit, and
+persisted-file progress every 15 seconds. A new activity attempt reuses that heartbeat state and already committed batches.
 
-- Consumer waits when an event already has nonterminal ingestions.
-- Default stale threshold is long (`BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS`, default 12h).
-
-How to confirm:
+For an old pre-heartbeat run, first prove that the worker attempt is dead. Terminate that exact workflow run with a reason;
+do not start a duplicate while the original can still write. Deploy the heartbeat-capable worker, then start one rebuild:
 
 ```bash
-kubectl cnpg psql -n jangar jangar-db -- -d jangar -c "
-with pending as (
-  select id, delivery_id, repository, received_at
-  from atlas.github_events
-  where processed_at is null
-),
-running as (
-  select event_id, count(*) as running_cnt, min(started_at) as oldest_started
-  from atlas.ingestions
-  where status in ('accepted','running')
-  group by event_id
-)
-select p.id, p.delivery_id, p.repository, p.received_at, r.running_cnt, r.oldest_started
-from pending p
-left join running r on r.event_id = p.id
-order by p.received_at asc;
-"
+bun run atlas:rebuild --repository proompteng/lab --ref main
 ```
 
-Immediate recovery:
+The July 14 production incident followed this pattern: the worker retained thousands of prepared embeddings, was
+OOM-killed, and Temporal could not detect the dead activity because its heartbeat timeout was zero. The accepted fix is
+bounded batch persistence plus heartbeats, not a larger in-memory corpus or a second schema.
 
-- Mark stale nonterminal rows `failed`.
-- Then mark events `processed_at` if all ingestions are terminal.
+## Repository build lease is busy
 
-Example (30m stale threshold):
+Symptoms:
+
+- An activity reports that another Atlas reconciliation is active.
+- A later GitHub event waits behind an earlier event for the same repository.
+
+This is expected serialization. Each batch checks the database build ID and target commit. Let the active workflow
+finish or fail. A Temporal retry reuses its own build ID; an unrelated build can take over only after the database lease
+expires. Do not clear the lease while its worker is alive.
+
+## Event consumer is disabled
+
+During cutover, this is expected:
 
 ```bash
-kubectl cnpg psql -n jangar jangar-db -- -d jangar -c "
-with stale as (
-  update atlas.ingestions i
-  set status='failed',
-      error = case
-        when i.error is null or i.error = '' then 'manual stale reconciliation'
-        when i.error like 'manual stale reconciliation%' then i.error
-        else i.error || ' | manual stale reconciliation'
-      end,
-      finished_at = coalesce(i.finished_at, now())
-  where i.status not in ('completed','failed','skipped')
-    and i.event_id in (select id from atlas.github_events where processed_at is null)
-    and i.started_at < now() - interval '30 minutes'
-  returning i.event_id
-),
-ready as (
-  select distinct s.event_id as id from stale s
-)
-update atlas.github_events e
-set processed_at = now()
-where e.id in (
-  select r.id
-  from ready r
-  where not exists (
-    select 1 from atlas.ingestions i
-    where i.event_id = r.id
-      and i.status not in ('completed','failed','skipped')
-  )
-);
-"
+kubectl -n jangar exec deploy/bumba -- printenv BUMBA_GITHUB_EVENT_CONSUMER_ENABLED
 ```
 
-Prevention:
-
-- Reduce `BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS` from 12h to an operationally safe lower value.
-- Alert on nonterminal ingestions older than threshold.
-
-## Failure Mode 4: Bootstrap `upsertIngestion` Failure Leaves Stale State (Fixed)
-
-Symptoms:
-
-- Workflow fails very early.
-- `atlas.ingestions` can stay `running` for the same `workflow_id`.
-
-Root cause (pre-fix):
-
-- Initial `upsertIngestion(status='running')` could fail before failure-finalization logic ran.
-
-Fix:
-
-- PR [#3505](https://github.com/proompteng/lab/pull/3505), merge commit `d32f478a3e3872533f221e505c1c9ede17662d55`.
-- File: `services/bumba/src/workflows/index.ts`.
-- Regression tests: `services/bumba/src/workflows/index.test.ts`.
-
-If observed on older deployments:
-
-- Reconcile stale rows (Failure Mode 3 recovery SQL).
-- Deploy a build that includes PR #3505.
-
-## Failure Mode 5: `already_exists` Start Errors
-
-Symptoms:
-
-- Logs contain:
-  - `failed to start enrichFile workflow`
-  - `[already_exists] Workflow execution is already running`
-  - `retaining event for retry after dispatch failures`
-
-Meaning:
-
-- Usually benign duplicate-start collisions.
-- Workflow IDs are deterministic per `(delivery_id, file_path)`, so duplicate starts collide by design.
-- If Bumba logs show `[already_exists] Workflow execution is already running`, treat it as non-fatal.
-  Current code classifies `already_exists` / `already running` as already-started and does not count it
-  as a dispatch failure.
-
-When to act:
-
-- Act only when starts fail for reasons other than `already_exists`.
-- If repeated attempts show `started=0`, inspect Temporal availability/routing immediately.
-
-## Failure Mode 6: Consumer Not Running / Disabled
-
-Symptoms:
-
-- No workflows triggered despite new webhook rows.
-- Readiness reports consumer unhealthy.
-
-Checks:
-
-```bash
-kubectl logs -n jangar deploy/bumba --since=15m | rg -n "event-consumer|disabled|tick failed"
-kubectl exec -n jangar deploy/bumba -- wget -qO- http://127.0.0.1:3001/readyz
-```
-
-Expected:
-
-- `consumer.required=true`, `consumer.running=true`, `status=ok` when enabled.
-
-Main knobs:
+Keep the value `false` until a current-main rebuild and live `atlas:verify` both pass. When enabled, readiness must show
+the consumer running. Main controls are:
 
 - `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED`
 - `BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS`
 - `BUMBA_GITHUB_EVENT_BATCH_SIZE`
+- `BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK`
+- `BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES`
 - `BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS`
-- `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED`
 
-## Failure Mode 7: GitHub Review Worktree Snapshot Refresh Failures (Not Bumba)
+## Stale nonterminal ingestion
 
-Symptoms:
-
-- Logs:
-  - `[github-review-ingest] worktree snapshot refresh failed`
-  - `Unable to resolve git ref: <ref>`
-
-Root cause:
-
-- Missing/deleted head ref (for example, stale PR head branch or release ref).
-- Jangar intentionally backs off repeated refresh attempts for missing refs.
-
-Impact:
-
-- Affects GitHub review snapshot enrichment.
-- Does **not** directly block Bumba Temporal workflow dispatch.
-
-Code references:
-
-- `services/jangar/src/server/github-review-ingest.ts`
-- `services/jangar/src/server/github-review-handlers.ts`
-- `services/jangar/src/server/__tests__/github-review-ingest.test.ts`
-
-## Workflow-Level Debug (Single Run)
-
-Given a UI URL:
-
-`http://temporal/namespaces/default/workflows/<workflowId>/<runId>/history`
-
-Inspect status + failure:
+An event waits while its one reconciliation ingestion is nonterminal. Inspect exact workflow IDs before changing data:
 
 ```bash
-temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" \
-  workflow describe --workflow-id "<workflowId>" --run-id "<runId>"
+kubectl cnpg psql -n jangar jangar-db -- -d jangar -c "
+select e.delivery_id, e.repository, e.received_at,
+       i.workflow_id, i.status, i.started_at, i.error
+from atlas.github_events e
+left join atlas.ingestions i on i.event_id = e.id
+where e.processed_at is null
+order by e.received_at, i.started_at;
+"
 ```
 
-Dump history and inspect timeout events:
+If the Temporal run is still live, repair that run. If it is definitively closed and the ingestion row is stale, mark
+only that row failed with an incident reason. The consumer will then settle the event. Never bulk-complete events merely
+to clear a dashboard.
+
+## `already_exists` on workflow start
+
+The reconciliation workflow ID is deterministic per delivery. `already_exists` is benign when that exact workflow is
+already recorded for the event; Bumba classifies it as already started. Other start failures remain retryable and keep
+the event pending.
+
+## Single-run inspection
 
 ```bash
 temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" \
-  workflow show --workflow-id "<workflowId>" --run-id "<runId>" --output json > /tmp/wf.json
+  workflow describe --workflow-id '<workflow-id>' --run-id '<run-id>'
 
-jq '.events[] | select(.eventType=="EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT")' /tmp/wf.json
+temporal --address "$TEMPORAL_ADDRESS" --namespace "$TEMPORAL_NAMESPACE" \
+  workflow show --workflow-id '<workflow-id>' --run-id '<run-id>' --output json > /tmp/workflow-history.json
 ```
 
 Interpretation:
 
-- `ScheduleToStart timeout`: queue routing/poller availability issue.
-- `ScheduleToClose` with `StartToClose` cause: activity started, then timed out while running or retrying.
-
-## Operational Guardrails (Recommended)
-
-- Add alert on `atlas.ingestions` nonterminal age over threshold.
-- Add alert when `atlas.github_events` `processed_at IS NULL` oldest age exceeds SLO.
-- Add deploy-time routing sync for Bumba task queue.
-- Keep this runbook updated whenever incident response introduces a new mitigation path.
+- no workflow-task start: routing or poller failure;
+- `ScheduleToStart` timeout: task-queue routing failure;
+- heartbeat timeout after a pod exit: expected crash detection and activity retry;
+- repeated activity failure with repository status `failed`: fix the concrete preparation, embedding, Git, or database
+  error before retrying.
