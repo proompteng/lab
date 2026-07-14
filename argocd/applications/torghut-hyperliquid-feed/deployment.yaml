@@ -32,18 +32,18 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-hyperliquid-feed
-          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:40598685cc3298597be18666959510683789d1c59521f089724a7a3724198ec1
+          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:b532dcf3e1a50266bbeded855d0ae6938f4afe55a6ff90293a74278d868356f1
           imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: torghut-hyperliquid-feed-config
           env:
             - name: TORGHUT_HYPERLIQUID_FEED_VERSION
-              value: main-sha-bf6d10ebebc63e55322a5d4d08a2c4f8b20c7bcf
+              value: main-sha-272f07d74aa1f4f75ff425b4ae6ce9a8d5622a30
             - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
-              value: bf6d10ebebc63e55322a5d4d08a2c4f8b20c7bcf
+              value: 272f07d74aa1f4f75ff425b4ae6ce9a8d5622a30
             - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
-              value: sha256:40598685cc3298597be18666959510683789d1c59521f089724a7a3724198ec1
+              value: sha256:b532dcf3e1a50266bbeded855d0ae6938f4afe55a6ff90293a74278d868356f1
             - name: KAFKA_SASL_USER
               value: torghut-hyperliquid-feed
             - name: KAFKA_SASL_PASSWORD
