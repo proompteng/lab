@@ -54,6 +54,7 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
     assert "revisionHistoryLimit: 2" in deployment
     assert "HYPERLIQUID_EXECUTION_ORDER_POLICY: marketable_ioc" in configmap
     assert 'HYPERLIQUID_EXECUTION_TRADING_ENABLED: "false"' in configmap
+    assert "HYPERLIQUID_EXECUTION_ACCOUNT_LABEL: hyperliquid-testnet" in configmap
     assert 'HYPERLIQUID_EXECUTION_ORDER_TTL_SECONDS: "10"' in configmap
     assert 'HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD: "12"' in configmap
     assert 'HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION: "0.35"' in configmap

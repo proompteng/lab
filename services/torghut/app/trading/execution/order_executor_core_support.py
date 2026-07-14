@@ -88,14 +88,6 @@ def _validate_pre_submit_request(*args: Any, **kwargs: Any) -> dict[str, Any] | 
     return validate_pre_submit_request(*args, **kwargs)
 
 
-def _persist_lean_shadow_event(*args: Any, **kwargs: Any) -> None:
-    from .validate_pre_submit_request import (
-        persist_lean_shadow_event,
-    )
-
-    persist_lean_shadow_event(*args, **kwargs)
-
-
 def _attach_execution_policy_context(*args: Any, **kwargs: Any) -> None:
     from .validate_pre_submit_request import (
         attach_execution_policy_context,
@@ -332,7 +324,6 @@ normalize_submission_block_reasons = _normalize_submission_block_reasons
 open_sell_order_reserves_symbol = _open_sell_order_reserves_symbol
 optional_decimal = _optional_decimal
 order_payload_with_execution_metadata = _order_payload_with_execution_metadata
-persist_lean_shadow_event = _persist_lean_shadow_event
 resolve_submission_simulation_context = _resolve_submission_simulation_context
 sell_inventory_conflict_payload = _sell_inventory_conflict_payload
 sell_inventory_metadata_update = _sell_inventory_metadata_update
@@ -363,7 +354,6 @@ __all__ = [
     "open_sell_order_reserves_symbol",
     "optional_decimal",
     "order_payload_with_execution_metadata",
-    "persist_lean_shadow_event",
     "resolve_submission_simulation_context",
     "sell_inventory_conflict_payload",
     "sell_inventory_metadata_update",

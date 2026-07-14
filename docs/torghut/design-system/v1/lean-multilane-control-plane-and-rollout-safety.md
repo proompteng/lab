@@ -1,5 +1,17 @@
 # LEAN Multi-Lane Control Plane And Rollout Safety
 
+## Execution Retirement Note (2026-07-14)
+
+The LEAN live-submit adapter, Alpaca fallback, session-router remnants, live-execution shadow telemetry, and live-canary
+controls described below were removed during profitability Slice 4. Current source had no production constructor for the
+LEAN submit adapter, while the adapter itself could mutate a second order endpoint without Torghut's durable
+claim/receipt coordinator. Keeping that dormant authority would make the broker-mutation boundary unverifiable.
+
+The non-mutating backtest and strategy-shadow research helpers remain. Strategy shadow now calls its research runtime
+directly instead of depending on a broker adapter. Historical database tables are retained for migration and data
+compatibility, but they are not evidence that retired live-submit or canary capabilities are active. Any future LEAN
+broker route must be introduced as a new coordinator-backed production capability with its own fault and rollout proof.
+
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
@@ -18,12 +30,12 @@
 
 This document defines production operations for Torghut LEAN multi-lane capability while preserving Torghut as control plane authority for risk, governance, and rollback safety.
 
-## Implemented Lanes
+## Historical Intended Lanes
 
-- `execution`: existing LEAN execution adapter with deterministic Alpaca fallback.
+- `execution`: retired; no current production submit authority.
 - `research_backtest`: asynchronous LEAN backtest submission/result flow with durable reproducibility metadata.
-- `live_shadow_execution`: no-side-effect simulation for live intents, persisted parity telemetry.
-- `live_canary_execution`: gated LEAN live routing for configured crypto symbols with hard rollback criteria.
+- `live_shadow_execution`: retired with the disconnected submit adapter.
+- `live_canary_execution`: retired; dormant settings and metrics were removed.
 - `strategy_shadow_runtime`: LEAN strategy shadow evaluation path without replacing Torghut decision authority.
 
 ## Contract And Safety Foundation

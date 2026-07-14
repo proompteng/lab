@@ -12,7 +12,7 @@ class SimulationParityGuardTest(unittest.TestCase):
         trading_root = repo_root / "app" / "trading"
         allowlist = {
             "execution_adapters.py",
-            "execution_adapters/lean_adapter.py",
+            "execution_adapters/factory.py",
             "market_session.py",
             "simulation.py",
             "simulation_progress.py",

@@ -291,22 +291,6 @@ class AutonomyExecutionSettingsFields(BaseSettings):
         default=True, alias="TRADING_EXECUTION_PREFER_LIMIT"
     )
 
-    trading_execution_max_retries: int = Field(
-        default=0, alias="TRADING_EXECUTION_MAX_RETRIES"
-    )
-
-    trading_execution_backoff_base_seconds: float = Field(
-        default=0.25, alias="TRADING_EXECUTION_BACKOFF_BASE_SECONDS"
-    )
-
-    trading_execution_backoff_multiplier: float = Field(
-        default=2.0, alias="TRADING_EXECUTION_BACKOFF_MULTIPLIER"
-    )
-
-    trading_execution_backoff_max_seconds: float = Field(
-        default=2.0, alias="TRADING_EXECUTION_BACKOFF_MAX_SECONDS"
-    )
-
     trading_execution_advisor_enabled: bool = Field(
         default=True,
         alias="TRADING_EXECUTION_ADVISOR_ENABLED",
@@ -427,12 +411,6 @@ class AutonomyExecutionSettingsFields(BaseSettings):
         description="Optional upstream URL for authoritative LEAN backtest submission and polling.",
     )
 
-    trading_lean_shadow_upstream_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_LEAN_SHADOW_UPSTREAM_URL",
-        description="Optional upstream URL for authoritative LEAN shadow simulation.",
-    )
-
     trading_lean_strategy_shadow_upstream_url: Optional[str] = Field(
         default=None,
         alias="TRADING_LEAN_STRATEGY_SHADOW_UPSTREAM_URL",
@@ -445,52 +423,16 @@ class AutonomyExecutionSettingsFields(BaseSettings):
         description="Enable asynchronous LEAN backtest lane orchestration.",
     )
 
-    trading_lean_shadow_execution_enabled: bool = Field(
-        default=False,
-        alias="TRADING_LEAN_SHADOW_EXECUTION_ENABLED",
-        description="Enable LEAN execution shadow simulation telemetry for live intents.",
-    )
-
     trading_lean_strategy_shadow_enabled: bool = Field(
         default=False,
         alias="TRADING_LEAN_STRATEGY_SHADOW_ENABLED",
         description="Enable LEAN strategy-runtime shadow evaluations without control-plane replacement.",
     )
 
-    trading_lean_live_canary_enabled: bool = Field(
-        default=False,
-        alias="TRADING_LEAN_LIVE_CANARY_ENABLED",
-        description="Enable strict LEAN live canary routing controls.",
-    )
-
     trading_lean_lane_disable_switch: bool = Field(
         default=False,
         alias="TRADING_LEAN_LANE_DISABLE_SWITCH",
         description="Emergency hard disable for LEAN multi-lane behavior.",
-    )
-
-    trading_lean_live_canary_crypto_only: bool = Field(
-        default=True,
-        alias="TRADING_LEAN_LIVE_CANARY_CRYPTO_ONLY",
-        description="Restrict LEAN live canary activation to crypto symbols only.",
-    )
-
-    trading_lean_live_canary_symbols_raw: Optional[str] = Field(
-        default=None,
-        alias="TRADING_LEAN_LIVE_CANARY_SYMBOLS",
-        description="Comma-separated symbol allowlist for LEAN live canaries.",
-    )
-
-    trading_lean_live_canary_fallback_ratio_limit: float = Field(
-        default=0.25,
-        alias="TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT",
-        description="Hard rollback trigger threshold for LEAN fallback ratio in live canary.",
-    )
-
-    trading_lean_live_canary_hard_rollback_enabled: bool = Field(
-        default=True,
-        alias="TRADING_LEAN_LIVE_CANARY_HARD_ROLLBACK_ENABLED",
-        description="Trigger emergency stop and evidence capture when live canary breaches thresholds.",
     )
 
     trading_max_position_pct_equity: Optional[float] = Field(

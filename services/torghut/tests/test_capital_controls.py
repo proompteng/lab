@@ -33,7 +33,7 @@ class _ExecutionAdapter:
         _ = status
         return []
 
-    def submit_order(self, submission):
+    def submit_risk_reducing_order(self, submission):
         self.submissions.append(submission)
         self.positions = []
         return {"id": "close-1", "status": "accepted"}

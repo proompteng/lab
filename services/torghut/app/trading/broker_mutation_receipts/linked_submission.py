@@ -15,7 +15,10 @@ from ..decision_submission_claims.types import (
     DecisionSubmissionClaimHandle,
     DecisionSubmissionFenceError,
 )
-from ..decision_submission_claims.validation import validate_broker_io_boundary
+from ..decision_submission_claims.validation import (
+    as_utc_datetime,
+    validate_broker_io_boundary,
+)
 from .persistence import (
     broker_mutation_identity_lock_keys,
     database_now,
@@ -145,7 +148,7 @@ def lock_linked_submission_claim(
             "linked_submission_claim_state_mismatch:"
             f"{row.state}:{','.join(sorted(expected_states))}"
         )
-    if require_unexpired and row.lease_expires_at <= now:
+    if require_unexpired and as_utc_datetime(row.lease_expires_at) <= now:
         raise BrokerMutationReceiptFenceError(
             f"linked_submission_claim_expired:{handle.decision_id}"
         )

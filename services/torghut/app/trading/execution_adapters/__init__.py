@@ -10,15 +10,10 @@ from .adapter_types import (
     SimulationExecutionAdapter,
     logger,
 )
-from .lean_adapter import LeanExecutionAdapter, build_execution_adapter
+from .factory import build_execution_adapter
 from .order_text import (
-    classify_failure_taxonomy,
-    classify_fallback_reason,
     decimal_to_order_text,
-    error_summary,
     float_to_order_text,
-    http_request_text,
-    is_http_status_error,
     optional_decimal,
     positive_decimal,
     resolve_simulation_context_payload,
@@ -36,16 +31,10 @@ from .simulation_orders import (
 __all__ = [
     "AlpacaExecutionAdapter",
     "ExecutionAdapter",
-    "LeanExecutionAdapter",
     "OrderSubmission",
     "SimulationExecutionAdapter",
-    "classify_failure_taxonomy",
-    "classify_fallback_reason",
     "decimal_to_order_text",
-    "error_summary",
     "float_to_order_text",
-    "http_request_text",
-    "is_http_status_error",
     "optional_decimal",
     "positive_decimal",
     "resolve_simulated_fill_price",

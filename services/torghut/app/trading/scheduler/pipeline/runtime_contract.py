@@ -199,13 +199,6 @@ class TradingPipelineInteractions(Protocol):
         request: ExecutionPolicyRequest,
     ) -> tuple[StrategyDecision, ExecutionPolicyOutcome] | None: ...
 
-    def _evaluate_lean_canary_guard(
-        self,
-        session: Session,
-        *,
-        symbol: str,
-    ) -> None: ...
-
     def _execution_client_for_symbol(self, symbol: str) -> ExecutionAdapter: ...
 
     def _execution_client_name(
@@ -284,8 +277,6 @@ class TradingPipelineInteractions(Protocol):
         *,
         session: Session,
         decision: StrategyDecision,
-        execution_client: ExecutionAdapter,
-        selected_adapter_name: str,
     ) -> None: ...
 
     def _passes_risk_verdict(self, request: RiskVerdictRequest) -> bool: ...
@@ -311,8 +302,6 @@ class TradingPipelineInteractions(Protocol):
         *,
         context: BatchSignalProcessingContext,
     ) -> None: ...
-
-    def _record_lean_shadow_from_execution(self, execution: Execution) -> None: ...
 
     def _record_llm_committee_metrics(
         self,
@@ -398,8 +387,6 @@ class TradingPipelineInteractions(Protocol):
         self,
         request: OrderSubmissionRequest,
     ) -> tuple[Execution | None, bool]: ...
-
-    def _sync_lean_observability(self, execution_client: ExecutionAdapter) -> None: ...
 
     def is_market_session_open(self, now: datetime | None = None) -> bool: ...
 

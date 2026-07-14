@@ -229,6 +229,96 @@ def test_non_close_operations_preserve_the_callers_honest_risk_class(
     assert intent.risk_class == risk_class
 
 
+def test_submit_claim_contract_is_route_specific() -> None:
+    hyperliquid = build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="hyperliquid",
+            account_label="hyperliquid-testnet",
+            endpoint_fingerprint="b" * 64,
+            operation="submit_order",
+            risk_class="risk_increasing",
+            purpose="initial_submission",
+            workflow_id="signal/signal-1",
+            client_request_id="0x" + "1" * 32,
+            target=BrokerMutationTarget(kind="order", key="0x" + "1" * 32),
+            request_payload={"coin": "BTC", "side": "buy", "size": Decimal("0.01")},
+            submission_claim_id=None,
+        )
+    )
+
+    assert hyperliquid.submission_claim_id is None
+    verify_broker_mutation_intent(hyperliquid)
+
+    for broker_route, claim_id in (
+        ("alpaca", None),
+        ("hyperliquid", uuid.uuid4()),
+    ):
+        with pytest.raises(
+            BrokerMutationReceiptValidationError,
+            match="submit_order_route_claim_contract_invalid",
+        ):
+            build_broker_mutation_intent(
+                BrokerMutationIntentRequest(
+                    broker_route=broker_route,
+                    account_label="paper",
+                    endpoint_fingerprint="b" * 64,
+                    operation="submit_order",
+                    risk_class="risk_increasing",
+                    purpose="initial_submission",
+                    workflow_id="workflow-1",
+                    client_request_id="request-1",
+                    target=BrokerMutationTarget(kind="order", key="request-1"),
+                    request_payload={"side": "buy", "qty": Decimal("1")},
+                    submission_claim_id=claim_id,
+                )
+            )
+
+
+def test_unlinked_alpaca_submit_is_limited_to_risk_reducing_closeout() -> None:
+    closeout = build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="alpaca",
+            account_label="paper",
+            endpoint_fingerprint="a" * 64,
+            operation="submit_order",
+            risk_class="risk_reducing",
+            purpose="closeout",
+            workflow_id="closeout-1",
+            client_request_id="closeout-1",
+            target=BrokerMutationTarget(kind="order", key="closeout-1"),
+            request_payload={"side": "sell", "qty": Decimal("1")},
+        )
+    )
+
+    assert closeout.submission_claim_id is None
+    for risk_class, purpose in (
+        ("risk_increasing", "closeout"),
+        ("risk_reducing", "initial_submission"),
+        ("risk_neutral", "flatten"),
+    ):
+        with pytest.raises(
+            BrokerMutationReceiptValidationError,
+            match="submit_order_route_claim_contract_invalid",
+        ):
+            build_broker_mutation_intent(
+                BrokerMutationIntentRequest(
+                    broker_route="alpaca",
+                    account_label="paper",
+                    endpoint_fingerprint="a" * 64,
+                    operation="submit_order",
+                    risk_class=risk_class,
+                    purpose=purpose,
+                    workflow_id="closeout-invalid",
+                    client_request_id="closeout-invalid",
+                    target=BrokerMutationTarget(
+                        kind="order",
+                        key="closeout-invalid",
+                    ),
+                    request_payload={"side": "sell", "qty": Decimal("1")},
+                )
+            )
+
+
 @pytest.mark.parametrize(
     ("operation", "target_kind", "target_identifier", "risk_class", "claim_id"),
     [

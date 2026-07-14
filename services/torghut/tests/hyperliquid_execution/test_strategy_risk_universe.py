@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
@@ -367,6 +367,52 @@ def test_ioc_order_policy_rounds_size_up_to_clear_min_notional() -> None:
 
     assert intent.notional_usd >= config.min_order_notional_usd
     assert intent.size == Decimal("0.1001")
+
+
+def test_order_cloid_is_stable_across_cycle_replay_and_bound_to_economics() -> None:
+    config = HyperliquidExecutionConfig.from_env({})
+    feature = replace(
+        _feature(momentum=Decimal("12")),
+        event_ts=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
+    )
+    signal = generate_signal(feature, config)
+    verdict = evaluate_signal_risk(signal, _risk_state(), config)
+
+    first = build_order_intent(
+        signal=signal,
+        verdict=verdict,
+        config=config,
+        signal_id="random-signal-row-a",
+        now=datetime(2026, 7, 14, 12, 0, 1, tzinfo=timezone.utc),
+    )
+    replay = build_order_intent(
+        signal=signal,
+        verdict=verdict,
+        config=config,
+        signal_id="random-signal-row-b",
+        now=datetime(2026, 7, 14, 12, 0, 9, tzinfo=timezone.utc),
+    )
+    changed_source = generate_signal(
+        replace(feature, event_ts=feature.event_ts + timedelta(microseconds=1)),
+        config,
+    )
+    changed = build_order_intent(
+        signal=changed_source,
+        verdict=evaluate_signal_risk(changed_source, _risk_state(), config),
+        config=config,
+        signal_id="random-signal-row-c",
+    )
+    changed_economics = build_order_intent(
+        signal=signal,
+        verdict=replace(verdict, order_notional_usd=Decimal("20")),
+        config=config,
+        signal_id="random-signal-row-d",
+    )
+
+    assert first.cloid == replay.cloid
+    assert first.expires_at != replay.expires_at
+    assert changed.cloid != first.cloid
+    assert changed_economics.cloid != first.cloid
 
 
 def test_ioc_order_policy_rejects_blocked_or_unusable_quotes() -> None:

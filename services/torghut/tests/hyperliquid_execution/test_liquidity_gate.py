@@ -20,6 +20,7 @@ from app.hyperliquid_execution.service import HyperliquidExecutionService
 from tests.hyperliquid_execution.test_runtime_surfaces import (
     _FakeSession,
     _ServiceExchange,
+    _SUBMIT_COORDINATOR,
     _TwoExecutableServiceFeed,
     _now,
 )
@@ -329,6 +330,7 @@ def test_service_skips_uncrossable_testnet_markets_before_signals() -> None:
         config=config,
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
+        submit_coordinator=_SUBMIT_COORDINATOR,
     )
 
     result = service.run_once(session)

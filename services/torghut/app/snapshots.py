@@ -95,6 +95,7 @@ def sync_order_to_db(
     execution_actual_adapter: str | None = None,
     execution_fallback_reason: str | None = None,
     execution_fallback_count: int | None = None,
+    commit: bool = True,
 ) -> Execution:
     """Create or update an Execution row from an Alpaca order response."""
 
@@ -145,15 +146,21 @@ def sync_order_to_db(
     )
     if existing is not None:
         return _persist_existing_execution(
-            session=session, existing=existing, data=data
+            session=session,
+            existing=existing,
+            data=data,
+            commit=commit,
         )
 
     execution = Execution(**data)
     session.add(execution)
+    if not commit:
+        session.flush()
+        return execution
     try:
         session.commit()
         session.refresh(execution)
-        _link_pending_order_feed_events(session, execution)
+        link_pending_order_feed_events(session, execution)
         return execution
     except IntegrityError:
         session.rollback()
@@ -167,7 +174,10 @@ def sync_order_to_db(
         if existing is None:
             raise
         return _persist_existing_execution(
-            session=session, existing=existing, data=data
+            session=session,
+            existing=existing,
+            data=data,
+            commit=True,
         )
 
 
@@ -355,18 +365,24 @@ def _persist_existing_execution(
     session: Session,
     existing: Execution,
     data: dict[str, Any],
+    commit: bool,
 ) -> Execution:
     data = _preserve_existing_execution_audit(existing=existing, data=data)
     for key, value in data.items():
         setattr(existing, key, value)
     session.add(existing)
+    if not commit:
+        session.flush()
+        return existing
     session.commit()
     session.refresh(existing)
-    _link_pending_order_feed_events(session, existing)
+    link_pending_order_feed_events(session, existing)
     return existing
 
 
-def _link_pending_order_feed_events(session: Session, execution: Execution) -> None:
+def link_pending_order_feed_events(session: Session, execution: Execution) -> None:
+    """Attach order-feed events after the owning execution commit is durable."""
+
     from .trading.order_feed import link_order_events_to_execution
 
     if link_order_events_to_execution(session, execution) <= 0:
@@ -678,4 +694,8 @@ def _optional_decimal(value: Any) -> Optional[Decimal]:
         return None
 
 
-__all__ = ["snapshot_account_and_positions", "sync_order_to_db"]
+__all__ = [
+    "link_pending_order_feed_events",
+    "snapshot_account_and_positions",
+    "sync_order_to_db",
+]

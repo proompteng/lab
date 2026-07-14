@@ -46,6 +46,8 @@ def _mutation_status(**overrides: object) -> dict[str, object]:
         "reduction_fencing_proven": True,
         "recovery_worker_wired": True,
         "recovery_degraded": False,
+        "database_status": "current",
+        "unresolved_receipt_count": 0,
         "reason_codes": [],
     }
     payload.update(overrides)
@@ -180,6 +182,54 @@ def test_unwired_mutation_runtime_cannot_claim_entry_or_reduction_safety() -> No
     assert authority.reason_codes["entry"] == ("broker_mutation_receipts_unwired",)
     assert authority.reason_codes["reduce_only"] == (
         "broker_mutation_receipts_unwired",
+    )
+
+
+def test_unresolved_submit_blocks_new_entry_without_disabling_reduction() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(unresolved_receipt_count=1),
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is False
+    assert authority.reduce_only_allowed is True
+    assert authority.reason_codes["entry"] == ("broker_mutation_submit_unresolved",)
+
+
+def test_entry_requires_current_durable_receipt_readback() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(
+            database_status="not_checked",
+            unresolved_receipt_count=None,
+        ),
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is False
+    assert authority.reduce_only_allowed is True
+    assert authority.reason_codes["entry"] == (
+        "broker_mutation_database_status_not_current",
+    )
+
+
+def test_entry_rejects_missing_unresolved_count_after_current_readback() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(unresolved_receipt_count=None),
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is False
+    assert authority.reason_codes["entry"] == (
+        "broker_mutation_status_contract_invalid",
     )
 
 

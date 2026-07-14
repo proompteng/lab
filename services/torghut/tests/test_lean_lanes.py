@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, LeanExecutionShadowEvent, LeanStrategyShadowEvaluation
+from app.models import Base, LeanStrategyShadowEvaluation
 from app.trading.lean_runtime import SCAFFOLD_BLOCKED_STATUS
 from app.trading.lean_lanes import LeanLaneManager
 
@@ -59,43 +58,8 @@ class TestLeanLanes(TestCase):
                 self.assertTrue(refreshed.deterministic_replay_passed)
                 self.assertIsNotNone(refreshed.completed_at)
 
-    def test_parity_summary_aggregates_shadow_events(self) -> None:
-        with self.SessionLocal() as session:
-            session.add(
-                LeanExecutionShadowEvent(
-                    symbol="BTC/USD",
-                    side="buy",
-                    qty=1,
-                    parity_status="drift",
-                    failure_taxonomy="execution_quality_drift",
-                    created_at=datetime.now(timezone.utc),
-                )
-            )
-            session.add(
-                LeanExecutionShadowEvent(
-                    symbol="ETH/USD",
-                    side="sell",
-                    qty=1,
-                    parity_status="pass",
-                    created_at=datetime.now(timezone.utc),
-                )
-            )
-            session.commit()
-
-            manager = LeanLaneManager()
-            summary = manager.parity_summary(session, lookback_hours=1)
-
-        self.assertEqual(summary["events_total"], 2)
-        self.assertEqual(summary["drift_events"], 1)
-        self.assertAlmostEqual(summary["drift_ratio"], 0.5)
-        self.assertEqual(summary["failure_classes"].get("execution_quality_drift"), 1)
-
     def test_shadow_parity_status_columns_allow_scaffold_blocked_status(self) -> None:
         required_length = len(SCAFFOLD_BLOCKED_STATUS)
-        self.assertGreaterEqual(
-            LeanExecutionShadowEvent.__table__.c.parity_status.type.length,
-            required_length,
-        )
         self.assertGreaterEqual(
             LeanStrategyShadowEvaluation.__table__.c.parity_status.type.length,
             required_length,

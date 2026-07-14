@@ -29,13 +29,14 @@ from .lifecycle_helpers import (
 from .persistence import full_state_values_from_event
 from .persistence import append_full_state_event
 from .types import (
-    BrokerMutationIoPermit,
+    BrokerMutationIoPermitIssueRequest,
     BrokerMutationIoStartResult,
     BrokerMutationReceiptHandle,
     BrokerMutationReceiptSnapshot,
     BrokerMutationReceiptState,
     BrokerMutationSettlement,
     BrokerMutationSettlementSource,
+    issue_broker_mutation_io_permit,
 )
 from .validation import (
     RECEIPT_DEFAULT_LEASE_SECONDS,
@@ -224,25 +225,34 @@ def mark_broker_mutation_io_started(
         return BrokerMutationIoStartResult(
             outcome="authorized",
             receipt=started,
-            permit=BrokerMutationIoPermit(
-                receipt_id=started.receipt_id,
-                primary_token=normalized.primary_token,
-                primary_epoch=normalized.primary_epoch,
-                event_sequence_no=started.lifecycle.sequence_no,
-                submission_claim_id=(
-                    normalized_submission_handle.decision_id
-                    if normalized_submission_handle is not None
-                    else None
-                ),
-                submission_claim_token=(
-                    normalized_submission_handle.claim_token
-                    if normalized_submission_handle is not None
-                    else None
-                ),
-                submission_claim_fencing_epoch=(
-                    normalized_submission_handle.fencing_epoch
-                    if normalized_submission_handle is not None
-                    else None
+            permit=issue_broker_mutation_io_permit(
+                BrokerMutationIoPermitIssueRequest(
+                    receipt_id=started.receipt_id,
+                    primary_token=normalized.primary_token,
+                    primary_epoch=normalized.primary_epoch,
+                    event_sequence_no=started.lifecycle.sequence_no,
+                    broker_route=started.intent.broker_route,
+                    operation=started.intent.operation,
+                    risk_class=started.intent.risk_class,
+                    account_label=started.intent.account_label,
+                    endpoint_fingerprint=started.intent.endpoint_fingerprint,
+                    canonical_intent_sha256=started.intent.canonical_intent_sha256,
+                    canonical_request_sha256=started.intent.canonical_request_sha256,
+                    submission_claim_id=(
+                        normalized_submission_handle.decision_id
+                        if normalized_submission_handle is not None
+                        else None
+                    ),
+                    submission_claim_token=(
+                        normalized_submission_handle.claim_token
+                        if normalized_submission_handle is not None
+                        else None
+                    ),
+                    submission_claim_fencing_epoch=(
+                        normalized_submission_handle.fencing_epoch
+                        if normalized_submission_handle is not None
+                        else None
+                    ),
                 ),
             ),
         )

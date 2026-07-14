@@ -89,48 +89,12 @@ class _TradingMetricsMethods(TradingMetricsFields):
             self.no_signal_reason_streak.get(normalized, 0) + 1
         )
 
-    def record_lean_observability(self, snapshot: Mapping[str, Any]) -> None:
-        requests = snapshot.get("requests_total")
-        if isinstance(requests, Mapping):
-            for key, value in cast(Mapping[object, Any], requests).items():
-                if isinstance(value, int):
-                    self.lean_request_total[str(key)] = value
-        failures = snapshot.get("failures_total")
-        if isinstance(failures, Mapping):
-            for key, value in cast(Mapping[object, Any], failures).items():
-                if isinstance(value, int):
-                    self.lean_failure_taxonomy_total[str(key)] = value
-        latency = snapshot.get("latency_ms_avg")
-        if isinstance(latency, Mapping):
-            for key, value in cast(Mapping[object, Any], latency).items():
-                if isinstance(value, (int, float)):
-                    self.lean_latency_ms[str(key)] = float(value)
-
-    def record_lean_shadow(
-        self, *, parity_status: str | None, failure_taxonomy: str | None
-    ) -> None:
-        status = parity_status.strip() if isinstance(parity_status, str) else ""
-        if not status:
-            status = "unknown"
-        self.lean_shadow_parity_total[status] = (
-            self.lean_shadow_parity_total.get(status, 0) + 1
-        )
-        if failure_taxonomy:
-            self.lean_shadow_failure_total[failure_taxonomy] = (
-                self.lean_shadow_failure_total.get(failure_taxonomy, 0) + 1
-            )
-
     def record_lean_strategy_shadow(self, parity_status: str | None) -> None:
         status = parity_status.strip() if isinstance(parity_status, str) else ""
         if not status:
             status = "unknown"
         self.lean_strategy_shadow_total[status] = (
             self.lean_strategy_shadow_total.get(status, 0) + 1
-        )
-
-    def record_lean_canary_breach(self, breach_type: str) -> None:
-        self.lean_canary_breach_total[breach_type] = (
-            self.lean_canary_breach_total.get(breach_type, 0) + 1
         )
 
     def record_signal_staleness_alert(self, reason: str | None) -> None:

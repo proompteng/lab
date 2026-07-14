@@ -91,10 +91,7 @@ def lean_authority_status() -> dict[str, Any]:
     authoritative_modes: list[str] = []
     if settings.trading_lean_backtest_upstream_url:
         authoritative_modes.append("research_backtest")
-    if (
-        settings.trading_lean_shadow_upstream_url
-        or settings.trading_lean_strategy_shadow_upstream_url
-    ):
+    if settings.trading_lean_strategy_shadow_upstream_url:
         authoritative_modes.append("shadow_replay")
     if settings.trading_lean_lane_disable_switch:
         return {
@@ -255,63 +252,6 @@ def evaluate_strategy_shadow(
     }
 
 
-def shadow_simulate(
-    *,
-    symbol: str,
-    side: str,
-    qty: float,
-    order_type: str = "market",
-    time_in_force: str = "day",
-    limit_price: float | None = None,
-    intent_price: float | None = None,
-    correlation_id: str,
-) -> dict[str, Any]:
-    upstream_url = (settings.trading_lean_shadow_upstream_url or "").strip()
-    payload = {
-        "symbol": symbol,
-        "side": side,
-        "qty": qty,
-        "order_type": order_type,
-        "time_in_force": time_in_force,
-        "limit_price": limit_price,
-        "intent_price": intent_price,
-    }
-    if upstream_url:
-        return _proxy_json_request(
-            method="POST",
-            url=upstream_url.rstrip("/"),
-            payload=payload,
-            headers={"accept": "application/json", "X-Correlation-ID": correlation_id},
-        )
-    seed = hashlib.sha256(
-        f"{symbol}:{side}:{qty}:{order_type}".encode("utf-8")
-    ).hexdigest()
-    basis = int(seed[:8], 16)
-    slippage_bps = ((basis % 29) - 14) / 10.0
-    base_price = intent_price or limit_price or max(qty, 1.0)
-    simulated_fill = base_price * (1.0 + (slippage_bps / 10000.0))
-    return {
-        "symbol": symbol,
-        "side": side,
-        "qty": qty,
-        "authority_mode": "deterministic_scaffold",
-        "promotion_authority_eligible": False,
-        "blocking_reason": SCAFFOLD_BLOCKED_STATUS,
-        "replay_dataset_ref": None,
-        "simulated_fill_price": round(simulated_fill, 8),
-        "simulated_slippage_bps": round(slippage_bps, 4),
-        "parity_status": SCAFFOLD_BLOCKED_STATUS,
-        "failure_taxonomy": "missing_empirical_shadow_replay",
-        "artifact_authority": evidence_contract_payload(
-            provenance=ArtifactProvenance.SYNTHETIC_GENERATED,
-            maturity=EvidenceMaturity.STUB,
-            authoritative=False,
-            placeholder=True,
-            notes="LEAN shadow replay is using deterministic scaffold simulation.",
-        ),
-    }
-
-
 def _deterministic_backtest_result(record: _BacktestRecord) -> dict[str, Any]:
     seed = int(record.reproducibility_hash[:8], 16)
     gross_pnl = ((seed % 20000) - 10000) / 100.0
@@ -368,6 +308,5 @@ __all__ = [
     "evaluate_strategy_shadow",
     "get_backtest",
     "lean_authority_status",
-    "shadow_simulate",
     "submit_backtest",
 ]

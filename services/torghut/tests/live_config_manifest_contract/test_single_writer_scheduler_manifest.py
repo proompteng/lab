@@ -94,8 +94,8 @@ class SingleWriterSchedulerManifestTests(TestCase):
             env["TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET"].get("value"),
             "00:00:00",
         )
-        self.assertEqual(env["TRADING_ORDER_MAX_ATTEMPTS"].get("value"), "1")
-        self.assertEqual(env["TRADING_EXECUTION_MAX_RETRIES"].get("value"), "0")
+        self.assertNotIn("TRADING_ORDER_MAX_ATTEMPTS", env)
+        self.assertNotIn("TRADING_EXECUTION_MAX_RETRIES", env)
         self.assertEqual(
             env["TRADING_SCHEDULER_LEADERSHIP_REQUIRED"].get("value"), "true"
         )

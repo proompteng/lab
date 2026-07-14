@@ -62,7 +62,6 @@ from .order_rules import (
     allocator_payload,
     build_impact_assumptions,
     build_impact_inputs,
-    build_retry_delays,
     combined_execution_seconds_scale,
     is_position_reducing,
     is_short_increasing,
@@ -107,7 +106,6 @@ class ExecutionPolicy:
             reasons=runtime.reasons,
             notional=sizing.notional,
             participation_rate=impact.participation_rate,
-            retry_delays=impact.retry_delays,
             impact_assumptions=impact.impact_assumptions,
             selected_order_type=selection.selected_order_type,
             adaptive=runtime.adaptive_application,
@@ -277,7 +275,6 @@ class ExecutionPolicy:
             runtime.reasons.append("participation_exceeds_max")
         return ExecutionPolicyImpact(
             participation_rate=participation_rate,
-            retry_delays=build_retry_delays(runtime.config),
             impact_assumptions=build_impact_assumptions(
                 estimate=estimate,
                 config=self.cost_model.config,
@@ -595,10 +592,6 @@ class ExecutionPolicy:
             allow_shorts=config.allow_shorts,
             kill_switch_enabled=config.kill_switch_enabled,
             prefer_limit=prefer_limit,
-            max_retries=config.max_retries,
-            backoff_base_seconds=config.backoff_base_seconds,
-            backoff_multiplier=config.backoff_multiplier,
-            backoff_max_seconds=config.backoff_max_seconds,
         )
 
     def _apply_microstructure_order_type(
@@ -661,10 +654,6 @@ class ExecutionPolicy:
             allow_shorts=config.allow_shorts,
             kill_switch_enabled=config.kill_switch_enabled,
             prefer_limit=prefer_limit,
-            max_retries=config.max_retries,
-            backoff_base_seconds=config.backoff_base_seconds,
-            backoff_multiplier=config.backoff_multiplier,
-            backoff_max_seconds=config.backoff_max_seconds,
         )
 
     def _evaluate_advisor(
@@ -787,17 +776,6 @@ class ExecutionPolicy:
         if max_participation_rate > 1:
             max_participation_rate = Decimal("1")
 
-        max_retries = max(config.max_retries, 0)
-        backoff_base_seconds = (
-            config.backoff_base_seconds if config.backoff_base_seconds > 0 else 0.1
-        )
-        backoff_multiplier = (
-            config.backoff_multiplier if config.backoff_multiplier >= 1 else 1.0
-        )
-        backoff_max_seconds = config.backoff_max_seconds
-        if backoff_max_seconds < backoff_base_seconds:
-            backoff_max_seconds = backoff_base_seconds
-
         return ExecutionPolicyConfig(
             min_notional=config.min_notional,
             max_notional=config.max_notional,
@@ -805,10 +783,6 @@ class ExecutionPolicy:
             allow_shorts=config.allow_shorts,
             kill_switch_enabled=config.kill_switch_enabled,
             prefer_limit=config.prefer_limit,
-            max_retries=max_retries,
-            backoff_base_seconds=backoff_base_seconds,
-            backoff_multiplier=backoff_multiplier,
-            backoff_max_seconds=backoff_max_seconds,
         )
 
     def _resolve_config(
@@ -841,10 +815,6 @@ class ExecutionPolicy:
             allow_shorts=settings.trading_allow_shorts,
             kill_switch_enabled=resolved_kill_switch_enabled,
             prefer_limit=settings.trading_execution_prefer_limit,
-            max_retries=settings.trading_execution_max_retries,
-            backoff_base_seconds=settings.trading_execution_backoff_base_seconds,
-            backoff_multiplier=settings.trading_execution_backoff_multiplier,
-            backoff_max_seconds=settings.trading_execution_backoff_max_seconds,
         )
 
     def _select_order_type(

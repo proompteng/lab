@@ -41,6 +41,12 @@ class HyperliquidExecutionRepository:
         self._session = session
         self._multifactor = MultifactorExecutionRepository(session)
 
+    @property
+    def session(self) -> Any:
+        """Return the owning unit of work for the durable submit coordinator."""
+
+        return self._session
+
     def upsert_markets(self, markets: Iterable[ExecutionMarket]) -> None:
         for market in markets:
             self._session.execute(

@@ -97,7 +97,6 @@ class SettingsNormalizationMixin(
             "trading_market_context_url",
             "trading_forecast_registry_manifest_url",
             "trading_lean_backtest_upstream_url",
-            "trading_lean_shadow_upstream_url",
             "trading_lean_strategy_shadow_upstream_url",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
@@ -147,7 +146,6 @@ class SettingsNormalizationMixin(
     def _normalize_trading_csv_settings(self) -> None:
         for field_name in (
             "trading_forecast_service_allowed_model_families_raw",
-            "trading_lean_live_canary_symbols_raw",
             "trading_signal_allowed_sources_raw",
             "trading_signal_staleness_alert_critical_reasons_raw",
             "trading_signal_market_closed_expected_reasons_raw",
@@ -406,16 +404,8 @@ class SettingsNormalizationMixin(
                 "TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY must be >= 0",
             ),
             (
-                self.trading_order_reprice_seconds,
-                "TRADING_ORDER_REPRICE_SECONDS must be >= 0",
-            ),
-            (
-                self.trading_order_max_attempts,
-                "TRADING_ORDER_MAX_ATTEMPTS must be >= 0",
-            ),
-            (
-                self.trading_order_slippage_bps,
-                "TRADING_ORDER_SLIPPAGE_BPS must be >= 0",
+                self.trading_pair_delta_tolerance_bps,
+                "TRADING_PAIR_DELTA_TOLERANCE_BPS must be >= 0",
             ),
             (
                 self.trading_closeout_reprice_seconds,
@@ -474,8 +464,6 @@ class SettingsNormalizationMixin(
         ):
             if not 0 < value <= 1:
                 raise ValueError(f"{name} must be within (0, 1]")
-        if self.trading_order_max_attempts < 1:
-            raise ValueError("TRADING_ORDER_MAX_ATTEMPTS must be >= 1")
         if self.trading_closeout_max_attempts < 1:
             raise ValueError("TRADING_CLOSEOUT_MAX_ATTEMPTS must be >= 1")
         if not (
@@ -701,10 +689,6 @@ class SettingsNormalizationMixin(
             (
                 self.llm_min_calibration_quality_score,
                 "LLM_MIN_CALIBRATION_QUALITY_SCORE must be within [0, 1]",
-            ),
-            (
-                self.trading_lean_live_canary_fallback_ratio_limit,
-                "TRADING_LEAN_LIVE_CANARY_FALLBACK_RATIO_LIMIT must be within [0, 1]",
             ),
         ]
         for value, message in interval_checks:

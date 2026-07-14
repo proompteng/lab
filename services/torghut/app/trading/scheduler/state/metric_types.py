@@ -200,31 +200,7 @@ class TradingMetricsFields:
         default_factory=lambda: cast(dict[str, int], {})
     )
 
-    lean_request_total: dict[str, int] = field(
-        default_factory=lambda: cast(dict[str, int], {})
-    )
-
-    lean_failure_taxonomy_total: dict[str, int] = field(
-        default_factory=lambda: cast(dict[str, int], {})
-    )
-
-    lean_latency_ms: dict[str, float] = field(
-        default_factory=lambda: cast(dict[str, float], {})
-    )
-
-    lean_shadow_parity_total: dict[str, int] = field(
-        default_factory=lambda: cast(dict[str, int], {})
-    )
-
-    lean_shadow_failure_total: dict[str, int] = field(
-        default_factory=lambda: cast(dict[str, int], {})
-    )
-
     lean_strategy_shadow_total: dict[str, int] = field(
-        default_factory=lambda: cast(dict[str, int], {})
-    )
-
-    lean_canary_breach_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )
 

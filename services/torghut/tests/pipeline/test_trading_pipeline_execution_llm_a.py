@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from app.models import (
+    BrokerMutationReceipt,
+    BrokerMutationReceiptEvent,
+    TradeDecisionSubmissionClaim,
+)
 from app.trading.scheduler.pipeline.contexts import OrderSubmissionRequest
 from tests.pipeline.trading_pipeline_base import (
     AdaptiveExecutionPolicyDecision,
@@ -487,6 +492,20 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 self.assertEqual(len(reviews), 1)
                 self.assertEqual(reviews[0].verdict, "approve")
                 self.assertEqual(len(executions), 1)
+                claim = session.execute(
+                    select(TradeDecisionSubmissionClaim)
+                ).scalar_one()
+                receipt = session.execute(select(BrokerMutationReceipt)).scalar_one()
+                terminal_event = session.execute(
+                    select(BrokerMutationReceiptEvent)
+                    .where(BrokerMutationReceiptEvent.receipt_id == receipt.id)
+                    .order_by(BrokerMutationReceiptEvent.sequence_no.desc())
+                    .limit(1)
+                ).scalar_one()
+                self.assertEqual(claim.state, "submitted")
+                self.assertEqual(claim.execution_id, executions[0].id)
+                self.assertEqual(terminal_event.state, "settled")
+                self.assertEqual(terminal_event.execution_id, executions[0].id)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -583,14 +602,31 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
             pipeline.run_once()
 
             self.assertEqual(alpaca.submit_calls, 1)
-            self.assertEqual(alpaca.cancel_calls, ["order-existing"])
+            self.assertEqual(alpaca.cancel_calls, [])
 
             with self.session_local() as session:
                 decisions = session.execute(select(TradeDecision)).scalars().all()
                 executions = session.execute(select(Execution)).scalars().all()
                 self.assertEqual(len(decisions), 1)
-                self.assertEqual(decisions[0].status, "rejected")
+                self.assertNotEqual(decisions[0].status, "rejected")
+                self.assertEqual(
+                    decisions[0].decision_json.get("submission_stage"),
+                    "broker_io_unresolved",
+                )
                 self.assertEqual(len(executions), 0)
+                claim = session.execute(
+                    select(TradeDecisionSubmissionClaim)
+                ).scalar_one()
+                receipt = session.execute(select(BrokerMutationReceipt)).scalar_one()
+                latest_event = session.execute(
+                    select(BrokerMutationReceiptEvent)
+                    .where(BrokerMutationReceiptEvent.receipt_id == receipt.id)
+                    .order_by(BrokerMutationReceiptEvent.sequence_no.desc())
+                    .limit(1)
+                ).scalar_one()
+                self.assertEqual(claim.state, "broker_io")
+                self.assertEqual(latest_event.state, "broker_io")
+                self.assertIsNone(latest_event.settled_at)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -654,13 +690,12 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                     decision=decision,
                     decision_row=decision_row,
                     selected_adapter_name="alpaca",
-                    retry_delays=[],
                 )
             )
 
             self.assertIsNone(execution)
             self.assertTrue(rejected)
-            self.assertEqual(alpaca.cancel_calls, ["existing-sell-order"])
+            self.assertEqual(alpaca.cancel_calls, [])
 
             session.refresh(decision_row)
             self.assertEqual(decision_row.status, "rejected")
@@ -672,12 +707,7 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 decision_row.decision_json.get("broker_precheck", {}).get("code"),
                 "precheck_sell_qty_exceeds_available",
             )
-            self.assertEqual(
-                decision_row.decision_json.get("broker_precheck_recovery", {}).get(
-                    "status"
-                ),
-                "blocked",
-            )
+            self.assertNotIn("broker_precheck_recovery", decision_row.decision_json)
 
     def test_pipeline_llm_veto(self) -> None:
         from app import config

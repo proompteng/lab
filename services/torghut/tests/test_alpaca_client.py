@@ -19,6 +19,13 @@ from app.alpaca_client import (
 from app.alpaca_client import OrderFirewallToken
 from app.config import settings
 from app.trading.firewall import OrderFirewall
+from app.trading.broker_mutation_receipts import BrokerMutationBrokerIoError
+from tests.broker_mutation_test_support import alpaca_broker_mutation_test_permit
+
+
+def _fenced_submit(firewall: OrderFirewall, **kwargs: Any) -> dict[str, Any]:
+    permit = alpaca_broker_mutation_test_permit(firewall, **kwargs)
+    return firewall.submit_order(**kwargs, mutation_permit=permit)
 
 
 class DummyModel:
@@ -126,7 +133,8 @@ class TestAlpacaClient(TestCase):
         self.assertEqual(order["id"], "order-abc")
 
         firewall = OrderFirewall(client)
-        submitted = firewall.submit_order(
+        submitted = _fenced_submit(
+            firewall,
             symbol="AAPL",
             side="buy",
             qty=1,
@@ -177,7 +185,8 @@ class TestAlpacaClient(TestCase):
                         rf"alpaca_order_extra_params_reserved:{reserved_key}",
                     ),
                 ):
-                    firewall.submit_order(
+                    _fenced_submit(
+                        firewall,
                         symbol="AAPL",
                         side="buy",
                         qty=1,
@@ -190,7 +199,9 @@ class TestAlpacaClient(TestCase):
                 ValueError,
                 "alpaca_order_extra_params_reserved:side,symbol,time_in_force",
             ):
-                OrderFirewall(client).submit_order(
+                firewall = OrderFirewall(client)
+                _fenced_submit(
+                    firewall,
                     symbol="AAPL",
                     side="buy",
                     qty=1,
@@ -207,7 +218,9 @@ class TestAlpacaClient(TestCase):
                 ValueError,
                 "alpaca_order_extra_params_unsupported:simulation_context",
             ):
-                OrderFirewall(client).submit_order(
+                firewall = OrderFirewall(client)
+                _fenced_submit(
+                    firewall,
                     symbol="AAPL",
                     side="buy",
                     qty=1,
@@ -237,7 +250,9 @@ class TestAlpacaClient(TestCase):
             data_client=DummyDataClient(),
         )
 
-        submitted = OrderFirewall(client).submit_order(
+        firewall = OrderFirewall(client)
+        submitted = _fenced_submit(
+            firewall,
             symbol="AAPL",
             side="buy",
             qty=1,
@@ -558,9 +573,14 @@ class TestAlpacaClient(TestCase):
                         "alpaca.common.rest.Session.request", return_value=response
                     ) as mock_request,
                     patch("alpaca.common.rest.time.sleep") as mock_sleep,
-                    self.assertRaises(APIError) as raised,
+                    self.assertRaisesRegex(
+                        BrokerMutationBrokerIoError,
+                        "alpaca_broker_io_failed:APIError",
+                    ) as raised,
                 ):
-                    OrderFirewall(client).submit_order(
+                    firewall = OrderFirewall(client)
+                    _fenced_submit(
+                        firewall,
                         symbol="AAPL",
                         side="buy",
                         qty=1,
@@ -568,7 +588,9 @@ class TestAlpacaClient(TestCase):
                         time_in_force="day",
                     )
 
-                self.assertEqual(raised.exception.status_code, status_code)
+                cause = cast(APIError, raised.exception.__cause__)
+                self.assertIsInstance(cause, APIError)
+                self.assertEqual(cause.status_code, status_code)
                 mock_request.assert_called_once()
                 self.assertEqual(mock_request.call_args.args[0], "POST")
                 mock_sleep.assert_not_called()

@@ -88,10 +88,6 @@ class ExecutionPolicyConfig:
     allow_shorts: bool
     kill_switch_enabled: bool
     prefer_limit: bool
-    max_retries: int
-    backoff_base_seconds: float
-    backoff_multiplier: float
-    backoff_max_seconds: float
 
 
 @dataclass(frozen=True)
@@ -114,7 +110,6 @@ class ExecutionPolicyOutcome:
     reasons: list[str]
     notional: Optional[Decimal]
     participation_rate: Optional[Decimal]
-    retry_delays: list[float]
     impact_assumptions: dict[str, Any]
     selected_order_type: str
     adaptive: AdaptiveExecutionApplication | None
@@ -129,7 +124,6 @@ class ExecutionPolicyOutcome:
                 "notional": stringify_decimal(self.notional),
                 "participation_rate": stringify_decimal(self.participation_rate),
                 "selected_order_type": self.selected_order_type,
-                "retry_delays": self.retry_delays,
             },
             "impact_assumptions": self.impact_assumptions,
             "execution_advisor": self.advisor_metadata,

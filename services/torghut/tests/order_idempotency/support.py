@@ -20,7 +20,6 @@ from app.models import (
 )
 from app.config import settings
 from app.trading.execution_adapters import (
-    LeanExecutionAdapter,
     OrderSubmission,
     SimulationExecutionAdapter,
 )
@@ -375,7 +374,6 @@ __all__: tuple[str, ...] = (
     "FakeAlpacaClient",
     "FilledAlpacaClient",
     "HeldInventoryClient",
-    "LeanExecutionAdapter",
     "OrderExecutor",
     "PartiallyHeldInventoryClient",
     "PositionLookupNoneClient",

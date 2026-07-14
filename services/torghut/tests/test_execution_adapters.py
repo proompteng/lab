@@ -6,6 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
+from app.db import SessionLocal
 from app.trading.execution_adapters import (
     OrderSubmission,
     SimulationExecutionAdapter,
@@ -48,6 +49,9 @@ class FakeOrderFirewall:
             "symbol": kwargs.get("symbol", "AAPL"),
             "qty": str(kwargs.get("qty", 1)),
         }
+
+    def submit_verified_risk_reducing_order(self, **kwargs: Any) -> dict[str, Any]:
+        return self.submit_order(**kwargs)
 
     def cancel_order(self, order_id: str) -> bool:
         _ = order_id
@@ -617,6 +621,9 @@ class TestExecutionAdapters(TestCase):
             adapter = build_execution_adapter(
                 alpaca_client=FakeReadClient(),
                 order_firewall=FakeOrderFirewall(),
+                session_factory=SessionLocal,
+                account_label="paper",
+                endpoint_url="https://paper-api.alpaca.markets",
             )
             self.assertEqual(adapter.name, "simulation")
         finally:
@@ -638,6 +645,9 @@ class TestExecutionAdapters(TestCase):
             adapter = build_execution_adapter(
                 alpaca_client=FakeReadClient(),
                 order_firewall=FakeOrderFirewall(),
+                session_factory=SessionLocal,
+                account_label="paper",
+                endpoint_url="https://paper-api.alpaca.markets",
             )
             self.assertEqual(adapter.name, "alpaca")
         finally:
