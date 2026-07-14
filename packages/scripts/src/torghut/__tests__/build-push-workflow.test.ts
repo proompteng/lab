@@ -271,8 +271,15 @@ describe('torghut build-push workflow', () => {
     )
     expect(hyperliquidFeedReleaseWorkflow).toContain('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     expect(hyperliquidFeedReleaseWorkflow).toContain(
+      'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml',
+    )
+    expect(hyperliquidFeedReleaseWorkflow).toContain(
       'branch: codex/torghut-hyperliquid-feed-release-${{ steps.meta.outputs.tag }}',
     )
+    expect(hyperliquidFeedReleaseWorkflow).toContain('## Related Issues')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('## Testing')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('## Breaking Changes')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('## Checklist')
   })
 
   it('defines native amd64 and arm64 GitHub runner scale sets for Torghut image builds', () => {

@@ -236,7 +236,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- argocd/applications/torghut-hyperliquid-feed/deployment.yaml; then
+          if git diff --quiet -- \
+            argocd/applications/torghut-hyperliquid-feed/deployment.yaml \
+            argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -258,14 +260,33 @@ jobs:
           delete-branch: true
           add-paths: |
             argocd/applications/torghut-hyperliquid-feed/deployment.yaml
+            argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml
           body: |
             ## Summary
-            Promote the Torghut Hyperliquid feed image into GitOps manifests.
 
-            - Source commit: `${{ steps.meta.outputs.source_sha }}`
-            - Image tag: `${{ steps.meta.outputs.tag }}`
-            - Image digest: `${{ steps.digest.outputs.digest }}`
-            - Manifest: Hyperliquid feed Deployment
+            - Promote the immutable Torghut Hyperliquid feed image built from `${{ steps.meta.outputs.source_sha }}`.
+            - Pin both the feed and Kafka-backed ClickHouse writer Deployments to `${{ steps.digest.outputs.digest }}`.
+            - Preserve one source commit and image digest across both runtime modes.
+
+            ## Related Issues
+
+            None.
+
+            ## Testing
+
+            - The source commit passed its required CI before merge to `main`.
+            - The release workflow verified the multi-architecture image contract before creating this PR.
+            - The deploy gate validates both manifests against source `${{ steps.meta.outputs.source_sha }}` and tag `${{ steps.meta.outputs.tag }}`.
+
+            ## Breaking Changes
+
+            None.
+
+            ## Checklist
+
+            - [x] Testing section documents the exact automated release validation.
+            - [x] Screenshots are not applicable; Breaking Changes is filled in.
+            - [x] Both runtime manifests carry the same immutable source and image identity.
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

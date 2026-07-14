@@ -159,6 +159,10 @@ describe('torghut-deploy-automerge workflow', () => {
       "startsWith(github.event.pull_request.head.ref, 'codex/torghut-hyperliquid-feed-release-')",
     )
     expect(deployAutomergeWorkflow).toContain("steps.gates.outputs.release_lane == 'hyperliquid-feed'")
+    expect(deployAutomergeWorkflow).toContain("'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'")
+    expect(deployAutomergeWorkflow).toContain(
+      'Hyperliquid feed and Kafka ClickHouse writer release metadata do not match',
+    )
     expect(deployAutomergeWorkflow).toContain('name: Verify source Hyperliquid feed image digest contract')
     expect(deployAutomergeWorkflow).toContain('Hyperliquid feed release manifest pins a multi-arch image digest')
     expect(deployAutomergeWorkflow).toContain('TORGHUT_HYPERLIQUID_FEED_COMMIT')

@@ -29,11 +29,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.put
 import mu.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -186,7 +184,7 @@ class ClickHouseSink(
   ) {
     if (records.isEmpty()) return
     // Reusing the exact body keeps ReplicatedMergeTree retry block hashes stable.
-    val body = records.joinToString("\n") { json.encodeToString(rowFor(it)) }
+    val body = records.joinToString("\n") { json.encodeToString(clickHouseRowFor(json, it)) }
     val bodyBytes = body.toByteArray(Charsets.UTF_8).size
     val startedAtNanos = System.nanoTime()
     var retryDelayMs = config.retryInitialMs
@@ -370,28 +368,6 @@ class ClickHouseSink(
       eventFutureSkewMs = tables.associateWith { eventFutureSkewRows[it] },
     )
   }
-
-  private fun rowFor(record: RoutedEnvelope): JsonObject =
-    buildJsonObject {
-      val env = record.envelope
-      put("ingest_ts", env.ingestTs)
-      put("event_ts", env.eventTs)
-      put("provider", env.provider)
-      put("network", env.network)
-      put("feed", env.feed)
-      put("channel", env.channel)
-      put("symbol", env.symbol)
-      env.marketType?.let { put("market_type", it) }
-      env.marketId?.let { put("market_id", it) }
-      env.dex?.let { put("dex", it) }
-      env.coin?.let { put("coin", it) }
-      env.spotIndex?.let { put("spot_index", it) }
-      put("seq", env.seq)
-      put("is_final", env.isFinal)
-      put("source", env.source)
-      put("version", env.version)
-      put("payload", json.encodeToString(env.payload))
-    }
 
   private fun tableForTopic(topic: String): String =
     when {

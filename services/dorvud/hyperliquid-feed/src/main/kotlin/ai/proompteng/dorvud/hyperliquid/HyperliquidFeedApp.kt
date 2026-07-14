@@ -496,7 +496,18 @@ internal fun hyperliquidReadinessBlockers(
     if (!catalogReady) add("catalog_not_loaded")
   }
 
-fun main() =
+fun main() {
+  when (val mode = System.getenv("TORGHUT_HYPERLIQUID_MODE") ?: "feed") {
+    "feed" -> runHyperliquidFeed()
+    "clickhouse-writer" -> runKafkaClickHouseWriter()
+    else -> {
+      appLogger.error { "unsupported TORGHUT_HYPERLIQUID_MODE=$mode" }
+      exitProcess(2)
+    }
+  }
+}
+
+private fun runHyperliquidFeed() {
   runBlocking {
     val config =
       runCatching { HyperliquidConfig.fromEnv() }
@@ -516,3 +527,4 @@ fun main() =
     )
     job.join()
   }
+}

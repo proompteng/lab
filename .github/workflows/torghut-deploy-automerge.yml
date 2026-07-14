@@ -112,6 +112,7 @@ jobs:
           )
           feed_allowed_paths=(
             'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
+            'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
           )
 
           if [ "${release_lane}" = 'hyperliquid-feed' ]; then
@@ -345,6 +346,41 @@ jobs:
           image_digest="${image_ref#*@}"
           if [ -z "${image_ref}" ] || [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
             echo "Unable to resolve digest-pinned Hyperliquid feed image from release manifest"
+            exit 1
+          fi
+
+          writer_manifest="$(
+            gh api \
+              -H 'Accept: application/vnd.github.raw' \
+              "repos/${GH_REPO}/contents/argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml?ref=${PR_HEAD_SHA}"
+          )"
+          writer_source_sha="$(
+            printf '%s\n' "${writer_manifest}" |
+              awk '
+                /^[[:space:]]*- name:[[:space:]]*TORGHUT_HYPERLIQUID_FEED_COMMIT[[:space:]]*$/ { found = 1; next }
+                found && /^[[:space:]]*value:/ {
+                  sub(/^[[:space:]]*value:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  print
+                  exit
+                }
+              '
+          )"
+          writer_image_ref="$(
+            printf '%s\n' "${writer_manifest}" |
+              awk '
+                /^[[:space:]]*image:[[:space:]]*/ {
+                  sub(/^[[:space:]]*image:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  if (index($0, "registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:") == 1) {
+                    print
+                    exit
+                  }
+                }
+              '
+          )"
+          if [ "${writer_source_sha}" != "${source_sha}" ] || [ "${writer_image_ref}" != "${image_ref}" ]; then
+            echo "Hyperliquid feed and Kafka ClickHouse writer release metadata do not match"
             exit 1
           fi
 
