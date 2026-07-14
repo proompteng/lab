@@ -56,6 +56,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain("- 'argocd/applications/torghut-options/**'")
     expect(workflow).toContain('for app in torghut torghut-options; do')
     expect(workflow).toContain('kubectl rollout status "deployment/${deployment}"')
+    expect(workflow).toContain('torghut-options-archive')
     expect(workflow).toContain('torghut-options-catalog')
     expect(workflow).toContain('torghut-options-enricher')
     expect(workflow).toContain('torghut-options-ta')

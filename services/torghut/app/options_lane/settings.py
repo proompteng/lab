@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Any, Callable, cast
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -105,6 +105,44 @@ class OptionsLaneSettings(BaseSettings):
     options_contract_expiration_horizon_days: int = Field(
         120,
         validation_alias=AliasChoices("OPTIONS_CONTRACT_EXPIRATION_HORIZON_DAYS"),
+    )
+    options_contract_archive_horizon_days: int = Field(
+        730,
+        ge=0,
+        le=3650,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_HORIZON_DAYS"),
+    )
+    options_contract_archive_page_limit: int = Field(
+        10000,
+        ge=1,
+        le=10000,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_PAGE_LIMIT"),
+    )
+    options_contract_archive_requests_per_second: float = Field(
+        0.1,
+        gt=0,
+        le=1,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_REQUESTS_PER_SECOND"),
+    )
+    options_contract_archive_refresh_sec: int = Field(
+        86400,
+        ge=300,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_REFRESH_SEC"),
+    )
+    options_contract_archive_retry_base_sec: int = Field(
+        30,
+        ge=1,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_RETRY_BASE_SEC"),
+    )
+    options_contract_archive_retry_max_sec: int = Field(
+        1800,
+        ge=1,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_RETRY_MAX_SEC"),
+    )
+    options_contract_archive_lock_name: str = Field(
+        "torghut:options-catalog-archive",
+        min_length=1,
+        validation_alias=AliasChoices("OPTIONS_CONTRACT_ARCHIVE_LOCK_NAME"),
     )
     options_live_underlying_symbols: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
@@ -221,6 +259,15 @@ class OptionsLaneSettings(BaseSettings):
         if value.startswith("postgresql://"):
             return value.replace("postgresql://", "postgresql+psycopg://", 1)
         return value
+
+    @model_validator(mode="after")
+    def _validate_archive_retry_bounds(self) -> OptionsLaneSettings:
+        if (
+            self.options_contract_archive_retry_max_sec
+            < self.options_contract_archive_retry_base_sec
+        ):
+            raise ValueError("archive retry max must be at least retry base")
+        return self
 
     @property
     def holiday_set(self) -> set[str]:

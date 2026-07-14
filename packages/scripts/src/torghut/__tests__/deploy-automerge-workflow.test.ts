@@ -69,6 +69,13 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(countOccurrences(deployAutomergeWorkflow, `'${schedulerManifest}'`)).toBe(2)
   })
 
+  test('carries the options archive image through release and automatic deploy merge allowlists', () => {
+    const archiveManifest = 'argocd/applications/torghut-options/archive/deployment.yaml'
+
+    expect(countOccurrences(releaseWorkflow, archiveManifest)).toBe(3)
+    expect(countOccurrences(deployAutomergeWorkflow, `'${archiveManifest}'`)).toBe(2)
+  })
+
   test('allowlists TA and WS promotion manifests for automatic release PR merges', () => {
     const promotedTaManifests = [
       'argocd/applications/torghut/ta/flinkdeployment.yaml',

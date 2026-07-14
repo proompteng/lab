@@ -330,6 +330,7 @@ jobs:
           wait_knative_service_ready torghut-sim
 
           for deployment in \
+            torghut-options-archive \
             torghut-options-catalog \
             torghut-options-enricher \
             torghut-options-ta \

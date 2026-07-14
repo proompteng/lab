@@ -87,6 +87,17 @@ class AlpacaApiError(RuntimeError):
         return f"alpaca_api_error:{self.status_code}:{self.body[:200]}"
 
 
+@dataclass(frozen=True, slots=True)
+class OptionsContractsQuery:
+    """Bounded provider query shared by live and archive discovery."""
+
+    status: str
+    limit: int
+    expiration_date_gte: date
+    expiration_date_lte: date
+    page_token: str | None = None
+
+
 class AlpacaOptionsClient:
     """HTTP client for Alpaca options discovery and enrichment endpoints."""
 
@@ -108,28 +119,47 @@ class AlpacaOptionsClient:
     def list_contracts(
         self,
         *,
-        status: str,
-        limit: int,
+        query: OptionsContractsQuery,
         underlying_symbols: list[str],
-        expiration_date_gte: date,
-        expiration_date_lte: date,
-        page_token: str | None = None,
     ) -> tuple[list[JsonObject], str | None]:
         normalized_underlyings = sorted(
             {symbol.strip().upper() for symbol in underlying_symbols if symbol.strip()}
         )
         if not normalized_underlyings:
             raise ValueError("options contract request requires underlying symbols")
+        return self._list_contracts(
+            query=query,
+            underlying_symbols=",".join(normalized_underlyings),
+        )
+
+    def list_archive_contracts(
+        self,
+        *,
+        query: OptionsContractsQuery,
+    ) -> tuple[list[JsonObject], str | None]:
+        """List an all-underlying shard only when its date range is bounded."""
+
+        shard_days = (query.expiration_date_lte - query.expiration_date_gte).days + 1
+        if not 1 <= shard_days <= 7:
+            raise ValueError("options archive request must span one to seven days")
+        return self._list_contracts(query=query)
+
+    def _list_contracts(
+        self,
+        *,
+        query: OptionsContractsQuery,
+        underlying_symbols: str | None = None,
+    ) -> tuple[list[JsonObject], str | None]:
         payload = self._request_json(
             self._contracts_base_url,
             "/v2/options/contracts",
             {
-                "status": status,
-                "limit": limit,
-                "underlying_symbols": ",".join(normalized_underlyings),
-                "expiration_date_gte": expiration_date_gte.isoformat(),
-                "expiration_date_lte": expiration_date_lte.isoformat(),
-                "page_token": page_token,
+                "status": query.status,
+                "limit": query.limit,
+                "underlying_symbols": underlying_symbols,
+                "expiration_date_gte": query.expiration_date_gte.isoformat(),
+                "expiration_date_lte": query.expiration_date_lte.isoformat(),
+                "page_token": query.page_token,
             },
         )
         rows = _as_json_list(

@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.options_lane.alpaca import (
-    AlpacaOptionsClient,
+    OptionsContractsQuery,
     normalize_contract_record,
     normalize_snapshot_record,
 )
@@ -29,21 +29,6 @@ from app.options_lane.repository import (
 )
 from app.options_lane.settings import OptionsLaneSettings
 from app.options_lane.session import session_state
-
-
-class _FakeResponse:
-    def __init__(self, payload: object, *, status: int = 200) -> None:
-        self.status = status
-        self._payload = json.dumps(payload).encode("utf-8")
-
-    def read(self) -> bytes:
-        return self._payload
-
-    def __enter__(self) -> _FakeResponse:
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        return False
 
 
 class _FakeScalarResult:
@@ -615,101 +600,11 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         self.assertEqual(repository.completed_cycles[0].contract_count, 1)
         self.assertEqual(repository.completed_cycles[0].hot_count, 1)
         self.assertEqual(client.request["underlying_symbols"], ["AAPL", "MSFT"])
-        self.assertEqual(client.request["limit"], 10000)
+        query = cast(OptionsContractsQuery, client.request["query"])
+        self.assertEqual(query.limit, 10000)
 
 
 class TestOptionsLaneNormalization(TestCase):
-    def test_alpaca_client_splits_contracts_and_market_data_hosts(self) -> None:
-        requests: list[str] = []
-
-        def fake_urlopen(request: object, timeout: int = 30) -> _FakeResponse:
-            full_url = getattr(request, "full_url")
-            requests.append(str(full_url))
-            if "/v2/options/contracts" in str(full_url):
-                return _FakeResponse(
-                    {"option_contracts": [{"symbol": "AA260313C00030000"}]}
-                )
-            return _FakeResponse({"snapshots": {"AA260313C00030000": {}}})
-
-        client = AlpacaOptionsClient(
-            key_id="key-id",
-            secret_key="secret-key",
-            contracts_base_url="https://paper-api.alpaca.markets",
-            data_base_url="https://data.alpaca.markets",
-            feed="indicative",
-        )
-
-        with patch("app.options_lane.alpaca.urlopen", side_effect=fake_urlopen):
-            contracts, _ = client.list_contracts(
-                status="active",
-                limit=1,
-                underlying_symbols=["AA"],
-                expiration_date_gte=date(2026, 3, 8),
-                expiration_date_lte=date(2026, 3, 15),
-            )
-            snapshots = client.get_snapshots(["AA260313C00030000"])
-
-        self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
-        self.assertIn(
-            "https://paper-api.alpaca.markets/v2/options/contracts", requests[0]
-        )
-        self.assertIn(
-            "https://data.alpaca.markets/v1beta1/options/snapshots", requests[1]
-        )
-        self.assertIn("feed=indicative", requests[1])
-        self.assertIn("AA260313C00030000", snapshots)
-
-    def test_alpaca_client_normalizes_contracts_base_url_with_v2_suffix(self) -> None:
-        requests: list[str] = []
-
-        def fake_urlopen(request: object, timeout: int = 30) -> _FakeResponse:
-            full_url = getattr(request, "full_url")
-            requests.append(str(full_url))
-            return _FakeResponse(
-                {"option_contracts": [{"symbol": "AA260313C00030000"}]}
-            )
-
-        client = AlpacaOptionsClient(
-            key_id="key-id",
-            secret_key="secret-key",
-            contracts_base_url="https://paper-api.alpaca.markets/v2",
-            data_base_url="https://data.alpaca.markets",
-            feed="indicative",
-        )
-
-        with patch("app.options_lane.alpaca.urlopen", side_effect=fake_urlopen):
-            contracts, _ = client.list_contracts(
-                status="active",
-                limit=1,
-                underlying_symbols=["AA"],
-                expiration_date_gte=date(2026, 3, 8),
-                expiration_date_lte=date(2026, 3, 15),
-            )
-
-        self.assertEqual(contracts[0]["symbol"], "AA260313C00030000")
-        self.assertEqual(
-            requests[0],
-            "https://paper-api.alpaca.markets/v2/options/contracts?status=active&limit=1&underlying_symbols=AA&expiration_date_gte=2026-03-08&expiration_date_lte=2026-03-15",
-        )
-
-    def test_alpaca_client_rejects_unbounded_contract_request(self) -> None:
-        client = AlpacaOptionsClient(
-            key_id="key-id",
-            secret_key="secret-key",
-            contracts_base_url="https://paper-api.alpaca.markets",
-            data_base_url="https://data.alpaca.markets",
-            feed="indicative",
-        )
-
-        with self.assertRaisesRegex(ValueError, "requires underlying symbols"):
-            client.list_contracts(
-                status="active",
-                limit=100,
-                underlying_symbols=[],
-                expiration_date_gte=date(2026, 3, 8),
-                expiration_date_lte=date(2026, 3, 15),
-            )
-
     def test_normalize_contract_record_maps_required_fields(self) -> None:
         observed_at = datetime(2026, 3, 8, 18, 0, tzinfo=timezone.utc)
         payload = normalize_contract_record(

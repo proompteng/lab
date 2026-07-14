@@ -321,6 +321,7 @@ jobs:
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml \
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml \
+            argocd/applications/torghut-options/archive/deployment.yaml \
             argocd/applications/torghut-options/catalog/deployment.yaml \
             argocd/applications/torghut-options/enricher/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -359,6 +360,7 @@ jobs:
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
+            argocd/applications/torghut-options/archive/deployment.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
@@ -401,6 +403,7 @@ jobs:
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
+            argocd/applications/torghut-options/archive/deployment.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |

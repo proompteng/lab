@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-options-archive
+  namespace: torghut
+  labels:
+    app: torghut-options-archive
+spec:
+  # The image promotion activates this replica. The startup gate below keeps it
+  # from serving until the independently reconciled core app applies migration 0062.
+  replicas: 0
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: torghut-options-archive
+  template:
+    metadata:
+      labels:
+        app: torghut-options-archive
+    spec:
+      terminationGracePeriodSeconds: 45
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      serviceAccountName: torghut-runtime
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: torghut-options-archive
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:929fb34236555d86e17b473996e8ff19a8779cb0c9b3f7a2845718f7b09a2556
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              python - <<'PY'
+              import os
+              import time
+
+              from sqlalchemy import create_engine, text
+              from sqlalchemy.exc import SQLAlchemyError
+
+              raw_dsn = os.environ["DB_DSN"]
+              if raw_dsn.startswith("postgresql://"):
+                  dsn = "postgresql+psycopg://" + raw_dsn.removeprefix("postgresql://")
+              elif raw_dsn.startswith("postgres://"):
+                  dsn = "postgresql+psycopg://" + raw_dsn.removeprefix("postgres://")
+              else:
+                  dsn = raw_dsn
+              deadline = time.monotonic() + 900
+              attempts = 0
+              while True:
+                  attempts += 1
+                  try:
+                      engine = create_engine(dsn, pool_pre_ping=True)
+                      try:
+                          with engine.connect() as connection:
+                              ready = connection.execute(
+                                  text("select to_regclass('public.torghut_options_archive_membership') is not null")
+                              ).scalar_one()
+                      finally:
+                          engine.dispose()
+                      if ready:
+                          print(f"options archive migration gate ready after {attempts} attempt(s)")
+                          break
+                  except SQLAlchemyError as error:
+                      print(
+                          "waiting for options archive migration: "
+                          f"attempt={attempts} last_error={type(error).__name__}"
+                      )
+                  if time.monotonic() >= deadline:
+                      raise SystemExit("options archive migration 0062 was not ready within 900 seconds")
+                  time.sleep(5)
+              PY
+              exec uvicorn app.options_lane.archive_service:app --host 0.0.0.0 --port 8080
+          envFrom:
+            - configMapRef:
+                name: torghut-options-archive-config
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+            - name: ALPACA_OPTIONS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_KEY_ID
+            - name: ALPACA_OPTIONS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_SECRET_KEY
+            - name: APCA_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-options-alpaca
+                  key: APCA_API_BASE_URL
+            - name: TORGHUT_OPTIONS_VERSION
+              value: v0.596.0-1868-g298c9b856
+            - name: TORGHUT_OPTIONS_COMMIT
+              value: 298c9b856eb00705acfd703952ec920144df274c
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 90
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
