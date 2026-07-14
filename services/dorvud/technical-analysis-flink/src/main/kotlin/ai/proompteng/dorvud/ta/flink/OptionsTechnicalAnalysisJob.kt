@@ -327,9 +327,18 @@ private fun applyOptionsClickhouseSinks(
   }
 
   ensureOptionsClickhouseSchema(config)
-  contractBars.sinkTo(optionsClickhouseContractBarSink(config)).name("sink-options-contract-bars-clickhouse")
-  contractFeatures.sinkTo(optionsClickhouseContractFeatureSink(config)).name("sink-options-contract-features-clickhouse")
-  surfaceFeatures.sinkTo(optionsClickhouseSurfaceFeatureSink(config)).name("sink-options-surface-features-clickhouse")
+  contractBars
+    .sinkTo(optionsClickhouseContractBarSink(config))
+    .name("sink-options-contract-bars-clickhouse")
+    .setParallelism(config.clickhouseSinkParallelism)
+  contractFeatures
+    .sinkTo(optionsClickhouseContractFeatureSink(config))
+    .name("sink-options-contract-features-clickhouse")
+    .setParallelism(config.clickhouseSinkParallelism)
+  surfaceFeatures
+    .sinkTo(optionsClickhouseSurfaceFeatureSink(config))
+    .name("sink-options-surface-features-clickhouse")
+    .setParallelism(config.clickhouseSinkParallelism)
 }
 
 private fun ensureOptionsClickhouseSchema(config: OptionsTaConfig) {
