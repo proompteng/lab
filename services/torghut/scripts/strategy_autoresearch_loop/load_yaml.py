@@ -350,6 +350,11 @@ def _history_record(
     status: str,
     objective_met: bool,
     dataset_snapshot_id: str,
+    raw_objective_met: bool | None = None,
+    terminal_validation_status: str = "valid",
+    terminal_validation_reason: str = "terminal_validation_passed",
+    search_action: str = "continue",
+    search_reason: str = "objective_not_met",
     descriptor: MlxCandidateDescriptor | None = None,
     proposal_score: ProposalScore | None = None,
     proposal_selected: bool = False,
@@ -389,6 +394,13 @@ def _history_record(
         "parent_candidate_id": parent_candidate_id,
         "status": status,
         "objective_met": objective_met,
+        "raw_objective_met": (
+            objective_met if raw_objective_met is None else raw_objective_met
+        ),
+        "terminal_validation_status": terminal_validation_status,
+        "terminal_validation_reason": terminal_validation_reason,
+        "search_action": search_action,
+        "search_reason": search_reason,
         "mutation_label": mutation_label,
         "dataset_snapshot_id": dataset_snapshot_id,
         "sweep_config_path": str(sweep_config_path),
@@ -658,7 +670,12 @@ def _history_record(
 
 def _write_history_jsonl(path: Path, history: list[dict[str, Any]]) -> None:
     lines = [json.dumps(item, sort_keys=True) for item in history]
-    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    temporary_path.write_text(
+        "\n".join(lines) + ("\n" if lines else ""),
+        encoding="utf-8",
+    )
+    temporary_path.replace(path)
 
 
 def _sanitize_tsv_field(value: Any) -> str:

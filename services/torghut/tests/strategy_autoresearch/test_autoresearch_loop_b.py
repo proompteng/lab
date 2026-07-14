@@ -514,7 +514,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(frontier_call_count["count"], 2)
 
-    def test_run_strategy_autoresearch_loop_stops_when_discarded_candidate_meets_objective(
+    def test_run_strategy_autoresearch_loop_continues_when_discarded_candidate_meets_objective(
         self,
     ) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -598,7 +598,8 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
                                 "entry_cooldown_seconds": "600",
                             },
                             "strategy_overrides": {
-                                "universe_symbols": ["AMAT", "NVDA"]
+                                "universe_symbols": ["AMAT", "NVDA"],
+                                "max_position_pct_equity": "0.10",
                             },
                         },
                     },
@@ -634,7 +635,8 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
                                 "entry_cooldown_seconds": "600",
                             },
                             "strategy_overrides": {
-                                "universe_symbols": ["AMAT", "NVDA"]
+                                "universe_symbols": ["AMAT", "NVDA"],
+                                "max_position_pct_equity": "2.0",
                             },
                         },
                     },
@@ -645,18 +647,54 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
                 "scripts.strategy_autoresearch_loop.run_strategy_autoresearch_loop.run_consistent_profitability_frontier",
                 side_effect=[
                     frontier_payload,
-                    AssertionError("loop should stop after discarded objective hit"),
+                    {
+                        "dataset_snapshot_receipt": {"snapshot_id": "snap-1"},
+                        "top": [],
+                    },
                 ],
             ):
                 payload = runner.run_strategy_autoresearch_loop(args)
 
             self.assertEqual(payload["status"], "ok")
-            self.assertTrue(payload["objective_met"])
-            self.assertEqual(payload["frontier_run_count"], 1)
+            self.assertFalse(payload["objective_met"])
+            self.assertEqual(payload["frontier_run_count"], 2)
             summary = json.loads(
                 (Path(payload["run_root"]) / "summary.json").read_text(encoding="utf-8")
             )
-            self.assertTrue(summary["objective_met"])
+            self.assertFalse(summary["objective_met"])
+            run_root = Path(payload["run_root"])
+            history = [
+                json.loads(line)
+                for line in (run_root / "history.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            discarded = next(
+                item
+                for item in history
+                if item["candidate_id"] == "discarded-objective-hit"
+            )
+            self.assertTrue(discarded["raw_objective_met"])
+            self.assertFalse(discarded["objective_met"])
+            self.assertEqual(discarded["terminal_validation_status"], "discarded")
+            self.assertEqual(
+                discarded["terminal_validation_reason"], "candidate_not_selected"
+            )
+            self.assertEqual(discarded["search_action"], "continue")
+            search_decisions = [
+                json.loads(line)
+                for line in (run_root / "search-decisions.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            discarded_decision = next(
+                item
+                for item in search_decisions
+                if item.get("candidate_id") == "discarded-objective-hit"
+            )
+            self.assertEqual(discarded_decision["reason"], "candidate_not_selected")
+            self.assertEqual(discarded_decision["action"], "continue")
+            self.assertTrue((run_root / "checkpoint.json").is_file())
 
     def test_run_strategy_autoresearch_loop_persists_error_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -722,7 +760,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             self.assertEqual(promotion_readiness["status"], "blocked_no_candidate")
             self.assertIn("best_candidate_missing", promotion_readiness["blockers"])
 
-    def test_run_strategy_autoresearch_loop_honors_max_frontier_runs_and_dedupes_seen_sweeps(
+    def test_run_strategy_autoresearch_loop_records_and_skips_duplicate_sweeps(
         self,
     ) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -765,7 +803,7 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
                 expected_last_trading_day="",
                 allow_stale_tape=False,
                 prefetch_full_window_rows=False,
-                max_frontier_runs=1,
+                max_frontier_runs=0,
                 json_output=None,
             )
             frontier_payload = {
@@ -779,9 +817,19 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
             ) as mock_frontier:
                 payload = runner.run_strategy_autoresearch_loop(args)
 
-        self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["frontier_run_count"], 1)
-        mock_frontier.assert_called_once()
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["frontier_run_count"], 1)
+            mock_frontier.assert_called_once()
+            decisions = [
+                json.loads(line)
+                for line in (Path(payload["run_root"]) / "search-decisions.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertIn(
+                "duplicate_sweep_identity",
+                [item["reason"] for item in decisions],
+            )
 
     def test_run_strategy_autoresearch_loop_force_keeps_top_candidate_when_all_vetoed(
         self,
@@ -878,7 +926,16 @@ class TestStrategyAutoresearchLoopB(StrategyAutoresearchTestCase):
                 payload = runner.run_strategy_autoresearch_loop(args)
 
             self.assertEqual(payload["frontier_run_count"], 2)
-            history = (Path(payload["run_root"]) / "history.jsonl").read_text(
-                encoding="utf-8"
+            history = [
+                json.loads(line)
+                for line in (Path(payload["run_root"]) / "history.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            vetoed = next(
+                item for item in history if item["candidate_id"] == "vetoed-seed"
             )
-            self.assertIn('"candidate_id": "vetoed-seed"', history)
+            self.assertFalse(vetoed["objective_met"])
+            self.assertEqual(vetoed["terminal_validation_status"], "invalid")
+            self.assertEqual(vetoed["terminal_validation_reason"], "candidate_vetoed")
+            self.assertEqual(vetoed["search_action"], "continue")

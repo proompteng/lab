@@ -14,22 +14,18 @@ import yaml
 from app.trading.discovery.autoresearch import (
     ProposalModelPolicy,
     apply_program_objective,
-    build_mutated_sweep_config,
-    candidate_meets_objective,
     load_strategy_autoresearch_program,
     run_id,
     stable_payload_hash,
 )
 from app.trading.discovery.mlx_features import (
     MlxCandidateDescriptor,
-    descriptor_from_candidate_payload,
     descriptor_from_sweep_config,
 )
 from app.trading.discovery.mlx_proposal_models import (
     ProposalScore,
     ProposalSelectionEntry,
     rank_candidate_descriptors,
-    select_proposal_batch,
 )
 from app.trading.discovery.mlx_snapshot import (
     MlxSignalBundleStats,
@@ -42,13 +38,13 @@ from scripts.search_consistent_profitability_frontier import (
 )
 
 
+from .candidate_processing import CandidateBatchRequest, process_candidate_batch
+from .completion_semantics import append_search_decision
 from .shared_context import (
     WorkItem,
-    _apply_exact_replay_guidance_to_next_sweep,
     _apply_objective_capital_limits,
     _float,
     _frontier_args,
-    _keep_candidate_limit,
     _mapping,
     _mlx_bundle_paths,
     _runtime_missing_candidate_payload,
@@ -66,6 +62,13 @@ from .load_yaml import (
     _maybe_write_signal_bundle,
     _provided_replay_tape_receipt,
 )
+from .run_checkpoint import (
+    RunCheckpointSnapshot,
+    execution_contract_digest,
+    load_run_checkpoint,
+    read_uncommitted_lifecycle_decisions,
+    write_run_checkpoint,
+)
 from .write_portfolio_outputs import (
     _exact_replay_candidate_for_payload,
     _exact_replay_ranking_by_candidate,
@@ -76,68 +79,164 @@ from .write_portfolio_outputs import (
 )
 
 
+_EXPECTED_RUN_ERRORS = (
+    ArithmeticError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    yaml.YAMLError,
+)
+
+
 def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
     program = load_strategy_autoresearch_program(
         args.program.resolve(),
         family_dir=args.family_template_dir.resolve(),
     )
-    runner_run_id = run_id("strategy-autoresearch")
-    run_root = args.output_dir.resolve() / runner_run_id
+    program_payload = program.to_payload()
+    contract_digest = execution_contract_digest(
+        args=args,
+        program_payload=program_payload,
+        family_plans=program.families,
+    )
+    resume_run_root = getattr(args, "resume_run_root", None)
+    restored_state = None
+    if resume_run_root is not None:
+        run_root = Path(resume_run_root).resolve()
+        restored_state = load_run_checkpoint(
+            run_root=run_root,
+            program_id=program.program_id,
+            program_payload=program_payload,
+            contract_digest=contract_digest,
+            family_plans=program.families,
+        )
+        if restored_state.status == "completed":
+            summary_path = run_root / "summary.json"
+            if not summary_path.is_file():
+                raise ValueError(
+                    f"autoresearch_completed_summary_missing:{summary_path}"
+                )
+            return cast(
+                dict[str, Any], json.loads(summary_path.read_text(encoding="utf-8"))
+            )
+        runner_run_id = restored_state.runner_run_id
+    else:
+        output_dir = getattr(args, "output_dir", None)
+        if output_dir is None:
+            raise ValueError("autoresearch_output_dir_missing")
+        runner_run_id = run_id("strategy-autoresearch")
+        run_root = Path(output_dir).resolve() / runner_run_id
     run_root.mkdir(parents=True, exist_ok=True)
     (run_root / "experiments").mkdir(parents=True, exist_ok=True)
 
-    worklist: list[WorkItem] = []
-    seen_sweeps: set[str] = set()
-    for family_plan in program.families:
-        seed_sweep = _load_yaml(family_plan.seed_sweep_config)
-        seed_sweep = apply_program_objective(
-            sweep_config=seed_sweep,
-            objective=program.objective,
-            holdout_day_count=max(1, int(args.holdout_days)),
-            full_window_day_count=_default_full_window_day_count(args),
-        )
-        seed_sweep = _apply_objective_capital_limits(
-            sweep_config=seed_sweep,
-            max_gross_exposure_pct_equity=program.objective.max_gross_exposure_pct_equity,
-            start_equity=Decimal(str(args.start_equity)),
-        )
-        worklist.append(
-            WorkItem(
-                family_plan=family_plan,
-                iteration=1,
+    if restored_state is None:
+        worklist: list[WorkItem] = []
+        for family_plan in program.families:
+            seed_sweep = _load_yaml(family_plan.seed_sweep_config)
+            seed_sweep = apply_program_objective(
                 sweep_config=seed_sweep,
-                mutation_label="seed",
-                parent_candidate_id=None,
+                objective=program.objective,
+                holdout_day_count=max(1, int(args.holdout_days)),
+                full_window_day_count=_default_full_window_day_count(args),
             )
+            seed_sweep = _apply_objective_capital_limits(
+                sweep_config=seed_sweep,
+                max_gross_exposure_pct_equity=(
+                    program.objective.max_gross_exposure_pct_equity
+                ),
+                start_equity=Decimal(str(args.start_equity)),
+            )
+            worklist.append(
+                WorkItem(
+                    family_plan=family_plan,
+                    iteration=1,
+                    sweep_config=seed_sweep,
+                    mutation_label="seed",
+                    parent_candidate_id=None,
+                )
+            )
+        seen_sweeps: set[str] = set()
+        seen_candidate_ids: set[str] = set()
+        history: list[dict[str, Any]] = []
+        descriptors: list[MlxCandidateDescriptor] = []
+        proposal_scores: list[ProposalScore] = []
+        search_decisions: list[dict[str, Any]] = []
+        tape_freshness_receipts: list[dict[str, Any]] = []
+        snapshot_symbols = _snapshot_symbols(args=args, worklist=worklist)
+        resolved_full_window_start_date = _string(args.full_window_start_date)
+        resolved_full_window_end_date = _string(args.full_window_end_date)
+        effective_expected_last_trading_day = _string(args.expected_last_trading_day)
+        signal_bundle_stats: MlxSignalBundleStats | None = None
+        effective_replay_tape_path = (
+            Path(replay_tape_path).resolve()
+            if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
+            else None
+        )
+        effective_replay_tape_manifest = (
+            Path(replay_tape_manifest).resolve()
+            if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
+            is not None
+            else None
+        )
+        checkpoint_generation = 0
+        setup_complete = False
+        if effective_replay_tape_path is not None:
+            provided_receipt = _provided_replay_tape_receipt(
+                tape_path=effective_replay_tape_path,
+                manifest_path=effective_replay_tape_manifest,
+            )
+            if provided_receipt is not None:
+                tape_freshness_receipts.append(provided_receipt)
+    else:
+        worklist = restored_state.worklist
+        seen_sweeps = restored_state.seen_sweeps
+        seen_candidate_ids = restored_state.seen_candidate_ids
+        history = restored_state.history
+        descriptors = restored_state.descriptors
+        proposal_scores = restored_state.proposal_scores
+        search_decisions = restored_state.search_decisions
+        tape_freshness_receipts = restored_state.tape_freshness_receipts
+        snapshot_symbols = restored_state.snapshot_symbols
+        resolved_full_window_start_date = restored_state.resolved_full_window_start_date
+        resolved_full_window_end_date = restored_state.resolved_full_window_end_date
+        effective_expected_last_trading_day = (
+            restored_state.effective_expected_last_trading_day
+        )
+        signal_bundle_stats = restored_state.signal_bundle_stats
+        effective_replay_tape_path = restored_state.effective_replay_tape_path
+        effective_replay_tape_manifest = restored_state.effective_replay_tape_manifest
+        checkpoint_generation = restored_state.generation
+        setup_complete = restored_state.setup_complete
+        for lifecycle_record in read_uncommitted_lifecycle_decisions(
+            run_root=run_root,
+            committed_count=len(search_decisions),
+        ):
+            append_search_decision(
+                search_decisions,
+                event_type="run",
+                action=str(lifecycle_record.get("action") or "stop"),
+                reason=str(lifecycle_record.get("reason") or "run_interrupted"),
+                context={
+                    key: value
+                    for key, value in lifecycle_record.items()
+                    if key not in {"sequence", "event_type", "action", "reason"}
+                },
+            )
+        append_search_decision(
+            search_decisions,
+            event_type="run",
+            action="continue",
+            reason="run_resumed_from_checkpoint",
+            context={"checkpoint_generation": checkpoint_generation},
         )
 
-    history: list[dict[str, Any]] = []
-    descriptors: list[MlxCandidateDescriptor] = []
-    proposal_scores: list[ProposalScore] = []
-    tape_freshness_receipts: list[dict[str, Any]] = []
-    snapshot_symbols = _snapshot_symbols(args=args, worklist=worklist)
+    termination: dict[str, Any] = {
+        "event_type": "run",
+        "action": "continue",
+        "reason": "run_in_progress",
+    }
     bundle_paths = _mlx_bundle_paths(run_root)
-    resolved_full_window_start_date = _string(args.full_window_start_date)
-    resolved_full_window_end_date = _string(args.full_window_end_date)
-    signal_bundle_stats: MlxSignalBundleStats | None = None
-    effective_replay_tape_path = (
-        Path(replay_tape_path).resolve()
-        if (replay_tape_path := getattr(args, "replay_tape_path", None)) is not None
-        else None
-    )
-    effective_replay_tape_manifest = (
-        Path(replay_tape_manifest).resolve()
-        if (replay_tape_manifest := getattr(args, "replay_tape_manifest", None))
-        is not None
-        else None
-    )
-    if effective_replay_tape_path is not None:
-        provided_receipt = _provided_replay_tape_receipt(
-            tape_path=effective_replay_tape_path,
-            manifest_path=effective_replay_tape_manifest,
-        )
-        if provided_receipt is not None:
-            tape_freshness_receipts.append(provided_receipt)
     closure_execution_context = RuntimeClosureExecutionContext(
         strategy_configmap_path=args.strategy_configmap.resolve(),
         clickhouse_http_url=str(args.clickhouse_http_url),
@@ -180,105 +279,219 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             tensor_bundle_paths=bundle_paths,
         )
 
-    manifest = _refresh_manifest()
-    frontier_runs = 0
-    objective_met = False
-    summary = _persist_run_outputs(
-        run_root=run_root,
-        program=program,
-        program_payload=program.to_payload(),
-        runner_run_id=runner_run_id,
-        program_id=program.program_id,
-        frontier_runs=frontier_runs,
-        objective_met=objective_met,
-        history=history,
-        manifest=manifest,
-        descriptors=descriptors,
-        proposal_scores=proposal_scores,
-        worklist=worklist,
-        status="running",
-        closure_execution_context=closure_execution_context,
-    )
-    latest_exact_replay_ledger_remediation = _mapping(
-        summary.get("exact_replay_ledger_remediation")
-    )
-    signal_bundle_stats, materialized_replay_tape_receipt = (
-        _maybe_materialize_run_replay_tape(
-            args=args,
-            runner_run_id=runner_run_id,
-            snapshot_symbols=snapshot_symbols,
-            bundle_paths=bundle_paths,
-            full_window_start_date=resolved_full_window_start_date,
-            full_window_end_date=resolved_full_window_end_date,
-            existing_signal_bundle=signal_bundle_stats,
-            objective_min_observed_trading_days=program.objective.min_observed_trading_days,
-        )
-    )
-    if materialized_replay_tape_receipt is not None:
-        tape_freshness_receipts.append(materialized_replay_tape_receipt)
-        effective_replay_tape_path = Path(materialized_replay_tape_receipt["tape_path"])
-        effective_replay_tape_manifest = Path(
-            materialized_replay_tape_receipt["manifest_path"]
-        )
-        resolved_full_window_start_date = (
-            _string(
-                materialized_replay_tape_receipt.get("effective_full_window_start_date")
-            )
-            or resolved_full_window_start_date
-        )
-        resolved_full_window_end_date = (
-            _string(
-                materialized_replay_tape_receipt.get("effective_full_window_end_date")
-            )
-            or resolved_full_window_end_date
-        )
-    signal_bundle_stats = _maybe_write_signal_bundle(
-        args=args,
-        snapshot_symbols=snapshot_symbols,
-        bundle_paths=bundle_paths,
-        full_window_start_date=resolved_full_window_start_date,
-        full_window_end_date=resolved_full_window_end_date,
-        existing=signal_bundle_stats,
-    )
-    frontier_base_args = argparse.Namespace(
-        **{
-            **vars(args),
-            "full_window_start_date": resolved_full_window_start_date,
-            "full_window_end_date": resolved_full_window_end_date,
-            "expected_last_trading_day": (
-                resolved_full_window_end_date
-                if materialized_replay_tape_receipt is not None
-                else str(args.expected_last_trading_day)
+    def _commit_checkpoint(*, status: str) -> Path:
+        nonlocal checkpoint_generation
+        checkpoint_generation += 1
+        return write_run_checkpoint(
+            run_root=run_root,
+            snapshot=RunCheckpointSnapshot(
+                status=status,
+                generation=checkpoint_generation,
+                setup_complete=setup_complete,
+                program_id=program.program_id,
+                program_payload=program_payload,
+                contract_digest=contract_digest,
+                runner_run_id=runner_run_id,
+                frontier_runs=frontier_runs,
+                objective_met=objective_met,
+                worklist=worklist,
+                seen_sweeps=seen_sweeps,
+                seen_candidate_ids=seen_candidate_ids,
+                history=history,
+                descriptors=descriptors,
+                proposal_scores=proposal_scores,
+                search_decisions=search_decisions,
+                termination=termination,
+                tape_freshness_receipts=tape_freshness_receipts,
+                snapshot_symbols=snapshot_symbols,
+                resolved_full_window_start_date=resolved_full_window_start_date,
+                resolved_full_window_end_date=resolved_full_window_end_date,
+                effective_expected_last_trading_day=(
+                    effective_expected_last_trading_day
+                ),
+                signal_bundle_stats=signal_bundle_stats,
+                effective_replay_tape_path=effective_replay_tape_path,
+                effective_replay_tape_manifest=effective_replay_tape_manifest,
             ),
-            "replay_tape_path": effective_replay_tape_path,
-            "replay_tape_manifest": effective_replay_tape_manifest,
-        }
-    )
+        )
+
     manifest = _refresh_manifest()
-    summary = _persist_run_outputs(
-        run_root=run_root,
-        program=program,
-        program_payload=program.to_payload(),
-        runner_run_id=runner_run_id,
-        program_id=program.program_id,
-        frontier_runs=frontier_runs,
-        objective_met=objective_met,
-        history=history,
-        manifest=manifest,
-        descriptors=descriptors,
-        proposal_scores=proposal_scores,
-        worklist=worklist,
-        status="running",
-        closure_execution_context=closure_execution_context,
+    frontier_runs = restored_state.frontier_runs if restored_state is not None else 0
+    objective_met = (
+        restored_state.objective_met if restored_state is not None else False
     )
-    latest_exact_replay_ledger_remediation = _mapping(
-        summary.get("exact_replay_ledger_remediation")
-    )
+    latest_exact_replay_ledger_remediation: dict[str, Any] = {}
+    _commit_checkpoint(status="running")
+
+    def _persist_failure(
+        *,
+        status: str,
+        reason: str,
+        error: BaseException,
+    ) -> dict[str, Any]:
+        nonlocal termination
+        context: dict[str, Any] = {"frontier_run_count": frontier_runs}
+        if reason == "run_error":
+            context["error_type"] = error.__class__.__name__
+        termination = append_search_decision(
+            search_decisions,
+            event_type="run",
+            action="stop",
+            reason=reason,
+            context=context,
+        )
+        return _persist_run_outputs(
+            run_root=run_root,
+            program=program,
+            program_payload=program_payload,
+            runner_run_id=runner_run_id,
+            program_id=program.program_id,
+            frontier_runs=frontier_runs,
+            objective_met=objective_met,
+            history=history,
+            manifest=manifest,
+            descriptors=descriptors,
+            proposal_scores=proposal_scores,
+            worklist=worklist,
+            status=status,
+            search_decisions=search_decisions,
+            termination=termination,
+            closure_execution_context=closure_execution_context,
+            error={
+                "type": error.__class__.__name__,
+                "message": str(error),
+            },
+        )
+
+    try:
+        summary = _persist_run_outputs(
+            run_root=run_root,
+            program=program,
+            program_payload=program_payload,
+            runner_run_id=runner_run_id,
+            program_id=program.program_id,
+            frontier_runs=frontier_runs,
+            objective_met=objective_met,
+            history=history,
+            manifest=manifest,
+            descriptors=descriptors,
+            proposal_scores=proposal_scores,
+            worklist=worklist,
+            status="running",
+            search_decisions=search_decisions,
+            termination=termination,
+            closure_execution_context=closure_execution_context,
+        )
+        latest_exact_replay_ledger_remediation = _mapping(
+            summary.get("exact_replay_ledger_remediation")
+        )
+        materialized_replay_tape_receipt: dict[str, Any] | None = None
+        if not setup_complete:
+            signal_bundle_stats, materialized_replay_tape_receipt = (
+                _maybe_materialize_run_replay_tape(
+                    args=args,
+                    runner_run_id=runner_run_id,
+                    snapshot_symbols=snapshot_symbols,
+                    bundle_paths=bundle_paths,
+                    full_window_start_date=resolved_full_window_start_date,
+                    full_window_end_date=resolved_full_window_end_date,
+                    existing_signal_bundle=signal_bundle_stats,
+                    objective_min_observed_trading_days=(
+                        program.objective.min_observed_trading_days
+                    ),
+                )
+            )
+        if materialized_replay_tape_receipt is not None:
+            tape_freshness_receipts.append(materialized_replay_tape_receipt)
+            effective_replay_tape_path = Path(
+                materialized_replay_tape_receipt["tape_path"]
+            )
+            effective_replay_tape_manifest = Path(
+                materialized_replay_tape_receipt["manifest_path"]
+            )
+            resolved_full_window_start_date = (
+                _string(
+                    materialized_replay_tape_receipt.get(
+                        "effective_full_window_start_date"
+                    )
+                )
+                or resolved_full_window_start_date
+            )
+            resolved_full_window_end_date = (
+                _string(
+                    materialized_replay_tape_receipt.get(
+                        "effective_full_window_end_date"
+                    )
+                )
+                or resolved_full_window_end_date
+            )
+            effective_expected_last_trading_day = resolved_full_window_end_date
+        if not setup_complete:
+            signal_bundle_stats = _maybe_write_signal_bundle(
+                args=args,
+                snapshot_symbols=snapshot_symbols,
+                bundle_paths=bundle_paths,
+                full_window_start_date=resolved_full_window_start_date,
+                full_window_end_date=resolved_full_window_end_date,
+                existing=signal_bundle_stats,
+            )
+        setup_complete = True
+        frontier_base_args = argparse.Namespace(
+            **{
+                **vars(args),
+                "full_window_start_date": resolved_full_window_start_date,
+                "full_window_end_date": resolved_full_window_end_date,
+                "expected_last_trading_day": effective_expected_last_trading_day,
+                "replay_tape_path": effective_replay_tape_path,
+                "replay_tape_manifest": effective_replay_tape_manifest,
+            }
+        )
+        manifest = _refresh_manifest()
+        summary = _persist_run_outputs(
+            run_root=run_root,
+            program=program,
+            program_payload=program_payload,
+            runner_run_id=runner_run_id,
+            program_id=program.program_id,
+            frontier_runs=frontier_runs,
+            objective_met=objective_met,
+            history=history,
+            manifest=manifest,
+            descriptors=descriptors,
+            proposal_scores=proposal_scores,
+            worklist=worklist,
+            status="running",
+            search_decisions=search_decisions,
+            termination=termination,
+            closure_execution_context=closure_execution_context,
+        )
+        latest_exact_replay_ledger_remediation = _mapping(
+            summary.get("exact_replay_ledger_remediation")
+        )
+        _commit_checkpoint(status="running")
+    except KeyboardInterrupt as exc:
+        return _persist_failure(
+            status="interrupted",
+            reason="run_interrupted",
+            error=exc,
+        )
+    except _EXPECTED_RUN_ERRORS as exc:
+        return _persist_failure(status="error", reason="run_error", error=exc)
     try:
         while worklist:
             if int(args.max_frontier_runs) > 0 and frontier_runs >= int(
                 args.max_frontier_runs
             ):
+                termination = append_search_decision(
+                    search_decisions,
+                    event_type="loop",
+                    action="stop",
+                    reason="max_frontier_runs_reached",
+                    context={
+                        "frontier_run_count": frontier_runs,
+                        "pending_work_item_count": len(worklist),
+                    },
+                )
                 break
             pending_descriptors = [
                 descriptor_from_sweep_config(
@@ -310,6 +523,18 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             worklist = [item for item, _ in ordered_pending[1:]]
             sweep_hash = stable_payload_hash(current.sweep_config)
             if sweep_hash in seen_sweeps:
+                append_search_decision(
+                    search_decisions,
+                    event_type="sweep",
+                    action="continue",
+                    reason="duplicate_sweep_identity",
+                    context={
+                        "family_template_id": current.family_plan.family_template.family_id,
+                        "iteration": current.iteration,
+                        "sweep_hash": sweep_hash,
+                    },
+                )
+                _commit_checkpoint(status="running")
                 continue
             seen_sweeps.add(sweep_hash)
             frontier_runs += 1
@@ -357,6 +582,8 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 proposal_scores=proposal_scores,
                 worklist=worklist,
                 status="running",
+                search_decisions=search_decisions,
+                termination=termination,
                 selected_for_replay=selected_for_replay,
                 selected_descriptor=current_descriptor,
                 closure_execution_context=closure_execution_context,
@@ -389,6 +616,17 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     family_plan=current.family_plan,
                     status_reason=status_reason,
                 )
+                append_search_decision(
+                    search_decisions,
+                    event_type="frontier",
+                    action="continue",
+                    reason="runtime_strategy_missing",
+                    context={
+                        "experiment_index": experiment_index,
+                        "candidate_id": current_descriptor.candidate_id,
+                        "detail": status_reason,
+                    },
+                )
                 history.append(
                     _history_record(
                         runner_run_id=runner_run_id,
@@ -404,6 +642,11 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                         status="skip",
                         objective_met=False,
                         dataset_snapshot_id="",
+                        raw_objective_met=False,
+                        terminal_validation_status="invalid",
+                        terminal_validation_reason="runtime_strategy_missing",
+                        search_action="continue",
+                        search_reason="runtime_strategy_missing",
                         descriptor=current_descriptor,
                         proposal_score=selected_score,
                         proposal_selected=False,
@@ -431,11 +674,14 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                     proposal_scores=proposal_scores,
                     worklist=worklist,
                     status="running",
+                    search_decisions=search_decisions,
+                    termination=termination,
                     closure_execution_context=closure_execution_context,
                 )
                 latest_exact_replay_ledger_remediation = _mapping(
                     summary.get("exact_replay_ledger_remediation")
                 )
+                _commit_checkpoint(status="running")
                 continue
             result_path.write_text(
                 json.dumps(frontier_payload, indent=2, sort_keys=True),
@@ -498,157 +744,37 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
             ]
             if top_candidates:
                 frontier_payload = {**frontier_payload, "top": top_candidates}
-            keep_candidates = [
-                candidate
-                for candidate in top_candidates
-                if not bool(_mapping(candidate.get("ranking")).get("vetoed"))
-            ]
-            frontier_descriptors = [
-                descriptor_from_candidate_payload(
-                    candidate_payload=candidate,
-                    family_plan=current.family_plan,
-                )
-                for candidate in top_candidates
-            ]
-            descriptors.extend(frontier_descriptors)
-            frontier_candidate_scores = rank_candidate_descriptors(
-                descriptors=frontier_descriptors,
-                history_rows=history,
-                policy=cast(ProposalModelPolicy, program.proposal_model_policy),
-            )
-            proposal_scores.extend(frontier_candidate_scores)
-            frontier_descriptor_by_candidate = {
-                item.candidate_id: item for item in frontier_descriptors
-            }
-            frontier_score_by_candidate = {
-                item.candidate_id: item for item in frontier_candidate_scores
-            }
-            keep_limit = _keep_candidate_limit(
-                family_plan=current.family_plan,
-                replay_budget_max_candidates_per_round=int(
-                    program.replay_budget.max_candidates_per_round
-                ),
-            )
-            non_vetoed_descriptors = [
-                frontier_descriptor_by_candidate[_string(candidate.get("candidate_id"))]
-                for candidate in keep_candidates
-                if _string(candidate.get("candidate_id"))
-                in frontier_descriptor_by_candidate
-            ]
-            non_vetoed_scores = [
-                frontier_score_by_candidate[_string(candidate.get("candidate_id"))]
-                for candidate in keep_candidates
-                if _string(candidate.get("candidate_id")) in frontier_score_by_candidate
-            ]
-            exploration_slots = min(
-                max(0, int(program.proposal_model_policy.exploration_slots)),
-                max(0, int(program.replay_budget.exploration_slots)),
-            )
-            selected_keep_entries = select_proposal_batch(
-                descriptors=non_vetoed_descriptors,
-                proposal_scores=non_vetoed_scores,
-                limit=keep_limit,
-                top_k=max(1, int(program.proposal_model_policy.top_k)),
-                exploration_slots=exploration_slots,
-            )
-            if (
-                not selected_keep_entries
-                and current.family_plan.force_keep_top_candidate_if_all_vetoed
-                and top_candidates
-            ):
-                first_candidate = top_candidates[0]
-                first_candidate_id = _string(first_candidate.get("candidate_id"))
-                descriptor = frontier_descriptor_by_candidate.get(first_candidate_id)
-                score = frontier_score_by_candidate.get(first_candidate_id)
-                if descriptor is not None and score is not None:
-                    selected_keep_entries = [
-                        ProposalSelectionEntry(
-                            candidate_id=first_candidate_id,
-                            descriptor_id=descriptor.descriptor_id,
-                            selection_reason="fallback_force_keep",
-                            score=score.score,
-                            rank=score.rank,
-                            family_template_id=descriptor.family_template_id,
-                            side_policy=descriptor.side_policy,
-                        )
-                    ]
-            keep_ids = {item.candidate_id for item in selected_keep_entries}
-            keep_reason_by_candidate = {
-                item.candidate_id: item.selection_reason
-                for item in selected_keep_entries
-            }
-            for rank, candidate in enumerate(top_candidates, start=1):
-                candidate_id = _string(candidate.get("candidate_id"))
-                candidate_status = "keep" if candidate_id in keep_ids else "discard"
-                candidate_objective_met = candidate_meets_objective(
-                    candidate, objective=program.objective
-                )
-                candidate_descriptor = frontier_descriptor_by_candidate[candidate_id]
-                history.append(
-                    _history_record(
-                        runner_run_id=runner_run_id,
-                        experiment_index=experiment_index,
-                        family_plan=current.family_plan,
-                        iteration=current.iteration,
-                        mutation_label=current.mutation_label,
-                        parent_candidate_id=current.parent_candidate_id,
-                        sweep_config_path=sweep_config_path,
-                        result_path=result_path,
-                        candidate_payload=candidate,
-                        rank=rank,
-                        status=candidate_status,
-                        objective_met=candidate_objective_met,
-                        dataset_snapshot_id=dataset_snapshot_id,
-                        descriptor=candidate_descriptor,
-                        proposal_score=frontier_score_by_candidate.get(candidate_id),
-                        proposal_selected=candidate_id in keep_ids,
-                        proposal_selection_reason=keep_reason_by_candidate.get(
-                            candidate_id, ""
-                        ),
-                        disable_other_strategies=bool(
-                            current.sweep_config.get("disable_other_strategies", True)
-                        ),
-                    )
-                )
-                if candidate_objective_met:
-                    objective_met = True
-                if candidate_status != "keep":
-                    continue
-                if current.iteration >= current.family_plan.max_iterations:
-                    continue
-                next_sweep_config, mutation_label = build_mutated_sweep_config(
-                    base_sweep_config=current.sweep_config,
-                    candidate_payload=candidate,
-                    family_plan=current.family_plan,
-                )
-                next_sweep_config = apply_program_objective(
-                    sweep_config=next_sweep_config,
-                    objective=program.objective,
-                    holdout_day_count=max(1, int(args.holdout_days)),
+            candidate_outcome = process_candidate_batch(
+                CandidateBatchRequest(
+                    candidates=top_candidates,
+                    current=current,
+                    program=program,
+                    existing_history=history,
+                    existing_seen_candidate_ids=seen_candidate_ids,
+                    search_decision_offset=len(search_decisions),
+                    runner_run_id=runner_run_id,
+                    experiment_index=experiment_index,
+                    sweep_config_path=sweep_config_path,
+                    result_path=result_path,
+                    dataset_snapshot_id=dataset_snapshot_id,
+                    latest_exact_replay_ledger_remediation=(
+                        latest_exact_replay_ledger_remediation
+                    ),
+                    start_equity=Decimal(str(args.start_equity)),
+                    holdout_days=int(args.holdout_days),
                     full_window_day_count=_default_full_window_day_count(args),
                 )
-                (
-                    next_sweep_config,
-                    mutation_label,
-                ) = _apply_exact_replay_guidance_to_next_sweep(
-                    sweep_config=next_sweep_config,
-                    mutation_label=mutation_label,
-                    remediation_report=latest_exact_replay_ledger_remediation,
-                )
-                next_sweep_config = _apply_objective_capital_limits(
-                    sweep_config=next_sweep_config,
-                    max_gross_exposure_pct_equity=program.objective.max_gross_exposure_pct_equity,
-                    start_equity=Decimal(str(args.start_equity)),
-                )
-                worklist.append(
-                    WorkItem(
-                        family_plan=current.family_plan,
-                        iteration=current.iteration + 1,
-                        sweep_config=next_sweep_config,
-                        mutation_label=mutation_label,
-                        parent_candidate_id=candidate_id,
-                    )
-                )
+            )
+            descriptors.extend(candidate_outcome.descriptors)
+            proposal_scores.extend(candidate_outcome.proposal_scores)
+            history.extend(candidate_outcome.history_records)
+            search_decisions.extend(candidate_outcome.search_decisions)
+            worklist.extend(candidate_outcome.continuation_work)
+            seen_candidate_ids.update(candidate_outcome.seen_candidate_ids)
+            if candidate_outcome.objective_met:
+                objective_met = True
+            if candidate_outcome.termination is not None:
+                termination = candidate_outcome.termination
             summary = _persist_run_outputs(
                 run_root=run_root,
                 program=program,
@@ -663,36 +789,34 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
                 proposal_scores=proposal_scores,
                 worklist=worklist,
                 status="running",
+                search_decisions=search_decisions,
+                termination=termination,
                 closure_execution_context=closure_execution_context,
             )
             latest_exact_replay_ledger_remediation = _mapping(
                 summary.get("exact_replay_ledger_remediation")
             )
+            _commit_checkpoint(status="running")
             if objective_met and program.objective.stop_when_objective_met:
                 break
-    except Exception as exc:
-        return _persist_run_outputs(
-            run_root=run_root,
-            program=program,
-            program_payload=program.to_payload(),
-            runner_run_id=runner_run_id,
-            program_id=program.program_id,
-            frontier_runs=frontier_runs,
-            objective_met=objective_met,
-            history=history,
-            manifest=manifest,
-            descriptors=descriptors,
-            proposal_scores=proposal_scores,
-            worklist=worklist,
-            status="error",
-            closure_execution_context=closure_execution_context,
-            error={
-                "type": exc.__class__.__name__,
-                "message": str(exc),
-            },
+    except KeyboardInterrupt as exc:
+        return _persist_failure(
+            status="interrupted",
+            reason="run_interrupted",
+            error=exc,
         )
+    except _EXPECTED_RUN_ERRORS as exc:
+        return _persist_failure(status="error", reason="run_error", error=exc)
 
-    return _persist_run_outputs(
+    if termination.get("reason") == "run_in_progress":
+        termination = append_search_decision(
+            search_decisions,
+            event_type="loop",
+            action="stop",
+            reason="worklist_exhausted",
+            context={"frontier_run_count": frontier_runs},
+        )
+    final_summary = _persist_run_outputs(
         run_root=run_root,
         program=program,
         program_payload=program.to_payload(),
@@ -706,8 +830,12 @@ def run_strategy_autoresearch_loop(args: argparse.Namespace) -> dict[str, Any]:
         proposal_scores=proposal_scores,
         worklist=worklist,
         status="ok",
+        search_decisions=search_decisions,
+        termination=termination,
         closure_execution_context=closure_execution_context,
     )
+    _commit_checkpoint(status="completed")
+    return final_summary
 
 
 __all__ = ("run_strategy_autoresearch_loop",)

@@ -856,6 +856,24 @@ class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
         self.assertEqual(args.max_coverage_spread_bps, "50")
         self.assertEqual(args.max_executable_gap_seconds, 120)
         self.assertEqual(args.staged_train_screen_multiplier, 0)
+        self.assertIsNone(args.resume_run_root)
+
+    def test_parse_args_accepts_checkpoint_resume_instead_of_output_dir(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "run_strategy_autoresearch_loop.py",
+                "--program",
+                "program.yaml",
+                "--resume-run-root",
+                "/tmp/existing-run",
+            ],
+        ):
+            args = runner._parse_args()
+
+        self.assertIsNone(args.output_dir)
+        self.assertEqual(args.resume_run_root, Path("/tmp/existing-run"))
 
     def test_parse_args_prefers_clickhouse_http_url_env(self) -> None:
         with (
