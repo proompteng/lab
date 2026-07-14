@@ -6,9 +6,9 @@ metadata:
   labels:
     app: torghut-options-archive
 spec:
-  # The image promotion activates this replica. The startup gate below keeps it
-  # from serving until the independently reconciled core app applies migration 0062.
-  replicas: 1
+  # Keep the regressed archive contained until the fixed image promotion activates
+  # this replica. The startup gate below also requires migration 0063's valid index.
+  replicas: 0
   revisionHistoryLimit: 2
   strategy:
     type: Recreate
@@ -62,7 +62,22 @@ spec:
                       try:
                           with engine.connect() as connection:
                               ready = connection.execute(
-                                  text("select to_regclass('public.torghut_options_archive_membership') is not null")
+                                  text(
+                                      """
+                                      SELECT
+                                        to_regclass('public.torghut_options_archive_membership') IS NOT NULL
+                                        AND COALESCE(
+                                          (
+                                            SELECT index_entry.indisvalid AND index_entry.indisready
+                                            FROM pg_index AS index_entry
+                                            WHERE index_entry.indexrelid = to_regclass(
+                                              'public.ix_options_catalog_active_expiration_symbol'
+                                            )
+                                          ),
+                                          FALSE
+                                        )
+                                      """
+                                  )
                               ).scalar_one()
                       finally:
                           engine.dispose()
@@ -75,7 +90,7 @@ spec:
                           f"attempt={attempts} last_error={type(error).__name__}"
                       )
                   if time.monotonic() >= deadline:
-                      raise SystemExit("options archive migration 0062 was not ready within 900 seconds")
+                      raise SystemExit("options archive migrations through 0063 were not ready within 900 seconds")
                   time.sleep(5)
               PY
               exec uvicorn app.options_lane.archive_service:app --host 0.0.0.0 --port 8080

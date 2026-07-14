@@ -11,6 +11,7 @@ from urllib.request import Request
 
 import pytest
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Executable
 
 from app.options_lane.alpaca import AlpacaOptionsClient, OptionsContractsQuery
 from app.options_lane.archive_model import (
@@ -36,18 +37,38 @@ from app.options_lane.settings import OptionsLaneSettings
 
 
 class _Result:
-    def __init__(self, *, scalar: object = 0, rowcount: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        scalar: object = 0,
+        rowcount: int = 0,
+        rows: list[dict[str, object]] | None = None,
+    ) -> None:
         self._scalar = scalar
         self.rowcount = rowcount
+        self._rows = rows or []
 
     def scalar_one(self) -> object:
         return self._scalar
 
+    def mappings(self) -> _Result:
+        return self
+
+    def all(self) -> list[dict[str, object]]:
+        return self._rows
+
 
 class _ArchiveSession:
-    def __init__(self, *, active_count: int = 0, transition_count: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        active_count: int = 0,
+        transition_count: int = 0,
+        candidate_rows: list[dict[str, object]] | None = None,
+    ) -> None:
         self.active_count = active_count
         self.transition_count = transition_count
+        self.candidate_rows = candidate_rows or []
         self.calls: list[tuple[str, object]] = []
 
     def begin(self) -> object:
@@ -56,8 +77,10 @@ class _ArchiveSession:
     def execute(self, statement: object, parameters: object = None) -> _Result:
         sql = str(statement)
         self.calls.append((sql, parameters))
-        if "SELECT count(*)" in sql and "contract_catalog" in sql:
-            return _Result(scalar=self.active_count)
+        if "SELECT EXISTS" in sql and "contract_catalog" in sql:
+            return _Result(scalar=self.active_count > 0)
+        if "SELECT catalog.expiration_date" in sql:
+            return _Result(rows=self.candidate_rows)
         if "UPDATE torghut_options_contract_catalog" in sql:
             return _Result(rowcount=self.transition_count)
         return _Result()
@@ -99,6 +122,14 @@ class _ArchiveRepository(OptionsArchiveRepository):
 
     def lease_healthy(self) -> bool:
         return self.lease_is_healthy
+
+    def _execute_cancellable(
+        self,
+        session: Session,
+        statement: Executable,
+        parameters: Mapping[str, object] | None = None,
+    ) -> object:
+        return cast(_ArchiveSession, session).execute(statement, parameters)
 
 
 class _SequencedLeaseRepository:
@@ -171,6 +202,9 @@ def _watermark_row(
     seen_count: int = 0,
     retry_count: int = 0,
     next_eligible_ts: datetime | None = None,
+    finalize_after_expiration_date: date | None = None,
+    finalize_after_contract_symbol: str | None = None,
+    transitioned_count: int = 0,
 ) -> dict[str, object]:
     return {
         "cursor": cursor,
@@ -182,6 +216,13 @@ def _watermark_row(
             "status": status,
             "page_count": page_count,
             "seen_count": seen_count,
+            "finalize_after_expiration_date": (
+                finalize_after_expiration_date.isoformat()
+                if finalize_after_expiration_date is not None
+                else None
+            ),
+            "finalize_after_contract_symbol": finalize_after_contract_symbol,
+            "transitioned_count": transitioned_count,
         },
     }
 
@@ -512,9 +553,22 @@ def test_record_failure_retains_cursor_and_caps_exponential_backoff() -> None:
     assert "provider_timeout" in str(update_parameters["metadata"])
 
 
-def test_finalize_is_exactly_shard_scoped_and_cleans_membership() -> None:
+def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
     fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
-    session = _ArchiveSession(active_count=3, transition_count=1)
+    session = _ArchiveSession(
+        active_count=3,
+        transition_count=1,
+        candidate_rows=[
+            {
+                "expiration_date": date(2026, 7, 14),
+                "contract_symbol": "AAPL-CONTRACT",
+            },
+            {
+                "expiration_date": date(2026, 7, 15),
+                "contract_symbol": "MSFT-CONTRACT",
+            },
+        ],
+    )
     repository = _ArchiveRepository(
         row=_watermark_row(
             fingerprint=fingerprint,
@@ -540,18 +594,164 @@ def test_finalize_is_exactly_shard_scoped_and_cleans_membership() -> None:
         ),
         observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
         refresh_seconds=86400,
+        batch_size=1000,
+        statement_timeout_ms=30000,
+        lock_timeout_ms=5000,
     )
 
     assert completion.transitioned_count == 1
-    assert completion.checkpoint.status == "complete"
+    assert completion.batch_scanned_count == 2
+    assert completion.batch_transitioned_count == 1
+    assert completion.checkpoint.status == "finalizing"
+    assert completion.checkpoint.finalize_after_expiration_date == date(2026, 7, 15)
+    assert completion.checkpoint.finalize_after_contract_symbol == "MSFT-CONTRACT"
+    candidate_sql = next(
+        sql for sql, _ in session.calls if "SELECT catalog.expiration_date" in sql
+    )
+    assert "LIMIT :batch_size" in candidate_sql
+    assert "ORDER BY catalog.expiration_date, catalog.contract_symbol" in candidate_sql
     transition_sql = next(
         sql
         for sql, _ in session.calls
         if "UPDATE torghut_options_contract_catalog" in sql
     )
-    assert "expiration_date BETWEEN :start_date AND :end_date" in transition_sql
+    assert "CAST(:candidate_symbols AS TEXT[])" in transition_sql
     assert "membership.query_fingerprint = :query_fingerprint" in transition_sql
     assert "membership.shard_key = :shard_key" in transition_sql
+    assert not any(
+        "DELETE FROM torghut_options_archive_membership" in sql
+        for sql, _ in session.calls
+    )
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "statement_timeout_ms", "lock_timeout_ms", "message"),
+    (
+        (0, 30_000, 5_000, "batch size"),
+        (1_000, 999, 500, "statement timeout"),
+        (1_000, 30_000, 30_000, "lock timeout"),
+    ),
+)
+def test_finalize_rejects_unsafe_write_bounds(
+    batch_size: int,
+    statement_timeout_ms: int,
+    lock_timeout_ms: int,
+    message: str,
+) -> None:
+    checkpoint = ArchiveCheckpoint(
+        shard=_shard(),
+        query_fingerprint="f" * 64,
+        status="finalizing",
+        cursor=None,
+        page_count=1,
+        seen_count=1,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+    )
+    repository = _ArchiveRepository(row={}, membership_count=1)
+
+    with pytest.raises(ValueError, match=message):
+        repository.finalize_shard(
+            checkpoint=checkpoint,
+            observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+            refresh_seconds=86400,
+            batch_size=batch_size,
+            statement_timeout_ms=statement_timeout_ms,
+            lock_timeout_ms=lock_timeout_ms,
+        )
+
+
+@pytest.mark.parametrize(
+    ("seen_count", "membership_count", "finalize_date", "finalize_symbol", "message"),
+    (
+        (1, 1, date(2026, 7, 17), None, "cursor is incomplete"),
+        (2, 1, None, None, "membership count changed"),
+    ),
+)
+def test_finalize_fails_closed_on_inconsistent_durable_state(
+    seen_count: int,
+    membership_count: int,
+    finalize_date: date | None,
+    finalize_symbol: str | None,
+    message: str,
+) -> None:
+    fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
+    repository = _ArchiveRepository(
+        row=_watermark_row(
+            fingerprint=fingerprint,
+            status="finalizing",
+            page_count=1,
+            seen_count=seen_count,
+            finalize_after_expiration_date=finalize_date,
+            finalize_after_contract_symbol=finalize_symbol,
+        ),
+        membership_count=membership_count,
+    )
+
+    with pytest.raises(ArchiveStateError, match=message):
+        repository.finalize_shard(
+            checkpoint=ArchiveCheckpoint(
+                shard=_shard(),
+                query_fingerprint=fingerprint,
+                status="finalizing",
+                cursor=None,
+                page_count=1,
+                seen_count=seen_count,
+                retry_count=0,
+                next_eligible_at=None,
+                last_success_at=None,
+            ),
+            observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+            refresh_seconds=86400,
+            batch_size=1000,
+            statement_timeout_ms=30000,
+            lock_timeout_ms=5000,
+        )
+
+
+def test_finalize_completes_only_after_the_cursor_exhausts_candidates() -> None:
+    fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
+    session = _ArchiveSession(active_count=3)
+    repository = _ArchiveRepository(
+        row=_watermark_row(
+            fingerprint=fingerprint,
+            status="finalizing",
+            page_count=2,
+            seen_count=2,
+            finalize_after_expiration_date=date(2026, 7, 15),
+            finalize_after_contract_symbol="MSFT-CONTRACT",
+            transitioned_count=1,
+        ),
+        membership_count=2,
+        session=session,
+    )
+
+    completion = repository.finalize_shard(
+        checkpoint=ArchiveCheckpoint(
+            shard=_shard(),
+            query_fingerprint=fingerprint,
+            status="finalizing",
+            cursor=None,
+            page_count=2,
+            seen_count=2,
+            retry_count=0,
+            next_eligible_at=None,
+            last_success_at=None,
+        ),
+        observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+        refresh_seconds=86400,
+        batch_size=1000,
+        statement_timeout_ms=30000,
+        lock_timeout_ms=5000,
+    )
+
+    assert completion.checkpoint.status == "complete"
+    assert completion.transitioned_count == 1
+    candidate_sql = next(
+        sql for sql, _ in session.calls if "SELECT catalog.expiration_date" in sql
+    )
+    assert ":after_expiration_date" in candidate_sql
     assert "DELETE FROM torghut_options_archive_membership" in session.calls[-1][0]
 
 
@@ -583,6 +783,9 @@ def test_finalize_rejects_empty_result_for_nonempty_active_shard() -> None:
             ),
             observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
             refresh_seconds=86400,
+            batch_size=1000,
+            statement_timeout_ms=30000,
+            lock_timeout_ms=5000,
         )
 
 
@@ -597,7 +800,16 @@ def test_finalize_allows_empty_completed_shard_after_every_contract_expired() ->
             seen_count=0,
         ),
         membership_count=0,
-        session=_ArchiveSession(active_count=3, transition_count=3),
+        session=_ArchiveSession(active_count=3),
+    )
+    repository.row = _watermark_row(
+        fingerprint=fingerprint,
+        status="finalizing",
+        page_count=1,
+        seen_count=0,
+        finalize_after_expiration_date=date(2026, 7, 12),
+        finalize_after_contract_symbol="ZZZ-CONTRACT",
+        transitioned_count=3,
     )
 
     completion = repository.finalize_shard(
@@ -614,6 +826,9 @@ def test_finalize_allows_empty_completed_shard_after_every_contract_expired() ->
         ),
         observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
         refresh_seconds=86400,
+        batch_size=1000,
+        statement_timeout_ms=30000,
+        lock_timeout_ms=5000,
     )
 
     assert completion.transitioned_count == 3

@@ -29,6 +29,10 @@ class ArchiveRuntimeState:
         self.lease_acquired = False
         self.active_shard: str | None = None
         self.cursor_present = False
+        self.finalization_cursor_present = False
+        self.finalize_after_expiration_date: str | None = None
+        self.finalize_after_contract_symbol: str | None = None
+        self.transitioned_count = 0
         self.page_count = 0
         self.seen_count = 0
         self.retry_count = 0
@@ -46,6 +50,19 @@ class ArchiveRuntimeState:
             if change.checkpoint is not None:
                 self.active_shard = change.checkpoint.shard.key
                 self.cursor_present = change.checkpoint.cursor is not None
+                self.finalization_cursor_present = (
+                    change.checkpoint.finalize_after_expiration_date is not None
+                    and change.checkpoint.finalize_after_contract_symbol is not None
+                )
+                self.finalize_after_expiration_date = (
+                    change.checkpoint.finalize_after_expiration_date.isoformat()
+                    if change.checkpoint.finalize_after_expiration_date is not None
+                    else None
+                )
+                self.finalize_after_contract_symbol = (
+                    change.checkpoint.finalize_after_contract_symbol
+                )
+                self.transitioned_count = change.checkpoint.transitioned_count
                 self.page_count = change.checkpoint.page_count
                 self.seen_count = change.checkpoint.seen_count
                 self.retry_count = change.checkpoint.retry_count
@@ -63,6 +80,10 @@ class ArchiveRuntimeState:
                 "lease_acquired": self.lease_acquired,
                 "active_shard": self.active_shard,
                 "cursor_present": self.cursor_present,
+                "finalization_cursor_present": self.finalization_cursor_present,
+                "finalize_after_expiration_date": self.finalize_after_expiration_date,
+                "finalize_after_contract_symbol": self.finalize_after_contract_symbol,
+                "transitioned_count": self.transitioned_count,
                 "page_count": self.page_count,
                 "seen_count": self.seen_count,
                 "retry_count": self.retry_count,

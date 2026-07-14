@@ -364,6 +364,21 @@ class TestOptionsLaneSettings(TestCase):
         self.assertEqual(settings.options_market_holidays, [])
         self.assertEqual(settings.options_underlying_priority_symbols, [])
 
+    @patch.dict(
+        os.environ,
+        {
+            "DB_DSN": "postgresql://torghut:torghut@localhost:5432/torghut",
+            "ALPACA_OPTIONS_KEY_ID": "key-id",
+            "ALPACA_OPTIONS_SECRET_KEY": "secret-key",
+            "OPTIONS_CONTRACT_ARCHIVE_STATEMENT_TIMEOUT_MS": "5000",
+            "OPTIONS_CONTRACT_ARCHIVE_LOCK_TIMEOUT_MS": "5000",
+        },
+        clear=True,
+    )
+    def test_settings_reject_archive_lock_timeout_at_statement_timeout(self) -> None:
+        with self.assertRaisesRegex(ValueError, "lock timeout must be below"):
+            OptionsLaneSettings()
+
 
 class TestOptionsRepositoryStatusCounts(TestCase):
     def test_count_active_contracts_uses_bounded_statement_timeout(self) -> None:

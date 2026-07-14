@@ -10,7 +10,10 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
+from psycopg import OperationalError
 import pytest
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import Executable
 
 from app.options_lane.alpaca import AlpacaApiError, AlpacaOptionsClient
 from app.options_lane.archive_model import ArchiveShard, archive_query_fingerprint
@@ -19,6 +22,7 @@ from app.options_lane.archive_repository import (
     ArchiveCompletion,
     ArchiveStateError,
     OptionsArchiveRepository,
+    _as_date,
     _as_int,
     _metadata,
     archive_advisory_lock_id,
@@ -66,6 +70,10 @@ def _settings(**overrides: object) -> OptionsLaneSettings:
         "options_contract_archive_lock_name": "archive-lock",
         "options_contract_archive_page_limit": 10_000,
         "options_contract_archive_refresh_sec": 86_400,
+        "options_contract_archive_finalize_batch_size": 1_000,
+        "options_contract_archive_finalize_interval_ms": 0,
+        "options_contract_archive_statement_timeout_ms": 30_000,
+        "options_contract_archive_lock_timeout_ms": 5_000,
         "options_contract_archive_requests_per_second": 0.1,
         "options_contract_archive_retry_base_sec": 30,
         "options_contract_archive_retry_max_sec": 900,
@@ -131,6 +139,11 @@ def test_archive_repository_helpers_are_stable_and_fail_closed() -> None:
     assert _metadata("[]") == {}
     assert _as_int("12") == 12
     assert _as_int("invalid", default=7) == 7
+    assert _as_date(datetime(2026, 7, 14, 12, tzinfo=UTC)) == date(2026, 7, 14)
+    assert _as_date(date(2026, 7, 14)) == date(2026, 7, 14)
+    assert _as_date("2026-07-14") == date(2026, 7, 14)
+    assert _as_date("not-a-date") is None
+    assert _as_date(42) is None
 
 
 def test_archive_repository_constructs_and_disposes_without_opening_a_connection() -> (
@@ -140,6 +153,59 @@ def test_archive_repository_constructs_and_disposes_without_opening_a_connection
         "postgresql+psycopg://unused:unused@localhost/unused"
     )
 
+    repository.close()
+
+
+def test_archive_repository_cancels_the_inflight_driver_statement() -> None:
+    repository = OptionsArchiveRepository(
+        "postgresql+psycopg://unused:unused@localhost/unused"
+    )
+    driver_connection = MagicMock()
+    repository._active_driver_connection = driver_connection
+
+    assert repository.cancel_active_work()
+
+    driver_connection.cancel_safe.assert_called_once_with(timeout=5.0)
+    repository._active_driver_connection = None
+    repository.close()
+
+
+def test_archive_repository_cancel_fails_closed_when_work_is_not_cancellable() -> None:
+    repository = OptionsArchiveRepository(
+        "postgresql+psycopg://unused:unused@localhost/unused"
+    )
+
+    assert not repository.cancel_active_work()
+
+    repository._active_driver_connection = SimpleNamespace(cancel_safe=None)
+    assert not repository.cancel_active_work()
+
+    driver_connection = MagicMock()
+    driver_connection.cancel_safe.side_effect = OperationalError("cancel failed")
+    repository._active_driver_connection = driver_connection
+    assert not repository.cancel_active_work()
+
+    repository._active_driver_connection = None
+    repository.close()
+
+
+def test_archive_repository_tracks_only_the_executing_driver_statement() -> None:
+    repository = OptionsArchiveRepository(
+        "postgresql+psycopg://unused:unused@localhost/unused"
+    )
+    session = MagicMock(spec=Session)
+    driver_connection = MagicMock()
+    result = MagicMock()
+    session.connection.return_value.connection.driver_connection = driver_connection
+    session.execute.return_value = result
+    statement = MagicMock(spec=Executable)
+
+    assert (
+        repository._execute_cancellable(session, statement, {"key": "value"}) is result
+    )
+
+    session.execute.assert_called_once_with(statement, {"key": "value"})
+    assert repository._active_driver_connection is None
     repository.close()
 
 
@@ -208,6 +274,55 @@ def test_process_shard_resumes_finalization() -> None:
         assert worker._process_shard(_shard()) == checkpoint
 
     finalize.assert_called_once_with(checkpoint)
+
+
+def test_process_shard_does_not_record_a_failure_after_shutdown() -> None:
+    repository = MagicMock(spec=OptionsArchiveRepository)
+    checkpoint = _checkpoint()
+    repository.prepare_shard.return_value = checkpoint
+    stop_event = threading.Event()
+    stop_event.set()
+    worker = _worker(archive_repository=repository, stop_event=stop_event)
+
+    with (
+        patch.object(worker, "_scan_pages", side_effect=ArchiveStateError("cancelled")),
+        patch.object(worker, "_record_failure") as record_failure,
+    ):
+        assert worker._process_shard(_shard()) == checkpoint
+
+    record_failure.assert_not_called()
+
+
+def test_runtime_state_exposes_durable_finalization_progress() -> None:
+    state = ArchiveRuntimeState()
+    checkpoint = ArchiveCheckpoint(
+        shard=_shard(),
+        query_fingerprint="f" * 64,
+        status="finalizing",
+        cursor=None,
+        page_count=4,
+        seen_count=2_000,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+        finalize_after_expiration_date=date(2026, 7, 17),
+        finalize_after_contract_symbol="MSFT-CONTRACT",
+        transitioned_count=731,
+    )
+
+    state.update(
+        ArchiveStateUpdate(
+            phase="finalizing",
+            observed_at=NOW,
+            checkpoint=checkpoint,
+        )
+    )
+
+    snapshot = state.snapshot()
+    assert snapshot["finalization_cursor_present"] is True
+    assert snapshot["finalize_after_expiration_date"] == "2026-07-17"
+    assert snapshot["finalize_after_contract_symbol"] == "MSFT-CONTRACT"
+    assert snapshot["transitioned_count"] == 731
 
 
 @pytest.mark.parametrize(
@@ -288,10 +403,99 @@ def test_scan_pages_persists_page_then_finalizes() -> None:
         checkpoint=finalizing,
         observed_at=NOW,
         refresh_seconds=86_400,
+        batch_size=1_000,
+        statement_timeout_ms=30_000,
+        lock_timeout_ms=5_000,
     )
     snapshot = state.snapshot()
     assert snapshot["phase"] == "complete"
     assert snapshot["last_success_ts"] == NOW.isoformat()
+
+
+def test_finalize_runs_committed_batches_until_an_empty_scan_completes() -> None:
+    repository = MagicMock(spec=OptionsArchiveRepository)
+    state = ArchiveRuntimeState()
+    initial = _checkpoint(status="finalizing")
+    progressed = ArchiveCheckpoint(
+        shard=initial.shard,
+        query_fingerprint=initial.query_fingerprint,
+        status="finalizing",
+        cursor=None,
+        page_count=initial.page_count,
+        seen_count=initial.seen_count,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+        finalize_after_expiration_date=date(2026, 7, 17),
+        finalize_after_contract_symbol="MSFT-CONTRACT",
+        transitioned_count=700,
+    )
+    completed = ArchiveCheckpoint(
+        shard=initial.shard,
+        query_fingerprint=initial.query_fingerprint,
+        status="complete",
+        cursor=None,
+        page_count=initial.page_count,
+        seen_count=initial.seen_count,
+        retry_count=0,
+        next_eligible_at=NOW + timedelta(days=1),
+        last_success_at=NOW,
+        transitioned_count=700,
+    )
+    repository.finalize_shard.side_effect = (
+        ArchiveCompletion(
+            checkpoint=progressed,
+            transitioned_count=700,
+            batch_scanned_count=1_000,
+            batch_transitioned_count=700,
+        ),
+        ArchiveCompletion(checkpoint=completed, transitioned_count=700),
+    )
+    worker = _worker(archive_repository=repository, state=state)
+
+    assert worker._finalize(initial) == completed
+
+    assert repository.finalize_shard.call_count == 2
+    assert state.snapshot()["phase"] == "complete"
+    assert state.snapshot()["transitioned_count"] == 700
+
+
+def test_finalize_stops_after_the_current_committed_batch() -> None:
+    repository = MagicMock(spec=OptionsArchiveRepository)
+    initial = _checkpoint(status="finalizing")
+    progressed = ArchiveCheckpoint(
+        shard=initial.shard,
+        query_fingerprint=initial.query_fingerprint,
+        status="finalizing",
+        cursor=None,
+        page_count=initial.page_count,
+        seen_count=initial.seen_count,
+        retry_count=0,
+        next_eligible_at=None,
+        last_success_at=None,
+        finalize_after_expiration_date=date(2026, 7, 17),
+        finalize_after_contract_symbol="MSFT-CONTRACT",
+        transitioned_count=700,
+    )
+    repository.finalize_shard.return_value = ArchiveCompletion(
+        checkpoint=progressed,
+        transitioned_count=700,
+        batch_scanned_count=1_000,
+        batch_transitioned_count=700,
+    )
+    stop_event = MagicMock(spec=threading.Event)
+    stop_event.is_set.return_value = False
+    stop_event.wait.return_value = True
+    worker = _worker(
+        archive_repository=repository,
+        stop_event=cast(threading.Event, stop_event),
+        settings=_settings(options_contract_archive_finalize_interval_ms=250),
+    )
+
+    assert worker._finalize(initial) == progressed
+
+    repository.finalize_shard.assert_called_once()
+    stop_event.wait.assert_called_once_with(0.25)
 
 
 def test_record_failure_uses_bounded_retry_settings_and_updates_state() -> None:
@@ -391,6 +595,7 @@ def test_archive_service_lifecycle_and_health_surfaces() -> None:
     asyncio.run(exercise_lifespan())
 
     archive_repository.close.assert_called_once_with()
+    archive_repository.cancel_active_work.assert_called_once_with()
     catalog_repository.close.assert_called_once_with()
     with pytest.raises(HTTPException) as unhealthy:
         service.healthz()

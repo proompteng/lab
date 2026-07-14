@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import hashlib
 import json
+import threading
 from typing import cast
 
+from psycopg import Error as PsycopgError
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Connection, CursorResult, Engine
+from sqlalchemy.engine import Connection, CursorResult, Engine, Result
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.sql import Executable
 
 from .archive_model import ARCHIVE_COMPONENT, ARCHIVE_SCOPE_TYPE, ArchiveShard
 
@@ -42,6 +45,9 @@ class ArchiveCheckpoint:
     retry_count: int
     next_eligible_at: datetime | None
     last_success_at: datetime | None
+    finalize_after_expiration_date: date | None = None
+    finalize_after_contract_symbol: str | None = None
+    transitioned_count: int = 0
 
     def due(self, now: datetime) -> bool:
         return self.next_eligible_at is None or self.next_eligible_at <= now
@@ -51,6 +57,8 @@ class ArchiveCheckpoint:
 class ArchiveCompletion:
     checkpoint: ArchiveCheckpoint
     transitioned_count: int
+    batch_scanned_count: int = 0
+    batch_transitioned_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +114,13 @@ def _metadata_json(
         "query_fingerprint": checkpoint.query_fingerprint,
         "seen_count": checkpoint.seen_count,
         "status": checkpoint.status,
+        "finalize_after_expiration_date": (
+            checkpoint.finalize_after_expiration_date.isoformat()
+            if checkpoint.finalize_after_expiration_date is not None
+            else None
+        ),
+        "finalize_after_contract_symbol": checkpoint.finalize_after_contract_symbol,
+        "transitioned_count": checkpoint.transitioned_count,
     }
     if extra:
         payload.update(extra)
@@ -117,6 +132,19 @@ def _as_int(value: object, default: int = 0) -> int:
         return int(cast(int | float | str, value))
     except (TypeError, ValueError, ArithmeticError):
         return default
+
+
+def _as_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
 
 
 class OptionsArchiveRepository:
@@ -137,6 +165,8 @@ class OptionsArchiveRepository:
         )
         self._lease_connection: Connection | None = None
         self._lease_lock_id: int | None = None
+        self._active_driver_connection: object | None = None
+        self._active_driver_connection_lock = threading.Lock()
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -215,8 +245,44 @@ class OptionsArchiveRepository:
             connection.close()
 
     def close(self) -> None:
+        self.cancel_active_work()
         self.release_lease()
         self._engine.dispose()
+
+    def cancel_active_work(self) -> bool:
+        """Interrupt the currently executing archive statement during shutdown."""
+
+        with self._active_driver_connection_lock:
+            connection = self._active_driver_connection
+            if connection is None:
+                return False
+            cancel = getattr(connection, "cancel_safe", None)
+            if not callable(cancel):
+                return False
+            try:
+                cancel(timeout=5.0)
+            except PsycopgError:
+                return False
+            return True
+
+    def _execute_cancellable(
+        self,
+        session: Session,
+        statement: Executable,
+        parameters: Mapping[str, object] | None = None,
+    ) -> Result[tuple[object, ...]]:
+        driver_connection = session.connection().connection.driver_connection
+        with self._active_driver_connection_lock:
+            self._active_driver_connection = driver_connection
+        try:
+            return cast(
+                Result[tuple[object, ...]],
+                session.execute(statement, parameters or {}),
+            )
+        finally:
+            with self._active_driver_connection_lock:
+                if self._active_driver_connection is driver_connection:
+                    self._active_driver_connection = None
 
     def oldest_active_expiration_date(self, *, before: date) -> date | None:
         """Find stale active coverage so downtime cannot strand expired rows."""
@@ -265,6 +331,11 @@ class OptionsArchiveRepository:
                     reset_reason = "refresh_due"
                 elif checkpoint.status not in _IN_PROGRESS_STATUSES | {"complete"}:
                     reset_reason = "invalid_status"
+                elif checkpoint.status == "finalizing" and (
+                    (checkpoint.finalize_after_expiration_date is None)
+                    != (checkpoint.finalize_after_contract_symbol is None)
+                ):
+                    reset_reason = "invalid_finalization_cursor"
                 elif checkpoint.status in _IN_PROGRESS_STATUSES:
                     membership_count = self._membership_count(
                         session,
@@ -450,6 +521,9 @@ class OptionsArchiveRepository:
                 retry_count=retry_count,
                 next_eligible_at=next_eligible_at,
                 last_success_at=current.last_success_at,
+                finalize_after_expiration_date=(current.finalize_after_expiration_date),
+                finalize_after_contract_symbol=(current.finalize_after_contract_symbol),
+                transitioned_count=current.transitioned_count,
             )
             session.execute(
                 text(
@@ -488,8 +562,20 @@ class OptionsArchiveRepository:
         checkpoint: ArchiveCheckpoint,
         observed_at: datetime,
         refresh_seconds: int,
+        batch_size: int,
+        statement_timeout_ms: int,
+        lock_timeout_ms: int,
     ) -> ArchiveCompletion:
-        """Apply missing transitions only after exact shard membership is complete."""
+        """Scan and transition one durable, bounded finalization batch."""
+
+        if not 1 <= batch_size <= 10_000:
+            raise ValueError("archive finalization batch size must be 1..10000")
+        if statement_timeout_ms < 1_000:
+            raise ValueError("archive finalization statement timeout must be >= 1000ms")
+        if not 100 <= lock_timeout_ms < statement_timeout_ms:
+            raise ValueError(
+                "archive finalization lock timeout must be >= 100ms and below the statement timeout"
+            )
 
         shard = checkpoint.shard
         query_fingerprint = checkpoint.query_fingerprint
@@ -504,39 +590,145 @@ class OptionsArchiveRepository:
                 raise ArchiveStateError(
                     f"cannot finalize archive shard from status {current.status}"
                 )
-            membership_count = self._membership_count(
-                session,
-                shard_key=shard.key,
-                query_fingerprint=query_fingerprint,
+            has_finalize_date = current.finalize_after_expiration_date is not None
+            has_finalize_symbol = current.finalize_after_contract_symbol is not None
+            if has_finalize_date != has_finalize_symbol:
+                raise ArchiveStateError("archive finalization cursor is incomplete")
+
+            session.execute(text(f"SET LOCAL lock_timeout = {lock_timeout_ms}"))
+            session.execute(
+                text(f"SET LOCAL statement_timeout = {statement_timeout_ms}")
             )
-            if membership_count != current.seen_count:
-                raise ArchiveStateError(
-                    "archive membership count changed before finalize"
+
+            if not has_finalize_date:
+                membership_count = self._membership_count(
+                    session,
+                    shard_key=shard.key,
+                    query_fingerprint=query_fingerprint,
                 )
-            active_count = _as_int(
+                if membership_count != current.seen_count:
+                    raise ArchiveStateError(
+                        "archive membership count changed before finalize"
+                    )
+                active_exists = bool(
+                    cast(
+                        CursorResult[object],
+                        self._execute_cancellable(
+                            session,
+                            text(
+                                """
+                                SELECT EXISTS (
+                                  SELECT 1
+                                  FROM torghut_options_contract_catalog
+                                  WHERE status = 'active'
+                                    AND expiration_date BETWEEN :start_date AND :end_date
+                                )
+                                """
+                            ),
+                            {"start_date": shard.start, "end_date": shard.end},
+                        ),
+                    ).scalar_one()
+                )
+                if (
+                    membership_count == 0
+                    and active_exists
+                    and shard.end >= observed_at.date()
+                ):
+                    raise ArchiveStateError(
+                        "refusing empty archive result for a nonempty active shard"
+                    )
+
+            cursor_predicate = ""
+            parameters: dict[str, object] = {
+                "start_date": shard.start,
+                "end_date": shard.end,
+                "batch_size": batch_size,
+            }
+            if has_finalize_date:
+                cursor_predicate = """
+                  AND (catalog.expiration_date, catalog.contract_symbol) >
+                      (:after_expiration_date, :after_contract_symbol)
+                """
+                parameters.update(
+                    {
+                        "after_expiration_date": current.finalize_after_expiration_date,
+                        "after_contract_symbol": current.finalize_after_contract_symbol,
+                    }
+                )
+            candidate_rows = (
+                cast(
+                    CursorResult[object],
+                    self._execute_cancellable(
+                        session,
+                        text(
+                            f"""
+                            SELECT catalog.expiration_date,
+                                   catalog.contract_symbol
+                            FROM torghut_options_contract_catalog AS catalog
+                            WHERE catalog.status = 'active'
+                              AND catalog.expiration_date BETWEEN :start_date AND :end_date
+                              {cursor_predicate}
+                            ORDER BY catalog.expiration_date, catalog.contract_symbol
+                            LIMIT :batch_size
+                            FOR UPDATE OF catalog
+                            """
+                        ),
+                        parameters,
+                    ),
+                )
+                .mappings()
+                .all()
+            )
+
+            if not candidate_rows:
+                next_eligible_at = observed_at + timedelta(seconds=refresh_seconds)
+                completed = ArchiveCheckpoint(
+                    shard=shard,
+                    query_fingerprint=query_fingerprint,
+                    status="complete",
+                    cursor=None,
+                    page_count=current.page_count,
+                    seen_count=current.seen_count,
+                    retry_count=0,
+                    next_eligible_at=next_eligible_at,
+                    last_success_at=observed_at,
+                    transitioned_count=current.transitioned_count,
+                )
                 session.execute(
                     text(
                         """
-                        SELECT count(*)
-                        FROM torghut_options_contract_catalog
-                        WHERE status = 'active'
-                          AND expiration_date BETWEEN :start_date AND :end_date
+                        UPDATE torghut_options_watermarks
+                        SET cursor = NULL,
+                            last_event_ts = :observed_at,
+                            last_success_ts = :observed_at,
+                            next_eligible_ts = :next_eligible_at,
+                            retry_count = 0,
+                            metadata = CAST(:metadata AS JSONB)
+                        WHERE component = :component
+                          AND scope_type = :scope_type
+                          AND scope_key = :scope_key
                         """
                     ),
-                    {"start_date": shard.start, "end_date": shard.end},
-                ).scalar_one()
-            )
-            if (
-                membership_count == 0
-                and active_count > 0
-                and shard.end >= observed_at.date()
-            ):
-                raise ArchiveStateError(
-                    "refusing empty archive result for a nonempty active shard"
+                    {
+                        "observed_at": observed_at,
+                        "next_eligible_at": next_eligible_at,
+                        "metadata": _metadata_json(completed),
+                        "component": ARCHIVE_COMPONENT,
+                        "scope_type": ARCHIVE_SCOPE_TYPE,
+                        "scope_key": shard.key,
+                    },
                 )
+                self._delete_membership(session, shard_key=shard.key)
+                return ArchiveCompletion(
+                    checkpoint=completed,
+                    transitioned_count=current.transitioned_count,
+                )
+
+            candidate_symbols = [str(row["contract_symbol"]) for row in candidate_rows]
             transition_result = cast(
                 CursorResult[object],
-                session.execute(
+                self._execute_cancellable(
+                    session,
                     text(
                         f"""
                     UPDATE torghut_options_contract_catalog AS catalog
@@ -546,8 +738,10 @@ class OptionsArchiveRepository:
                           ELSE 'inactive'
                         END,
                         last_seen_ts = :observed_at
-                    WHERE catalog.status = 'active'
-                      AND catalog.expiration_date BETWEEN :start_date AND :end_date
+                    WHERE catalog.contract_symbol = ANY(
+                            CAST(:candidate_symbols AS TEXT[])
+                          )
+                      AND catalog.status = 'active'
                       AND NOT EXISTS (
                         SELECT 1
                         FROM {ARCHIVE_MEMBERSHIP_TABLE} AS membership
@@ -560,26 +754,31 @@ class OptionsArchiveRepository:
                     ),
                     {
                         "observed_at": observed_at,
-                        "start_date": shard.start,
-                        "end_date": shard.end,
+                        "candidate_symbols": candidate_symbols,
                         "component": ARCHIVE_COMPONENT,
                         "query_fingerprint": query_fingerprint,
                         "shard_key": shard.key,
                     },
                 ),
             )
-            transitioned_count = max(transition_result.rowcount or 0, 0)
-            next_eligible_at = observed_at + timedelta(seconds=refresh_seconds)
-            completed = ArchiveCheckpoint(
+            batch_transitioned_count = max(transition_result.rowcount or 0, 0)
+            transitioned_count = current.transitioned_count + batch_transitioned_count
+            last_candidate = candidate_rows[-1]
+            finalizing = ArchiveCheckpoint(
                 shard=shard,
                 query_fingerprint=query_fingerprint,
-                status="complete",
+                status="finalizing",
                 cursor=None,
                 page_count=current.page_count,
                 seen_count=current.seen_count,
                 retry_count=0,
-                next_eligible_at=next_eligible_at,
-                last_success_at=observed_at,
+                next_eligible_at=None,
+                last_success_at=current.last_success_at,
+                finalize_after_expiration_date=cast(
+                    date, last_candidate["expiration_date"]
+                ),
+                finalize_after_contract_symbol=str(last_candidate["contract_symbol"]),
+                transitioned_count=transitioned_count,
             )
             session.execute(
                 text(
@@ -587,8 +786,7 @@ class OptionsArchiveRepository:
                     UPDATE torghut_options_watermarks
                     SET cursor = NULL,
                         last_event_ts = :observed_at,
-                        last_success_ts = :observed_at,
-                        next_eligible_ts = :next_eligible_at,
+                        next_eligible_ts = NULL,
                         retry_count = 0,
                         metadata = CAST(:metadata AS JSONB)
                     WHERE component = :component
@@ -598,20 +796,17 @@ class OptionsArchiveRepository:
                 ),
                 {
                     "observed_at": observed_at,
-                    "next_eligible_at": next_eligible_at,
-                    "metadata": _metadata_json(
-                        completed,
-                        extra={"transitioned_count": transitioned_count},
-                    ),
+                    "metadata": _metadata_json(finalizing),
                     "component": ARCHIVE_COMPONENT,
                     "scope_type": ARCHIVE_SCOPE_TYPE,
                     "scope_key": shard.key,
                 },
             )
-            self._delete_membership(session, shard_key=shard.key)
             return ArchiveCompletion(
-                checkpoint=completed,
+                checkpoint=finalizing,
                 transitioned_count=transitioned_count,
+                batch_scanned_count=len(candidate_rows),
+                batch_transitioned_count=batch_transitioned_count,
             )
 
     def _select_watermark(
@@ -767,4 +962,14 @@ class OptionsArchiveRepository:
             retry_count=_as_int(row.get("retry_count")),
             next_eligible_at=cast(datetime | None, row.get("next_eligible_ts")),
             last_success_at=cast(datetime | None, row.get("last_success_ts")),
+            finalize_after_expiration_date=_as_date(
+                metadata.get("finalize_after_expiration_date")
+            ),
+            finalize_after_contract_symbol=(
+                str(metadata["finalize_after_contract_symbol"])
+                if metadata.get("finalize_after_contract_symbol") is not None
+                and str(metadata["finalize_after_contract_symbol"]).strip()
+                else None
+            ),
+            transitioned_count=_as_int(metadata.get("transitioned_count")),
         )

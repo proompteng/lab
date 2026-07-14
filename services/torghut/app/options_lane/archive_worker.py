@@ -208,6 +208,8 @@ class OptionsArchiveWorker:
                 error_detail=exc.body,
             )
         except (ArchiveStateError, SQLAlchemyError, TypeError, ValueError) as exc:
+            if self._stop_event.is_set():
+                return checkpoint
             return self._record_failure(
                 checkpoint,
                 error_code="archive_shard_failed",
@@ -274,29 +276,62 @@ class OptionsArchiveWorker:
         return checkpoint
 
     def _finalize(self, checkpoint: ArchiveCheckpoint) -> ArchiveCheckpoint:
-        self._archive_repository.require_lease()
-        observed_at = self._now()
-        completion = self._archive_repository.finalize_shard(
-            checkpoint=checkpoint,
-            observed_at=observed_at,
-            refresh_seconds=self._settings.options_contract_archive_refresh_sec,
-        )
-        logger.info(
-            "options archive shard completed shard=%s pages=%s seen=%s transitions=%s",
-            completion.checkpoint.shard.key,
-            completion.checkpoint.page_count,
-            completion.checkpoint.seen_count,
-            completion.transitioned_count,
-        )
-        self._state.update(
-            ArchiveStateUpdate(
-                phase="complete",
+        while not self._stop_event.is_set():
+            self._archive_repository.require_lease()
+            observed_at = self._now()
+            completion = self._archive_repository.finalize_shard(
+                checkpoint=checkpoint,
                 observed_at=observed_at,
-                checkpoint=completion.checkpoint,
-                completed=True,
+                refresh_seconds=self._settings.options_contract_archive_refresh_sec,
+                batch_size=(
+                    self._settings.options_contract_archive_finalize_batch_size
+                ),
+                statement_timeout_ms=(
+                    self._settings.options_contract_archive_statement_timeout_ms
+                ),
+                lock_timeout_ms=(
+                    self._settings.options_contract_archive_lock_timeout_ms
+                ),
             )
-        )
-        return completion.checkpoint
+            checkpoint = completion.checkpoint
+            if checkpoint.status == "complete":
+                logger.info(
+                    "options archive shard completed shard=%s pages=%s seen=%s transitions=%s",
+                    checkpoint.shard.key,
+                    checkpoint.page_count,
+                    checkpoint.seen_count,
+                    completion.transitioned_count,
+                )
+                self._state.update(
+                    ArchiveStateUpdate(
+                        phase="complete",
+                        observed_at=observed_at,
+                        checkpoint=checkpoint,
+                        completed=True,
+                    )
+                )
+                return checkpoint
+            logger.info(
+                "options archive finalization progress shard=%s scanned=%s batch_transitions=%s transitions=%s after=%s/%s",
+                checkpoint.shard.key,
+                completion.batch_scanned_count,
+                completion.batch_transitioned_count,
+                completion.transitioned_count,
+                checkpoint.finalize_after_expiration_date,
+                checkpoint.finalize_after_contract_symbol,
+            )
+            self._state.update(
+                ArchiveStateUpdate(
+                    phase="finalizing",
+                    observed_at=observed_at,
+                    checkpoint=checkpoint,
+                )
+            )
+            if self._stop_event.wait(
+                self._settings.options_contract_archive_finalize_interval_ms / 1000
+            ):
+                return checkpoint
+        return checkpoint
 
     def _record_failure(
         self,

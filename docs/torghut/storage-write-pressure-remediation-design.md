@@ -201,8 +201,18 @@ The live trading universe and the archival catalog are separate workloads:
 - Partition work by bounded expiration windows.
 - Store query fingerprint, shard, cursor, counts, status, and last success in `torghut_options_watermarks`.
 - Mark missing contracts only within a completely scanned shard.
+- Finalize a complete shard with a durable keyset cursor over
+  `(expiration_date, contract_symbol)`, scanning and committing no more than 1,000 catalog rows per transaction. A
+  candidate batch advances the cursor even when every candidate is present in the exact membership set; only an empty
+  candidate batch marks the shard complete and removes staging membership. Pace committed batches at no more than four
+  per second initially so bounded transactions do not become an fsync burst.
+- Persist the cumulative transition count with that cursor so a restart resumes after the last committed batch instead
+  of repeating the weekly shard. Serve the worker only after the matching partial index on active
+  `(expiration_date, contract_symbol)` rows is valid.
 - Use a database lease or advisory lock to prevent overlapping reconcilers.
 - Retry the current shard without restarting the entire 730-day range.
+- Treat statement and lock timeouts as secondary safety bounds, not as the remediation. Shutdown explicitly cancels an
+  in-flight archive statement and each committed batch remains independently replay-safe.
 
 ## Design 2: ClickHouse ingestion
 
