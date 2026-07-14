@@ -277,7 +277,7 @@ class DSPyReviewRuntime:
 
     def _load_manifest_from_db(self, artifact_hash: str) -> DSPyArtifactManifest | None:
         try:
-            from sqlalchemy import case, select
+            from sqlalchemy import select
 
             from ....db import SessionLocal
             from ....models import LLMDSPyWorkflowArtifact
@@ -290,17 +290,11 @@ class DSPyReviewRuntime:
             row = (
                 session.execute(
                     select(LLMDSPyWorkflowArtifact)
-                    .where(LLMDSPyWorkflowArtifact.artifact_hash == artifact_hash)
-                    .order_by(
-                        case(
-                            (
-                                LLMDSPyWorkflowArtifact.gate_compatibility == "pass",
-                                0,
-                            ),
-                            else_=1,
-                        ),
-                        LLMDSPyWorkflowArtifact.created_at.desc(),
+                    .where(
+                        LLMDSPyWorkflowArtifact.artifact_hash == artifact_hash,
+                        LLMDSPyWorkflowArtifact.gate_compatibility == "pass",
                     )
+                    .order_by(LLMDSPyWorkflowArtifact.created_at.desc())
                 )
                 .scalars()
                 .first()
@@ -309,7 +303,7 @@ class DSPyReviewRuntime:
         if row is None:
             return None
 
-        if row.gate_compatibility and row.gate_compatibility != "pass":
+        if row.gate_compatibility != "pass":
             raise DSPyRuntimeUnsupportedStateError(
                 "dspy_artifact_gate_compatibility_failed"
             )

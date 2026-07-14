@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
+from app.trading.llm.dspy_programs.runtime import (
+    DSPyReviewRuntime,
+    DSPyRuntimeUnsupportedStateError,
+)
 
 
 class TestLLMDSPyRuntimeDuplicateHash(TestCase):
@@ -23,7 +25,7 @@ class TestLLMDSPyRuntimeDuplicateHash(TestCase):
                 return row
 
         class _FakeSession:
-            def execute(self, query: Any) -> _FakeResult:
+            def execute(self, query: object) -> _FakeResult:
                 captured_queries.append(query)
                 return _FakeResult()
 
@@ -78,9 +80,41 @@ class TestLLMDSPyRuntimeDuplicateHash(TestCase):
         self.assertIsNotNone(manifest)
         self.assertEqual(len(captured_queries), 1)
         query_text = str(captured_queries[0])
-        self.assertIn("CASE WHEN", query_text)
         self.assertIn("gate_compatibility", query_text)
-        self.assertLess(
-            query_text.index("gate_compatibility"),
-            query_text.index("created_at DESC"),
+        self.assertIn(
+            "llm_dspy_workflow_artifacts.gate_compatibility = :gate_compatibility_1",
+            query_text,
         )
+
+    def test_manifest_loader_rejects_row_without_passing_gate(self) -> None:
+        artifact_hash = "a" * 64
+        row = SimpleNamespace(
+            artifact_uri="s3://bucket/dspy-compiled-program.json",
+            reproducibility_hash="b" * 64,
+            optimizer="miprov2",
+            dataset_hash="c" * 64,
+            compiled_prompt_hash="d" * 64,
+            signature_version="trade_review:v1",
+            program_name="trade-review-committee-v1",
+            gate_compatibility=None,
+            metadata_json={"executor": "dspy_live"},
+        )
+        runtime = DSPyReviewRuntime(
+            mode="active",
+            artifact_hash=artifact_hash,
+            program_name=row.program_name,
+            signature_version="v1",
+            timeout_seconds=8,
+        )
+
+        with (
+            patch(
+                "app.db.SessionLocal",
+                return_value=self._fake_session_context(row, captured_queries=[]),
+            ),
+            self.assertRaisesRegex(
+                DSPyRuntimeUnsupportedStateError,
+                "dspy_artifact_gate_compatibility_failed",
+            ),
+        ):
+            runtime._load_manifest_from_db(artifact_hash)
