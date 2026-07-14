@@ -242,6 +242,28 @@ data:
             expr: |
               sum(ceph_pg_scrubbing{job="ceph-storage"}) +
               sum(ceph_pg_deep{job="ceph-storage"})
+          - record: ceph_storage:rbd_pod_write_bytes_per_second:rate5m
+            expr: |
+              sum by (namespace, pod, device) (
+                rate(
+                  container_fs_writes_bytes_total{
+                    container="",
+                    device=~"/dev/rbd[0-9]+",
+                    pod!=""
+                  }[5m]
+                )
+              )
+          - record: ceph_storage:rbd_pod_write_iops:rate5m
+            expr: |
+              sum by (namespace, pod, device) (
+                rate(
+                  container_fs_writes_total{
+                    container="",
+                    device=~"/dev/rbd[0-9]+",
+                    pod!=""
+                  }[5m]
+                )
+              )
       - name: torghut-storage-alerts.rules
         rules:
           - alert: TorghutPostgresMetricsMissing

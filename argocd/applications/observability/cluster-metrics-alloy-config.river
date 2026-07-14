@@ -100,6 +100,16 @@ prometheus.relabel "arc_resource_metrics" {
   }
 }
 
+prometheus.relabel "rbd_client_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__", "device", "container", "pod"]
+    regex         = "container_fs_(reads|writes)(_bytes)?_total;/dev/rbd[0-9]+;;.+"
+  }
+}
+
 discovery.kubernetes "nodes" {
   role = "node"
 }
@@ -170,7 +180,10 @@ prometheus.scrape "kubelet_cadvisor" {
   scrape_interval   = "30s"
   scrape_timeout    = "10s"
   bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-  forward_to        = [prometheus.relabel.arc_resource_metrics.receiver]
+  forward_to = [
+    prometheus.relabel.arc_resource_metrics.receiver,
+    prometheus.relabel.rbd_client_metrics.receiver,
+  ]
 
   tls_config {
     ca_file     = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"

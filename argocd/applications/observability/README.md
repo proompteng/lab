@@ -83,7 +83,7 @@ kubectl -n argocd get app observability
 The observability app owns the cluster metrics pipeline used for ARC runner sizing and shared-storage diagnosis:
 
 - `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics.
-- `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, and the Ceph manager; it applies bounded metric allowlists before remote-writing to Mimir.
+- `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, and the Ceph manager; it applies bounded metric allowlists, including pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on missing telemetry, WAL archive backlog, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
@@ -102,5 +102,8 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   --data-urlencode 'query=ceph_storage:osd_commit_latency_ms:max' \
+  http://127.0.0.1:19090/prometheus/api/v1/query
+curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
+  --data-urlencode 'query=topk(10, ceph_storage:rbd_pod_write_bytes_per_second:rate5m)' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 ```

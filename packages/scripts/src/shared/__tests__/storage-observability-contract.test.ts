@@ -22,6 +22,9 @@ test('cluster Alloy collects bounded CloudNativePG and Ceph storage metrics', ()
   expect(config).toContain('rook-ceph-mgr.rook-ceph.svc.cluster.local:9283')
   expect(config).toContain('ceph_osd_(apply|commit)_latency_ms')
   expect(config).toContain('ceph_health_detail')
+  expect(config).toContain('prometheus.relabel "rbd_client_metrics"')
+  expect(config).toContain('container_fs_(reads|writes)(_bytes)?_total;/dev/rbd[0-9]+;;.+')
+  expect(config).toContain('prometheus.relabel.rbd_client_metrics.receiver')
   expect(deployment).toContain(
     `observability.proompteng.ai/config-sha256: ${createHash('sha256').update(config).digest('hex')}`,
   )
@@ -35,6 +38,8 @@ test('Mimir records the storage baseline and alerts on actionable pressure', () 
     'torghut_postgres:requested_checkpoint_ratio:rate1h',
     'ceph_storage:osd_commit_latency_ms:max',
     'ceph_storage:pool_write_bytes_per_second:rate5m',
+    'ceph_storage:rbd_pod_write_bytes_per_second:rate5m',
+    'ceph_storage:rbd_pod_write_iops:rate5m',
     'alert: TorghutPostgresMetricsMissing',
     'alert: CloudNativePgWalArchiveBacklog',
     'alert: CephStorageMetricsMissing',
