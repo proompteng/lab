@@ -147,7 +147,7 @@ spec:
       `apiVersion: apps/v1
 kind: Deployment
 spec:
-  template:
+${container === 'torghut-options-archive' ? '  replicas: 0\n' : ''}  template:
     spec:
       containers:
         - name: ${container}
@@ -363,6 +363,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: v0.600.0')
       expect(manifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     }
+    expect(optionsArchiveManifest).toContain('  replicas: 1')
     expect(result.changed).toBe(true)
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
