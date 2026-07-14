@@ -19,6 +19,7 @@ from app.options_lane.catalog_watermark_repository import (
     CatalogCycleSummary,
     record_catalog_cycle_success,
 )
+from app.options_lane.catalog_page_upsert import CATALOG_PAGE_UPSERT
 from app.options_lane.catalog_scope import OptionsCatalogScope
 from app.options_lane.catalog_change_detection import contract_catalog_row_changed
 from app.options_lane.subscription_state_repository import (
@@ -33,6 +34,7 @@ from app.options_lane.subscription_state_repository import (
 logger = logging.getLogger(__name__)
 
 OPTIONS_STATUS_COUNT_TIMEOUT_MS = 500
+OPTIONS_EXPIRED_CLEANUP_BATCH_LIMIT = 1_000
 
 
 def _utc_now() -> datetime:
@@ -245,114 +247,12 @@ class OptionsRepository:
                 )
                 if changed:
                     published_rows.append(payload)
-                    upsert_rows.append(
-                        {
-                            **payload,
-                            "metadata": _coerce_json(payload["metadata"]),
-                        }
-                    )
+                    upsert_rows.append(payload)
 
             if upsert_rows:
                 session.execute(
-                    text(
-                        """
-                    INSERT INTO torghut_options_contract_catalog (
-                      contract_symbol,
-                      contract_id,
-                      root_symbol,
-                      underlying_symbol,
-                      expiration_date,
-                      strike_price,
-                      option_type,
-                      style,
-                      contract_size,
-                      status,
-                      tradable,
-                      open_interest,
-                      open_interest_date,
-                      close_price,
-                      close_price_date,
-                      provider_updated_ts,
-                      first_seen_ts,
-                      last_seen_ts,
-                      metadata
-                    ) VALUES (
-                      :contract_symbol,
-                      :contract_id,
-                      :root_symbol,
-                      :underlying_symbol,
-                      :expiration_date,
-                      :strike_price,
-                      :option_type,
-                      :style,
-                      :contract_size,
-                      :status,
-                      :tradable,
-                      :open_interest,
-                      :open_interest_date,
-                      :close_price,
-                      :close_price_date,
-                      :provider_updated_ts,
-                      :first_seen_ts,
-                      :last_seen_ts,
-                      CAST(:metadata AS JSONB)
-                    )
-                    ON CONFLICT (contract_symbol) DO UPDATE
-                    SET contract_id = EXCLUDED.contract_id,
-                        root_symbol = EXCLUDED.root_symbol,
-                        underlying_symbol = EXCLUDED.underlying_symbol,
-                        expiration_date = EXCLUDED.expiration_date,
-                        strike_price = EXCLUDED.strike_price,
-                        option_type = EXCLUDED.option_type,
-                        style = EXCLUDED.style,
-                        contract_size = EXCLUDED.contract_size,
-                        status = EXCLUDED.status,
-                        tradable = EXCLUDED.tradable,
-                        open_interest = EXCLUDED.open_interest,
-                        open_interest_date = EXCLUDED.open_interest_date,
-                        close_price = EXCLUDED.close_price,
-                        close_price_date = EXCLUDED.close_price_date,
-                        provider_updated_ts = EXCLUDED.provider_updated_ts,
-                        last_seen_ts = EXCLUDED.last_seen_ts,
-                        metadata = EXCLUDED.metadata
-                    WHERE (
-                      torghut_options_contract_catalog.contract_id,
-                      torghut_options_contract_catalog.root_symbol,
-                      torghut_options_contract_catalog.underlying_symbol,
-                      torghut_options_contract_catalog.expiration_date,
-                      torghut_options_contract_catalog.strike_price,
-                      torghut_options_contract_catalog.option_type,
-                      torghut_options_contract_catalog.style,
-                      torghut_options_contract_catalog.contract_size,
-                      torghut_options_contract_catalog.status,
-                      torghut_options_contract_catalog.tradable,
-                      torghut_options_contract_catalog.open_interest,
-                      torghut_options_contract_catalog.open_interest_date,
-                      torghut_options_contract_catalog.close_price,
-                      torghut_options_contract_catalog.close_price_date,
-                      torghut_options_contract_catalog.provider_updated_ts,
-                      torghut_options_contract_catalog.metadata
-                    ) IS DISTINCT FROM (
-                      EXCLUDED.contract_id,
-                      EXCLUDED.root_symbol,
-                      EXCLUDED.underlying_symbol,
-                      EXCLUDED.expiration_date,
-                      EXCLUDED.strike_price,
-                      EXCLUDED.option_type,
-                      EXCLUDED.style,
-                      EXCLUDED.contract_size,
-                      EXCLUDED.status,
-                      EXCLUDED.tradable,
-                      EXCLUDED.open_interest,
-                      EXCLUDED.open_interest_date,
-                      EXCLUDED.close_price,
-                      EXCLUDED.close_price_date,
-                      EXCLUDED.provider_updated_ts,
-                      EXCLUDED.metadata
-                    )
-                        """
-                    ),
-                    upsert_rows,
+                    CATALOG_PAGE_UPSERT,
+                    {"rows": _coerce_json(upsert_rows)},
                 )
 
         return published_rows
@@ -390,9 +290,10 @@ class OptionsRepository:
                 ),
                 {"seen_symbols": normalized_seen_symbols},
             )
-            transition_rows = session.execute(
-                text(
-                    """
+            transition_rows = list(
+                session.execute(
+                    text(
+                        """
                     UPDATE torghut_options_contract_catalog AS catalog
                     SET status = CASE
                           WHEN catalog.expiration_date < CAST(:observed_at AS DATE) THEN 'expired'
@@ -401,27 +302,63 @@ class OptionsRepository:
                         last_seen_ts = :observed_at
                     WHERE catalog.status = 'active'
                       AND catalog.underlying_symbol = ANY(:underlying_symbols)
-                      AND catalog.expiration_date <= :expiration_date_lte
-                      AND (
-                        catalog.expiration_date < :expiration_date_gte
-                        OR NOT EXISTS (
-                          SELECT 1
-                          FROM options_catalog_seen_contracts AS seen
-                          WHERE seen.contract_symbol = catalog.contract_symbol
-                        )
+                      AND catalog.expiration_date BETWEEN :expiration_date_gte
+                                                      AND :expiration_date_lte
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM options_catalog_seen_contracts AS seen
+                        WHERE seen.contract_symbol = catalog.contract_symbol
                       )
                     RETURNING catalog.*
                     """
-                ),
-                {"observed_at": observed_at, **scope.query_parameters},
-            ).mappings()
-            return [
+                    ),
+                    {"observed_at": observed_at, **scope.query_parameters},
+                ).mappings()
+            )
+            expired_rows = list(
+                session.execute(
+                    text(
+                        """
+                        WITH expired_batch AS (
+                          SELECT catalog.contract_symbol
+                          FROM torghut_options_contract_catalog AS catalog
+                          WHERE catalog.status = 'active'
+                            AND catalog.underlying_symbol = ANY(:underlying_symbols)
+                            AND catalog.expiration_date < :expiration_date_gte
+                          LIMIT :expired_cleanup_limit
+                          FOR UPDATE SKIP LOCKED
+                        )
+                        UPDATE torghut_options_contract_catalog AS catalog
+                        SET status = 'expired',
+                            last_seen_ts = :observed_at
+                        FROM expired_batch
+                        WHERE catalog.contract_symbol = expired_batch.contract_symbol
+                        RETURNING catalog.*
+                        """
+                    ),
+                    {
+                        "observed_at": observed_at,
+                        "underlying_symbols": list(scope.underlying_symbols),
+                        "expiration_date_gte": scope.expiration_date_gte,
+                        "expired_cleanup_limit": OPTIONS_EXPIRED_CLEANUP_BATCH_LIMIT,
+                    },
+                ).mappings()
+            )
+            missing_transitions = [
                 {
                     **dict(row),
                     "catalog_status_reason": "not_seen_in_active_discovery_run",
                 }
                 for row in transition_rows
             ]
+            expired_transitions = [
+                {
+                    **dict(row),
+                    "catalog_status_reason": "expired_below_live_discovery_window",
+                }
+                for row in expired_rows
+            ]
+            return [*missing_transitions, *expired_transitions]
 
     def list_active_contracts(self) -> list[dict[str, Any]]:
         with self.session() as session:
