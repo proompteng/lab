@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass(frozen=True)
 class ProvisionalSubscriptionPlan:
     """Rows owned by the current scan and prior cycle-owned rows to deactivate."""
 
-    ranked_rows: list[dict[str, Any]]
+    ranked_rows: list[dict[str, object]]
     deactivate_symbols: set[str]
     owned_symbols: set[str]
 
 
 def plan_provisional_subscription_reconciliation(
-    ranked_rows: Iterable[dict[str, Any]],
+    ranked_rows: Iterable[Mapping[str, object]],
     *,
     protected_hot_symbols: set[str],
     protected_warm_symbols: set[str],
@@ -38,7 +37,7 @@ def plan_provisional_subscription_reconciliation(
     ]
     hot_slots = max(hot_limit - len(protected_hot_symbols), 0)
     warm_slots = max(warm_limit - len(protected_warm_symbols), 0)
-    selected_rows: list[dict[str, Any]] = []
+    selected_rows: list[dict[str, object]] = []
     for index, row in enumerate(eligible_rows[: hot_slots + warm_slots]):
         selected_row = dict(row)
         selected_row["tier"] = "hot" if index < hot_slots else "warm"
