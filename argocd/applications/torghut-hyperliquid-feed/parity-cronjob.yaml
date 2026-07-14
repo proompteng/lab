@@ -5,7 +5,6 @@ metadata:
   namespace: torghut
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/ignore-healthcheck: "true"
   labels:
     app: torghut-hyperliquid-clickhouse-parity
 spec:

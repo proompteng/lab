@@ -361,7 +361,6 @@ describe('Torghut manifest scheduling', () => {
     const parityJob = getAtPath(parity, ['spec', 'jobTemplate', 'spec'])
     const parityPod = getAtPath(parityJob, ['template', 'spec'])
     const parityContainer = getAtPath(parityPod, ['containers', 0])
-    expect(getAtPath(parity, ['metadata', 'annotations'])['argocd.argoproj.io/ignore-healthcheck']).toBe('true')
     expect(getAtPath(parity, ['spec']).suspend).toBe(true)
     expect(getAtPath(parity, ['spec']).concurrencyPolicy).toBe('Forbid')
     expect(parityJob.backoffLimit).toBe(0)
