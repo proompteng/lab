@@ -5,13 +5,7 @@ import { Atlas, AtlasLive } from '~/server/atlas'
 import { resolveAtlasRuntimeConfig } from '~/server/atlas-config'
 import { DEFAULT_REF } from '~/server/atlas-http'
 import { BumbaWorkflows, BumbaWorkflowsLive } from '~/server/bumba'
-import {
-  DEFAULT_ATLAS_REF,
-  ensureGitRef,
-  normalizeSearchParam,
-  resolveAtlasRepository,
-  runGitCommand,
-} from '~/server/git-utils'
+import { DEFAULT_ATLAS_REF, normalizeSearchParam, resolveAtlasRepository } from '~/server/git-utils'
 
 type EnrichPayload = {
   repository?: string
@@ -159,13 +153,6 @@ const resolveAtlasEventInput = (payload: Record<string, unknown>) => {
   }
 }
 
-const resolveRefCommit = async (ref: string) => {
-  const result = await runGitCommand(['rev-parse', ref])
-  if (result.exitCode !== 0) return undefined
-  const commit = result.stdout.trim()
-  return commit || undefined
-}
-
 export const postEnrichHandlerEffect = (request: Request) =>
   pipe(
     Effect.gen(function* () {
@@ -188,19 +175,7 @@ export const postEnrichHandlerEffect = (request: Request) =>
         if (ref !== DEFAULT_REF) {
           return errorResponse('Atlas reconciles only the authoritative main ref.', 409)
         }
-        const refResult = yield* Effect.tryPromise({
-          try: () => ensureGitRef(ref),
-          catch: (error) => error as Error,
-        })
-        if (!refResult.ok) return errorResponse(refResult.message, 404)
-
-        const commit =
-          normalizeOptionalText(payloadRecord.commit) ??
-          (yield* Effect.tryPromise({
-            try: () => resolveRefCommit(ref),
-            catch: (error) => error as Error,
-          }))
-        if (!commit) return errorResponse('Commit not found for ref.', 404)
+        const commit = normalizeOptionalText(payloadRecord.commit)
 
         let pathPrefix: string | undefined
         try {
