@@ -203,6 +203,9 @@ def _resolve_symbol_filter(*, session: Session, universe_ref: str) -> _UniverseF
         if enabled_symbols:
             return _UniverseFilter(mode="equity_enabled", symbols=enabled_symbols)
 
+        if not settings.trading_universe_static_fallback_enabled:
+            return _UniverseFilter(mode="equity_enabled", symbols=set())
+
         static_fallback_symbols = {
             symbol.strip().upper()
             for symbol in settings.trading_universe_static_fallback_symbols

@@ -247,6 +247,10 @@ class TestLLMDSPyDatasetBuilder(TestCase):
                     "app.trading.llm.dspy_compile.dataset.settings.trading_universe_static_fallback_symbols_raw",
                     "AAPL,MSFT",
                 ),
+                patch(
+                    "app.trading.llm.dspy_compile.dataset.settings.trading_universe_static_fallback_enabled",
+                    True,
+                ),
             ):
                 result = build_dspy_dataset_artifacts(
                     session,
@@ -266,6 +270,57 @@ class TestLLMDSPyDatasetBuilder(TestCase):
                 self.assertEqual(
                     metadata_payload.get("filters", {}).get("symbolFilterMode"),
                     "equity_enabled_static_fallback",
+                )
+
+    def test_build_dataset_artifacts_does_not_use_static_symbols_when_fallback_disabled(
+        self,
+    ) -> None:
+        now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            disabled_strategy = self._create_strategy(
+                session,
+                name="disabled-strategy",
+                universe_symbols=["AAPL"],
+                enabled=False,
+            )
+            self._insert_reviewed_decision(
+                session=session,
+                strategy_id=str(disabled_strategy.id),
+                symbol="AAPL",
+                created_at=now - timedelta(hours=1),
+                verdict="approve",
+                include_market_context=True,
+            )
+
+            with (
+                TemporaryDirectory() as tmp,
+                patch(
+                    "app.trading.llm.dspy_compile.dataset.settings.trading_universe_static_fallback_symbols_raw",
+                    "AAPL",
+                ),
+                patch(
+                    "app.trading.llm.dspy_compile.dataset.settings.trading_universe_static_fallback_enabled",
+                    False,
+                ),
+            ):
+                result = build_dspy_dataset_artifacts(
+                    session,
+                    repository="proompteng/lab",
+                    base="main",
+                    head="codex/dspy-dataset",
+                    artifact_path=tmp,
+                    dataset_window="P10D",
+                    universe_ref="torghut:equity:enabled",
+                    window_end=now,
+                )
+
+                self.assertEqual(result.total_rows, 0)
+                metadata_payload = json.loads(
+                    result.metadata_path.read_text(encoding="utf-8")
+                )
+                self.assertEqual(
+                    metadata_payload.get("filters", {}).get("symbolFilterMode"),
+                    "equity_enabled",
                 )
 
     def test_build_dataset_artifacts_rejects_empty_explicit_symbol_filter(self) -> None:
