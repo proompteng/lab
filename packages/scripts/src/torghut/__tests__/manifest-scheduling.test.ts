@@ -511,6 +511,19 @@ describe('Torghut manifest scheduling', () => {
     expect(flinkConfiguration['restart-strategy.fixed-delay.delay']).toBe('10 s')
   })
 
+  it('bounds options archive finalization writes and rolls ConfigMap changes', () => {
+    const config = parseManifest('argocd/applications/torghut-options/archive/configmap.yaml')
+    const data = getAtPath(config, ['data'])
+    expect(data.OPTIONS_CONTRACT_ARCHIVE_FINALIZE_BATCH_SIZE).toBe('100')
+    expect(data.OPTIONS_CONTRACT_ARCHIVE_FINALIZE_INTERVAL_MS).toBe('1000')
+    expect(data.OPTIONS_CONTRACT_ARCHIVE_STATEMENT_TIMEOUT_MS).toBe('30000')
+
+    const deployment = parseManifest('argocd/applications/torghut-options/archive/deployment.yaml')
+    expect(getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
+      'proompteng.ai/config-revision': 'archive-finalize-write-budget-20260713a',
+    })
+  })
+
   it('keeps production TA in live consumer mode', () => {
     const config = parseManifest('argocd/applications/torghut/ta/configmap.yaml')
     const data = getAtPath(config, ['data'])
