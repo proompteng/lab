@@ -116,14 +116,14 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         config_data = cast(Mapping[str, object], data)
 
         self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_BATCH_SIZE"), "1000")
-        self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_FLUSH_MS"), "5000")
+        self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_FLUSH_MS"), "30000")
         self.assertEqual(config_data.get("OPTIONS_TA_CLICKHOUSE_SINK_PARALLELISM"), "1")
 
         deployment = _load_yaml_mapping(
             "argocd/applications/torghut-options/ta/flinkdeployment.yaml"
         )
         spec = cast(Mapping[str, object], deployment.get("spec", {}))
-        self.assertGreaterEqual(int(str(spec.get("restartNonce"))), 32)
+        self.assertGreaterEqual(int(str(spec.get("restartNonce"))), 33)
 
     def test_direct_torghut_deployments_bound_replica_set_history(self) -> None:
         deployment_paths = [
