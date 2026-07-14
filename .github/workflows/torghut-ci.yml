@@ -609,7 +609,7 @@ jobs:
     if: ${{ needs.changes.outputs.service == 'true' }}
     services:
       postgres:
-        image: postgres:18-trixie
+        image: postgres:17-bookworm
         env:
           POSTGRES_USER: torghut
           POSTGRES_PASSWORD: torghut
@@ -682,7 +682,8 @@ jobs:
             tests/execution/test_broker_mutation_receipts_postgres.py \
             tests/execution/test_broker_mutation_linked_receipts_postgres.py \
             tests/execution/test_broker_mutation_receipt_boundaries_postgres.py \
-            tests/execution/test_linked_submission_terminal_postgres.py
+            tests/execution/test_linked_submission_terminal_postgres.py \
+            tests/trading/test_strategy_capital_authority_postgres.py
 
       - name: Upload PostgreSQL coverage data
         if: always()

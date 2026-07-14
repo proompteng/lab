@@ -13,8 +13,10 @@ from sqlalchemy import (
     Index,
     String,
     UniqueConstraint,
+    column,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.schema import conv
 
 from ..base import Base, GUID, JSONType
 from .model_mixins import CreatedAtMixin
@@ -29,7 +31,14 @@ class StrategyCapitalAuthorityRecord(Base, CreatedAtMixin):
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     authority_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     strategy_id: Mapped[uuid.UUID] = mapped_column(
-        GUID(), ForeignKey("strategies.id", ondelete="RESTRICT"), nullable=False
+        GUID(),
+        ForeignKey(
+            "strategies.id",
+            name=conv("fk_strategy_capital_authorities_strategy"),
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        nullable=False,
     )
     schema_version: Mapped[str] = mapped_column(String(length=64), nullable=False)
     stage: Mapped[str] = mapped_column(String(length=32), nullable=False)
@@ -47,42 +56,48 @@ class StrategyCapitalAuthorityRecord(Base, CreatedAtMixin):
     __table_args__ = (
         CheckConstraint(
             "schema_version = 'torghut.strategy-capital-authority.v1'",
-            name="ck_strategy_capital_authorities_schema",
+            name=conv("ck_strategy_capital_authorities_schema"),
         ),
         CheckConstraint(
             "stage IN ('disabled', 'quarantined', 'research_only', "
             "'replay_verified', 'shadow_allowed', 'paper_probation', "
             "'paper_verified', 'micro_live_allowed', 'capital_allowed', 'scaled')",
-            name="ck_strategy_capital_authorities_stage",
+            name=conv("ck_strategy_capital_authorities_stage"),
         ),
         CheckConstraint(
-            "length(authority_digest) = 71 AND authority_digest LIKE 'sha256:%'",
-            name="ck_strategy_capital_authorities_digest",
+            column("authority_digest").regexp_match(r"^sha256:[0-9a-f]{64}$"),
+            name=conv("ck_strategy_capital_authorities_digest"),
+        ),
+        CheckConstraint(
+            "length(authority_id) BETWEEN 1 AND 128",
+            name=conv("ck_strategy_capital_authorities_id"),
         ),
         CheckConstraint(
             "expires_at IS NULL OR issued_at IS NOT NULL",
-            name="ck_strategy_capital_authorities_expiry_issuance",
+            name=conv("ck_strategy_capital_authorities_expiry_issuance"),
         ),
         CheckConstraint(
             "expires_at IS NULL OR expires_at > issued_at",
-            name="ck_strategy_capital_authorities_expiry_order",
+            name=conv("ck_strategy_capital_authorities_expiry_order"),
         ),
         UniqueConstraint(
-            "authority_id", name="uq_strategy_capital_authorities_authority_id"
+            "authority_id",
+            name=conv("uq_strategy_capital_authorities_authority_id"),
         ),
         UniqueConstraint(
-            "authority_digest", name="uq_strategy_capital_authorities_digest"
+            "authority_digest",
+            name=conv("uq_strategy_capital_authorities_digest"),
         ),
         UniqueConstraint(
             "id",
             "strategy_id",
-            name="uq_strategy_capital_authorities_record_strategy",
+            name=conv("uq_strategy_capital_authorities_record_strategy"),
         ),
         UniqueConstraint(
             "authority_id",
             "authority_digest",
             "strategy_id",
-            name="uq_strategy_capital_authorities_identity",
+            name=conv("uq_strategy_capital_authorities_identity"),
         ),
         Index(
             "ix_strategy_capital_authorities_strategy_created",

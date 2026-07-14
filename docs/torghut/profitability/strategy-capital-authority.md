@@ -65,7 +65,7 @@ not accepted.
 
 ## Persistence
 
-Migration `0063_strategy_capital_authority` creates `strategy_capital_authorities` and
+Migration `0064_strategy_capital_authority` creates `strategy_capital_authorities` and
 `strategies.active_capital_authority_id`. It also adds the exact authority ID, digest, decision, and evaluation time to
 each `trade_decisions` row. These columns are the durable pre-broker reservation used for rate limits; event time and
 accepted executions are not substitutes for an attempted broker mutation.
@@ -90,6 +90,44 @@ instead of continuing with the previous grant.
 Existing `StrategyCapitalAllocation`, `StrategyPromotionDecision`, and evidence-epoch rows remain historical evidence.
 They are not rewritten, do not project a capital stage, and are not consulted as broker authority. A complete new
 authority must be independently issued and selected before any legacy evidence can participate in a broker grant.
+
+### Production migration safety
+
+Revision `0064` is an online, retry-safe migration because `trade_decisions` is a live multi-gigabyte table. The
+migration contract is:
+
+- run each revision in its own Alembic transaction and put the online DDL in an explicit autocommit block; Alembic
+  documents that entering an autocommit block commits prior work, so every statement after that boundary must be safe
+  to retry;
+- set a five-second `lock_timeout`, so a busy table causes a failed deployment and retry instead of an unbounded
+  scheduler write outage;
+- add the four nullable decision columns without defaults in one metadata-only `ALTER TABLE`, which PostgreSQL does
+  without a table rewrite;
+- add the four checks and composite foreign key as `NOT VALID`, then validate them separately. PostgreSQL enforces a
+  not-valid constraint for new writes while skipping the initial scan, and `VALIDATE CONSTRAINT` uses a lock that does
+  not exclude concurrent inserts, updates, or deletes;
+- build only the query-serving partial index, with
+  `WHERE strategy_capital_authority_allowed IS TRUE`, using `CREATE INDEX CONCURRENTLY`. Historical rows with no
+  authority verdict do not consume index space or future index-maintenance work;
+- detect and remove an invalid interrupted concurrent index before retry, and skip already-present columns,
+  constraints, triggers, and valid indexes;
+- run the required PostgreSQL integration test in CI. It must prove a complete upgrade, a second idempotent upgrade,
+  immutable history, exact constraint validation, the partial-index predicate, a forced lock timeout, the retained
+  `0062` revision after partial progress, and successful retry to `0063`.
+
+These choices follow the production PostgreSQL 17 major version's documented
+[`ALTER TABLE ... NOT VALID` and `VALIDATE CONSTRAINT`](https://www.postgresql.org/docs/17/sql-altertable.html),
+[`CREATE INDEX CONCURRENTLY`](https://www.postgresql.org/docs/17/sql-createindex.html), and
+[`lock_timeout`](https://www.postgresql.org/docs/17/runtime-config-client.html) behavior, plus Alembic's
+[`autocommit_block`](https://alembic.sqlalchemy.org/en/latest/api/runtime.html#alembic.runtime.migration.MigrationContext.autocommit_block)
+transaction warning. A green unit test that only inspects emitted method calls is not release evidence.
+
+The immediate predecessor, `0063_options_archive_final_idx`, follows the same autocommit, timeout, structural-index
+verification, invalid-index cleanup, and retry contract. The pre-cutover live readback was approximately 6.0 GiB and
+3.97 million planner-estimated rows for `torghut_options_contract_catalog`, plus 1.9 GiB and 154,339 exact rows for
+`trade_decisions`. The GitOps migration Job therefore has a one-hour active deadline; its former 15-minute deadline
+could terminate a healthy 45-minute concurrent index statement. This changes only the failure budget for the PreSync
+hook. It does not bypass migration failure, permit direct deployment, or increase capital authority.
 
 ## Immediate Pre-Broker Evaluation
 
