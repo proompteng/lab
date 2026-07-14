@@ -198,7 +198,6 @@ def authorize_infrastructure_validation_order(
     plan: InfrastructureValidationOrderPlan,
     *,
     account_label: str,
-    account_mode: str,
     broker_base_url: str,
     now: datetime,
 ) -> InfrastructureValidationPermit:
@@ -207,7 +206,7 @@ def authorize_infrastructure_validation_order(
     authorize_infrastructure_validation(
         permit,
         account_label=account_label,
-        account_mode=account_mode,
+        account_mode="paper",
         broker_base_url=broker_base_url,
         now=now,
     )

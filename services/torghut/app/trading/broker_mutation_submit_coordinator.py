@@ -109,7 +109,6 @@ class InfrastructureValidationOrderSubmission:
     permit: InfrastructureValidationPermit
     plan: InfrastructureValidationOrderPlan
     account_label: str
-    account_mode: str
     endpoint_url: str
 
 
@@ -213,7 +212,6 @@ class BrokerMutationSubmitCoordinator:
             request.permit,
             request.plan,
             account_label=request.account_label,
-            account_mode=request.account_mode,
             broker_base_url=request.endpoint_url,
             now=evaluated_at,
         )

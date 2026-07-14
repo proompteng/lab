@@ -56,6 +56,7 @@ from app.trading.infrastructure_validation import (
     infrastructure_validation_terminal_state_sha256,
 )
 from app.trading.infrastructure_validation_submit import (
+    InfrastructureValidationSubmitContext,
     run_infrastructure_validation_submit,
 )
 from tests.execution.decision_submission_claims_postgres_support import (
@@ -359,7 +360,6 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
         permit=permit,
         plan=plan,
         account_label=permit.account_label,
-        account_mode="paper",
         endpoint_url="https://paper-api.alpaca.markets",
     )
     request_payload = infrastructure_validation_request_payload(permit, plan)
@@ -476,7 +476,6 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
                     permit=reused_permit,
                     plan=reused_plan,
                     account_label=reused_permit.account_label,
-                    account_mode="paper",
                     endpoint_url="https://paper-api.alpaca.markets",
                 ),
                 callbacks=callbacks,
@@ -682,10 +681,12 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
         report = run_infrastructure_validation_submit(
             permit=permit,
             plan=plan,
-            client=client,
-            session_factory=sessions,
-            configured_account_label=permit.account_label,
-            now=now,
+            context=InfrastructureValidationSubmitContext(
+                client=client,
+                session_factory=sessions,
+                configured_account_label=permit.account_label,
+                evaluated_at=now,
+            ),
         )
 
         assert report.broker_call_count == 1

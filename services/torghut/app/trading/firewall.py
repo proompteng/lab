@@ -345,7 +345,6 @@ class OrderFirewall:
             permit,
             plan,
             account_label=self.account_label,
-            account_mode="paper",
             broker_base_url=self.broker_endpoint_url,
             now=evaluated_at,
         )

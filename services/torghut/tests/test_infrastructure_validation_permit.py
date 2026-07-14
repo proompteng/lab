@@ -169,7 +169,6 @@ def test_crypto_ioc_plan_is_immutably_bound_to_one_non_promotable_identity() -> 
         permit,
         plan,
         account_label=permit.account_label,
-        account_mode="paper",
         broker_base_url="https://paper-api.alpaca.markets",
         now=_NOW,
     )
@@ -245,7 +244,6 @@ def test_order_plan_cannot_escape_permit_bounds(
             permit,
             plan,
             account_label=permit.account_label,
-            account_mode="paper",
             broker_base_url="https://paper-api.alpaca.markets",
             now=_NOW,
         )
