@@ -16,6 +16,7 @@ from scripts.historical_simulation_analysis.report_helpers import (
     _extract_run_scope_decisions,
     _filter_rows_by_any_scope_id,
     _filter_rows_by_scope_ids,
+    _resolve_scoped_execution_id,
     _fifo_trade_pnl,
     _query_rows,
 )
@@ -267,6 +268,34 @@ class TestAnalyzeHistoricalSimulation(TestCase):
                     "trade_decision_id": "decision-scoped",
                 }
             ],
+        )
+
+    def test_decision_linked_order_event_resolves_only_when_execution_is_unique(
+        self,
+    ) -> None:
+        event = {
+            "execution_id": None,
+            "trade_decision_id": "decision-scoped",
+        }
+
+        self.assertEqual(
+            _resolve_scoped_execution_id(
+                event,
+                execution_ids={"execution-1"},
+                execution_ids_by_decision={
+                    "decision-scoped": ["execution-1"],
+                },
+            ),
+            "execution-1",
+        )
+        self.assertIsNone(
+            _resolve_scoped_execution_id(
+                event,
+                execution_ids={"execution-1", "execution-2"},
+                execution_ids_by_decision={
+                    "decision-scoped": ["execution-1", "execution-2"],
+                },
+            )
         )
 
     def test_fifo_trade_pnl_computes_realized_and_unrealized(self) -> None:

@@ -548,6 +548,22 @@ def _filter_rows_by_any_scope_id(
     ]
 
 
+def _resolve_scoped_execution_id(
+    event: dict[str, Any],
+    *,
+    execution_ids: set[str],
+    execution_ids_by_decision: Mapping[str, list[str]],
+) -> str | None:
+    """Resolve an order event to one scoped execution without guessing."""
+    execution_id = str(event.get("execution_id") or "")
+    if execution_id in execution_ids:
+        return execution_id
+
+    decision_id = str(event.get("trade_decision_id") or "")
+    candidates = execution_ids_by_decision.get(decision_id, [])
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _csv_write(path: Path, rows_payload: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows_payload:
@@ -686,6 +702,7 @@ __all__ = [
     "_extract_run_scope_decisions",
     "_filter_rows_by_scope_ids",
     "_filter_rows_by_any_scope_id",
+    "_resolve_scoped_execution_id",
     "_build_last_price_map",
     "_last_prices_from_clickhouse",
     "_last_prices_from_clickhouse_field",
