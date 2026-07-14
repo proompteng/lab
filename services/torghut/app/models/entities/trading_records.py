@@ -19,10 +19,12 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    column,
     text,
 )
 from sqlalchemy import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.schema import conv
 
 from ..base import Base, GUID, JSONType
 from .model_mixins import CreatedAtMixin, TimestampMixin
@@ -78,7 +80,7 @@ class Strategy(Base, TimestampMixin):
                 "strategy_capital_authorities.id",
                 "strategy_capital_authorities.strategy_id",
             ],
-            name="fk_strategies_active_capital_authority_identity",
+            name=conv("fk_strategies_active_capital_authority_identity"),
             ondelete="RESTRICT",
             onupdate="RESTRICT",
         ),
@@ -156,7 +158,7 @@ class TradeDecision(Base, CreatedAtMixin):
                 "strategy_capital_authorities.authority_digest",
                 "strategy_capital_authorities.strategy_id",
             ],
-            name="fk_trade_decisions_strategy_capital_authority_identity",
+            name=conv("fk_trade_decisions_strategy_capital_authority_identity"),
             ondelete="RESTRICT",
             onupdate="RESTRICT",
         ),
@@ -183,28 +185,31 @@ class TradeDecision(Base, CreatedAtMixin):
             "strategy_id",
             "alpaca_account_label",
             "strategy_capital_authority_evaluated_at",
+            postgresql_where=text("strategy_capital_authority_allowed IS TRUE"),
+            sqlite_where=text("strategy_capital_authority_allowed IS TRUE"),
         ),
         CheckConstraint(
             "strategy_capital_authority_allowed IS NULL OR "
             "strategy_capital_authority_evaluated_at IS NOT NULL",
-            name="ck_trade_decisions_capital_authority_evaluated",
+            name=conv("ck_trade_decisions_capital_authority_evaluated"),
         ),
         CheckConstraint(
             "strategy_capital_authority_allowed IS NOT TRUE OR "
             "(strategy_capital_authority_id IS NOT NULL AND "
             "strategy_capital_authority_digest IS NOT NULL)",
-            name="ck_trade_decisions_capital_authority_allowed_identity",
+            name=conv("ck_trade_decisions_capital_authority_allowed_identity"),
         ),
         CheckConstraint(
             "(strategy_capital_authority_id IS NULL) = "
             "(strategy_capital_authority_digest IS NULL)",
-            name="ck_trade_decisions_capital_authority_identity_pair",
+            name=conv("ck_trade_decisions_capital_authority_identity_pair"),
         ),
         CheckConstraint(
-            "strategy_capital_authority_digest IS NULL OR "
-            "(length(strategy_capital_authority_digest) = 71 AND "
-            "strategy_capital_authority_digest LIKE 'sha256:%')",
-            name="ck_trade_decisions_capital_authority_digest",
+            column("strategy_capital_authority_digest").is_(None)
+            | column("strategy_capital_authority_digest").regexp_match(
+                r"^sha256:[0-9a-f]{64}$"
+            ),
+            name=conv("ck_trade_decisions_capital_authority_digest"),
         ),
         Index(
             "uq_trade_decisions_account_decision_hash",
