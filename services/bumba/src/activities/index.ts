@@ -5,7 +5,7 @@ import { basename, extname, relative, resolve, sep } from 'node:path'
 import { SQL } from 'bun'
 import { Effect } from 'effect'
 import * as TSemaphore from 'effect/TSemaphore'
-import { Language, Parser } from 'web-tree-sitter'
+import { Language, Parser, type Tree } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
 import { currentActivityContext } from '@proompteng/temporal-bun-sdk/worker'
@@ -952,6 +952,34 @@ type LoadedLanguage = {
   language: Language
 }
 
+type TreeSitterParserResource = {
+  setLanguage: (language: Language) => unknown
+  parse: (source: string) => Tree | null
+  delete: () => void
+}
+
+const withParsedTree = <T>(
+  language: Language,
+  source: string,
+  read: (tree: Tree) => T,
+  createParser: () => TreeSitterParserResource = () => new Parser(),
+): T | null => {
+  const parser = createParser()
+  let tree: Tree | null = null
+
+  try {
+    parser.setLanguage(language)
+    tree = parser.parse(source)
+    return tree ? read(tree) : null
+  } finally {
+    try {
+      tree?.delete()
+    } finally {
+      parser.delete()
+    }
+  }
+}
+
 const require = createRequire(import.meta.url)
 const runtimeWasmPath = require.resolve('web-tree-sitter/web-tree-sitter.wasm')
 
@@ -1776,42 +1804,42 @@ const parseAst = async (source: string, filePath: string): Promise<AstSummaryOut
   }
 
   try {
-    const parser = new Parser()
-    parser.setLanguage(entry.language)
-    const tree = parser.parse(source)
-    if (!tree) {
+    const result = withParsedTree(entry.language, source, (tree) => {
+      const root = tree.rootNode as AstNode
+      const facts = collectFacts(root, source, maxFacts, maxFactChars)
+      const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
+      if (facts.length === 0) {
+        const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
+        return {
+          astSummary,
+          facts: fallback.facts,
+          metadata: {
+            language: entry.name,
+            factCount: fallback.facts.length,
+            factsFallback: 'text',
+            factsFallbackLanguage: fallbackLanguage,
+          },
+        }
+      }
+
+      return {
+        astSummary,
+        facts,
+        metadata: {
+          language: entry.name,
+          factCount: facts.length,
+        },
+      }
+    })
+
+    if (!result) {
       return {
         astSummary: 'Tree-sitter parse failed.',
         facts: [],
         metadata: { skipped: true, reason: 'parse_failed', language: entry.name },
       }
     }
-    const root = tree.rootNode as AstNode
-
-    const facts = collectFacts(root, source, maxFacts, maxFactChars)
-    const astSummary = buildAstSummary(root, source, maxSummaryNodes, maxFactChars)
-    if (facts.length === 0) {
-      const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
-      return {
-        astSummary,
-        facts: fallback.facts,
-        metadata: {
-          language: entry.name,
-          factCount: fallback.facts.length,
-          factsFallback: 'text',
-          factsFallbackLanguage: fallbackLanguage,
-        },
-      }
-    }
-
-    return {
-      astSummary,
-      facts,
-      metadata: {
-        language: entry.name,
-        factCount: facts.length,
-      },
-    }
+    return result
   } catch (error) {
     const fallback = parsePlainTextAst(source, maxFacts, maxFactChars, maxSummaryNodes, fallbackLanguage, 'text')
     return {
@@ -2088,17 +2116,13 @@ const extractFileChunks = async (source: string, filePath: string): Promise<Extr
   }
 
   try {
-    const parser = new Parser()
-    parser.setLanguage(entry.language)
-    const tree = parser.parse(source)
-    const root = tree?.rootNode as AstNode | undefined
-    if (!root) {
-      return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
-    }
-    const chunks = extractTreeSitterChunks(root, source, config)
-    const completeChunks =
-      chunks.length > 0 ? addUncoveredLineChunks(source, chunks, config) : extractFixedLineChunks(source, config)
-    return finalizeFileChunks(source, completeChunks, config)
+    const chunks = withParsedTree(entry.language, source, (tree) => {
+      const extracted = extractTreeSitterChunks(tree.rootNode as AstNode, source, config)
+      return extracted.length > 0
+        ? addUncoveredLineChunks(source, extracted, config)
+        : extractFixedLineChunks(source, config)
+    })
+    return finalizeFileChunks(source, chunks ?? extractFixedLineChunks(source, config), config)
   } catch {
     return finalizeFileChunks(source, extractFixedLineChunks(source, config), config)
   }
@@ -5192,6 +5216,7 @@ export const __test__ = {
   assertChunkCoverage,
   extractFileChunks,
   shouldUseNullCommitConflictTarget,
+  withParsedTree,
   resetAtlasDb: async () => {
     if (atlasDb) await atlasDb.close()
     atlasDb = undefined
