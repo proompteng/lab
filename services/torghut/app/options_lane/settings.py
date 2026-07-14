@@ -103,8 +103,12 @@ class OptionsLaneSettings(BaseSettings):
         validation_alias=AliasChoices("OPTIONS_CONTRACT_DISCOVERY_PAGE_LIMIT"),
     )
     options_contract_expiration_horizon_days: int = Field(
-        730,
+        120,
         validation_alias=AliasChoices("OPTIONS_CONTRACT_EXPIRATION_HORIZON_DAYS"),
+    )
+    options_live_underlying_symbols: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("OPTIONS_LIVE_UNDERLYING_SYMBOLS"),
     )
     options_subscription_hot_cap: int = Field(
         400,
@@ -187,7 +191,10 @@ class OptionsLaneSettings(BaseSettings):
     )
 
     @field_validator(
-        "options_market_holidays", "options_underlying_priority_symbols", mode="before"
+        "options_live_underlying_symbols",
+        "options_market_holidays",
+        "options_underlying_priority_symbols",
+        mode="before",
     )
     @classmethod
     def _normalize_csv_fields(cls, value: Any) -> list[str]:

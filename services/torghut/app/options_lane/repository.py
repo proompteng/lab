@@ -19,6 +19,8 @@ from app.options_lane.catalog_watermark_repository import (
     CatalogCycleSummary,
     record_catalog_cycle_success,
 )
+from app.options_lane.catalog_scope import OptionsCatalogScope
+from app.options_lane.catalog_change_detection import contract_catalog_row_changed
 from app.options_lane.subscription_state_repository import (
     SubscriptionReconcileResult,
     load_cold_subscription_symbols,
@@ -197,8 +199,16 @@ class OptionsRepository:
 
         if not contracts:
             return []
+        contracts_by_symbol = {
+            cast(str, row["contract_symbol"]): row for row in contracts
+        }
+        ordered_contracts = [
+            contracts_by_symbol[symbol] for symbol in sorted(contracts_by_symbol)
+        ]
         seen_symbols = {
-            row["contract_symbol"] for row in contracts if row.get("contract_symbol")
+            row["contract_symbol"]
+            for row in ordered_contracts
+            if row.get("contract_symbol")
         }
         published_rows: list[dict[str, Any]] = []
 
@@ -218,7 +228,7 @@ class OptionsRepository:
             }
             upsert_rows: list[dict[str, Any]] = []
 
-            for contract in contracts:
+            for contract in ordered_contracts:
                 contract_symbol = cast(str, contract["contract_symbol"])
                 current = existing_rows.get(contract_symbol)
                 first_seen_ts = (
@@ -229,39 +239,23 @@ class OptionsRepository:
                 payload = dict(contract)
                 payload["first_seen_ts"] = first_seen_ts
 
-                changed = current is None or any(
-                    payload.get(field) != current.get(field)
-                    for field in (
-                        "contract_id",
-                        "status",
-                        "tradable",
-                        "expiration_date",
-                        "root_symbol",
-                        "underlying_symbol",
-                        "underlying_asset_id",
-                        "option_type",
-                        "style",
-                        "strike_price",
-                        "contract_size",
-                        "open_interest",
-                        "open_interest_date",
-                        "close_price",
-                        "close_price_date",
-                        "provider_updated_ts",
-                    )
-                )
-                upsert_rows.append(
-                    {
-                        **payload,
-                        "metadata": _coerce_json(payload["metadata"]),
-                    }
+                changed = contract_catalog_row_changed(
+                    current=current,
+                    payload=payload,
                 )
                 if changed:
                     published_rows.append(payload)
+                    upsert_rows.append(
+                        {
+                            **payload,
+                            "metadata": _coerce_json(payload["metadata"]),
+                        }
+                    )
 
-            session.execute(
-                text(
-                    """
+            if upsert_rows:
+                session.execute(
+                    text(
+                        """
                     INSERT INTO torghut_options_contract_catalog (
                       contract_symbol,
                       contract_id,
@@ -321,10 +315,45 @@ class OptionsRepository:
                         provider_updated_ts = EXCLUDED.provider_updated_ts,
                         last_seen_ts = EXCLUDED.last_seen_ts,
                         metadata = EXCLUDED.metadata
-                    """
-                ),
-                upsert_rows,
-            )
+                    WHERE (
+                      torghut_options_contract_catalog.contract_id,
+                      torghut_options_contract_catalog.root_symbol,
+                      torghut_options_contract_catalog.underlying_symbol,
+                      torghut_options_contract_catalog.expiration_date,
+                      torghut_options_contract_catalog.strike_price,
+                      torghut_options_contract_catalog.option_type,
+                      torghut_options_contract_catalog.style,
+                      torghut_options_contract_catalog.contract_size,
+                      torghut_options_contract_catalog.status,
+                      torghut_options_contract_catalog.tradable,
+                      torghut_options_contract_catalog.open_interest,
+                      torghut_options_contract_catalog.open_interest_date,
+                      torghut_options_contract_catalog.close_price,
+                      torghut_options_contract_catalog.close_price_date,
+                      torghut_options_contract_catalog.provider_updated_ts,
+                      torghut_options_contract_catalog.metadata
+                    ) IS DISTINCT FROM (
+                      EXCLUDED.contract_id,
+                      EXCLUDED.root_symbol,
+                      EXCLUDED.underlying_symbol,
+                      EXCLUDED.expiration_date,
+                      EXCLUDED.strike_price,
+                      EXCLUDED.option_type,
+                      EXCLUDED.style,
+                      EXCLUDED.contract_size,
+                      EXCLUDED.status,
+                      EXCLUDED.tradable,
+                      EXCLUDED.open_interest,
+                      EXCLUDED.open_interest_date,
+                      EXCLUDED.close_price,
+                      EXCLUDED.close_price_date,
+                      EXCLUDED.provider_updated_ts,
+                      EXCLUDED.metadata
+                    )
+                        """
+                    ),
+                    upsert_rows,
+                )
 
         return published_rows
 
@@ -332,113 +361,67 @@ class OptionsRepository:
         self,
         *,
         observed_at: datetime,
+        scope: OptionsCatalogScope,
+        seen_symbols: set[str],
     ) -> list[dict[str, Any]]:
-        transition_rows: list[dict[str, Any]] = []
-
-        with self.session() as session, session.begin():
-            stale_rows = list(
-                session.execute(
-                    text(
-                        """
-                        SELECT *
-                        FROM torghut_options_contract_catalog
-                        WHERE status = 'active'
-                          AND last_seen_ts < :observed_at
-                        """
-                    ),
-                    {"observed_at": observed_at},
-                ).mappings()
-            )
-
-            for row in stale_rows:
-                expiration_date = cast(date, row["expiration_date"])
-                next_status = (
-                    "expired" if expiration_date < observed_at.date() else "inactive"
-                )
-                session.execute(
-                    text(
-                        """
-                        UPDATE torghut_options_contract_catalog
-                        SET status = :status,
-                            last_seen_ts = :last_seen_ts
-                        WHERE contract_symbol = :contract_symbol
-                        """
-                    ),
-                    {
-                        "contract_symbol": row["contract_symbol"],
-                        "status": next_status,
-                        "last_seen_ts": observed_at,
-                    },
-                )
-                transition = dict(row)
-                transition["status"] = next_status
-                transition["last_seen_ts"] = observed_at
-                transition["catalog_status_reason"] = "not_seen_in_active_discovery_run"
-                transition_rows.append(transition)
-
-        return transition_rows
-
-    def sync_contract_catalog(
-        self,
-        contracts: list[dict[str, Any]],
-        *,
-        observed_at: datetime,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Upsert the active contract set and return changed rows plus inactive transitions."""
-
-        published_rows = self.sync_contract_catalog_page(
-            contracts, observed_at=observed_at
+        normalized_seen_symbols = sorted(
+            {symbol.strip().upper() for symbol in seen_symbols if symbol.strip()}
         )
-        seen_symbols = {
-            row["contract_symbol"] for row in contracts if row.get("contract_symbol")
-        }
-        transition_rows: list[dict[str, Any]] = []
-
-        if not seen_symbols:
-            return published_rows, self.mark_contracts_missing_from_cycle(
-                observed_at=observed_at
-            )
+        if not normalized_seen_symbols:
+            raise ValueError("complete options catalog scan must contain contracts")
 
         with self.session() as session, session.begin():
-            stale_rows = session.execute(
+            session.execute(
                 text(
                     """
-                    SELECT *
-                    FROM torghut_options_contract_catalog
-                    WHERE status = 'active'
-                      AND contract_symbol <> ALL(:symbols)
+                    CREATE TEMPORARY TABLE options_catalog_seen_contracts (
+                      contract_symbol TEXT PRIMARY KEY
+                    ) ON COMMIT DROP
+                    """
+                )
+            )
+            session.execute(
+                text(
+                    """
+                    INSERT INTO options_catalog_seen_contracts (contract_symbol)
+                    SELECT unnest(CAST(:seen_symbols AS TEXT[]))
+                    ON CONFLICT (contract_symbol) DO NOTHING
                     """
                 ),
-                {"symbols": list(seen_symbols) or [""]},
+                {"seen_symbols": normalized_seen_symbols},
+            )
+            transition_rows = session.execute(
+                text(
+                    """
+                    UPDATE torghut_options_contract_catalog AS catalog
+                    SET status = CASE
+                          WHEN catalog.expiration_date < CAST(:observed_at AS DATE) THEN 'expired'
+                          ELSE 'inactive'
+                        END,
+                        last_seen_ts = :observed_at
+                    WHERE catalog.status = 'active'
+                      AND catalog.underlying_symbol = ANY(:underlying_symbols)
+                      AND catalog.expiration_date <= :expiration_date_lte
+                      AND (
+                        catalog.expiration_date < :expiration_date_gte
+                        OR NOT EXISTS (
+                          SELECT 1
+                          FROM options_catalog_seen_contracts AS seen
+                          WHERE seen.contract_symbol = catalog.contract_symbol
+                        )
+                      )
+                    RETURNING catalog.*
+                    """
+                ),
+                {"observed_at": observed_at, **scope.query_parameters},
             ).mappings()
-
-            for row in stale_rows:
-                expiration_date = cast(date, row["expiration_date"])
-                next_status = (
-                    "expired" if expiration_date < observed_at.date() else "inactive"
-                )
-                session.execute(
-                    text(
-                        """
-                        UPDATE torghut_options_contract_catalog
-                        SET status = :status,
-                            last_seen_ts = :last_seen_ts
-                        WHERE contract_symbol = :contract_symbol
-                        """
-                    ),
-                    {
-                        "contract_symbol": row["contract_symbol"],
-                        "status": next_status,
-                        "last_seen_ts": observed_at,
-                    },
-                )
-                transition = dict(row)
-                transition["status"] = next_status
-                transition["last_seen_ts"] = observed_at
-                transition["catalog_status_reason"] = "not_seen_in_active_discovery_run"
-                transition_rows.append(transition)
-
-        return published_rows, transition_rows
+            return [
+                {
+                    **dict(row),
+                    "catalog_status_reason": "not_seen_in_active_discovery_run",
+                }
+                for row in transition_rows
+            ]
 
     def list_active_contracts(self) -> list[dict[str, Any]]:
         with self.session() as session:
@@ -464,7 +447,7 @@ class OptionsRepository:
             return [dict(row) for row in rows]
 
     def iter_active_contracts_for_ranking(
-        self, *, batch_size: int = 5000
+        self, *, scope: OptionsCatalogScope, batch_size: int = 5000
     ) -> Iterator[dict[str, Any]]:
         with self.session() as session:
             rows = session.execute(
@@ -482,19 +465,24 @@ class OptionsRepository:
                     LEFT JOIN torghut_options_subscription_state AS subs
                       ON subs.contract_symbol = catalog.contract_symbol
                     WHERE catalog.status = 'active'
+                      AND catalog.underlying_symbol = ANY(:underlying_symbols)
+                      AND catalog.expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
                     ORDER BY catalog.contract_symbol
                     """
-                )
+                ),
+                scope.query_parameters,
             ).mappings()
             while batch := rows.fetchmany(batch_size):
                 for row in batch:
                     yield dict(row)
 
-    def list_live_subscription_candidates(self) -> list[dict[str, Any]]:
+    def list_live_subscription_candidates(
+        self, *, scope: OptionsCatalogScope
+    ) -> list[dict[str, Any]]:
         """Return only the persisted hot/warm candidate seed."""
 
         with self.session() as session:
-            return load_live_subscription_candidates(session)
+            return load_live_subscription_candidates(session, scope=scope)
 
     def list_non_off_subscription_symbols(self) -> set[str]:
         """Return every symbol eligible for final-cycle cleanup."""
@@ -502,11 +490,13 @@ class OptionsRepository:
         with self.session() as session:
             return load_non_off_subscription_symbols(session)
 
-    def list_cold_subscription_symbols(self) -> frozenset[str]:
+    def list_cold_subscription_symbols(
+        self, *, scope: OptionsCatalogScope
+    ) -> frozenset[str]:
         """Return rows that only final reconciliation may retier or deactivate."""
 
         with self.session() as session:
-            return load_cold_subscription_symbols(session)
+            return load_cold_subscription_symbols(session, scope=scope)
 
     def write_subscription_state(
         self,
@@ -523,7 +513,7 @@ class OptionsRepository:
                 observed_at=observed_at,
             )
 
-    def get_hot_symbols(self, limit: int) -> list[str]:
+    def get_hot_symbols(self, limit: int, *, scope: OptionsCatalogScope) -> list[str]:
         with self.session() as session:
             rows = session.execute(
                 text(
@@ -534,12 +524,14 @@ class OptionsRepository:
                       ON catalog.contract_symbol = subscriptions.contract_symbol
                     WHERE subscriptions.tier = 'hot'
                       AND catalog.status = 'active'
+                      AND catalog.underlying_symbol = ANY(:underlying_symbols)
+                      AND catalog.expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
                     ORDER BY subscriptions.ranking_score DESC,
                              subscriptions.contract_symbol ASC
                     LIMIT :limit
                     """
                 ),
-                {"limit": limit},
+                {"limit": limit, **scope.query_parameters},
             )
             return [cast(str, row[0]) for row in rows]
 
@@ -697,7 +689,7 @@ class OptionsRepository:
             "SELECT COUNT(*) FROM torghut_options_subscription_state WHERE tier = 'hot'"
         )
 
-    def max_active_open_interest(self) -> int:
+    def max_active_open_interest(self, *, scope: OptionsCatalogScope) -> int:
         with self.session() as session:
             return int(
                 session.execute(
@@ -706,8 +698,11 @@ class OptionsRepository:
                         SELECT COALESCE(MAX(open_interest), 0)
                         FROM torghut_options_contract_catalog
                         WHERE status = 'active'
+                          AND underlying_symbol = ANY(:underlying_symbols)
+                          AND expiration_date BETWEEN :expiration_date_gte AND :expiration_date_lte
                         """
-                    )
+                    ),
+                    scope.query_parameters,
                 ).scalar_one()
                 or 0
             )
