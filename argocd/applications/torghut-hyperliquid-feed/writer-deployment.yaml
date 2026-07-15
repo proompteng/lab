@@ -8,9 +8,9 @@ metadata:
   labels:
     app: torghut-hyperliquid-clickhouse-writer
 spec:
-  # Shadow-writes Kafka records into suffixed staging tables. The direct sink
-  # remains authoritative until the bounded parity gate passes.
-  replicas: 1
+  # Keep the staging writer stopped until the bounded replay profile has been
+  # validated live. The direct sink remains authoritative.
+  replicas: 0
   revisionHistoryLimit: 2
   strategy:
     type: Recreate
