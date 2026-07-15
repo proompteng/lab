@@ -1,6 +1,6 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-15 04:29 UTC**
+Last updated: **2026-07-15 13:45 UTC**
 
 Status: **write-heavy activation contained; Jangar write-pressure fix and clean storage observation pending**
 
@@ -270,6 +270,16 @@ occurred at `04:28:57 UTC`, and maximum follower-lag time was 14,449 ms. Ceph re
 up and in, SMART current health passed on all three expected disks, and every Torghut runtime check passed. Concurrent
 WAL samples measured Torghut at 0.0048 MiB/s and Jangar at 0.3624 MiB/s; Jangar remains above the 0.3015 MiB/s gate.
 This is a real failed baseline, not a timeout-setting problem.
+
+After the Jangar write-pressure cleanup and registry mutation rate limit were live, the schema-v4 gate passed at
+`2026-07-15 12:41:51 UTC` against an observation start of `12:05:26 UTC`. The 36.42-minute window returned no failures:
+Ceph was `HEALTH_OK` with all six OSDs up and in; all three SMART devices passed current/baseline health, zero-media, and
+no-new-CRC checks; Kafka 4.3.0 / metadata `4.3-IV0` had all six broker/controller pods ready; and the archive worker and
+Kafka ClickHouse writer remained declaratively and actually at zero replicas. Concurrent WAL samples measured Torghut
+at 0.0096 MiB/s and Jangar at 0.0027 MiB/s over 30.6 seconds. The feed, scheduler, and Knative API revision
+`torghut-01477` were ready. The only warnings were the already-documented interrupted historical SMART self-tests and
+the still-active Kafka controller timeout overrides. This `PASS` authorizes the one-replica archive activation below;
+it does not authorize the Kafka writer or timeout-removal stages.
 
 The superseded repair-gate collection completed at `2026-07-15 01:38 UTC`, using `2026-07-14T20:12:00Z` as the start
 of the incident window. It correctly returned `FAIL` because that window intentionally contained the incident itself;
