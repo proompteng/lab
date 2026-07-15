@@ -425,15 +425,11 @@ spec:
             - name: TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY
               value: "0.05"
             - name: TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET
-              # P0 capital freeze: the scheduler stays healthy for recovery and
-              # closeout, while every risk-increasing decision is rejected.
-              value: "00:00:00"
+              value: "15:30:00"
             - name: TRADING_FLATTEN_START_TIME_ET
-              # Temporary Slice 6 proof window; restore immediately after the
-              # bounded continuous-session lifecycle reaches a known-null account.
-              value: "23:50:00"
+              value: "15:45:00"
             - name: TRADING_FLAT_CONFIRMATION_TIME_ET
-              value: "23:55:00"
+              value: "15:50:00"
             - name: TRADING_PAIR_DELTA_TOLERANCE_BPS
               value: "8"
             - name: TRADING_CLOSEOUT_REPRICE_SECONDS
