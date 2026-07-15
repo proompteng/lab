@@ -521,7 +521,7 @@ export const createAtlasCodeSearchHandlers = ({
       MAX_SEARCH_LIMIT,
       Math.max(MIN_SEMANTIC_CANDIDATES, resolvedLimit * SEMANTIC_CANDIDATE_MULTIPLIER),
     )
-    const requiresExactScopedSemanticScan = Boolean(filters.pathPrefix || filters.language)
+    const requiresExactScopedSemanticScan = Boolean(filters.pathPrefix)
     const embeddingConfig = loadEmbeddingConfig()
     const vectorString = isPathQuery
       ? null
