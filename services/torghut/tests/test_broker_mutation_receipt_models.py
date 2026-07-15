@@ -2,9 +2,18 @@ from __future__ import annotations
 
 from typing import cast
 
-from sqlalchemy import CheckConstraint, Table, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Table,
+    UniqueConstraint,
+    create_mock_engine,
+)
 
 from app.models import BrokerMutationReceipt, BrokerMutationReceiptEvent
+from app.models.entities.broker_mutation_validation_contract import (
+    BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
+)
+from tests.migration_testing import load_migration_module
 
 
 def _table(
@@ -59,6 +68,48 @@ def test_receipt_header_encodes_the_exact_broker_mutation_contract() -> None:
     )
     assert "operation = 'submit_order'" in str(
         submit_claim.dialect_options["postgresql"]["where"]
+    )
+
+
+def test_receipt_header_mirrors_validation_authority_and_permit_guards() -> None:
+    table = _table(BrokerMutationReceipt)
+    validation_check = next(
+        constraint
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+        and constraint.name == "ck_bm_receipt_validation_authority"
+    )
+    assert str(validation_check.sqltext).strip() == (
+        BROKER_MUTATION_VALIDATION_AUTHORITY_SQL.strip()
+    )
+
+    validation_permit = next(
+        index
+        for index in table.indexes
+        if index.name == "uq_bm_receipt_validation_permit"
+    )
+    assert validation_permit.unique
+    assert "permit,permit_id" in str(validation_permit.expressions[0])
+    assert "control_plane_validation" in str(
+        validation_permit.dialect_options["postgresql"]["where"]
+    )
+
+    statements: list[str] = []
+    engine = create_mock_engine(
+        "postgresql+psycopg://",
+        lambda statement, *_args, **_kwargs: statements.append(
+            str(statement.compile(dialect=engine.dialect))
+        ),
+    )
+    table.create(engine)
+    ddl = "\n".join(statements)
+    assert "CONSTRAINT ck_bm_receipt_validation_authority" in ddl
+    assert "CREATE UNIQUE INDEX uq_bm_receipt_validation_permit" in ddl
+    assert "non_promotable_validation" in ddl
+
+    migration = load_migration_module("0068_infrastructure_validation_submit.py")
+    assert str(getattr(migration, "_VALIDATION_AUTHORITY")).strip() == (
+        BROKER_MUTATION_VALIDATION_AUTHORITY_SQL.strip()
     )
 
 

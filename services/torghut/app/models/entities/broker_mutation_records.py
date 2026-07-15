@@ -19,8 +19,13 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.schema import conv
 
 from ..base import Base, GUID
+from .broker_mutation_validation_contract import (
+    BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
+    BROKER_MUTATION_VALIDATION_PERMIT_ID_SQL,
+)
 
 if TYPE_CHECKING:
     from .trading_records import TradeDecisionSubmissionClaim
@@ -136,6 +141,10 @@ class BrokerMutationReceipt(Base):
             "AND risk_class = 'risk_reducing'))",
             name="operation_contract",
         ),
+        CheckConstraint(
+            BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
+            name=conv("ck_bm_receipt_validation_authority"),
+        ).ddl_if(dialect="postgresql"),
         CheckConstraint("length(endpoint_fingerprint) = 64", name="endpoint_hash"),
         CheckConstraint(
             "intent_schema_version = 'torghut.broker-mutation-intent.v1'",
@@ -180,6 +189,12 @@ class BrokerMutationReceipt(Base):
                 "operation = 'submit_order' AND submission_claim_id IS NOT NULL"
             ),
         ),
+        Index(
+            "uq_bm_receipt_validation_permit",
+            text(BROKER_MUTATION_VALIDATION_PERMIT_ID_SQL),
+            unique=True,
+            postgresql_where=text("purpose = 'control_plane_validation'"),
+        ).ddl_if(dialect="postgresql"),
         Index("ix_broker_mutation_receipts_workflow", "workflow_id"),
         Index(
             "ix_broker_mutation_receipts_target",
