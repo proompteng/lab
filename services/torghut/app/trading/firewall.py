@@ -635,7 +635,9 @@ class OrderFirewall:
         try:
             return callback()
         except _ALPACA_MUTATION_ERRORS as exc:
-            _raise_alpaca_mutation_error(exc)
+            raise BrokerMutationBrokerIoError(
+                f"alpaca_broker_io_failed:{type(exc).__name__}"
+            ) from exc
 
     def get_order_by_client_order_id(
         self, client_order_id: str
