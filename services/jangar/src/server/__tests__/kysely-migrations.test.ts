@@ -99,6 +99,21 @@ describe('migration registration', () => {
     expect(normalized).not.toContain('quant_pipeline_health;')
   })
 
+  it('keeps the no-copy quant-series active-store migration rollback-compatible', () => {
+    const migrationPath = new URL('../migrations/20260715_torghut_quant_series_active.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('partition_count = 16')
+    expect(normalized).toContain('partition by hash (strategy_id)')
+    expect(normalized).toContain('using brin (as_of)')
+    expect(normalized).toContain('create view torghut_control_plane.quant_metrics_series as')
+    expect(normalized).toContain('instead of insert on torghut_control_plane.quant_metrics_series')
+    expect(normalized).toContain('on conflict (id) do nothing')
+    expect(normalized).not.toContain('vacuum full')
+    expect(normalized).not.toContain('reindex')
+    expect(normalized).not.toContain('unlogged')
+  })
+
   it('keeps the Codex judge AgentRun column migration registered as a retired Agents backfill handoff', () => {
     expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
     expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
