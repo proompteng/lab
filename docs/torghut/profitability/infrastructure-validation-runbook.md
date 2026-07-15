@@ -40,20 +40,27 @@ Before issuing a permit, record and independently verify:
 6. the account has zero positions and zero open orders;
 7. the selected asset is active, tradable, and has the requested asset class;
 8. no earlier receipt uses the proposed `permit_id` or deterministic client-order ID;
-9. the scheduler cannot race the exercise: it is healthy and outside every scheduled/emergency closeout window, or it
-   has first been proven healthy on the promoted image and then quiesced through a reviewed GitOps change.
+9. the scheduler cannot race the exercise: it is healthy, has no emergency stop latched, and is outside the configured
+   scheduled closeout window;
+10. the production order-feed ingestor that persists lifecycle fill ancestry remains healthy for the full exercise.
 
 Stop if any identity is missing, aliased, or contradictory. Never infer paper safety from `TRADING_MODE`; the endpoint
 and broker account response are authoritative. Kubernetes readiness does not prove scheduler non-interference: after
 `TRADING_FLATTEN_START_TIME_ET`, or while an emergency stop is latched, the scheduler will correctly cancel and flatten
 broker state and therefore cannot share the account with this exercise.
 
-If the scheduler must be quiesced, do not patch or scale the live Deployment directly. Merge a temporary GitOps change
-to zero replicas, wait for Argo CD to reconcile it, and independently reconfirm the paper account is flat. Run the
-exercise only from the promoted API revision after proving its container image ID equals the promoted scheduler image
-digest. Whether the exercise succeeds or fails, independently read the broker account, restore one scheduler replica
-through GitOps, and require `/scheduler/readyz` to recover before ending the operation. A validation runner, permit, or
-API pod is never a replacement scheduler.
+The scheduler currently owns the only production Kafka-to-PostgreSQL order-feed ingestor. Quiescing it would prevent
+the lifecycle runner from proving persisted fill ancestry, so zero scheduler replicas is not an admissible state for
+this exercise. If the normal closeout time has passed, merge a temporary GitOps change that moves only the scheduled
+paper closeout and flat-confirmation times later than the bounded exercise. Keep exactly one scheduler replica, the
+new-exposure cutoff, emergency stop, equity stops, ledger stop, and kill switch unchanged. Wait for Argo CD to
+reconcile, require `/scheduler/readyz`, prove that ordinary entry authority remains false and no emergency stop is
+latched, and independently reconfirm the account is flat.
+
+Run the lifecycle only from the promoted API revision after proving its container image ID equals the scheduler image
+digest. Whether the exercise succeeds or fails, independently read the broker account, restore the normal closeout
+times through GitOps, and require `/scheduler/readyz` to recover before ending the operation. A validation runner,
+permit, or API pod is never a replacement scheduler or an alternate order-feed authority.
 
 ## Build The Input
 
