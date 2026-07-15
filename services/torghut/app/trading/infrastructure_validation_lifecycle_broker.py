@@ -17,7 +17,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..models import BrokerMutationReceipt, ExecutionOrderEvent
-from .alpaca_observations import alpaca_position_observation
+from .alpaca_observations import (
+    alpaca_order_references,
+    alpaca_position_observation,
+)
 from .alpaca_reduction_mutations import (
     AlpacaReductionMutationExecutor,
     AlpacaReductionReadClient,
@@ -73,6 +76,8 @@ _CLEANUP_ERRORS = (
     TypeError,
     ValueError,
 )
+_MAX_CRYPTO_TAKER_FEE_RATE = Decimal("0.0025")
+_MIN_LIFECYCLE_LEG_NOTIONAL_USD = Decimal("12")
 
 
 class InfrastructureValidationLifecycleClient(
@@ -135,6 +140,12 @@ class LifecycleOrderExpectation:
     price_bound: Decimal | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _LifecycleAssetConstraints:
+    minimum_order_size: Decimal
+    quantity_increment: Decimal
+
+
 class AlpacaPaperLifecycleBroker:
     """Own all broker observations, response checks, waits, and cleanup."""
 
@@ -145,6 +156,7 @@ class AlpacaPaperLifecycleBroker:
         account_label: str,
         broker_account_number: str,
         evaluated_at: datetime,
+        asset_constraints: _LifecycleAssetConstraints,
         firewall: OrderFirewall,
         coordinator: BrokerMutationCoordinator,
     ) -> None:
@@ -152,6 +164,7 @@ class AlpacaPaperLifecycleBroker:
         self.account_label = account_label
         self.broker_account_number = broker_account_number
         self.evaluated_at = evaluated_at
+        self.asset_constraints = asset_constraints
         self.firewall = firewall
         self.coordinator = coordinator
 
@@ -187,7 +200,10 @@ class AlpacaPaperLifecycleBroker:
             context.client.get_account(),
             permit,
         )
-        _validate_lifecycle_asset(context.client.get_asset(plan.symbol), plan)
+        asset_constraints = _validate_lifecycle_asset(
+            context.client.get_asset(plan.symbol),
+            plan,
+        )
         positions, orders = _known_null_snapshot(context.client)
         if positions or orders:
             raise RuntimeError("infrastructure_validation_account_not_known_null")
@@ -214,6 +230,7 @@ class AlpacaPaperLifecycleBroker:
             account_label=account_label,
             broker_account_number=account_number,
             evaluated_at=evaluated_at,
+            asset_constraints=asset_constraints,
             firewall=firewall,
             coordinator=BrokerMutationCoordinator("validation-lifecycle"),
         )
@@ -364,6 +381,80 @@ class AlpacaPaperLifecycleBroker:
             raise RuntimeError("infrastructure_validation_fill_price_exceeds_limit")
         return order_id
 
+    def wait_entry_position(
+        self,
+        *,
+        plan: InfrastructureValidationLifecyclePlan,
+    ) -> Decimal:
+        """Return the fee-adjusted position created by the filled buy order."""
+
+        deadline = time.monotonic() + self.context.order_timeout_seconds
+        latest = "missing"
+        minimum_quantity = (
+            plan.qty * (Decimal("1") - _MAX_CRYPTO_TAKER_FEE_RATE)
+            - self.asset_constraints.quantity_increment
+        )
+        while time.monotonic() < deadline:
+            raw_positions = self.context.client.list_positions()
+            if len(raw_positions) == 1:
+                position = alpaca_position_observation(raw_positions[0])
+                latest = f"{position.symbol}:{position.signed_quantity}"
+                if (
+                    position.symbol == plan.symbol
+                    and minimum_quantity <= position.signed_quantity <= plan.qty
+                ):
+                    self._require_entry_reduction_quantities(
+                        plan=plan,
+                        position_quantity=position.signed_quantity,
+                        unit_notional=position.unit_notional,
+                    )
+                    return position.signed_quantity
+            else:
+                latest = f"count={len(raw_positions)}"
+            time.sleep(self.context.poll_interval_seconds)
+        raise RuntimeError(
+            f"infrastructure_validation_entry_position_wait_timeout:{latest}"
+        )
+
+    def _require_entry_reduction_quantities(
+        self,
+        *,
+        plan: InfrastructureValidationLifecyclePlan,
+        position_quantity: Decimal,
+        unit_notional: Decimal,
+    ) -> None:
+        residual_quantity = position_quantity - plan.partial_close_qty
+        if residual_quantity <= 0:
+            raise RuntimeError(
+                "infrastructure_validation_fee_adjusted_residual_not_positive"
+            )
+        for field, quantity in (
+            ("fee_adjusted_entry_quantity", position_quantity),
+            ("fee_adjusted_residual_quantity", residual_quantity),
+        ):
+            if quantity < self.asset_constraints.minimum_order_size:
+                raise RuntimeError(
+                    f"infrastructure_validation_{field}_below_broker_minimum"
+                )
+            try:
+                _require_increment(
+                    quantity,
+                    self.asset_constraints.quantity_increment,
+                    field,
+                )
+                _require_numeric_21_9(quantity, field)
+            except ValueError as exc:
+                raise RuntimeError(str(exc)) from exc
+        for field, quantity in (
+            ("partial_close", plan.partial_close_qty),
+            ("fee_adjusted_residual_close", residual_quantity),
+        ):
+            if quantity * unit_notional < _MIN_LIFECYCLE_LEG_NOTIONAL_USD:
+                raise RuntimeError(
+                    "infrastructure_validation_"
+                    f"{field}_observed_notional_below_broker_cost_basis_floor"
+                )
+
     def wait_position(self, *, symbol: str, quantity: Decimal) -> None:
         deadline = time.monotonic() + self.context.order_timeout_seconds
         latest = "missing"
@@ -441,18 +532,20 @@ class AlpacaPaperLifecycleBroker:
 
 
 def order_id(response: Mapping[str, object]) -> str:
-    value = str(response.get("id") or response.get("order_id") or "").strip()
-    if not value:
+    references = alpaca_order_references(response)
+    if len(references) != 1:
         raise RuntimeError("infrastructure_validation_broker_order_identity_missing")
-    return value
+    return references[0]
 
 
 def single_order_id(response: Sequence[Mapping[str, object]]) -> str:
-    if len(response) != 1:
+    references = alpaca_order_references(response)
+    if len(response) != 1 or len(references) != 1:
         raise RuntimeError(
-            f"infrastructure_validation_flatten_response_count_invalid:{len(response)}"
+            "infrastructure_validation_flatten_response_identity_invalid:"
+            f"responses={len(response)}:references={len(references)}"
         )
-    return order_id(response[0])
+    return references[0]
 
 
 def decimal_text(value: Decimal) -> str:
@@ -497,7 +590,7 @@ def _validate_broker_account(
 def _validate_lifecycle_asset(
     asset: Mapping[str, object] | None,
     plan: InfrastructureValidationLifecyclePlan,
-) -> None:
+) -> _LifecycleAssetConstraints:
     if not asset or not bool(asset.get("tradable")):
         raise RuntimeError("infrastructure_validation_asset_not_tradable")
     if str(asset.get("asset_class") or "").strip().lower() != "crypto":
@@ -525,7 +618,7 @@ def _validate_lifecycle_asset(
         if quantity < minimum_order_size:
             raise ValueError(f"infrastructure_validation_{field}_below_broker_minimum")
         _require_increment(quantity, quantity_increment, field)
-        _require_numeric_20_8(quantity, field)
+        _require_numeric_21_9(quantity, field)
     for field, price in (
         ("entry_limit_price", plan.limit_price),
         ("resting_close_limit_price", plan.resting_close_limit_price),
@@ -533,6 +626,10 @@ def _validate_lifecycle_asset(
     ):
         _require_increment(price, price_increment, field)
         _require_numeric_20_8(price, field)
+    return _LifecycleAssetConstraints(
+        minimum_order_size=minimum_order_size,
+        quantity_increment=quantity_increment,
+    )
 
 
 def _require_increment(value: Decimal, increment: Decimal, field: str) -> None:
@@ -541,7 +638,21 @@ def _require_increment(value: Decimal, increment: Decimal, field: str) -> None:
         raise ValueError(f"infrastructure_validation_{field}_increment_invalid")
 
 
+def _require_numeric_21_9(value: Decimal, field: str) -> None:
+    _require_numeric_precision(value, field=field, integer_digits=12, scale=9)
+
+
 def _require_numeric_20_8(value: Decimal, field: str) -> None:
+    _require_numeric_precision(value, field=field, integer_digits=12, scale=8)
+
+
+def _require_numeric_precision(
+    value: Decimal,
+    *,
+    field: str,
+    integer_digits: int,
+    scale: int,
+) -> None:
     normalized = value.copy_abs().normalize()
     exponent = normalized.as_tuple().exponent
     if not isinstance(exponent, int):  # finite values are guaranteed by the plan
@@ -549,8 +660,8 @@ def _require_numeric_20_8(value: Decimal, field: str) -> None:
             f"infrastructure_validation_{field}_database_precision_invalid"
         )
     fractional_digits = max(0, -exponent)
-    integer_digits = max(1, normalized.adjusted() + 1)
-    if fractional_digits > 8 or integer_digits > 12:
+    observed_integer_digits = max(1, normalized.adjusted() + 1)
+    if fractional_digits > scale or observed_integer_digits > integer_digits:
         raise ValueError(
             f"infrastructure_validation_{field}_database_precision_invalid"
         )

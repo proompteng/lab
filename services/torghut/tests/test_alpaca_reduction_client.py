@@ -42,7 +42,14 @@ class _ReductionTradingClient:
 
     def close_all_positions(self, cancel_orders: bool = False) -> list[_Model]:
         self.close_all_cancel_orders.append(cancel_orders)
-        return [_Model(order_id="close-1", status=200, symbol="AAPL")]
+        return [
+            _Model(
+                body={"id": "close-1", "status": "accepted"},
+                order_id=None,
+                status=200,
+                symbol="AAPL",
+            )
+        ]
 
 
 class TestAlpacaReductionClient(TestCase):
@@ -77,6 +84,7 @@ class TestAlpacaReductionClient(TestCase):
         self.assertEqual(close["id"], "close-1")
         self.assertEqual(trading_client.closed[0][0], "AAPL")
         self.assertEqual(trading_client.closed[0][1].qty, "0.5")
-        self.assertEqual(close_all[0]["order_id"], "close-1")
+        self.assertIsNone(close_all[0]["order_id"])
         self.assertEqual(close_all[0]["status"], 200)
+        self.assertEqual(close_all[0]["body"]["id"], "close-1")
         self.assertEqual(trading_client.close_all_cancel_orders, [False])
