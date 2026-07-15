@@ -369,6 +369,7 @@ def persist_order_event(
         session,
         account_label=event.alpaca_account_label,
         client_order_id=event.client_order_id,
+        alpaca_order_id=event.alpaca_order_id,
     )
     existing = session.execute(
         select(ExecutionOrderEvent).where(
@@ -759,6 +760,7 @@ def link_order_events_to_execution(
                 session,
                 account_label=event.alpaca_account_label,
                 client_order_id=event.client_order_id,
+                alpaca_order_id=event.alpaca_order_id,
             )
             is not None
         ):

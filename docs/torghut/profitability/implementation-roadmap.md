@@ -183,11 +183,14 @@ recoverable.
 - Deliverable: extend the coordinator to cancel, cancel-all, replace, multi-leg unwind, reduce-only closeout, and
   emergency liquidation, including causal links to the original order. Add a per-action `RiskReductionPermit` derived
   from broker-observed orders/positions that forbids new symbols, side flips, and any gross/net exposure increase; it
-  must remain issuable when candidate authority or profitability evidence is missing or expired.
+  must remain issuable when candidate authority or profitability evidence is missing or expired. Validation descendants
+  carry an exact-key root-and-parent lineage envelope enforced by PostgreSQL; mixed ordinary/validation account-wide
+  cancellation remains live without relabeling ordinary activity, and each proven validation event remains outside
+  candidate, trial, PnL, promotion, and ledger evidence.
 - Primary surfaces: all broker mutation adapters, closeout/kill-switch paths, claim schema, and emergency runbooks.
 - Tests: cancel/replace races with fills, partial-fill closeout, duplicate cancel, multi-leg partial failure, stale
-  candidate authority, stale profitability/reconciliation evidence, no-side-flip and no-increase properties, and broker
-  outage during emergency reduction.
+  candidate authority, stale profitability/reconciliation evidence, no-side-flip and no-increase properties, forged or
+  cross-scope validation ancestry, descendant order-feed exclusion, and broker outage during emergency reduction.
 - Runtime proof: an infrastructure-validation paper/sandbox lifecycle exercises each mutation, reconciles a single
   causal chain, and remains excluded from every promotion/trial query.
 - Dependency: slices 4-5. Effort: `L`.

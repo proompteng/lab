@@ -136,8 +136,44 @@ receipt for an aggregate broker position or an external order, and it does not a
 Torghut order ancestry remains recoverable from the sealed client order ID and existing receipt or submission-claim
 records.
 
-Infrastructure-validation mutations retain their non-promotable marker and validation workflow identity throughout the
-causal chain. Candidate, trial, PnL, and promotion queries must exclude every descendant, not only the initial submit.
+Order-targeted and position-targeted infrastructure-validation mutations retain their non-promotable marker and
+validation workflow identity throughout the causal chain. Account-wide cancellation events are classified per order.
+Candidate, trial, PnL, and promotion queries must exclude every validation descendant, not only the initial submit.
+
+### Validation-Descendant Lineage
+
+Validation lineage is carried inside the existing canonical mutation intent; it is not a second coordinator, claim
+table, or evidence authority. The envelope names the immutable validation root, the immediately preceding receipt and
+broker order, the exact permit identity, and `promotable=false`. PostgreSQL accepts it only when all of these are true:
+
+- the root is an acknowledged or broker-reconciled, risk-neutral Alpaca paper validation submit in the same account
+  and endpoint;
+- the root permit ID and digest match; the root was created inside that permit's validity window, while later
+  risk-reducing descendants remain available after it expires;
+- the immediate parent is terminal, belongs to the same root chain, produced the named broker order ID, and is either
+  the root submit or an order-creating replace/close descendant; cancel receipts never become order identity;
+- cancel or replace targets that parent order, while close targets the root plan's sole symbol; and
+- the envelope has exactly the documented keys, with no caller-supplied extensions.
+
+The existing known-null IOC submit plan can parent cancel or replace only. It can never parent a close: it proves zero
+fill and therefore has no position ancestry. Close lineage remains database-blocked until the dedicated lifecycle plan
+schema and runner establish a bounded fill on the sole symbol. The follow-up guard must verify persisted tagged fill
+and reconciled position evidence; recognizing a plan-schema string alone is not position proof.
+
+Account-wide cancel remains available for every complete snapshot because it is a safety operation whose broker scope
+can race beyond the observed order set. Its receipt is never relabeled wholesale as validation. Each validation
+cancellation event is excluded independently from the existing root or replacement order ancestry. Cancel receipts
+never become order-identity parents because cancellation creates no broker order. Order-feed ingestion resolves
+order-creating descendants by settled broker order ID as well as the root `ivp-...` client ID. The same database-proven
+marker prevents execution/decision linkage and TigerBeetle journaling for every validation event.
+
+A broker trade update can race ahead of local receipt settlement. The order feed may classify the root update from the
+exact validation client ID plus the broker-observed order ID so ingestion continues and the event remains excluded, but
+that provisional evidence cannot authorize a descendant. Lineage construction remains blocked until the durable root
+receipt is acknowledged or broker-reconciled with an order reference.
+
+These checks prove evidence isolation and causal ancestry. They do not prove that the paper lifecycle runner exercised
+replace, cancel, partial close, or flatten. That remains a separate runtime gate below.
 
 ## State And Recovery
 
@@ -162,7 +198,8 @@ Broker-specific terminal evidence:
 
 - Alpaca cancel uses the exact order ID; cancel-all is only terminal after all sealed IDs are absent from a complete
   open-order snapshot. Replace is terminal when the desired replacement fields and causal order relationship are
-  observed. Close is terminal when the exact position is reduced or flat without a side flip.
+  observed. Close is terminal when the exact position is reduced or flat without a side flip. A successful replace or
+  close response without its broker order ID remains unresolved; a generated request ID is not order identity.
 - Hyperliquid cancel uses the exact order ID and coin. Reduce-only close is terminal only after broker position
   observation proves the bounded reduction; the SDK's `reduce_only` flag is necessary but not sufficient evidence.
 

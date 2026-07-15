@@ -37,6 +37,11 @@ from .broker_mutation_receipts import (
     fingerprint_broker_endpoint,
 )
 from .firewall import OrderFirewall
+from .infrastructure_validation_records import (
+    InfrastructureValidationEvidence,
+    infrastructure_validation_lineage_payload,
+    load_infrastructure_validation_evidence,
+)
 from .risk_reduction import (
     BrokerOrderObservation,
     BrokerPositionObservation,
@@ -61,6 +66,9 @@ _Result = TypeVar("_Result")
 _OPEN_ORDER_LIMIT = 500
 _REQUEST_SCHEMA_VERSION = "torghut.alpaca-reduction-request.v1"
 _PREFLIGHT_SCHEMA_VERSION = "torghut.alpaca-reduction-preflight.v1"
+_ORDER_CREATING_OPERATIONS = frozenset(
+    {"replace_order", "close_position", "close_all_positions"}
+)
 _ACCEPTED_ORDER_STATUSES = frozenset(
     {
         "accepted",
@@ -144,6 +152,7 @@ class AlpacaReductionMutationExecutor:
             raise RiskReductionPermitError("alpaca_cancel_order_identity_mismatch")
         if not order.open:
             observation = {"order": dict(raw_order)}
+            validation_evidence = self._validation_evidence_for_order(order)
             self._settle_already_satisfied(
                 _MutationSpec(
                     operation="cancel_order",
@@ -151,7 +160,10 @@ class AlpacaReductionMutationExecutor:
                     purpose=purpose,
                     target_kind="order",
                     target_key=order_id,
-                    request_payload=_already_satisfied_request(observation),
+                    request_payload=_already_satisfied_request(
+                        observation,
+                        validation_evidence=validation_evidence,
+                    ),
                 ),
                 observation=observation,
             )
@@ -164,6 +176,7 @@ class AlpacaReductionMutationExecutor:
         request_payload = _request_payload(
             authorization,
             broker_request={"order_id": order_id},
+            validation_evidence=self._validation_evidence_for_order(order),
         )
         return self._execute(
             _MutationSpec(
@@ -274,6 +287,7 @@ class AlpacaReductionMutationExecutor:
                 "limit_price": _decimal_text(limit_price),
                 "order_id": order_id,
             },
+            validation_evidence=self._validation_evidence_for_order(order),
         )
         return self._execute(
             _MutationSpec(
@@ -301,7 +315,12 @@ class AlpacaReductionMutationExecutor:
         quantity: Decimal,
         *,
         purpose: BrokerMutationPurpose = "closeout",
+        validation_evidence: InfrastructureValidationEvidence | None = None,
     ) -> dict[str, object]:
+        self._require_validation_evidence_scope(
+            validation_evidence,
+            require_position_ancestry=True,
+        )
         observed_at = datetime.now(timezone.utc)
         positions = tuple(
             alpaca_position_observation(position)
@@ -321,7 +340,10 @@ class AlpacaReductionMutationExecutor:
                     purpose=purpose,
                     target_kind="position",
                     target_key=normalized_symbol,
-                    request_payload=_already_satisfied_request(observation),
+                    request_payload=_already_satisfied_request(
+                        observation,
+                        validation_evidence=validation_evidence,
+                    ),
                 ),
                 observation=observation,
             )
@@ -346,6 +368,7 @@ class AlpacaReductionMutationExecutor:
                 "quantity": _decimal_text(quantity),
                 "symbol": normalized_symbol,
             },
+            validation_evidence=validation_evidence,
         )
         return self._execute(
             _MutationSpec(
@@ -371,7 +394,12 @@ class AlpacaReductionMutationExecutor:
         self,
         *,
         purpose: BrokerMutationPurpose = "flatten",
+        validation_evidence: InfrastructureValidationEvidence | None = None,
     ) -> list[dict[str, object]]:
+        self._require_validation_evidence_scope(
+            validation_evidence,
+            require_position_ancestry=True,
+        )
         observed_at = datetime.now(timezone.utc)
         positions = tuple(
             alpaca_position_observation(position)
@@ -386,7 +414,10 @@ class AlpacaReductionMutationExecutor:
                     purpose=purpose,
                     target_kind="account",
                     target_key=self._account_label,
-                    request_payload=_already_satisfied_request(observation),
+                    request_payload=_already_satisfied_request(
+                        observation,
+                        validation_evidence=validation_evidence,
+                    ),
                 ),
                 observation=observation,
             )
@@ -406,6 +437,7 @@ class AlpacaReductionMutationExecutor:
             broker_request={
                 "symbols": sorted(position.symbol for position in positions),
             },
+            validation_evidence=validation_evidence,
         )
         return self._execute(
             _MutationSpec(
@@ -442,6 +474,43 @@ class AlpacaReductionMutationExecutor:
             orders=orders,
             positions=positions,
         )
+
+    def _validation_evidence_for_order(
+        self,
+        order: BrokerOrderObservation,
+    ) -> InfrastructureValidationEvidence | None:
+        client_order_id = str(order.client_order_id or "").strip()
+        with self._session_factory() as session:
+            evidence = load_infrastructure_validation_evidence(
+                session,
+                account_label=self._account_label,
+                client_order_id=client_order_id,
+                alpaca_order_id=order.order_id,
+                endpoint_fingerprint=self._endpoint_fingerprint,
+            )
+        if evidence is None and client_order_id.startswith("ivp-"):
+            raise RuntimeError("infrastructure_validation_order_lineage_missing")
+        return evidence
+
+    def _require_validation_evidence_scope(
+        self,
+        evidence: InfrastructureValidationEvidence | None,
+        *,
+        require_position_ancestry: bool = False,
+    ) -> None:
+        if evidence is None:
+            return
+        if (
+            evidence.account_label != self._account_label
+            or evidence.endpoint_fingerprint != self._endpoint_fingerprint
+        ):
+            raise RuntimeError("infrastructure_validation_lineage_scope_mismatch")
+        if (
+            require_position_ancestry
+            and evidence.root_plan_schema
+            != "torghut.infrastructure-validation-lifecycle-plan.v1"
+        ):
+            raise RuntimeError("infrastructure_validation_position_ancestry_missing")
 
     def _execute(
         self,
@@ -544,22 +613,35 @@ def _request_payload(
     authorization: RiskReductionAuthorization,
     *,
     broker_request: Mapping[str, object],
+    validation_evidence: InfrastructureValidationEvidence | None = None,
 ) -> Mapping[str, object]:
-    return {
+    payload: dict[str, object] = {
         **broker_request,
         "risk_reduction": authorization.evidence_payload,
         "schema_version": _REQUEST_SCHEMA_VERSION,
     }
+    if validation_evidence is not None:
+        payload["infrastructure_validation_lineage"] = (
+            infrastructure_validation_lineage_payload(validation_evidence)
+        )
+    return payload
 
 
 def _already_satisfied_request(
     observation: Mapping[str, object],
+    *,
+    validation_evidence: InfrastructureValidationEvidence | None = None,
 ) -> Mapping[str, object]:
-    return {
+    payload: dict[str, object] = {
         "already_satisfied": True,
         "observation": observation,
         "schema_version": _PREFLIGHT_SCHEMA_VERSION,
     }
+    if validation_evidence is not None:
+        payload["infrastructure_validation_lineage"] = (
+            infrastructure_validation_lineage_payload(validation_evidence)
+        )
+    return payload
 
 
 def _terminal_settlement(
@@ -569,7 +651,15 @@ def _terminal_settlement(
     response: object,
 ) -> BrokerMutationSettlement:
     rejected = _response_rejected(response)
-    broker_reference = _broker_reference(response) or client_request_id
+    broker_reference = _broker_reference(response)
+    if (
+        not rejected
+        and operation in _ORDER_CREATING_OPERATIONS
+        and not broker_reference
+    ):
+        raise ValueError("alpaca_reduction_broker_reference_missing")
+    if not broker_reference:
+        broker_reference = client_request_id
     return build_broker_mutation_settlement(
         BrokerMutationSettlementRequest(
             source="primary",

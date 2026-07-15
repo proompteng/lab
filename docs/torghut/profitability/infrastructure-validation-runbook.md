@@ -185,3 +185,31 @@ This implementation was checked on 2026-07-14 against Alpaca's official document
 - [client-order-ID lookup](https://docs.alpaca.markets/us/reference/getorderbyclientorderid) is the recovery identity.
 
 Recheck these primary sources before changing the order envelope or interpreting a new broker response.
+
+## Slice 6 Lifecycle Boundary
+
+Migration `0071_validation_lineage` adds the database contract for non-promotable replace and targeted cancel, and
+establishes the still-blocked boundary for targeted close and flatten descendants. Each descendant must name a terminal
+immediate parent and broker-terminal validation root; the database independently checks account, endpoint, root permit
+identity and submit-time window, broker order target, and root symbol.
+Order-feed events from a settled descendant are excluded by broker order ID even when the broker client-order ID no
+longer has the `ivp-` prefix.
+
+Permit expiry prevents another validation submit; it does not strand an existing order or position. A descendant uses
+the normal short-lived `RiskReductionPermit`, so cancel, monotonic replace, close, and flatten remain available after
+the root permit expires. A root recovered from an ambiguous broker-I/O window is eligible once broker readback settles
+it as `reconciled` with the exact broker order ID.
+
+The known-null IOC plan in this runbook may parent cancel or replace, but never close. Because it requires zero fill, it
+cannot prove position ancestry. Migration `0071` keeps close lineage blocked until the lifecycle runner's separate,
+position-producing plan schema is installed.
+
+The follow-up migration must not unlock close merely by accepting that schema name. It must bind the root broker order
+to persisted non-promotable fill evidence, prove positive bounded cumulative fill on the sole symbol, and reconcile the
+paper account's before/after position against that fill. Missing, zero, stale, cross-account, or cross-endpoint fill
+evidence keeps close and flatten blocked.
+
+This migration is necessary but is not the lifecycle proof. Do not manually compose descendant intents or infer that
+Slice 6 is proven from migration presence. The bounded Alpaca-paper lifecycle runner, immutable image promotion, broker
+readback, CNPG receipt chain, and independent absence from candidate/PnL/ledger evidence must all pass before
+`reduction_fencing_proven` can become true.
