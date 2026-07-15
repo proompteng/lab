@@ -582,6 +582,22 @@ describe('atlas store', () => {
     expect(exactSql?.sql.toLowerCase()).not.toMatch(/file_chunks\.content\s+%\s+\$/)
   })
 
+  it('keeps exact content candidates for literal queries that are not declaration identifiers', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'docker:25.0-dind', repository: 'proompteng/lab', ref: 'main' })
+
+    const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
+    const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
+    expect(candidates).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    expect(candidates).toContain('file_chunks.content ilike')
+  })
+
   it('pushes corpus and caller filters into every materialized exact-candidate scan', async () => {
     const { db, calls } = makeFakeDb({ selectRows: [] })
     const store = createPostgresAtlasStore({
@@ -645,7 +661,7 @@ describe('atlas store', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(false)
   })
 
-  it('skips whole-query content scans but keeps semantic retrieval for natural-language queries containing a path', async () => {
+  it('keeps content and semantic retrieval for natural-language queries containing a path', async () => {
     const { db, calls } = makeFakeDb({ selectRows: [] })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
@@ -660,8 +676,7 @@ describe('atlas store', () => {
 
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
-    const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
-    expect(candidates).not.toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    expect(normalized).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(true)
   })
 
@@ -768,7 +783,7 @@ describe('atlas store', () => {
     expect(matches[0]?.signals.matchedIdentifiers).toEqual(['BUMBA_ATLAS_CHUNK_INDEXING'])
   })
 
-  it('does not let lexical-only matches crowd the best semantic result out of the first page', async () => {
+  it('breaks top-result RRF ties in favor of the best semantic result', async () => {
     const lexicalRows = Array.from({ length: 10 }, (_, index) =>
       makeCodeSearchRow({
         chunk_id: `lexical-${index}`,
@@ -791,13 +806,12 @@ describe('atlas store', () => {
       query: 'where are unsupported Git file modes and oversized files rejected before indexing',
       repository: 'proompteng/lab',
       ref: 'main',
-      limit: 10,
+      limit: 1,
     })
 
-    const semanticRank = matches.findIndex((match) => match.chunk.id === 'semantic-target')
-    expect(semanticRank).toBeGreaterThanOrEqual(0)
-    expect(semanticRank).toBeLessThan(3)
-    expect(matches[semanticRank]?.retrievalMode).toBe('semantic')
+    expect(matches).toHaveLength(1)
+    expect(matches[0]?.chunk.id).toBe('semantic-target')
+    expect(matches[0]?.retrievalMode).toBe('semantic')
   })
 
   it('keeps generic content substring matches on the RRF score scale', async () => {

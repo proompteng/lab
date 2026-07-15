@@ -529,11 +529,9 @@ export const createAtlasCodeSearchHandlers = ({
       : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
     const whereClause = searchWhereClause(filters)
-    const definitionPattern = buildDefinitionPattern(resolvedQuery)
-    const contentCandidateUnion =
-      isPathQuery || definitionPattern === null
-        ? sql``
-        : sql`
+    const contentCandidateUnion = isPathQuery
+      ? sql``
+      : sql`
           UNION
 
           SELECT file_chunks.id AS chunk_id
@@ -545,6 +543,7 @@ export const createAtlasCodeSearchHandlers = ({
             AND file_chunks.content IS NOT NULL
             AND file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
         `
+    const definitionPattern = buildDefinitionPattern(resolvedQuery)
     const definitionRankClause = definitionPattern
       ? sql`WHEN file_chunks.content ~ ${definitionPattern} THEN 0.98`
       : sql``
@@ -740,7 +739,12 @@ export const createAtlasCodeSearchHandlers = ({
           retrievalMode,
         )
       })
-      .sort((left, right) => right.score - left.score || left.fileKey.path.localeCompare(right.fileKey.path))
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          Number(right.signals.semanticDistance !== null) - Number(left.signals.semanticDistance !== null) ||
+          left.fileKey.path.localeCompare(right.fileKey.path),
+      )
       .slice(0, resolvedLimit)
   }
 
