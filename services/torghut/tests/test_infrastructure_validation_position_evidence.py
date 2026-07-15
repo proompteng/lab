@@ -51,7 +51,7 @@ def test_position_evidence_requires_exact_tagged_fill_and_quantity(
     event = _position_event(
         evidence,
         fingerprint="a" * 64,
-        position_quantity=Decimal("0.00002000"),
+        position_quantity=Decimal("0.00040000"),
     )
     session.add(event)
     session.commit()
@@ -60,15 +60,15 @@ def test_position_evidence_requires_exact_tagged_fill_and_quantity(
         session,
         evidence=evidence,
         symbol="btc/usd",
-        signed_quantity=Decimal("0.00002"),
+        signed_quantity=Decimal("0.0004"),
     )
 
     assert proven.order_event_id == event.id
     assert proven.alpaca_order_id == "validation-root-order-1"
     assert proven.symbol == "BTC/USD"
-    assert proven.filled_quantity == Decimal("0.00002000")
-    assert proven.position_quantity == Decimal("0.00002000")
-    assert proven.average_fill_price == Decimal("100000.00000000")
+    assert proven.filled_quantity == Decimal("0.00040000")
+    assert proven.position_quantity == Decimal("0.00040000")
+    assert proven.average_fill_price == Decimal("70000.00000000")
     with pytest.raises(
         RuntimeError,
         match="infrastructure_validation_position_not_reconciled",
@@ -77,7 +77,7 @@ def test_position_evidence_requires_exact_tagged_fill_and_quantity(
             session,
             evidence=evidence,
             symbol="BTC/USD",
-            signed_quantity=Decimal("0.00003"),
+            signed_quantity=Decimal("0.0003"),
         )
 
 
@@ -88,7 +88,7 @@ def test_position_evidence_rejects_forged_receipt_and_linked_event(
     forged = _position_event(
         evidence,
         fingerprint="b" * 64,
-        position_quantity=Decimal("0.00002"),
+        position_quantity=Decimal("0.0004"),
     )
     forged.raw_event = copy.deepcopy(forged.raw_event)
     forged.raw_event["_torghut_evidence_contract"]["broker_mutation_receipt_id"] = str(
@@ -97,7 +97,7 @@ def test_position_evidence_rejects_forged_receipt_and_linked_event(
     linked = _position_event(
         evidence,
         fingerprint="c" * 64,
-        position_quantity=Decimal("0.00002"),
+        position_quantity=Decimal("0.0004"),
     )
     linked.trade_decision_id = uuid.uuid4()
     session.add_all((forged, linked))
@@ -111,7 +111,7 @@ def test_position_evidence_rejects_forged_receipt_and_linked_event(
             session,
             evidence=evidence,
             symbol="BTC/USD",
-            signed_quantity=Decimal("0.00002"),
+            signed_quantity=Decimal("0.0004"),
         )
 
 
@@ -136,7 +136,7 @@ def test_position_evidence_rejects_nonpositive_broker_position(
             session,
             evidence=evidence,
             symbol="BTC/USD",
-            signed_quantity=Decimal("0.00002"),
+            signed_quantity=Decimal("0.0004"),
         )
 
     flat = require_infrastructure_validation_flat_position_evidence(
@@ -156,14 +156,14 @@ def _seed_lifecycle_root(session: Session) -> InfrastructureValidationEvidence:
             "asset_class": "crypto",
             "symbol": "BTC/USD",
             "side": "buy",
-            "qty": "0.00002",
+            "qty": "0.0004",
             "order_type": "limit",
             "time_in_force": "ioc",
-            "limit_price": "100000",
+            "limit_price": "70000",
             "stop_price": None,
-            "resting_close_limit_price": "200000",
-            "replacement_close_limit_price": "210000",
-            "partial_close_qty": "0.00001",
+            "resting_close_limit_price": "130000",
+            "replacement_close_limit_price": "140000",
+            "partial_close_qty": "0.0002",
         }
     )
     permit = InfrastructureValidationPermit.model_validate(
@@ -182,8 +182,8 @@ def _seed_lifecycle_root(session: Session) -> InfrastructureValidationEvidence:
             "order_types": ["limit"],
             "max_orders": 1,
             "max_outstanding_intents": 1,
-            "max_notional_usd": "5",
-            "max_loss_usd": "5",
+            "max_notional_usd": "30",
+            "max_loss_usd": "30",
             "issued_by": "infrastructure-owner",
             "approved_by": "independent-infrastructure-owner",
             "issued_at": now - timedelta(seconds=1),
@@ -256,10 +256,10 @@ def _position_event(
         client_order_id=evidence.root_client_order_id,
         event_type="fill",
         status="filled",
-        qty=Decimal("0.00002"),
-        filled_qty=Decimal("0.00002"),
+        qty=Decimal("0.0004"),
+        filled_qty=Decimal("0.0004"),
         position_qty=position_quantity,
-        avg_fill_price=Decimal("100000"),
+        avg_fill_price=Decimal("70000"),
         raw_event=tag_infrastructure_validation_event(
             {"event": "fill"},
             evidence,
