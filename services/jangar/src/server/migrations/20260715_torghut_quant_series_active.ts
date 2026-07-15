@@ -133,8 +133,15 @@ export const up = async (db: Kysely<Database>) => {
 }
 
 export const down = async (db: Kysely<Database>) => {
+  await sql`SET LOCAL lock_timeout = '5s';`.execute(db)
+  await sql`
+    LOCK TABLE torghut_control_plane.quant_metrics_series_active
+    IN ACCESS EXCLUSIVE MODE;
+  `.execute(db)
+
   // Preserve rows written after cutover before restoring the physical legacy
-  // table. This is intentionally the only data-copying path.
+  // table. The active-table lock blocks the compatibility-view trigger before
+  // the snapshot and remains held through the destructive rollback steps.
   await sql
     .raw(`
     INSERT INTO torghut_control_plane.quant_metrics_series_legacy (${SERIES_COLUMNS})
