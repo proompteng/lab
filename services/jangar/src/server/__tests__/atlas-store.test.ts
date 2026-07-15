@@ -708,9 +708,9 @@ describe('atlas store', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(false)
   })
 
-  it('cancels the active PostgreSQL backend when the request is aborted', async () => {
+  it('rejects an already-aborted request before issuing SQL', async () => {
     const cancelBackend = vi.fn(async () => undefined)
-    const { db } = makeFakeDb({ selectRows: [] })
+    const { db, calls } = makeFakeDb({ selectRows: [] })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
       createDb: () => db,
@@ -719,10 +719,12 @@ describe('atlas store', () => {
     const controller = new AbortController()
     controller.abort(new Error('client disconnected'))
 
-    await store.codeSearch({ query: 'where is source search implemented', limit: 5 }, controller.signal)
+    await expect(
+      store.codeSearch({ query: 'where is source search implemented', limit: 5 }, controller.signal),
+    ).rejects.toThrow('client disconnected')
 
-    expect(cancelBackend).toHaveBeenCalledOnce()
-    expect(cancelBackend).toHaveBeenCalledWith(4242)
+    expect(calls).toEqual([])
+    expect(cancelBackend).not.toHaveBeenCalled()
   })
 
   it('keeps indexed content and semantic retrieval for natural-language queries containing a path', async () => {

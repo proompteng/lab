@@ -506,12 +506,15 @@ export const createAtlasCodeSearchHandlers = ({
     { query, limit, repository, ref, pathPrefix, language }: AtlasCodeSearchInput,
     signal?: AbortSignal,
   ): Promise<AtlasCodeSearchMatch[]> => {
+    signal?.throwIfAborted()
     await ensureSchema()
+    signal?.throwIfAborted()
 
     const resolvedQuery = normalizeText(query, 'query')
     const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
     const filters = resolveCodeSearchFilters({ repository, ref, pathPrefix, language })
     const health = await codeSearchHealth({ repository, ref, pathPrefix, language })
+    signal?.throwIfAborted()
     if (health.status !== 'ok') throw new Error(`Atlas code search is not ready: ${health.message}`)
 
     const isPathQuery = isStandalonePathQuery(resolvedQuery)
@@ -525,6 +528,7 @@ export const createAtlasCodeSearchHandlers = ({
     const vectorString = isPathQuery
       ? null
       : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
+    signal?.throwIfAborted()
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
     const whereClause = searchWhereClause(filters)
     const pathCandidateClause = isPathQuery
@@ -575,20 +579,20 @@ export const createAtlasCodeSearchHandlers = ({
         })
       }
 
-      if (signal) {
-        const backendResult = await sql<{
-          backend_pid: number | string
-        }>`SELECT pg_backend_pid() AS backend_pid;`.execute(trx)
-        const resolvedBackendPid = Number(backendResult.rows[0]?.backend_pid)
-        if (!Number.isInteger(resolvedBackendPid) || resolvedBackendPid <= 0) {
-          throw new Error('Atlas code search could not resolve its PostgreSQL backend PID')
-        }
-        backendPid = resolvedBackendPid
-        if (signal.aborted) abortTransaction()
-        else signal.addEventListener('abort', abortTransaction, { once: true })
-      }
-
       try {
+        if (signal) {
+          const backendResult = await sql<{
+            backend_pid: number | string
+          }>`SELECT pg_backend_pid() AS backend_pid;`.execute(trx)
+          const resolvedBackendPid = Number(backendResult.rows[0]?.backend_pid)
+          if (!Number.isInteger(resolvedBackendPid) || resolvedBackendPid <= 0) {
+            throw new Error('Atlas code search could not resolve its PostgreSQL backend PID')
+          }
+          backendPid = resolvedBackendPid
+          signal.addEventListener('abort', abortTransaction, { once: true })
+          signal.throwIfAborted()
+        }
+
         await sql`SELECT set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true);`.execute(trx)
 
         const exactResult = await sql<AtlasCodeSearchRow>`
