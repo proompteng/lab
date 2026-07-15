@@ -232,6 +232,12 @@ def _recovery_writer_identity(component: str) -> tuple[str, int]:
     )
 
 
+def broker_mutation_recovery_writer_identity(component: str) -> tuple[str, int]:
+    """Return one process-unique writer identity for direct fenced recovery."""
+
+    return _recovery_writer_identity(component)
+
+
 class BrokerMutationRecoveryWorker:
     """Recover due mutation receipts using reads only; this class cannot mutate."""
 
@@ -658,4 +664,5 @@ __all__ = [
     "BrokerMutationRecoveryRunResult",
     "BrokerMutationRecoveryWorker",
     "BrokerMutationRecoveryRead",
+    "broker_mutation_recovery_writer_identity",
 ]

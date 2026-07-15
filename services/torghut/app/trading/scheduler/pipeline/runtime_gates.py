@@ -56,7 +56,13 @@ from .support import (
 )
 
 
-_TERMINAL_ORDER_STATUSES = {"canceled", "cancelled", "expired", "rejected"}
+_TERMINAL_ORDER_STATUSES = {
+    "canceled",
+    "cancelled",
+    "done_for_day",
+    "expired",
+    "rejected",
+}
 
 
 def terminal_unfilled_execution_reason(execution: object) -> str | None:
@@ -377,6 +383,8 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                 self.account_label,
                 execution_expected_adapter=request.selected_adapter_name,
             )
+            if execution is None and request.decision_row.status == "rejected":
+                return self._handle_recovered_submission_rejection(request=request)
             terminal_reason = terminal_unfilled_execution_reason(execution)
             if terminal_reason is not None:
                 return self._handle_terminal_unfilled_execution(
@@ -404,6 +412,39 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                 request=request,
                 exc=exc,
             )
+
+    def _handle_recovered_submission_rejection(
+        self,
+        *,
+        request: OrderSubmissionRequest,
+    ) -> tuple[None, bool]:
+        reason = "broker_rejected"
+        self.state.metrics.orders_rejected_total += 1
+        self.state.metrics.record_decision_state("rejected")
+        self.state.metrics.record_decision_rejection_reasons([reason])
+        self.state.metrics.record_execution_submit_result(
+            status="rejected",
+            adapter=request.selected_adapter_name,
+        )
+        self._emit_domain_telemetry(
+            DomainTelemetryEvent(
+                event_name="torghut.execution.rejected",
+                severity="warning",
+                decision=request.decision,
+                decision_row=request.decision_row,
+                reason_codes=[reason],
+                extra_properties={
+                    "rejection_type": "recovered_broker_rejection",
+                },
+            )
+        )
+        logger.warning(
+            "Recovered broker rejection strategy_id=%s decision_id=%s symbol=%s",
+            request.decision.strategy_id,
+            request.decision_row.id,
+            request.decision.symbol,
+        )
+        return None, True
 
     def _handle_terminal_unfilled_execution(
         self,

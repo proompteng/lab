@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.models import (
     BrokerMutationReceipt,
     BrokerMutationReceiptEvent,
@@ -708,6 +710,182 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
                 "precheck_sell_qty_exceeds_available",
             )
             self.assertNotIn("broker_precheck_recovery", decision_row.decision_json)
+
+    def test_recovered_broker_rejection_is_not_reported_as_submitted(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="recovered-rejection",
+                description="recovered broker rejection",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            alpaca = FakeAlpacaClient()
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca,
+                order_firewall=OrderFirewall(alpaca),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=executor,
+                execution_adapter=alpaca,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            def recover_rejected_order(*_args: object, **_kwargs: object) -> None:
+                decision_json = dict(decision_row.decision_json)
+                decision_json["submission_stage"] = "rejected"
+                decision_row.status = "rejected"
+                decision_row.decision_json = decision_json
+                session.add(decision_row)
+                session.commit()
+                return None
+
+            with patch.object(
+                executor,
+                "submit_order",
+                side_effect=recover_rejected_order,
+            ):
+                execution, rejected = pipeline._submit_order_with_handling(
+                    OrderSubmissionRequest(
+                        session=session,
+                        execution_client=alpaca,
+                        decision=decision,
+                        decision_row=decision_row,
+                        selected_adapter_name="alpaca",
+                    )
+                )
+
+            self.assertIsNone(execution)
+            self.assertTrue(rejected)
+            self.assertEqual(decision_row.status, "rejected")
+            self.assertEqual(
+                decision_row.decision_json.get("submission_stage"),
+                "rejected",
+            )
+            self.assertEqual(state.metrics.orders_submitted_total, 0)
+            self.assertEqual(state.metrics.orders_rejected_total, 1)
+            self.assertEqual(
+                state.metrics.decision_reject_reason_total.get("broker_rejected"),
+                1,
+            )
+
+    def test_recovered_terminal_order_is_not_reported_as_submitted(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="recovered-terminal",
+                description="recovered terminal broker order",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime.now(timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            alpaca = FakeAlpacaClient()
+            state = TradingState()
+            pipeline = TradingPipeline(
+                alpaca_client=alpaca,
+                order_firewall=OrderFirewall(alpaca),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=executor,
+                execution_adapter=alpaca,
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=state,
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            terminal_execution = SimpleNamespace(
+                id="recovered-terminal-execution",
+                status="canceled",
+                filled_qty=Decimal("0"),
+                raw_order={},
+                execution_audit_json={},
+                execution_correlation_id=None,
+                execution_idempotency_key=None,
+                execution_fallback_reason=None,
+            )
+
+            with patch.object(
+                executor,
+                "submit_order",
+                return_value=terminal_execution,
+            ):
+                execution, rejected = pipeline._submit_order_with_handling(
+                    OrderSubmissionRequest(
+                        session=session,
+                        execution_client=alpaca,
+                        decision=decision,
+                        decision_row=decision_row,
+                        selected_adapter_name="alpaca",
+                    )
+                )
+
+            self.assertIs(execution, terminal_execution)
+            self.assertTrue(rejected)
+            self.assertEqual(state.metrics.orders_submitted_total, 0)
+            self.assertEqual(state.metrics.orders_rejected_total, 1)
+            self.assertEqual(
+                state.metrics.decision_reject_reason_total.get(
+                    "order_terminal_unfilled_canceled"
+                ),
+                1,
+            )
+            session.refresh(decision_row)
+            self.assertEqual(decision_row.status, "rejected")
+            self.assertEqual(
+                decision_row.decision_json.get("submission_stage"),
+                "rejected_unfilled",
+            )
 
     def test_pipeline_llm_veto(self) -> None:
         from app import config

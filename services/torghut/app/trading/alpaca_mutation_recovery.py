@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 
 from alpaca.common.exceptions import APIError, RetryException
 from requests.exceptions import RequestException
@@ -37,7 +37,7 @@ from .broker_mutation_recovery_worker import (
     BrokerMutationRecoveryRouteError,
     BrokerMutationRecoveryRead,
 )
-from .execution import OrderExecutor
+from .decision_submission_claims.types import DecisionSubmissionClaimHandle
 from .firewall import OrderFirewall
 from .risk_reduction import (
     BrokerPositionObservation,
@@ -77,6 +77,19 @@ _ALPACA_ACKNOWLEDGED_ORDER_STATUSES = frozenset(
 _ALPACA_REJECTED_ORDER_STATUSES = frozenset({"rejected"})
 
 
+class LinkedSubmissionRecoveryExecutor(Protocol):
+    """Executor surface required to persist one recovered linked order."""
+
+    def recover_linked_order_submission(
+        self,
+        *,
+        session: Session,
+        execution_client: object,
+        claim_handle: DecisionSubmissionClaimHandle,
+        order_response: Mapping[str, object],
+    ) -> Execution: ...
+
+
 class AlpacaMutationRecoveryRoute:
     """Alpaca recovery route that has no broker-mutation surface."""
 
@@ -87,7 +100,7 @@ class AlpacaMutationRecoveryRoute:
         *,
         client: TorghutAlpacaClient,
         firewall: OrderFirewall,
-        executor: OrderExecutor,
+        executor: LinkedSubmissionRecoveryExecutor,
         account_label: str,
         endpoint_url: str,
     ) -> None:
@@ -478,67 +491,12 @@ class AlpacaMutationRecoveryRoute:
     ) -> BrokerMutationSettlement:
         if receipt.intent.operation != "submit_order":
             return self._build_reduction_settlement(receipt, read)
-        order = read.broker_result
-        if not isinstance(order, Mapping):
-            raise ValueError("alpaca_recovery_found_order_required")
-        normalized = _validated_alpaca_order(receipt, order)
-        broker_status = cast(str, normalized["status"])
-        broker_reference = cast(str, normalized["broker_reference"])
-        submission_resolution = cast(str, normalized["submission_resolution"])
-        recovery_evidence = {
-            "schema_version": ALPACA_SUBMIT_RECOVERY_READ_SCHEMA_VERSION,
-            "resolution_state": submission_resolution,
-            "observation": dict(read.evidence),
-            "automatic_resubmission_attempted": False,
-        }
-        claim_handle = receipt.submission_claim_handle
-        if claim_handle is not None:
-            if submission_resolution == "rejected":
-                return build_linked_submission_terminal_settlement(
-                    BrokerMutationLinkedSubmissionSettlementRequest(
-                        source="recovery",
-                        outcome="rejected",
-                        claim_handle=claim_handle,
-                        broker_status=broker_status,
-                        rejection_code="broker_rejected",
-                        broker_reference=None,
-                        execution_id=None,
-                        recovery_evidence_payload=recovery_evidence,
-                    )
-                )
-            execution = self._executor.recover_linked_order_submission(
-                session=session,
-                execution_client=self._firewall,
-                claim_handle=claim_handle,
-                order_response=order,
-            )
-            return build_linked_submission_terminal_settlement(
-                BrokerMutationLinkedSubmissionSettlementRequest(
-                    source="recovery",
-                    outcome="reconciled",
-                    claim_handle=claim_handle,
-                    broker_status=broker_status,
-                    rejection_code=None,
-                    broker_reference=broker_reference,
-                    execution_id=execution.id,
-                    recovery_evidence_payload=recovery_evidence,
-                )
-            )
-        return build_broker_mutation_settlement(
-            BrokerMutationSettlementRequest(
-                source="recovery",
-                outcome=(
-                    "rejected" if submission_resolution == "rejected" else "reconciled"
-                ),
-                broker_reference=broker_reference,
-                execution_id=None,
-                evidence_payload={
-                    "route": self.broker_route,
-                    "client_order_id": receipt.intent.client_request_id,
-                    "broker_status": broker_status,
-                    **recovery_evidence,
-                },
-            )
+        return build_alpaca_found_settlement(
+            session,
+            receipt,
+            read,
+            executor=self._executor,
+            firewall=self._firewall,
         )
 
     def _build_reduction_settlement(
@@ -631,6 +589,80 @@ class AlpacaMutationRecoveryRoute:
                 exact_lookup == "not_found" and history_complete and match_count == 0
             ),
         }
+
+
+def build_alpaca_found_settlement(
+    session: Session,
+    receipt: BrokerMutationReceiptSnapshot,
+    read: BrokerMutationRecoveryRead,
+    *,
+    executor: LinkedSubmissionRecoveryExecutor,
+    firewall: OrderFirewall,
+) -> BrokerMutationSettlement:
+    """Persist and describe one validated Alpaca submission recovery observation."""
+
+    order = read.broker_result
+    if not isinstance(order, Mapping):
+        raise ValueError("alpaca_recovery_found_order_required")
+    normalized = _validated_alpaca_order(receipt, order)
+    broker_status = cast(str, normalized["status"])
+    broker_reference = cast(str, normalized["broker_reference"])
+    submission_resolution = cast(str, normalized["submission_resolution"])
+    recovery_evidence = {
+        "schema_version": ALPACA_SUBMIT_RECOVERY_READ_SCHEMA_VERSION,
+        "resolution_state": submission_resolution,
+        "observation": dict(read.evidence),
+        "automatic_resubmission_attempted": False,
+    }
+    claim_handle = receipt.submission_claim_handle
+    if claim_handle is not None:
+        if submission_resolution == "rejected":
+            return build_linked_submission_terminal_settlement(
+                BrokerMutationLinkedSubmissionSettlementRequest(
+                    source="recovery",
+                    outcome="rejected",
+                    claim_handle=claim_handle,
+                    broker_status=broker_status,
+                    rejection_code="broker_rejected",
+                    broker_reference=None,
+                    execution_id=None,
+                    recovery_evidence_payload=recovery_evidence,
+                )
+            )
+        execution = executor.recover_linked_order_submission(
+            session=session,
+            execution_client=firewall,
+            claim_handle=claim_handle,
+            order_response=order,
+        )
+        return build_linked_submission_terminal_settlement(
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="recovery",
+                outcome="reconciled",
+                claim_handle=claim_handle,
+                broker_status=broker_status,
+                rejection_code=None,
+                broker_reference=broker_reference,
+                execution_id=execution.id,
+                recovery_evidence_payload=recovery_evidence,
+            )
+        )
+    return build_broker_mutation_settlement(
+        BrokerMutationSettlementRequest(
+            source="recovery",
+            outcome=(
+                "rejected" if submission_resolution == "rejected" else "reconciled"
+            ),
+            broker_reference=broker_reference,
+            execution_id=None,
+            evidence_payload={
+                "route": "alpaca",
+                "client_order_id": receipt.intent.client_request_id,
+                "broker_status": broker_status,
+                **recovery_evidence,
+            },
+        )
+    )
 
 
 def _required_string_set(value: object, *, field: str) -> set[str]:
@@ -791,4 +823,6 @@ def _optional_decimal(value: object) -> Decimal | None:
 __all__ = [
     "ALPACA_SUBMIT_RECOVERY_READ_SCHEMA_VERSION",
     "AlpacaMutationRecoveryRoute",
+    "LinkedSubmissionRecoveryExecutor",
+    "build_alpaca_found_settlement",
 ]

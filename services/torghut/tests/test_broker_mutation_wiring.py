@@ -227,13 +227,20 @@ def test_runtime_status_claims_only_the_entry_capability_now_wired() -> None:
     assert status["recovery_degraded"] is False
 
 
-def test_scheduler_singleton_replica_contract_remains_enabled() -> None:
+def test_scheduler_writer_is_singleton_or_explicitly_quiesced() -> None:
     manifest = (
         SERVICE_ROOT.parents[1]
         / "argocd/applications/torghut/scheduler-deployment.yaml"
     ).read_text(encoding="utf-8")
 
-    assert "replicas: 1" in manifest
+    if "replicas: 0" in manifest:
+        assert (
+            "Temporarily quiesced for the bounded Alpaca-paper lifecycle proof"
+            in manifest
+        )
+        assert "Restore the single scheduler writer after readback" in manifest
+    else:
+        assert "replicas: 1" in manifest
 
 
 def test_receipt_postgres_races_are_a_required_ci_gate() -> None:
