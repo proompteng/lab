@@ -122,6 +122,35 @@ describe('torghut quant metrics store', () => {
     expect(normalized.join(' ')).not.toContain('torghut_control_plane.quant_pipeline_health ')
   })
 
+  it('cuts series writes over to an empty partitioned store without copying legacy history', async () => {
+    const { db, calls } = makeFakeDb()
+    const { up } = await import('../migrations/20260715_torghut_quant_series_active')
+
+    await up(db)
+
+    expect(calls).toHaveLength(24)
+    const normalized = calls.map((call) => call.sql.toLowerCase().replace(/\s+/g, ' '))
+    expect(normalized[0]).toContain("set local lock_timeout = '5s'")
+    expect(normalized[1]).toContain(
+      'alter table torghut_control_plane.quant_metrics_series rename to quant_metrics_series_legacy',
+    )
+    expect(normalized[2]).toContain('create table "torghut_control_plane"."quant_metrics_series_active"')
+    expect(normalized[2]).toContain('partition by hash (strategy_id)')
+
+    const partitions = normalized.filter((statement) => statement.includes('partition of'))
+    expect(partitions).toHaveLength(16)
+    expect(partitions[0]).toContain('modulus 16, remainder 0')
+    expect(partitions[15]).toContain('modulus 16, remainder 15')
+
+    expect(normalized.join(' ')).toContain('torghut_qm_series_active_lookup_idx')
+    expect(normalized.join(' ')).toContain('torghut_qm_series_active_as_of_brin')
+    expect(normalized.join(' ')).toContain('create view torghut_control_plane.quant_metrics_series as')
+    expect(normalized.join(' ')).toContain('union all')
+    expect(normalized.join(' ')).toContain('instead of insert on torghut_control_plane.quant_metrics_series')
+    expect(normalized.join(' ')).not.toContain('insert into torghut_control_plane.quant_metrics_series_legacy select')
+    expect(normalized.join(' ')).not.toContain('create table as select')
+  })
+
   it('avoids physical latest-metric updates when every material value is unchanged', async () => {
     const { db, calls } = makeFakeDb()
     dbMocks.getDb.mockReturnValue(db)
