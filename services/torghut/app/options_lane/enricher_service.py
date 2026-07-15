@@ -17,6 +17,7 @@ from .options_status import build_status_payload
 from .repository import OptionsRepository
 from .session import session_state, utc_now
 from .settings import get_options_lane_settings
+from .snapshot_ranking import snapshot_ranking_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -133,22 +134,6 @@ def _publish_status(
     _producer.send(settings.topic_status, "enricher", envelope)
 
 
-def _ranking_inputs_from_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
-    trade_recency_score = 1.0 if payload.get("latest_trade_ts") else 0.2
-    quote_recency_score = 1.0 if payload.get("latest_quote_ts") else 0.2
-    liquidity_score = 0.5
-    if payload.get("latest_bid_size") and payload.get("latest_ask_size"):
-        total_size = float(payload["latest_bid_size"]) + float(
-            payload["latest_ask_size"]
-        )
-        liquidity_score = min(total_size / 1000.0, 1.0)
-    return {
-        "trade_recency_score": trade_recency_score,
-        "quote_recency_score": quote_recency_score,
-        "liquidity_score": liquidity_score,
-    }
-
-
 def _process_tier(*, tier: str, interval_sec: int, bucket_name: str) -> int:
     due_rows = _repository.get_due_snapshot_contracts(
         tier=tier,
@@ -186,7 +171,7 @@ def _process_tier(*, tier: str, interval_sec: int, bucket_name: str) -> int:
             contract_symbol=symbol,
             snapshot_class=tier,
             observed_at=observed_at,
-            ranking_inputs=_ranking_inputs_from_snapshot(payload),
+            ranking_inputs=snapshot_ranking_inputs(payload),
         )
     return 0
 

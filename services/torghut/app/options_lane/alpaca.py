@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import cast
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 _OCC_SYMBOL_RE = re.compile(r"^([A-Z]{1,6})\d{6}[CP]\d{8}$")
+_CONTRACT_PRICE_QUANTUM = Decimal("0.000001")
 JsonObject = dict[str, object]
 
 
@@ -64,6 +65,20 @@ def _to_float(value: object) -> float | None:
     try:
         return float(cast(Decimal | int | float | str, value))
     except (TypeError, ValueError, ArithmeticError):
+        return None
+
+
+def _to_contract_price(value: object) -> Decimal | None:
+    """Normalize provider prices to the catalog's NUMERIC(18, 6) domain."""
+
+    if value is None:
+        return None
+    try:
+        parsed = Decimal(str(value))
+        if not parsed.is_finite():
+            return None
+        return parsed.quantize(_CONTRACT_PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
         return None
 
 
@@ -328,11 +343,12 @@ def normalize_contract_record(
         or None,
         "option_type": option_type,
         "style": style,
-        "strike_price": _to_float(raw.get("strike_price")) or 0.0,
+        "strike_price": _to_contract_price(raw.get("strike_price"))
+        or Decimal("0.000000"),
         "contract_size": contract_size,
         "open_interest": _to_int(raw.get("open_interest")),
         "open_interest_date": _normalize_iso_date(raw.get("open_interest_date")),
-        "close_price": _to_float(raw.get("close_price")),
+        "close_price": _to_contract_price(raw.get("close_price")),
         "close_price_date": _normalize_iso_date(raw.get("close_price_date")),
         "provider_updated_ts": _normalize_iso_datetime(
             raw.get("updated_at") or raw.get("provider_updated_at")

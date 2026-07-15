@@ -632,6 +632,11 @@ class OptionsRepository:
                     ON CONFLICT (contract_symbol) DO UPDATE
                     SET ranking_inputs = COALESCE(torghut_options_subscription_state.ranking_inputs, '{}'::JSONB)
                         || EXCLUDED.ranking_inputs
+                    WHERE COALESCE(torghut_options_subscription_state.ranking_inputs, '{}'::JSONB)
+                      IS DISTINCT FROM (
+                        COALESCE(torghut_options_subscription_state.ranking_inputs, '{}'::JSONB)
+                        || EXCLUDED.ranking_inputs
+                      )
                     """
                 ),
                 {
