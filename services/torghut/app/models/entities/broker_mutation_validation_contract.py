@@ -176,7 +176,58 @@ BROKER_MUTATION_VALIDATION_PERMIT_ID_SQL = (
     "'{request,infrastructure_validation,permit,permit_id}')"
 )
 
+BROKER_MUTATION_VALIDATION_LINEAGE_SQL = r"""
+(canonical_intent_json::jsonb #>
+  '{request,infrastructure_validation_lineage}') IS NULL
+OR COALESCE((
+  broker_route = 'alpaca'
+  AND submission_claim_id IS NULL
+  AND operation IN ('replace_order', 'cancel_order',
+                    'close_position', 'close_all_positions')
+  AND jsonb_typeof(canonical_intent_json::jsonb #>
+      '{request,infrastructure_validation_lineage}') = 'object'
+  AND (canonical_intent_json::jsonb #>
+      '{request,infrastructure_validation_lineage}') ?& ARRAY[
+        'schema_version', 'root_receipt_id', 'root_client_order_id',
+        'parent_receipt_id', 'parent_broker_order_id', 'permit_id',
+        'permit_sha256', 'evidence_tag', 'promotable'
+      ]
+  AND ((canonical_intent_json::jsonb #>
+      '{request,infrastructure_validation_lineage}') - ARRAY[
+        'schema_version', 'root_receipt_id', 'root_client_order_id',
+        'parent_receipt_id', 'parent_broker_order_id', 'permit_id',
+        'permit_sha256', 'evidence_tag', 'promotable'
+      ]) = '{}'::jsonb
+  AND canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,schema_version}' =
+      'torghut.infrastructure-validation-lineage.v1'
+  AND canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,root_receipt_id}' ~
+      '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,root_client_order_id}' ~
+      '^ivp-[0-9a-f]{44}$'
+  AND canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,parent_receipt_id}' ~
+      '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND length(canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,parent_broker_order_id}')
+      BETWEEN 1 AND 256
+  AND length(canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,permit_id}') BETWEEN 1 AND 128
+  AND canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,permit_sha256}' ~
+      '^[0-9a-f]{64}$'
+  AND canonical_intent_json::jsonb #>>
+      '{request,infrastructure_validation_lineage,evidence_tag}' =
+      'non_promotable_validation'
+  AND canonical_intent_json::jsonb #>
+      '{request,infrastructure_validation_lineage,promotable}' = 'false'::jsonb
+), FALSE)
+"""
+
 __all__ = [
     "BROKER_MUTATION_VALIDATION_AUTHORITY_SQL",
+    "BROKER_MUTATION_VALIDATION_LINEAGE_SQL",
     "BROKER_MUTATION_VALIDATION_PERMIT_ID_SQL",
 ]

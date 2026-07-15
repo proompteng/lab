@@ -223,6 +223,7 @@ def repair_order_feed_execution_links(
                 session,
                 account_label=event.alpaca_account_label,
                 client_order_id=event.client_order_id,
+                alpaca_order_id=event.alpaca_order_id,
             )
             is not None
         ):

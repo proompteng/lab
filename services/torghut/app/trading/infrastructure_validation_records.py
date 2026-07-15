@@ -6,13 +6,18 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import BrokerMutationReceipt, coerce_json_payload
+from ..models import (
+    BrokerMutationReceipt,
+    BrokerMutationReceiptEvent,
+    coerce_json_payload,
+)
 from .evidence_contracts import (
     ArtifactProvenance,
     EvidenceMaturity,
@@ -23,11 +28,55 @@ from .evidence_contracts import (
 _EVIDENCE_KEY = "_torghut_evidence_contract"
 _EVIDENCE_SCHEMA_VERSION = "torghut.order-event-evidence-contract.v1"
 _EVIDENCE_TAG = ArtifactProvenance.NON_PROMOTABLE_VALIDATION.value
+_EVIDENCE_SEAL = object()
+_LINEAGE_SCHEMA_VERSION = "torghut.infrastructure-validation-lineage.v1"
+_ORDER_CREATING_LINEAGE_OPERATIONS = (
+    "replace_order",
+    "close_position",
+    "close_all_positions",
+)
+_LINEAGE_KEYS = frozenset(
+    {
+        "schema_version",
+        "root_receipt_id",
+        "root_client_order_id",
+        "parent_receipt_id",
+        "parent_broker_order_id",
+        "permit_id",
+        "permit_sha256",
+        "evidence_tag",
+        "promotable",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
 class InfrastructureValidationEvidence:
+    """Database-proven validation ancestry for one broker mutation."""
+
     receipt_id: uuid.UUID
+    broker_order_id: str
+    root_receipt_id: uuid.UUID
+    root_client_order_id: str
+    root_plan_schema: str
+    permit_id: str
+    permit_sha256: str
+    account_label: str
+    endpoint_fingerprint: str
+    lineage_parent_terminal: bool
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _EVIDENCE_SEAL:
+            raise PermissionError("infrastructure_validation_evidence_issuer_invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidationLineage:
+    root_receipt_id: uuid.UUID
+    root_client_order_id: str
+    parent_receipt_id: uuid.UUID
+    parent_broker_order_id: str
     permit_id: str
     permit_sha256: str
 
@@ -37,32 +86,288 @@ def load_infrastructure_validation_evidence(
     *,
     account_label: str,
     client_order_id: str | None,
+    alpaca_order_id: str | None = None,
+    endpoint_fingerprint: str | None = None,
 ) -> InfrastructureValidationEvidence | None:
-    """Resolve a broker order identity to its immutable validation receipt."""
+    """Resolve broker client/order identities to immutable validation ancestry."""
 
     normalized_client_order_id = str(client_order_id or "").strip()
-    if not normalized_client_order_id.startswith("ivp-"):
-        return None
-    receipts = (
-        session.execute(
-            select(BrokerMutationReceipt).where(
-                BrokerMutationReceipt.account_label == account_label,
-                BrokerMutationReceipt.client_request_id == normalized_client_order_id,
-                BrokerMutationReceipt.purpose == "control_plane_validation",
-            )
+    normalized_order_id = str(alpaca_order_id or "").strip()
+    normalized_endpoint = str(endpoint_fingerprint or "").strip()
+    evidence: list[InfrastructureValidationEvidence] = []
+    if normalized_client_order_id.startswith("ivp-"):
+        root_receipts = _root_receipts(
+            session,
+            account_label=account_label,
+            client_order_id=normalized_client_order_id,
+            endpoint_fingerprint=normalized_endpoint,
         )
-        .scalars()
-        .all()
-    )
-    if not receipts:
+        for receipt in root_receipts:
+            root_evidence = _root_evidence(
+                session,
+                receipt,
+                expected_client_order_id=normalized_client_order_id,
+                observed_broker_order_id=normalized_order_id,
+            )
+            if root_evidence is not None:
+                evidence.append(root_evidence)
+    if normalized_order_id:
+        descendant_receipts = _descendant_receipts(
+            session,
+            account_label=account_label,
+            alpaca_order_id=normalized_order_id,
+            endpoint_fingerprint=normalized_endpoint,
+        )
+        if len(descendant_receipts) > 1:
+            raise RuntimeError("infrastructure_validation_lineage_parent_split")
+        evidence.extend(
+            _descendant_evidence(session, receipt) for receipt in descendant_receipts
+        )
+    if not evidence:
         return None
-    if len(receipts) != 1:
+    roots = {
+        (
+            item.root_receipt_id,
+            item.root_client_order_id,
+            item.root_plan_schema,
+            item.permit_id,
+            item.permit_sha256,
+        )
+        for item in evidence
+    }
+    if len(roots) != 1:
         raise RuntimeError("infrastructure_validation_receipt_identity_split")
-    receipt = receipts[0]
+    # Prefer the receipt that created the observed broker order. Root client-ID
+    # evidence remains the fallback for cancel/reject events on the setup order.
+    return evidence[-1]
+
+
+def infrastructure_validation_lineage_payload(
+    evidence: InfrastructureValidationEvidence,
+) -> dict[str, object]:
+    """Build the exact parent proof sealed into a descendant mutation intent."""
+
+    if not evidence.lineage_parent_terminal:
+        raise RuntimeError("infrastructure_validation_lineage_parent_not_terminal")
+    return {
+        "schema_version": _LINEAGE_SCHEMA_VERSION,
+        "root_receipt_id": str(evidence.root_receipt_id),
+        "root_client_order_id": evidence.root_client_order_id,
+        "parent_receipt_id": str(evidence.receipt_id),
+        "parent_broker_order_id": evidence.broker_order_id,
+        "permit_id": evidence.permit_id,
+        "permit_sha256": evidence.permit_sha256,
+        "evidence_tag": _EVIDENCE_TAG,
+        "promotable": False,
+    }
+
+
+def _root_receipts(
+    session: Session,
+    *,
+    account_label: str,
+    client_order_id: str,
+    endpoint_fingerprint: str,
+) -> list[BrokerMutationReceipt]:
+    statement = select(BrokerMutationReceipt).where(
+        BrokerMutationReceipt.account_label == account_label,
+        BrokerMutationReceipt.client_request_id == client_order_id,
+        BrokerMutationReceipt.purpose == "control_plane_validation",
+    )
+    if endpoint_fingerprint:
+        statement = statement.where(
+            BrokerMutationReceipt.endpoint_fingerprint == endpoint_fingerprint
+        )
+    receipts = session.execute(statement).scalars().all()
+    if len(receipts) > 1:
+        raise RuntimeError("infrastructure_validation_receipt_identity_split")
+    return list(receipts)
+
+
+def _descendant_receipts(
+    session: Session,
+    *,
+    account_label: str,
+    alpaca_order_id: str,
+    endpoint_fingerprint: str,
+) -> list[BrokerMutationReceipt]:
+    statement = (
+        select(BrokerMutationReceipt)
+        .join(
+            BrokerMutationReceiptEvent,
+            BrokerMutationReceiptEvent.receipt_id == BrokerMutationReceipt.id,
+        )
+        .where(
+            BrokerMutationReceipt.account_label == account_label,
+            BrokerMutationReceipt.broker_route == "alpaca",
+            BrokerMutationReceipt.operation.in_(_ORDER_CREATING_LINEAGE_OPERATIONS),
+            BrokerMutationReceiptEvent.state == "settled",
+            BrokerMutationReceiptEvent.broker_reference == alpaca_order_id,
+        )
+        .distinct()
+    )
+    if endpoint_fingerprint:
+        statement = statement.where(
+            BrokerMutationReceipt.endpoint_fingerprint == endpoint_fingerprint
+        )
+    return [
+        receipt
+        for receipt in session.execute(statement).scalars().all()
+        if _has_validation_lineage(receipt)
+    ]
+
+
+def _has_validation_lineage(receipt: BrokerMutationReceipt) -> bool:
     try:
-        intent = json.loads(receipt.canonical_intent_json)
-        validation = intent["request"]["infrastructure_validation"]
-        permit = validation["permit"]
+        intent = _parse_json_object(receipt.canonical_intent_json)
+        request = _required_object(intent, "request")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return "infrastructure_validation_lineage" in request
+
+
+def _root_evidence(
+    session: Session,
+    receipt: BrokerMutationReceipt,
+    *,
+    expected_client_order_id: str,
+    observed_broker_order_id: str,
+) -> InfrastructureValidationEvidence | None:
+    permit_id, permit_sha256 = _root_permit_identity(receipt)
+    if receipt.client_request_id != expected_client_order_id:
+        raise RuntimeError("infrastructure_validation_receipt_identity_split")
+    terminal = _lineage_parent_terminal(
+        session,
+        receipt.id,
+        allowed_outcomes=frozenset({"acknowledged", "reconciled"}),
+    )
+    broker_order_id = (
+        _required_broker_reference(terminal)
+        if terminal is not None
+        else observed_broker_order_id
+    )
+    if not broker_order_id:
+        return None
+    return InfrastructureValidationEvidence(
+        receipt_id=receipt.id,
+        broker_order_id=broker_order_id,
+        root_receipt_id=receipt.id,
+        root_client_order_id=receipt.client_request_id,
+        root_plan_schema=_root_plan_schema(receipt),
+        permit_id=permit_id,
+        permit_sha256=permit_sha256,
+        account_label=receipt.account_label,
+        endpoint_fingerprint=receipt.endpoint_fingerprint,
+        lineage_parent_terminal=terminal is not None,
+        _seal=_EVIDENCE_SEAL,
+    )
+
+
+def _descendant_evidence(
+    session: Session,
+    receipt: BrokerMutationReceipt,
+) -> InfrastructureValidationEvidence:
+    intent, lineage = _parse_validation_lineage(receipt)
+    root = session.get(BrokerMutationReceipt, lineage.root_receipt_id)
+    if root is None:
+        raise RuntimeError("infrastructure_validation_lineage_root_missing")
+    root_permit = _root_permit_identity(root)
+    if (
+        root.account_label != receipt.account_label
+        or root.endpoint_fingerprint != receipt.endpoint_fingerprint
+        or root.client_request_id != lineage.root_client_order_id
+        or root_permit != (lineage.permit_id, lineage.permit_sha256)
+    ):
+        raise RuntimeError("infrastructure_validation_lineage_root_mismatch")
+    _require_lineage_parent_terminal(
+        session,
+        root.id,
+        allowed_outcomes=frozenset({"acknowledged", "reconciled"}),
+    )
+    parent = session.get(BrokerMutationReceipt, lineage.parent_receipt_id)
+    if parent is None:
+        raise RuntimeError("infrastructure_validation_lineage_parent_missing")
+    if (
+        parent.account_label != receipt.account_label
+        or parent.endpoint_fingerprint != receipt.endpoint_fingerprint
+        or _utc(parent.created_at) > _utc(receipt.created_at)
+        or parent.operation not in ("submit_order", *_ORDER_CREATING_LINEAGE_OPERATIONS)
+        or not _belongs_to_validation_root(parent, lineage.root_receipt_id)
+    ):
+        raise RuntimeError("infrastructure_validation_lineage_parent_mismatch")
+    parent_terminal = _require_lineage_parent_terminal(
+        session,
+        parent.id,
+        allowed_outcomes=frozenset({"acknowledged", "reconciled"}),
+    )
+    if _required_broker_reference(parent_terminal) != lineage.parent_broker_order_id:
+        raise RuntimeError("infrastructure_validation_lineage_parent_mismatch")
+    _require_lineage_target(
+        receipt,
+        intent=intent,
+        root=root,
+        parent_broker_order_id=lineage.parent_broker_order_id,
+    )
+    terminal = _require_lineage_parent_terminal(
+        session,
+        receipt.id,
+        allowed_outcomes=frozenset({"acknowledged", "reconciled"}),
+    )
+    return InfrastructureValidationEvidence(
+        receipt_id=receipt.id,
+        broker_order_id=_required_broker_reference(terminal),
+        root_receipt_id=lineage.root_receipt_id,
+        root_client_order_id=lineage.root_client_order_id,
+        root_plan_schema=_root_plan_schema(root),
+        permit_id=lineage.permit_id,
+        permit_sha256=lineage.permit_sha256,
+        account_label=receipt.account_label,
+        endpoint_fingerprint=receipt.endpoint_fingerprint,
+        lineage_parent_terminal=True,
+        _seal=_EVIDENCE_SEAL,
+    )
+
+
+def _parse_validation_lineage(
+    receipt: BrokerMutationReceipt,
+) -> tuple[dict[str, object], _ValidationLineage]:
+    try:
+        intent = _parse_json_object(receipt.canonical_intent_json)
+        request = _required_object(intent, "request")
+        raw = _required_object(request, "infrastructure_validation_lineage")
+        if frozenset(raw) != _LINEAGE_KEYS:
+            raise ValueError("validation_lineage_shape_invalid")
+        lineage = _ValidationLineage(
+            root_receipt_id=uuid.UUID(str(raw["root_receipt_id"])),
+            root_client_order_id=str(raw["root_client_order_id"]).strip(),
+            parent_receipt_id=uuid.UUID(str(raw["parent_receipt_id"])),
+            parent_broker_order_id=str(raw["parent_broker_order_id"]).strip(),
+            permit_id=str(raw["permit_id"]).strip(),
+            permit_sha256=str(raw["permit_sha256"]).strip(),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "infrastructure_validation_receipt_evidence_invalid"
+        ) from exc
+    if (
+        raw["schema_version"] != _LINEAGE_SCHEMA_VERSION
+        or re.fullmatch(r"ivp-[0-9a-f]{44}", lineage.root_client_order_id) is None
+        or not lineage.parent_broker_order_id
+        or not lineage.permit_id
+        or re.fullmatch(r"[0-9a-f]{64}", lineage.permit_sha256) is None
+        or raw["evidence_tag"] != _EVIDENCE_TAG
+        or raw["promotable"] is not False
+    ):
+        raise RuntimeError("infrastructure_validation_receipt_evidence_invalid")
+    return intent, lineage
+
+
+def _root_permit_identity(receipt: BrokerMutationReceipt) -> tuple[str, str]:
+    try:
+        intent = _parse_json_object(receipt.canonical_intent_json)
+        request = _required_object(intent, "request")
+        validation = _required_object(request, "infrastructure_validation")
+        permit = _required_object(validation, "permit")
         permit_id = str(permit["permit_id"]).strip()
         permit_sha256 = str(validation["permit_sha256"]).strip()
         evidence_tag = permit["evidence_tag"]
@@ -72,17 +377,151 @@ def load_infrastructure_validation_evidence(
             "infrastructure_validation_receipt_evidence_invalid"
         ) from exc
     if (
-        not permit_id
+        receipt.purpose != "control_plane_validation"
+        or receipt.operation != "submit_order"
+        or re.fullmatch(r"ivp-[0-9a-f]{44}", receipt.client_request_id) is None
+        or not permit_id
         or re.fullmatch(r"[0-9a-f]{64}", permit_sha256) is None
         or evidence_tag != _EVIDENCE_TAG
         or promotable is not False
     ):
         raise RuntimeError("infrastructure_validation_receipt_evidence_invalid")
-    return InfrastructureValidationEvidence(
-        receipt_id=receipt.id,
-        permit_id=permit_id,
-        permit_sha256=permit_sha256,
+    return permit_id, permit_sha256
+
+
+def _root_plan_schema(receipt: BrokerMutationReceipt) -> str:
+    try:
+        intent = _parse_json_object(receipt.canonical_intent_json)
+        request = _required_object(intent, "request")
+        validation = _required_object(request, "infrastructure_validation")
+        test_plan = _required_object(validation, "test_plan")
+        schema_version = str(test_plan["schema_version"]).strip()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "infrastructure_validation_receipt_evidence_invalid"
+        ) from exc
+    if not schema_version:
+        raise RuntimeError("infrastructure_validation_receipt_evidence_invalid")
+    return schema_version
+
+
+def _belongs_to_validation_root(
+    receipt: BrokerMutationReceipt,
+    root_receipt_id: uuid.UUID,
+) -> bool:
+    if receipt.id == root_receipt_id:
+        return True
+    try:
+        intent = _parse_json_object(receipt.canonical_intent_json)
+        request = _required_object(intent, "request")
+        lineage = _required_object(request, "infrastructure_validation_lineage")
+        lineage_root = uuid.UUID(str(lineage["root_receipt_id"]))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return lineage_root == root_receipt_id
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _require_lineage_target(
+    receipt: BrokerMutationReceipt,
+    *,
+    intent: Mapping[str, object],
+    root: BrokerMutationReceipt,
+    parent_broker_order_id: str,
+) -> None:
+    try:
+        request = _required_object(intent, "request")
+        root_intent = _parse_json_object(root.canonical_intent_json)
+        root_request = _required_object(root_intent, "request")
+        validation = _required_object(root_request, "infrastructure_validation")
+        test_plan = _required_object(validation, "test_plan")
+        root_symbol = str(test_plan["symbol"]).strip()
+        root_plan_schema = str(test_plan["schema_version"]).strip()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "infrastructure_validation_receipt_evidence_invalid"
+        ) from exc
+    target_matches = {
+        "replace_order": receipt.target_key == parent_broker_order_id,
+        "cancel_order": receipt.target_key == parent_broker_order_id,
+        "close_position": root_plan_schema
+        == "torghut.infrastructure-validation-lifecycle-plan.v1"
+        and receipt.target_key == root_symbol,
+        "close_all_positions": root_plan_schema
+        == "torghut.infrastructure-validation-lifecycle-plan.v1"
+        and request.get("symbols") == [root_symbol],
+    }.get(receipt.operation, False)
+    if not target_matches:
+        raise RuntimeError("infrastructure_validation_lineage_target_mismatch")
+
+
+def _require_lineage_parent_terminal(
+    session: Session,
+    receipt_id: uuid.UUID,
+    *,
+    allowed_outcomes: frozenset[str],
+) -> BrokerMutationReceiptEvent:
+    latest = _lineage_parent_terminal(
+        session,
+        receipt_id,
+        allowed_outcomes=allowed_outcomes,
     )
+    if latest is None:
+        raise RuntimeError("infrastructure_validation_lineage_parent_not_terminal")
+    return latest
+
+
+def _lineage_parent_terminal(
+    session: Session,
+    receipt_id: uuid.UUID,
+    *,
+    allowed_outcomes: frozenset[str],
+) -> BrokerMutationReceiptEvent | None:
+    latest = session.execute(
+        select(BrokerMutationReceiptEvent)
+        .where(BrokerMutationReceiptEvent.receipt_id == receipt_id)
+        .order_by(BrokerMutationReceiptEvent.sequence_no.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if (
+        latest is None
+        or latest.state != "settled"
+        or latest.settlement_outcome not in allowed_outcomes
+    ):
+        return None
+    return latest
+
+
+def _required_broker_reference(event: BrokerMutationReceiptEvent) -> str:
+    broker_reference = str(event.broker_reference or "").strip()
+    if not broker_reference:
+        raise RuntimeError("infrastructure_validation_lineage_parent_reference_missing")
+    return broker_reference
+
+
+def _parse_json_object(raw_document: str) -> dict[str, object]:
+    raw_value: object = json.loads(raw_document)
+    return _object_mapping(raw_value)
+
+
+def _required_object(
+    document: Mapping[str, object],
+    key: str,
+) -> dict[str, object]:
+    return _object_mapping(document[key])
+
+
+def _object_mapping(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise TypeError("infrastructure_validation_json_object_required")
+    return {
+        str(key): item for key, item in cast(Mapping[object, object], value).items()
+    }
 
 
 def tag_infrastructure_validation_event(
@@ -108,6 +547,8 @@ def tag_infrastructure_validation_event(
         ),
         "promotable": False,
         "broker_mutation_receipt_id": str(evidence.receipt_id),
+        "validation_root_receipt_id": str(evidence.root_receipt_id),
+        "validation_root_client_order_id": evidence.root_client_order_id,
         "permit_id": evidence.permit_id,
         "permit_sha256": evidence.permit_sha256,
     }
@@ -157,6 +598,7 @@ def is_non_promotable_validation_event(raw_event: object) -> bool:
 
 __all__ = [
     "InfrastructureValidationEvidence",
+    "infrastructure_validation_lineage_payload",
     "is_non_promotable_validation_event",
     "load_infrastructure_validation_evidence",
     "strip_unproven_infrastructure_validation_evidence",

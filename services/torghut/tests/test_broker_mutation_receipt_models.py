@@ -12,6 +12,7 @@ from sqlalchemy import (
 from app.models import BrokerMutationReceipt, BrokerMutationReceiptEvent
 from app.models.entities.broker_mutation_validation_contract import (
     BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
+    BROKER_MUTATION_VALIDATION_LINEAGE_SQL,
 )
 from tests.migration_testing import load_migration_module
 
@@ -82,6 +83,15 @@ def test_receipt_header_mirrors_validation_authority_and_permit_guards() -> None
     assert str(validation_check.sqltext).strip() == (
         BROKER_MUTATION_VALIDATION_AUTHORITY_SQL.strip()
     )
+    lineage_check = next(
+        constraint
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+        and constraint.name == "ck_bm_receipt_validation_lineage"
+    )
+    assert str(lineage_check.sqltext).strip() == (
+        BROKER_MUTATION_VALIDATION_LINEAGE_SQL.strip()
+    )
 
     validation_permit = next(
         index
@@ -104,12 +114,19 @@ def test_receipt_header_mirrors_validation_authority_and_permit_guards() -> None
     table.create(engine)
     ddl = "\n".join(statements)
     assert "CONSTRAINT ck_bm_receipt_validation_authority" in ddl
+    assert "CONSTRAINT ck_bm_receipt_validation_lineage" in ddl
     assert "CREATE UNIQUE INDEX uq_bm_receipt_validation_permit" in ddl
     assert "non_promotable_validation" in ddl
 
     migration = load_migration_module("0068_infrastructure_validation_submit.py")
     assert str(getattr(migration, "_VALIDATION_AUTHORITY")).strip() == (
         BROKER_MUTATION_VALIDATION_AUTHORITY_SQL.strip()
+    )
+    lineage_migration = load_migration_module(
+        "0071_infrastructure_validation_lineage.py"
+    )
+    assert str(getattr(lineage_migration, "_LINEAGE_CONTRACT")).strip() == (
+        BROKER_MUTATION_VALIDATION_LINEAGE_SQL.strip()
     )
 
 
@@ -138,7 +155,21 @@ def test_event_model_keeps_recovery_and_settlement_evidence_separate() -> None:
     assert {
         "ix_broker_mutation_receipt_latest",
         "ix_broker_mutation_receipt_recovery_due",
+        "ix_bm_receipt_event_broker_reference",
     }.issubset(index_names)
+    broker_reference_index = next(
+        index
+        for index in table.indexes
+        if index.name == "ix_bm_receipt_event_broker_reference"
+    )
+    assert tuple(column.name for column in broker_reference_index.columns) == (
+        "broker_reference",
+        "receipt_id",
+    )
+    assert (
+        str(broker_reference_index.dialect_options["postgresql"]["where"])
+        == "state = 'settled' AND broker_reference IS NOT NULL"
+    )
 
 
 def test_event_model_enforces_the_exact_settlement_contract() -> None:

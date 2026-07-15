@@ -3,23 +3,30 @@ from __future__ import annotations
 import json
 import uuid
 
-from app.models import BrokerMutationReceipt, SimulationRunProgress
+from app.models import ExecutionOrderEvent, SimulationRunProgress
+from app.trading.broker_mutation_coordinator import (
+    BrokerMutationCoordinator,
+    InfrastructureValidationOrderSubmission,
+    UnlinkedMutationCallbacks,
+)
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
+    BrokerMutationSettlementRequest,
     BrokerMutationTarget,
     build_broker_mutation_intent,
-    fingerprint_broker_endpoint,
+    build_broker_mutation_settlement,
 )
 from app.trading.infrastructure_validation import (
     InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
     infrastructure_validation_client_order_id,
     infrastructure_validation_order_plan_sha256,
-    infrastructure_validation_request_payload,
     infrastructure_validation_terminal_state_sha256,
 )
 from app.trading.infrastructure_validation_records import (
+    infrastructure_validation_lineage_payload,
     is_non_promotable_validation_event,
+    load_infrastructure_validation_evidence,
     strip_unproven_infrastructure_validation_evidence,
 )
 
@@ -187,25 +194,6 @@ class TestInfrastructureValidationExclusion(OrderFeedTestCase):
             }
         )
         client_order_id = infrastructure_validation_client_order_id(permit, plan)
-        intent = build_broker_mutation_intent(
-            BrokerMutationIntentRequest(
-                broker_route="alpaca",
-                account_label="paper",
-                endpoint_fingerprint=fingerprint_broker_endpoint(
-                    "https://paper-api.alpaca.markets"
-                ),
-                operation="submit_order",
-                risk_class="risk_neutral",
-                purpose="control_plane_validation",
-                workflow_id=client_order_id,
-                client_request_id=client_order_id,
-                target=BrokerMutationTarget(kind="order", key=client_order_id),
-                request_payload=infrastructure_validation_request_payload(
-                    permit,
-                    plan,
-                ),
-            )
-        )
         payload = (
             '{"channel":"trade_updates","payload":{"event":"fill",'
             '"timestamp":"2026-07-14T10:00:00Z","order":{'
@@ -215,29 +203,14 @@ class TestInfrastructureValidationExclusion(OrderFeedTestCase):
         ).encode()
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_journal_enabled = True
+        normalized = normalize_order_feed_record(
+            FakeRecord(value=payload, offset=91),
+            default_topic="torghut.trade-updates.v1",
+            default_account_label="paper",
+        )
+        assert normalized.event is not None
 
         with Session(self.engine) as session:
-            session.add(
-                BrokerMutationReceipt(
-                    id=uuid.uuid4(),
-                    broker_route=intent.broker_route,
-                    account_label=intent.account_label,
-                    endpoint_fingerprint=intent.endpoint_fingerprint,
-                    operation=intent.operation,
-                    risk_class=intent.risk_class,
-                    purpose=intent.purpose,
-                    submission_claim_id=None,
-                    workflow_id=intent.workflow_id,
-                    client_request_id=intent.client_request_id,
-                    target_kind=intent.target.kind,
-                    target_key=intent.target.key,
-                    intent_schema_version=intent.intent_schema_version,
-                    canonical_intent_json=intent.canonical_intent_json,
-                    canonical_intent_sha256=intent.canonical_intent_sha256,
-                    creator_owner="validation-test",
-                    origin_writer_generation=1,
-                )
-            )
             execution = self._seed_execution(
                 session,
                 account_label="paper",
@@ -245,17 +218,65 @@ class TestInfrastructureValidationExclusion(OrderFeedTestCase):
                 client_order_id=client_order_id,
             )
             session.flush()
-            normalized = normalize_order_feed_record(
-                FakeRecord(value=payload, offset=91),
-                default_topic="torghut.trade-updates.v1",
-                default_account_label="paper",
-            )
-            assert normalized.event is not None
+            persisted_during_broker_io: tuple[ExecutionOrderEvent, bool] | None = None
+
+            def broker_call(_permit: object) -> dict[str, str]:
+                nonlocal persisted_during_broker_io
+                persisted_during_broker_io = persist_order_event(
+                    session,
+                    normalized.event,
+                )
+                race_evidence = load_infrastructure_validation_evidence(
+                    session,
+                    account_label="paper",
+                    client_order_id=client_order_id,
+                    alpaca_order_id="validation-order-1",
+                )
+                assert race_evidence is not None
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "infrastructure_validation_lineage_parent_not_terminal",
+                ):
+                    infrastructure_validation_lineage_payload(race_evidence)
+                return {"id": "validation-order-1", "status": "accepted"}
+
             with patch(
                 "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
                 return_value=FakeTigerBeetleClient(),
             ):
-                persisted, duplicate = persist_order_event(session, normalized.event)
+                BrokerMutationCoordinator(
+                    "validation-order-feed-test"
+                ).submit_infrastructure_validation_order(
+                    session,
+                    request=InfrastructureValidationOrderSubmission(
+                        permit=permit,
+                        plan=plan,
+                        account_label="paper",
+                        endpoint_url="https://paper-api.alpaca.markets",
+                    ),
+                    callbacks=UnlinkedMutationCallbacks(
+                        broker_call=broker_call,
+                        persist_terminal=lambda _result: None,
+                        build_settlement=lambda result: (
+                            build_broker_mutation_settlement(
+                                BrokerMutationSettlementRequest(
+                                    source="primary",
+                                    outcome="acknowledged",
+                                    broker_reference=str(result["id"]),
+                                    execution_id=None,
+                                    evidence_payload={
+                                        "evidence_tag": "non_promotable_validation",
+                                        "promotable": False,
+                                        "status": result["status"],
+                                    },
+                                )
+                            )
+                        ),
+                    ),
+                    now=now,
+                )
+            assert persisted_during_broker_io is not None
+            persisted, duplicate = persisted_during_broker_io
             session.commit()
 
             self.assertFalse(duplicate)
@@ -268,6 +289,89 @@ class TestInfrastructureValidationExclusion(OrderFeedTestCase):
             session.refresh(persisted)
             self.assertIsNone(persisted.execution_id)
             self.assertIsNone(persisted.trade_decision_id)
+            self.assertEqual(
+                session.execute(select(TigerBeetleTransferRef)).scalars().all(),
+                [],
+            )
+
+            evidence = load_infrastructure_validation_evidence(
+                session,
+                account_label="paper",
+                client_order_id=client_order_id,
+            )
+            assert evidence is not None
+            replacement_intent = build_broker_mutation_intent(
+                BrokerMutationIntentRequest(
+                    broker_route="alpaca",
+                    account_label="paper",
+                    endpoint_fingerprint=evidence.endpoint_fingerprint,
+                    operation="replace_order",
+                    risk_class="risk_neutral",
+                    purpose="repricing",
+                    workflow_id="validation-replace-1",
+                    client_request_id="validation-replace-1",
+                    target=BrokerMutationTarget(
+                        kind="order",
+                        key="validation-order-1",
+                    ),
+                    request_payload={
+                        "schema_version": "torghut.alpaca-reduction-request.v1",
+                        "order_id": "validation-order-1",
+                        "limit_price": "0.9",
+                        "infrastructure_validation_lineage": (
+                            infrastructure_validation_lineage_payload(evidence)
+                        ),
+                    },
+                )
+            )
+            BrokerMutationCoordinator(
+                "validation-descendant-test"
+            ).execute_unlinked_mutation(
+                session,
+                intent=replacement_intent,
+                callbacks=UnlinkedMutationCallbacks(
+                    broker_call=lambda _permit: {
+                        "id": "validation-replacement-1",
+                        "status": "accepted",
+                    },
+                    persist_terminal=lambda _result: None,
+                    build_settlement=lambda result: build_broker_mutation_settlement(
+                        BrokerMutationSettlementRequest(
+                            source="primary",
+                            outcome="acknowledged",
+                            broker_reference=str(result["id"]),
+                            execution_id=None,
+                            evidence_payload={"status": result["status"]},
+                        )
+                    ),
+                ),
+            )
+            descendant_payload = (
+                '{"channel":"trade_updates","payload":{"event":"fill",'
+                '"timestamp":"2026-07-14T10:01:00Z","order":{'
+                '"id":"validation-replacement-1",'
+                '"client_order_id":"broker-replacement-client",'
+                '"symbol":"BTC/USD","status":"filled","qty":"1",'
+                '"filled_qty":"1","filled_avg_price":"1"}},"seq":11}'
+            ).encode()
+            descendant = normalize_order_feed_record(
+                FakeRecord(value=descendant_payload, offset=92),
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert descendant.event is not None
+            descendant_event, descendant_duplicate = persist_order_event(
+                session,
+                descendant.event,
+            )
+            session.commit()
+
+            self.assertFalse(descendant_duplicate)
+            self.assertIsNone(descendant_event.execution_id)
+            self.assertIsNone(descendant_event.trade_decision_id)
+            self.assertTrue(
+                is_non_promotable_validation_event(descendant_event.raw_event)
+            )
             self.assertEqual(
                 session.execute(select(TigerBeetleTransferRef)).scalars().all(),
                 [],

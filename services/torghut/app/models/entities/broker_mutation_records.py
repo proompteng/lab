@@ -24,6 +24,7 @@ from sqlalchemy.schema import conv
 from ..base import Base, GUID
 from .broker_mutation_validation_contract import (
     BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
+    BROKER_MUTATION_VALIDATION_LINEAGE_SQL,
     BROKER_MUTATION_VALIDATION_PERMIT_ID_SQL,
 )
 
@@ -146,6 +147,10 @@ class BrokerMutationReceipt(Base):
         CheckConstraint(
             BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
             name=conv("ck_bm_receipt_validation_authority"),
+        ).ddl_if(dialect="postgresql"),
+        CheckConstraint(
+            BROKER_MUTATION_VALIDATION_LINEAGE_SQL,
+            name=conv("ck_bm_receipt_validation_lineage"),
         ).ddl_if(dialect="postgresql"),
         CheckConstraint("length(endpoint_fingerprint) = 64", name="endpoint_hash"),
         CheckConstraint(
@@ -535,6 +540,13 @@ class BrokerMutationReceiptEvent(Base):
             "recovery_lease_expires_at",
             "receipt_id",
             "sequence_no",
+        ),
+        Index(
+            "ix_bm_receipt_event_broker_reference",
+            "broker_reference",
+            "receipt_id",
+            postgresql_where=text("state = 'settled' AND broker_reference IS NOT NULL"),
+            sqlite_where=text("state = 'settled' AND broker_reference IS NOT NULL"),
         ),
     )
 
