@@ -12,12 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ...models import (
-    Execution,
-    Strategy,
-    TradeDecision,
-    coerce_json_payload,
-)
+from ...models import Execution, Strategy, TradeDecision, coerce_json_payload
 from ...config import settings
 from ...snapshots import link_pending_order_feed_events, sync_order_to_db
 from ..route_metadata import resolve_order_route_metadata
@@ -41,13 +36,8 @@ from .order_lifecycle import (
     fetch_existing_orders,
 )
 from . import durable_existing_order_recovery as durable_recovery
-from ..quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
-)
-from ..simulation import (
-    resolve_event_persisted_at,
-)
+from ..quantity_rules import min_qty_for_symbol, quantize_qty_for_symbol
+from ..simulation import resolve_event_persisted_at
 from ..tca import upsert_execution_tca_metric
 
 from .shared_context import (
@@ -633,7 +623,11 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             _attach_execution_policy_context(execution, execution_policy_context)
             upsert_execution_tca_metric(session, execution)
             _apply_execution_status(decision_row, execution, account_label)
-            recovered_execution = execution
+            if recovered_execution is None or (
+                (_optional_decimal(execution.filled_qty) or Decimal("0"))
+                >= (_optional_decimal(recovered_execution.filled_qty) or Decimal("0"))
+            ):
+                recovered_execution = execution
         session.add(decision_row)
         session.commit()
         logger.info(

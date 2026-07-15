@@ -187,6 +187,82 @@ def test_existing_order_path_uses_durable_recovery_before_legacy_backfill() -> N
     legacy_backfill.assert_not_called()
 
 
+def test_legacy_backfill_prefers_filled_attempt_over_later_terminal_retry() -> None:
+    decision = StrategyDecision(
+        strategy_id=str(uuid.uuid4()),
+        symbol="AAPL",
+        event_ts=datetime(2026, 7, 15, 6, 10, tzinfo=timezone.utc),
+        timeframe="1Min",
+        action="buy",
+        qty=Decimal("1"),
+    )
+    decision_row = cast(
+        TradeDecision,
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_hash="5" * 64,
+            alpaca_account_label="paper",
+        ),
+    )
+    partial_execution = cast(
+        Execution,
+        SimpleNamespace(
+            id=uuid.uuid4(), status="partially_filled", filled_qty=Decimal("0.4")
+        ),
+    )
+    canceled_execution = cast(
+        Execution,
+        SimpleNamespace(id=uuid.uuid4(), status="canceled", filled_qty=Decimal("0")),
+    )
+    session = MagicMock(spec=Session)
+    executor = OrderExecutor()
+    existing_orders = [
+        {"id": "base-order", "filled_qty": "0.4", "status": "partially_filled"},
+        {"id": "retry-order", "filled_qty": "0", "status": "canceled"},
+    ]
+
+    with (
+        patch(
+            "app.trading.execution.order_executor_core_methods.fetch_existing_orders",
+            return_value=existing_orders,
+        ),
+        patch.object(
+            executor,
+            "_sync_execution_payload",
+            side_effect=(partial_execution, canceled_execution),
+        ),
+        patch(
+            "app.trading.execution.order_executor_core_methods."
+            "_order_payload_with_execution_metadata",
+            side_effect=lambda order, *_args, **_kwargs: order,
+        ),
+        patch(
+            "app.trading.execution.order_executor_core_methods."
+            "_attach_execution_policy_context"
+        ),
+        patch(
+            "app.trading.execution.order_executor_core_methods."
+            "upsert_execution_tca_metric"
+        ),
+        patch(
+            "app.trading.execution.order_executor_core_methods._apply_execution_status"
+        ),
+    ):
+        handled, execution = executor._sync_existing_order_if_present(
+            session=session,
+            execution_client=object(),
+            decision=decision,
+            decision_row=decision_row,
+            account_label="paper",
+            execution_expected_adapter="alpaca",
+            execution_policy_context={},
+        )
+
+    assert handled
+    assert execution is partial_execution
+    session.commit.assert_called_once_with()
+
+
 def test_submit_order_returns_recovered_terminal_execution() -> None:
     decision = StrategyDecision(
         strategy_id=str(uuid.uuid4()),
