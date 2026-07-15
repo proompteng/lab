@@ -14,7 +14,10 @@ from ..trading.broker_mutation_submit_coordinator import (
     BrokerMutationSubmissionDeferred,
     BrokerMutationSubmitCoordinator,
 )
-from ..trading.broker_mutation_recovery_worker import BrokerMutationRecoveryRunResult
+from ..trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRunError,
+    BrokerMutationRecoveryRunResult,
+)
 from .config import HyperliquidExecutionConfig
 from .entry_processing import process_features
 from .exchange import HyperliquidExecutionExchange
@@ -198,7 +201,7 @@ class HyperliquidExecutionService:
         self._recovery_run_sequence += 1
         try:
             recovery_result = self._recovery_worker.run_once()
-        except Exception as exc:
+        except BrokerMutationRecoveryRunError as exc:
             logger.exception(
                 "Hyperliquid broker mutation recovery cycle failed error_class=%s",
                 type(exc).__name__,

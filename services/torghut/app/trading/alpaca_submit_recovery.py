@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
+from alpaca.common.exceptions import APIError, RetryException
+from requests.exceptions import RequestException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -23,7 +25,10 @@ from .broker_mutation_receipts import (
     build_linked_submission_terminal_settlement,
     fingerprint_broker_endpoint,
 )
-from .broker_mutation_recovery_worker import BrokerSubmitRecoveryRead
+from .broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRouteError,
+    BrokerSubmitRecoveryRead,
+)
 from .execution import OrderExecutor
 from .firewall import OrderFirewall
 
@@ -92,23 +97,48 @@ class AlpacaSubmitRecoveryRoute:
         *,
         observed_at: datetime,
     ) -> BrokerSubmitRecoveryRead:
+        try:
+            return self._observe(receipt, observed_at=observed_at)
+        except (
+            APIError,
+            RetryException,
+            RequestException,
+            OSError,
+            TimeoutError,
+        ) as exc:
+            raise BrokerMutationRecoveryRouteError(
+                f"alpaca_submit_recovery_read_failed:{type(exc).__name__}"
+            ) from exc
+
+    def _observe(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+        *,
+        observed_at: datetime,
+    ) -> BrokerSubmitRecoveryRead:
         client_order_id = receipt.intent.client_request_id
         exact = self._client.get_order_by_client_order_id_strict(client_order_id)
         if exact is not None:
             return self._found_read(
                 receipt,
                 order=exact,
-                exact_lookup="found",
-                history_count=0,
-                history_complete=False,
+                evidence=self._evidence(
+                    exact_lookup="found",
+                    history_count=0,
+                    history_complete=False,
+                    match_count=1,
+                ),
             )
 
         started_at = receipt.lifecycle.broker_io_started_at
         if started_at is None:
             return self._indeterminate_read(
-                exact_lookup="not_found",
-                history_count=0,
-                history_complete=False,
+                evidence=self._evidence(
+                    exact_lookup="not_found",
+                    history_count=0,
+                    history_complete=False,
+                    match_count=0,
+                ),
                 reason="broker_io_started_at_missing",
             )
         history = self._client.list_orders_recovery_window(
@@ -129,17 +159,22 @@ class AlpacaSubmitRecoveryRoute:
             return self._found_read(
                 receipt,
                 order=matches[0],
-                exact_lookup="not_found",
-                history_count=len(history.orders),
-                history_complete=history.complete,
+                evidence=self._evidence(
+                    exact_lookup="not_found",
+                    history_count=len(history.orders),
+                    history_complete=history.complete,
+                    match_count=1,
+                ),
             )
         if len(matches) > 1 or len(broker_ids) > 1:
             return self._indeterminate_read(
-                exact_lookup="not_found",
-                history_count=len(history.orders),
-                history_complete=history.complete,
+                evidence=self._evidence(
+                    exact_lookup="not_found",
+                    history_count=len(history.orders),
+                    history_complete=history.complete,
+                    match_count=len(matches),
+                ),
                 reason="conflicting_client_order_history",
-                match_count=len(matches),
             )
         evidence = self._evidence(
             exact_lookup="not_found",
@@ -219,8 +254,7 @@ class AlpacaSubmitRecoveryRoute:
             execution = self._executor.recover_linked_order_submission(
                 session=session,
                 execution_client=self._firewall,
-                decision_id=claim_handle.decision_id,
-                account_label=receipt.intent.account_label,
+                claim_handle=claim_handle,
                 order_response=order,
             )
             return build_linked_submission_terminal_settlement(
@@ -257,30 +291,20 @@ class AlpacaSubmitRecoveryRoute:
         receipt: BrokerMutationReceiptSnapshot,
         *,
         order: Mapping[str, object],
-        exact_lookup: str,
-        history_count: int,
-        history_complete: bool,
+        evidence: Mapping[str, object],
     ) -> BrokerSubmitRecoveryRead:
         try:
             normalized = _validated_alpaca_order(receipt, order)
         except ValueError as exc:
             return self._indeterminate_read(
-                exact_lookup=exact_lookup,
-                history_count=history_count,
-                history_complete=history_complete,
+                evidence=evidence,
                 reason=str(exc),
-                match_count=1,
             )
         return BrokerSubmitRecoveryRead(
             outcome="found",
             broker_order=order,
             evidence={
-                **self._evidence(
-                    exact_lookup=exact_lookup,
-                    history_count=history_count,
-                    history_complete=history_complete,
-                    match_count=1,
-                ),
+                **dict(evidence),
                 "broker_status": normalized["status"],
                 "broker_reference": normalized["broker_reference"],
                 "submission_resolution": normalized["submission_resolution"],
@@ -290,21 +314,13 @@ class AlpacaSubmitRecoveryRoute:
     def _indeterminate_read(
         self,
         *,
-        exact_lookup: str,
-        history_count: int,
-        history_complete: bool,
+        evidence: Mapping[str, object],
         reason: str,
-        match_count: int = 0,
     ) -> BrokerSubmitRecoveryRead:
         return BrokerSubmitRecoveryRead(
             outcome="indeterminate",
             evidence={
-                **self._evidence(
-                    exact_lookup=exact_lookup,
-                    history_count=history_count,
-                    history_complete=history_complete,
-                    match_count=match_count,
-                ),
+                **dict(evidence),
                 "reason": reason,
                 "absence_proof_complete": False,
             },

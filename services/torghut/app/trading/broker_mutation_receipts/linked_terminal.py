@@ -6,6 +6,7 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
 
@@ -29,6 +30,7 @@ from ..decision_submission_claims.types import (
 from ..decision_submission_claims.validation import normalized_terminal_identity
 from .canonicalization import build_broker_mutation_settlement
 from .lifecycle_helpers import (
+    LockedReceipt,
     lock_current_receipt,
     normalized_primary_handle,
     normalized_recovery_handle,
@@ -83,6 +85,40 @@ LINKED_SUBMISSION_RECOVERY_TERMINAL_SCHEMA_VERSION = (
 )
 _STABLE_BROKER_VALUE = re.compile(r"^[a-z0-9][a-z0-9_.:-]*$")
 _SUCCESS_OUTCOMES: frozenset[str] = frozenset({"acknowledged", "reconciled"})
+
+
+@dataclass(frozen=True, slots=True)
+class _LinkedRecoveryContext:
+    receipt: LockedReceipt
+    receipt_handle: BrokerMutationRecoveryHandle
+    primary_claim_handle: DecisionSubmissionClaimHandle
+    claim_recovery_handle: DecisionSubmissionRecoveryHandle
+
+
+def _lock_linked_recovery_context(
+    session: Session,
+    *,
+    normalized_handle: BrokerMutationRecoveryHandle,
+    submission_recovery_handle: DecisionSubmissionRecoveryHandle,
+) -> _LinkedRecoveryContext:
+    current = lock_current_receipt(session, normalized_handle.receipt_id)
+    if current is None:
+        raise BrokerMutationReceiptFenceError(
+            f"broker_mutation_receipt_not_found:{normalized_handle.receipt_id}"
+        )
+    require_recovery_handle(current.snapshot, normalized_handle)
+    primary_claim_handle = _required_submission_claim_handle(current.snapshot)
+    claim_recovery_handle = _normalize_claim_recovery_handle(submission_recovery_handle)
+    _require_paired_recovery_handles(
+        receipt_handle=normalized_handle,
+        claim_handle=claim_recovery_handle,
+    )
+    return _LinkedRecoveryContext(
+        receipt=current,
+        receipt_handle=normalized_handle,
+        primary_claim_handle=primary_claim_handle,
+        claim_recovery_handle=claim_recovery_handle,
+    )
 
 
 def build_linked_submission_terminal_settlement(
@@ -302,26 +338,18 @@ def record_linked_submission_recovery_observation(
             maximum=RECEIPT_MAX_RECOVERY_SECONDS,
             field="retry_seconds",
         )
-        current = lock_current_receipt(session, normalized_handle.receipt_id)
-        if current is None:
-            raise BrokerMutationReceiptFenceError(
-                f"broker_mutation_receipt_not_found:{normalized_handle.receipt_id}"
-            )
-        require_recovery_handle(current.snapshot, normalized_handle)
+        context = _lock_linked_recovery_context(
+            session,
+            normalized_handle=normalized_handle,
+            submission_recovery_handle=submission_recovery_handle,
+        )
+        current = context.receipt
         _require_active_receipt_recovery(current.snapshot, current.now)
-        primary_claim_handle = _required_submission_claim_handle(current.snapshot)
-        claim_recovery_handle = _normalize_claim_recovery_handle(
-            submission_recovery_handle
-        )
-        _require_paired_recovery_handles(
-            receipt_handle=normalized_handle,
-            claim_handle=claim_recovery_handle,
-        )
         lock_linked_submission_recovery_claim(
             session,
             intent=current.snapshot.intent,
-            primary_handle=primary_claim_handle,
-            recovery_handle=claim_recovery_handle,
+            primary_handle=context.primary_claim_handle,
+            recovery_handle=context.claim_recovery_handle,
         )
         if (
             normalized_observation.checked_client_request_id
@@ -333,33 +361,32 @@ def record_linked_submission_recovery_observation(
                 "recovery_observation_identity_mismatch"
             )
 
-        retry_at = current.now + timedelta(seconds=bounded_retry)
         event_values = full_state_values_from_event(current.event)
         event_values.update(
             sequence_no=current.event.sequence_no + 1,
             event_type="recovery_observed",
-            event_writer_generation=normalized_handle.recovery_writer_generation,
-            recovery_after=retry_at,
+            event_writer_generation=context.receipt_handle.recovery_writer_generation,
+            recovery_after=current.now + timedelta(seconds=bounded_retry),
             recovery_checked_at=current.now,
-            recovery_observation_epoch=normalized_handle.recovery_epoch,
+            recovery_observation_epoch=context.receipt_handle.recovery_epoch,
             recovery_outcome=normalized_observation.outcome,
             recovery_evidence_json=normalized_observation.evidence_json,
             recovery_evidence_sha256=normalized_observation.evidence_sha256,
         )
         observed_event = append_full_state_event(
             session,
-            receipt_id=normalized_handle.receipt_id,
+            receipt_id=context.receipt_handle.receipt_id,
             values=event_values,
         )
         release_values = full_state_values_from_event(observed_event)
         release_values.update(
             sequence_no=observed_event.sequence_no + 1,
             event_type="recovery_released",
-            event_writer_generation=normalized_handle.recovery_writer_generation,
+            event_writer_generation=context.receipt_handle.recovery_writer_generation,
         )
         released_event = append_full_state_event(
             session,
-            receipt_id=normalized_handle.receipt_id,
+            receipt_id=context.receipt_handle.receipt_id,
             values=release_values,
         )
         if (
@@ -373,15 +400,15 @@ def record_linked_submission_recovery_observation(
         try:
             transition_recovery_uncommitted(
                 session,
-                handle=claim_recovery_handle,
+                handle=context.claim_recovery_handle,
                 values={
                     "recovery_checked_at": observed_event.recovery_checked_at,
                     "recovery_observation_epoch": (
-                        claim_recovery_handle.recovery_fencing_epoch
+                        context.claim_recovery_handle.recovery_fencing_epoch
                     ),
                     "recovery_outcome": normalized_observation.outcome,
                     "recovery_evidence": _claim_recovery_evidence_reference(
-                        receipt_id=normalized_handle.receipt_id,
+                        receipt_id=context.receipt_handle.receipt_id,
                         evidence_sha256=normalized_observation.evidence_sha256,
                     ),
                     "recovery_after": observed_event.recovery_after,
@@ -397,8 +424,8 @@ def record_linked_submission_recovery_observation(
         commit_or_rollback(session)
         return _committed_recovery_observation_result(
             session,
-            receipt_id=normalized_handle.receipt_id,
-            decision_id=primary_claim_handle.decision_id,
+            receipt_id=context.receipt_handle.receipt_id,
+            decision_id=context.primary_claim_handle.decision_id,
         )
 
 
@@ -417,29 +444,21 @@ def settle_linked_submission_recovery(
             settlement,
             expected_source="recovery",
         )
-        current = lock_current_receipt(session, normalized_handle.receipt_id)
-        if current is None:
-            raise BrokerMutationReceiptFenceError(
-                f"broker_mutation_receipt_not_found:{normalized_handle.receipt_id}"
-            )
-        require_recovery_handle(current.snapshot, normalized_handle)
-        primary_claim_handle = _required_submission_claim_handle(current.snapshot)
-        claim_recovery_handle = _normalize_claim_recovery_handle(
-            submission_recovery_handle
+        context = _lock_linked_recovery_context(
+            session,
+            normalized_handle=normalized_handle,
+            submission_recovery_handle=submission_recovery_handle,
         )
-        _require_paired_recovery_handles(
-            receipt_handle=normalized_handle,
-            claim_handle=claim_recovery_handle,
-        )
+        current = context.receipt
         terminal_evidence = _validate_linked_terminal_evidence(
             normalized_terminal,
-            claim_handle=primary_claim_handle,
+            claim_handle=context.primary_claim_handle,
         )
         if current.snapshot.settled:
             locked_claim = lock_linked_submission_claim(
                 session,
                 intent=current.snapshot.intent,
-                handle=primary_claim_handle,
+                handle=context.primary_claim_handle,
                 expected_states=frozenset({"submitted", "rejected"}),
                 require_unexpired=False,
             )
@@ -460,13 +479,13 @@ def settle_linked_submission_recovery(
         lock_linked_submission_recovery_claim(
             session,
             intent=current.snapshot.intent,
-            primary_handle=primary_claim_handle,
-            recovery_handle=claim_recovery_handle,
+            primary_handle=context.primary_claim_handle,
+            recovery_handle=context.claim_recovery_handle,
         )
         session.flush()
         terminal_values = _claim_terminal_values(
             session,
-            claim_handle=claim_recovery_handle,
+            claim_handle=context.claim_recovery_handle,
             settlement=normalized_terminal,
         )
         event_values = full_state_values_from_event(current.event)
@@ -474,7 +493,7 @@ def settle_linked_submission_recovery(
             sequence_no=current.event.sequence_no + 1,
             event_type="settled",
             state="settled",
-            event_writer_generation=normalized_handle.recovery_writer_generation,
+            event_writer_generation=context.receipt_handle.recovery_writer_generation,
             settlement_source=normalized_terminal.source,
             settlement_outcome=normalized_terminal.outcome,
             broker_reference=normalized_terminal.broker_reference,
@@ -485,7 +504,7 @@ def settle_linked_submission_recovery(
         )
         terminal_event = append_full_state_event(
             session,
-            receipt_id=normalized_handle.receipt_id,
+            receipt_id=context.receipt_handle.receipt_id,
             values=event_values,
         )
         if terminal_event.settled_at is None:  # pragma: no cover - DB contract
@@ -496,10 +515,12 @@ def settle_linked_submission_recovery(
             completed_at=terminal_event.settled_at,
             terminal_receipt_event_id=terminal_event.id,
             recovery_checked_at=terminal_event.settled_at,
-            recovery_observation_epoch=(claim_recovery_handle.recovery_fencing_epoch),
+            recovery_observation_epoch=(
+                context.claim_recovery_handle.recovery_fencing_epoch
+            ),
             recovery_outcome=_linked_recovery_claim_outcome(terminal_evidence),
             recovery_evidence=_claim_recovery_evidence_reference(
-                receipt_id=normalized_handle.receipt_id,
+                receipt_id=context.receipt_handle.receipt_id,
                 evidence_sha256=normalized_terminal.evidence_sha256,
             ),
             recovery_lease_expires_at=terminal_event.settled_at,
@@ -507,7 +528,7 @@ def settle_linked_submission_recovery(
         try:
             transition_recovery_uncommitted(
                 session,
-                handle=claim_recovery_handle,
+                handle=context.claim_recovery_handle,
                 values=terminal_values,
             )
         except DecisionSubmissionClaimError as exc:
@@ -517,8 +538,8 @@ def settle_linked_submission_recovery(
         commit_or_rollback(session)
         return _committed_terminal_result(
             session,
-            receipt_id=normalized_handle.receipt_id,
-            decision_id=primary_claim_handle.decision_id,
+            receipt_id=context.receipt_handle.receipt_id,
+            decision_id=context.primary_claim_handle.decision_id,
         )
 
 

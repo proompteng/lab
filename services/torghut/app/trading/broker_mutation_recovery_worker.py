@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Protocol, cast
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .broker_mutation_receipts import (
+    BrokerMutationReceiptError,
     BrokerMutationReceiptSnapshot,
     BrokerMutationRecoveryAcquireOptions,
     BrokerMutationRecoveryHandle,
@@ -34,6 +36,7 @@ from .broker_mutation_receipts import (
     settle_linked_submission_recovery,
 )
 from .decision_submission_claims import (
+    DecisionSubmissionClaimError,
     DecisionSubmissionRecoveryHandle,
     acquire_decision_submission_recovery_claim,
 )
@@ -54,6 +57,40 @@ BrokerMutationRecoveryRouteKey = tuple[str, str, str]
 SessionFactory = Callable[[], Session]
 
 
+class BrokerMutationRecoveryError(RuntimeError):
+    """Base error for the bounded recovery runtime."""
+
+
+class BrokerMutationRecoveryRouteError(BrokerMutationRecoveryError):
+    """A route-specific broker read failed before producing evidence."""
+
+
+class BrokerMutationRecoveryRunError(BrokerMutationRecoveryError):
+    """The worker could not complete its bounded recovery run."""
+
+
+_RECOVERY_ITEM_ERRORS = (
+    BrokerMutationReceiptError,
+    DecisionSubmissionClaimError,
+    SQLAlchemyError,
+    BrokerMutationRecoveryRouteError,
+    ValueError,
+)
+_RECOVERY_RUN_ERRORS = (
+    BrokerMutationReceiptError,
+    DecisionSubmissionClaimError,
+    SQLAlchemyError,
+    ValueError,
+)
+_RECOVERY_OBSERVATION_ERRORS = (BrokerMutationRecoveryRouteError, ValueError)
+_RECOVERY_ACTIVITY_ERRORS = (
+    BrokerMutationRecoveryRouteError,
+    SQLAlchemyError,
+    TimeoutError,
+    ValueError,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class BrokerSubmitRecoveryRead:
     """One broker observation with no authority to submit or mutate an order."""
@@ -61,6 +98,16 @@ class BrokerSubmitRecoveryRead:
     outcome: BrokerSubmitRecoveryReadOutcome
     evidence: Mapping[str, object]
     broker_order: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _BrokerSubmitRecoveryAttempt:
+    receipt: BrokerMutationReceiptSnapshot
+    receipt_handle: BrokerMutationRecoveryHandle
+    claim_handle: DecisionSubmissionRecoveryHandle | None
+    read: BrokerSubmitRecoveryRead
+    observed_at: datetime
+    independent_activity: tuple[str, ...] = ()
 
 
 class BrokerMutationRecoveryRoute(Protocol):
@@ -215,6 +262,14 @@ class BrokerMutationRecoveryWorker:
         self._routes = route_map
 
     def run_once(self) -> BrokerMutationRecoveryRunResult:
+        try:
+            return self._run_once()
+        except _RECOVERY_RUN_ERRORS as exc:
+            raise BrokerMutationRecoveryRunError(
+                f"broker_mutation_recovery_run_failed:{type(exc).__name__}"
+            ) from exc
+
+    def _run_once(self) -> BrokerMutationRecoveryRunResult:
         if not self._enabled:
             return BrokerMutationRecoveryRunResult(False, 0, {"disabled": 1})
         with self._session_factory() as session:
@@ -240,7 +295,7 @@ class BrokerMutationRecoveryWorker:
             scanned += 1
             try:
                 outcome = self._recover_one(route, receipt)
-            except Exception as exc:
+            except _RECOVERY_ITEM_ERRORS as exc:
                 outcomes["failed"] += 1
                 logger.exception(
                     "Broker mutation recovery failed receipt_id=%s error_class=%s",
@@ -310,7 +365,7 @@ class BrokerMutationRecoveryWorker:
         observed_at = datetime.now(timezone.utc)
         try:
             read = _validated_read(route.observe(receipt, observed_at=observed_at))
-        except Exception as exc:
+        except _RECOVERY_OBSERVATION_ERRORS as exc:
             read = BrokerSubmitRecoveryRead(
                 outcome="indeterminate",
                 evidence={
@@ -326,7 +381,7 @@ class BrokerMutationRecoveryWorker:
             try:
                 with self._session_factory() as session:
                     independent_activity = route.independent_activity(session, receipt)
-            except Exception as exc:
+            except _RECOVERY_ACTIVITY_ERRORS as exc:
                 read = BrokerSubmitRecoveryRead(
                     outcome="indeterminate",
                     evidence={
@@ -347,35 +402,22 @@ class BrokerMutationRecoveryWorker:
                         },
                     )
 
-        if read.outcome == "found":
-            return self._settle_found(
-                route,
-                receipt,
-                receipt_handle=receipt_handle,
-                claim_handle=claim_handle,
-                read=read,
-            )
-        if self._absence_window_expired(
-            receipt,
-            read=read,
-            observed_at=observed_at,
-            independent_activity=independent_activity,
-        ):
-            return self._record_nonterminal(
-                receipt,
-                receipt_handle=receipt_handle,
-                claim_handle=claim_handle,
-                read=read,
-                observed_at=observed_at,
-                resolution_state="expired",
-            )
-        return self._record_nonterminal(
-            receipt,
+        attempt = _BrokerSubmitRecoveryAttempt(
+            receipt=receipt,
             receipt_handle=receipt_handle,
             claim_handle=claim_handle,
             read=read,
             observed_at=observed_at,
+            independent_activity=independent_activity,
         )
+        if read.outcome == "found":
+            return self._settle_found(route, attempt)
+        if self._absence_window_expired(attempt):
+            return self._record_nonterminal(
+                attempt,
+                resolution_state="expired",
+            )
+        return self._record_nonterminal(attempt)
 
     def _acquire_linked_claim(
         self,
@@ -400,54 +442,50 @@ class BrokerMutationRecoveryWorker:
     def _settle_found(
         self,
         route: BrokerMutationRecoveryRoute,
-        receipt: BrokerMutationReceiptSnapshot,
-        *,
-        receipt_handle: BrokerMutationRecoveryHandle,
-        claim_handle: DecisionSubmissionRecoveryHandle | None,
-        read: BrokerSubmitRecoveryRead,
+        attempt: _BrokerSubmitRecoveryAttempt,
     ) -> str:
         with self._session_factory() as session:
-            settlement = route.build_found_settlement(session, receipt, read)
+            settlement = route.build_found_settlement(
+                session,
+                attempt.receipt,
+                attempt.read,
+            )
             if settlement.outcome not in {"reconciled", "rejected"}:
                 raise ValueError("broker_mutation_recovery_settlement_outcome_invalid")
-            if claim_handle is None:
+            if attempt.claim_handle is None:
                 settle_broker_mutation_recovery(
                     session,
-                    handle=receipt_handle,
+                    handle=attempt.receipt_handle,
                     settlement=settlement,
                 )
             else:
                 settle_linked_submission_recovery(
                     session,
-                    handle=receipt_handle,
-                    submission_recovery_handle=claim_handle,
+                    handle=attempt.receipt_handle,
+                    submission_recovery_handle=attempt.claim_handle,
                     settlement=settlement,
                 )
         return "reconciled" if settlement.outcome == "reconciled" else "rejected"
 
     def _record_nonterminal(
         self,
-        receipt: BrokerMutationReceiptSnapshot,
+        attempt: _BrokerSubmitRecoveryAttempt,
         *,
-        receipt_handle: BrokerMutationRecoveryHandle,
-        claim_handle: DecisionSubmissionRecoveryHandle | None,
-        read: BrokerSubmitRecoveryRead,
-        observed_at: datetime,
         resolution_state: BrokerSubmitRecoveryResolutionState | None = None,
     ) -> str:
-        age_seconds = _recovery_age_seconds(receipt, observed_at)
+        age_seconds = _recovery_age_seconds(attempt.receipt, attempt.observed_at)
         manual_review = (
-            read.outcome == "indeterminate"
+            attempt.read.outcome == "indeterminate"
             and age_seconds >= self._policy.manual_review_after_seconds
         )
         resolved_state: BrokerSubmitRecoveryResolutionState = resolution_state or (
             "manual_review" if manual_review else "submitted_unknown"
         )
         evidence_payload = {
-            **dict(read.evidence),
+            **dict(attempt.read.evidence),
             "schema_version": BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION,
-            "broker_read_schema_version": read.evidence["schema_version"],
-            "route": receipt.intent.broker_route,
+            "broker_read_schema_version": attempt.read.evidence["schema_version"],
+            "route": attempt.receipt.intent.broker_route,
             "resolution_state": resolved_state,
             "automatic_recovery_age_seconds": age_seconds,
             "automatic_resubmission_attempted": False,
@@ -456,9 +494,9 @@ class BrokerMutationRecoveryWorker:
         }
         observation = build_broker_mutation_recovery_observation(
             BrokerMutationRecoveryObservationRequest(
-                checked_client_request_id=receipt.intent.client_request_id,
-                checked_target_key=receipt.intent.target.key,
-                outcome=read.outcome,
+                checked_client_request_id=attempt.receipt.intent.client_request_id,
+                checked_target_key=attempt.receipt.intent.target.key,
+                outcome=attempt.read.outcome,
                 evidence_payload=evidence_payload,
             )
         )
@@ -468,48 +506,49 @@ class BrokerMutationRecoveryWorker:
             else self._policy.retry_seconds
         )
         with self._session_factory() as session:
-            if claim_handle is None:
+            if attempt.claim_handle is None:
                 record_broker_mutation_recovery_observation(
                     session,
-                    handle=receipt_handle,
+                    handle=attempt.receipt_handle,
                     observation=observation,
                     retry_seconds=retry_seconds,
                 )
             else:
                 record_linked_submission_recovery_observation(
                     session,
-                    handle=receipt_handle,
-                    submission_recovery_handle=claim_handle,
+                    handle=attempt.receipt_handle,
+                    submission_recovery_handle=attempt.claim_handle,
                     observation=observation,
                     retry_seconds=retry_seconds,
                 )
-        if claim_handle is None:
-            self._release_receipt(receipt_handle)
+        if attempt.claim_handle is None:
+            self._release_receipt(attempt.receipt_handle)
         if resolved_state != "submitted_unknown":
             return resolved_state
-        return read.outcome
+        return attempt.read.outcome
 
     def _absence_window_expired(
         self,
-        receipt: BrokerMutationReceiptSnapshot,
-        *,
-        read: BrokerSubmitRecoveryRead,
-        observed_at: datetime,
-        independent_activity: tuple[str, ...],
+        attempt: _BrokerSubmitRecoveryAttempt,
     ) -> bool:
         if (
-            read.outcome != "not_found"
-            or independent_activity
-            or read.evidence.get("absence_proof_complete") is not True
-            or _recovery_age_seconds(receipt, observed_at)
+            attempt.read.outcome != "not_found"
+            or attempt.independent_activity
+            or attempt.read.evidence.get("absence_proof_complete") is not True
+            or _recovery_age_seconds(attempt.receipt, attempt.observed_at)
             < self._policy.absence_grace_seconds
-            or receipt.recovery.outcome != "not_found"
-            or receipt.recovery.checked_at is None
-            or (observed_at - receipt.recovery.checked_at).total_seconds()
+            or attempt.receipt.recovery.outcome != "not_found"
+            or attempt.receipt.recovery.checked_at is None
+            or (
+                attempt.observed_at - attempt.receipt.recovery.checked_at
+            ).total_seconds()
             < self._policy.absence_observation_spacing_seconds
         ):
             return False
-        return _prior_absence_proof_is_compatible(receipt, read=read)
+        return _prior_absence_proof_is_compatible(
+            attempt.receipt,
+            read=attempt.read,
+        )
 
     def _release_receipt(self, handle: BrokerMutationRecoveryHandle) -> None:
         with self._session_factory() as session:

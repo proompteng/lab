@@ -11,6 +11,7 @@ from ...db import SessionLocal
 from ..alpaca_submit_recovery import AlpacaSubmitRecoveryRoute
 from ..broker_mutation_recovery_worker import (
     BrokerMutationRecoveryPolicy,
+    BrokerMutationRecoveryRunError,
     BrokerMutationRecoveryWorker,
 )
 from .pipeline import TradingPipeline
@@ -70,7 +71,7 @@ async def reconcile_broker_mutation_recovery(
         return True
     try:
         result = await asyncio.to_thread(worker.run_once)
-    except Exception as exc:
+    except BrokerMutationRecoveryRunError as exc:
         metrics.record_broker_mutation_recovery(outcome="failed")
         emit_failure(loop_name="broker_mutation_recovery", error=exc)
         return False

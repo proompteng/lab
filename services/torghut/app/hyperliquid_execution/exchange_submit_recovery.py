@@ -6,11 +6,36 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Literal, Protocol, cast
 
+from requests.exceptions import RequestException
+
+from ..trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRouteError,
+)
 from .models import OrderIntent
+from .sdk_submission import HYPERLIQUID_SDK_ERRORS
 
 _HYPERLIQUID_HISTORY_LIMIT = 2000
+_RECOVERY_READ_EXCEPTIONS = HYPERLIQUID_SDK_ERRORS + (
+    RequestException,
+    OSError,
+    TimeoutError,
+)
+
+
+class HyperliquidRecoveryInfo(Protocol):
+    def query_order_by_cloid(self, account_address: str, cloid: object) -> object: ...
+
+    def historical_orders(self, account_address: str) -> object: ...
+
+    def user_fills_by_time(
+        self,
+        account_address: str,
+        _start_time: int,
+        _end_time: int,
+        _aggregate_by_time: bool,
+    ) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +43,23 @@ class HyperliquidOrderRecoveryLookup:
     outcome: Literal["found", "not_found", "indeterminate"]
     evidence: Mapping[str, object]
     order: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HyperliquidOrderRecoveryRequest:
+    account_address: str
+    cloid: str
+    sdk_cloid: object
+    after: datetime
+    until: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _HyperliquidRecoveryHistory:
+    orders: tuple[Mapping[str, object], ...]
+    fills: tuple[Mapping[str, object], ...]
+    order_count: int
+    fill_count: int
 
 
 def hyperliquid_submit_request_payload(intent: OrderIntent) -> dict[str, object]:
@@ -40,16 +82,28 @@ def hyperliquid_submit_request_payload(intent: OrderIntent) -> dict[str, object]
 
 def recover_hyperliquid_order(
     *,
-    info: Any,
-    account_address: str,
-    cloid: str,
-    sdk_cloid: object,
-    after: datetime,
-    until: datetime,
+    info: HyperliquidRecoveryInfo | None,
+    request: HyperliquidOrderRecoveryRequest,
 ) -> HyperliquidOrderRecoveryLookup:
     """Observe one CLOID and bounded history without any exchange mutation."""
 
-    if not account_address:
+    try:
+        return _recover_hyperliquid_order(
+            info=info,
+            request=request,
+        )
+    except _RECOVERY_READ_EXCEPTIONS as exc:
+        raise BrokerMutationRecoveryRouteError(
+            f"hyperliquid_submit_recovery_read_failed:{type(exc).__name__}"
+        ) from exc
+
+
+def _recover_hyperliquid_order(
+    *,
+    info: HyperliquidRecoveryInfo | None,
+    request: HyperliquidOrderRecoveryRequest,
+) -> HyperliquidOrderRecoveryLookup:
+    if not request.account_address:
         return HyperliquidOrderRecoveryLookup(
             outcome="indeterminate",
             evidence={
@@ -60,10 +114,16 @@ def recover_hyperliquid_order(
                 "reason": "account_address_missing",
             },
         )
-    if after.tzinfo is None or until.tzinfo is None or after >= until:
+    if info is None:
+        raise ValueError("hyperliquid_recovery_info_required")
+    if (
+        request.after.tzinfo is None
+        or request.until.tzinfo is None
+        or request.after >= request.until
+    ):
         raise ValueError("hyperliquid_recovery_window_invalid")
-    exact_raw = info.query_order_by_cloid(account_address, sdk_cloid)
-    exact_status, exact_order = _hyperliquid_exact_order(exact_raw, cloid)
+    exact_raw = info.query_order_by_cloid(request.account_address, request.sdk_cloid)
+    exact_status, exact_order = _hyperliquid_exact_order(exact_raw, request.cloid)
     if exact_order is not None:
         return HyperliquidOrderRecoveryLookup(
             outcome="found",
@@ -81,47 +141,71 @@ def recover_hyperliquid_order(
             },
             order=exact_order,
         )
-    history_raw = info.historical_orders(account_address)
+    history = _load_hyperliquid_history(info, request)
+    return _hyperliquid_history_lookup(
+        history,
+        cloid=request.cloid,
+        exact_status=exact_status,
+    )
+
+
+def _load_hyperliquid_history(
+    info: HyperliquidRecoveryInfo,
+    request: HyperliquidOrderRecoveryRequest,
+) -> _HyperliquidRecoveryHistory:
+    history_raw = info.historical_orders(request.account_address)
     fills_raw = info.user_fills_by_time(
-        account_address,
-        int(after.timestamp() * 1000),
-        int(until.timestamp() * 1000),
+        request.account_address,
+        int(request.after.timestamp() * 1000),
+        int(request.until.timestamp() * 1000),
         False,
     )
     if not isinstance(history_raw, list) or not isinstance(fills_raw, list):
         raise ValueError("hyperliquid_recovery_history_payload_invalid")
     history_items = cast(list[object], history_raw)
     fill_items = cast(list[object], fills_raw)
-    history = tuple(
-        cast(Mapping[str, object], item)
-        for item in history_items
-        if isinstance(item, dict)
+    return _HyperliquidRecoveryHistory(
+        orders=tuple(
+            cast(Mapping[str, object], item)
+            for item in history_items
+            if isinstance(item, dict)
+        ),
+        fills=tuple(
+            cast(Mapping[str, object], item)
+            for item in fill_items
+            if isinstance(item, dict)
+        ),
+        order_count=len(history_items),
+        fill_count=len(fill_items),
     )
-    fills = tuple(
-        cast(Mapping[str, object], item)
-        for item in fill_items
-        if isinstance(item, dict)
-    )
+
+
+def _hyperliquid_history_lookup(
+    history: _HyperliquidRecoveryHistory,
+    *,
+    cloid: str,
+    exact_status: str,
+) -> HyperliquidOrderRecoveryLookup:
     history_matches = tuple(
-        item for item in history if _hyperliquid_payload_cloid(item) == cloid
+        item for item in history.orders if _hyperliquid_payload_cloid(item) == cloid
     )
     fill_matches = tuple(
-        item for item in fills if _hyperliquid_payload_cloid(item) == cloid
+        item for item in history.fills if _hyperliquid_payload_cloid(item) == cloid
     )
     matches: list[Mapping[str, object]] = list(history_matches)
     matches.extend(_hyperliquid_order_from_fill(item) for item in fill_matches)
     matches = _deduplicate_hyperliquid_matches(matches)
     broker_ids = {_hyperliquid_payload_oid(item) for item in matches}.difference({None})
-    history_complete = len(history_items) < _HYPERLIQUID_HISTORY_LIMIT
-    fills_complete = len(fill_items) < _HYPERLIQUID_HISTORY_LIMIT
+    history_complete = history.order_count < _HYPERLIQUID_HISTORY_LIMIT
+    fills_complete = history.fill_count < _HYPERLIQUID_HISTORY_LIMIT
     evidence = {
         "exact_order_status": exact_status,
         "history_checked": True,
-        "history_count": len(history_items),
+        "history_count": history.order_count,
         "history_complete": history_complete,
         "history_match_count": len(history_matches),
         "fill_checked": True,
-        "fill_count": len(fill_items),
+        "fill_count": history.fill_count,
         "fill_complete": fills_complete,
         "fill_match_count": len(fill_matches),
         "absence_proof_complete": (

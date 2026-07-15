@@ -17,6 +17,7 @@ from ..trading.broker_mutation_receipts import (
 from .config import HyperliquidExecutionConfig
 from .exchange_submit_recovery import (
     HyperliquidOrderRecoveryLookup,
+    HyperliquidOrderRecoveryRequest,
     hyperliquid_submit_request_payload,
     recover_hyperliquid_order,
 )
@@ -327,11 +328,13 @@ class HyperliquidSdkExecutionExchange:
         account_address = (self._config.account_address or "").strip()
         lookup = recover_hyperliquid_order(
             info=self._recovery_info() if account_address else None,
-            account_address=account_address,
-            cloid=cloid,
-            sdk_cloid=self._cloid(cloid) if account_address else cloid,
-            after=after,
-            until=until,
+            request=HyperliquidOrderRecoveryRequest(
+                account_address=account_address,
+                cloid=cloid,
+                sdk_cloid=self._cloid(cloid) if account_address else cloid,
+                after=after,
+                until=until,
+            ),
         )
         if account_address:
             self._last_read_at = datetime.now(timezone.utc)

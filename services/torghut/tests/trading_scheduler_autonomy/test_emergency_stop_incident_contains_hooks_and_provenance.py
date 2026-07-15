@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import cast
 
-from app.trading.broker_mutation_recovery_worker import BrokerMutationRecoveryWorker
+from app.trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRunError,
+    BrokerMutationRecoveryWorker,
+)
 
 from tests.trading_scheduler_autonomy.support import (
     Path,
@@ -305,7 +308,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
     def test_recovery_worker_failure_is_counted_and_fails_reconciliation(self) -> None:
         class _FailingRecoveryWorker:
             def run_once(self) -> None:
-                raise RuntimeError("recovery unavailable")
+                raise BrokerMutationRecoveryRunError("recovery unavailable")
 
         scheduler = TradingScheduler()
         lane = _PipelineIterationStub(

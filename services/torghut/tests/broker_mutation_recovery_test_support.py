@@ -20,6 +20,7 @@ from app.models import (
     TradeDecisionSubmissionClaim,
 )
 from app.trading.broker_mutation_receipts import (
+    BrokerMutationReceiptError,
     BrokerMutationIntentRequest,
     BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationReceiptAcquireOptions,
@@ -151,7 +152,7 @@ class _ObservationOnlyRoute:
                 )
             )
             session.flush()
-            raise RuntimeError("injected terminal persistence failure")
+            raise BrokerMutationReceiptError("injected terminal persistence failure")
         self.persisted_broker_ids.append(broker_order_id)
         claim_handle = receipt.submission_claim_handle
         if claim_handle is None:

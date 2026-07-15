@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRunError,
     BrokerMutationRecoveryRunResult,
 )
 
@@ -23,7 +24,7 @@ class _FailingRecoveryWorker:
 
     def run_once(self) -> BrokerMutationRecoveryRunResult:
         self.calls += 1
-        raise RuntimeError("recovery unavailable")
+        raise BrokerMutationRecoveryRunError("recovery unavailable")
 
 
 def _ready_recovery_worker() -> _RecoveryWorker:

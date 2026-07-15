@@ -245,7 +245,7 @@ def test_recovery_failure_blocks_entry_without_crashing_reconciliation() -> None
     assert status.details == {
         "enabled": True,
         "run_sequence": 1,
-        "error_class": "RuntimeError",
+        "error_class": "BrokerMutationRecoveryRunError",
         "outcomes": {"failed": 1},
         "interval_seconds": 60,
     }

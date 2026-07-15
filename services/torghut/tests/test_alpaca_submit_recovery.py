@@ -26,6 +26,7 @@ from app.trading.broker_mutation_receipts import (
     fingerprint_broker_endpoint,
     mark_broker_mutation_io_started,
 )
+from app.trading.decision_submission_claims import DecisionSubmissionClaimHandle
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision
 
@@ -204,6 +205,18 @@ def _recovery_decision(
         params={"price": "190.25"},
     )
     return executor.ensure_decision(session, decision, strategy, "paper")
+
+
+def _claim_handle(decision: TradeDecision) -> DecisionSubmissionClaimHandle:
+    assert decision.decision_hash is not None
+    return DecisionSubmissionClaimHandle(
+        decision_id=decision.id,
+        claim_token=uuid.uuid4(),
+        fencing_epoch=1,
+        account_label="paper",
+        client_order_id=decision.decision_hash,
+        claim_owner="strict-submit-recovery-test",
+    )
 
 
 def test_exact_client_id_match_recovers_without_history_scan(tmp_path: Path) -> None:
@@ -397,10 +410,8 @@ def test_order_executor_recovery_persists_observation_without_submit_or_commit(
         execution = executor.recover_linked_order_submission(
             session=session,
             execution_client=execution_context,
-            decision_id=decision_row.id,
-            account_label="paper",
+            claim_handle=_claim_handle(decision_row),
             order_response=observed_order,
-            execution_expected_adapter="alpaca",
         )
 
         execution_id = execution.id
@@ -466,13 +477,11 @@ def test_order_executor_recovery_rejects_conflicting_local_execution_identity(
             executor.recover_linked_order_submission(
                 session=session,
                 execution_client=execution_context,
-                decision_id=decision_id,
-                account_label="paper",
+                claim_handle=_claim_handle(decision_row),
                 order_response=_order(
                     broker_order_id="conflicting-local-order",
                     client_order_id=decision_row.decision_hash,
                 ),
-                execution_expected_adapter="alpaca",
             )
 
         assert execution_context.submit_calls == 0
@@ -486,6 +495,33 @@ def test_order_executor_recovery_rejects_conflicting_local_execution_identity(
         persisted_decision = session.get(TradeDecision, decision_id)
         assert persisted_decision is not None
         assert persisted_decision.status == "planned"
+
+
+def test_order_executor_recovery_rejects_client_order_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    sessions = _sessions(tmp_path / "executor-recovery-client-id.sqlite")
+    execution_context = _ObservationOnlyExecutionContext()
+    executor = OrderExecutor()
+    with sessions() as session:
+        decision_row = _recovery_decision(
+            session,
+            executor,
+            event_ts=datetime(2026, 7, 15, 1, 0, tzinfo=timezone.utc),
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="linked_submission_recovery_client_order_id_mismatch",
+        ):
+            executor.recover_linked_order_submission(
+                session=session,
+                execution_client=execution_context,
+                claim_handle=_claim_handle(decision_row),
+                order_response=_order(client_order_id="b" * 64),
+            )
+
+        assert execution_context.submit_calls == 0
 
 
 def test_complete_exact_and_history_absence_is_only_nonterminal_read(

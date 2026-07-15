@@ -34,6 +34,7 @@ _SDK_ERRORS = cast(
         getattr(_SDK_ERROR_MODULE, "ServerError"),
     ),
 )
+HYPERLIQUID_SDK_ERRORS = _SDK_ERRORS
 _MARKET_OPEN_ERRORS = _SDK_ERRORS + (
     RequestException,
     ArithmeticError,
@@ -118,6 +119,7 @@ def is_halted(result: OrderResult) -> bool:
 
 
 __all__ = [
+    "HYPERLIQUID_SDK_ERRORS",
     "MarketOpenRequest",
     "is_halted",
     "parse_order_result",
