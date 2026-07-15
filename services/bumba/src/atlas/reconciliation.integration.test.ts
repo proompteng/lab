@@ -185,6 +185,7 @@ integrationTest(
   async () => {
     if (!db) throw new Error('integration database was not initialized')
     await mkdir(join(checkout, 'src'), { recursive: true })
+    await mkdir(join(checkout, '.github', 'ISSUE_TEMPLATE'), { recursive: true })
     await writeFile(
       join(checkout, 'src', 'atlas.ts'),
       [
@@ -198,6 +199,8 @@ integrationTest(
     )
     await writeFile(join(checkout, 'README.md'), '# Atlas\n\nComplete Git corpus.\n')
     await writeFile(join(checkout, 'deleted.ts'), 'export const deletedFixture = true\n')
+    await writeFile(join(checkout, '.github', 'actionlint.yaml'), 'self-hosted-runner:\n  labels: [arc]\n')
+    await writeFile(join(checkout, '.github', 'ISSUE_TEMPLATE', 'codex-task.md'), '# Codex task\n')
     await writeFile(join(checkout, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
     const firstCommit = await commitAndPush('initial')
 
@@ -207,7 +210,7 @@ integrationTest(
       ref: 'main',
       commit: firstCommit,
     })
-    expect(initial).toMatchObject({ expectedFiles: 3, indexedFiles: 3, embeddings: initial.chunks })
+    expect(initial).toMatchObject({ expectedFiles: 5, indexedFiles: 5, embeddings: initial.chunks })
 
     const firstRows = (await db`
     SELECT fk.path, fv.id, fv.content_hash, fv.repository_commit,
@@ -229,9 +232,15 @@ integrationTest(
       chunks: number
       embeddings: number
     }>
-    expect(firstRows.map((row) => row.path)).toHaveLength(3)
+    expect(firstRows.map((row) => row.path)).toHaveLength(5)
     expect(firstRows.map((row) => row.path)).toEqual(
-      expect.arrayContaining(['README.md', 'deleted.ts', 'src/atlas.ts']),
+      expect.arrayContaining([
+        '.github/ISSUE_TEMPLATE/codex-task.md',
+        '.github/actionlint.yaml',
+        'README.md',
+        'deleted.ts',
+        'src/atlas.ts',
+      ]),
     )
     expect(firstRows.every((row) => row.metadata_type === 'object' && row.chunks === row.embeddings)).toBe(true)
     const oldAtlasVersion = firstRows.find((row) => row.path === 'src/atlas.ts')?.id
@@ -251,7 +260,7 @@ integrationTest(
       commit: firstCommit,
     })
     expect(changed.commit).toBe(secondCommit)
-    expect(changed).toMatchObject({ expectedFiles: 2, indexedFiles: 2, deletedFiles: 2 })
+    expect(changed).toMatchObject({ expectedFiles: 4, indexedFiles: 4, deletedFiles: 2 })
 
     const replay = await activities.reconcileAtlasRepository({
       repoRoot: checkout,
@@ -259,7 +268,7 @@ integrationTest(
       ref: 'main',
       commit: secondCommit,
     })
-    expect(replay).toMatchObject({ commit: secondCommit, changedFiles: 0, unchangedFiles: 2 })
+    expect(replay).toMatchObject({ commit: secondCommit, changedFiles: 0, unchangedFiles: 4 })
 
     const finalRows = (await db`
     SELECT fk.path, fv.id, fv.repository_commit, fv.content_hash,
@@ -281,8 +290,15 @@ integrationTest(
       chunks: number
       embeddings: number
     }>
-    expect(finalRows.map((row) => row.path)).toHaveLength(2)
-    expect(finalRows.map((row) => row.path)).toEqual(expect.arrayContaining(['ATLAS.md', 'src/atlas.ts']))
+    expect(finalRows.map((row) => row.path)).toHaveLength(4)
+    expect(finalRows.map((row) => row.path)).toEqual(
+      expect.arrayContaining([
+        '.github/ISSUE_TEMPLATE/codex-task.md',
+        '.github/actionlint.yaml',
+        'ATLAS.md',
+        'src/atlas.ts',
+      ]),
+    )
     expect(finalRows.every((row) => row.repository_commit === secondCommit && row.chunks === row.embeddings)).toBe(true)
     expect(finalRows.find((row) => row.path === 'src/atlas.ts')?.id).not.toBe(oldAtlasVersion)
     const oldVersionRows = (await db`
@@ -320,8 +336,8 @@ integrationTest(
       metadata: {
         indexStatus: 'ready',
         indexedCommit: secondCommit,
-        expectedFiles: 2,
-        indexedFiles: 2,
+        expectedFiles: 4,
+        indexedFiles: 4,
         embeddingDimension: 1024,
         missingPaths: 0,
         stalePaths: 0,
