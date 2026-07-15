@@ -12,4 +12,4 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/sag
     newName: registry.ide-newton.ts.net/lab/sag
-    digest: sha256:d6accf1ff4f7eecb4f97b772dd0bcb5cd303030c007ed5bfda2b7bd123808b9d
+    digest: sha256:da99a22b2eca5ca1264abfbf048204659768ac53d8987033880d92c5b0b75ab9
