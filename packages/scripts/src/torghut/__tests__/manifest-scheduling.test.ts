@@ -256,8 +256,30 @@ describe('Torghut manifest scheduling', () => {
     const data = getAtPath(schema, ['data'])
     expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 10;')
     expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
-    expect(data['schema.sql']).not.toContain('_kafka_staging')
-    expect(data['schema.sql']).not.toContain('kafka_topic')
+    for (const table of [
+      'hyperliquid_raw',
+      'hyperliquid_market_catalog',
+      'hyperliquid_trades',
+      'hyperliquid_l2_books',
+      'hyperliquid_bbo',
+      'hyperliquid_candles',
+      'hyperliquid_asset_contexts',
+      'hyperliquid_funding',
+      'hyperliquid_status',
+    ]) {
+      expect(data['schema.sql']).not.toContain(`CREATE TABLE IF NOT EXISTS torghut.${table}_kafka_staging`)
+      expect(data['schema.sql']).toContain(
+        `DROP TABLE IF EXISTS torghut.${table}_kafka_staging ON CLUSTER default SYNC;`,
+      )
+      expect(data['schema.sql']).toContain(`ALTER TABLE torghut.${table} ON CLUSTER default`)
+    }
+    for (const column of ['kafka_topic', 'kafka_partition', 'kafka_offset']) {
+      expect(data['schema.sql'].match(new RegExp(`DROP COLUMN IF EXISTS ${column}`, 'g'))).toHaveLength(9)
+    }
+    expect(args).toContain('removed_table_count')
+    expect(args).toContain('legacy_column_count')
+    expect(args).toContain('still has ${removed_count} removed Hyperliquid staging tables')
+    expect(args).toContain('still has ${column_count} removed Hyperliquid Kafka-lineage columns')
     expect(args).not.toContain('WRITER_TABLES')
   })
 

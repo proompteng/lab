@@ -93,3 +93,50 @@ data:
     ORDER BY (channel, symbol, event_ts, seq)
     TTL parseDateTimeBestEffort(event_ts) + INTERVAL 7 DAY
     SETTINGS index_granularity = 8192;
+
+    DROP TABLE IF EXISTS torghut.hyperliquid_raw_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_market_catalog_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_trades_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_l2_books_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_bbo_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_candles_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_asset_contexts_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_funding_kafka_staging ON CLUSTER default SYNC;
+    DROP TABLE IF EXISTS torghut.hyperliquid_status_kafka_staging ON CLUSTER default SYNC;
+
+    ALTER TABLE torghut.hyperliquid_raw ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_market_catalog ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_trades ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_l2_books ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_bbo ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_candles ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_asset_contexts ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_funding ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;
+    ALTER TABLE torghut.hyperliquid_status ON CLUSTER default
+      DROP COLUMN IF EXISTS kafka_topic,
+      DROP COLUMN IF EXISTS kafka_partition,
+      DROP COLUMN IF EXISTS kafka_offset;

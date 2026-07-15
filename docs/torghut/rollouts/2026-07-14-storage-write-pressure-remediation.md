@@ -136,15 +136,17 @@ The archive deployment is declaratively at **zero replicas**; there is no tempor
 Catalog and enricher are ready on digest
 `sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb`.
 
-The Kafka writer was a shadow path only; the direct sink remained authoritative throughout. During retained-history
-replay it wrote more than 15.7 million rows across the populated staging tables, then repeatedly terminated with JVM
+The Kafka writer was a shadow path only; the direct sink remained authoritative throughout. Before cleanup, live
+ClickHouse verification found 33,104,910 rows across the populated staging tables and zero non-null lineage values in
+the nine authoritative tables. During retained-history replay the writer repeatedly terminated with JVM
 heap exhaustion at both 1 GiB and 2 GiB memory limits. During the replay Ceph again reported an OSD.5 BlueStore slow
 operation warning. A bounded-replay change would reduce one symptom but would preserve an unnecessary second sink.
 
 The production decision is therefore full removal: the writer Deployment and Service, suspended parity CronJob,
 Kotlin writer/parity implementation and tests, configuration and release wiring, nine `_kafka_staging` tables, three
 unused Kafka-lineage columns, and inactive consumer groups are deleted. No fallback, dual-write, shadow, staging, or
-cutover path remains. The existing direct per-table acknowledged sink is the single ClickHouse persistence path.
+cutover path remains. The existing schema hook performs and verifies the idempotent table/column cleanup without adding
+a permanent cleanup workload. The existing direct per-table acknowledged sink is the single ClickHouse persistence path.
 
 ## Storage incident diagnosis
 

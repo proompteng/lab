@@ -49,9 +49,24 @@ spec:
                 hyperliquid_funding
                 hyperliquid_status
               )
+              REMOVED_TABLES=(
+                hyperliquid_raw_kafka_staging
+                hyperliquid_market_catalog_kafka_staging
+                hyperliquid_trades_kafka_staging
+                hyperliquid_l2_books_kafka_staging
+                hyperliquid_bbo_kafka_staging
+                hyperliquid_candles_kafka_staging
+                hyperliquid_asset_contexts_kafka_staging
+                hyperliquid_funding_kafka_staging
+                hyperliquid_status_kafka_staging
+              )
               REQUIRED_TABLE_LIST="'${REQUIRED_TABLES[0]}'"
               for table in "${REQUIRED_TABLES[@]:1}"; do
                 REQUIRED_TABLE_LIST="${REQUIRED_TABLE_LIST},'${table}'"
+              done
+              REMOVED_TABLE_LIST="'${REMOVED_TABLES[0]}'"
+              for table in "${REMOVED_TABLES[@]:1}"; do
+                REMOVED_TABLE_LIST="${REMOVED_TABLE_LIST},'${table}'"
               done
 
               wait_for_host() {
@@ -72,6 +87,18 @@ spec:
                   "SELECT count() FROM system.tables WHERE database='torghut' AND name IN (${REQUIRED_TABLE_LIST})"
               }
 
+              removed_table_count() {
+                local host="$1"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
+                  "SELECT count() FROM system.tables WHERE database='torghut' AND name IN (${REMOVED_TABLE_LIST})"
+              }
+
+              legacy_column_count() {
+                local host="$1"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
+                  "SELECT count() FROM system.columns WHERE database='torghut' AND table IN (${REQUIRED_TABLE_LIST}) AND name IN ('kafka_topic','kafka_partition','kafka_offset')"
+              }
+
               wait_for_host "${PRIMARY_HOST}"
               mapfile -t HOSTS < <(
                 "${CLICKHOUSE_CLIENT[@]}" --host "${PRIMARY_HOST}" --query \
@@ -88,6 +115,16 @@ spec:
                 count="$(table_count "${host}")"
                 if [ "${count}" -ne "${#REQUIRED_TABLES[@]}" ]; then
                   echo "ClickHouse host ${host} has ${count}/${#REQUIRED_TABLES[@]} required Hyperliquid tables" >&2
+                  exit 1
+                fi
+                removed_count="$(removed_table_count "${host}")"
+                if [ "${removed_count}" -ne 0 ]; then
+                  echo "ClickHouse host ${host} still has ${removed_count} removed Hyperliquid staging tables" >&2
+                  exit 1
+                fi
+                column_count="$(legacy_column_count "${host}")"
+                if [ "${column_count}" -ne 0 ]; then
+                  echo "ClickHouse host ${host} still has ${column_count} removed Hyperliquid Kafka-lineage columns" >&2
                   exit 1
                 fi
               done

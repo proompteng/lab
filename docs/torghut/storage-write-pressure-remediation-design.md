@@ -279,7 +279,10 @@ path. It was never authoritative and never replaced the direct sink. Production 
 The decision is removal, not another tuning cycle. The direct acknowledged per-table sink remains the only ClickHouse
 persistence path. Kafka remains an independent normalized event stream for its real consumers; it is not a fallback or
 shadow ClickHouse sink. The writer and parity workloads, Kotlin implementation, configuration, release wiring, schema
-creation, staging tables, unused lineage columns, and inactive consumer groups are removed end to end.
+creation, staging tables, unused lineage columns, and inactive consumer groups are removed end to end. The existing
+bounded schema hook carries the idempotent `DROP TABLE IF EXISTS` and `DROP COLUMN IF EXISTS` migration and verifies
+that every ClickHouse host has zero staging tables and zero legacy lineage columns; no permanent cleanup workload is
+introduced.
 
 ## PostgreSQL and Ceph tuning
 

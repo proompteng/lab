@@ -40,7 +40,23 @@ def test_hyperliquid_feed_has_no_shadow_clickhouse_path() -> None:
     )
     schema_data = cast(Mapping[str, object], schema_config.get("data", {}))
     schema = str(schema_data.get("schema.sql", ""))
-    assert "_kafka_staging" not in schema
-    assert "kafka_topic" not in schema
-    assert "kafka_partition" not in schema
-    assert "kafka_offset" not in schema
+    tables = (
+        "hyperliquid_raw",
+        "hyperliquid_market_catalog",
+        "hyperliquid_trades",
+        "hyperliquid_l2_books",
+        "hyperliquid_bbo",
+        "hyperliquid_candles",
+        "hyperliquid_asset_contexts",
+        "hyperliquid_funding",
+        "hyperliquid_status",
+    )
+    for table in tables:
+        assert f"CREATE TABLE IF NOT EXISTS torghut.{table}_kafka_staging" not in schema
+        assert (
+            f"DROP TABLE IF EXISTS torghut.{table}_kafka_staging "
+            "ON CLUSTER default SYNC;"
+        ) in schema
+        assert f"ALTER TABLE torghut.{table} ON CLUSTER default" in schema
+    for column in ("kafka_topic", "kafka_partition", "kafka_offset"):
+        assert schema.count(f"DROP COLUMN IF EXISTS {column}") == len(tables)
