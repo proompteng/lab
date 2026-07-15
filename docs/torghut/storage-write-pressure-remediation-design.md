@@ -333,6 +333,15 @@ The current 60-second controller election and 180-second fetch timeout values ma
 and maintenance changes meet their live gates, remove both explicit fields and allow Kafka defaults. No timeout increase
 is an accepted remediation for a failed validation gate.
 
+## Post-implementation Jangar addendum
+
+A clean-observation attempt after the original application slices found another independent shared-pool writer. Jangar
+generated 18.204 MiB of PostgreSQL WAL in 30.182 seconds while its primary and asynchronous replica were the largest
+sustained RBD images. The same capture showed roughly 50-400 ms RBD write latency and recurring Kafka controller fsync
+stalls. Jangar quant persistence must therefore switch from append-only pipeline-health history to primary-keyed latest
+state, suppress no-op latest-metric updates, and reduce one-minute analytical-series sampling from five seconds to one
+minute before the storage-stability observation can start. Compute, alerting, and trading semantics remain unchanged.
+
 ## Talos local-storage feasibility and boundary
 
 Talos user volumes already expose sufficient local capacity:
@@ -389,20 +398,27 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 
 ### Live gates
 
-- Before activating either contained write workload, run
-  `bun run gate:torghut-storage-repair --repair-start <post-repair RFC3339 timestamp> --output json`. The read-only gate
-  requires a complete 24-hour Talos log window, `HEALTH_OK`, all six OSDs up and in, only clean placement groups, no
-  unacknowledged crashes, no transport/flush errors, and a successful extended SMART test started after repair on
-  each expected SAS disk with zero critical sector/CRC attributes. It also requires no KRaft request timeout or
+- Before activating either contained write workload, begin a clean observation window while both workloads remain at
+  zero replicas, then run
+  `bun run gate:torghut-storage-stability --observation-start <RFC3339 timestamp> --output json` after at least 30
+  minutes. The read-only gate requires complete Talos and Kafka log coverage for the window, `HEALTH_OK`, all six OSDs
+  up and in, only clean placement groups, no unacknowledged crashes, and no new SCSI device-reset/recovery, cache-flush,
+  or I/O-error record. Every expected disk must pass current SMART overall health with zero reallocated, pending,
+  offline-uncorrectable, and interface-CRC counters. Historical SMART self-tests are retained as diagnostic context but
+  are not treated as proof of a physical repair or as an activation prerequisite. The gate also requires no KRaft
+  request timeout or
   controller event above two seconds, exactly three KRaft voters with follower lag below 1,000 records and five seconds,
-  no under-replicated or offline partitions, PostgreSQL durability and WAL-budget compliance, and healthy Argo
-  applications. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and ClickHouse
-  true; the scheduler running with fresh trading/reconcile cycles and healthy leadership; and the current Knative API
-  revision ready. Both write workloads must still be at zero replicas. A warning that the temporary Kafka controller
-  timeout overrides remain present is expected at this stage; passing this gate does not authorize their removal.
+  no under-replicated or offline partitions, Torghut and Jangar PostgreSQL durability and WAL-budget compliance, and
+  healthy Argo applications. Jangar must remain at or below 0.3015 MiB/s, a 50% reduction from its measured 0.603 MiB/s
+  pre-change baseline. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and
+  ClickHouse true; the scheduler running with fresh trading/reconcile cycles and healthy leadership; and the current
+  Knative API revision ready. Both write workloads must still be at zero replicas. A warning that the temporary Kafka
+  controller timeout overrides remain present is expected at this stage; passing this gate does not authorize their
+  removal.
 - An unchanged catalog page causes zero subscription updates.
 - Subscription updates fall at least 95%; steady target is below 10 per second outside actual membership changes.
 - Torghut PostgreSQL WAL falls below 0.25 MiB per second during discovery.
+- Jangar PostgreSQL WAL remains at or below 0.3015 MiB per second after its persistence fix.
 - Hot/warm membership remains within provider limits and snapshot freshness remains healthy.
 - During direct-sink batching, BBO median part size is at least 1,000 rows. After partition-scoped writer cutover,
   size-triggered BBO parts contain 1,000 rows, age-triggered parts are reported separately, and the aggregate `NewPart`

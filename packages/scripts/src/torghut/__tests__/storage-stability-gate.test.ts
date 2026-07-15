@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 
-import { __private, evaluateStorageRepairGate, type StorageRepairSnapshot } from '../storage-repair-gate'
+import { __private, evaluateStorageStabilityGate, type StorageStabilitySnapshot } from '../storage-stability-gate'
 
 const capturedAt = '2026-07-17T12:00:00.000Z'
-const repairStartedAt = '2026-07-15T11:00:00.000Z'
+const observationStartedAt = '2026-07-15T11:00:00.000Z'
 
-const healthySnapshot = (): StorageRepairSnapshot => ({
-  schemaVersion: 'torghut.storage-repair-gate.v1',
+const healthySnapshot = (): StorageStabilitySnapshot => ({
+  schemaVersion: 'torghut.storage-stability-gate.v3',
   capturedAt,
-  repairStartedAt,
+  observationStartedAt,
   talos: {
     node: '100.100.244.142',
     coverageStartedAt: '2026-07-15T10:00:00.000Z',
@@ -35,8 +35,6 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
       device: '/dev/sda',
       serial: 'ZXA12R7C',
       smartPassed: true,
-      powerOnHours: 1_025,
-      extendedPollingMinutes: 2_415,
       latestExtendedSelfTest: {
         lifetimeHours: 1_024,
         passed: true,
@@ -53,8 +51,6 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
       device: '/dev/sdb',
       serial: 'ZXA0LKW9',
       smartPassed: true,
-      powerOnHours: 1_025,
-      extendedPollingMinutes: 2_415,
       latestExtendedSelfTest: {
         lifetimeHours: 1_024,
         passed: true,
@@ -71,8 +67,6 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
       device: '/dev/sdc',
       serial: 'ZXA0HS7E',
       smartPassed: true,
-      powerOnHours: 1_025,
-      extendedPollingMinutes: 2_415,
       latestExtendedSelfTest: {
         lifetimeHours: 1_024,
         passed: true,
@@ -148,6 +142,17 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
     walBytesPerSecond: 10_000,
     walSampleSeconds: 30.1,
   },
+  jangarPostgres: {
+    ready: true,
+    settings: {
+      fsync: 'on',
+      fullPageWrites: 'on',
+      synchronousCommit: 'on',
+      walBuffers: '4MB',
+    },
+    walBytesPerSecond: 100_000,
+    walSampleSeconds: 30.1,
+  },
   runtime: {
     hyperliquidFeed: {
       httpOk: true,
@@ -203,6 +208,7 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
     },
   ],
   argoApplications: [
+    { name: 'jangar', sync: 'Synced', health: 'Healthy' },
     { name: 'kafka', sync: 'Synced', health: 'Healthy' },
     { name: 'rook-ceph', sync: 'Synced', health: 'Healthy' },
     { name: 'torghut', sync: 'Synced', health: 'Healthy' },
@@ -212,12 +218,12 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
   ],
 })
 
-describe('Torghut storage repair gate', () => {
+describe('Torghut storage stability gate', () => {
   it('accepts a complete healthy observation while preserving timeout containment', () => {
-    const result = evaluateStorageRepairGate(healthySnapshot())
+    const result = evaluateStorageStabilityGate(healthySnapshot())
 
     expect(result.ok).toBe(true)
-    expect(result.observationHours).toBe(49)
+    expect(result.observationMinutes).toBe(2_940)
     expect(result.failures).toEqual([])
     expect(result.warnings).toEqual([
       'Kafka controller timeout overrides remain active; this storage gate does not authorize their removal',
@@ -225,28 +231,28 @@ describe('Torghut storage repair gate', () => {
     expect(result.summaryLines.at(-1)).toBe('Activation verdict: PASS')
   })
 
-  it('fails when the observation is shorter than 24 hours or dmesg coverage starts late', () => {
+  it('fails when the observation is shorter than 30 minutes or dmesg coverage starts late', () => {
     const snapshot = healthySnapshot()
-    snapshot.repairStartedAt = '2026-07-16T13:00:00Z'
-    snapshot.talos.coverageStartedAt = '2026-07-16T14:00:00Z'
+    snapshot.observationStartedAt = '2026-07-17T11:45:00Z'
+    snapshot.talos.coverageStartedAt = '2026-07-17T11:46:00Z'
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('at least 24 hours is required')
-    expect(result.failures.join('\n')).toContain('after repair start')
+    expect(result.failures.join('\n')).toContain('at least 30 minutes is required')
+    expect(result.failures.join('\n')).toContain('after observation start')
   })
 
   it.each([
-    ['sd 0:0:0:0: Power-on or device reset occurred', 'SAS transport reset'],
-    ['mpt3sas_cm0: fault reset requested', 'SAS transport reset'],
+    ['sd 0:0:0:0: Power-on or device reset occurred', 'SCSI device reset/recovery'],
+    ['mpt3sas_cm0: fault reset requested', 'SCSI device reset/recovery'],
     ['sd 0:0:0:0: [sda] Synchronize Cache(10) failed', 'durable cache-flush I/O failure'],
     ['I/O error, dev sda, sector 0 op WRITE', 'durable cache-flush I/O failure'],
-  ])('fails on post-repair Talos evidence: %s', (message, expected) => {
+  ])('fails on SCSI or durable-write errors inside the observation window: %s', (message, expected) => {
     const snapshot = healthySnapshot()
     snapshot.talos.lines.push({ timestamp: '2026-07-16T11:00:00Z', message })
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain(expected)
@@ -260,7 +266,7 @@ describe('Torghut storage repair gate', () => {
     snapshot.ceph.placementGroups.push({ count: 2, state: 'active+undersized+degraded' })
     snapshot.ceph.unacknowledgedCrashIds = ['2026-07-14T20:18:05Z_osd3']
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('expected HEALTH_OK')
@@ -270,7 +276,7 @@ describe('Torghut storage repair gate', () => {
     expect(result.failures.join('\n')).toContain('2026-07-14T20:18:05Z_osd3')
   })
 
-  it('requires a healthy extended SMART test started after repair on every SAS disk', () => {
+  it('requires current SMART health, zero critical counters, and every expected disk', () => {
     const snapshot = healthySnapshot()
     snapshot.smartDevices[0].latestExtendedSelfTest = {
       lifetimeHours: 819,
@@ -280,31 +286,31 @@ describe('Torghut storage repair gate', () => {
     snapshot.smartDevices[0].criticalAttributes.currentPendingSectors = 1
     snapshot.smartDevices.pop()
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('Interrupted (host reset)')
-    expect(result.failures.join('\n')).toContain('does not prove a post-repair start')
+    expect(result.failures.join('\n')).not.toContain('Interrupted (host reset)')
     expect(result.failures.join('\n')).toContain('currentPendingSectors=1')
     expect(result.failures.join('\n')).toContain('SMART evidence is missing for /dev/sdc')
+    expect(result.warnings.join('\n')).toContain("is 'Interrupted (host reset)'")
   })
 
-  it('rejects a passed extended SMART test that completed after repair but started before it', () => {
+  it('does not require a new extended SMART test when current device evidence is healthy', () => {
     const snapshot = healthySnapshot()
-    snapshot.repairStartedAt = '2026-07-15T19:00:00Z'
-    for (const smart of snapshot.smartDevices) {
+    snapshot.smartDevices[0].latestExtendedSelfTest = null
+    for (const smart of snapshot.smartDevices.slice(1)) {
       smart.latestExtendedSelfTest = {
-        lifetimeHours: smart.powerOnHours,
-        passed: true,
-        status: 'Completed without error',
+        lifetimeHours: 819,
+        passed: false,
+        status: 'Interrupted (host reset)',
       }
     }
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
-    expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('maximum duration 40.25 hours')
-    expect(result.failures.join('\n')).toContain('exceeds the 41 hour repair window')
+    expect(result.ok).toBe(true)
+    expect(result.failures).toEqual([])
+    expect(result.warnings.filter((warning) => warning.includes('historical test'))).toHaveLength(2)
   })
 
   it('fails on KRaft timeouts and controller durable events above two seconds', () => {
@@ -318,7 +324,7 @@ describe('Torghut storage repair gate', () => {
       message: 'EventPerformanceMonitor - Exceptionally slow controller event writeNoOpRecord(1) took 2001 ms.',
     })
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('KRaft fetch/request timeout')
@@ -335,14 +341,14 @@ describe('Torghut storage repair gate', () => {
     snapshot.kafka.controllerLogs = snapshot.kafka.controllerLogs.filter(({ pod }) => pod !== 'kafka-pool-a-2')
     snapshot.kafka.unreadyTopics = ['torghut.options.v1']
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('Kafka Ready condition is not True')
     expect(result.failures.join('\n')).toContain('does not match generation')
-    expect(result.failures.join('\n')).toContain('started after the repair observation window began')
+    expect(result.failures.join('\n')).toContain('started after the storage stability observation window began')
     expect(result.failures.join('\n')).toContain('is not ready')
-    expect(result.failures.join('\n')).toContain('more than five minutes after repair start')
+    expect(result.failures.join('\n')).toContain('more than five minutes after observation start')
     expect(result.failures.join('\n')).toContain('logs are missing for kafka-pool-a-2')
     expect(result.failures.join('\n')).toContain('torghut.options.v1')
   })
@@ -356,7 +362,7 @@ describe('Torghut storage repair gate', () => {
     snapshot.kafka.underReplicatedPartitions = ['Topic: a Partition: 0']
     snapshot.kafka.offlinePartitions = ['Topic: b Partition: 1']
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('expected [0, 1, 2]')
@@ -371,7 +377,7 @@ describe('Torghut storage repair gate', () => {
     snapshot.kafka.quorum.maxFollowerLag = 1
     snapshot.kafka.quorum.maxFollowerLagTimeMs = -1
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('max follower lag time is unknown (-1 ms) while follower lag is 1')
@@ -382,14 +388,19 @@ describe('Torghut storage repair gate', () => {
     snapshot.postgres.settings.fsync = 'off'
     snapshot.postgres.walBytesPerSecond = 300_000
     snapshot.postgres.walSampleSeconds = 29
+    snapshot.jangarPostgres.settings.synchronousCommit = 'off'
+    snapshot.jangarPostgres.walBytesPerSecond = 400_000
+    snapshot.jangarPostgres.walSampleSeconds = 29
     snapshot.workloads[0].desiredReplicas = 1
     snapshot.argoApplications.find(({ name }) => name === 'rook-ceph')!.health = 'Degraded'
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('PostgreSQL fsync is off')
     expect(result.failures.join('\n')).toContain('limit is 0.25 MiB/s')
+    expect(result.failures.join('\n')).toContain('Jangar PostgreSQL synchronous_commit is off')
+    expect(result.failures.join('\n')).toContain('limit is 0.3015 MiB/s (50% of the 0.603 MiB/s pre-change baseline)')
     expect(result.failures.join('\n')).toContain('at least 30 seconds is required')
     expect(result.failures.join('\n')).toContain('torghut-options-archive must remain contained')
     expect(result.failures.join('\n')).toContain('rook-ceph is sync=Synced health=Degraded')
@@ -401,7 +412,7 @@ describe('Torghut storage repair gate', () => {
     snapshot.workloads[0].terminatingReplicas = 1
     snapshot.workloads[0].podNames = ['torghut-options-archive-7d9f8f6f65-abcde']
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('observed desired=0 actual=1 ready=0 available=0 terminating=1')
@@ -411,7 +422,7 @@ describe('Torghut storage repair gate', () => {
   it('records the evidence cutoff after bounded samples and before Talos and Kafka tail collection', async () => {
     const source = healthySnapshot()
     const events: string[] = []
-    const collected = await __private.collectStorageRepairSnapshotWith(repairStartedAt, source.talos.node, {
+    const collected = await __private.collectStorageStabilitySnapshotWith(observationStartedAt, source.talos.node, {
       now: () => {
         events.push('cutoff')
         return new Date(capturedAt)
@@ -428,6 +439,11 @@ describe('Torghut storage repair gate', () => {
         await Promise.resolve()
         events.push('postgres-complete')
         return source.postgres
+      },
+      jangarPostgres: async () => {
+        await Promise.resolve()
+        events.push('jangar-postgres-complete')
+        return source.jangarPostgres
       },
       runtime: async () => {
         events.push('runtime')
@@ -453,6 +469,7 @@ describe('Torghut storage repair gate', () => {
 
     expect(collected.capturedAt).toBe(capturedAt)
     expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('postgres-complete'))
+    expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('jangar-postgres-complete'))
     expect(events.indexOf('ceph')).toBeGreaterThan(events.indexOf('cutoff'))
     expect(events.indexOf('workloads')).toBeGreaterThan(events.indexOf('cutoff'))
     expect(events.indexOf('talos-tail')).toBeGreaterThan(events.indexOf('cutoff'))
@@ -504,6 +521,57 @@ describe('Torghut storage repair gate', () => {
     ])
   })
 
+  it('collects Jangar WAL from its current primary and labels collector failures', async () => {
+    let clusterRead = 0
+    let nowRead = 0
+    const evidence = await __private.collectJangarPostgresEvidence({
+      cluster: async () => {
+        clusterRead += 1
+        return {
+          status: {
+            currentPrimary: clusterRead === 1 ? 'jangar-db-1' : 'jangar-db-2',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        }
+      },
+      psql: async (primary, sql) => {
+        if (sql.includes("current_setting('fsync')")) return 'on|on|on|4MB'
+        return primary === 'jangar-db-1' ? '1000' : '4096'
+      },
+      sleep: async () => {},
+      now: () => {
+        nowRead += 1
+        return nowRead === 1 ? 0 : 30_000
+      },
+    })
+
+    expect(evidence).toEqual({
+      ready: true,
+      settings: {
+        fsync: 'on',
+        fullPageWrites: 'on',
+        synchronousCommit: 'on',
+        walBuffers: '4MB',
+      },
+      walBytesPerSecond: 103.2,
+      walSampleSeconds: 30,
+    })
+
+    await expect(
+      __private.collectJangarPostgresEvidence({
+        cluster: async () => ({
+          status: {
+            currentPrimary: 'jangar-db-1',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        }),
+        psql: async (_primary, sql) => (sql.includes("current_setting('fsync')") ? 'on|on|on' : '1000'),
+        sleep: async () => {},
+        now: () => 30_000,
+      }),
+    ).rejects.toThrow('Jangar PostgreSQL settings query returned 3 fields, expected 4')
+  })
+
   it('fails closed when feed, scheduler, or current Knative revision readiness regresses', () => {
     const snapshot = healthySnapshot()
     snapshot.runtime.hyperliquidFeed.kafka = false
@@ -513,7 +581,7 @@ describe('Torghut storage repair gate', () => {
     snapshot.runtime.knativeService.latestCreatedRevision = 'torghut-01464'
     snapshot.runtime.knativeService.apiStatus = 'degraded'
 
-    const result = evaluateStorageRepairGate(snapshot)
+    const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('Hyperliquid feed readiness failed')
@@ -529,7 +597,7 @@ describe('Torghut storage repair gate', () => {
     const snapshot = healthySnapshot()
     snapshot.runtime.hyperliquidFeed.kafka = 'false' as unknown as boolean
 
-    expect(() => evaluateStorageRepairGate(snapshot)).toThrow(
+    expect(() => evaluateStorageStabilityGate(snapshot)).toThrow(
       'snapshot.runtime.hyperliquidFeed.kafka must be a boolean',
     )
   })
