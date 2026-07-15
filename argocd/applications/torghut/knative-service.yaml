@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-07-15T14:55:39Z"
+        client.knative.dev/updateTimestamp: "2026-07-15T16:17:34Z"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
     spec:
@@ -446,9 +446,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.596.0-2031-g89e9c4e8a
+              value: v0.596.0-2037-geb9ebfa9e
             - name: TORGHUT_COMMIT
-              value: 89e9c4e8ab4975f305dad586723b166ba7f1836a
+              value: eb9ebfa9e7b5230ea0961215c39da1bd204278fa
             - name: TORGHUT_IMAGE_DIGEST
               value: sha256:14dad3547c734cd97dc971d2a80122903e9ecfa3bcf1120275e13600da2674b0
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS

@@ -46,7 +46,7 @@ spec:
                 name: torghut-hyperliquid-runtime-config
           env:
             - name: TORGHUT_COMMIT
-              value: 89e9c4e8ab4975f305dad586723b166ba7f1836a
+              value: eb9ebfa9e7b5230ea0961215c39da1bd204278fa
             - name: TORGHUT_IMAGE_DIGEST
               value: sha256:14dad3547c734cd97dc971d2a80122903e9ecfa3bcf1120275e13600da2674b0
             - name: DB_DSN
