@@ -562,6 +562,46 @@ https://example.com/paper.pdf
                 1,
             )
 
+            third_result = service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={
+                    "status": "completed",
+                    "synthesis": {"summary": "replacement without structured outputs"},
+                },
+            )
+            self.assertEqual(third_result["status"], "completed")
+            session.commit()
+
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaim)).scalars().all()), 0
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaimRelation)).scalars().all()),
+                0,
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+                ),
+                0,
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()),
+                0,
+            )
+            self.assertEqual(
+                len(session.execute(select(VNextExperimentSpec)).scalars().all()), 0
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperContradictionEvent))
+                    .scalars()
+                    .all()
+                ),
+                0,
+            )
+
     def test_structured_output_helpers_cover_direct_nested_and_gating_merge(
         self,
     ) -> None:
