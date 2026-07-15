@@ -8,6 +8,9 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from app.config import settings
+from app.trading.broker_mutation_submit_coordinator import (
+    BrokerMutationSubmissionPreflightFailed,
+)
 from app.trading.prices import MarketSnapshot
 from app.trading.models import StrategyDecision
 from app.trading.scheduler.capital_controls import (
@@ -348,6 +351,47 @@ class TestCapitalSafetyController(TestCase):
         submission = adapter.submissions[0]
         self.assertEqual(submission.side, "buy")
         self.assertEqual(submission.qty, 2.0)
+
+    def test_closeout_continues_after_released_preflight_race(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "1",
+                    "side": "long",
+                    "current_price": "100",
+                },
+                {
+                    "symbol": "AMD",
+                    "qty": "2",
+                    "side": "long",
+                    "current_price": "100",
+                },
+            ]
+        )
+        submitted_symbols: list[str] = []
+
+        def submit(submission):
+            submitted_symbols.append(submission.symbol)
+            if submission.symbol == "NVDA":
+                adapter.positions = [adapter.positions[1]]
+                raise BrokerMutationSubmissionPreflightFailed(
+                    "risk_reduction_preflight_failed:position_disappeared"
+                )
+            adapter.positions = []
+            return {"id": "close-amd", "status": "accepted"}
+
+        adapter.submit_risk_reducing_order = submit
+        controller = self._controller(adapter)
+
+        controller._flatten(
+            reason="scheduled_closeout",
+            now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+        )
+
+        self.assertEqual(submitted_symbols, ["NVDA", "AMD"])
+        self.assertFalse(controller.state.emergency_stop_active)
+        self.assertIsNotNone(controller.state.capital_flat_confirmed_at)
 
     def test_closeout_fails_closed_when_order_cancellation_is_not_confirmed(
         self,

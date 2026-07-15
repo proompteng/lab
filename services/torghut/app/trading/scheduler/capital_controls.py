@@ -18,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import PositionSnapshot
+from ..broker_mutation_submit_coordinator import (
+    BrokerMutationSubmissionPreflightFailed,
+)
 from ..execution_adapters import ExecutionAdapter, OrderSubmission
 from ..models import SignalEnvelope, StrategyDecision
 from ..prices import PriceFetcher
@@ -341,7 +344,15 @@ class CapitalSafetyController:
                         now=now,
                         attempt=attempt,
                     )
-                    self.execution_adapter.submit_risk_reducing_order(submission)
+                    try:
+                        self.execution_adapter.submit_risk_reducing_order(submission)
+                    except BrokerMutationSubmissionPreflightFailed:
+                        logger.info(
+                            "Capital closeout position changed before broker I/O; "
+                            "continuing account=%s symbol=%s",
+                            self.account_label,
+                            submission.symbol,
+                        )
                 self.state.capital_closeout_attempts = attempt
                 self.sleep(max(0.0, settings.trading_closeout_reprice_seconds))
 
