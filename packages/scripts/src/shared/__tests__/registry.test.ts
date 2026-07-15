@@ -22,12 +22,23 @@ const backendBlock = (name: string): string => {
 }
 
 describe('private registry write-pressure boundary', () => {
-  it('rate-limits every registry mutation through one shared backend connection', () => {
+  it('rate-limits every mutation while keeping tiny manifest commits out of the blob queue', () => {
     expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 1m default-period 1s')
     expect(haproxyConfig).toContain('acl write_request method POST PUT PATCH DELETE')
+    expect(haproxyConfig).toContain('acl manifest_write method PUT')
+    expect(haproxyConfig).toContain('acl manifest_path path_reg ^/v2/.+/manifests/[^/]+$')
     expect(haproxyConfig).toContain('http-request set-bandwidth-limit registry_upload if write_request')
+    expect(haproxyConfig).toContain('use_backend registry_manifest_write if manifest_write manifest_path')
     expect(haproxyConfig).toContain('use_backend registry_write if write_request')
     expect(haproxyConfig).toContain('default_backend registry_read')
+    expect(haproxyConfig.indexOf('use_backend registry_manifest_write')).toBeLessThan(
+      haproxyConfig.indexOf('use_backend registry_write'),
+    )
+
+    const manifestWriteBackend = backendBlock('registry_manifest_write')
+    expect(manifestWriteBackend).toContain('option http-server-close')
+    expect(manifestWriteBackend).toContain('127.0.0.1:5000 maxconn 4 maxqueue 32 check')
+    expect(manifestWriteBackend).not.toContain('maxconn 1 ')
 
     const writeBackend = backendBlock('registry_write')
     expect(writeBackend).toContain('option http-server-close')

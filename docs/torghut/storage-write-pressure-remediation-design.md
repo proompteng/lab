@@ -384,6 +384,19 @@ immediately afterward. That exceeds the two-second storage gate even though requ
 registry boundary must therefore also shape mutation request bodies to 1 MiB/s. This keeps the shared Ceph write path
 bounded independently of publisher implementation while leaving `GET` and `HEAD` image pulls unthrottled.
 
+A later production build exposed a liveness defect in that first boundary. A large blob upload occupied the only write
+connection while completed multi-architecture builds queued their small image-manifest and index `PUT` requests behind
+it. The Torghut publisher spent more than ten minutes in `crane index append` without sending the index to Distribution;
+live HAProxy socket state showed full client receive queues waiting behind the single backend connection. Repeating the
+publisher reproduced the same head-of-line blocking.
+
+Manifest commits now have a separate, bounded four-connection backend selected only for `PUT
+/v2/<repository>/manifests/<reference>`. All mutation bodies remain subject to the 1 MiB/s frontend limit, while blob
+upload initiation, transfer, finalization, and deletion remain on the original single-connection queue. The exception is
+safe because an image manifest or index is only a few KiB and Distribution rejects references to blobs that are not
+already present. This restores publication liveness without reopening the large-blob fan-out that caused the Ceph write
+burst.
+
 After request-body shaping rolls out, dispatch the current Analysis `main` workflow through build and push, then start
 a new 30-minute observation from a fresh SMART baseline. The gate must show no controller event above two seconds. If
 the shaped workload still fails that gate, stop the rollout and investigate the remaining measured writer instead of
