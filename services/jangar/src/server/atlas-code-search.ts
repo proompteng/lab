@@ -116,12 +116,37 @@ type CreateAtlasCodeSearchHandlersOptions = {
 
 const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 200
+const MIN_SEMANTIC_CANDIDATES = 20
+const SEMANTIC_CANDIDATE_MULTIPLIER = 2
 const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 12_000
 const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
 const MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 900
 const DEFAULT_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = 60_000
 const RRF_K = 60
 const ATLAS_QUERY_INSTRUCTION = 'Given a query, retrieve relevant source-code chunks from the repository'
+const LEXICAL_STOP_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'for',
+  'from',
+  'how',
+  'in',
+  'is',
+  'it',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'which',
+  'with',
+])
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
 
@@ -186,6 +211,24 @@ const parsePositiveIntEnv = (name: string, fallback: number, max = Number.MAX_SA
 const buildAtlasQueryInstruction = (query: string) => `Instruct: ${ATLAS_QUERY_INSTRUCTION}\nQuery: ${query}`
 
 const escapeLikePattern = (value: string) => value.replace(/[\\%_]/g, (match) => `\\${match}`)
+
+const buildDefinitionPattern = (query: string) => {
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(query)) return null
+  const escaped = query.replace(/\$/g, '\\$')
+  return `(^|\\n)[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(async[[:space:]]+)?(const|let|var|function|class|interface|type|enum)[[:space:]]+${escaped}([^A-Za-z0-9_$]|$)`
+}
+
+const buildLexicalQuery = (query: string) => {
+  const terms = [
+    ...new Set(
+      (query.match(/[A-Za-z0-9_$]+/g) ?? [])
+        .map((term) => term.toLowerCase())
+        .filter((term) => term.length > 2 && !LEXICAL_STOP_WORDS.has(term)),
+    ),
+  ].slice(0, 10)
+  if (terms.length < 3) return query
+  return terms.map((_, omitted) => terms.filter((__, index) => index !== omitted).join(' ')).join(' OR ')
+}
 
 const resolveCodeSearchFilters = ({
   repository,
@@ -469,10 +512,19 @@ export const createAtlasCodeSearchHandlers = ({
 
     const identifiers = extractIdentifierTokens(resolvedQuery)
     const candidateLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
+    const semanticCandidateLimit = Math.min(
+      MAX_SEARCH_LIMIT,
+      Math.max(MIN_SEMANTIC_CANDIDATES, resolvedLimit * SEMANTIC_CANDIDATE_MULTIPLIER),
+    )
     const embeddingConfig = loadEmbeddingConfig()
     const embedding = await embedCodeSearchQuery(resolvedQuery, embeddingConfig)
     const vectorString = vectorToPgArray(embedding)
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
+    const definitionPattern = buildDefinitionPattern(resolvedQuery)
+    const definitionRankClause = definitionPattern
+      ? sql`WHEN file_chunks.content ~ ${definitionPattern} THEN 0.98`
+      : sql``
+    const lexicalQuery = buildLexicalQuery(resolvedQuery)
     const whereClause = searchWhereClause(filters)
     const semanticTimeoutMs = parsePositiveIntEnv(
       'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
@@ -508,8 +560,9 @@ export const createAtlasCodeSearchHandlers = ({
           CASE
             WHEN file_keys.path = ${resolvedQuery} THEN 1.0
             WHEN lower(file_keys.path) = lower(${resolvedQuery}) THEN 0.99
-            WHEN file_chunks.content ILIKE ${containsPattern} ESCAPE '\' THEN 0.95
+            ${definitionRankClause}
             WHEN file_keys.path ILIKE ${containsPattern} ESCAPE '\' THEN 0.90
+            WHEN file_chunks.content ILIKE ${containsPattern} ESCAPE '\' THEN 0.75
             ELSE similarity(file_keys.path, ${resolvedQuery}::text)
           END AS exact_rank
         FROM exact_candidates
@@ -525,16 +578,18 @@ export const createAtlasCodeSearchHandlers = ({
       const lexicalResult = await sql<AtlasCodeSearchRow>`
         SELECT
           ${sql.raw(codeSearchRawSelectColumns)},
-          ts_rank_cd(file_chunks.text_tsvector, websearch_to_tsquery('simple', ${resolvedQuery}::text)) AS lexical_rank
+          ts_rank_cd(file_chunks.text_tsvector, websearch_to_tsquery('simple', ${lexicalQuery}::text)) AS lexical_rank
         FROM atlas.file_chunks AS file_chunks
         INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
         INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
         INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
         ${whereClause}
-          AND file_chunks.text_tsvector @@ websearch_to_tsquery('simple', ${resolvedQuery}::text)
+          AND file_chunks.text_tsvector @@ websearch_to_tsquery('simple', ${lexicalQuery}::text)
         ORDER BY lexical_rank DESC, file_keys.path, file_chunks.chunk_index
         LIMIT ${candidateLimit};
       `.execute(trx)
+
+      await sql`SELECT set_config('hnsw.ef_search', ${String(semanticCandidateLimit)}, true);`.execute(trx)
 
       const semanticResult = await sql<AtlasCodeSearchRow>`
         SELECT
@@ -549,7 +604,7 @@ export const createAtlasCodeSearchHandlers = ({
           AND chunk_embeddings.model = ${embeddingConfig.model}
           AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
         ORDER BY chunk_embeddings.embedding <=> ${vectorString}::vector
-        LIMIT ${candidateLimit};
+        LIMIT ${semanticCandidateLimit};
       `.execute(trx)
 
       return {
@@ -580,7 +635,10 @@ export const createAtlasCodeSearchHandlers = ({
         }
         entry.score += weight / (RRF_K + index + 1)
         entry.modes.add(mode)
-        if (mode === 'exact') entry.exactRank = Number(row.exact_rank)
+        if (mode === 'exact') {
+          entry.exactRank = Number(row.exact_rank)
+          if (Number.isFinite(entry.exactRank)) entry.score += entry.exactRank
+        }
         if (mode === 'lexical') entry.lexicalRank = Number(row.lexical_rank)
         if (mode === 'semantic') entry.semanticDistance = Number(row.semantic_distance)
         merged.set(row.chunk_id, entry)

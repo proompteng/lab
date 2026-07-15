@@ -455,7 +455,10 @@ describe('atlas store', () => {
     expect(semanticSql).toBeDefined()
     expect(semanticSql?.sql.toLowerCase()).not.toContain('candidate_chunks')
     expect(semanticSql?.sql.toLowerCase()).toContain('order by chunk_embeddings.embedding <=> $')
+    expect(semanticSql?.params.at(-1)).toBe(20)
     expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))).toBe(true)
+    const hnswBudgetSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))
+    expect(hnswBudgetSql?.params).toContain('20')
   })
 
   it('isolates exact-match candidates without whole-content similarity scans', async () => {
@@ -471,7 +474,27 @@ describe('atlas store', () => {
     expect(exactSql).toBeDefined()
     expect(exactSql?.sql.toLowerCase()).toContain('with exact_candidates as materialized')
     expect(exactSql?.sql.toLowerCase()).toContain('file_chunks.content ilike')
+    expect(exactSql?.sql.toLowerCase()).toContain('file_chunks.content ~ $')
     expect(exactSql?.sql.toLowerCase()).not.toMatch(/file_chunks\.content\s+%\s+\$/)
+  })
+
+  it('relaxes natural-language lexical queries by one content term', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'source preview verifies the indexed commit and content hash',
+      repository: 'proompteng/lab',
+      ref: 'main',
+    })
+
+    const lexicalSql = calls.find((call) => call.sql.toLowerCase().includes(' as lexical_rank'))
+    expect(lexicalSql?.params).toContain(
+      'preview verifies indexed commit content hash OR source verifies indexed commit content hash OR source preview indexed commit content hash OR source preview verifies commit content hash OR source preview verifies indexed content hash OR source preview verifies indexed commit hash OR source preview verifies indexed commit content',
+    )
   })
 
   it('reports complete reconciliation metadata without sampling rows', async () => {
