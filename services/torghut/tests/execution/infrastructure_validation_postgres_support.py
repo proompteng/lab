@@ -46,6 +46,67 @@ def upgrade_validation_submit_schema(
     command.upgrade(alembic, "0068_validation_submit")
 
 
+def upgrade_reduction_schema(
+    alembic: AlembicConfig,
+    schema_engine: Engine,
+    *,
+    target: str = "0071_validation_lineage",
+) -> None:
+    """Apply the accelerated reduction lineage and its catalog prerequisites."""
+
+    command.stamp(alembic, "0057_generic_multifactor_machine")
+    command.upgrade(alembic, "0061_linked_submission_terminal")
+    command.stamp(alembic, "0065_strategy_capital_compat")
+    with schema_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE torghut_options_contract_catalog (
+                    contract_symbol TEXT PRIMARY KEY,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+        )
+        if target in {
+            "0072_validation_lifecycle",
+            "0073_live_paper_bounds",
+        }:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE execution_order_events (
+                        id UUID PRIMARY KEY,
+                        event_fingerprint VARCHAR(64) NOT NULL UNIQUE,
+                        source_topic VARCHAR(128) NOT NULL,
+                        source_partition INTEGER,
+                        source_offset BIGINT,
+                        alpaca_account_label VARCHAR(64) NOT NULL,
+                        feed_seq BIGINT,
+                        event_ts TIMESTAMPTZ,
+                        symbol VARCHAR(64),
+                        alpaca_order_id VARCHAR(128),
+                        client_order_id VARCHAR(128),
+                        event_type VARCHAR(64),
+                        status VARCHAR(32),
+                        qty NUMERIC(20, 8),
+                        filled_qty NUMERIC(20, 8),
+                        filled_qty_delta NUMERIC(20, 8),
+                        avg_fill_price NUMERIC(20, 8),
+                        filled_notional_delta NUMERIC(20, 8),
+                        fill_quantity_basis VARCHAR(32),
+                        raw_event JSONB NOT NULL,
+                        execution_id UUID,
+                        trade_decision_id UUID,
+                        source_window_id UUID,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+            )
+    command.upgrade(alembic, target)
+
+
 def validation_fixture(
     now: datetime,
     *,
@@ -108,7 +169,7 @@ def validation_lifecycle_fixture(
 ) -> tuple[InfrastructureValidationPermit, InfrastructureValidationLifecyclePlan]:
     plan = InfrastructureValidationLifecyclePlan.model_validate(
         {
-            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v2",
             "venue": "alpaca",
             "asset_class": "crypto",
             "symbol": "BTC/USD",

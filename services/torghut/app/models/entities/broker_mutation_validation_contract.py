@@ -50,22 +50,22 @@ purpose <> 'control_plane_validation' OR COALESCE((
       > 0
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_notional_usd}')::numeric
-      <= CASE
-          WHEN canonical_intent_json::jsonb #>>
-               '{request,infrastructure_validation,test_plan,schema_version}' =
-               'torghut.infrastructure-validation-lifecycle-plan.v1'
-          THEN 30 ELSE 1
+      <= CASE canonical_intent_json::jsonb #>>
+              '{request,infrastructure_validation,test_plan,schema_version}'
+          WHEN 'torghut.infrastructure-validation-lifecycle-plan.v1' THEN 5
+          WHEN 'torghut.infrastructure-validation-lifecycle-plan.v2' THEN 30
+          ELSE 1
          END
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
       > 0
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
-      <= CASE
-          WHEN canonical_intent_json::jsonb #>>
-               '{request,infrastructure_validation,test_plan,schema_version}' =
-               'torghut.infrastructure-validation-lifecycle-plan.v1'
-          THEN 30 ELSE 1
+      <= CASE canonical_intent_json::jsonb #>>
+              '{request,infrastructure_validation,test_plan,schema_version}'
+          WHEN 'torghut.infrastructure-validation-lifecycle-plan.v1' THEN 5
+          WHEN 'torghut.infrastructure-validation-lifecycle-plan.v2' THEN 30
+          ELSE 1
          END
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
@@ -117,7 +117,8 @@ purpose <> 'control_plane_validation' OR COALESCE((
   AND canonical_intent_json::jsonb #>>
       '{request,infrastructure_validation,test_plan,schema_version}' IN (
       'torghut.infrastructure-validation-order-plan.v1',
-      'torghut.infrastructure-validation-lifecycle-plan.v1')
+      'torghut.infrastructure-validation-lifecycle-plan.v1',
+      'torghut.infrastructure-validation-lifecycle-plan.v2')
   AND canonical_intent_json::jsonb #>>
       '{request,infrastructure_validation,test_plan,venue}' = 'alpaca'
   AND canonical_intent_json::jsonb #>>
@@ -181,8 +182,9 @@ purpose <> 'control_plane_validation' OR COALESCE((
       '{request,infrastructure_validation,test_plan,stop_price}' = 'null'::jsonb
   AND (
       canonical_intent_json::jsonb #>>
-          '{request,infrastructure_validation,test_plan,schema_version}' <>
-          'torghut.infrastructure-validation-lifecycle-plan.v1'
+          '{request,infrastructure_validation,test_plan,schema_version}' NOT IN (
+          'torghut.infrastructure-validation-lifecycle-plan.v1',
+          'torghut.infrastructure-validation-lifecycle-plan.v2')
       OR COALESCE((
         ((canonical_intent_json::jsonb #>
           '{request,infrastructure_validation,test_plan}') - ARRAY[
@@ -198,18 +200,25 @@ purpose <> 'control_plane_validation' OR COALESCE((
              '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric
             < (canonical_intent_json::jsonb #>>
                '{request,infrastructure_validation,test_plan,qty}')::numeric
-        AND (canonical_intent_json::jsonb #>>
+        AND (
+          canonical_intent_json::jsonb #>>
+              '{request,infrastructure_validation,test_plan,schema_version}' <>
+              'torghut.infrastructure-validation-lifecycle-plan.v2'
+          OR (
+            (canonical_intent_json::jsonb #>>
              '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric *
-            (canonical_intent_json::jsonb #>>
-             '{request,infrastructure_validation,test_plan,limit_price}')::numeric
-            >= 12
-        AND ((canonical_intent_json::jsonb #>>
-              '{request,infrastructure_validation,test_plan,qty}')::numeric -
-             (canonical_intent_json::jsonb #>>
-              '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric) *
-            (canonical_intent_json::jsonb #>>
-             '{request,infrastructure_validation,test_plan,limit_price}')::numeric
-            >= 12
+                (canonical_intent_json::jsonb #>>
+                 '{request,infrastructure_validation,test_plan,limit_price}')::numeric
+                >= 12
+            AND ((canonical_intent_json::jsonb #>>
+                  '{request,infrastructure_validation,test_plan,qty}')::numeric -
+                 (canonical_intent_json::jsonb #>>
+                  '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric) *
+                (canonical_intent_json::jsonb #>>
+                 '{request,infrastructure_validation,test_plan,limit_price}')::numeric
+                >= 12
+          )
+        )
         AND (canonical_intent_json::jsonb #>>
              '{request,infrastructure_validation,test_plan,resting_close_limit_price}')::numeric
             > (canonical_intent_json::jsonb #>>

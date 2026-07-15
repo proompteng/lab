@@ -25,6 +25,9 @@ from .evidence_contracts import (
     EvidenceMaturity,
     evidence_contract_payload,
 )
+from .infrastructure_validation import (
+    is_infrastructure_validation_lifecycle_plan_schema,
+)
 
 
 _EVIDENCE_KEY = "_torghut_evidence_contract"
@@ -229,9 +232,8 @@ def _require_infrastructure_validation_position_event(
     expected_position_quantity: Decimal,
     require_positive_position: bool,
 ) -> InfrastructureValidationPositionEvidence:
-    if (
+    if not is_infrastructure_validation_lifecycle_plan_schema(
         evidence.root_plan_schema
-        != "torghut.infrastructure-validation-lifecycle-plan.v1"
     ):
         raise RuntimeError("infrastructure_validation_position_ancestry_missing")
     normalized_symbol = symbol.strip().upper()
@@ -601,18 +603,17 @@ def _require_lineage_target(
         raise RuntimeError(
             "infrastructure_validation_receipt_evidence_invalid"
         ) from exc
+    lifecycle_root = is_infrastructure_validation_lifecycle_plan_schema(
+        root_plan_schema
+    )
     target_matches = {
-        "submit_order": root_plan_schema
-        == "torghut.infrastructure-validation-lifecycle-plan.v1"
+        "submit_order": lifecycle_root
         and receipt.target_key == root_symbol
         and request.get("symbol") == root_symbol,
         "replace_order": receipt.target_key == parent_broker_order_id,
         "cancel_order": receipt.target_key == parent_broker_order_id,
-        "close_position": root_plan_schema
-        == "torghut.infrastructure-validation-lifecycle-plan.v1"
-        and receipt.target_key == root_symbol,
-        "close_all_positions": root_plan_schema
-        == "torghut.infrastructure-validation-lifecycle-plan.v1"
+        "close_position": lifecycle_root and receipt.target_key == root_symbol,
+        "close_all_positions": lifecycle_root
         and request.get("symbols") == [root_symbol],
     }.get(receipt.operation, False)
     if not target_matches:

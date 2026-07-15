@@ -23,6 +23,15 @@ _MAX_PERMIT_LIFETIME = timedelta(minutes=15)
 _MAX_SUBMIT_PROOF_NOTIONAL_USD = Decimal("1")
 _MAX_LIFECYCLE_NOTIONAL_USD = Decimal("30")
 _MIN_LIFECYCLE_LEG_PLAN_NOTIONAL_USD = Decimal("12")
+INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSION = (
+    "torghut.infrastructure-validation-lifecycle-plan.v2"
+)
+_INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSIONS = frozenset(
+    {
+        "torghut.infrastructure-validation-lifecycle-plan.v1",
+        INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSION,
+    }
+)
 _VALIDATION_HOSTS = {
     "alpaca": "paper-api.alpaca.markets",
     "hyperliquid": "api.hyperliquid-testnet.xyz",
@@ -179,7 +188,7 @@ class InfrastructureValidationOrderPlan(_InfrastructureValidationPlanBase):
 class InfrastructureValidationLifecyclePlan(_InfrastructureValidationPlanBase):
     """One bounded fill followed only by independently authorized reductions."""
 
-    schema_version: Literal["torghut.infrastructure-validation-lifecycle-plan.v1"]
+    schema_version: Literal["torghut.infrastructure-validation-lifecycle-plan.v2"]
     resting_close_limit_price: Decimal = Field(gt=0)
     replacement_close_limit_price: Decimal = Field(gt=0)
     partial_close_qty: Decimal = Field(gt=0)
@@ -324,6 +333,15 @@ def infrastructure_validation_lifecycle_plan_sha256(
     return infrastructure_validation_plan_sha256(plan)
 
 
+def is_infrastructure_validation_lifecycle_plan_schema(value: object) -> bool:
+    """Recognize both immutable historical v1 and current floor-enforced v2."""
+
+    return (
+        isinstance(value, str)
+        and value in _INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSIONS
+    )
+
+
 def infrastructure_validation_plan_sha256(
     plan: InfrastructureValidationSubmitPlan,
 ) -> str:
@@ -446,6 +464,7 @@ def _canonical_json(payload: Mapping[str, object]) -> str:
 
 
 __all__ = [
+    "INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSION",
     "InfrastructureValidationLifecyclePlan",
     "InfrastructureValidationPermit",
     "InfrastructureValidationOrderPlan",
@@ -460,4 +479,5 @@ __all__ = [
     "infrastructure_validation_request_payload",
     "infrastructure_validation_terminal_state_payload",
     "infrastructure_validation_terminal_state_sha256",
+    "is_infrastructure_validation_lifecycle_plan_schema",
 ]

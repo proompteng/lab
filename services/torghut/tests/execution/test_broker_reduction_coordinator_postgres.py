@@ -9,7 +9,6 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import select, text
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -61,67 +60,9 @@ from tests.execution.decision_submission_claims_postgres_support import (
     drop_schema,
 )
 from tests.execution.infrastructure_validation_postgres_support import (
+    upgrade_reduction_schema as _upgrade_reduction_schema,
     validation_lifecycle_fixture,
 )
-
-
-def _upgrade_reduction_schema(
-    alembic: AlembicConfig,
-    schema_engine: Engine,
-    *,
-    target: str = "0071_validation_lineage",
-) -> None:
-    command.stamp(alembic, "0057_generic_multifactor_machine")
-    command.upgrade(alembic, "0061_linked_submission_terminal")
-    command.stamp(alembic, "0065_strategy_capital_compat")
-    with schema_engine.begin() as connection:
-        connection.execute(
-            text(
-                """
-                CREATE TABLE torghut_options_contract_catalog (
-                    contract_symbol TEXT PRIMARY KEY,
-                    status TEXT NOT NULL
-                )
-                """
-            )
-        )
-        if target in {
-            "0072_validation_lifecycle",
-            "0073_live_paper_bounds",
-        }:
-            connection.execute(
-                text(
-                    """
-                    CREATE TABLE execution_order_events (
-                        id UUID PRIMARY KEY,
-                        event_fingerprint VARCHAR(64) NOT NULL UNIQUE,
-                        source_topic VARCHAR(128) NOT NULL,
-                        source_partition INTEGER,
-                        source_offset BIGINT,
-                        alpaca_account_label VARCHAR(64) NOT NULL,
-                        feed_seq BIGINT,
-                        event_ts TIMESTAMPTZ,
-                        symbol VARCHAR(64),
-                        alpaca_order_id VARCHAR(128),
-                        client_order_id VARCHAR(128),
-                        event_type VARCHAR(64),
-                        status VARCHAR(32),
-                        qty NUMERIC(20, 8),
-                        filled_qty NUMERIC(20, 8),
-                        filled_qty_delta NUMERIC(20, 8),
-                        avg_fill_price NUMERIC(20, 8),
-                        filled_notional_delta NUMERIC(20, 8),
-                        fill_quantity_basis VARCHAR(32),
-                        raw_event JSONB NOT NULL,
-                        execution_id UUID,
-                        trade_decision_id UUID,
-                        source_window_id UUID,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-            )
-    command.upgrade(alembic, target)
 
 
 @pytest.mark.skipif(

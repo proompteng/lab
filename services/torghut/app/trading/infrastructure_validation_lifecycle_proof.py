@@ -23,6 +23,9 @@ from ..models import (
     TradeDecisionSubmissionClaim,
 )
 from .broker_mutation_receipts import fingerprint_broker_endpoint
+from .infrastructure_validation import (
+    INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSION,
+)
 from .infrastructure_validation_lifecycle_broker import (
     InfrastructureValidationLifecycleContext,
 )
@@ -109,7 +112,7 @@ class InfrastructureValidationLifecycleProof:
                     )
                 if (
                     evidence.root_plan_schema
-                    != "torghut.infrastructure-validation-lifecycle-plan.v1"
+                    != INFRASTRUCTURE_VALIDATION_LIFECYCLE_PLAN_SCHEMA_VERSION
                 ):
                     raise RuntimeError(
                         "infrastructure_validation_position_ancestry_missing"
