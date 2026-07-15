@@ -256,12 +256,9 @@ describe('Torghut manifest scheduling', () => {
     const data = getAtPath(schema, ['data'])
     expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 10;')
     expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
-    expect(data['schema.sql']).toContain('ADD COLUMN IF NOT EXISTS kafka_offset Nullable(Int64)')
-    expect(data['schema.sql']).toContain('CREATE TABLE IF NOT EXISTS torghut.hyperliquid_bbo_kafka_staging')
-    expect(data['schema.sql']).toContain('ORDER BY (kafka_topic, kafka_partition, kafka_offset)')
-    expect(args).toContain('hyperliquid_bbo_kafka_staging')
-    expect(args).toContain("name IN ('kafka_topic','kafka_partition','kafka_offset')")
-    expect(args).toContain("startsWith(sorting_key, 'kafka_topic, kafka_partition, kafka_offset')")
+    expect(data['schema.sql']).not.toContain('_kafka_staging')
+    expect(data['schema.sql']).not.toContain('kafka_topic')
+    expect(args).not.toContain('WRITER_TABLES')
   })
 
   it('bounds Torghut PostSync hook jobs so completed hooks do not become residue', () => {
@@ -315,22 +312,8 @@ describe('Torghut manifest scheduling', () => {
     expect(data.KAFKA_READY_MAX_AGE_MS).toBe('120000')
     expect(data.CLICKHOUSE_READY_MAX_AGE_MS).toBe('300000')
     expect(data.CLICKHOUSE_TABLE_READY_MAX_AGE_MS).toBe('300000')
-    expect(data.CLICKHOUSE_WRITER_MAX_POLL_RECORDS).toBe('5000')
-    expect(data.CLICKHOUSE_WRITER_HIGH_THROUGHPUT_BATCH_SIZE).toBe('5000')
-    expect(data.CLICKHOUSE_WRITER_HIGH_THROUGHPUT_MAX_AGE_MS).toBe('300000')
-    expect(data.CLICKHOUSE_WRITER_SPARSE_BATCH_SIZE).toBe('5000')
-    expect(data.CLICKHOUSE_WRITER_SPARSE_MAX_AGE_MS).toBe('300000')
-    expect(data.CLICKHOUSE_WRITER_MAX_BUFFERED_RECORDS_PER_PARTITION).toBe('10000')
-    expect(data.CLICKHOUSE_WRITER_AUTO_OFFSET_RESET).toBe('earliest')
-    expect(data.CLICKHOUSE_WRITER_DESTINATION_SUFFIX).toBe('_kafka_staging')
-    expect(data.CLICKHOUSE_WRITER_REQUEST_TIMEOUT_MS).toBe('10000')
-    expect(data.CLICKHOUSE_PARITY_REQUEST_TIMEOUT_MS).toBe('120000')
-    expect(data.CLICKHOUSE_WRITER_KAFKA_OPERATION_TIMEOUT_MS).toBe('10000')
-    expect(data.CLICKHOUSE_WRITER_SHUTDOWN_FLUSH_TIMEOUT_MS).toBe('35000')
-    expect(data.CLICKHOUSE_WRITER_READINESS_MAX_AGE_MS).toBe('360000')
-    expect(data.CLICKHOUSE_WRITER_CATCH_UP_MAX_PARTITION_LAG_RECORDS).toBe('1000')
-    expect(data.CLICKHOUSE_WRITER_READINESS_MAX_PARTITION_LAG_RECORDS).toBeUndefined()
-    expect(data.CLICKHOUSE_WRITER_CONSUMER_CLOSE_TIMEOUT_MS).toBe('10000')
+    expect(Object.keys(data).some((key) => key.startsWith('CLICKHOUSE_WRITER_'))).toBe(false)
+    expect(Object.keys(data).some((key) => key.startsWith('CLICKHOUSE_PARITY_'))).toBe(false)
     expect(data.HYPERLIQUID_TOP_MARKET_COUNT).toBe('12')
     expect(data.HYPERLIQUID_PINNED_PERP_COINS).toBe('BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD')
 
@@ -362,30 +345,6 @@ describe('Torghut manifest scheduling', () => {
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
     ).toBe('hyperliquid-feed-pinned-runtime-universe-20260704a')
-
-    const writer = parseManifest('argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml')
-    const writerContainer = getAtPath(writer, ['spec', 'template', 'spec', 'containers', 0])
-    expect(getAtPath(writer, ['spec']).replicas).toBe(1)
-    expect(getAtPath(writer, ['spec', 'strategy']).type).toBe('Recreate')
-    expect(String(writerContainer.image)).toMatch(
-      /^registry\.ide-newton\.ts\.net\/lab\/torghut-hyperliquid-feed@sha256:[0-9a-f]{64}$/,
-    )
-    expect(writerContainer.env).toContainEqual({ name: 'TORGHUT_HYPERLIQUID_MODE', value: 'clickhouse-writer' })
-
-    const parity = parseManifest('argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml')
-    const parityJob = getAtPath(parity, ['spec', 'jobTemplate', 'spec'])
-    const parityPod = getAtPath(parityJob, ['template', 'spec'])
-    const parityContainer = getAtPath(parityPod, ['containers', 0])
-    expect(getAtPath(parity, ['spec']).suspend).toBe(true)
-    expect(getAtPath(parity, ['spec']).concurrencyPolicy).toBe('Forbid')
-    expect(parityJob.backoffLimit).toBe(0)
-    expect(parityJob.activeDeadlineSeconds).toBe(1500)
-    expect(parityJob.ttlSecondsAfterFinished).toBe(86400)
-    expect(parityPod.automountServiceAccountToken).toBe(false)
-    expect(String(parityContainer.image)).toMatch(
-      /^registry\.ide-newton\.ts\.net\/lab\/torghut-hyperliquid-feed@sha256:[0-9a-f]{64}$/,
-    )
-    expect(parityContainer.env).toContainEqual({ name: 'TORGHUT_HYPERLIQUID_MODE', value: 'clickhouse-parity' })
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {

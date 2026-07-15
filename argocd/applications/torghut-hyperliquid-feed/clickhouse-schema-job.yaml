@@ -48,34 +48,10 @@ spec:
                 hyperliquid_asset_contexts
                 hyperliquid_funding
                 hyperliquid_status
-                hyperliquid_raw_kafka_staging
-                hyperliquid_market_catalog_kafka_staging
-                hyperliquid_trades_kafka_staging
-                hyperliquid_l2_books_kafka_staging
-                hyperliquid_bbo_kafka_staging
-                hyperliquid_candles_kafka_staging
-                hyperliquid_asset_contexts_kafka_staging
-                hyperliquid_funding_kafka_staging
-                hyperliquid_status_kafka_staging
-              )
-              WRITER_TABLES=(
-                hyperliquid_raw_kafka_staging
-                hyperliquid_market_catalog_kafka_staging
-                hyperliquid_trades_kafka_staging
-                hyperliquid_l2_books_kafka_staging
-                hyperliquid_bbo_kafka_staging
-                hyperliquid_candles_kafka_staging
-                hyperliquid_asset_contexts_kafka_staging
-                hyperliquid_funding_kafka_staging
-                hyperliquid_status_kafka_staging
               )
               REQUIRED_TABLE_LIST="'${REQUIRED_TABLES[0]}'"
               for table in "${REQUIRED_TABLES[@]:1}"; do
                 REQUIRED_TABLE_LIST="${REQUIRED_TABLE_LIST},'${table}'"
-              done
-              WRITER_TABLE_LIST="'${WRITER_TABLES[0]}'"
-              for table in "${WRITER_TABLES[@]:1}"; do
-                WRITER_TABLE_LIST="${WRITER_TABLE_LIST},'${table}'"
               done
 
               wait_for_host() {
@@ -112,22 +88,6 @@ spec:
                 count="$(table_count "${host}")"
                 if [ "${count}" -ne "${#REQUIRED_TABLES[@]}" ]; then
                   echo "ClickHouse host ${host} has ${count}/${#REQUIRED_TABLES[@]} required Hyperliquid tables" >&2
-                  exit 1
-                fi
-                lineage_columns="$(
-                  "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
-                    "SELECT count() FROM system.columns WHERE database='torghut' AND table IN (${WRITER_TABLE_LIST}) AND name IN ('kafka_topic','kafka_partition','kafka_offset')"
-                )"
-                if [ "${lineage_columns}" -ne "$((3 * ${#WRITER_TABLES[@]}))" ]; then
-                  echo "ClickHouse host ${host} has ${lineage_columns}/$((3 * ${#WRITER_TABLES[@]})) writer lineage columns" >&2
-                  exit 1
-                fi
-                lineage_keys="$(
-                  "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query \
-                    "SELECT count() FROM system.tables WHERE database='torghut' AND name IN (${WRITER_TABLE_LIST}) AND startsWith(sorting_key, 'kafka_topic, kafka_partition, kafka_offset')"
-                )"
-                if [ "${lineage_keys}" -ne "${#WRITER_TABLES[@]}" ]; then
-                  echo "ClickHouse host ${host} has ${lineage_keys}/${#WRITER_TABLES[@]} lineage-keyed writer tables" >&2
                   exit 1
                 fi
               done

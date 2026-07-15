@@ -12,10 +12,6 @@ const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut-hyperliquid-feed'
 const defaultManifestPath = 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
 const defaultContainerName = 'torghut-hyperliquid-feed'
-const defaultWriterManifestPath = 'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
-const defaultWriterContainerName = 'torghut-hyperliquid-clickhouse-writer'
-const defaultParityManifestPath = 'argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml'
-const defaultParityContainerName = 'torghut-hyperliquid-clickhouse-parity'
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
 
 type CliOptions = {
@@ -130,22 +126,6 @@ const updateHyperliquidFeedManifest = (
   }
 }
 
-type ManifestTarget = {
-  manifestPath: string
-  containerName: string
-}
-
-const updateHyperliquidFeedManifests = (
-  imageName: string,
-  digest: string,
-  version: string,
-  commit: string,
-  targets: ManifestTarget[],
-) =>
-  targets.map((target) =>
-    updateHyperliquidFeedManifest(imageName, digest, version, commit, target.manifestPath, target.containerName),
-  )
-
 const parseArgs = (argv: string[]): CliOptions => {
   const options: CliOptions = {}
 
@@ -230,29 +210,15 @@ const main = (cliOptions?: CliOptions) => {
   const version =
     parsed.version ?? process.env.TORGHUT_HYPERLIQUID_FEED_VERSION ?? execGit(['describe', '--tags', '--always'])
   const commit = parsed.commit ?? process.env.TORGHUT_HYPERLIQUID_FEED_COMMIT ?? execGit(['rev-parse', 'HEAD'])
-  const manifestPathOverride = parsed.manifestPath ?? process.env.TORGHUT_HYPERLIQUID_FEED_MANIFEST_PATH
-  const containerNameOverride = parsed.containerName ?? process.env.TORGHUT_HYPERLIQUID_FEED_CONTAINER_NAME
-  const targets =
-    manifestPathOverride || containerNameOverride
-      ? [
-          {
-            manifestPath: manifestPathOverride ?? defaultManifestPath,
-            containerName: containerNameOverride ?? defaultContainerName,
-          },
-        ]
-      : [
-          { manifestPath: defaultManifestPath, containerName: defaultContainerName },
-          { manifestPath: defaultWriterManifestPath, containerName: defaultWriterContainerName },
-          { manifestPath: defaultParityManifestPath, containerName: defaultParityContainerName },
-        ]
-  const results = updateHyperliquidFeedManifests(imageName, digest, version, commit, targets)
-  results.forEach((result) => {
-    if (result.changed) {
-      console.log(`Updated ${result.manifestPath} with ${result.imageRef}`)
-    } else {
-      console.log(`No manifest changes required for ${result.imageRef} in ${result.manifestPath}`)
-    }
-  })
+  const manifestPath = parsed.manifestPath ?? process.env.TORGHUT_HYPERLIQUID_FEED_MANIFEST_PATH ?? defaultManifestPath
+  const containerName =
+    parsed.containerName ?? process.env.TORGHUT_HYPERLIQUID_FEED_CONTAINER_NAME ?? defaultContainerName
+  const result = updateHyperliquidFeedManifest(imageName, digest, version, commit, manifestPath, containerName)
+  if (result.changed) {
+    console.log(`Updated ${result.manifestPath} with ${result.imageRef}`)
+  } else {
+    console.log(`No manifest changes required for ${result.imageRef} in ${result.manifestPath}`)
+  }
 }
 
 if (import.meta.main) {
@@ -269,5 +235,4 @@ export const __private = {
   parseArgs,
   replaceSingle,
   updateHyperliquidFeedManifest,
-  updateHyperliquidFeedManifests,
 }

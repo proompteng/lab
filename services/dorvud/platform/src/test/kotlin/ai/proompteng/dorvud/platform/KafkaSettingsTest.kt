@@ -14,14 +14,14 @@ class KafkaSettingsTest {
     val properties =
       KafkaConsumerSettings(
         bootstrapServers = "kafka:9092",
-        groupId = "clickhouse-writer",
-        clientId = "clickhouse-writer-1",
+        groupId = "test-consumer",
+        clientId = "test-consumer-1",
         maxPollRecords = 321,
         maxPollIntervalMs = 600_000,
         sessionTimeoutMs = 45_000,
         heartbeatIntervalMs = 3_000,
         securityProtocol = "SASL_PLAINTEXT",
-        auth = KafkaAuth(username = "writer", password = "secret"),
+        auth = KafkaAuth(username = "consumer", password = "secret"),
       ).toProperties()
 
     assertEquals(false, properties[ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG])
@@ -39,14 +39,14 @@ class KafkaSettingsTest {
     val properties =
       KafkaConsumerSettings(
         bootstrapServers = "kafka:9092",
-        groupId = "clickhouse-writer",
-        clientId = "clickhouse-parity",
+        groupId = "test-consumer",
+        clientId = "test-admin",
         securityProtocol = "SASL_PLAINTEXT",
-        auth = KafkaAuth(username = "writer", password = "secret"),
+        auth = KafkaAuth(username = "consumer", password = "secret"),
       ).toAdminProperties()
 
     assertEquals("kafka:9092", properties[AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG])
-    assertEquals("clickhouse-parity-admin", properties[AdminClientConfig.CLIENT_ID_CONFIG])
+    assertEquals("test-admin-admin", properties[AdminClientConfig.CLIENT_ID_CONFIG])
     assertEquals(null, properties[ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG])
     assertEquals("SASL_PLAINTEXT", properties["security.protocol"])
     assertEquals("SCRAM-SHA-512", properties[SaslConfigs.SASL_MECHANISM])

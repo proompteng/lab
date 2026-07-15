@@ -798,7 +798,7 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     )
   }
 
-  for (const expectedWorkload of ['torghut-options-archive', 'torghut-hyperliquid-clickhouse-writer']) {
+  for (const expectedWorkload of ['torghut-options-archive']) {
     const workload = snapshot.workloads.find(({ name }) => name === expectedWorkload)
     if (!workload) {
       failures.push(`containment workload evidence is missing for ${expectedWorkload}`)
@@ -1427,16 +1427,7 @@ const collectRuntimeEvidence = async (): Promise<RuntimeEvidence> => {
 const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
   const [deploymentsValue, podsValue] = await Promise.all([
     kubectlJson(
-      [
-        '-n',
-        'torghut',
-        'get',
-        'deployment',
-        'torghut-options-archive',
-        'torghut-hyperliquid-clickhouse-writer',
-        '-o',
-        'json',
-      ],
+      ['-n', 'torghut', 'get', 'deployment', 'torghut-options-archive', '-o', 'json'],
       'contained Torghut deployments',
     ),
     kubectlJson(['-n', 'torghut', 'get', 'pods', '-o', 'json'], 'Torghut pods for containment proof'),

@@ -239,15 +239,6 @@ const healthySnapshot = (): StorageStabilitySnapshot => ({
       terminatingReplicas: 0,
       podNames: [],
     },
-    {
-      name: 'torghut-hyperliquid-clickhouse-writer',
-      desiredReplicas: 0,
-      actualReplicas: 0,
-      readyReplicas: 0,
-      availableReplicas: 0,
-      terminatingReplicas: 0,
-      podNames: [],
-    },
   ],
   argoApplications: [
     { name: 'jangar', sync: 'Synced', health: 'Healthy' },
