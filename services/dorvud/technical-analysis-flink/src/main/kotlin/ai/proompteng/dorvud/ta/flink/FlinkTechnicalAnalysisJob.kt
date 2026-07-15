@@ -1216,12 +1216,12 @@ private class StatusHeartbeatProcessFunction(
     ctx: OnTimerContext,
     out: Collector<Envelope<TaStatusPayload>>,
   ) {
+    val next = nextStatusHeartbeatTimer(timestamp, nextTimerState.value(), intervalMs) ?: return
     emitHeartbeat(
       now = Instant.now(),
       watermark = ctx.timerService().currentWatermark(),
       out = out,
     )
-    val next = timestamp + intervalMs
     ctx.timerService().registerProcessingTimeTimer(next)
     nextTimerState.update(next)
   }
@@ -1290,6 +1290,17 @@ private class StatusHeartbeatProcessFunction(
     }
   }
 }
+
+internal fun nextStatusHeartbeatTimer(
+  firedTimestamp: Long,
+  scheduledTimestamp: Long?,
+  intervalMs: Long,
+): Long? =
+  if (firedTimestamp == scheduledTimestamp) {
+    firedTimestamp + intervalMs
+  } else {
+    null
+  }
 
 internal fun taStatusPayload(
   now: Instant,
