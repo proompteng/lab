@@ -8,3 +8,7 @@ resources:
   - registry-configmap.yaml
   - tailscale-ingress.yaml
   - ingressroute-registry-k8s-private.yaml
+configMapGenerator:
+  - name: registry-proxy
+    files:
+      - haproxy.cfg=haproxy.cfg

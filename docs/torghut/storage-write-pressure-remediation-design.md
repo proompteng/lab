@@ -354,10 +354,21 @@ inside the BuildKit container and does not inherit the Docker daemon's upload li
 The Analysis workflow now removes its duplicate `mode=max` registry-cache export, keeps only inline cache metadata, and
 sets BuildKit's OCI worker `max-parallelism` to one. This removes publication of every intermediate build layer while
 preserving final-image cache reuse. All ARC DinD daemons also use `--max-concurrent-uploads=1` as a secondary boundary
-for direct Docker daemon pushes; that flag is not treated as BuildKit proof. The cancelled analysis image workflow must
-be rerun through build and push, and a new 30-minute storage gate must show no controller event above two seconds. If
-the real BuildKit workload still fails that gate, stop the rollout and design a retained local-registry migration with
-explicit copy, outage, recovery, and digest-inventory proof rather than masking the failure with Kafka timeouts.
+for direct Docker daemon pushes; that per-daemon flag is not treated as a global limit and does not govern direct
+`skopeo` publication.
+
+The definitive boundary is therefore attached to the singleton registry itself. Its Service terminates at an HAProxy
+sidecar that routes `POST`, `PUT`, `PATCH`, and `DELETE` requests through one backend connection while preserving a
+separate concurrent path for `GET` and `HEAD` image pulls. The write backend closes its server connection after each
+response so the single slot cannot remain captured by an idle publisher, and queues at most 128 write requests for up
+to two hours. A generated ConfigMap name forces a pod rollout on proxy-policy changes, and `Recreate` prevents two
+registry pods from competing for the RWO filesystem during that rollout. This covers Docker, BuildKit, and direct OCI
+publishers at the same shared choke point without reducing pull concurrency.
+
+The cancelled analysis image workflow must be rerun through build and push after this boundary rolls out, and a new
+30-minute storage gate must show no controller event above two seconds. If the real BuildKit workload still fails that
+gate, stop the rollout and design a retained local-registry migration with explicit copy, outage, recovery, and
+digest-inventory proof rather than masking the failure with Kafka timeouts.
 
 ## Talos local-storage feasibility and boundary
 
