@@ -357,6 +357,12 @@ preserving final-image cache reuse. All ARC DinD daemons also use `--max-concurr
 for direct Docker daemon pushes; that per-daemon flag is not treated as a global limit and does not govern direct
 `skopeo` publication.
 
+The pre-proxy Analysis rerun `29408081703` completed successfully after removing the registry-cache export, but its
+Distribution request log still showed simultaneous blob initiation and finalization from the BuildKit exporter. Kafka
+remained below the hard gate with no fencing or timeout, but the maximum controller event reached 1,854.48 ms. This is
+live proof that OCI worker `max-parallelism` bounds build execution, not exporter request fan-out; it cannot substitute
+for a registry-wide write boundary.
+
 The definitive boundary is therefore attached to the singleton registry itself. Its Service terminates at an HAProxy
 sidecar that routes `POST`, `PUT`, `PATCH`, and `DELETE` requests through one backend connection while preserving a
 separate concurrent path for `GET` and `HEAD` image pulls. The write backend closes its server connection after each
