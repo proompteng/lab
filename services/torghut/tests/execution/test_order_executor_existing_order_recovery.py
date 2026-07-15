@@ -14,6 +14,7 @@ from app.models import Execution, TradeDecision
 from app.trading.broker_mutation_receipts import BrokerMutationReceiptSnapshot
 from app.trading.broker_mutation_coordinator import BrokerMutationDeferred
 from app.trading.execution import OrderExecutor
+from app.trading.execution import durable_existing_order_recovery as durable_recovery
 from app.trading.execution.durable_existing_order_recovery import (
     DurableExistingOrderRecoveryRequest,
     DurableExistingOrderRecoveryResult,
@@ -378,3 +379,148 @@ def test_durable_recovery_rejects_foreign_endpoint_receipt() -> None:
 
     assert session.rollback.call_count == 2
     assert "endpoint_fingerprint" in str(session.execute.call_args_list[0].args[0])
+
+
+def test_durable_recovery_rejects_nonterminal_non_io_receipt() -> None:
+    decision_row = cast(
+        TradeDecision,
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_hash="3" * 64,
+            alpaca_account_label="paper",
+        ),
+    )
+    session = MagicMock(spec=Session)
+    session.execute.return_value.scalar_one_or_none.return_value = uuid.uuid4()
+    claimed_receipt = cast(
+        BrokerMutationReceiptSnapshot,
+        SimpleNamespace(state="claimed"),
+    )
+
+    with (
+        patch(
+            "app.trading.execution.durable_existing_order_recovery."
+            "get_broker_mutation_receipt",
+            return_value=claimed_receipt,
+        ),
+        pytest.raises(
+            RuntimeError,
+            match="linked_submission_existing_order_without_broker_io",
+        ),
+    ):
+        recover_durable_linked_existing_order(
+            _durable_recovery_request(
+                session,
+                decision_row,
+                existing_orders=({"id": "claimed-order"},),
+            )
+        )
+
+
+def test_settled_reconciled_receipt_loads_recovered_execution() -> None:
+    execution_id = uuid.uuid4()
+    recovered_execution = cast(
+        Execution,
+        SimpleNamespace(id=execution_id, status="accepted"),
+    )
+    decision_row = cast(
+        TradeDecision,
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            decision_hash="4" * 64,
+            alpaca_account_label="paper",
+        ),
+    )
+    session = MagicMock(spec=Session)
+    session.execute.return_value.scalar_one_or_none.return_value = uuid.uuid4()
+    settled_receipt = cast(
+        BrokerMutationReceiptSnapshot,
+        SimpleNamespace(
+            state="settled",
+            settlement=SimpleNamespace(
+                outcome="reconciled",
+                execution_id=execution_id,
+            ),
+        ),
+    )
+
+    with (
+        patch(
+            "app.trading.execution.durable_existing_order_recovery."
+            "get_broker_mutation_receipt",
+            return_value=settled_receipt,
+        ),
+        patch.object(
+            durable_recovery,
+            "_load_recovered_execution",
+            return_value=recovered_execution,
+        ) as load_execution,
+    ):
+        result = recover_durable_linked_existing_order(
+            _durable_recovery_request(
+                session,
+                decision_row,
+                existing_orders=({"id": "reconciled-order"},),
+            )
+        )
+
+    assert result.handled
+    assert result.execution is recovered_execution
+    load_execution.assert_called_once_with(
+        session,
+        execution_id=execution_id,
+        required=True,
+    )
+
+
+def test_load_recovered_execution_requires_execution_id() -> None:
+    session = MagicMock(spec=Session)
+
+    with pytest.raises(
+        RuntimeError,
+        match="linked_submission_recovery_execution_missing",
+    ):
+        durable_recovery._load_recovered_execution(
+            session,
+            execution_id=None,
+            required=True,
+        )
+
+
+def test_load_recovered_execution_reuses_identity_map() -> None:
+    execution_id = uuid.uuid4()
+    recovered_execution = cast(
+        Execution,
+        SimpleNamespace(id=execution_id, status="expired"),
+    )
+    session = MagicMock()
+    identity_key = (Execution, (execution_id,), None)
+    session.identity_key.return_value = identity_key
+    session.identity_map.get.return_value = recovered_execution
+
+    result = durable_recovery._load_recovered_execution(
+        session,
+        execution_id=execution_id,
+        required=True,
+    )
+
+    assert result is recovered_execution
+    session.identity_key.assert_called_once_with(Execution, execution_id)
+    session.identity_map.get.assert_called_once_with(identity_key)
+    session.execute.assert_not_called()
+
+
+def test_load_recovered_execution_rejects_missing_execution_schema() -> None:
+    session = MagicMock()
+    session.identity_map.get.return_value = None
+    session.execute.return_value.scalars.return_value = ()
+
+    with pytest.raises(
+        RuntimeError,
+        match="linked_submission_recovery_execution_schema_missing",
+    ):
+        durable_recovery._load_recovered_execution(
+            session,
+            execution_id=uuid.uuid4(),
+            required=True,
+        )
