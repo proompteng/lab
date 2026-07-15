@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tests.live_config_manifest_contract.support import (
     Mapping,
+    _load_knative_container,
     _load_yaml_mapping,
     cast,
 )
@@ -14,6 +15,13 @@ def test_kafka_clickhouse_writer_is_active_only_against_staging_tables() -> None
     spec = cast(Mapping[str, object], deployment.get("spec", {}))
     assert spec.get("replicas") == 1
     assert spec.get("strategy") == {"type": "Recreate"}
+
+    container = _load_knative_container(
+        "argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml"
+    )
+    resources = cast(Mapping[str, object], container.get("resources", {}))
+    assert resources.get("requests") == {"cpu": "250m", "memory": "1Gi"}
+    assert resources.get("limits") == {"cpu": "1", "memory": "2Gi"}
 
     config = _load_yaml_mapping(
         "argocd/applications/torghut-hyperliquid-feed/configmap.yaml"
