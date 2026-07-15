@@ -16,6 +16,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _TwoExecutableServiceFeed,
     _account_state,
     _now,
+    _ready_recovery_worker,
 )
 
 
@@ -36,6 +37,7 @@ def test_service_cycle_submits_at_most_one_order() -> None:
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -65,6 +67,7 @@ def test_service_blocks_low_after_cost_edge_before_exchange_submission() -> None
         feed=_LowEdgeServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -97,6 +100,7 @@ def test_service_blocks_low_after_cost_flip_before_reduce_only_close() -> None:
         feed=_LowEdgeServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -130,6 +134,7 @@ def test_service_closes_opposite_position_reduce_only_before_new_entry() -> None
         feed=_ServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -166,6 +171,7 @@ def test_service_closes_scoped_opposite_position_reduce_only() -> None:
         feed=_ServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -198,6 +204,7 @@ def test_service_stops_cycle_after_submitted_reduce_only_close() -> None:
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -240,6 +247,7 @@ def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
         feed=_ServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)

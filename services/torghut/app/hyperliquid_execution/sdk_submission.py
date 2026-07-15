@@ -10,6 +10,7 @@ from typing import Protocol, cast
 from requests.exceptions import RequestException
 
 from ..trading.broker_mutation_receipts import BrokerMutationBrokerIoError
+from .models import OrderResult, OrderStatus
 
 
 class HyperliquidMarketOpenClient(Protocol):
@@ -74,4 +75,51 @@ def submit_market_open(
     return normalized
 
 
-__all__ = ["MarketOpenRequest", "submit_market_open"]
+def parse_order_result(response: dict[str, object]) -> OrderResult:
+    status: OrderStatus = "submitted"
+    exchange_order_id: str | None = None
+    rejection_reason: str | None = None
+    response_body = response.get("response")
+    if isinstance(response_body, dict):
+        response_map = cast(Mapping[str, object], response_body)
+        data = response_map.get("data")
+        if isinstance(data, dict):
+            data_map = cast(Mapping[str, object], data)
+            statuses = data_map.get("statuses")
+            if isinstance(statuses, list) and statuses:
+                first = cast(list[object], statuses)[0]
+                if isinstance(first, dict):
+                    status, exchange_order_id, rejection_reason = _parse_sdk_status(
+                        cast(dict[str, object], first)
+                    )
+    return OrderResult(status, exchange_order_id, response, rejection_reason)
+
+
+def _parse_sdk_status(
+    status_payload: dict[str, object],
+) -> tuple[OrderStatus, str | None, str | None]:
+    if "error" in status_payload:
+        return "rejected", None, str(status_payload["error"])
+    for name, order_status in (("resting", "accepted"), ("filled", "filled")):
+        value = status_payload.get(name)
+        if not isinstance(value, dict):
+            continue
+        oid = cast(Mapping[str, object], value).get("oid")
+        return (
+            cast(OrderStatus, order_status),
+            str(oid) if oid is not None else None,
+            None,
+        )
+    return "submitted", None, None
+
+
+def is_halted(result: OrderResult) -> bool:
+    return (result.rejection_reason or "").strip() == "Trading is halted."
+
+
+__all__ = [
+    "MarketOpenRequest",
+    "is_halted",
+    "parse_order_result",
+    "submit_market_open",
+]

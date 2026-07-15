@@ -161,6 +161,7 @@ def reduce_runtime_action_authority(
             *service_reasons,
             *submission.reason_codes["entry"],
             *mutation_entry_reasons,
+            *mutation_recovery_reasons,
         )
     )
     reduction_reasons = _unique(
@@ -265,9 +266,12 @@ def _mutation_recovery_reasons(
         and status.get("recovery_degraded") is False
     ):
         return ()
-    return _strings(status.get("reason_codes")) or (
-        "broker_mutation_recovery_unproven",
+    recovery_reasons = tuple(
+        reason
+        for reason in _strings(status.get("reason_codes"))
+        if reason.startswith("broker_mutation_recovery_")
     )
+    return recovery_reasons or ("broker_mutation_recovery_unproven",)
 
 
 def _service_reason(service_status: Mapping[str, object]) -> str:

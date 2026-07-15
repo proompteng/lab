@@ -15,9 +15,19 @@ from ..trading.broker_mutation_receipts import (
     fingerprint_broker_endpoint,
 )
 from .config import HyperliquidExecutionConfig
+from .exchange_submit_recovery import (
+    HyperliquidOrderRecoveryLookup,
+    hyperliquid_submit_request_payload,
+    recover_hyperliquid_order,
+)
 from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
 from .sdk_aliases import register_sdk_market_alias as _register_sdk_market_alias
-from .sdk_submission import MarketOpenRequest, submit_market_open
+from .sdk_submission import (
+    MarketOpenRequest,
+    is_halted as _is_halted,
+    parse_order_result as _order_result,
+    submit_market_open,
+)
 from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
@@ -27,7 +37,6 @@ from .models import (
     OpenOrder,
     OrderIntent,
     OrderResult,
-    OrderStatus,
     PositionSnapshot,
     RuntimeDependencyStatus,
 )
@@ -47,24 +56,6 @@ _BOOK_UNAVAILABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     TypeError,
     ValueError,
 )
-
-
-def hyperliquid_submit_request_payload(intent: OrderIntent) -> dict[str, object]:
-    """Build the exact normalized request sealed before SDK market-open I/O."""
-
-    return {
-        "market_id": intent.market_id,
-        "coin": intent.coin,
-        "dex": intent.dex,
-        "side": intent.side,
-        "size": intent.size,
-        "limit_price": intent.limit_price,
-        "notional_usd": intent.notional_usd,
-        "cloid": intent.cloid,
-        "tif": intent.tif,
-        "reduce_only": intent.reduce_only,
-        "slippage": Decimal("0"),
-    }
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -107,6 +98,14 @@ class HyperliquidExecutionExchange(Protocol):
 
     def execution_metadata_details(self) -> dict[str, object]: ...
 
+    def recover_order_by_cloid(
+        self,
+        cloid: str,
+        *,
+        after: datetime,
+        until: datetime,
+    ) -> HyperliquidOrderRecoveryLookup: ...
+
 
 class HyperliquidSdkExecutionExchange:
     """Official SDK adapter. Orders are testnet-only by config validation."""
@@ -115,6 +114,8 @@ class HyperliquidSdkExecutionExchange:
         self._config = config
         self._sdk_exchange: Any | None = None
         self._sdk_info: Any | None = None
+        self._sdk_recovery_info: Any | None = None
+        self._sdk_recovery_info_perp_dexs: tuple[str, ...] | None = None
         self._sdk_info_perp_dexs: tuple[str, ...] | None = None
         self._sdk_exchange_perp_dexs: tuple[str, ...] | None = None
         self._last_read_at: datetime | None = None
@@ -315,6 +316,26 @@ class HyperliquidSdkExecutionExchange:
         if _is_halted(result):
             self._halted_by_dex.setdefault(_sdk_dex(intent.dex), set()).add(intent.coin)
         return result
+
+    def recover_order_by_cloid(
+        self,
+        cloid: str,
+        *,
+        after: datetime,
+        until: datetime,
+    ) -> HyperliquidOrderRecoveryLookup:
+        account_address = (self._config.account_address or "").strip()
+        lookup = recover_hyperliquid_order(
+            info=self._recovery_info() if account_address else None,
+            account_address=account_address,
+            cloid=cloid,
+            sdk_cloid=self._cloid(cloid) if account_address else cloid,
+            after=after,
+            until=until,
+        )
+        if account_address:
+            self._last_read_at = datetime.now(timezone.utc)
+        return lookup
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
         if not order.exchange_order_id:
@@ -630,6 +651,25 @@ class HyperliquidSdkExecutionExchange:
             self._sdk_info_perp_dexs = perp_dexs
         return self._sdk_info
 
+    def _recovery_info(self) -> Any:
+        perp_dexs = self._known_dexes()
+        if (
+            self._sdk_recovery_info is None
+            or self._sdk_recovery_info_perp_dexs != perp_dexs
+        ):
+            info_module = importlib.import_module("hyperliquid.info")
+            info_cls = getattr(info_module, "Info")
+            self._sdk_recovery_info = info_cls(
+                self._config.exchange_api_url,
+                skip_ws=True,
+                perp_dexs=list(perp_dexs),
+                timeout=float(
+                    self._config.broker_mutation_recovery_request_timeout_seconds
+                ),
+            )
+            self._sdk_recovery_info_perp_dexs = perp_dexs
+        return self._sdk_recovery_info
+
     def _cloid(self, raw: str) -> Any:
         types_module = importlib.import_module("hyperliquid.utils.types")
         cloid_cls = getattr(types_module, "Cloid", None)
@@ -647,49 +687,6 @@ def exchange_from_config(
     """Return the production SDK adapter."""
 
     return HyperliquidSdkExecutionExchange(config)
-
-
-def _order_result(response: dict[str, object]) -> OrderResult:
-    status: OrderStatus = "submitted"
-    exchange_order_id: str | None = None
-    rejection_reason: str | None = None
-    response_body = response.get("response")
-    if isinstance(response_body, dict):
-        response_map = cast(Mapping[str, object], response_body)
-        data = response_map.get("data")
-        if isinstance(data, dict):
-            data_map = cast(Mapping[str, object], data)
-            statuses = data_map.get("statuses")
-            if isinstance(statuses, list) and statuses:
-                first = cast(list[object], statuses)[0]
-                if isinstance(first, dict):
-                    first_map = cast(dict[str, object], first)
-                    status, exchange_order_id, rejection_reason = _parse_sdk_status(
-                        first_map
-                    )
-    return OrderResult(status, exchange_order_id, response, rejection_reason)
-
-
-def _parse_sdk_status(
-    status_payload: dict[str, object],
-) -> tuple[OrderStatus, str | None, str | None]:
-    if "error" in status_payload:
-        return "rejected", None, str(status_payload["error"])
-    for name, order_status in (("resting", "accepted"), ("filled", "filled")):
-        value = status_payload.get(name)
-        if not isinstance(value, dict):
-            continue
-        oid = cast(Mapping[str, object], value).get("oid")
-        return (
-            cast(OrderStatus, order_status),
-            str(oid) if oid is not None else None,
-            None,
-        )
-    return "submitted", None, None
-
-
-def _is_halted(result: OrderResult) -> bool:
-    return (result.rejection_reason or "").strip() == "Trading is halted."
 
 
 def _fill_from_payload(

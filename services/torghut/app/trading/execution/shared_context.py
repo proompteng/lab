@@ -121,6 +121,20 @@ class _OrderExecutorContract(Protocol):
     _asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]]
     _shorting_metadata_status: dict[str, Any]
 
+    def _sync_submitted_order_execution(
+        self,
+        *,
+        session: Session,
+        execution_client: Any,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+        account_label: str,
+        execution_expected_adapter: Optional[str],
+        execution_policy_context: dict[str, Any],
+        order_response: Mapping[str, object],
+        commit: bool,
+    ) -> Execution: ...
+
     @classmethod
     def _remaining_order_qty(cls, order: Mapping[str, Any]) -> Decimal: ...
 

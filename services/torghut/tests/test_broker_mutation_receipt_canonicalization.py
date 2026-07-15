@@ -577,7 +577,7 @@ def test_linked_terminal_builder_binds_exact_claim_and_rejection_semantics() -> 
         )
     with pytest.raises(
         BrokerMutationReceiptValidationError,
-        match="linked_submission_terminal_source_invalid",
+        match="linked_submission_recovery_evidence_required",
     ):
         build_linked_submission_terminal_settlement(
             BrokerMutationLinkedSubmissionSettlementRequest(
@@ -588,6 +588,66 @@ def test_linked_terminal_builder_binds_exact_claim_and_rejection_semantics() -> 
                 rejection_code=None,
                 broker_reference="broker-order",
                 execution_id=uuid.uuid4(),
+            )
+        )
+    recovered_execution_id = uuid.uuid4()
+    recovery_settlement = build_linked_submission_terminal_settlement(
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="recovery",
+            outcome="reconciled",
+            claim_handle=handle,
+            broker_status="accepted",
+            rejection_code=None,
+            broker_reference="broker-order",
+            execution_id=recovered_execution_id,
+            recovery_evidence_payload={
+                "schema_version": "torghut.test-submit-recovery.v1",
+                "resolution_state": "acknowledged",
+                "automatic_resubmission_attempted": False,
+            },
+        )
+    )
+    assert recovery_settlement.source == "recovery"
+    assert recovery_settlement.outcome == "reconciled"
+    assert recovery_settlement.execution_id == recovered_execution_id
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="linked_submission_recovery_resolution_invalid",
+    ):
+        build_linked_submission_terminal_settlement(
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="recovery",
+                outcome="reconciled",
+                claim_handle=handle,
+                broker_status="accepted",
+                rejection_code=None,
+                broker_reference="broker-order",
+                execution_id=uuid.uuid4(),
+                recovery_evidence_payload={
+                    "schema_version": "torghut.test-submit-recovery.v1",
+                    "resolution_state": "expired",
+                    "automatic_resubmission_attempted": False,
+                },
+            )
+        )
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="linked_submission_recovery_resolution_invalid",
+    ):
+        build_linked_submission_terminal_settlement(
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="recovery",
+                outcome="rejected",
+                claim_handle=handle,
+                broker_status="not_found",
+                rejection_code="recovery_absence_proven",
+                broker_reference=None,
+                execution_id=None,
+                recovery_evidence_payload={
+                    "schema_version": "torghut.test-submit-recovery.v1",
+                    "resolution_state": "expired",
+                    "automatic_resubmission_attempted": False,
+                },
             )
         )
     with pytest.raises(BrokerMutationReceiptValidationError):

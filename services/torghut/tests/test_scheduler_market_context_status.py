@@ -482,6 +482,7 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
             pipeline = _PipelineLabelStub()
             cast(Any, scheduler)._pipelines = [pipeline]
             cast(Any, scheduler)._pipeline = pipeline
+            cast(Any, scheduler)._broker_mutation_recovery_worker = Mock()
 
             async def fake_run_loop() -> None:
                 await scheduler._stop_event.wait()

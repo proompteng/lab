@@ -508,6 +508,10 @@ class TradingMetricsFields:
         default_factory=lambda: cast(dict[str, int], {})
     )
 
+    broker_mutation_recovery_total: dict[str, int] = field(
+        default_factory=lambda: cast(dict[str, int], {})
+    )
+
     decision_state_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )

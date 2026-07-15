@@ -23,6 +23,7 @@ from app.hyperliquid_execution.models import (
 )
 from app.trading.broker_mutation_receipts import BrokerMutationIoPermit
 from app.hyperliquid_execution.service import HyperliquidExecutionService
+from tests.hyperliquid_execution.test_runtime_surfaces import _ready_recovery_worker
 
 
 def test_feed_reader_includes_feed_service_readiness(
@@ -236,6 +237,7 @@ def test_service_blocks_orders_when_feed_service_is_not_ready() -> None:
         config=config,
         feed=_UnavailableFeed(now),
         exchange=exchange,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(_Session())

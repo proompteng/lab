@@ -64,6 +64,10 @@ spec:
               value: "true"
             - name: TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS
               value: "5"
+            - name: TRADING_BROKER_MUTATION_RECOVERY_ENABLED
+              value: "true"
+            - name: TRADING_BROKER_MUTATION_HTTP_TIMEOUT_SECONDS
+              value: "10"
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL

@@ -92,6 +92,9 @@ class HyperliquidExecutionConfig:
     min_seconds_between_side_flip: int
     maintenance_reduce_only_close_enabled: bool
     metrics_namespace: str
+    broker_mutation_recovery_enabled: bool = True
+    broker_mutation_recovery_request_timeout_seconds: int = 10
+    broker_mutation_recovery_interval_seconds: int = 60
     old_env_names: tuple[str, ...] = ()
     removed_env_names: tuple[str, ...] = ()
 
@@ -105,6 +108,21 @@ class HyperliquidExecutionConfig:
         return cls(
             enabled=_bool(source, "ENABLED", True),
             trading_enabled=_bool(source, "TRADING_ENABLED", False),
+            broker_mutation_recovery_enabled=_bool(
+                source,
+                "BROKER_MUTATION_RECOVERY_ENABLED",
+                True,
+            ),
+            broker_mutation_recovery_request_timeout_seconds=_int(
+                source,
+                "BROKER_MUTATION_RECOVERY_REQUEST_TIMEOUT_SECONDS",
+                10,
+            ),
+            broker_mutation_recovery_interval_seconds=_int(
+                source,
+                "BROKER_MUTATION_RECOVERY_INTERVAL_SECONDS",
+                60,
+            ),
             allow_short_entries=_bool(source, "ALLOW_SHORT_ENTRIES", False),
             market_data_network=_text(source, "MARKET_DATA_NETWORK", "mainnet").lower(),
             execution_network=_text(source, "EXECUTION_NETWORK", "testnet").lower(),
@@ -271,6 +289,14 @@ def _runtime_validation_errors(config: HyperliquidExecutionConfig) -> list[str]:
         errors.append("account_address_required_when_trading_enabled")
     if config.trading_enabled and not config.api_wallet_private_key:
         errors.append("api_wallet_private_key_required_when_trading_enabled")
+    if not 1 <= config.broker_mutation_recovery_request_timeout_seconds <= 15:
+        errors.append(
+            "broker_mutation_recovery_request_timeout_seconds_must_be_between_1_and_15"
+        )
+    if not 60 <= config.broker_mutation_recovery_interval_seconds <= 300:
+        errors.append(
+            "broker_mutation_recovery_interval_seconds_must_be_between_60_and_300"
+        )
     return errors
 
 

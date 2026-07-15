@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from alpaca.common.exceptions import APIError
+from alpaca.common.enums import Sort
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
@@ -40,6 +41,17 @@ class OrderFirewallViolation(PermissionError):
 
 class AlpacaStrictOrderLookupMalformedError(RuntimeError):
     """Raised when an exact broker lookup returns no trustworthy order payload."""
+
+
+@dataclass(frozen=True, slots=True)
+class AlpacaRecoveryOrderHistoryPage:
+    """One bounded order-history read used only to prove recovery completeness."""
+
+    orders: tuple[dict[str, object], ...]
+    complete: bool
+    limit: int
+    after: datetime
+    until: datetime
 
 
 def _is_explicit_http_not_found(exc: APIError) -> bool:
@@ -184,7 +196,14 @@ class _SingleAttemptTradingClient(TradingClient):
         *,
         paper: bool = True,
         url_override: str | None = None,
+        request_timeout_seconds: float = 10.0,
     ) -> None:
+        if (
+            isinstance(request_timeout_seconds, bool)
+            or request_timeout_seconds <= 0
+            or request_timeout_seconds > 15
+        ):
+            raise ValueError("alpaca_request_timeout_seconds_outside_bounds")
         super().__init__(
             api_key=api_key,
             secret_key=secret_key,
@@ -198,6 +217,22 @@ class _SingleAttemptTradingClient(TradingClient):
             raise RuntimeError("alpaca_sdk_retry_control_unavailable")
 
         self._retry = 0
+        self._request_timeout_seconds = float(request_timeout_seconds)
+
+    def _one_request(
+        self,
+        method: str,
+        url: str,
+        opts: dict[str, Any],
+        retry: int,
+    ) -> dict[str, Any]:
+        bounded_opts = dict(opts)
+        bounded_opts.setdefault("timeout", self._request_timeout_seconds)
+        base_request = cast(
+            Callable[[str, str, dict[str, Any], int], dict[str, Any]],
+            getattr(super(), "_one_request"),
+        )
+        return base_request(method, url, bounded_opts, retry)
 
 
 class _ReadOnlyTradingClient:
@@ -234,6 +269,7 @@ class TorghutAlpacaClient:
         secret_key: Optional[str] = None,
         base_url: Optional[str] = None,
         trading_client: _TradingClientLike | None = None,
+        recovery_trading_client: _ReadOnlyTradingClientLike | None = None,
         data_client: _StockDataClientLike | None = None,
         paper: Optional[bool] = None,
     ) -> None:
@@ -254,8 +290,9 @@ class TorghutAlpacaClient:
         use_paper = endpoint_class == "paper"
 
         # Broker mutations use a dedicated single-attempt client so an ambiguous
-        # response cannot cause a hidden resubmission. Reads keep the SDK's retry
-        # policy because repeating a read does not create broker-side state.
+        # response cannot cause a hidden resubmission. Ordinary reads retain the
+        # SDK retry policy; strict submit-recovery reads use their own bounded,
+        # single-attempt client so one worker lease has a deterministic I/O bound.
         if trading_client is None:
             read_trading_client: _ReadOnlyTradingClientLike = TradingClient(
                 api_key=key,
@@ -268,15 +305,32 @@ class TorghutAlpacaClient:
                 secret_key=secret,
                 paper=use_paper,
                 url_override=base,
+                request_timeout_seconds=(
+                    settings.trading_broker_mutation_http_timeout_seconds
+                ),
+            )
+            recovery_read_trading_client: _ReadOnlyTradingClientLike = (
+                recovery_trading_client
+                or _SingleAttemptTradingClient(
+                    api_key=key,
+                    secret_key=secret,
+                    paper=use_paper,
+                    url_override=base,
+                    request_timeout_seconds=(
+                        settings.trading_broker_mutation_http_timeout_seconds
+                    ),
+                )
             )
         else:
             read_trading_client = trading_client
             mutation_trading_client = trading_client
+            recovery_read_trading_client = recovery_trading_client or trading_client
 
         self._trading = mutation_trading_client
         self.trading: _ReadOnlyTradingClient = _ReadOnlyTradingClient(
             read_trading_client
         )
+        self._recovery_trading = _ReadOnlyTradingClient(recovery_read_trading_client)
 
         # Market Data v2 (stocks).
         self.data: _StockDataClientLike = data_client or StockHistoricalDataClient(
@@ -343,7 +397,7 @@ class TorghutAlpacaClient:
         if not client_order_id.strip():
             raise ValueError("alpaca_client_order_id_required")
         try:
-            order = self._trading.get_order_by_client_id(client_order_id)
+            order = self._recovery_trading.get_order_by_client_id(client_order_id)
         except APIError as exc:
             if _is_explicit_http_not_found(exc):
                 return None
@@ -358,6 +412,42 @@ class TorghutAlpacaClient:
                 "alpaca_strict_order_lookup_non_string_key"
             )
         return {cast(str, key): value for key, value in raw.items()}
+
+    def list_orders_recovery_window(
+        self,
+        *,
+        after: datetime,
+        until: datetime,
+        limit: int = 500,
+    ) -> AlpacaRecoveryOrderHistoryPage:
+        """Read a bounded all-status window; a full page is explicitly incomplete."""
+
+        if after.tzinfo is None or until.tzinfo is None:
+            raise ValueError("alpaca_recovery_window_timezone_required")
+        normalized_after = after.astimezone(timezone.utc)
+        normalized_until = until.astimezone(timezone.utc)
+        if normalized_after >= normalized_until:
+            raise ValueError("alpaca_recovery_window_invalid")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("alpaca_recovery_history_limit_outside_bounds")
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.ALL,
+            limit=limit,
+            after=normalized_after,
+            until=normalized_until,
+            direction=Sort.ASC,
+        )
+        raw_orders = tuple(self._recovery_trading.get_orders(request))
+        orders = tuple(
+            cast(dict[str, object], self._model_to_dict(order)) for order in raw_orders
+        )
+        return AlpacaRecoveryOrderHistoryPage(
+            orders=orders,
+            complete=len(orders) < limit,
+            limit=limit,
+            after=normalized_after,
+            until=normalized_until,
+        )
 
     def submit_order(
         self,
@@ -569,6 +659,7 @@ def _classify_alpaca_trading_endpoint(endpoint_url: str) -> str:
 
 
 __all__ = [
+    "AlpacaRecoveryOrderHistoryPage",
     "AlpacaStrictOrderLookupMalformedError",
     "OrderFirewallToken",
     "OrderFirewallViolation",

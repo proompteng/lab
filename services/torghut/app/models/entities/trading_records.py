@@ -497,7 +497,7 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
         ),
         CheckConstraint(
             "recovery_outcome IS NULL "
-            "OR (recovery_outcome = 'found' AND state = 'submitted') "
+            "OR (recovery_outcome = 'found' AND state IN ('submitted', 'rejected')) "
             "OR (recovery_outcome IN ('not_found', 'indeterminate') "
             "AND state IN ('broker_io', 'submitted', 'rejected'))",
             name="recovery_outcome",

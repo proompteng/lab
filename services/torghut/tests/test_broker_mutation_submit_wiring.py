@@ -109,8 +109,9 @@ def test_runtime_status_claims_only_the_entry_capability_now_wired() -> None:
     assert status["runtime_wired"] is True
     assert status["entry_fencing_proven"] is True
     assert status["reduction_fencing_proven"] is False
-    assert status["recovery_worker_wired"] is False
-    assert status["recovery_degraded"] is True
+    assert status["recovery_worker_wired"] is True
+    assert status["recovery_worker_enabled"] is True
+    assert status["recovery_degraded"] is False
 
 
 def test_scheduler_singleton_replica_contract_remains_enabled() -> None:

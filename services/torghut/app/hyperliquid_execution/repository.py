@@ -141,7 +141,7 @@ class HyperliquidExecutionRepository:
 
     def insert_order(self, intent: OrderIntent, result: OrderResult) -> str:
         order_id = str(uuid.uuid4())
-        self._session.execute(
+        persisted_order_id = self._session.execute(
             text(
                 """
                 INSERT INTO hyperliquid_execution_orders (
@@ -185,11 +185,61 @@ class HyperliquidExecutionRepository:
                   CAST(:raw_response AS jsonb)
                 )
                 ON CONFLICT (execution_network, cloid) DO UPDATE SET
-                  exchange_order_id = EXCLUDED.exchange_order_id,
-                  status = EXCLUDED.status,
-                  rejection_reason = EXCLUDED.rejection_reason,
-                  raw_response = EXCLUDED.raw_response,
+                  exchange_order_id = COALESCE(
+                    hyperliquid_execution_orders.exchange_order_id,
+                    EXCLUDED.exchange_order_id
+                  ),
+                  status = CASE
+                    WHEN hyperliquid_execution_orders.status = 'filled'
+                      OR EXCLUDED.status = 'filled' THEN 'filled'
+                    WHEN hyperliquid_execution_orders.status = 'cancelled'
+                      OR EXCLUDED.status = 'cancelled' THEN 'cancelled'
+                    WHEN hyperliquid_execution_orders.status = 'rejected'
+                      OR EXCLUDED.status = 'rejected' THEN 'rejected'
+                    WHEN hyperliquid_execution_orders.status = 'accepted'
+                      OR EXCLUDED.status = 'accepted' THEN 'accepted'
+                    ELSE EXCLUDED.status
+                  END,
+                  rejection_reason = COALESCE(
+                    EXCLUDED.rejection_reason,
+                    hyperliquid_execution_orders.rejection_reason
+                  ),
+                  raw_response = hyperliquid_execution_orders.raw_response
+                    || EXCLUDED.raw_response,
                   updated_at = now()
+                WHERE hyperliquid_execution_orders.signal_id
+                        IS NOT DISTINCT FROM EXCLUDED.signal_id
+                  AND hyperliquid_execution_orders.market_id
+                        IS NOT DISTINCT FROM EXCLUDED.market_id
+                  AND hyperliquid_execution_orders.coin
+                        IS NOT DISTINCT FROM EXCLUDED.coin
+                  AND hyperliquid_execution_orders.side
+                        IS NOT DISTINCT FROM EXCLUDED.side
+                  AND hyperliquid_execution_orders.size
+                        IS NOT DISTINCT FROM EXCLUDED.size
+                  AND hyperliquid_execution_orders.limit_price
+                        IS NOT DISTINCT FROM EXCLUDED.limit_price
+                  AND hyperliquid_execution_orders.notional_usd
+                        IS NOT DISTINCT FROM EXCLUDED.notional_usd
+                  AND hyperliquid_execution_orders.reduce_only
+                        IS NOT DISTINCT FROM EXCLUDED.reduce_only
+                  AND hyperliquid_execution_orders.tif
+                        IS NOT DISTINCT FROM EXCLUDED.tif
+                  AND hyperliquid_execution_orders.expires_at
+                        IS NOT DISTINCT FROM EXCLUDED.expires_at
+                  AND (
+                    hyperliquid_execution_orders.exchange_order_id IS NULL
+                    OR EXCLUDED.exchange_order_id IS NULL
+                    OR hyperliquid_execution_orders.exchange_order_id
+                        IS NOT DISTINCT FROM EXCLUDED.exchange_order_id
+                  )
+                  AND (
+                    hyperliquid_execution_orders.status = 'submitted'
+                    OR EXCLUDED.status = 'submitted'
+                    OR (hyperliquid_execution_orders.status = 'rejected')
+                        = (EXCLUDED.status = 'rejected')
+                  )
+                RETURNING id
                 """
             ),
             {
@@ -211,8 +261,10 @@ class HyperliquidExecutionRepository:
                 "expires_at": intent.expires_at,
                 "raw_response": json.dumps(result.raw_response, sort_keys=True),
             },
-        )
-        return order_id
+        ).scalar_one_or_none()
+        if persisted_order_id is None:
+            raise ValueError("hyperliquid_order_cloid_identity_conflict")
+        return str(persisted_order_id)
 
     def insert_multifactor_execution_intent(
         self,

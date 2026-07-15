@@ -15,6 +15,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _ServiceFeed,
     _SUBMIT_COORDINATOR,
     _now,
+    _ready_recovery_worker,
 )
 
 
@@ -35,6 +36,7 @@ def test_service_persists_exchange_normalized_order_intent() -> None:
         feed=_ServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)

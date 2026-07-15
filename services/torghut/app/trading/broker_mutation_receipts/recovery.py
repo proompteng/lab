@@ -6,11 +6,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ...models import BrokerMutationReceiptEvent
+from ...models import BrokerMutationReceipt, BrokerMutationReceiptEvent
 from .linked_submission import validate_linked_claim_lifecycle
 from .lifecycle_helpers import (
     LockedReceipt,
@@ -69,9 +69,76 @@ def list_due_broker_mutation_receipt_ids(
     session: Session,
     *,
     limit: int = 100,
+    route_identities: tuple[tuple[str, str, str], ...] | None = None,
+    operation: str | None = None,
 ) -> tuple[uuid.UUID, ...]:
     try:
-        return _list_due_broker_mutation_receipt_ids(session, limit=limit)
+        return _list_due_broker_mutation_receipt_ids(
+            session,
+            limit=limit,
+            route_identities=route_identities,
+            operation=operation,
+        )
+    except (BrokerMutationReceiptError, SQLAlchemyError):
+        session.rollback()
+        raise
+
+
+def count_unresolved_broker_mutation_receipts(
+    session: Session,
+    *,
+    route_identities: tuple[tuple[str, str, str], ...] | None = None,
+    operation: str | None = None,
+) -> int:
+    """Count unresolved broker-I/O receipts for the selected recovery routes."""
+
+    try:
+        normalized_routes = _normalized_route_identities(route_identities)
+        normalized_operation = (
+            required_text(operation, field="operation", maximum=32)
+            if operation is not None
+            else None
+        )
+        if normalized_routes == ():
+            close_read_transaction(session)
+            return 0
+        latest = (
+            select(
+                BrokerMutationReceiptEvent.receipt_id.label("receipt_id"),
+                func.max(BrokerMutationReceiptEvent.sequence_no).label("sequence_no"),
+            )
+            .group_by(BrokerMutationReceiptEvent.receipt_id)
+            .subquery()
+        )
+        statement = (
+            select(func.count())
+            .select_from(BrokerMutationReceiptEvent)
+            .join(
+                latest,
+                (BrokerMutationReceiptEvent.receipt_id == latest.c.receipt_id)
+                & (BrokerMutationReceiptEvent.sequence_no == latest.c.sequence_no),
+            )
+            .join(
+                BrokerMutationReceipt,
+                BrokerMutationReceipt.id == BrokerMutationReceiptEvent.receipt_id,
+            )
+            .where(BrokerMutationReceiptEvent.state == "broker_io")
+        )
+        if normalized_operation is not None:
+            statement = statement.where(
+                BrokerMutationReceipt.operation == normalized_operation
+            )
+        if normalized_routes is not None:
+            statement = statement.where(
+                tuple_(
+                    BrokerMutationReceipt.broker_route,
+                    BrokerMutationReceipt.account_label,
+                    BrokerMutationReceipt.endpoint_fingerprint,
+                ).in_(normalized_routes)
+            )
+        unresolved = int(session.execute(statement).scalar_one())
+        close_read_transaction(session)
+        return unresolved
     except (BrokerMutationReceiptError, SQLAlchemyError):
         session.rollback()
         raise
@@ -81,12 +148,23 @@ def _list_due_broker_mutation_receipt_ids(
     session: Session,
     *,
     limit: int = 100,
+    route_identities: tuple[tuple[str, str, str], ...] | None = None,
+    operation: str | None = None,
 ) -> tuple[uuid.UUID, ...]:
     """Return only latest ambiguous receipts; acquisition must recheck each ID."""
 
     bounded_limit = positive_integer(limit, field="limit")
     if bounded_limit > 1000:
         raise BrokerMutationReceiptValidationError("limit_too_large:1000")
+    normalized_routes = _normalized_route_identities(route_identities)
+    normalized_operation = (
+        required_text(operation, field="operation", maximum=32)
+        if operation is not None
+        else None
+    )
+    if normalized_routes == ():
+        close_read_transaction(session)
+        return ()
     now = database_now(session)
     latest = (
         select(
@@ -96,12 +174,16 @@ def _list_due_broker_mutation_receipt_ids(
         .group_by(BrokerMutationReceiptEvent.receipt_id)
         .subquery()
     )
-    rows = session.execute(
+    statement = (
         select(BrokerMutationReceiptEvent.receipt_id)
         .join(
             latest,
             (BrokerMutationReceiptEvent.receipt_id == latest.c.receipt_id)
             & (BrokerMutationReceiptEvent.sequence_no == latest.c.sequence_no),
+        )
+        .join(
+            BrokerMutationReceipt,
+            BrokerMutationReceipt.id == BrokerMutationReceiptEvent.receipt_id,
         )
         .where(
             BrokerMutationReceiptEvent.state == "broker_io",
@@ -116,11 +198,49 @@ def _list_due_broker_mutation_receipt_ids(
             BrokerMutationReceiptEvent.recovery_after.asc(),
             BrokerMutationReceiptEvent.receipt_id.asc(),
         )
-        .limit(bounded_limit)
-    ).scalars()
+    )
+    if normalized_operation is not None:
+        statement = statement.where(
+            BrokerMutationReceipt.operation == normalized_operation
+        )
+    if normalized_routes is not None:
+        statement = statement.where(
+            tuple_(
+                BrokerMutationReceipt.broker_route,
+                BrokerMutationReceipt.account_label,
+                BrokerMutationReceipt.endpoint_fingerprint,
+            ).in_(normalized_routes)
+        )
+    rows = session.execute(statement.limit(bounded_limit)).scalars()
     receipt_ids = tuple(as_uuid(value, field="receipt_id") for value in rows)
     close_read_transaction(session)
     return receipt_ids
+
+
+def _normalized_route_identities(
+    route_identities: tuple[tuple[str, str, str], ...] | None,
+) -> tuple[tuple[str, str, str], ...] | None:
+    if route_identities is None:
+        return None
+    normalized: set[tuple[str, str, str]] = set()
+    for identity in route_identities:
+        route = required_text(identity[0], field="broker_route", maximum=32).lower()
+        account = required_text(identity[1], field="account_label", maximum=64)
+        fingerprint = required_text(
+            identity[2], field="endpoint_fingerprint", maximum=64
+        ).lower()
+        if route not in {"alpaca", "hyperliquid"}:
+            raise BrokerMutationReceiptValidationError(
+                "recovery_route_identity_invalid"
+            )
+        if len(fingerprint) != 64 or any(
+            character not in "0123456789abcdef" for character in fingerprint
+        ):
+            raise BrokerMutationReceiptValidationError(
+                "recovery_route_identity_invalid"
+            )
+        normalized.add((route, account, fingerprint))
+    return tuple(sorted(normalized))
 
 
 def acquire_broker_mutation_recovery(
@@ -456,6 +576,7 @@ def _require_active_recovery(
 
 __all__ = [
     "acquire_broker_mutation_recovery",
+    "count_unresolved_broker_mutation_receipts",
     "list_due_broker_mutation_receipt_ids",
     "record_broker_mutation_recovery_observation",
     "release_broker_mutation_recovery",

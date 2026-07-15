@@ -23,6 +23,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _SUBMIT_COORDINATOR,
     _TwoExecutableServiceFeed,
     _now,
+    _ready_recovery_worker,
 )
 
 
@@ -331,6 +332,7 @@ def test_service_skips_uncrossable_testnet_markets_before_signals() -> None:
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)

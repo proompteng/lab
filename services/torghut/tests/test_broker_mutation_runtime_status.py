@@ -12,12 +12,12 @@ def test_entry_wiring_reports_code_truth_without_overclaim() -> None:
     assert payload["runtime_wired"] is True
     assert payload["entry_fencing_proven"] is True
     assert payload["reduction_fencing_proven"] is False
-    assert payload["recovery_degraded"] is True
+    assert payload["recovery_degraded"] is False
     assert payload["schema_version"] == "torghut.broker-mutation-runtime-status.v1"
-    assert payload["recovery_worker_wired"] is False
+    assert payload["recovery_worker_wired"] is True
+    assert payload["recovery_worker_enabled"] is True
     assert payload["reason_codes"] == [
         "broker_mutation_reduction_fencing_unproven",
-        "broker_mutation_recovery_unproven",
     ]
 
 

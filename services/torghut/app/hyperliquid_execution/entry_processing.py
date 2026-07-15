@@ -22,6 +22,7 @@ from ..trading.broker_mutation_receipts import (
 )
 from ..trading.broker_mutation_submit_coordinator import (
     BrokerMutationSubmissionAlreadyProcessed,
+    BrokerMutationSubmissionDeferred,
     BrokerMutationSubmitCoordinator,
     UnlinkedOrderSubmissionCallbacks,
 )
@@ -272,6 +273,9 @@ def _submit_order(
         )
     except BrokerMutationSubmissionAlreadyProcessed:
         return False
+    except BrokerMutationSubmissionDeferred as exc:
+        runtime.counts.record_order_error(type(exc).__name__)
+        raise
     except _ORDER_SUBMISSION_ERRORS as exc:
         runtime.counts.record_order_error(type(exc).__name__)
         return False

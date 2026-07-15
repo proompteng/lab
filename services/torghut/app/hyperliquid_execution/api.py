@@ -19,6 +19,10 @@ from app.trading.loop_status import (
     QuerySession,
     build_trading_loop_status,
 )
+from app.trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryPolicy,
+    BrokerMutationRecoveryWorker,
+)
 
 from .config import HyperliquidExecutionConfig
 from .exchange import exchange_from_config
@@ -27,6 +31,7 @@ from .metrics import HyperliquidExecutionMetrics
 from .models import CycleResult, RuntimeDependencyStatus
 from .repository import HyperliquidExecutionRepository
 from .service import HyperliquidExecutionService, runtime_readiness
+from .submit_recovery import HyperliquidSubmitRecoveryRoute
 
 
 logger = logging.getLogger(__name__)
@@ -40,10 +45,28 @@ class RuntimeAppState:
         self.metrics = HyperliquidExecutionMetrics()
         self.latest_cycle: CycleResult | None = None
         self.latest_error: str | None = None
+        exchange = exchange_from_config(self.config)
+        recovery_worker = BrokerMutationRecoveryWorker(
+            session_factory=SessionLocal,
+            routes=(
+                HyperliquidSubmitRecoveryRoute(
+                    config=self.config,
+                    exchange=exchange,
+                ),
+            ),
+            component="hyperliquid-recovery",
+            enabled=self.config.broker_mutation_recovery_enabled,
+            policy=BrokerMutationRecoveryPolicy(
+                batch_size=1,
+                retry_seconds=self.config.broker_mutation_recovery_interval_seconds,
+                absence_observation_spacing_seconds=60,
+            ),
+        )
         self.service = HyperliquidExecutionService(
             config=self.config,
             feed=ClickHouseFeedReader(self.config),
-            exchange=exchange_from_config(self.config),
+            exchange=exchange,
+            recovery_worker=recovery_worker,
         )
         self.task: asyncio.Task[None] | None = None
 
@@ -257,6 +280,13 @@ def _config_payload() -> dict[str, object]:
         "signal_staleness_seconds": config.signal_staleness_seconds,
         "feed_readiness_url_configured": config.feed_readiness_url is not None,
         "feed_readiness_timeout_seconds": config.feed_readiness_timeout_seconds,
+        "broker_mutation_recovery_enabled": config.broker_mutation_recovery_enabled,
+        "broker_mutation_recovery_interval_seconds": (
+            config.broker_mutation_recovery_interval_seconds
+        ),
+        "broker_mutation_recovery_request_timeout_seconds": (
+            config.broker_mutation_recovery_request_timeout_seconds
+        ),
         "order_policy": config.order_policy,
         "effective_order_tif": config.effective_order_tif,
         "marketable_ioc_slippage_bps": str(config.marketable_ioc_slippage_bps),

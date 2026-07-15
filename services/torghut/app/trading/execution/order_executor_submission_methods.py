@@ -35,6 +35,9 @@ from .shared_context import (
 from .order_executor_core_methods import (
     OrderExecutorCoreMethods as _OrderExecutorCoreMethods,
 )
+from .linked_submission_recovery import (
+    LinkedSubmissionRecoveryMethods as _LinkedSubmissionRecoveryMethods,
+)
 
 
 def _optional_decimal(value: Any) -> Decimal | None:
@@ -456,6 +459,7 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
 class OrderExecutor(
     _OrderExecutorFields,
     _OrderExecutorCoreMethods,
+    _LinkedSubmissionRecoveryMethods,
     _OrderExecutorSubmissionMethods,
 ):
     pass
