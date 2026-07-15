@@ -109,12 +109,12 @@ describe('Torghut manifest scheduling', () => {
     })
   })
 
-  it('runs exactly one fenced options archive worker without rollout overlap', () => {
+  it('keeps the fenced options archive worker disabled pending production proof', () => {
     const deployment = parseManifest('argocd/applications/torghut-options/archive/deployment.yaml')
     const spec = getAtPath(deployment, ['spec'])
     const podSpec = getAtPath(deployment, ['spec', 'template', 'spec'])
 
-    expect(spec.replicas).toBe(1)
+    expect(spec.replicas).toBe(0)
     expect(spec.strategy).toMatchObject({ type: 'Recreate' })
     expect(podSpec.nodeSelector).toMatchObject({ 'kubernetes.io/arch': 'arm64' })
     expect(podSpec.serviceAccountName).toBe('torghut-runtime')
