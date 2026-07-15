@@ -371,10 +371,17 @@ to two hours. A generated ConfigMap name forces a pod rollout on proxy-policy ch
 registry pods from competing for the RWO filesystem during that rollout. This covers Docker, BuildKit, and direct OCI
 publishers at the same shared choke point without reducing pull concurrency.
 
-The cancelled analysis image workflow must be rerun through build and push after this boundary rolls out, and a new
-30-minute storage gate must show no controller event above two seconds. If the real BuildKit workload still fails that
-gate, stop the rollout and design a retained local-registry migration with explicit copy, outage, recovery, and
-digest-inventory proof rather than masking the failure with Kafka timeouts.
+The first post-proxy Analysis run, `29411750432` at source revision `89a019b4`, proved that the proxy serialized all 12
+mutation requests, with a maximum queue time of 10.211 seconds. It also exposed a second-order limit: one
+519,231,697-byte blob was still committed at roughly 51.53 MiB/s, and Kafka recorded a 2,423.56 ms controller event
+immediately afterward. That exceeds the two-second storage gate even though request fan-out was eliminated. The
+registry boundary must therefore also shape mutation request bodies to 1 MiB/s. This keeps the shared Ceph write path
+bounded independently of publisher implementation while leaving `GET` and `HEAD` image pulls unthrottled.
+
+After request-body shaping rolls out, dispatch the current Analysis `main` workflow through build and push, then start
+a new 30-minute observation from a fresh SMART baseline. The gate must show no controller event above two seconds. If
+the shaped workload still fails that gate, stop the rollout and investigate the remaining measured writer instead of
+masking the failure with Kafka timeouts.
 
 ## Talos local-storage feasibility and boundary
 
