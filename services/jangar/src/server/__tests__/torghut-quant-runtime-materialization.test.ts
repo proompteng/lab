@@ -6,7 +6,6 @@ const recordTorghutQuantComputeError = vi.fn()
 const recordTorghutQuantFrame = vi.fn()
 const computeTorghutQuantMetrics = vi.fn()
 const listTorghutStrategyAccounts = vi.fn()
-const appendQuantSeriesMetrics = vi.fn()
 const upsertQuantAlerts = vi.fn()
 const upsertQuantLatestMetrics = vi.fn()
 const upsertQuantPipelineHealth = vi.fn()
@@ -29,7 +28,6 @@ vi.mock('../torghut-quant-metrics', () => ({
 }))
 
 vi.mock('../torghut-quant-metrics-store', () => ({
-  appendQuantSeriesMetrics,
   upsertQuantAlerts,
   upsertQuantLatestMetrics,
   upsertQuantPipelineHealth,
@@ -52,7 +50,6 @@ describe('materializeTorghutQuantFrameOnDemand', () => {
     recordTorghutQuantFrame.mockReset()
     computeTorghutQuantMetrics.mockReset()
     listTorghutStrategyAccounts.mockReset()
-    appendQuantSeriesMetrics.mockReset()
     upsertQuantAlerts.mockReset()
     upsertQuantLatestMetrics.mockReset()
     upsertQuantPipelineHealth.mockReset()
@@ -84,7 +81,6 @@ describe('materializeTorghutQuantFrameOnDemand', () => {
         },
       ],
     })
-    appendQuantSeriesMetrics.mockResolvedValue(undefined)
     upsertQuantLatestMetrics.mockResolvedValue(undefined)
     upsertQuantAlerts.mockResolvedValue(undefined)
     upsertQuantPipelineHealth.mockResolvedValue(undefined)
@@ -93,7 +89,7 @@ describe('materializeTorghutQuantFrameOnDemand', () => {
     delete runtimeGlobal.__torghutQuantRuntime
   })
 
-  it('updates series append timestamp map after on-demand materialization', async () => {
+  it('updates the latest-state sampling clock after on-demand materialization', async () => {
     const { materializeTorghutQuantFrameOnDemand } = await import('../torghut-quant-runtime')
 
     await materializeTorghutQuantFrameOnDemand({
@@ -103,10 +99,10 @@ describe('materializeTorghutQuantFrameOnDemand', () => {
     })
 
     const runtimeGlobal = globalThis as typeof globalThis & {
-      __torghutQuantRuntime?: { lastSeriesAppendAtMs: Map<string, number> }
+      __torghutQuantRuntime?: { lastLatestUpsertAtMs: Map<string, number> }
     }
     const key = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:paper:1d'
-    expect(appendQuantSeriesMetrics).toHaveBeenCalledTimes(1)
-    expect(runtimeGlobal.__torghutQuantRuntime?.lastSeriesAppendAtMs.get(key)).toEqual(expect.any(Number))
+    expect(upsertQuantLatestMetrics).toHaveBeenCalledTimes(1)
+    expect(runtimeGlobal.__torghutQuantRuntime?.lastLatestUpsertAtMs.get(key)).toEqual(expect.any(Number))
   })
 })

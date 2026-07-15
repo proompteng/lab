@@ -114,6 +114,19 @@ describe('migration registration', () => {
     expect(normalized).not.toContain('unlogged')
   })
 
+  it('removes every unused quant-series relation without broad cascading', () => {
+    const migrationPath = new URL('../migrations/20260715_torghut_quant_series_remove.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('drop view if exists torghut_control_plane.quant_metrics_series')
+    expect(normalized).toContain('drop function if exists torghut_control_plane.insert_quant_metrics_series_active()')
+    expect(normalized).toContain('drop table if exists torghut_control_plane.quant_metrics_series_active')
+    expect(normalized).toContain('drop table if exists torghut_control_plane.quant_metrics_series_legacy')
+    expect(normalized).not.toContain('cascade')
+    expect(normalized).not.toContain('insert into')
+    expect(normalized).not.toContain('export const down')
+  })
+
   it('keeps the Codex judge AgentRun column migration registered as a retired Agents backfill handoff', () => {
     expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
     expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
