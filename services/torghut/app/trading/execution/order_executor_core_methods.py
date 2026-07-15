@@ -40,6 +40,7 @@ from .order_lifecycle import (
     HISTORICAL_LIVE_ORDER_ATTEMPT_SCAN_LIMIT,
     fetch_existing_orders,
 )
+from . import durable_existing_order_recovery as durable_recovery
 from ..quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
@@ -48,7 +49,6 @@ from ..simulation import (
     resolve_event_persisted_at,
 )
 from ..tca import upsert_execution_tca_metric
-
 
 from .shared_context import (
     OrderExecutorContract as _OrderExecutorContract,
@@ -216,16 +216,19 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         execution_policy_context = _extract_execution_policy_context(
             decision, decision_row=decision_row
         )
-        if self._sync_existing_order_if_present(
-            session=session,
-            execution_client=execution_client,
-            decision=decision,
-            decision_row=decision_row,
-            account_label=account_label,
-            execution_expected_adapter=execution_expected_adapter,
-            execution_policy_context=execution_policy_context,
-        ):
-            return None
+        existing_order_handled, existing_execution = (
+            self._sync_existing_order_if_present(
+                session=session,
+                execution_client=execution_client,
+                decision=decision,
+                decision_row=decision_row,
+                account_label=account_label,
+                execution_expected_adapter=execution_expected_adapter,
+                execution_policy_context=execution_policy_context,
+            )
+        )
+        if existing_order_handled:
+            return existing_execution
 
         prepared = self._prepare_order_submission(
             _OrderPreparationInputs(
@@ -586,7 +589,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         account_label: str,
         execution_expected_adapter: Optional[str],
         execution_policy_context: dict[str, Any],
-    ) -> bool:
+    ) -> tuple[bool, Execution | None]:
         existing_orders = fetch_existing_orders(
             execution_client,
             decision_row.decision_hash,
@@ -597,7 +600,21 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             ),
         )
         if not existing_orders:
-            return False
+            return False, None
+        if isinstance(execution_client, OrderFirewall):
+            recovery = durable_recovery.recover_durable_linked_existing_order(
+                durable_recovery.DurableExistingOrderRecoveryRequest(
+                    executor=cast(Any, self),
+                    session=session,
+                    firewall=execution_client,
+                    decision_row=decision_row,
+                    account_label=account_label,
+                    existing_orders=existing_orders,
+                )
+            )
+            if recovery.handled:
+                return True, recovery.execution
+        recovered_execution: Execution | None = None
         for existing_order in existing_orders:
             existing_payload = _order_payload_with_execution_metadata(
                 existing_order,
@@ -616,6 +633,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             _attach_execution_policy_context(execution, execution_policy_context)
             upsert_execution_tca_metric(session, execution)
             _apply_execution_status(decision_row, execution, account_label)
+            recovered_execution = execution
         session.add(decision_row)
         session.commit()
         logger.info(
@@ -623,7 +641,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             len(existing_orders),
             decision_row.id,
         )
-        return True
+        return True, recovered_execution
 
     def _raise_if_conflicting_open_order(
         self,

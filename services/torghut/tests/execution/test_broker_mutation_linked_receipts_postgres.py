@@ -28,6 +28,7 @@ from app.trading.broker_mutation_receipts import (
     acquire_broker_mutation_recovery,
     acquire_broker_mutation_receipt,
     build_broker_mutation_settlement,
+    fingerprint_broker_endpoint,
     get_broker_mutation_receipt_history,
     mark_broker_mutation_io_started,
     renew_broker_mutation_receipt,
@@ -278,14 +279,25 @@ def create_linked_submit_fixture(schema_engine: Engine) -> LinkedSubmitFixture:
         BrokerMutationIntentRequest(
             broker_route="alpaca",
             account_label="paper",
-            endpoint_fingerprint="a" * 64,
+            endpoint_fingerprint=fingerprint_broker_endpoint(
+                "https://paper-api.alpaca.markets"
+            ),
             operation="submit_order",
             risk_class="risk_increasing",
             purpose="initial_submission",
             workflow_id="workflow-linked",
             client_request_id=client_request_id,
             target=BrokerMutationTarget(kind="order", key=client_request_id),
-            request_payload={"symbol": "AAPL", "qty": Decimal("1")},
+            request_payload={
+                "symbol": "AAPL",
+                "side": "buy",
+                "qty": Decimal("1"),
+                "order_type": "market",
+                "time_in_force": "day",
+                "limit_price": None,
+                "stop_price": None,
+                "extra_params": {"client_order_id": client_request_id},
+            },
             submission_claim_id=decision_id,
         )
     )

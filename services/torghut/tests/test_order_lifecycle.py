@@ -68,6 +68,19 @@ def test_terminal_zero_fill_is_rejected_but_partial_fill_remains_actionable() ->
     assert terminal_unfilled_execution_reason(execution) is None
 
 
+def test_done_for_day_zero_fill_is_terminal() -> None:
+    execution = type(
+        "Execution",
+        (),
+        {"status": "done_for_day", "filled_qty": Decimal("0")},
+    )()
+
+    assert (
+        terminal_unfilled_execution_reason(execution)
+        == "order_terminal_unfilled_done_for_day"
+    )
+
+
 def test_historical_lifecycle_fill_metadata_remains_readable() -> None:
     execution = type(
         "Execution",

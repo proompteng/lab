@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import timedelta
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from alembic import command
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
+from app.models import Execution, TradeDecision
+from app.trading.alpaca_mutation_recovery import LinkedSubmissionRecoveryExecutor
 from app.trading.broker_mutation_receipts import (
     BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationReceiptAcquireResult,
@@ -26,8 +32,14 @@ from app.trading.broker_mutation_receipts import (
     settle_linked_submission_recovery,
 )
 from app.trading.decision_submission_claims import (
+    DecisionSubmissionClaimHandle,
     acquire_decision_submission_recovery_claim,
 )
+from app.trading.execution.durable_existing_order_recovery import (
+    DurableExistingOrderRecoveryRequest,
+    recover_durable_linked_existing_order,
+)
+from app.trading.firewall import OrderFirewall
 from app.trading.broker_mutation_receipts.persistence import (
     append_full_state_event,
     full_state_values_from_event,
@@ -50,6 +62,80 @@ from tests.execution.test_linked_submission_terminal_postgres import (
 )
 
 __all__ = ("terminal_harness",)
+
+
+def _recovery_firewall() -> OrderFirewall:
+    return cast(
+        OrderFirewall,
+        SimpleNamespace(
+            broker_endpoint_url="https://paper-api.alpaca.markets",
+        ),
+    )
+
+
+class _ObservedOrderExecutor:
+    def __init__(self, *, fail_after_insert: bool = False) -> None:
+        self.calls = 0
+        self._fail_after_insert = fail_after_insert
+
+    def recover_linked_order_submission(
+        self,
+        *,
+        session: Session,
+        execution_client: object,
+        claim_handle: DecisionSubmissionClaimHandle,
+        order_response: Mapping[str, object],
+    ) -> Execution:
+        _ = execution_client
+        self.calls += 1
+        execution_id = uuid.uuid4()
+        session.execute(
+            text(
+                """
+                INSERT INTO executions (
+                    id, trade_decision_id, alpaca_account_label,
+                    client_order_id, alpaca_order_id, status
+                ) VALUES (
+                    :execution_id, :decision_id, 'paper',
+                    :client_order_id, :broker_order_id, :status
+                )
+                """
+            ),
+            {
+                "execution_id": execution_id,
+                "decision_id": claim_handle.decision_id,
+                "client_order_id": claim_handle.client_order_id,
+                "broker_order_id": order_response["id"],
+                "status": str(order_response.get("status") or "accepted"),
+            },
+        )
+        if self._fail_after_insert:
+            raise RuntimeError("injected_after_execution_insert")
+        return cast(Execution, SimpleNamespace(id=execution_id))
+
+
+def _observed_order(fixture: LinkedSubmitFixture) -> dict[str, object]:
+    return {
+        "id": "recovered-existing-order",
+        "client_order_id": fixture.claim_handle.client_order_id,
+        "symbol": "AAPL",
+        "side": "buy",
+        "qty": "1",
+        "type": "market",
+        "time_in_force": "day",
+        "limit_price": None,
+        "stop_price": None,
+        "status": "accepted",
+    }
+
+
+def _recovery_decision(
+    session: Session,
+    fixture: LinkedSubmitFixture,
+) -> TradeDecision:
+    decision_row = session.get(TradeDecision, fixture.decision_id)
+    assert decision_row is not None
+    return decision_row
 
 
 def _upgrade_to_strict_submit_recovery(harness: _TerminalHarness) -> None:
@@ -715,3 +801,154 @@ def test_postgres_0069_refuses_downgrade_after_recovery_terminal(
         ).scalar_one()
     assert revision == "0069_strict_submit_recovery"
     assert state == "rejected"
+
+
+def test_order_executor_existing_order_recovery_settles_linked_records_once(
+    terminal_harness: _TerminalHarness,
+) -> None:
+    _upgrade_to_strict_submit_recovery(terminal_harness)
+    fixture, acquired = _enter_linked_io(terminal_harness)
+    _force_linked_recovery_due(
+        terminal_harness,
+        fixture=fixture,
+        receipt_id=acquired.receipt.receipt_id,
+    )
+    executor = _ObservedOrderExecutor()
+    order = _observed_order(fixture)
+    with terminal_harness.sessions() as session:
+        result = recover_durable_linked_existing_order(
+            DurableExistingOrderRecoveryRequest(
+                executor=cast(LinkedSubmissionRecoveryExecutor, executor),
+                session=session,
+                firewall=_recovery_firewall(),
+                decision_row=_recovery_decision(session, fixture),
+                account_label="paper",
+                existing_orders=(order,),
+            )
+        )
+    assert result.handled
+    assert result.execution is not None
+    assert result.execution.status == "accepted"
+    assert executor.calls == 1
+    with terminal_harness.engine.connect() as connection:
+        claim = connection.execute(
+            text(
+                "SELECT state, recovery_outcome, execution_id "
+                "FROM trade_decision_submission_claims "
+                "WHERE trade_decision_id = :decision_id"
+            ),
+            {"decision_id": fixture.decision_id},
+        ).one()
+        receipt = connection.execute(
+            text(
+                "SELECT state, settlement_source, settlement_outcome, execution_id "
+                "FROM broker_mutation_receipt_events "
+                "WHERE receipt_id = :receipt_id "
+                "ORDER BY sequence_no DESC LIMIT 1"
+            ),
+            {"receipt_id": acquired.receipt.receipt_id},
+        ).one()
+        execution_count = connection.execute(
+            text(
+                "SELECT count(*) FROM executions WHERE trade_decision_id = :decision_id"
+            ),
+            {"decision_id": fixture.decision_id},
+        ).scalar_one()
+    assert claim.state == "submitted"
+    assert claim.recovery_outcome == "found"
+    assert claim.execution_id is not None
+    assert tuple(receipt[:3]) == ("settled", "recovery", "reconciled")
+    assert receipt.execution_id == claim.execution_id
+    assert execution_count == 1
+    with terminal_harness.sessions() as session:
+        repeated = recover_durable_linked_existing_order(
+            DurableExistingOrderRecoveryRequest(
+                executor=cast(LinkedSubmissionRecoveryExecutor, executor),
+                session=session,
+                firewall=_recovery_firewall(),
+                decision_row=_recovery_decision(session, fixture),
+                account_label="paper",
+                existing_orders=(order,),
+            )
+        )
+    assert repeated.handled
+    assert repeated.execution is not None
+    assert repeated.execution.id == result.execution.id
+    assert executor.calls == 1
+    with terminal_harness.engine.connect() as connection:
+        repeated_execution_count = connection.execute(
+            text(
+                "SELECT count(*) FROM executions WHERE trade_decision_id = :decision_id"
+            ),
+            {"decision_id": fixture.decision_id},
+        ).scalar_one()
+    assert repeated_execution_count == 1
+
+
+def test_order_executor_existing_order_recovery_preserves_rejection_state(
+    terminal_harness: _TerminalHarness,
+) -> None:
+    _upgrade_to_strict_submit_recovery(terminal_harness)
+    fixture, acquired = _enter_linked_io(terminal_harness)
+    _force_linked_recovery_due(
+        terminal_harness,
+        fixture=fixture,
+        receipt_id=acquired.receipt.receipt_id,
+    )
+    executor = _ObservedOrderExecutor()
+    order = _observed_order(fixture)
+    order["status"] = "rejected"
+    with terminal_harness.sessions() as session:
+        result = recover_durable_linked_existing_order(
+            DurableExistingOrderRecoveryRequest(
+                executor=cast(LinkedSubmissionRecoveryExecutor, executor),
+                session=session,
+                firewall=_recovery_firewall(),
+                decision_row=_recovery_decision(session, fixture),
+                account_label="paper",
+                existing_orders=(order,),
+            )
+        )
+    assert result.handled
+    assert result.execution is None
+    assert executor.calls == 0
+    with terminal_harness.engine.connect() as connection:
+        decision = connection.execute(
+            text(
+                "SELECT status, decision_json FROM trade_decisions "
+                "WHERE id = :decision_id"
+            ),
+            {"decision_id": fixture.decision_id},
+        ).one()
+        claim_state = connection.execute(
+            text(
+                "SELECT state FROM trade_decision_submission_claims "
+                "WHERE trade_decision_id = :decision_id"
+            ),
+            {"decision_id": fixture.decision_id},
+        ).scalar_one()
+        receipt = connection.execute(
+            text(
+                "SELECT state, settlement_source, settlement_outcome, execution_id "
+                "FROM broker_mutation_receipt_events "
+                "WHERE receipt_id = :receipt_id "
+                "ORDER BY sequence_no DESC LIMIT 1"
+            ),
+            {"receipt_id": acquired.receipt.receipt_id},
+        ).one()
+        execution_count = connection.execute(
+            text(
+                "SELECT count(*) FROM executions WHERE trade_decision_id = :decision_id"
+            ),
+            {"decision_id": fixture.decision_id},
+        ).scalar_one()
+    assert decision.status == "rejected"
+    assert decision.decision_json["submission_stage"] == "rejected"
+    assert decision.decision_json["risk_reasons"] == ["broker_rejected"]
+    assert decision.decision_json["reject_reason_atomic"] == ["broker_rejected"]
+    assert decision.decision_json["reject_class"] == "runtime"
+    assert decision.decision_json["reject_origin"] == "scheduler"
+    assert claim_state == "rejected"
+    assert tuple(receipt[:3]) == ("settled", "recovery", "rejected")
+    assert receipt.execution_id is None
+    assert execution_count == 0
