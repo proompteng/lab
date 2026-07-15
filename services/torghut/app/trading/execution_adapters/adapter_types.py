@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...alpaca_client import TorghutAlpacaClient
 from ..broker_mutation_receipts import (
     BrokerMutationIntentRequest,
+    BrokerMutationIoPermit,
     BrokerMutationSettlement,
     BrokerMutationSettlementRequest,
     BrokerMutationTarget,
@@ -25,12 +26,15 @@ from ..broker_mutation_receipts import (
     fingerprint_broker_endpoint,
 )
 from ..broker_mutation_submit_coordinator import (
+    BrokerMutationSubmissionPreflightFailed,
     BrokerMutationSubmitCoordinator,
     UnlinkedOrderSubmissionCallbacks,
 )
 from ..firewall import (
     AlpacaSubmitRequest,
     OrderFirewall,
+    OrderFirewallRiskReductionError,
+    OrderFirewallRiskReductionVerification,
     alpaca_submit_request_payload,
 )
 from ..simulation_progress import active_simulation_runtime_context
@@ -260,22 +264,42 @@ class AlpacaExecutionAdapter:
                 request_payload=request_payload,
             )
         )
+        verification: OrderFirewallRiskReductionVerification | None = None
+
+        def preflight() -> None:
+            nonlocal verification
+            try:
+                initial_verification = self._firewall.verify_risk_reducing_order(
+                    alpaca_request
+                )
+                verification = self._firewall.verify_risk_reducing_order(
+                    initial_verification.request
+                )
+            except OrderFirewallRiskReductionError as exc:
+                raise BrokerMutationSubmissionPreflightFailed(
+                    f"risk_reduction_preflight_failed:{type(exc).__name__}"
+                ) from exc
+
+        def broker_call(permit: BrokerMutationIoPermit) -> dict[str, Any]:
+            if verification is None:
+                raise RuntimeError("risk_reduction_preflight_verification_missing")
+            return self._firewall.submit_verified_risk_reducing_order(
+                verification,
+                mutation_permit=permit,
+            )
+
         with self._session_factory() as session:
             payload = self._submit_coordinator.submit_unlinked_order(
                 session,
                 intent=intent,
                 callbacks=UnlinkedOrderSubmissionCallbacks(
-                    broker_call=lambda permit: (
-                        self._firewall.submit_verified_risk_reducing_order(
-                            alpaca_request,
-                            mutation_permit=permit,
-                        )
-                    ),
+                    broker_call=broker_call,
                     persist_terminal=lambda _payload: None,
                     build_settlement=lambda response: _alpaca_closeout_settlement(
                         response,
                         client_order_id=client_order_id,
                     ),
+                    preflight=preflight,
                 ),
             )
         self.last_route = self.name

@@ -31,6 +31,7 @@ from .broker_mutation_receipts import (
     build_linked_submission_terminal_settlement,
     fingerprint_broker_endpoint,
     mark_broker_mutation_io_started,
+    release_broker_mutation_receipt,
     settle_broker_mutation_primary,
     settle_linked_submission_primary,
 )
@@ -74,6 +75,10 @@ class BrokerMutationSubmissionRejected(BrokerMutationSubmissionError):
     """The linked decision is durably rejected or no longer claimable."""
 
 
+class BrokerMutationSubmissionPreflightFailed(BrokerMutationSubmissionError):
+    """A reversible pre-I/O check failed before the broker boundary."""
+
+
 @dataclass(frozen=True, slots=True)
 class _BrokerMutationWriterIdentity:
     owner: str
@@ -102,6 +107,7 @@ class UnlinkedOrderSubmissionCallbacks(Generic[_BrokerResult]):
     broker_call: Callable[[BrokerMutationIoPermit], _BrokerResult]
     persist_terminal: Callable[[_BrokerResult], None]
     build_settlement: Callable[[_BrokerResult], BrokerMutationSettlement]
+    preflight: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +260,11 @@ class BrokerMutationSubmitCoordinator:
             intent=intent,
             submission_claim_handle=None,
         )
+        _run_unlinked_preflight(
+            session,
+            handle=handle,
+            preflight=callbacks.preflight,
+        )
         permit = self._start_io(
             session,
             handle=handle,
@@ -394,6 +405,32 @@ _BROKER_CALLBACK_ERRORS = (
 _TERMINAL_CALLBACK_ERRORS = _BROKER_CALLBACK_ERRORS + (SQLAlchemyError,)
 
 
+def _run_unlinked_preflight(
+    session: Session,
+    *,
+    handle: BrokerMutationReceiptHandle,
+    preflight: Callable[[], None] | None,
+) -> None:
+    if preflight is None:
+        return
+    try:
+        preflight()
+    except BrokerMutationSubmissionPreflightFailed as exc:
+        try:
+            release_broker_mutation_receipt(
+                session,
+                handle=handle,
+                reason=f"preflight_failed:{type(exc).__name__}",
+            )
+        except (BrokerMutationReceiptError, SQLAlchemyError) as release_exc:
+            session.rollback()
+            raise BrokerMutationSubmissionDeferred(
+                "unlinked_submission_preflight_release_unavailable:"
+                f"{handle.receipt_id}:{type(release_exc).__name__}"
+            ) from release_exc
+        raise
+
+
 def _linked_submission_intent(
     request: LinkedOrderSubmission,
 ) -> BrokerMutationIntent:
@@ -515,6 +552,7 @@ __all__ = [
     "BrokerMutationSubmissionAlreadyProcessed",
     "BrokerMutationSubmissionDeferred",
     "BrokerMutationSubmissionError",
+    "BrokerMutationSubmissionPreflightFailed",
     "BrokerMutationSubmissionRejected",
     "BrokerMutationSubmissionUnresolved",
     "BrokerMutationSubmitCoordinator",

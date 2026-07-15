@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
@@ -54,14 +54,29 @@ class OrderFirewallBlocked(RuntimeError):
     """Raised when the order firewall blocks submission."""
 
 
-class OrderFirewallRiskReductionBlocked(RuntimeError):
+class OrderFirewallRiskReductionError(RuntimeError):
+    """Base failure for broker-observed risk-reduction verification."""
+
+
+class OrderFirewallRiskReductionBlocked(OrderFirewallRiskReductionError):
     """Raised when broker-observed position state cannot prove a reduction."""
+
+
+class OrderFirewallRiskReductionObservationError(OrderFirewallRiskReductionError):
+    """Raised when current broker position state cannot be observed."""
 
 
 @dataclass(frozen=True)
 class OrderFirewallStatus:
     kill_switch_enabled: bool
     reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class OrderFirewallRiskReductionVerification:
+    request: AlpacaSubmitRequest
+    observed_position_qty: Decimal
+    verification_token: object = field(repr=False, compare=False)
 
 
 def alpaca_submit_request_payload(request: AlpacaSubmitRequest) -> dict[str, object]:
@@ -176,6 +191,7 @@ class OrderFirewall:
         ).strip()
         if not self._account_label:
             raise ValueError("order_firewall_account_label_required")
+        self._risk_reduction_verification_token = object()
 
     def status(self) -> OrderFirewallStatus:
         if settings.trading_kill_switch_enabled:
@@ -271,18 +287,21 @@ class OrderFirewall:
         )
         return self._submit_payload(request_payload, request.extra_params)
 
-    def submit_verified_risk_reducing_order(
+    def verify_risk_reducing_order(
         self,
         request: AlpacaSubmitRequest,
-        *,
-        mutation_permit: BrokerMutationIoPermit,
-    ) -> dict[str, Any]:
-        """Submit only an observed reduction under a durable mutation permit."""
+    ) -> OrderFirewallRiskReductionVerification:
+        """Verify one closeout against broker-observed position state before I/O."""
 
         normalized_symbol = str(request.symbol).strip().upper()
         normalized_side = str(request.side).strip().lower()
         requested_qty = _positive_decimal(request.qty)
-        positions = self._client.list_positions()
+        try:
+            positions = self._client.list_positions()
+        except _ALPACA_MUTATION_ERRORS as exc:
+            raise OrderFirewallRiskReductionObservationError(
+                "risk_reduction_position_observation_failed"
+            ) from exc
         matching = [
             position
             for position in positions or []
@@ -312,8 +331,31 @@ class OrderFirewall:
             time_in_force=request.time_in_force,
             limit_price=request.limit_price,
             stop_price=request.stop_price,
-            extra_params=request.extra_params,
+            extra_params=dict(request.extra_params or {}),
         )
+        alpaca_submit_request_payload(normalized_request)
+        return OrderFirewallRiskReductionVerification(
+            request=normalized_request,
+            observed_position_qty=observed_qty,
+            verification_token=self._risk_reduction_verification_token,
+        )
+
+    def submit_verified_risk_reducing_order(
+        self,
+        verification: OrderFirewallRiskReductionVerification,
+        *,
+        mutation_permit: BrokerMutationIoPermit,
+    ) -> dict[str, Any]:
+        """Submit one pre-I/O-verified reduction under a durable mutation permit."""
+
+        if (
+            verification.verification_token
+            is not self._risk_reduction_verification_token
+        ):
+            raise OrderFirewallRiskReductionBlocked(
+                "risk_reduction_verification_not_issued_by_firewall"
+            )
+        normalized_request = verification.request
         request_payload = alpaca_submit_request_payload(normalized_request)
         consume_broker_mutation_io_permit(
             mutation_permit,
