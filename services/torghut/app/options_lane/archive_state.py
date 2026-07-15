@@ -70,8 +70,11 @@ class ArchiveRuntimeState:
                     self.last_success_ts = change.checkpoint.last_success_at.isoformat()
             if change.completed:
                 self.last_success_ts = change.observed_at.isoformat()
-            self.last_error_code = change.error_code
-            self.last_error_detail = change.error_detail
+                self.last_error_code = None
+                self.last_error_detail = None
+            elif change.error_code is not None:
+                self.last_error_code = change.error_code
+                self.last_error_detail = change.error_detail
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:

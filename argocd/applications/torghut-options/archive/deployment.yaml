@@ -6,9 +6,9 @@ metadata:
   labels:
     app: torghut-options-archive
 spec:
-  # Exactly one worker owns the PostgreSQL advisory lease. Recreate prevents
-  # Kubernetes from overlapping workers during image or configuration rollouts.
-  replicas: 1
+  # Keep the worker disabled until the fixed image is promoted and a separate
+  # activation change can prove a complete archive shard against production.
+  replicas: 0
   revisionHistoryLimit: 2
   strategy:
     type: Recreate

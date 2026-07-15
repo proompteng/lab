@@ -647,7 +647,13 @@ class OptionsArchiveRepository:
                     session,
                     text(
                         f"""
-                    WITH candidates AS (
+                    WITH archive_parameters AS (
+                      SELECT CAST(:query_fingerprint AS VARCHAR(64)) AS query_fingerprint,
+                             CAST(:shard_key AS TEXT) AS shard_key,
+                             CAST(:component AS TEXT) AS component,
+                             CAST(:finalize_snapshot_at AS TIMESTAMPTZ) AS finalize_snapshot_at
+                    ),
+                    candidates AS (
                       SELECT candidate.expiration_date,
                              candidate.contract_symbol
                       FROM unnest(
@@ -664,14 +670,15 @@ class OptionsArchiveRepository:
                     )
                     SELECT catalog.contract_symbol,
                            CASE
-                             WHEN catalog.expiration_date < CAST(:finalize_snapshot_at AS DATE)
+                             WHEN catalog.expiration_date < CAST(archive_parameters.finalize_snapshot_at AS DATE)
                                THEN 'expired'
                              ELSE 'inactive'
                            END,
-                           :query_fingerprint,
-                           :shard_key,
-                           :finalize_snapshot_at
+                           archive_parameters.query_fingerprint,
+                           archive_parameters.shard_key,
+                           archive_parameters.finalize_snapshot_at
                     FROM candidates
+                    CROSS JOIN archive_parameters
                     JOIN torghut_options_contract_catalog AS catalog
                       ON catalog.expiration_date = candidates.expiration_date
                       AND catalog.contract_symbol = candidates.contract_symbol
@@ -679,9 +686,9 @@ class OptionsArchiveRepository:
                       AND NOT EXISTS (
                         SELECT 1
                         FROM {ARCHIVE_MEMBERSHIP_TABLE} AS membership
-                        WHERE membership.component = :component
-                          AND membership.query_fingerprint = :query_fingerprint
-                          AND membership.shard_key = :shard_key
+                        WHERE membership.component = archive_parameters.component
+                          AND membership.query_fingerprint = archive_parameters.query_fingerprint
+                          AND membership.shard_key = archive_parameters.shard_key
                           AND membership.contract_symbol = catalog.contract_symbol
                       )
                       AND NOT EXISTS (
@@ -707,7 +714,6 @@ class OptionsArchiveRepository:
                         """
                     ),
                     {
-                        "observed_at": observed_at,
                         "finalize_snapshot_at": current.finalize_snapshot_at,
                         "candidate_expiration_dates": candidate_expiration_dates,
                         "candidate_symbols": candidate_symbols,

@@ -662,18 +662,25 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
         for sql, parameters in session.calls
         if "INSERT INTO torghut_options_contract_archive_status" in sql
     )
-    assert "WITH candidates AS" in transition_sql
+    assert "WITH archive_parameters AS" in transition_sql
+    assert "CAST(:query_fingerprint AS VARCHAR(64))" in transition_sql
+    assert "CAST(:shard_key AS TEXT)" in transition_sql
+    assert "CAST(:component AS TEXT)" in transition_sql
+    assert "CAST(:finalize_snapshot_at AS TIMESTAMPTZ)" in transition_sql
     assert "INSERT INTO torghut_options_contract_archive_status" in transition_sql
     assert "UPDATE torghut_options_contract_catalog" not in transition_sql
     assert "CAST(:candidate_expiration_dates AS DATE[])" in transition_sql
     assert "CAST(:candidate_symbols AS TEXT[])" in transition_sql
     assert "catalog.expiration_date = candidates.expiration_date" in transition_sql
     assert "catalog.contract_symbol = candidates.contract_symbol" in transition_sql
-    assert "membership.query_fingerprint = :query_fingerprint" in transition_sql
-    assert "membership.shard_key = :shard_key" in transition_sql
+    assert (
+        "membership.query_fingerprint = archive_parameters.query_fingerprint"
+        in transition_sql
+    )
+    assert "membership.shard_key = archive_parameters.shard_key" in transition_sql
     assert "subscription.tier IS DISTINCT FROM 'off'" in transition_sql
     assert "ON CONFLICT (contract_symbol) DO UPDATE" in transition_sql
-    assert "CAST(:finalize_snapshot_at AS DATE)" in transition_sql
+    assert "CAST(archive_parameters.finalize_snapshot_at AS DATE)" in transition_sql
     assert "CAST(:observed_at AS DATE)" not in transition_sql
     assert isinstance(transition_parameters, dict)
     assert transition_parameters["finalize_snapshot_at"] == finalize_snapshot_at
@@ -928,3 +935,38 @@ def test_archive_retry_remains_live_but_not_ready() -> None:
     )
 
     assert not archive_is_ready(runtime_state.snapshot())
+
+
+def test_archive_error_remains_not_ready_until_a_shard_completes() -> None:
+    runtime_state = ArchiveRuntimeState()
+    runtime_state.update(
+        ArchiveStateUpdate(
+            phase="retry",
+            observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+            lease_acquired=True,
+            error_code="archive_shard_failed",
+            error_detail="database statement failed",
+        )
+    )
+    runtime_state.update(
+        ArchiveStateUpdate(
+            phase="finalizing",
+            observed_at=datetime(2026, 7, 14, 12, 1, tzinfo=UTC),
+        )
+    )
+
+    failed_snapshot = runtime_state.snapshot()
+    assert failed_snapshot["last_error_code"] == "archive_shard_failed"
+    assert not archive_is_ready(failed_snapshot)
+
+    runtime_state.update(
+        ArchiveStateUpdate(
+            phase="complete",
+            observed_at=datetime(2026, 7, 14, 12, 2, tzinfo=UTC),
+            completed=True,
+        )
+    )
+
+    recovered_snapshot = runtime_state.snapshot()
+    assert recovered_snapshot["last_error_code"] is None
+    assert archive_is_ready(recovered_snapshot)
