@@ -535,6 +535,46 @@ describe('Torghut storage stability gate', () => {
     expect(result.failures.join('\n')).toContain('pods=[torghut-options-archive-7d9f8f6f65-abcde]')
   })
 
+  it('collects the contained workload from list-shaped deployment output', () => {
+    const workloads = __private.collectWorkloadEvidenceFromValues(
+      {
+        items: [
+          {
+            metadata: { name: 'torghut-options-archive' },
+            spec: { replicas: 0, selector: { matchLabels: { app: 'torghut-options-archive' } } },
+            status: {},
+          },
+          {
+            metadata: { name: 'torghut-scheduler' },
+          },
+        ],
+      },
+      {
+        items: [
+          {
+            metadata: {
+              name: 'torghut-options-archive-7d9f8f6f65-abcde',
+              labels: { app: 'torghut-options-archive' },
+              deletionTimestamp: '2026-07-15T17:00:00Z',
+            },
+          },
+        ],
+      },
+    )
+
+    expect(workloads).toEqual([
+      {
+        name: 'torghut-options-archive',
+        desiredReplicas: 0,
+        actualReplicas: 0,
+        readyReplicas: 0,
+        availableReplicas: 0,
+        terminatingReplicas: 1,
+        podNames: ['torghut-options-archive-7d9f8f6f65-abcde'],
+      },
+    ])
+  })
+
   it('records the evidence cutoff after bounded samples and before Talos and Kafka tail collection', async () => {
     const source = healthySnapshot()
     const events: string[] = []

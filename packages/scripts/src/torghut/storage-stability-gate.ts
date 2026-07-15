@@ -1424,14 +1424,9 @@ const collectRuntimeEvidence = async (): Promise<RuntimeEvidence> => {
   }
 }
 
-const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
-  const [deploymentsValue, podsValue] = await Promise.all([
-    kubectlJson(
-      ['-n', 'torghut', 'get', 'deployment', 'torghut-options-archive', '-o', 'json'],
-      'contained Torghut deployments',
-    ),
-    kubectlJson(['-n', 'torghut', 'get', 'pods', '-o', 'json'], 'Torghut pods for containment proof'),
-  ])
+const containedWorkloadNames = new Set(['torghut-options-archive'])
+
+const collectWorkloadEvidenceFromValues = (deploymentsValue: unknown, podsValue: unknown): WorkloadEvidence[] => {
   const pods = requireArray(requireObject(podsValue, 'Torghut pods').items, 'pods.items').map((value, index) => {
     const pod = requireObject(value, `contained pod ${index}`)
     const metadata = requireObject(pod.metadata, `contained pod ${index}.metadata`)
@@ -1446,46 +1441,58 @@ const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
       terminating: metadata.deletionTimestamp !== undefined,
     }
   })
-  return requireArray(requireObject(deploymentsValue, 'contained Torghut deployments').items, 'deployments.items').map(
-    (value, index) => {
-      const deployment = requireObject(value, `contained deployment ${index}`)
-      const metadata = requireObject(deployment.metadata, `contained deployment ${index}.metadata`)
-      const spec = requireObject(deployment.spec, `contained deployment ${index}.spec`)
-      const status = isObject(deployment.status) ? deployment.status : {}
-      const name = requireString(metadata.name, `contained deployment ${index}.metadata.name`)
-      const selector = requireObject(spec.selector, `contained deployment ${index}.spec.selector`)
-      const matchLabels = requireObject(selector.matchLabels, `contained deployment ${index}.spec.selector.matchLabels`)
-      const selectorLabels = Object.entries(matchLabels).map(([key, labelValue]) => [
-        key,
-        requireString(labelValue, `contained deployment ${index}.spec.selector.matchLabels.${key}`),
-      ])
-      if (selectorLabels.length === 0) throw new Error(`contained deployment ${name} has no matchLabels selector`)
-      const workloadPods = pods.filter(({ labels }) => selectorLabels.every(([key, value]) => labels[key] === value))
-      const statusTerminatingReplicas =
-        status.terminatingReplicas === undefined
+  const deployments = requireArray(
+    requireObject(deploymentsValue, 'contained Torghut deployments').items,
+    'deployments.items',
+  ).flatMap((value, index) => {
+    const deployment = requireObject(value, `contained deployment candidate ${index}`)
+    const metadata = requireObject(deployment.metadata, `contained deployment candidate ${index}.metadata`)
+    const name = requireString(metadata.name, `contained deployment candidate ${index}.metadata.name`)
+    return containedWorkloadNames.has(name) ? [{ deployment, index, name }] : []
+  })
+  return deployments.map(({ deployment, index, name }) => {
+    const spec = requireObject(deployment.spec, `contained deployment ${index}.spec`)
+    const status = isObject(deployment.status) ? deployment.status : {}
+    const selector = requireObject(spec.selector, `contained deployment ${index}.spec.selector`)
+    const matchLabels = requireObject(selector.matchLabels, `contained deployment ${index}.spec.selector.matchLabels`)
+    const selectorLabels = Object.entries(matchLabels).map(([key, labelValue]) => [
+      key,
+      requireString(labelValue, `contained deployment ${index}.spec.selector.matchLabels.${key}`),
+    ])
+    if (selectorLabels.length === 0) throw new Error(`contained deployment ${name} has no matchLabels selector`)
+    const workloadPods = pods.filter(({ labels }) => selectorLabels.every(([key, value]) => labels[key] === value))
+    const statusTerminatingReplicas =
+      status.terminatingReplicas === undefined
+        ? 0
+        : requireNumber(status.terminatingReplicas, `deployment ${index}.terminatingReplicas`)
+    return {
+      name,
+      desiredReplicas: requireNumber(spec.replicas, `contained deployment ${index}.spec.replicas`),
+      actualReplicas:
+        status.replicas === undefined ? 0 : requireNumber(status.replicas, `deployment ${index}.replicas`),
+      readyReplicas:
+        status.readyReplicas === undefined
           ? 0
-          : requireNumber(status.terminatingReplicas, `deployment ${index}.terminatingReplicas`)
-      return {
-        name,
-        desiredReplicas: requireNumber(spec.replicas, `contained deployment ${index}.spec.replicas`),
-        actualReplicas:
-          status.replicas === undefined ? 0 : requireNumber(status.replicas, `deployment ${index}.replicas`),
-        readyReplicas:
-          status.readyReplicas === undefined
-            ? 0
-            : requireNumber(status.readyReplicas, `deployment ${index}.readyReplicas`),
-        availableReplicas:
-          status.availableReplicas === undefined
-            ? 0
-            : requireNumber(status.availableReplicas, `deployment ${index}.availableReplicas`),
-        terminatingReplicas: Math.max(
-          statusTerminatingReplicas,
-          workloadPods.filter(({ terminating }) => terminating).length,
-        ),
-        podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
-      }
-    },
-  )
+          : requireNumber(status.readyReplicas, `deployment ${index}.readyReplicas`),
+      availableReplicas:
+        status.availableReplicas === undefined
+          ? 0
+          : requireNumber(status.availableReplicas, `deployment ${index}.availableReplicas`),
+      terminatingReplicas: Math.max(
+        statusTerminatingReplicas,
+        workloadPods.filter(({ terminating }) => terminating).length,
+      ),
+      podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
+    }
+  })
+}
+
+const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
+  const [deploymentsValue, podsValue] = await Promise.all([
+    kubectlJson(['-n', 'torghut', 'get', 'deployment', '-o', 'json'], 'contained Torghut deployments'),
+    kubectlJson(['-n', 'torghut', 'get', 'pods', '-o', 'json'], 'Torghut pods for containment proof'),
+  ])
+  return collectWorkloadEvidenceFromValues(deploymentsValue, podsValue)
 }
 
 const collectArgoEvidence = async (): Promise<ArgoApplicationEvidence[]> => {
@@ -1723,6 +1730,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  collectWorkloadEvidenceFromValues,
   collectStorageStabilitySnapshotWith,
   collectJangarPostgresEvidence,
   collectPostgresEvidence,
