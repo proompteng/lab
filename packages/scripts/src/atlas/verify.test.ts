@@ -36,4 +36,18 @@ describe('atlas verify', () => {
       'deleted path search returned 1 result(s) for src/deleted.ts: src/live.ts',
     )
   })
+
+  it('checks cancellation before the configured statement timeout', () => {
+    const startedAt = 10_000
+    const deadlines = __private.cancellationProbeDeadlines(startedAt, 750)
+
+    expect(deadlines.observeDeadline).toBe(startedAt + 300)
+    expect(deadlines.clearDeadline).toBe(startedAt + 650)
+    expect(deadlines.statementTimeoutDeadline).toBe(startedAt + 750)
+    expect(deadlines.clearDeadline).toBeLessThan(deadlines.statementTimeoutDeadline)
+
+    const shortTimeout = __private.cancellationProbeDeadlines(startedAt, 250)
+    expect(shortTimeout.observeDeadline).toBeLessThan(shortTimeout.clearDeadline)
+    expect(shortTimeout.clearDeadline).toBeLessThan(shortTimeout.statementTimeoutDeadline)
+  })
 })

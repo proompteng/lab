@@ -299,6 +299,27 @@ const absentPathSearchError = (path: string, paths: string[]) =>
     ? undefined
     : `deleted path search returned ${paths.length} result(s) for ${path}: ${paths.join(', ')}`
 
+const DEFAULT_ATLAS_STATEMENT_TIMEOUT_MS = 750
+const CANCELLATION_TIMEOUT_HEADROOM_MS = 100
+const CANCELLATION_OBSERVE_MAX_MS = 300
+const CANCELLATION_POLL_INTERVAL_MS = 25
+
+const cancellationProbeDeadlines = (startedAt: number, statementTimeoutMs: number) => {
+  const clearWindowMs = Math.max(
+    CANCELLATION_POLL_INTERVAL_MS * 2,
+    statementTimeoutMs - CANCELLATION_TIMEOUT_HEADROOM_MS,
+  )
+  const observeWindowMs = Math.min(
+    CANCELLATION_OBSERVE_MAX_MS,
+    Math.max(CANCELLATION_POLL_INTERVAL_MS, clearWindowMs - 150),
+  )
+  return {
+    observeDeadline: startedAt + observeWindowMs,
+    clearDeadline: startedAt + clearWindowMs,
+    statementTimeoutDeadline: startedAt + statementTimeoutMs,
+  }
+}
+
 const activeAtlasQueryCount = async (db: SQL) => {
   const rows = (await db`
     SELECT count(DISTINCT activity.pid)::bigint AS active
@@ -318,6 +339,7 @@ const runCancellationProbe = async (input: {
   repository: string
   ref: string
   concurrency: number
+  statementTimeoutMs: number
 }) => {
   const query = `Atlas cancellation probe ${randomUUID()}`
 
@@ -353,6 +375,8 @@ const runCancellationProbe = async (input: {
     ])
 
     const controllers = Array.from({ length: input.concurrency }, () => new AbortController())
+    const requestStartedAt = Date.now()
+    const deadlines = cancellationProbeDeadlines(requestStartedAt, input.statementTimeoutMs)
     const requests = controllers.map((controller) =>
       fetch(`${input.baseUrl}/api/code-search`, {
         method: 'POST',
@@ -364,8 +388,7 @@ const runCancellationProbe = async (input: {
         .catch(() => undefined),
     )
 
-    const observeDeadline = Date.now() + 750
-    while (Date.now() < observeDeadline) {
+    while (Date.now() < deadlines.observeDeadline) {
       observedBlockedQueries = Math.max(observedBlockedQueries, await activeAtlasQueryCount(input.db))
       if (observedBlockedQueries > 0) {
         reachedDatabase = true
@@ -376,17 +399,41 @@ const runCancellationProbe = async (input: {
 
     for (const controller of controllers) controller.abort(new Error('Atlas live cancellation probe'))
     await Promise.all(requests)
-    await Bun.sleep(1_000)
-    lingeringQueries = await activeAtlasQueryCount(input.db)
+    let cancellationCheckedAt = Date.now()
+    while (cancellationCheckedAt < deadlines.clearDeadline) {
+      lingeringQueries = await activeAtlasQueryCount(input.db)
+      cancellationCheckedAt = Date.now()
+      if (lingeringQueries === 0) break
+      const remainingMs = deadlines.clearDeadline - cancellationCheckedAt
+      if (remainingMs <= 0) break
+      await Bun.sleep(Math.min(CANCELLATION_POLL_INTERVAL_MS, remainingMs))
+    }
+    const clearedBeforeStatementTimeout =
+      reachedDatabase && lingeringQueries === 0 && cancellationCheckedAt < deadlines.statementTimeoutDeadline
+    if (!clearedBeforeStatementTimeout) {
+      lingeringQueries = Math.max(1, lingeringQueries, observedBlockedQueries)
+    }
+
+    return {
+      reachedDatabase,
+      observedBlockedQueries,
+      lingeringQueries,
+      clearedBeforeStatementTimeout,
+      cancellationCheckedAt,
+      ...deadlines,
+    }
   } finally {
     releaseLock()
     await lockTask
   }
-
-  return { reachedDatabase, observedBlockedQueries, lingeringQueries }
 }
 
-export const __private = { absentPathSearchError, activeAtlasQueryCount, buildColdPerformanceQueries }
+export const __private = {
+  absentPathSearchError,
+  activeAtlasQueryCount,
+  buildColdPerformanceQueries,
+  cancellationProbeDeadlines,
+}
 
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
@@ -688,8 +735,15 @@ const main = async () => {
       repository: options.repository,
       ref: options.ref,
       concurrency: options.concurrency,
+      statementTimeoutMs: positiveInt(
+        'ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS',
+        process.env.ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS ?? String(DEFAULT_ATLAS_STATEMENT_TIMEOUT_MS),
+      ),
     })
     if (!cancellation.reachedDatabase) errors.push('cancellation probe did not reach PostgreSQL')
+    if (!cancellation.clearedBeforeStatementTimeout) {
+      errors.push('cancellation probe did not clear PostgreSQL before the statement timeout')
+    }
     const lingeringCanceledQueries = cancellation.lingeringQueries
     if (lingeringCanceledQueries) errors.push(`${lingeringCanceledQueries} canceled Atlas queries remained active`)
 
@@ -732,6 +786,10 @@ const main = async () => {
         reachedDatabase: cancellation.reachedDatabase,
         observedBlockedQueries: cancellation.observedBlockedQueries,
         lingeringQueries: cancellation.lingeringQueries,
+        clearedBeforeStatementTimeout: cancellation.clearedBeforeStatementTimeout,
+        cancellationCheckedAt: new Date(cancellation.cancellationCheckedAt).toISOString(),
+        clearDeadline: new Date(cancellation.clearDeadline).toISOString(),
+        statementTimeoutDeadline: new Date(cancellation.statementTimeoutDeadline).toISOString(),
       },
       lingeringCanceledQueries,
       errors,
