@@ -22,6 +22,7 @@ type FakeDbOptions = {
   exactRows?: unknown[]
   lexicalRows?: unknown[]
   semanticRows?: unknown[]
+  scopedSemanticCandidateCount?: number
   repositoryRows?: unknown[]
 }
 
@@ -193,6 +194,10 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
 
       if (normalized.includes(' as lexical_rank')) {
         return { rows: (options.lexicalRows ?? options.selectRows ?? []) as R[] }
+      }
+
+      if (normalized.includes(' as candidate_count') && normalized.includes('scoped_semantic_probe')) {
+        return { rows: [{ candidate_count: options.scopedSemanticCandidateCount ?? 0 }] as R[] }
       }
 
       if (normalized.includes('from atlas.chunk_embeddings as chunk_embeddings')) {
@@ -449,8 +454,10 @@ describe('atlas store', () => {
 
     await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
 
-    const semanticSql = calls.find((call) =>
-      call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings'),
+    const semanticSql = calls.find(
+      (call) =>
+        call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings') &&
+        call.sql.toLowerCase().includes(' as semantic_distance'),
     )
     expect(semanticSql).toBeDefined()
     expect(semanticSql?.sql.toLowerCase()).not.toContain('candidate_chunks')
@@ -459,6 +466,98 @@ describe('atlas store', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))).toBe(true)
     const hnswBudgetSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))
     expect(hnswBudgetSql?.params).toContain('20')
+  })
+
+  it('uses an exact materialized semantic scan for narrow caller scopes', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        data: [{ embedding: [0.1, 0.2, 0.3] }],
+      }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const { db, calls } = makeFakeDb({ selectRows: [], scopedSemanticCandidateCount: 50 })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'where is source search implemented',
+      repository: 'proompteng/lab',
+      pathPrefix: 'services/jangar',
+      language: 'typescript',
+      limit: 5,
+    })
+
+    const semanticSql = calls.find((call) =>
+      call.sql.toLowerCase().includes('with scoped_semantic_candidates as materialized'),
+    )
+    const normalized = String(semanticSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain('with scoped_semantic_candidates as materialized')
+    expect(normalized).toContain('file_keys.path like')
+    expect(normalized).toContain('file_versions.language =')
+    expect(normalized).toContain('order by scoped_semantic_candidates.candidate_embedding <=> $')
+    expect(normalized).not.toContain('order by chunk_embeddings.embedding <=> $')
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(false)
+  })
+
+  it('keeps broad path-prefix semantic searches on HNSW', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [], scopedSemanticCandidateCount: 501 })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'where is source search implemented',
+      repository: 'proompteng/lab',
+      pathPrefix: 'services/',
+      limit: 5,
+    })
+
+    const countSql = calls.find((call) => call.sql.toLowerCase().includes('scoped_semantic_probe'))
+    expect(countSql?.params.at(-1)).toBe(501)
+    const semanticSql = calls.find(
+      (call) =>
+        call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings') &&
+        call.sql.toLowerCase().includes(' as semantic_distance'),
+    )
+    const normalized = String(semanticSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).not.toContain('with scoped_semantic_candidates as materialized')
+    expect(normalized).toContain('order by chunk_embeddings.embedding <=> $')
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(true)
+  })
+
+  it('keeps broad language-only semantic searches on HNSW', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        data: [{ embedding: [0.1, 0.2, 0.3] }],
+      }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'where is source search implemented',
+      repository: 'proompteng/lab',
+      language: 'typescript',
+      limit: 5,
+    })
+
+    const semanticSql = calls.find((call) =>
+      call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings'),
+    )
+    const normalized = String(semanticSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).not.toContain('with scoped_semantic_candidates as materialized')
+    expect(normalized).toContain('file_versions.language =')
+    expect(normalized).toContain('order by chunk_embeddings.embedding <=> $')
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(true)
   })
 
   it('isolates exact-match candidates without whole-content similarity scans', async () => {
