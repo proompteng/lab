@@ -28,12 +28,51 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Determine Sag ApplicationSet state
+        id: sag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          enabled="$(
+            awk '
+              /^[[:space:]]+- name: sag[[:space:]]*$/ {
+                in_sag = 1
+                next
+              }
+              in_sag && /^[[:space:]]+- name:/ {
+                exit
+              }
+              in_sag && $1 == "enabled:" {
+                gsub(/["[:space:]]/, "", $2)
+                print $2
+                exit
+              }
+            ' argocd/applicationsets/product.yaml
+          )"
+
+          case "${enabled}" in
+            true)
+              echo "enabled=true" >> "${GITHUB_OUTPUT}"
+              ;;
+            false)
+              echo "enabled=false" >> "${GITHUB_OUTPUT}"
+              echo "Sag is disabled in the product ApplicationSet; post-deploy verification is not applicable."
+              ;;
+            *)
+              echo "Unable to resolve the Sag enabled state from argocd/applicationsets/product.yaml" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Set up kubectl
+        if: steps.sag.outputs.enabled == 'true'
         uses: azure/setup-kubectl@v4
         with:
           version: v1.31.2
 
       - name: Configure in-cluster kubeconfig when context is missing
+        if: steps.sag.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -72,6 +111,7 @@ jobs:
           kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
 
       - name: Verify Sag Argo health and deployment digest
+        if: steps.sag.outputs.enabled == 'true'
         shell: bash
         env:
           EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
