@@ -33,6 +33,21 @@ jobs:
         with:
           bun-version: 1.3.14
 
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.11.1
+
+      - name: Install Temporal routing dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts \
+            --filter @proompteng/source \
+            --filter @proompteng/scripts \
+            --filter @proompteng/temporal-bun-sdk
+          bun run --filter @proompteng/temporal-bun-sdk build
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@v5
         with:
