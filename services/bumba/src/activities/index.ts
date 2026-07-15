@@ -11,6 +11,7 @@ import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 import { currentActivityContext } from '@proompteng/temporal-bun-sdk/worker'
 
 import { shouldSkipAtlasPath } from '../atlas/file-eligibility'
+import { LEGACY_RECONCILE_PENDING_ERROR } from '../atlas/ingestion-status'
 import {
   assertAtlasManifestMatches,
   type AtlasCurrentFile,
@@ -190,6 +191,7 @@ export type UpsertIngestionInput = {
   error?: string | null
   startedAt?: string | null
   finishedAt?: string | null
+  correctLegacyPendingFailure?: boolean
 }
 
 export type UpsertIngestionOutput = {
@@ -4968,6 +4970,10 @@ export const activities = {
     const status = input.status.trim()
     const errorText = typeof input.error === 'string' ? input.error.trim() : ''
     const error = errorText.length > 0 ? errorText : null
+    const correctLegacyPendingFailure = input.correctLegacyPendingFailure === true
+    const validLegacyCorrection =
+      (status === 'completed' && error === null) ||
+      (status === 'failed' && error !== null && error !== LEGACY_RECONCILE_PENDING_ERROR)
 
     if (!deliveryId || !workflowId || !status) {
       logActivity('info', 'skipped', 'upsertIngestion', {
@@ -4978,6 +4984,9 @@ export const activities = {
         durationMs: Date.now() - startedAt,
       })
       return null
+    }
+    if (correctLegacyPendingFailure && !validLegacyCorrection) {
+      throw new Error('Legacy pending-failure correction requires completion or a real failure')
     }
 
     logActivity('info', 'started', 'upsertIngestion', {
@@ -5023,18 +5032,31 @@ export const activities = {
         )
         ON CONFLICT (event_id, workflow_id) DO UPDATE
         SET status = CASE
+              WHEN ${correctLegacyPendingFailure}
+                AND atlas.ingestions.status = 'failed'
+                AND atlas.ingestions.error = ${LEGACY_RECONCILE_PENDING_ERROR}
+              THEN EXCLUDED.status
               WHEN atlas.ingestions.status IN ('completed', 'failed', 'skipped') THEN atlas.ingestions.status
               ELSE EXCLUDED.status
             END,
-            error = COALESCE(EXCLUDED.error, atlas.ingestions.error),
+            error = CASE
+              WHEN ${correctLegacyPendingFailure}
+                AND atlas.ingestions.status = 'failed'
+                AND atlas.ingestions.error = ${LEGACY_RECONCILE_PENDING_ERROR}
+              THEN EXCLUDED.error
+              ELSE COALESCE(EXCLUDED.error, atlas.ingestions.error)
+            END,
             started_at = COALESCE(EXCLUDED.started_at, atlas.ingestions.started_at),
             finished_at = COALESCE(EXCLUDED.finished_at, atlas.ingestions.finished_at)
-        RETURNING id, event_id;
-      `) as Array<{ id: string; event_id: string }>
+        RETURNING id, event_id, status, error;
+      `) as Array<{ id: string; event_id: string; status: string; error: string | null }>
 
       const row = rows[0]
       if (!row) {
         throw new Error('ingestion upsert failed')
+      }
+      if (correctLegacyPendingFailure && (row.status !== status || row.error !== error)) {
+        throw new Error('Ingestion does not match the legacy pending-failure correction guard')
       }
 
       logActivity('info', 'completed', 'upsertIngestion', {

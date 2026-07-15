@@ -1,10 +1,11 @@
-import { defineWorkflow, log } from '@proompteng/temporal-bun-sdk/workflow'
+import { defineWorkflow, log, WorkflowBlockedError } from '@proompteng/temporal-bun-sdk/workflow'
 import { Effect } from 'effect'
 import * as Cause from 'effect/Cause'
 import * as Chunk from 'effect/Chunk'
 import * as Schema from 'effect/Schema'
 
 import type { ReconcileAtlasRepositoryInput, ReconcileAtlasRepositoryOutput } from '../activities/index'
+import { LEGACY_RECONCILE_PENDING_ERROR } from '../atlas/ingestion-status'
 import type { MainMergeMemoryNoteInput } from '../event-consumer'
 
 const activityRetry = {
@@ -18,6 +19,8 @@ const upsertIngestionTimeouts = {
   startToCloseTimeoutMs: 30_000,
   scheduleToCloseTimeoutMs: 900_000,
 }
+
+const reconcilePendingPatchId = 'reconcileAtlasRepository.preserve-pending.v1'
 
 const logWorkflow = (event: string, fields: Record<string, unknown> = {}) => {
   log.info('[bumba:workflow]', { event, ...fields })
@@ -35,6 +38,8 @@ const getCauseError = (cause: Cause.Cause<unknown>): Error | undefined => {
   }
   return undefined
 }
+
+const isWorkflowBlocked = (cause: Cause.Cause<unknown>): boolean => getCauseError(cause) instanceof WorkflowBlockedError
 
 const MainMergeMemoryNoteWorkflowInput = Schema.Struct({
   eventId: Schema.String,
@@ -80,31 +85,79 @@ export const workflows = [
       })
     }),
   ),
-  defineWorkflow('reconcileAtlasRepository', ReconcileAtlasRepositoryWorkflowInput, ({ input, activities, info }) =>
-    Effect.gen(function* () {
-      const eventDeliveryId = input.eventDeliveryId
-      if (eventDeliveryId) {
-        yield* activities.schedule(
-          'upsertIngestion',
-          [{ deliveryId: eventDeliveryId, workflowId: info.workflowId, status: 'running' }],
-          { ...upsertIngestionTimeouts, retry: activityRetry },
+  defineWorkflow(
+    'reconcileAtlasRepository',
+    ReconcileAtlasRepositoryWorkflowInput,
+    ({ input, activities, determinism, info }) =>
+      Effect.gen(function* () {
+        const eventDeliveryId = input.eventDeliveryId
+        if (eventDeliveryId) {
+          yield* activities.schedule(
+            'upsertIngestion',
+            [{ deliveryId: eventDeliveryId, workflowId: info.workflowId, status: 'running' }],
+            { ...upsertIngestionTimeouts, retry: activityRetry },
+          )
+        }
+
+        const preservePendingReconciliation = determinism.patched(reconcilePendingPatchId)
+
+        const reconcile = activities.schedule('reconcileAtlasRepository', [input as ReconcileAtlasRepositoryInput], {
+          startToCloseTimeoutMs: 24 * 60 * 60 * 1_000,
+          scheduleToCloseTimeoutMs: 3 * 24 * 60 * 60 * 1_000,
+          heartbeatTimeoutMs: 90_000,
+          retry: {
+            initialIntervalMs: 30_000,
+            backoffCoefficient: 2,
+            maximumIntervalMs: 15 * 60 * 1_000,
+          },
+        }) as Effect.Effect<ReconcileAtlasRepositoryOutput, unknown, never>
+
+        const result = yield* Effect.catchAllCause(reconcile, (cause) =>
+          Effect.gen(function* () {
+            const workflowBlocked = isWorkflowBlocked(cause)
+            if (preservePendingReconciliation && workflowBlocked) {
+              return yield* Effect.failCause(cause)
+            }
+            if (eventDeliveryId) {
+              if (!preservePendingReconciliation) {
+                yield* activities.schedule(
+                  'upsertIngestion',
+                  [
+                    {
+                      deliveryId: eventDeliveryId,
+                      workflowId: info.workflowId,
+                      status: 'failed',
+                      error: LEGACY_RECONCILE_PENDING_ERROR,
+                    },
+                  ],
+                  { ...upsertIngestionTimeouts, retry: activityRetry },
+                )
+              }
+              if (workflowBlocked) {
+                return yield* Effect.failCause(cause)
+              }
+              yield* activities.schedule(
+                'upsertIngestion',
+                [
+                  {
+                    deliveryId: eventDeliveryId,
+                    workflowId: info.workflowId,
+                    status: 'failed',
+                    error: getCauseError(cause)?.message,
+                    ...(preservePendingReconciliation ? {} : { correctLegacyPendingFailure: true }),
+                  },
+                ],
+                { ...upsertIngestionTimeouts, retry: activityRetry },
+              )
+            }
+            return yield* Effect.failCause(cause)
+          }),
         )
-      }
 
-      const reconcile = activities.schedule('reconcileAtlasRepository', [input as ReconcileAtlasRepositoryInput], {
-        startToCloseTimeoutMs: 24 * 60 * 60 * 1_000,
-        scheduleToCloseTimeoutMs: 3 * 24 * 60 * 60 * 1_000,
-        heartbeatTimeoutMs: 90_000,
-        retry: {
-          initialIntervalMs: 30_000,
-          backoffCoefficient: 2,
-          maximumIntervalMs: 15 * 60 * 1_000,
-        },
-      }) as Effect.Effect<ReconcileAtlasRepositoryOutput, unknown, never>
-
-      const result = yield* Effect.catchAllCause(reconcile, (cause) =>
-        Effect.gen(function* () {
-          if (eventDeliveryId) {
+        if (eventDeliveryId) {
+          if (!preservePendingReconciliation) {
+            // Pre-patch histories recorded this command while activity-1 was pending. Consume that command and its
+            // existing result before emitting the corrective completed upsert so those histories remain replayable.
             yield* activities.schedule(
               'upsertIngestion',
               [
@@ -112,25 +165,27 @@ export const workflows = [
                   deliveryId: eventDeliveryId,
                   workflowId: info.workflowId,
                   status: 'failed',
-                  error: getCauseError(cause)?.message,
+                  error: LEGACY_RECONCILE_PENDING_ERROR,
                 },
               ],
               { ...upsertIngestionTimeouts, retry: activityRetry },
             )
           }
-          return yield* Effect.failCause(cause)
-        }),
-      )
-
-      if (eventDeliveryId) {
-        yield* activities.schedule(
-          'upsertIngestion',
-          [{ deliveryId: eventDeliveryId, workflowId: info.workflowId, status: 'completed' }],
-          { ...upsertIngestionTimeouts, retry: activityRetry },
-        )
-      }
-      return result
-    }),
+          yield* activities.schedule(
+            'upsertIngestion',
+            [
+              {
+                deliveryId: eventDeliveryId,
+                workflowId: info.workflowId,
+                status: 'completed',
+                ...(preservePendingReconciliation ? {} : { correctLegacyPendingFailure: true }),
+              },
+            ],
+            { ...upsertIngestionTimeouts, retry: activityRetry },
+          )
+        }
+        return result
+      }),
   ),
 ]
 

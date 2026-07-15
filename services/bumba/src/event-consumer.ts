@@ -8,6 +8,7 @@ import { Effect } from 'effect'
 
 import { runCommandIsolated } from './command-runner'
 import { shouldSkipAtlasPath } from './atlas/file-eligibility'
+import { LEGACY_RECONCILE_PENDING_ERROR } from './atlas/ingestion-status'
 import { buildAtlasReconciliationWorkflowId } from './atlas/reconciliation'
 
 const DEFAULT_TASK_QUEUE = 'bumba'
@@ -816,10 +817,21 @@ const getIngestionCounts = async (db: SqlClient, eventId: string): Promise<Inges
   const rows = (await db`
     SELECT
       count(*)::bigint AS total,
-      count(*) FILTER (WHERE status IN ('completed', 'failed', 'skipped'))::bigint AS terminal,
-      count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
-      count(*) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped'))::bigint AS nonterminal,
-      min(started_at) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped')) AS oldest_nonterminal_started_at
+      count(*) FILTER (
+        WHERE status IN ('completed', 'failed', 'skipped')
+          AND NOT (status = 'failed' AND error IS NOT DISTINCT FROM ${LEGACY_RECONCILE_PENDING_ERROR})
+      )::bigint AS terminal,
+      count(*) FILTER (
+        WHERE status = 'failed' AND error IS DISTINCT FROM ${LEGACY_RECONCILE_PENDING_ERROR}
+      )::bigint AS failed,
+      count(*) FILTER (
+        WHERE status NOT IN ('completed', 'failed', 'skipped')
+          OR (status = 'failed' AND error IS NOT DISTINCT FROM ${LEGACY_RECONCILE_PENDING_ERROR})
+      )::bigint AS nonterminal,
+      min(started_at) FILTER (
+        WHERE status NOT IN ('completed', 'failed', 'skipped')
+          OR (status = 'failed' AND error IS NOT DISTINCT FROM ${LEGACY_RECONCILE_PENDING_ERROR})
+      ) AS oldest_nonterminal_started_at
     FROM atlas.ingestions
     WHERE event_id = ${eventId};
   `) as IngestionCountsRow[]
@@ -857,7 +869,10 @@ const markStaleIngestionsFailed = async (db: SqlClient, eventId: string, staleMs
       END,
       finished_at = COALESCE(finished_at, now())
     WHERE event_id = ${eventId}
-      AND status NOT IN ('completed', 'failed', 'skipped')
+      AND (
+        status NOT IN ('completed', 'failed', 'skipped')
+        OR (status = 'failed' AND error IS NOT DISTINCT FROM ${LEGACY_RECONCILE_PENDING_ERROR})
+      )
       AND started_at < now() - (${staleMs}::bigint * interval '1 millisecond')
     RETURNING id;
   `) as Array<{ id: string }>
@@ -1316,5 +1331,7 @@ export const __test__ = {
   normalizeGeneratedMemoryNote,
   isMainBranchRef,
   mainMergeMemoryNamespace,
+  getIngestionCounts,
+  markStaleIngestionsFailed,
   TERMINAL_INGESTION_STATUSES,
 }
