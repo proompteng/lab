@@ -109,6 +109,9 @@ describe('migration registration', () => {
     expect(normalized).toContain('create view torghut_control_plane.quant_metrics_series as')
     expect(normalized).toContain('instead of insert on torghut_control_plane.quant_metrics_series')
     expect(normalized).toContain('on conflict (id) do nothing')
+    expect(normalized).toContain(
+      'lock table torghut_control_plane.quant_metrics_series, torghut_control_plane.quant_metrics_series_active in access exclusive mode',
+    )
     expect(normalized).not.toContain('vacuum full')
     expect(normalized).not.toContain('reindex')
     expect(normalized).not.toContain('unlogged')
