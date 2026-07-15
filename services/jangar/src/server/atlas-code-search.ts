@@ -119,6 +119,7 @@ const MAX_SEARCH_LIMIT = 200
 const MIN_SEMANTIC_CANDIDATES = 20
 const SEMANTIC_CANDIDATE_MULTIPLIER = 2
 const MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES = 500
+const MIN_HNSW_EF_SEARCH = 40
 const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 12_000
 const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
 const MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 900
@@ -528,9 +529,11 @@ export const createAtlasCodeSearchHandlers = ({
       : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
     const whereClause = searchWhereClause(filters)
-    const contentCandidateUnion = isPathQuery
-      ? sql``
-      : sql`
+    const definitionPattern = buildDefinitionPattern(resolvedQuery)
+    const contentCandidateUnion =
+      isPathQuery || definitionPattern === null
+        ? sql``
+        : sql`
           UNION
 
           SELECT file_chunks.id AS chunk_id
@@ -542,7 +545,6 @@ export const createAtlasCodeSearchHandlers = ({
             AND file_chunks.content IS NOT NULL
             AND file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
         `
-    const definitionPattern = buildDefinitionPattern(resolvedQuery)
     const definitionRankClause = definitionPattern
       ? sql`WHEN file_chunks.content ~ ${definitionPattern} THEN 0.98`
       : sql``
@@ -553,8 +555,8 @@ export const createAtlasCodeSearchHandlers = ({
     )
     const statementTimeoutMs = parsePositiveIntEnv(
       'ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS',
-      Math.min(DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS, Math.max(250, semanticTimeoutMs - 250)),
-      Math.min(MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS, Math.max(250, semanticTimeoutMs - 250)),
+      DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS,
+      MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS,
     )
 
     const { exactRows, lexicalRows, semanticRows } = await db.transaction().execute(async (trx) => {
@@ -611,6 +613,7 @@ export const createAtlasCodeSearchHandlers = ({
 
       let semanticRows: AtlasCodeSearchRow[] = []
       if (vectorString !== null) {
+        await sql`SELECT set_config('statement_timeout', ${`${semanticTimeoutMs}ms`}, true);`.execute(trx)
         let requiresExactScopedSemanticScan = false
         if (filters.pathPrefix) {
           const scopedCount = await sql<{ candidate_count: number | string }>`
@@ -656,7 +659,9 @@ export const createAtlasCodeSearchHandlers = ({
           `.execute(trx)
           semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
         } else {
-          await sql`SELECT set_config('hnsw.ef_search', ${String(semanticCandidateLimit)}, true);`.execute(trx)
+          await sql`SELECT set_config('hnsw.ef_search', ${String(
+            Math.max(MIN_HNSW_EF_SEARCH, semanticCandidateLimit),
+          )}, true);`.execute(trx)
 
           const semanticResult = await sql<AtlasCodeSearchRow>`
             SELECT
@@ -715,9 +720,9 @@ export const createAtlasCodeSearchHandlers = ({
         merged.set(row.chunk_id, entry)
       })
     }
-    addRows(exactRows, 'exact', 3)
-    addRows(lexicalRows, 'lexical', 2)
+    addRows(exactRows, 'exact', 1)
     addRows(semanticRows, 'semantic', 1)
+    addRows(lexicalRows, 'lexical', 1)
 
     return [...merged.values()]
       .map((entry) => {

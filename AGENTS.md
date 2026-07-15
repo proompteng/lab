@@ -12,6 +12,17 @@
 - Check the nearest `README` or nested `AGENTS.md` for component-specific rules.
 - Keep this root guide repository-wide. Add new path-specific rules to the nearest nested `AGENTS.md` instead of expanding the global instruction chain.
 
+## GPT-5.6 Sol Usage
+
+- `gpt-5.6-sol` is this repository's frontier-capability default; the public `gpt-5.6` alias routes to Sol. Do not switch model families or raise reasoning effort merely as a substitute for missing evidence or tests.
+- Give the model the outcome, material domain context, hard constraints, approval boundaries, success criteria, required evidence, and output shape. Let it choose ordinary implementation steps instead of prescribing a brittle procedure.
+- Keep prompts and tool descriptions lean: state each durable rule once, expose only relevant tools, and retain examples only when they encode a product requirement or correct a measured failure.
+- Gather context in a bounded loop: search broadly once, focus on the converged files and contracts, deduplicate reads, stop when the change and validation path are known, and search again only when validation exposes a new unknown.
+- For new GPT-5.6 integrations, start at `medium` reasoning, use `low` for measured latency-sensitive work, move to `high` or `xhigh` only for measured quality gains, and reserve `max` for the hardest quality-first workloads. Preserve an existing evaluated setting when migrating, then compare one level lower.
+- Use the Responses API for tool-using or multi-turn integrations and preserve response output items and applicable reasoning context across turns. Use programmatic tool calling only for bounded tool-heavy work that does not need fresh judgment between calls.
+
+Sources: [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model) and the [OpenAI GPT-5 prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_prompting_guide).
+
 ## Repository Map
 
 - `apps/`: Next.js and TanStack frontends; tests are co-located.

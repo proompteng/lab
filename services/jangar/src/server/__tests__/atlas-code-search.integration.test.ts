@@ -37,7 +37,7 @@ integration('Atlas code search PostgreSQL integration', () => {
   beforeAll(async () => {
     if (!databaseUrl) throw new Error('integration database was not configured')
     process.env.ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS = '250'
-    process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = '1000'
+    process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = '300'
     db = createKyselyDb(databaseUrl)
     lockDb = createKyselyDb(databaseUrl)
     await sql`DROP SCHEMA IF EXISTS atlas CASCADE;`.execute(db)

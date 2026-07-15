@@ -261,6 +261,7 @@ describe('atlas store', () => {
       'ATLAS_CODE_SEARCH_EMBEDDING_MODEL',
       'ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION',
       'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
+      'ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS',
       'ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS',
       'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
       'ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT',
@@ -275,6 +276,7 @@ describe('atlas store', () => {
     process.env.ATLAS_CODE_SEARCH_EMBEDDING_MODEL = 'test-embedding'
     process.env.ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION = '3'
     process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = '1000'
+    process.env.ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS = '250'
     process.env.ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = '1'
     globalThis.fetch = vi.fn(async () =>
       Response.json({ data: [{ embedding: [0.1, 0.2, 0.3] }] }),
@@ -463,9 +465,12 @@ describe('atlas store', () => {
     expect(semanticSql?.sql.toLowerCase()).not.toContain('candidate_chunks')
     expect(semanticSql?.sql.toLowerCase()).toContain('order by chunk_embeddings.embedding <=> $')
     expect(semanticSql?.params.at(-1)).toBe(20)
-    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))).toBe(true)
+    const statementTimeouts = calls
+      .filter((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))
+      .flatMap((call) => call.params)
+    expect(statementTimeouts).toEqual(['250ms', '1000ms'])
     const hnswBudgetSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))
-    expect(hnswBudgetSql?.params).toContain('20')
+    expect(hnswBudgetSql?.params).toContain('40')
   })
 
   it('uses an exact materialized semantic scan for narrow caller scopes', async () => {
@@ -585,7 +590,7 @@ describe('atlas store', () => {
     })
 
     await store.codeSearch({
-      query: 'source search implementation',
+      query: 'createAtlasCodeSearchHandlers',
       repository: 'proompteng/lab',
       ref: 'main',
       pathPrefix: 'services/jangar',
@@ -640,7 +645,7 @@ describe('atlas store', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(false)
   })
 
-  it('keeps content and semantic retrieval for natural-language queries containing a path', async () => {
+  it('skips whole-query content scans but keeps semantic retrieval for natural-language queries containing a path', async () => {
     const { db, calls } = makeFakeDb({ selectRows: [] })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
@@ -655,7 +660,8 @@ describe('atlas store', () => {
 
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
+    expect(candidates).not.toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(true)
   })
 
@@ -762,6 +768,38 @@ describe('atlas store', () => {
     expect(matches[0]?.signals.matchedIdentifiers).toEqual(['BUMBA_ATLAS_CHUNK_INDEXING'])
   })
 
+  it('does not let lexical-only matches crowd the best semantic result out of the first page', async () => {
+    const lexicalRows = Array.from({ length: 10 }, (_, index) =>
+      makeCodeSearchRow({
+        chunk_id: `lexical-${index}`,
+        file_key_path: `schemas/generated/lexical-${index}.json`,
+        lexical_rank: 1 - index / 100,
+      }),
+    )
+    const semantic = makeCodeSearchRow({
+      chunk_id: 'semantic-target',
+      file_key_path: 'services/bumba/src/atlas/file-eligibility.ts',
+      semantic_distance: 0.18,
+    })
+    const { db } = makeFakeDb({ exactRows: [], lexicalRows, semanticRows: [semantic] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const matches = await store.codeSearch({
+      query: 'where are unsupported Git file modes and oversized files rejected before indexing',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      limit: 10,
+    })
+
+    const semanticRank = matches.findIndex((match) => match.chunk.id === 'semantic-target')
+    expect(semanticRank).toBeGreaterThanOrEqual(0)
+    expect(semanticRank).toBeLessThan(3)
+    expect(matches[semanticRank]?.retrievalMode).toBe('semantic')
+  })
+
   it('keeps generic content substring matches on the RRF score scale', async () => {
     const generic = makeCodeSearchRow({
       chunk_id: 'generic-content-chunk',
@@ -779,7 +817,7 @@ describe('atlas store', () => {
 
     expect(matches).toHaveLength(1)
     expect(matches[0]?.signals.exactRank).toBe(0.75)
-    expect(matches[0]?.score).toBeCloseTo(3 / 61)
+    expect(matches[0]?.score).toBeCloseTo(1 / 61)
     expect(matches[0]?.score).toBeLessThan(0.1)
   })
 
