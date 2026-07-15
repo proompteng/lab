@@ -535,6 +535,28 @@ describe('Torghut storage stability gate', () => {
     expect(result.failures.join('\n')).toContain('pods=[torghut-options-archive-7d9f8f6f65-abcde]')
   })
 
+  it('fails while the removed shadow writer deployment or any of its pods still exists', () => {
+    const snapshot = healthySnapshot()
+    snapshot.workloads.push({
+      name: 'torghut-hyperliquid-clickhouse-writer',
+      desiredReplicas: 0,
+      actualReplicas: 1,
+      readyReplicas: 0,
+      availableReplicas: 0,
+      terminatingReplicas: 1,
+      podNames: ['torghut-hyperliquid-clickhouse-writer-75dd7d9ddc-abcde'],
+    })
+
+    const result = evaluateStorageStabilityGate(snapshot)
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain(
+      'torghut-hyperliquid-clickhouse-writer must be absent after shadow-sink removal',
+    )
+    expect(result.failures.join('\n')).toContain('actual=1 ready=0 available=0 terminating=1')
+    expect(result.failures.join('\n')).toContain('pods=[torghut-hyperliquid-clickhouse-writer-75dd7d9ddc-abcde]')
+  })
+
   it('collects the contained workload from list-shaped deployment output', () => {
     const workloads = __private.collectWorkloadEvidenceFromValues(
       {
@@ -571,6 +593,52 @@ describe('Torghut storage stability gate', () => {
         availableReplicas: 0,
         terminatingReplicas: 1,
         podNames: ['torghut-options-archive-7d9f8f6f65-abcde'],
+      },
+    ])
+  })
+
+  it('collects an orphaned removed-writer pod after its deployment disappears', () => {
+    const workloads = __private.collectWorkloadEvidenceFromValues(
+      {
+        items: [
+          {
+            metadata: { name: 'torghut-options-archive' },
+            spec: { replicas: 0, selector: { matchLabels: { app: 'torghut-options-archive' } } },
+            status: {},
+          },
+        ],
+      },
+      {
+        items: [
+          {
+            metadata: {
+              name: 'torghut-hyperliquid-clickhouse-writer-75dd7d9ddc-abcde',
+              labels: { app: 'torghut-hyperliquid-clickhouse-writer' },
+              deletionTimestamp: '2026-07-15T17:10:00Z',
+            },
+          },
+        ],
+      },
+    )
+
+    expect(workloads).toEqual([
+      {
+        name: 'torghut-options-archive',
+        desiredReplicas: 0,
+        actualReplicas: 0,
+        readyReplicas: 0,
+        availableReplicas: 0,
+        terminatingReplicas: 0,
+        podNames: [],
+      },
+      {
+        name: 'torghut-hyperliquid-clickhouse-writer',
+        desiredReplicas: 0,
+        actualReplicas: 1,
+        readyReplicas: 0,
+        availableReplicas: 0,
+        terminatingReplicas: 1,
+        podNames: ['torghut-hyperliquid-clickhouse-writer-75dd7d9ddc-abcde'],
       },
     ])
   })

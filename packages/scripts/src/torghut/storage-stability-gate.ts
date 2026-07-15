@@ -34,6 +34,9 @@ const EXPECTED_ARGO_APPLICATIONS = [
   'torghut-hyperliquid-runtime',
   'torghut-options',
 ] as const
+const CONTAINED_WORKLOAD_NAMES = ['torghut-options-archive'] as const
+const REMOVED_WORKLOAD_NAMES = ['torghut-hyperliquid-clickhouse-writer'] as const
+const OBSERVED_WORKLOAD_NAMES = new Set([...CONTAINED_WORKLOAD_NAMES, ...REMOVED_WORKLOAD_NAMES])
 
 type OutputFormat = 'json' | 'text'
 
@@ -798,7 +801,7 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     )
   }
 
-  for (const expectedWorkload of ['torghut-options-archive']) {
+  for (const expectedWorkload of CONTAINED_WORKLOAD_NAMES) {
     const workload = snapshot.workloads.find(({ name }) => name === expectedWorkload)
     if (!workload) {
       failures.push(`containment workload evidence is missing for ${expectedWorkload}`)
@@ -816,6 +819,14 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
         `${expectedWorkload} must remain contained at desired=0 actual=0 ready=0 available=0 terminating=0 pods=[]; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} pods=[${workload.podNames.join(', ')}]`,
       )
     }
+  }
+
+  for (const removedWorkload of REMOVED_WORKLOAD_NAMES) {
+    const workload = snapshot.workloads.find(({ name }) => name === removedWorkload)
+    if (!workload) continue
+    failures.push(
+      `${removedWorkload} must be absent after shadow-sink removal; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} pods=[${workload.podNames.join(', ')}]`,
+    )
   }
 
   for (const name of EXPECTED_ARGO_APPLICATIONS) {
@@ -1424,8 +1435,6 @@ const collectRuntimeEvidence = async (): Promise<RuntimeEvidence> => {
   }
 }
 
-const containedWorkloadNames = new Set(['torghut-options-archive'])
-
 const collectWorkloadEvidenceFromValues = (deploymentsValue: unknown, podsValue: unknown): WorkloadEvidence[] => {
   const pods = requireArray(requireObject(podsValue, 'Torghut pods').items, 'pods.items').map((value, index) => {
     const pod = requireObject(value, `contained pod ${index}`)
@@ -1448,9 +1457,9 @@ const collectWorkloadEvidenceFromValues = (deploymentsValue: unknown, podsValue:
     const deployment = requireObject(value, `contained deployment candidate ${index}`)
     const metadata = requireObject(deployment.metadata, `contained deployment candidate ${index}.metadata`)
     const name = requireString(metadata.name, `contained deployment candidate ${index}.metadata.name`)
-    return containedWorkloadNames.has(name) ? [{ deployment, index, name }] : []
+    return OBSERVED_WORKLOAD_NAMES.has(name) ? [{ deployment, index, name }] : []
   })
-  return deployments.map(({ deployment, index, name }) => {
+  const deploymentEvidence = deployments.map(({ deployment, index, name }) => {
     const spec = requireObject(deployment.spec, `contained deployment ${index}.spec`)
     const status = isObject(deployment.status) ? deployment.status : {}
     const selector = requireObject(spec.selector, `contained deployment ${index}.spec.selector`)
@@ -1485,6 +1494,23 @@ const collectWorkloadEvidenceFromValues = (deploymentsValue: unknown, podsValue:
       podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
     }
   })
+  const orphanedRemovedWorkloadEvidence = REMOVED_WORKLOAD_NAMES.flatMap((name) => {
+    if (deploymentEvidence.some((workload) => workload.name === name)) return []
+    const workloadPods = pods.filter(({ labels }) => labels.app === name)
+    if (workloadPods.length === 0) return []
+    return [
+      {
+        name,
+        desiredReplicas: 0,
+        actualReplicas: workloadPods.length,
+        readyReplicas: 0,
+        availableReplicas: 0,
+        terminatingReplicas: workloadPods.filter(({ terminating }) => terminating).length,
+        podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
+      },
+    ]
+  })
+  return [...deploymentEvidence, ...orphanedRemovedWorkloadEvidence]
 }
 
 const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
