@@ -313,14 +313,14 @@ integration('Atlas code search PostgreSQL integration', () => {
           CASE
             WHEN file_keys.path LIKE '%atlas-code-search.ts'
               THEN 'export const createAtlasCodeSearchHandlers = () => full HNSW code search'
-            ELSE 'export const shouldSkipAtlasPath = path => versioned Git file eligibility'
+            ELSE '// createAtlasCodeSearchHandlers is referenced here\nexport const shouldSkipAtlasPath = path => versioned Git file eligibility'
           END,
           to_tsvector(
             'simple',
             CASE
               WHEN file_keys.path LIKE '%atlas-code-search.ts'
                 THEN 'export const createAtlasCodeSearchHandlers = () => full HNSW code search'
-              ELSE 'export const shouldSkipAtlasPath = path => versioned Git file eligibility'
+              ELSE '// createAtlasCodeSearchHandlers is referenced here\nexport const shouldSkipAtlasPath = path => versioned Git file eligibility'
             END
           ),
           10,
