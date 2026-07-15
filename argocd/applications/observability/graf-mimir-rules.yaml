@@ -1484,40 +1484,89 @@ data:
           - alert: TorghutQuantDecisionsStalledDuringMarketHours
             expr: |
               (
-                sum(
-                  rate(
-                    torghut_trading_decisions_total{
-                      job="torghut",
-                      namespace="torghut",
-                      service="torghut-scheduler"
-                    }[5m]
+                (
+                  sum(
+                    rate(
+                      torghut_trading_decisions_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      }[5m]
+                    )
+                  )
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
                   )
                 ) == 0
               )
               and
               (
-                sum(
-                  rate(
-                    torghut_trading_strategy_events_total{
-                      job="torghut",
-                      namespace="torghut",
-                      service="torghut-scheduler"
-                    }[5m]
+                (
+                  sum(
+                    rate(
+                      torghut_trading_strategy_events_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      }[5m]
+                    )
+                  )
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
                   )
                 ) == 0
               )
               and
               (
-                sum(
-                  increase(
-                    torghut_trading_rejected_signal_reason_total{
-                      job="torghut",
-                      namespace="torghut",
-                      service="torghut-scheduler",
-                      reason=~"missing_executable_quote|spread_bps_exceeded"
-                    }[5m]
+                (
+                  sum(
+                    increase(
+                      torghut_trading_rejected_signal_reason_total{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler",
+                        reason=~"missing_executable_quote|spread_bps_exceeded"
+                      }[5m]
+                    )
+                  )
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
                   )
                 ) == 0
+              )
+              and on()
+              (
+                max(
+                  up{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }
+                ) == 1
               )
               and on()
               (
