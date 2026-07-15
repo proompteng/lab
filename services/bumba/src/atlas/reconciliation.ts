@@ -22,6 +22,12 @@ export type AtlasCurrentFile = {
   gitObjectId: string | null
 }
 
+export type AtlasIndexedFile = {
+  path: string
+  repositoryCommit: string | null
+  gitObjectId: string | null
+}
+
 const GIT_TREE_ENTRY = /^(\d{6})\s+(\w+)\s+([0-9a-f]+)\s+(\d+|-)\t([\s\S]+)$/i
 
 export const buildAtlasReconciliationWorkflowId = (repository: string) => {
@@ -41,6 +47,12 @@ export const computeAtlasTreeHash = (files: AtlasGitFile[]) => {
     hash.update('\0')
   }
   return hash.digest('hex')
+}
+
+const compareAtlasPaths = (left: string, right: string) => {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
 }
 
 export const parseAtlasGitTree = (
@@ -68,12 +80,37 @@ export const parseAtlasGitTree = (
     files.push(file)
   }
 
-  files.sort((left, right) => left.path.localeCompare(right.path))
+  files.sort((left, right) => compareAtlasPaths(left.path, right.path))
   return {
     eligibilityVersion: ATLAS_ELIGIBILITY_VERSION,
     files,
     skipped,
     treeHash: computeAtlasTreeHash(files),
+  }
+}
+
+export const assertAtlasManifestMatches = (
+  manifest: Pick<AtlasGitManifest, 'files'>,
+  indexedFiles: AtlasIndexedFile[],
+  commit: string,
+) => {
+  if (indexedFiles.length !== manifest.files.length) {
+    throw new Error(`Atlas file count mismatch: expected ${manifest.files.length}, indexed ${indexedFiles.length}`)
+  }
+
+  const indexedByPath = new Map(indexedFiles.map((file) => [file.path, file]))
+  if (indexedByPath.size !== indexedFiles.length) {
+    throw new Error('Atlas indexed file paths are not unique')
+  }
+
+  for (const expected of manifest.files) {
+    const actual = indexedByPath.get(expected.path)
+    if (!actual || actual.gitObjectId !== expected.objectId) {
+      throw new Error(`Atlas manifest mismatch at ${expected.path}`)
+    }
+    if (actual.repositoryCommit !== commit) {
+      throw new Error(`Atlas commit mismatch for ${actual.path}`)
+    }
   }
 }
 

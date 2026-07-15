@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import {
+  assertAtlasManifestMatches,
   buildAtlasReconciliationWorkflowId,
   computeAtlasTreeHash,
   parseAtlasGitTree,
@@ -44,5 +45,39 @@ describe('Atlas Git reconciliation', () => {
     expect(plan.unchanged.map((file) => file.path)).toEqual(['docs/README.md'])
     expect(plan.changed.map((file) => file.path)).toEqual(['services/jangar/src/server/atlas.ts'])
     expect(plan.deleted.map((file) => file.path)).toEqual(['deleted.ts'])
+  })
+
+  it('validates the manifest by path when database and JavaScript row orders differ', () => {
+    const commit = 'dddddddddddddddddddddddddddddddddddddddd'
+    const manifest = parseAtlasGitTree(
+      [
+        '100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 12\t.github/actionlint.yaml',
+        '100644 blob bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 24\t.github/ISSUE_TEMPLATE/codex-task.md',
+        '',
+      ].join('\0'),
+    )
+
+    expect(manifest.files.map((file) => file.path)).toEqual([
+      '.github/ISSUE_TEMPLATE/codex-task.md',
+      '.github/actionlint.yaml',
+    ])
+    expect(() =>
+      assertAtlasManifestMatches(
+        manifest,
+        [
+          {
+            path: '.github/actionlint.yaml',
+            repositoryCommit: commit,
+            gitObjectId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          },
+          {
+            path: '.github/ISSUE_TEMPLATE/codex-task.md',
+            repositoryCommit: commit,
+            gitObjectId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          },
+        ],
+        commit,
+      ),
+    ).not.toThrow()
   })
 })

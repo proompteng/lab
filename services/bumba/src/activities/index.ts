@@ -12,6 +12,7 @@ import { currentActivityContext } from '@proompteng/temporal-bun-sdk/worker'
 
 import { shouldSkipAtlasPath } from '../atlas/file-eligibility'
 import {
+  assertAtlasManifestMatches,
   type AtlasCurrentFile,
   type AtlasGitFile,
   parseAtlasGitTree,
@@ -3331,19 +3332,15 @@ const applyAtlasReconciliation = async (input: {
       WHERE fk.repository_id = ${lockedRepository.id}
       ORDER BY fk.path;
     `) as Array<{ path: string; repository_commit: string | null; object_id: string | null }>
-    if (indexedRows.length !== manifest.files.length) {
-      throw new Error(`Atlas file count mismatch: expected ${manifest.files.length}, indexed ${indexedRows.length}`)
-    }
-    for (let index = 0; index < manifest.files.length; index += 1) {
-      const expected = manifest.files[index]
-      const actual = indexedRows[index]
-      if (!expected || !actual || actual.path !== expected.path || actual.object_id !== expected.objectId) {
-        throw new Error(`Atlas manifest mismatch at ${expected?.path ?? actual?.path ?? `index ${index}`}`)
-      }
-      if (actual.repository_commit !== commit) {
-        throw new Error(`Atlas commit mismatch for ${actual.path}`)
-      }
-    }
+    assertAtlasManifestMatches(
+      manifest,
+      indexedRows.map((row) => ({
+        path: row.path,
+        repositoryCommit: row.repository_commit,
+        gitObjectId: row.object_id,
+      })),
+      commit,
+    )
 
     const coverageRows = (await tx`
       SELECT
