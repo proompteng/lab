@@ -408,14 +408,17 @@ merge, and is followed through image publication, Argo reconciliation, and live 
   are not treated as proof of a physical repair or as an activation prerequisite. The gate also requires no KRaft
   request timeout or
   controller event above two seconds, exactly three KRaft voters with follower lag below 1,000 records and five seconds,
-  no under-replicated or offline partitions, PostgreSQL durability and WAL-budget compliance, and healthy Argo
-  applications. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and ClickHouse
-  true; the scheduler running with fresh trading/reconcile cycles and healthy leadership; and the current Knative API
-  revision ready. Both write workloads must still be at zero replicas. A warning that the temporary Kafka controller
-  timeout overrides remain present is expected at this stage; passing this gate does not authorize their removal.
+  no under-replicated or offline partitions, Torghut and Jangar PostgreSQL durability and WAL-budget compliance, and
+  healthy Argo applications. Jangar must remain at or below 0.3015 MiB/s, a 50% reduction from its measured 0.603 MiB/s
+  pre-change baseline. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and
+  ClickHouse true; the scheduler running with fresh trading/reconcile cycles and healthy leadership; and the current
+  Knative API revision ready. Both write workloads must still be at zero replicas. A warning that the temporary Kafka
+  controller timeout overrides remain present is expected at this stage; passing this gate does not authorize their
+  removal.
 - An unchanged catalog page causes zero subscription updates.
 - Subscription updates fall at least 95%; steady target is below 10 per second outside actual membership changes.
 - Torghut PostgreSQL WAL falls below 0.25 MiB per second during discovery.
+- Jangar PostgreSQL WAL remains at or below 0.3015 MiB per second after its persistence fix.
 - Hot/warm membership remains within provider limits and snapshot freshness remains healthy.
 - During direct-sink batching, BBO median part size is at least 1,000 rows. After partition-scoped writer cutover,
   size-triggered BBO parts contain 1,000 rows, age-triggered parts are reported separately, and the aggregate `NewPart`

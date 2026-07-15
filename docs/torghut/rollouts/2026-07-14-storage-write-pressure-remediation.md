@@ -1,6 +1,6 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-15 04:11 UTC**
+Last updated: **2026-07-15 04:29 UTC**
 
 Status: **write-heavy activation contained; Jangar write-pressure fix and clean storage observation pending**
 
@@ -224,8 +224,8 @@ bun run gate:torghut-storage-stability \
   --output json
 ```
 
-Replace the example timestamp with the actual clean-observation start. The command is read-only and samples PostgreSQL WAL
-for 30 seconds. It exits non-zero unless all of the following are simultaneously true:
+Replace the example timestamp with the actual clean-observation start. The command is read-only and samples Torghut and
+Jangar PostgreSQL WAL concurrently for 30 seconds. It exits non-zero unless all of the following are simultaneously true:
 
 - the clean window is at least 30 minutes and retained Talos dmesg plus Kafka controller logs cover it;
 - Talos contains no new SCSI device-reset/recovery, `mpt3sas` fault/reset, `Synchronize Cache`, or I/O-error signature;
@@ -236,8 +236,10 @@ for 30 seconds. It exits non-zero unless all of the following are simultaneously
   ready brokers, all topics ready, complete controller-log coverage, no KRaft request timeout or broker fencing, and no
   controller event above two seconds; its direct quorum readback must show voters 0/1/2, a current leader, follower lag
   no greater than 1,000 records or five seconds, and no under-replicated or offline partition;
-- PostgreSQL remains ready with `fsync`, `full_page_writes`, and `synchronous_commit` on, `wal_buffers=16MB`, and WAL
-  below 0.25 MiB/s;
+- Torghut PostgreSQL remains ready with `fsync`, `full_page_writes`, and `synchronous_commit` on,
+  `wal_buffers=16MB`, and WAL below 0.25 MiB/s;
+- Jangar PostgreSQL remains ready with the same durability settings on and WAL at or below 0.3015 MiB/s, a 50% reduction
+  from the measured 0.603 MiB/s pre-change baseline;
 - the Hyperliquid feed `/readyz` succeeds with ready, WebSocket, Kafka, and ClickHouse true; the scheduler `/readyz`
   succeeds with fresh trading/reconcile cycles and healthy leadership; and the latest Knative API revision is converged
   and directly ready;
@@ -251,11 +253,12 @@ The newest extended SMART tests are `Interrupted (host reset)` and old. They rem
 prove a physical fault, and waiting 40.25-41.25 hours for replacement self-tests is not an activation prerequisite when
 current overall health and critical media/interface counters are clean.
 
-A preliminary stability-gate run at `2026-07-15 03:43 UTC` used an observation start of `03:36:23 UTC`. In addition to
-being shorter than 30 minutes, the 6.94-minute window contained 24 KRaft request timeouts and 125 controller events above
-two seconds while Ceph remained `HEALTH_OK`, all six OSDs remained up and in, and the Torghut runtime checks passed.
-Controllers 0 and 1 continued timing out fetches to controller 2 through at least `04:05 UTC`; controller 2 recorded
-events as slow as 10.7 seconds. This is a real failed baseline, not a timeout-setting problem.
+The schema-v3 stability gate ran at `2026-07-15 04:29 UTC` against the observation start of `03:36:23 UTC`. The
+52.64-minute window contained 208 KRaft request timeouts and 959 controller events above two seconds; the latest events
+occurred at `04:28:57 UTC`, and maximum follower-lag time was 14,449 ms. Ceph remained `HEALTH_OK`, all six OSDs remained
+up and in, SMART current health passed on all three expected disks, and every Torghut runtime check passed. Concurrent
+WAL samples measured Torghut at 0.0048 MiB/s and Jangar at 0.3624 MiB/s; Jangar remains above the 0.3015 MiB/s gate.
+This is a real failed baseline, not a timeout-setting problem.
 
 The superseded repair-gate collection completed at `2026-07-15 01:38 UTC`, using `2026-07-14T20:12:00Z` as the start
 of the incident window. It correctly returned `FAIL` because that window intentionally contained the incident itself;

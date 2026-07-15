@@ -6,7 +6,7 @@ const capturedAt = '2026-07-17T12:00:00.000Z'
 const observationStartedAt = '2026-07-15T11:00:00.000Z'
 
 const healthySnapshot = (): StorageStabilitySnapshot => ({
-  schemaVersion: 'torghut.storage-stability-gate.v2',
+  schemaVersion: 'torghut.storage-stability-gate.v3',
   capturedAt,
   observationStartedAt,
   talos: {
@@ -142,6 +142,17 @@ const healthySnapshot = (): StorageStabilitySnapshot => ({
     walBytesPerSecond: 10_000,
     walSampleSeconds: 30.1,
   },
+  jangarPostgres: {
+    ready: true,
+    settings: {
+      fsync: 'on',
+      fullPageWrites: 'on',
+      synchronousCommit: 'on',
+      walBuffers: '4MB',
+    },
+    walBytesPerSecond: 100_000,
+    walSampleSeconds: 30.1,
+  },
   runtime: {
     hyperliquidFeed: {
       httpOk: true,
@@ -197,6 +208,7 @@ const healthySnapshot = (): StorageStabilitySnapshot => ({
     },
   ],
   argoApplications: [
+    { name: 'jangar', sync: 'Synced', health: 'Healthy' },
     { name: 'kafka', sync: 'Synced', health: 'Healthy' },
     { name: 'rook-ceph', sync: 'Synced', health: 'Healthy' },
     { name: 'torghut', sync: 'Synced', health: 'Healthy' },
@@ -376,6 +388,9 @@ describe('Torghut storage stability gate', () => {
     snapshot.postgres.settings.fsync = 'off'
     snapshot.postgres.walBytesPerSecond = 300_000
     snapshot.postgres.walSampleSeconds = 29
+    snapshot.jangarPostgres.settings.synchronousCommit = 'off'
+    snapshot.jangarPostgres.walBytesPerSecond = 400_000
+    snapshot.jangarPostgres.walSampleSeconds = 29
     snapshot.workloads[0].desiredReplicas = 1
     snapshot.argoApplications.find(({ name }) => name === 'rook-ceph')!.health = 'Degraded'
 
@@ -384,6 +399,8 @@ describe('Torghut storage stability gate', () => {
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('PostgreSQL fsync is off')
     expect(result.failures.join('\n')).toContain('limit is 0.25 MiB/s')
+    expect(result.failures.join('\n')).toContain('Jangar PostgreSQL synchronous_commit is off')
+    expect(result.failures.join('\n')).toContain('limit is 0.3015 MiB/s (50% of the 0.603 MiB/s pre-change baseline)')
     expect(result.failures.join('\n')).toContain('at least 30 seconds is required')
     expect(result.failures.join('\n')).toContain('torghut-options-archive must remain contained')
     expect(result.failures.join('\n')).toContain('rook-ceph is sync=Synced health=Degraded')
@@ -423,6 +440,11 @@ describe('Torghut storage stability gate', () => {
         events.push('postgres-complete')
         return source.postgres
       },
+      jangarPostgres: async () => {
+        await Promise.resolve()
+        events.push('jangar-postgres-complete')
+        return source.jangarPostgres
+      },
       runtime: async () => {
         events.push('runtime')
         return source.runtime
@@ -447,6 +469,7 @@ describe('Torghut storage stability gate', () => {
 
     expect(collected.capturedAt).toBe(capturedAt)
     expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('postgres-complete'))
+    expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('jangar-postgres-complete'))
     expect(events.indexOf('ceph')).toBeGreaterThan(events.indexOf('cutoff'))
     expect(events.indexOf('workloads')).toBeGreaterThan(events.indexOf('cutoff'))
     expect(events.indexOf('talos-tail')).toBeGreaterThan(events.indexOf('cutoff'))
@@ -496,6 +519,57 @@ describe('Torghut storage stability gate', () => {
       'wal-torghut-db-2',
       'settings-torghut-db-2',
     ])
+  })
+
+  it('collects Jangar WAL from its current primary and labels collector failures', async () => {
+    let clusterRead = 0
+    let nowRead = 0
+    const evidence = await __private.collectJangarPostgresEvidence({
+      cluster: async () => {
+        clusterRead += 1
+        return {
+          status: {
+            currentPrimary: clusterRead === 1 ? 'jangar-db-1' : 'jangar-db-2',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        }
+      },
+      psql: async (primary, sql) => {
+        if (sql.includes("current_setting('fsync')")) return 'on|on|on|4MB'
+        return primary === 'jangar-db-1' ? '1000' : '4096'
+      },
+      sleep: async () => {},
+      now: () => {
+        nowRead += 1
+        return nowRead === 1 ? 0 : 30_000
+      },
+    })
+
+    expect(evidence).toEqual({
+      ready: true,
+      settings: {
+        fsync: 'on',
+        fullPageWrites: 'on',
+        synchronousCommit: 'on',
+        walBuffers: '4MB',
+      },
+      walBytesPerSecond: 103.2,
+      walSampleSeconds: 30,
+    })
+
+    await expect(
+      __private.collectJangarPostgresEvidence({
+        cluster: async () => ({
+          status: {
+            currentPrimary: 'jangar-db-1',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        }),
+        psql: async (_primary, sql) => (sql.includes("current_setting('fsync')") ? 'on|on|on' : '1000'),
+        sleep: async () => {},
+        now: () => 30_000,
+      }),
+    ).rejects.toThrow('Jangar PostgreSQL settings query returned 3 fields, expected 4')
   })
 
   it('fails closed when feed, scheduler, or current Knative revision readiness regresses', () => {

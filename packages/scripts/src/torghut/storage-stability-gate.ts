@@ -5,11 +5,13 @@ import process from 'node:process'
 
 import { ensureCli, fatal } from '../shared/cli'
 
-const GATE_SCHEMA_VERSION = 'torghut.storage-stability-gate.v2'
-const RESULT_SCHEMA_VERSION = 'torghut.storage-stability-gate-result.v2'
+const GATE_SCHEMA_VERSION = 'torghut.storage-stability-gate.v3'
+const RESULT_SCHEMA_VERSION = 'torghut.storage-stability-gate-result.v3'
 const MINIMUM_OBSERVATION_MINUTES = 30
 const EXPECTED_OSD_COUNT = 6
-const MAX_WAL_BYTES_PER_SECOND = 0.25 * 1024 * 1024
+const MAX_TORGHUT_WAL_BYTES_PER_SECOND = 0.25 * 1024 * 1024
+const JANGAR_WAL_BASELINE_MIB_PER_SECOND = 0.603
+const MAX_JANGAR_WAL_BYTES_PER_SECOND = (JANGAR_WAL_BASELINE_MIB_PER_SECOND / 2) * 1024 * 1024
 const MAX_CONTROLLER_EVENT_MS = 2_000
 const MAX_CONTROLLER_LOG_START_DELAY_MS = 5 * 60 * 1_000
 const MAX_QUORUM_FOLLOWER_LAG = 1_000
@@ -22,6 +24,7 @@ const EXPECTED_SMART_DEVICES = {
   '/dev/sdc': 'ZXA0HS7E',
 } as const
 const EXPECTED_ARGO_APPLICATIONS = [
+  'jangar',
   'kafka',
   'rook-ceph',
   'torghut',
@@ -118,6 +121,18 @@ type RuntimeEvidence = {
   }
 }
 
+type PostgresEvidence = {
+  ready: boolean
+  settings: {
+    fsync: string
+    fullPageWrites: string
+    synchronousCommit: string
+    walBuffers: string
+  }
+  walBytesPerSecond: number
+  walSampleSeconds: number
+}
+
 export type StorageStabilitySnapshot = {
   schemaVersion: string
   capturedAt: string
@@ -165,17 +180,8 @@ export type StorageStabilitySnapshot = {
       fetchMs: number | null
     }
   }
-  postgres: {
-    ready: boolean
-    settings: {
-      fsync: string
-      fullPageWrites: string
-      synchronousCommit: string
-      walBuffers: string
-    }
-    walBytesPerSecond: number
-    walSampleSeconds: number
-  }
+  postgres: PostgresEvidence
+  jangarPostgres: PostgresEvidence
   runtime: RuntimeEvidence
   workloads: WorkloadEvidence[]
   argoApplications: ArgoApplicationEvidence[]
@@ -296,6 +302,16 @@ const appendIncidentSummaries = (failures: string[], prefix: string, incidents: 
   }
 }
 
+const validatePostgresEvidenceShape = (evidence: PostgresEvidence, label: string) => {
+  requireBoolean(evidence.ready, `${label}.ready`)
+  requireString(evidence.settings.fsync, `${label}.settings.fsync`)
+  requireString(evidence.settings.fullPageWrites, `${label}.settings.fullPageWrites`)
+  requireString(evidence.settings.synchronousCommit, `${label}.settings.synchronousCommit`)
+  requireString(evidence.settings.walBuffers, `${label}.settings.walBuffers`)
+  requireNumber(evidence.walBytesPerSecond, `${label}.walBytesPerSecond`)
+  requireNumber(evidence.walSampleSeconds, `${label}.walSampleSeconds`)
+}
+
 const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
   if (snapshot.schemaVersion !== GATE_SCHEMA_VERSION) {
     throw new Error(`snapshot.schemaVersion must be ${GATE_SCHEMA_VERSION}`)
@@ -315,8 +331,8 @@ const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
   requireNumber(snapshot.ceph.osds.in, 'snapshot.ceph.osds.in')
   requireNumber(snapshot.kafka.generation, 'snapshot.kafka.generation')
   requireNumber(snapshot.kafka.observedGeneration, 'snapshot.kafka.observedGeneration')
-  requireNumber(snapshot.postgres.walBytesPerSecond, 'snapshot.postgres.walBytesPerSecond')
-  requireNumber(snapshot.postgres.walSampleSeconds, 'snapshot.postgres.walSampleSeconds')
+  validatePostgresEvidenceShape(snapshot.postgres, 'snapshot.postgres')
+  validatePostgresEvidenceShape(snapshot.jangarPostgres, 'snapshot.jangarPostgres')
   const feed = snapshot.runtime.hyperliquidFeed
   requireBoolean(feed.httpOk, 'snapshot.runtime.hyperliquidFeed.httpOk')
   requireString(feed.status, 'snapshot.runtime.hyperliquidFeed.status')
@@ -354,6 +370,42 @@ const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
     for (const [podIndex, podName] of workload.podNames.entries()) {
       requireString(podName, `snapshot.workloads[${index}].podNames[${podIndex}]`)
     }
+  }
+}
+
+const appendPostgresGateFailures = (params: {
+  failures: string[]
+  label: string
+  evidence: PostgresEvidence
+  maxWalBytesPerSecond: number
+  expectedWalBuffers?: string
+  walLimitContext?: string
+}) => {
+  const { failures, label, evidence, maxWalBytesPerSecond, expectedWalBuffers, walLimitContext } = params
+  const prefix = `${label} PostgreSQL`
+  if (!evidence.ready) failures.push(`${prefix} cluster is not ready`)
+  if (evidence.settings.fsync !== 'on') {
+    failures.push(`${prefix} fsync is ${evidence.settings.fsync}, expected on`)
+  }
+  if (evidence.settings.fullPageWrites !== 'on') {
+    failures.push(`${prefix} full_page_writes is ${evidence.settings.fullPageWrites}, expected on`)
+  }
+  if (evidence.settings.synchronousCommit !== 'on') {
+    failures.push(`${prefix} synchronous_commit is ${evidence.settings.synchronousCommit}, expected on`)
+  }
+  if (expectedWalBuffers && evidence.settings.walBuffers.toUpperCase() !== expectedWalBuffers.toUpperCase()) {
+    failures.push(`${prefix} wal_buffers is ${evidence.settings.walBuffers}, expected ${expectedWalBuffers}`)
+  }
+  if (evidence.walSampleSeconds < WAL_SAMPLE_SECONDS) {
+    failures.push(
+      `${prefix} WAL sample is ${rounded(evidence.walSampleSeconds, 2)} seconds; at least ${WAL_SAMPLE_SECONDS} seconds is required`,
+    )
+  }
+  if (evidence.walBytesPerSecond > maxWalBytesPerSecond) {
+    const context = walLimitContext ? ` (${walLimitContext})` : ''
+    failures.push(
+      `${prefix} WAL rate is ${rounded(evidence.walBytesPerSecond / 1024 / 1024, 4)} MiB/s; limit is ${rounded(maxWalBytesPerSecond / 1024 / 1024, 4)} MiB/s${context}`,
+    )
   }
 }
 
@@ -557,28 +609,20 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     )
   }
 
-  if (!snapshot.postgres.ready) failures.push('Torghut PostgreSQL cluster is not ready')
-  const postgresSettings = snapshot.postgres.settings
-  if (postgresSettings.fsync !== 'on') failures.push(`PostgreSQL fsync is ${postgresSettings.fsync}, expected on`)
-  if (postgresSettings.fullPageWrites !== 'on') {
-    failures.push(`PostgreSQL full_page_writes is ${postgresSettings.fullPageWrites}, expected on`)
-  }
-  if (postgresSettings.synchronousCommit !== 'on') {
-    failures.push(`PostgreSQL synchronous_commit is ${postgresSettings.synchronousCommit}, expected on`)
-  }
-  if (postgresSettings.walBuffers.toUpperCase() !== '16MB') {
-    failures.push(`PostgreSQL wal_buffers is ${postgresSettings.walBuffers}, expected 16MB`)
-  }
-  if (snapshot.postgres.walSampleSeconds < WAL_SAMPLE_SECONDS) {
-    failures.push(
-      `PostgreSQL WAL sample is ${rounded(snapshot.postgres.walSampleSeconds, 2)} seconds; at least ${WAL_SAMPLE_SECONDS} seconds is required`,
-    )
-  }
-  if (snapshot.postgres.walBytesPerSecond > MAX_WAL_BYTES_PER_SECOND) {
-    failures.push(
-      `PostgreSQL WAL rate is ${rounded(snapshot.postgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s; limit is 0.25 MiB/s`,
-    )
-  }
+  appendPostgresGateFailures({
+    failures,
+    label: 'Torghut',
+    evidence: snapshot.postgres,
+    maxWalBytesPerSecond: MAX_TORGHUT_WAL_BYTES_PER_SECOND,
+    expectedWalBuffers: '16MB',
+  })
+  appendPostgresGateFailures({
+    failures,
+    label: 'Jangar',
+    evidence: snapshot.jangarPostgres,
+    maxWalBytesPerSecond: MAX_JANGAR_WAL_BYTES_PER_SECOND,
+    walLimitContext: `50% of the ${JANGAR_WAL_BASELINE_MIB_PER_SECOND} MiB/s pre-change baseline`,
+  })
 
   const feed = snapshot.runtime.hyperliquidFeed
   const feedReady =
@@ -680,7 +724,8 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
       `Ceph: ${snapshot.ceph.health}; OSDs ${snapshot.ceph.osds.up}/${snapshot.ceph.osds.in}/${snapshot.ceph.osds.total}`,
       `SMART: ${healthySmartDevices}/${Object.keys(EXPECTED_SMART_DEVICES).length} devices passed current health and critical-counter checks`,
       `Kafka: ${snapshot.kafka.kafkaVersion} / ${snapshot.kafka.metadataVersion}; ${snapshot.kafka.pods.filter((pod) => pod.ready).length}/${snapshot.kafka.pods.length} broker/controller pods ready`,
-      `PostgreSQL WAL: ${rounded(snapshot.postgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s over ${rounded(snapshot.postgres.walSampleSeconds, 1)} seconds`,
+      `Torghut PostgreSQL WAL: ${rounded(snapshot.postgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s over ${rounded(snapshot.postgres.walSampleSeconds, 1)} seconds`,
+      `Jangar PostgreSQL WAL: ${rounded(snapshot.jangarPostgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s over ${rounded(snapshot.jangarPostgres.walSampleSeconds, 1)} seconds`,
       `Runtime: feed=${feedReady ? 'ready' : 'not-ready'} scheduler=${schedulerReady ? 'ready' : 'not-ready'} api=${knative.ready && knativeApiReady ? 'ready' : 'not-ready'} revision=${knative.latestReadyRevision}`,
       `Activation verdict: ${uniqueFailures.length === 0 ? 'PASS' : 'FAIL'}`,
     ],
@@ -1037,37 +1082,51 @@ type PostgresCollectorDependencies = {
   now: () => number
 }
 
-const defaultPostgresCollectorDependencies = (): PostgresCollectorDependencies => ({
+const buildDefaultPostgresCollectorDependencies = (params: {
+  namespace: string
+  clusterName: string
+  label: string
+}): PostgresCollectorDependencies => ({
   cluster: () =>
     kubectlJson(
-      ['-n', 'torghut', 'get', 'cluster.postgresql.cnpg.io', 'torghut-db', '-o', 'json'],
-      'Torghut PostgreSQL cluster',
+      ['-n', params.namespace, 'get', 'cluster.postgresql.cnpg.io', params.clusterName, '-o', 'json'],
+      `${params.label} PostgreSQL cluster`,
     ),
   psql: (primary, sql) =>
-    kubectl(['-n', 'torghut', 'exec', primary, '-c', 'postgres', '--', 'psql', '-At', '-F', '|', '-c', sql]),
+    kubectl(['-n', params.namespace, 'exec', primary, '-c', 'postgres', '--', 'psql', '-At', '-F', '|', '-c', sql]),
   sleep: (milliseconds) => Bun.sleep(milliseconds),
   now: () => Date.now(),
 })
 
-const collectPostgresEvidence = async (
-  dependencies: PostgresCollectorDependencies = defaultPostgresCollectorDependencies(),
-): Promise<StorageStabilitySnapshot['postgres']> => {
-  const initialCluster = requireObject(await dependencies.cluster(), 'initial Torghut PostgreSQL cluster')
-  const initialStatus = requireObject(initialCluster.status, 'initial Torghut PostgreSQL status')
-  const initialPrimary = requireString(initialStatus.currentPrimary, 'initial Torghut PostgreSQL status.currentPrimary')
+const defaultPostgresCollectorDependencies = (): PostgresCollectorDependencies =>
+  buildDefaultPostgresCollectorDependencies({ namespace: 'torghut', clusterName: 'torghut-db', label: 'Torghut' })
+
+const defaultJangarPostgresCollectorDependencies = (): PostgresCollectorDependencies =>
+  buildDefaultPostgresCollectorDependencies({ namespace: 'jangar', clusterName: 'jangar-db', label: 'Jangar' })
+
+const collectPostgresEvidenceFor = async (
+  label: string,
+  dependencies: PostgresCollectorDependencies,
+): Promise<PostgresEvidence> => {
+  const initialCluster = requireObject(await dependencies.cluster(), `initial ${label} PostgreSQL cluster`)
+  const initialStatus = requireObject(initialCluster.status, `initial ${label} PostgreSQL status`)
+  const initialPrimary = requireString(
+    initialStatus.currentPrimary,
+    `initial ${label} PostgreSQL status.currentPrimary`,
+  )
   const walPosition = async (primary: string): Promise<number> => {
     const raw = await dependencies.psql(primary, "select pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::bigint")
     const parsed = Number(raw)
-    if (!Number.isFinite(parsed)) throw new Error(`PostgreSQL WAL position is not numeric: '${raw}'`)
+    if (!Number.isFinite(parsed)) throw new Error(`${label} PostgreSQL WAL position is not numeric: '${raw}'`)
     return parsed
   }
   const firstPosition = await walPosition(initialPrimary)
   const sampleStartedAt = dependencies.now()
   await dependencies.sleep(WAL_SAMPLE_SECONDS * 1_000)
 
-  const finalCluster = requireObject(await dependencies.cluster(), 'final Torghut PostgreSQL cluster')
-  const finalStatus = requireObject(finalCluster.status, 'final Torghut PostgreSQL status')
-  const finalPrimary = requireString(finalStatus.currentPrimary, 'final Torghut PostgreSQL status.currentPrimary')
+  const finalCluster = requireObject(await dependencies.cluster(), `final ${label} PostgreSQL cluster`)
+  const finalStatus = requireObject(finalCluster.status, `final ${label} PostgreSQL status`)
+  const finalPrimary = requireString(finalStatus.currentPrimary, `final ${label} PostgreSQL status.currentPrimary`)
   const [secondPosition, settingsRaw] = await Promise.all([
     walPosition(finalPrimary),
     dependencies.psql(
@@ -1076,11 +1135,13 @@ const collectPostgresEvidence = async (
     ),
   ])
   if (secondPosition < firstPosition) {
-    throw new Error(`PostgreSQL WAL position moved backwards from ${firstPosition} to ${secondPosition}`)
+    throw new Error(`${label} PostgreSQL WAL position moved backwards from ${firstPosition} to ${secondPosition}`)
   }
   const sampleSeconds = (dependencies.now() - sampleStartedAt) / 1_000
   const settings = settingsRaw.split('|')
-  if (settings.length !== 4) throw new Error(`PostgreSQL settings query returned ${settings.length} fields, expected 4`)
+  if (settings.length !== 4) {
+    throw new Error(`${label} PostgreSQL settings query returned ${settings.length} fields, expected 4`)
+  }
 
   return {
     ready: conditionIsTrue(finalStatus.conditions, 'Ready'),
@@ -1094,6 +1155,14 @@ const collectPostgresEvidence = async (
     walSampleSeconds: sampleSeconds,
   }
 }
+
+const collectPostgresEvidence = async (
+  dependencies: PostgresCollectorDependencies = defaultPostgresCollectorDependencies(),
+): Promise<StorageStabilitySnapshot['postgres']> => collectPostgresEvidenceFor('Torghut', dependencies)
+
+const collectJangarPostgresEvidence = async (
+  dependencies: PostgresCollectorDependencies = defaultJangarPostgresCollectorDependencies(),
+): Promise<StorageStabilitySnapshot['jangarPostgres']> => collectPostgresEvidenceFor('Jangar', dependencies)
 
 const collectRuntimeEvidence = async (): Promise<RuntimeEvidence> => {
   const knativeValue = await kubectlJson(
@@ -1278,6 +1347,7 @@ type SnapshotCollectors = {
   smartDevices: typeof collectSmartDeviceEvidence
   kafka: typeof collectKafkaEvidence
   postgres: typeof collectPostgresEvidence
+  jangarPostgres: typeof collectJangarPostgresEvidence
   runtime: typeof collectRuntimeEvidence
   workloads: typeof collectWorkloadEvidence
   argoApplications: typeof collectArgoEvidence
@@ -1290,6 +1360,7 @@ const defaultSnapshotCollectors: SnapshotCollectors = {
   smartDevices: collectSmartDeviceEvidence,
   kafka: collectKafkaEvidence,
   postgres: collectPostgresEvidence,
+  jangarPostgres: collectJangarPostgresEvidence,
   runtime: collectRuntimeEvidence,
   workloads: collectWorkloadEvidence,
   argoApplications: collectArgoEvidence,
@@ -1300,7 +1371,7 @@ const collectStorageStabilitySnapshotWith = async (
   talosNode: string,
   collectors: SnapshotCollectors,
 ): Promise<StorageStabilitySnapshot> => {
-  const postgres = await collectors.postgres()
+  const [postgres, jangarPostgres] = await Promise.all([collectors.postgres(), collectors.jangarPostgres()])
 
   // End the claimed observation window only after the slow bounded WAL sample finishes. History collectors then read
   // through this cutoff, while every point-in-time state collector runs at or after it, eliminating a collection tail.
@@ -1323,6 +1394,7 @@ const collectStorageStabilitySnapshotWith = async (
     smartDevices,
     kafka,
     postgres,
+    jangarPostgres,
     runtime,
     workloads,
     argoApplications,
@@ -1348,7 +1420,7 @@ const parseArgs = (argv: string[]): CliOptions => {
   bun run gate:torghut-storage-stability --observation-start <RFC3339> [--output text|json] [--talos-node <node>]
   bun run gate:torghut-storage-stability --snapshot <path> [--output text|json]
 
-The live mode is read-only. It samples PostgreSQL WAL for ${WAL_SAMPLE_SECONDS} seconds and requires a complete
+The live mode is read-only. It samples Torghut and Jangar PostgreSQL WAL concurrently for ${WAL_SAMPLE_SECONDS} seconds and requires a complete
 ${MINIMUM_OBSERVATION_MINUTES}-minute clean observation window. The command exits non-zero when any activation gate fails.`)
       process.exit(0)
     }
@@ -1421,6 +1493,7 @@ if (import.meta.main) {
 
 export const __private = {
   collectStorageStabilitySnapshotWith,
+  collectJangarPostgresEvidence,
   collectPostgresEvidence,
   controllerEventDurationMs,
   kafkaFailureClass,
