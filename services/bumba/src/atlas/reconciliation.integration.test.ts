@@ -9,6 +9,8 @@ import { SQL } from 'bun'
 import { runWithActivityContext, type ActivityContext } from '@proompteng/temporal-bun-sdk/worker'
 
 import activities, { __test__ as activityTest } from '../activities/index'
+import { __test__ as eventConsumerTest } from '../event-consumer'
+import { LEGACY_RECONCILE_PENDING_ERROR } from './ingestion-status'
 
 const databaseUrl = process.env.ATLAS_INTEGRATION_DATABASE_URL?.trim()
 if (process.env.ATLAS_REQUIRE_INTEGRATION_TESTS === '1' && !databaseUrl) {
@@ -167,6 +169,24 @@ beforeAll(async () => {
       created_at timestamptz NOT NULL DEFAULT now()
     );
   `
+  await db`
+    CREATE TABLE atlas.github_events (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      delivery_id text NOT NULL UNIQUE
+    );
+  `
+  await db`
+    CREATE TABLE atlas.ingestions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id uuid NOT NULL REFERENCES atlas.github_events(id) ON DELETE CASCADE,
+      workflow_id text NOT NULL,
+      status text NOT NULL,
+      error text,
+      started_at timestamptz NOT NULL DEFAULT now(),
+      finished_at timestamptz,
+      UNIQUE (event_id, workflow_id)
+    );
+  `
 })
 
 afterAll(async () => {
@@ -178,6 +198,144 @@ afterAll(async () => {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
   }
+})
+
+integrationTest('legacy ingestion correction and aging preserve real failures', async () => {
+  if (!db) throw new Error('integration database was not initialized')
+  const workflowId = 'bumba-atlas-reconcile-proompteng-lab-legacy'
+  const eventRows = (await db`
+    INSERT INTO atlas.github_events (delivery_id)
+    VALUES
+      ('legacy-pending-delivery'),
+      ('real-failure-delivery'),
+      ('legacy-real-failure-delivery'),
+      ('stale-legacy-delivery')
+    RETURNING id, delivery_id;
+  `) as Array<{ id: string; delivery_id: string }>
+  const legacyEventId = eventRows.find((row) => row.delivery_id === 'legacy-pending-delivery')?.id
+  const realFailureEventId = eventRows.find((row) => row.delivery_id === 'real-failure-delivery')?.id
+  const legacyRealFailureEventId = eventRows.find((row) => row.delivery_id === 'legacy-real-failure-delivery')?.id
+  const staleLegacyEventId = eventRows.find((row) => row.delivery_id === 'stale-legacy-delivery')?.id
+  if (!legacyEventId || !realFailureEventId || !legacyRealFailureEventId || !staleLegacyEventId) {
+    throw new Error('integration events were not created')
+  }
+
+  await activities.upsertIngestion({
+    deliveryId: 'legacy-pending-delivery',
+    workflowId,
+    status: 'failed',
+    error: LEGACY_RECONCILE_PENDING_ERROR,
+  })
+  await activities.upsertIngestion({
+    deliveryId: 'legacy-pending-delivery',
+    workflowId,
+    status: 'completed',
+  })
+
+  const preservedRows = (await db`
+    SELECT status, error
+    FROM atlas.ingestions
+    WHERE workflow_id = ${workflowId};
+  `) as Array<{ status: string; error: string | null }>
+  expect(preservedRows[0]).toEqual({ status: 'failed', error: LEGACY_RECONCILE_PENDING_ERROR })
+  await expect(eventConsumerTest.getIngestionCounts(db as never, legacyEventId)).resolves.toMatchObject({
+    total: 1,
+    terminal: 0,
+    failed: 0,
+    nonterminal: 1,
+  })
+
+  await activities.upsertIngestion({
+    deliveryId: 'legacy-pending-delivery',
+    workflowId,
+    status: 'completed',
+    correctLegacyPendingFailure: true,
+  })
+
+  const correctedRows = (await db`
+    SELECT status, error
+    FROM atlas.ingestions
+    WHERE workflow_id = ${workflowId};
+  `) as Array<{ status: string; error: string | null }>
+  expect(correctedRows[0]).toEqual({ status: 'completed', error: null })
+  await expect(eventConsumerTest.getIngestionCounts(db as never, legacyEventId)).resolves.toMatchObject({
+    total: 1,
+    terminal: 1,
+    failed: 0,
+    nonterminal: 0,
+  })
+
+  await activities.upsertIngestion({
+    deliveryId: 'real-failure-delivery',
+    workflowId,
+    status: 'failed',
+    error: 'real reconciliation failure',
+  })
+  await expect(
+    activities.upsertIngestion({
+      deliveryId: 'real-failure-delivery',
+      workflowId,
+      status: 'completed',
+      correctLegacyPendingFailure: true,
+    }),
+  ).rejects.toThrow('does not match the legacy pending-failure correction guard')
+
+  const realFailureRows = (await db`
+    SELECT status, error
+    FROM atlas.ingestions i
+    JOIN atlas.github_events e ON e.id = i.event_id
+    WHERE e.delivery_id = 'real-failure-delivery';
+  `) as Array<{ status: string; error: string | null }>
+  expect(realFailureRows[0]).toEqual({ status: 'failed', error: 'real reconciliation failure' })
+  await expect(eventConsumerTest.getIngestionCounts(db as never, realFailureEventId)).resolves.toMatchObject({
+    total: 1,
+    terminal: 1,
+    failed: 1,
+    nonterminal: 0,
+  })
+
+  await activities.upsertIngestion({
+    deliveryId: 'legacy-real-failure-delivery',
+    workflowId,
+    status: 'failed',
+    error: LEGACY_RECONCILE_PENDING_ERROR,
+  })
+  await activities.upsertIngestion({
+    deliveryId: 'legacy-real-failure-delivery',
+    workflowId,
+    status: 'failed',
+    error: 'real reconciliation failure after pending',
+    correctLegacyPendingFailure: true,
+  })
+  await expect(eventConsumerTest.getIngestionCounts(db as never, legacyRealFailureEventId)).resolves.toMatchObject({
+    total: 1,
+    terminal: 1,
+    failed: 1,
+    nonterminal: 0,
+  })
+
+  const staleStartedAt = new Date(Date.now() - 60_000).toISOString()
+  await activities.upsertIngestion({
+    deliveryId: 'stale-legacy-delivery',
+    workflowId,
+    status: 'failed',
+    error: LEGACY_RECONCILE_PENDING_ERROR,
+    startedAt: staleStartedAt,
+  })
+  await expect(eventConsumerTest.markStaleIngestionsFailed(db as never, staleLegacyEventId, 1_000)).resolves.toBe(1)
+  await expect(eventConsumerTest.getIngestionCounts(db as never, staleLegacyEventId)).resolves.toMatchObject({
+    total: 1,
+    terminal: 1,
+    failed: 1,
+    nonterminal: 0,
+  })
+  const staleRows = (await db`
+    SELECT error
+    FROM atlas.ingestions i
+    JOIN atlas.github_events e ON e.id = i.event_id
+    WHERE e.delivery_id = 'stale-legacy-delivery';
+  `) as Array<{ error: string | null }>
+  expect(staleRows[0]?.error).toContain('stale nonterminal ingestion auto-failed by bumba event-consumer')
 })
 
 integrationTest(
