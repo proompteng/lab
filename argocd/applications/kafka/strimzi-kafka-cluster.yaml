@@ -130,7 +130,7 @@ spec:
       memory: 4Gi
   storage:
     type: persistent-claim
-    size: 100Gi
+    size: 200Gi
     deleteClaim: false
     class: rook-ceph-block
 ---

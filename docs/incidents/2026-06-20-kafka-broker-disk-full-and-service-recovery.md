@@ -1,6 +1,7 @@
 # Kafka Broker Disk-Full Recovery And Dependent Service Bring-Up
 
 Date: 2026-06-20
+Last updated: 2026-07-15
 
 ## Summary
 
@@ -11,6 +12,12 @@ java.io.IOException: No space left on device
 ```
 
 The impact was visible downstream as `torghut-hyperliquid-feed` remaining unavailable and Kafka producers logging `NOT_ENOUGH_REPLICAS`.
+
+On 2026-07-15 all three `100Gi` broker volumes reached 76% use and fired the 25%-free warning. Kafka remained ready,
+with full replication. `torghut.hyperliquid.bbo.v1` accounted for 109.46 GiB across its three replicas and the retained
+Kafka record set is required by the staged ClickHouse writer, so deleting topics or shortening retention is not the
+capacity fix. The Ceph block pool reported 49 TiB maximum available; expand the existing broker PVCs in place to
+`200Gi`.
 
 ## Source Of Truth
 
@@ -31,7 +38,7 @@ metadata:
 spec:
   storage:
     type: persistent-claim
-    size: 100Gi
+    size: 200Gi
     deleteClaim: false
     class: rook-ceph-block
 ```
@@ -65,7 +72,7 @@ kubectl --context galactic-tailscale -n kafka exec kafka-pool-b-5 -- \
 ```bash
 kubectl --context galactic-tailscale -n kafka exec kafka-pool-a-0 -- \
   bin/kafka-topics.sh \
-    --bootstrap-server kafka-kafka-bootstrap.kafka.svc:9092 \
+    --bootstrap-server kafka-kafka-bootstrap.kafka.svc:9093 \
     --describe --under-replicated-partitions
 ```
 
@@ -117,11 +124,12 @@ Use this only if Kafka must be restored before GitOps can reconcile. Commit the 
 
 ```bash
 kubectl --context galactic-tailscale -n kafka patch kafkanodepool pool-b --type merge \
-  -p '{"spec":{"storage":{"type":"persistent-claim","size":"100Gi","deleteClaim":false,"class":"rook-ceph-block"}}}'
+  -p '{"spec":{"storage":{"type":"persistent-claim","size":"200Gi","deleteClaim":false,"class":"rook-ceph-block"}}}'
 ```
 
 ## Rollback
 
-Do not shrink PVCs. Kubernetes volume expansion is effectively one-way for this storage path. If `100Gi` is wrong, choose a larger size and apply another expansion.
+Do not shrink PVCs. Kubernetes volume expansion is effectively one-way for this storage path. If `200Gi` is too small,
+choose a larger size and apply another expansion.
 
 If Alertmanager or rule-loader changes are suspected during the same rollout, revert the observability commit and sync `observability`; leave Kafka PVCs at the expanded size.
