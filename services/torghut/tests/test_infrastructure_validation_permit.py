@@ -22,10 +22,30 @@ from app.trading.infrastructure_validation import (
     infrastructure_validation_order_plan_sha256,
     infrastructure_validation_request_payload,
     infrastructure_validation_terminal_state_sha256,
+    is_infrastructure_validation_lifecycle_plan_schema,
 )
 
 
 _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "expected"),
+    (
+        ("torghut.infrastructure-validation-lifecycle-plan.v1", True),
+        ("torghut.infrastructure-validation-lifecycle-plan.v2", True),
+        ("torghut.infrastructure-validation-lifecycle-plan.v3", False),
+        (" torghut.infrastructure-validation-lifecycle-plan.v2", False),
+        (None, False),
+    ),
+)
+def test_lifecycle_schema_recognizer_is_explicitly_version_bounded(
+    schema_version: object,
+    expected: bool,
+) -> None:
+    assert (
+        is_infrastructure_validation_lifecycle_plan_schema(schema_version) is expected
+    )
 
 
 def _permit_payload(**overrides: object) -> dict[str, object]:
@@ -190,7 +210,7 @@ def test_crypto_ioc_plan_is_immutably_bound_to_one_non_promotable_identity() -> 
 def test_lifecycle_plan_allows_one_bounded_fill_and_only_resting_reductions() -> None:
     plan = InfrastructureValidationLifecyclePlan.model_validate(
         {
-            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v2",
             "venue": "alpaca",
             "asset_class": "crypto",
             "symbol": "BTC/USD",
@@ -249,7 +269,7 @@ def test_lifecycle_authority_requires_two_broker_valid_close_legs(
 ) -> None:
     plan = InfrastructureValidationLifecyclePlan.model_validate(
         {
-            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v2",
             "venue": "alpaca",
             "asset_class": "crypto",
             "symbol": "BTC/USD",
@@ -304,7 +324,7 @@ def test_lifecycle_plan_rejects_nonreducing_schedule(
     error: str,
 ) -> None:
     payload: dict[str, object] = {
-        "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+        "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v2",
         "venue": "alpaca",
         "asset_class": "crypto",
         "symbol": "BTC/USD",

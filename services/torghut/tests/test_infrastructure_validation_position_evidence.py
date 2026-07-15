@@ -151,7 +151,7 @@ def _seed_lifecycle_root(session: Session) -> InfrastructureValidationEvidence:
     now = datetime.now(timezone.utc)
     plan = InfrastructureValidationLifecyclePlan.model_validate(
         {
-            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v2",
             "venue": "alpaca",
             "asset_class": "crypto",
             "symbol": "BTC/USD",

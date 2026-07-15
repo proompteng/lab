@@ -37,6 +37,9 @@ from .broker_mutation_receipts import (
     fingerprint_broker_endpoint,
 )
 from .firewall import OrderFirewall
+from .infrastructure_validation import (
+    is_infrastructure_validation_lifecycle_plan_schema,
+)
 from .infrastructure_validation_records import (
     InfrastructureValidationEvidence,
     infrastructure_validation_lineage_payload,
@@ -643,8 +646,9 @@ class AlpacaReductionMutationExecutor:
             raise RuntimeError("infrastructure_validation_lineage_scope_mismatch")
         if (
             require_position_ancestry
-            and evidence.root_plan_schema
-            != "torghut.infrastructure-validation-lifecycle-plan.v1"
+            and not is_infrastructure_validation_lifecycle_plan_schema(
+                evidence.root_plan_schema
+            )
         ):
             raise RuntimeError("infrastructure_validation_position_ancestry_missing")
 
