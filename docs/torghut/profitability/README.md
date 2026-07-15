@@ -37,6 +37,8 @@ readback. The audit snapshot records what was observed at its stated time.
   enforcement, evidence separation, catalog baseline, and live proof contract.
 - [Infrastructure validation runbook](infrastructure-validation-runbook.md): v2 permit authority, exact paper-account
   boundary, one-dollar IOC proof, no-retry failure handling, and independent broker/CNPG readback.
+- [Strict submit recovery](strict-submit-recovery.md): observation-only ambiguous-submit state machine, broker-specific
+  evidence, atomic settlement, rate limits, fail-closed readiness, rollout proof, and rollback contract.
 - [Implementation roadmap](implementation-roadmap.md): ordered PR-sized delivery slices, tests, rollout proof,
   dependencies, and rollback posture.
 - [Slice 3 production evidence](evidence/slice-03-autoresearch-completion-2026-07-14.md): committed revision, CI and

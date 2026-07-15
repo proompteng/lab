@@ -179,7 +179,10 @@ def test_unwired_mutation_runtime_cannot_claim_entry_or_reduction_safety() -> No
     assert authority.entry_allowed is False
     assert authority.reduce_only_allowed is False
     assert authority.recovery_degraded is True
-    assert authority.reason_codes["entry"] == ("broker_mutation_receipts_unwired",)
+    assert authority.reason_codes["entry"] == (
+        "broker_mutation_receipts_unwired",
+        "broker_mutation_recovery_unproven",
+    )
     assert authority.reason_codes["reduce_only"] == (
         "broker_mutation_receipts_unwired",
     )
@@ -197,6 +200,25 @@ def test_unresolved_submit_blocks_new_entry_without_disabling_reduction() -> Non
     assert authority.entry_allowed is False
     assert authority.reduce_only_allowed is True
     assert authority.reason_codes["entry"] == ("broker_mutation_submit_unresolved",)
+
+
+def test_disabled_recovery_blocks_new_entry_without_disabling_reduction() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(
+            recovery_degraded=True,
+            reason_codes=["broker_mutation_recovery_disabled"],
+        ),
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is False
+    assert authority.reduce_only_allowed is True
+    assert authority.recovery_degraded is True
+    assert authority.reason_codes["entry"] == ("broker_mutation_recovery_disabled",)
+    assert authority.reason_codes["recovery"] == ("broker_mutation_recovery_disabled",)
 
 
 def test_entry_requires_current_durable_receipt_readback() -> None:
@@ -251,4 +273,5 @@ def test_unwired_runtime_cannot_enable_actions_with_incoherent_fencing_flags() -
     assert authority.reduce_only_allowed is False
     assert authority.reason_codes["entry"] == (
         "broker_mutation_entry_fencing_unproven",
+        "broker_mutation_recovery_unproven",
     )

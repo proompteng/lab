@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from typing import cast
+
+from app.trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRunError,
+    BrokerMutationRecoveryWorker,
+)
+
 from tests.trading_scheduler_autonomy.support import (
     Path,
     TradingAccountLane,
@@ -297,6 +304,36 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertIsNone(scheduler.state.last_reconcile_at)
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
         self.assertEqual(healthy_lane.reconcile_last_error, None)
+
+    def test_recovery_worker_failure_is_counted_and_fails_reconciliation(self) -> None:
+        class _FailingRecoveryWorker:
+            def run_once(self) -> None:
+                raise BrokerMutationRecoveryRunError("recovery unavailable")
+
+        scheduler = TradingScheduler()
+        lane = _PipelineIterationStub(
+            account_label="paper-a",
+            reconcile_return=0,
+        )
+        scheduler._pipelines = [lane]
+        scheduler._pipeline = lane
+        scheduler._broker_mutation_recovery_worker = cast(
+            BrokerMutationRecoveryWorker,
+            _FailingRecoveryWorker(),
+        )
+        scheduler._evaluate_safety_controls = lambda: None
+
+        asyncio.run(scheduler._run_reconcile_iteration())
+
+        self.assertEqual(
+            scheduler.state.metrics.broker_mutation_recovery_total,
+            {"failed": 1},
+        )
+        self.assertEqual(
+            scheduler.state.last_reconcile_error,
+            "reconcile_lane_failures:broker-mutation-recovery",
+        )
+        self.assertIsNone(scheduler.state.last_reconcile_at)
 
     def test_reconcile_success_timestamp_advances_only_after_all_lanes_succeed(
         self,

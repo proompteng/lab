@@ -28,6 +28,38 @@ slice is not complete when code or schema merely exists. Completion requires, in
 The implementation must not increase capital authority merely because a slice ships. Capital stage changes are
 separate, explicit decisions governed by the promotion ladder.
 
+## Design And Review Discipline
+
+These are implementation gates, not reasons to add ceremony or new architecture:
+
+- Prefer one ordinary control path over special cases, keep functions single-purpose with bounded local state, and
+  delete tricky code that exists only to preserve an obsolete shape. This applies the maintainability guidance in the
+  [Linux kernel coding style](https://kernel.org/doc/html/next/process/coding-style.html) and Torvalds's emphasis on
+  fixing the concrete problem in front of the engineer.
+- Add an abstraction only when its small interface hides meaningful complexity or removes knowledge from callers. A
+  shallow wrapper that merely renames or forwards fields must be folded into the owning module, following Ousterhout's
+  [designing-abstractions guidance](https://web.stanford.edu/~ouster/CS349W/lectures/abstraction.html).
+- Treat every implementation of a broker, evidence, storage, or execution protocol as behaviorally substitutable: it
+  must preserve the protocol's preconditions, postconditions, invariants, and fail-closed semantics. Contract tests
+  must run against every implementation, following Liskov and Wing's
+  [behavioral-subtyping criterion](https://www.cs.cmu.edu/~wing/publications/LiskovWing94.pdf).
+- Specify concurrent and durable workflows as explicit state transitions. State safety properties (what must never
+  happen) separately from liveness properties (what must eventually happen), then test crash, retry, reordering, stale
+  writer, and timeout schedules. Use a model checker only when the state space justifies it; do not create a formal
+  model as decoration. This applies Lamport's
+  [safety/liveness and state-machine method](https://www.microsoft.com/en-us/research/blog/leslie-lamport-receives-turing-award/).
+- Separate behavior changes from structural cleanup. Refactor through small behavior-preserving steps on a green test
+  base and keep each integration independently reversible, following Fowler's
+  [refactoring discipline](https://www.martinfowler.com/books/refactoring.html).
+- Tests must be deterministic, sensitive to externally visible behavior rather than implementation structure, cheap
+  enough for the intended feedback loop, and predictive of deployment. Start focused, then cross the real database,
+  broker contract, image, GitOps, and runtime boundary required by this roadmap, following Beck's
+  [programmer-test principles](https://medium.com/@kentbeck_7670/programmer-test-principles-d01c064d7934).
+
+Reviewers must reject duplicate authorities, shallow wrappers, test-only production options, broad exception
+boundaries, unexplained state transitions, mocks used as economic proof, and abstractions whose deletion makes the
+system easier to understand without losing a required invariant.
+
 ## Global Safety Posture
 
 - Keep all live and candidate evidence-collecting risk-increasing submission disabled until Phase 0 exits. P0 broker

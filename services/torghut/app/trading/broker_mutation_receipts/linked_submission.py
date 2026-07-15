@@ -14,6 +14,7 @@ from ..decision_submission_claims.types import (
     DecisionSubmissionClaimError,
     DecisionSubmissionClaimHandle,
     DecisionSubmissionFenceError,
+    DecisionSubmissionRecoveryHandle,
 )
 from ..decision_submission_claims.validation import (
     as_utc_datetime,
@@ -38,6 +39,13 @@ from .validation import (
 @dataclass(frozen=True, slots=True)
 class LockedSubmissionClaim:
     handle: DecisionSubmissionClaimHandle
+    row: TradeDecisionSubmissionClaim
+    now: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class LockedSubmissionRecoveryClaim:
+    handle: DecisionSubmissionRecoveryHandle
     row: TradeDecisionSubmissionClaim
     now: datetime
 
@@ -153,6 +161,92 @@ def lock_linked_submission_claim(
             f"linked_submission_claim_expired:{handle.decision_id}"
         )
     return LockedSubmissionClaim(handle=handle, row=row, now=now)
+
+
+def lock_linked_submission_recovery_claim(
+    session: Session,
+    *,
+    intent: BrokerMutationIntent,
+    primary_handle: DecisionSubmissionClaimHandle,
+    recovery_handle: DecisionSubmissionRecoveryHandle,
+) -> LockedSubmissionRecoveryClaim:
+    """Lock and verify the recovery fence paired with one linked receipt."""
+
+    if (
+        recovery_handle.decision_id != primary_handle.decision_id
+        or recovery_handle.account_label != primary_handle.account_label
+        or recovery_handle.client_order_id != primary_handle.client_order_id
+        or recovery_handle.decision_id != intent.submission_claim_id
+        or recovery_handle.account_label != intent.account_label
+        or recovery_handle.client_order_id != intent.client_request_id
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_recovery_identity_mismatch"
+        )
+    lock_broker_mutation_identities(
+        session,
+        broker_mutation_identity_lock_keys(intent),
+    )
+    now = database_now(session)
+    row = session.execute(
+        select(TradeDecisionSubmissionClaim)
+        .where(
+            TradeDecisionSubmissionClaim.trade_decision_id
+            == recovery_handle.decision_id
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if row is None:
+        raise BrokerMutationReceiptFenceError("linked_submission_claim_not_found")
+    observed_primary = (
+        row.trade_decision_id,
+        row.account_label,
+        row.client_order_id,
+        row.claim_token,
+        int(row.fencing_epoch),
+        row.claim_owner,
+    )
+    expected_primary = (
+        primary_handle.decision_id,
+        primary_handle.account_label,
+        primary_handle.client_order_id,
+        primary_handle.claim_token,
+        primary_handle.fencing_epoch,
+        primary_handle.claim_owner,
+    )
+    observed_recovery = (
+        row.recovery_token,
+        int(row.recovery_fencing_epoch),
+        row.recovery_owner,
+    )
+    expected_recovery = (
+        recovery_handle.recovery_token,
+        recovery_handle.recovery_fencing_epoch,
+        recovery_handle.recovery_owner,
+    )
+    if observed_primary != expected_primary or observed_recovery != expected_recovery:
+        raise BrokerMutationReceiptFenceError(
+            "linked_submission_recovery_fenced:"
+            f"{recovery_handle.decision_id}:"
+            f"{recovery_handle.recovery_fencing_epoch}"
+        )
+    if row.state != "broker_io":
+        raise BrokerMutationReceiptConflictError(
+            f"linked_submission_claim_state_mismatch:{row.state}:broker_io"
+        )
+    if (
+        row.recovery_lease_expires_at is None
+        or as_utc_datetime(row.recovery_lease_expires_at) <= now
+    ):
+        raise BrokerMutationReceiptFenceError(
+            f"linked_submission_recovery_expired:{recovery_handle.decision_id}"
+        )
+    return LockedSubmissionRecoveryClaim(
+        handle=recovery_handle,
+        row=row,
+        now=now,
+    )
 
 
 def validate_linked_receipt_state(
@@ -316,6 +410,8 @@ def transition_linked_submission_io_uncommitted(
 
 __all__ = [
     "LockedSubmissionClaim",
+    "LockedSubmissionRecoveryClaim",
+    "lock_linked_submission_recovery_claim",
     "normalize_linked_submission_handle",
     "transition_linked_submission_io_uncommitted",
     "validate_linked_claim_lifecycle",

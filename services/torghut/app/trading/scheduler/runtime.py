@@ -13,6 +13,7 @@ from typing import Any, Optional, cast
 from ...config import TradingAccountLane, settings
 from ...db import engine as database_engine
 from ..execution import OrderExecutor
+from ..broker_mutation_recovery_worker import BrokerMutationRecoveryWorker
 from ..llm.dspy_programs.runtime import (
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
@@ -48,10 +49,15 @@ from .leadership import (
     SchedulerLeadershipStatus,
     scheduler_advisory_lock_id,
 )
+from .broker_mutation_recovery_runtime import (
+    build_alpaca_submit_recovery_worker,
+    reconcile_broker_mutation_recovery,
+)
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
 from .runtime_pipeline_factory import build_trading_pipeline_for_account
 from .state import TradingState
+from .startup_policy import resolve_trading_shorts_startup_policy
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +80,9 @@ class TradingScheduler(
         self._stop_event = asyncio.Event()
         self._pipeline: Optional[TradingPipeline] = None
         self._pipelines: list[TradingPipeline] = []
+        self._broker_mutation_recovery_worker: BrokerMutationRecoveryWorker | None = (
+            None
+        )
         self._active_simulation_run_id: str | None = None
         self._leadership = leadership or PostgresSchedulerLeadership(
             engine=database_engine,
@@ -432,39 +441,10 @@ class TradingScheduler(
         lane = settings.trading_accounts[0]
         return self._build_pipeline_for_account(lane)
 
-    @staticmethod
-    def _coerce_boolean_env_value(env_name: str, value: str) -> bool:
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "t", "yes", "on", "y"}:
-            return True
-        if normalized in {"0", "false", "f", "no", "off", "n"}:
-            return False
-        raise ValueError(
-            f"{env_name} has invalid boolean value: {value!r}; expected one of "
-            "1, true, false, 0, on, off, yes, no"
-        )
-
     def _assert_trading_shorts_startup_policy(self) -> None:
-        env_name = "TRADING_ALLOW_SHORTS"
-        raw_env_value = os.getenv(env_name)
-        if raw_env_value is None:
-            raise RuntimeError(
-                f"{env_name} must be explicitly set before scheduler startup"
-            )
-
-        configured_env_value = self._coerce_boolean_env_value(env_name, raw_env_value)
-        configured_setting = bool(settings.trading_allow_shorts)
-        if configured_env_value != configured_setting:
-            raise RuntimeError(
-                f"{env_name} resolved to {configured_env_value} but settings value is "
-                f"{configured_setting}; expected a single source of truth"
-            )
-
-        logger.info(
-            "Startup short policy explicit: %s=%s (declared=%s)",
-            env_name,
-            configured_setting,
-            raw_env_value,
+        configured_setting = resolve_trading_shorts_startup_policy(
+            raw_env_value=os.getenv("TRADING_ALLOW_SHORTS"),
+            configured_setting=bool(settings.trading_allow_shorts),
         )
         self.state.metrics.trading_shorts_enabled = 1 if configured_setting else 0
 
@@ -488,6 +468,13 @@ class TradingScheduler(
                     self._build_pipeline_for_account(lane) for lane in lanes
                 ]
                 self._pipeline = self._pipelines[0] if self._pipelines else None
+            if self._broker_mutation_recovery_worker is None:
+                self._broker_mutation_recovery_worker = (
+                    build_alpaca_submit_recovery_worker(
+                        self._pipelines,
+                        enabled=settings.trading_broker_mutation_recovery_enabled,
+                    )
+                )
             account_labels = ",".join(
                 pipeline.account_label for pipeline in self._pipelines
             )
@@ -898,6 +885,14 @@ class TradingScheduler(
                 raise outcome
             else:
                 updates += outcome
+
+        recovery_succeeded = await reconcile_broker_mutation_recovery(
+            self._broker_mutation_recovery_worker,
+            metrics=self.state.metrics,
+            emit_failure=self._emit_runtime_loop_failure,
+        )
+        if not recovery_succeeded:
+            failed_accounts.append("broker-mutation-recovery")
 
         if updates:
             logger.info("Reconciled %s executions", updates)

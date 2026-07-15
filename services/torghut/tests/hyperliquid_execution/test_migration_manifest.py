@@ -70,6 +70,15 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
         'HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SYMBOL_ENTRIES: "300"' in configmap
     )
     assert 'HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SIDE_FLIP: "900"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_ENABLED: "true"' in configmap
+    assert (
+        'HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_REQUEST_TIMEOUT_SECONDS: "10"'
+        in configmap
+    )
+    assert (
+        'HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_INTERVAL_SECONDS: "60"'
+        in configmap
+    )
     assert 'HYPERLIQUID_EXECUTION_MAX_DAILY_LOSS_USD: "100"' in configmap
     assert (
         'HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED: "true"'

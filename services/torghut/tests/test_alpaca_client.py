@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
@@ -420,7 +421,53 @@ class TestAlpacaClient(TestCase):
                     mock_request.call_args.kwargs["params"],
                     {"client_order_id": "client-123"},
                 )
+                self.assertEqual(
+                    mock_request.call_args.kwargs["timeout"],
+                    settings.trading_broker_mutation_http_timeout_seconds,
+                )
                 mock_sleep.assert_not_called()
+
+    def test_recovery_history_uses_dedicated_bounded_read_client(self) -> None:
+        class RecordingRecoveryClient(DummyTradingClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.filters: list[GetOrdersRequest | None] = []
+
+            def get_orders(
+                self,
+                filter: GetOrdersRequest | None = None,
+            ) -> list[DummyModel]:
+                self.filters.append(filter)
+                return []
+
+        regular = RecordingRecoveryClient()
+        recovery = RecordingRecoveryClient()
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=regular,
+            recovery_trading_client=recovery,
+            data_client=DummyDataClient(),
+        )
+        after = datetime(2026, 7, 14, 12, tzinfo=timezone.utc)
+        until = after + timedelta(minutes=5)
+
+        page = client.list_orders_recovery_window(
+            after=after,
+            until=until,
+            limit=500,
+        )
+
+        self.assertTrue(page.complete)
+        self.assertEqual(page.orders, ())
+        self.assertEqual(len(recovery.filters), 1)
+        request = recovery.filters[0]
+        assert request is not None
+        self.assertEqual(request.limit, 500)
+        self.assertEqual(request.after, after)
+        self.assertEqual(request.until, until)
+        self.assertEqual(regular.filters, [])
 
     def test_404_classification_rejects_404_like_non_integer_statuses(self) -> None:
         class IntLike404(int):
@@ -707,6 +754,11 @@ class TestAlpacaClient(TestCase):
 
                 self.assertFalse(read_trading_kwargs.get("paper"))
                 self.assertFalse(mutation_trading_kwargs.get("paper"))
+                self.assertEqual(mock_mutation_trading_client.call_count, 2)
+                self.assertEqual(
+                    mutation_trading_kwargs.get("request_timeout_seconds"),
+                    settings.trading_broker_mutation_http_timeout_seconds,
+                )
                 self.assertFalse(data_kwargs.get("sandbox"))
         finally:
             config.settings.trading_mode = original

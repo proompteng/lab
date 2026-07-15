@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -30,6 +30,14 @@ from app.hyperliquid_execution.models import (
     Signal,
 )
 from tests import broker_mutation_test_support as mutation_support
+from tests.hyperliquid_execution.runtime_surface_test_support import (
+    _FakeResult,
+    _now,
+)
+from tests.hyperliquid_execution.submit_recovery_test_support import (
+    _ready_recovery_worker,
+)
+
 from app.hyperliquid_execution.repository import HyperliquidExecutionRepository
 from app.hyperliquid_execution.runtime_details import _string_list_detail
 from app.hyperliquid_execution.service import (
@@ -323,6 +331,7 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -370,6 +379,7 @@ def test_service_selects_only_fresh_execution_markets() -> None:
         feed=_PartialFeatureServiceFeed(now),
         exchange=exchange,
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -405,6 +415,7 @@ def test_service_reports_blocked_signal_reasons() -> None:
         feed=_SellServiceFeed(now),
         exchange=_ServiceExchange(now),
         submit_coordinator=_SUBMIT_COORDINATOR,
+        recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
@@ -752,6 +763,8 @@ class _FakeSession:
         self.closed = True
 
     def _rows_for(self, sql: str) -> list[dict[str, object]]:
+        if "INSERT INTO hyperliquid_execution_orders" in sql and "RETURNING id" in sql:
+            return [{"id": "order-1"}]
         if "SELECT count(*) AS rejects" in sql:
             return [{"rejects": self.reject_count}]
         if "daily_realized_pnl_usd" in sql:
@@ -874,23 +887,6 @@ class _FakeSession:
         ]
 
 
-class _FakeResult:
-    def __init__(self, rows: Iterable[Mapping[str, object]]) -> None:
-        self.rows = [dict(row) for row in rows]
-
-    def mappings(self) -> "_FakeResult":
-        return self
-
-    def __iter__(self) -> Iterable[dict[str, object]]:
-        return iter(self.rows)
-
-    def one(self) -> dict[str, object]:
-        return self.rows[0]
-
-    def all(self) -> list[dict[str, object]]:
-        return self.rows
-
-
 def _market() -> ExecutionMarket:
     return ExecutionMarket(
         market_id="hl:perp:xyz:NVDA",
@@ -992,7 +988,3 @@ def _account_state(
             ),
         ),
     )
-
-
-def _now() -> datetime:
-    return datetime(2026, 6, 19, 12, tzinfo=timezone.utc)

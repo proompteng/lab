@@ -78,6 +78,27 @@ class CoreSettingsFields(BaseSettings):
         description="Timeout for stateless API reads of scheduler-owned runtime surfaces.",
     )
 
+    trading_broker_mutation_recovery_enabled: bool = Field(
+        default=True,
+        alias="TRADING_BROKER_MUTATION_RECOVERY_ENABLED",
+        description=(
+            "Run observation-only recovery for ambiguous broker submit receipts. "
+            "Disabling it preserves unresolved claims and never enables resubmission."
+        ),
+    )
+
+    trading_broker_mutation_http_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        le=15,
+        alias="TRADING_BROKER_MUTATION_HTTP_TIMEOUT_SECONDS",
+        description=(
+            "Per-request deadline for broker mutation and strict recovery HTTP "
+            "calls. The upper bound keeps the complete observation sequence inside "
+            "the durable recovery lease."
+        ),
+    )
+
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
     )

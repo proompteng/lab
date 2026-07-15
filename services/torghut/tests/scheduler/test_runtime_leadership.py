@@ -4,6 +4,7 @@ import asyncio
 import threading
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,19 @@ from app.trading.scheduler.leadership import (
     SchedulerLeadershipStatus,
 )
 from app.trading.scheduler.runtime import TradingScheduler
+from app.trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRunResult,
+    BrokerMutationRecoveryWorker,
+)
+
+
+class _NoopRecoveryWorker:
+    def run_once(self) -> BrokerMutationRecoveryRunResult:
+        return BrokerMutationRecoveryRunResult(
+            enabled=False,
+            scanned=0,
+            outcomes={"disabled": 1},
+        )
 
 
 class _FakeLeadership:
@@ -98,6 +112,10 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             )
         ]
         scheduler._pipeline = scheduler._pipelines[0]
+        scheduler._broker_mutation_recovery_worker = cast(
+            BrokerMutationRecoveryWorker,
+            _NoopRecoveryWorker(),
+        )
         return scheduler
 
     async def test_start_acquires_and_stop_releases_writer_fence(self) -> None:
@@ -123,6 +141,10 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         )
         scheduler._pipelines = self._prepared_scheduler(leadership)._pipelines
         scheduler._pipeline = scheduler._pipelines[0]
+        scheduler._broker_mutation_recovery_worker = cast(
+            BrokerMutationRecoveryWorker,
+            _NoopRecoveryWorker(),
+        )
 
         await scheduler.start()
         await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
@@ -148,6 +170,10 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         )
         scheduler._pipelines = self._prepared_scheduler(leadership)._pipelines
         scheduler._pipeline = scheduler._pipelines[0]
+        scheduler._broker_mutation_recovery_worker = cast(
+            BrokerMutationRecoveryWorker,
+            _NoopRecoveryWorker(),
+        )
 
         await scheduler.start()
         await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
@@ -323,6 +349,10 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         )
         scheduler._pipelines = [pipeline]
         scheduler._pipeline = pipeline
+        scheduler._broker_mutation_recovery_worker = cast(
+            BrokerMutationRecoveryWorker,
+            _NoopRecoveryWorker(),
+        )
 
         with (
             patch.object(settings, "trading_scheduler_shutdown_drain_seconds", 0.01),

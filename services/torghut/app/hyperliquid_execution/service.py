@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Protocol, cast
 
 from ..trading.broker_mutation_submit_coordinator import (
+    BrokerMutationSubmissionDeferred,
     BrokerMutationSubmitCoordinator,
+)
+from ..trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRunError,
+    BrokerMutationRecoveryRunResult,
 )
 from .config import HyperliquidExecutionConfig
 from .entry_processing import process_features
@@ -32,12 +40,19 @@ from .runtime_details import risk_state_details, universe_details
 from .universe import UniverseSelectionConfig, select_configured_markets
 
 
+logger = logging.getLogger(__name__)
+
+
 class HyperliquidExecutionFeed(Protocol):
     def status(self) -> FeedStatus: ...
 
     def load_catalog_rows(self) -> list[dict[str, object]]: ...
 
     def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]: ...
+
+
+class BrokerMutationRecoveryRunner(Protocol):
+    def run_once(self) -> BrokerMutationRecoveryRunResult: ...
 
 
 class _Session(Protocol):
@@ -52,6 +67,8 @@ class HyperliquidExecutionService:
         feed: HyperliquidExecutionFeed,
         exchange: HyperliquidExecutionExchange,
         submit_coordinator: BrokerMutationSubmitCoordinator | None = None,
+        recovery_worker: BrokerMutationRecoveryRunner | None = None,
+        recovery_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._feed = feed
@@ -59,12 +76,25 @@ class HyperliquidExecutionService:
         self._submit_coordinator = (
             submit_coordinator or BrokerMutationSubmitCoordinator("hyperliquid-submit")
         )
+        self._recovery_worker = recovery_worker
+        self._recovery_clock = recovery_clock
+        self._next_recovery_at: float | None = None
+        self._latest_recovery_status: RuntimeDependencyStatus | None = None
+        self._recovery_run_sequence = 0
 
     def run_once(self, session: _Session) -> CycleResult:
+        recovery_status = self._recovery_dependency(datetime.now(timezone.utc))
         started_at = datetime.now(timezone.utc)
         cycle_id = str(uuid.uuid4())
         repository = HyperliquidExecutionRepository(session)
         context = self._load_context(repository, started_at)
+        context = replace(
+            context,
+            dependencies=(*context.dependencies, recovery_status),
+        )
+        context.universe_details["broker_mutation_recovery"] = dict(
+            recovery_status.details
+        )
         counts = _CycleCounts()
         repository.insert_cycle(
             self._cycle_record(
@@ -100,16 +130,20 @@ class HyperliquidExecutionService:
         maintenance_reduce_only = self._reduce_over_cap_exposure(risk_state)
         counts.record_maintenance_reduce_only(maintenance_reduce_only)
         if not _maintenance_reduce_only_ran(maintenance_reduce_only):
-            self._process_features(
-                repository=repository,
-                context=_FeatureProcessingContext(
-                    cycle_id=cycle_id,
-                    started_at=started_at,
-                    features=context.features,
-                    risk_state=risk_state,
-                ),
-                counts=counts,
-            )
+            try:
+                self._process_features(
+                    repository=repository,
+                    context=_FeatureProcessingContext(
+                        cycle_id=cycle_id,
+                        started_at=started_at,
+                        features=context.features,
+                        risk_state=risk_state,
+                    ),
+                    counts=counts,
+                )
+            except BrokerMutationSubmissionDeferred as exc:
+                self._latch_unresolved_submission(started_at, exc)
+                raise
 
         repository.insert_performance_snapshot(observed_at=started_at)
         repository.insert_multifactor_attribution_snapshot(
@@ -131,6 +165,118 @@ class HyperliquidExecutionService:
         repository.insert_cycle(self._cycle_record(cycle_id, started_at, result))
         session.commit()
         return result
+
+    def _recovery_dependency(
+        self,
+        observed_at: datetime,
+    ) -> RuntimeDependencyStatus:
+        if self._recovery_worker is None:
+            status = RuntimeDependencyStatus(
+                name="broker_mutation_recovery",
+                ready=False,
+                observed_at=observed_at,
+                reason="broker_mutation_recovery_unwired",
+                details={
+                    "enabled": self._config.broker_mutation_recovery_enabled,
+                    "run_sequence": self._recovery_run_sequence,
+                    "interval_seconds": (
+                        self._config.broker_mutation_recovery_interval_seconds
+                    ),
+                },
+            )
+            self._latest_recovery_status = status
+            self._next_recovery_at = None
+            return status
+        monotonic_now = self._recovery_clock()
+        if (
+            self._latest_recovery_status is not None
+            and self._next_recovery_at is not None
+            and monotonic_now < self._next_recovery_at
+        ):
+            return self._latest_recovery_status
+
+        self._next_recovery_at = (
+            monotonic_now + self._config.broker_mutation_recovery_interval_seconds
+        )
+        self._recovery_run_sequence += 1
+        try:
+            recovery_result = self._recovery_worker.run_once()
+        except BrokerMutationRecoveryRunError as exc:
+            logger.exception(
+                "Hyperliquid broker mutation recovery cycle failed error_class=%s",
+                type(exc).__name__,
+            )
+            status = RuntimeDependencyStatus(
+                name="broker_mutation_recovery",
+                ready=False,
+                observed_at=observed_at,
+                reason="broker_mutation_recovery_failed",
+                details={
+                    "enabled": self._config.broker_mutation_recovery_enabled,
+                    "run_sequence": self._recovery_run_sequence,
+                    "error_class": type(exc).__name__,
+                    "outcomes": {"failed": 1},
+                    "interval_seconds": (
+                        self._config.broker_mutation_recovery_interval_seconds
+                    ),
+                },
+            )
+        else:
+            recovery_ready = recovery_result.enabled and not recovery_result.degraded
+            status = RuntimeDependencyStatus(
+                name="broker_mutation_recovery",
+                ready=recovery_ready,
+                observed_at=observed_at,
+                reason=(
+                    None
+                    if recovery_ready
+                    else (
+                        "broker_mutation_recovery_disabled"
+                        if not recovery_result.enabled
+                        else (
+                            "broker_mutation_recovery_failed"
+                            if recovery_result.failed
+                            else "broker_mutation_recovery_unresolved"
+                        )
+                    )
+                ),
+                details={
+                    "enabled": recovery_result.enabled,
+                    "run_sequence": self._recovery_run_sequence,
+                    "scanned": recovery_result.scanned,
+                    "unresolved": recovery_result.unresolved,
+                    "outcomes": dict(recovery_result.outcomes),
+                    "interval_seconds": (
+                        self._config.broker_mutation_recovery_interval_seconds
+                    ),
+                },
+            )
+        self._latest_recovery_status = status
+        return status
+
+    def _latch_unresolved_submission(
+        self,
+        observed_at: datetime,
+        exc: BrokerMutationSubmissionDeferred,
+    ) -> None:
+        """Block later entries until a fresh worker read proves no unresolved submit."""
+
+        self._latest_recovery_status = RuntimeDependencyStatus(
+            name="broker_mutation_recovery",
+            ready=False,
+            observed_at=observed_at,
+            reason="broker_mutation_recovery_unresolved",
+            details={
+                "enabled": self._config.broker_mutation_recovery_enabled,
+                "run_sequence": self._recovery_run_sequence,
+                "unresolved": 1,
+                "error_class": type(exc).__name__,
+                "interval_seconds": (
+                    self._config.broker_mutation_recovery_interval_seconds
+                ),
+            },
+        )
+        self._next_recovery_at = None
 
     def _cancel_expired_orders(
         self,

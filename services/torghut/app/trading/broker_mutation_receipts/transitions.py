@@ -26,8 +26,7 @@ from .lifecycle_helpers import (
     require_unlinked_terminal,
     rollback_session_on_error,
 )
-from .persistence import full_state_values_from_event
-from .persistence import append_full_state_event
+from .persistence import append_full_state_event, full_state_values_from_event
 from .types import (
     BrokerMutationIoPermitIssueRequest,
     BrokerMutationIoStartResult,

@@ -86,6 +86,13 @@ SIMPLE_MAP_METRICS: dict[str, tuple[str, str, str, str, str]] = {
         "reason",
         "int",
     ),
+    "broker_mutation_recovery_total": (
+        "torghut_trading_broker_mutation_recovery_total",
+        "Count of observation-only broker mutation recovery outcomes.",
+        "counter",
+        "outcome",
+        "int",
+    ),
     "decision_state_total": (
         "torghut_trading_decision_state_total",
         "Count of observed decision lifecycle states by status.",

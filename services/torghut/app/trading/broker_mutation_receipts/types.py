@@ -280,6 +280,15 @@ class BrokerMutationLinkedSubmissionSettlementRequest:
     rejection_code: str | None
     broker_reference: str | None
     execution_id: uuid.UUID | str | None
+    recovery_evidence_payload: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionRecoveryObservationResult:
+    """One atomically committed receipt/claim recovery observation."""
+
+    receipt: BrokerMutationReceiptSnapshot
+    submission_claim: DecisionSubmissionClaimSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,6 +612,7 @@ __all__ = [
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
     "BrokerMutationLinkedSubmissionSettlementRequest",
+    "BrokerMutationLinkedSubmissionRecoveryObservationResult",
     "BrokerMutationLinkedSubmissionTerminalResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",

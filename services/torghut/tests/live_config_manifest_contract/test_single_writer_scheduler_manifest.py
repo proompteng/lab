@@ -108,6 +108,13 @@ class SingleWriterSchedulerManifestTests(TestCase):
         self.assertEqual(
             env["TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS"].get("value"), "30"
         )
+        self.assertEqual(
+            env["TRADING_BROKER_MUTATION_RECOVERY_ENABLED"].get("value"), "true"
+        )
+        self.assertEqual(
+            env["TRADING_BROKER_MUTATION_HTTP_TIMEOUT_SECONDS"].get("value"),
+            "10",
+        )
         self.assertGreater(
             pod_spec["terminationGracePeriodSeconds"],
             int(cast(str, env["TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS"]["value"])),

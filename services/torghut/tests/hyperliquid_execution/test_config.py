@@ -64,6 +64,9 @@ def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     assert config.max_symbol_turnover_equity_multiple_1h == Decimal("1")
     assert config.min_seconds_between_symbol_entries == 300
     assert config.min_seconds_between_side_flip == 900
+    assert config.broker_mutation_recovery_enabled is True
+    assert config.broker_mutation_recovery_request_timeout_seconds == 10
+    assert config.broker_mutation_recovery_interval_seconds == 60
 
     short_config = HyperliquidExecutionConfig.from_env(
         {
@@ -97,6 +100,42 @@ def test_config_accepts_feed_readiness_dependency_contract() -> None:
 
     assert config.feed_readiness_url == "http://feed/readyz"
     assert config.feed_readiness_timeout_seconds == 7
+
+
+def test_config_bounds_submit_recovery_request_timeout_inside_lease() -> None:
+    configured = HyperliquidExecutionConfig.from_env(
+        {"HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_REQUEST_TIMEOUT_SECONDS": "7"}
+    )
+    assert configured.broker_mutation_recovery_request_timeout_seconds == 7
+    assert configured.validation_errors() == []
+
+    for invalid in ("0", "16"):
+        config = HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_REQUEST_TIMEOUT_SECONDS": invalid
+            }
+        )
+        assert (
+            "broker_mutation_recovery_request_timeout_seconds_must_be_between_1_and_15"
+            in config.validation_errors()
+        )
+
+
+def test_config_bounds_submit_recovery_interval_for_exchange_rate_budget() -> None:
+    configured = HyperliquidExecutionConfig.from_env(
+        {"HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_INTERVAL_SECONDS": "120"}
+    )
+    assert configured.broker_mutation_recovery_interval_seconds == 120
+    assert configured.validation_errors() == []
+
+    for invalid in ("59", "301"):
+        config = HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_BROKER_MUTATION_RECOVERY_INTERVAL_SECONDS": invalid}
+        )
+        assert (
+            "broker_mutation_recovery_interval_seconds_must_be_between_60_and_300"
+            in config.validation_errors()
+        )
 
 
 def test_config_rejects_removed_fixed_cap_envs_and_non_ioc_policy() -> None:

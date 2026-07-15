@@ -243,6 +243,34 @@ def transition_recovery(
     handle: DecisionSubmissionRecoveryHandle,
     values: dict[str, object],
 ) -> DecisionSubmissionClaimSnapshot:
+    """Apply and commit one fenced recovery transition."""
+
+    try:
+        transition_recovery_uncommitted(
+            session,
+            handle=handle,
+            values=values,
+        )
+        commit_or_rollback(session)
+    except (DecisionSubmissionClaimError, SQLAlchemyError):
+        session.rollback()
+        raise
+    snapshot = load_snapshot(session, handle.decision_id)
+    if snapshot is None:  # pragma: no cover - committed row must be readable
+        close_read_transaction(session)
+        raise DecisionSubmissionClaimError("transitioned_claim_not_found")
+    close_read_transaction(session)
+    return snapshot
+
+
+def transition_recovery_uncommitted(
+    session: Session,
+    *,
+    handle: DecisionSubmissionRecoveryHandle,
+    values: dict[str, object],
+) -> DecisionSubmissionClaimSnapshot:
+    """Apply a fenced recovery CAS inside the caller's transaction."""
+
     now = database_now(session)
     predicates = [
         TradeDecisionSubmissionClaim.trade_decision_id == handle.decision_id,
@@ -256,7 +284,7 @@ def transition_recovery(
         TradeDecisionSubmissionClaim.recovery_lease_expires_at.is_not(None),
         TradeDecisionSubmissionClaim.recovery_lease_expires_at > now,
     ]
-    return _commit_transition(
+    return _transition_uncommitted(
         session,
         decision_id=handle.decision_id,
         fencing_error=(

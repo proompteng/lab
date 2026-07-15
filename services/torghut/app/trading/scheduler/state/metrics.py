@@ -191,6 +191,13 @@ class _TradingMetricsMethods(TradingMetricsFields):
                     self.submission_block_total.get(normalized, 0) + 1
                 )
 
+    def record_broker_mutation_recovery(self, *, outcome: str, count: int = 1) -> None:
+        normalized = normalize_reason_metric(outcome)
+        increment = max(0, int(count))
+        self.broker_mutation_recovery_total[normalized] = (
+            self.broker_mutation_recovery_total.get(normalized, 0) + increment
+        )
+
     def record_decision_state(self, status: str | None) -> None:
         normalized = normalize_reason_metric(status)
         self.decision_state_total[normalized] = (
