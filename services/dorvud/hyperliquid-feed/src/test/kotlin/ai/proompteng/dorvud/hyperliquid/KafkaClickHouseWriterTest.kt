@@ -125,7 +125,7 @@ class KafkaClickHouseWriterTest {
   }
 
   @Test
-  fun `writer state requires assignment polling and a successful commit`() {
+  fun `writer state requires assignment polling a successful commit and observed lag`() {
     var nowMs = 10_000L
     val state = KafkaClickHouseWriterState(readinessMaxAgeMs = 1_000, nowMs = { nowMs })
     state.markRunning(1)
@@ -135,13 +135,20 @@ class KafkaClickHouseWriterTest {
 
     state.markCommit("partition:a:0")
     assertTrue(state.snapshot().ready)
-    assertTrue(state.snapshot().caughtUp)
-    assertEquals("ready", state.snapshot().status)
+    assertFalse(state.snapshot().caughtUp)
+    assertEquals("backfilling", state.snapshot().status)
 
     state.markConsumerLag(total = 48_000, maximum = 1_000)
     assertTrue(state.snapshot().ready)
     assertTrue(state.snapshot().caughtUp)
     state.markConsumerLag(total = 1_001, maximum = 1_001)
+    assertTrue(state.snapshot().ready)
+    assertFalse(state.snapshot().caughtUp)
+    assertEquals("backfilling", state.snapshot().status)
+    state.markConsumerLag(total = 0, maximum = 0)
+    assertTrue(state.snapshot().caughtUp)
+
+    state.markConsumerLagPending()
     assertTrue(state.snapshot().ready)
     assertFalse(state.snapshot().caughtUp)
     assertEquals("backfilling", state.snapshot().status)

@@ -267,6 +267,8 @@ class KafkaClickHouseWriter(
   private fun rebalanceListener(): ConsumerRebalanceListener =
     object : ConsumerRebalanceListener {
       override fun onPartitionsRevoked(partitions: Collection<TopicPartition>) {
+        state.markConsumerLagPending()
+        lastLagRefreshMs = 0
         var remainingFlushes = config.maxFlushesPerPoll
         partitions.forEach { topicPartition ->
           val buffer = buffers[topicPartition] ?: return@forEach
@@ -282,6 +284,8 @@ class KafkaClickHouseWriter(
       }
 
       override fun onPartitionsAssigned(partitions: Collection<TopicPartition>) {
+        state.markConsumerLagPending()
+        lastLagRefreshMs = 0
         partitions.forEach { topicPartition ->
           buffers.getOrPut(topicPartition) { PartitionBuffer() }.requiresReconciliation = true
         }
