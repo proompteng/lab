@@ -44,8 +44,8 @@ from .decision_submission_claims.types import (
 )
 from .decision_submission_claims import acquire_decision_submission_claim
 from .infrastructure_validation import (
-    InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
+    InfrastructureValidationSubmitPlan,
     authorize_infrastructure_validation_order,
     infrastructure_validation_client_order_id,
     infrastructure_validation_request_payload,
@@ -115,7 +115,7 @@ class UnlinkedMutationCallbacks(Generic[_BrokerResult]):
 @dataclass(frozen=True, slots=True)
 class InfrastructureValidationOrderSubmission:
     permit: InfrastructureValidationPermit
-    plan: InfrastructureValidationOrderPlan
+    plan: InfrastructureValidationSubmitPlan
     account_label: str
     endpoint_url: str
 

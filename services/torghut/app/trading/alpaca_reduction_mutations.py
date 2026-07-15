@@ -7,11 +7,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import TypeVar, cast
+from typing import Protocol, TypeVar, cast
 
 from sqlalchemy.orm import Session
 
-from ..alpaca_client import TorghutAlpacaClient
+from ..alpaca_client import AlpacaSubmitRequest
 from .alpaca_observations import (
     alpaca_order_observation,
     alpaca_position_observation,
@@ -41,6 +41,7 @@ from .infrastructure_validation_records import (
     InfrastructureValidationEvidence,
     infrastructure_validation_lineage_payload,
     load_infrastructure_validation_evidence,
+    require_infrastructure_validation_position_evidence,
 )
 from .risk_reduction import (
     BrokerOrderObservation,
@@ -53,6 +54,7 @@ from .risk_reduction import (
     ReplaceOrderPlan,
     RiskReductionAuthorization,
     RiskReductionPermitError,
+    SubmitCloseOrderPlan,
     authorize_risk_reduction,
     flatten_observed_positions,
 )
@@ -67,7 +69,7 @@ _OPEN_ORDER_LIMIT = 500
 _REQUEST_SCHEMA_VERSION = "torghut.alpaca-reduction-request.v1"
 _PREFLIGHT_SCHEMA_VERSION = "torghut.alpaca-reduction-preflight.v1"
 _ORDER_CREATING_OPERATIONS = frozenset(
-    {"replace_order", "close_position", "close_all_positions"}
+    {"submit_order", "replace_order", "close_position", "close_all_positions"}
 )
 _ACCEPTED_ORDER_STATUSES = frozenset(
     {
@@ -94,6 +96,24 @@ _REJECTED_ORDER_STATUSES = frozenset(
 )
 
 
+class AlpacaReductionReadClient(Protocol):
+    """Broker observations required to authorize Alpaca reductions."""
+
+    def get_order_by_id_strict(
+        self,
+        order_id: str,
+    ) -> dict[str, object] | None: ...
+
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]: ...
+
+    def list_positions(self) -> list[dict[str, object]]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class _MutationSpec:
     operation: BrokerMutationOperation
@@ -102,6 +122,7 @@ class _MutationSpec:
     target_kind: BrokerMutationTargetKind
     target_key: str
     request_payload: Mapping[str, object]
+    client_request_id: str | None = None
 
 
 class AlpacaReductionMutationExecutor:
@@ -111,7 +132,7 @@ class AlpacaReductionMutationExecutor:
         self,
         *,
         firewall: OrderFirewall,
-        read_client: TorghutAlpacaClient,
+        read_client: AlpacaReductionReadClient,
         session_factory: Callable[[], Session],
         account_label: str,
         endpoint_url: str,
@@ -124,6 +145,116 @@ class AlpacaReductionMutationExecutor:
         self._endpoint_url = endpoint_url.strip()
         self._endpoint_fingerprint = fingerprint_broker_endpoint(endpoint_url)
         self._coordinator = coordinator
+
+    def submit_crypto_close_order(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        *,
+        limit_price: Decimal,
+        validation_evidence: InfrastructureValidationEvidence | None = None,
+    ) -> dict[str, object]:
+        """Place one observed-position-bounded crypto close limit order."""
+
+        self._require_validation_evidence_scope(
+            validation_evidence,
+            require_position_ancestry=True,
+        )
+        normalized_symbol = symbol.strip().upper()
+        if "/" not in normalized_symbol:
+            raise RiskReductionPermitError(
+                "alpaca_close_limit_requires_non_shortable_crypto"
+            )
+        observed_at = datetime.now(timezone.utc)
+        positions = tuple(
+            alpaca_position_observation(position)
+            for position in self._read_client.list_positions()
+        )
+        position = next(
+            (value for value in positions if value.symbol == normalized_symbol),
+            None,
+        )
+        if position is None or position.signed_quantity <= 0:
+            raise RiskReductionPermitError(
+                "alpaca_close_limit_requires_long_crypto_position"
+            )
+        self._require_position_evidence(validation_evidence, position)
+        raw_orders = self._read_client.list_orders(
+            status="open",
+            limit=_OPEN_ORDER_LIMIT,
+        )
+        orders = tuple(alpaca_order_observation(order) for order in raw_orders)
+        authorization = authorize_risk_reduction(
+            self._snapshot(
+                observed_at=observed_at,
+                complete=len(raw_orders) < _OPEN_ORDER_LIMIT,
+                orders=orders,
+                positions=positions,
+            ),
+            SubmitCloseOrderPlan(
+                leg=PositionCloseLeg(
+                    symbol=normalized_symbol,
+                    side="sell",
+                    quantity=quantity,
+                ),
+                limit_price=limit_price,
+            ),
+            now=observed_at,
+        )
+        base_payload = _request_payload(
+            authorization,
+            broker_request={
+                "extra_params": {},
+                "limit_price": _decimal_text(limit_price),
+                "order_type": "limit",
+                "qty": _decimal_text(quantity),
+                "side": "sell",
+                "stop_price": None,
+                "symbol": normalized_symbol,
+                "time_in_force": "gtc",
+            },
+            validation_evidence=validation_evidence,
+        )
+        client_order_id = risk_reduction_request_id(
+            "submit_order",
+            base_payload,
+            target_kind="order",
+            target_key=normalized_symbol,
+        )
+        request_payload = {
+            **base_payload,
+            "extra_params": {"client_order_id": client_order_id},
+        }
+        return self._execute(
+            _MutationSpec(
+                operation="submit_order",
+                risk_class="risk_reducing",
+                purpose="closeout",
+                target_kind="order",
+                target_key=normalized_symbol,
+                request_payload=request_payload,
+                client_request_id=client_order_id,
+            ),
+            broker_call=lambda mutation_permit: (
+                self._firewall.submit_risk_reducing_order(
+                    AlpacaSubmitRequest(
+                        symbol=normalized_symbol,
+                        side="sell",
+                        qty=quantity,
+                        order_type="limit",
+                        time_in_force="gtc",
+                        limit_price=limit_price,
+                        stop_price=None,
+                        extra_params={"client_order_id": client_order_id},
+                    ),
+                    authority=RiskReductionMutationAuthority(
+                        request_payload=request_payload,
+                        mutation_permit=mutation_permit,
+                        reduction_permit=authorization.permit,
+                    ),
+                )
+            ),
+        )
 
     def cancel_order(
         self,
@@ -348,6 +479,7 @@ class AlpacaReductionMutationExecutor:
                 observation=observation,
             )
             return {"status": "already_satisfied", "symbol": normalized_symbol}
+        self._require_position_evidence(validation_evidence, position)
         leg = PositionCloseLeg(
             symbol=normalized_symbol,
             side="sell" if position.signed_quantity > 0 else "buy",
@@ -422,6 +554,10 @@ class AlpacaReductionMutationExecutor:
                 observation=observation,
             )
             return []
+        if validation_evidence is not None and len(positions) != 1:
+            raise RuntimeError("infrastructure_validation_position_scope_mismatch")
+        if positions:
+            self._require_position_evidence(validation_evidence, positions[0])
         snapshot = self._snapshot(
             observed_at=observed_at,
             complete=True,
@@ -512,6 +648,21 @@ class AlpacaReductionMutationExecutor:
         ):
             raise RuntimeError("infrastructure_validation_position_ancestry_missing")
 
+    def _require_position_evidence(
+        self,
+        evidence: InfrastructureValidationEvidence | None,
+        position: BrokerPositionObservation,
+    ) -> None:
+        if evidence is None:
+            return
+        with self._session_factory() as session:
+            require_infrastructure_validation_position_evidence(
+                session,
+                evidence=evidence,
+                symbol=position.symbol,
+                signed_quantity=position.signed_quantity,
+            )
+
     def _execute(
         self,
         spec: _MutationSpec,
@@ -535,7 +686,7 @@ class AlpacaReductionMutationExecutor:
             )
 
     def _intent(self, spec: _MutationSpec) -> BrokerMutationIntent:
-        request_id = risk_reduction_request_id(
+        request_id = spec.client_request_id or risk_reduction_request_id(
             spec.operation,
             spec.request_payload,
             target_kind=spec.target_kind,
@@ -751,4 +902,4 @@ def _decimal_text(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-__all__ = ["AlpacaReductionMutationExecutor"]
+__all__ = ["AlpacaReductionMutationExecutor", "AlpacaReductionReadClient"]

@@ -175,6 +175,7 @@ def normalize_order_feed_record(
 
     qty = _coerce_decimal((order or {}).get("qty"))
     filled_qty = _coerce_decimal((order or {}).get("filled_qty"))
+    position_qty = _coerce_decimal(data_payload.get("position_qty"))
     avg_fill_price = _coerce_decimal(
         (order or {}).get("filled_avg_price") or (order or {}).get("avg_fill_price")
     )
@@ -206,6 +207,7 @@ def normalize_order_feed_record(
         "feed_seq": feed_seq,
         "qty": str(qty) if qty is not None else None,
         "filled_qty": str(filled_qty) if filled_qty is not None else None,
+        "position_qty": str(position_qty) if position_qty is not None else None,
         "avg_fill_price": str(avg_fill_price) if avg_fill_price is not None else None,
     }
     fingerprint = hashlib.sha256(
@@ -228,6 +230,7 @@ def normalize_order_feed_record(
         status=status,
         qty=qty,
         filled_qty=filled_qty,
+        position_qty=position_qty,
         filled_qty_delta=None,
         avg_fill_price=avg_fill_price,
         filled_notional_delta=None,
@@ -305,6 +308,9 @@ def _fingerprint_normalized_order_event(
         "feed_seq": event.feed_seq,
         "qty": str(event.qty) if event.qty is not None else None,
         "filled_qty": str(event.filled_qty) if event.filled_qty is not None else None,
+        "position_qty": (
+            str(event.position_qty) if event.position_qty is not None else None
+        ),
         "avg_fill_price": (
             str(event.avg_fill_price) if event.avg_fill_price is not None else None
         ),
@@ -465,6 +471,7 @@ def persist_order_event(
         status=event.status,
         qty=event.qty,
         filled_qty=event.filled_qty,
+        position_qty=event.position_qty,
         filled_qty_delta=filled_qty_delta,
         avg_fill_price=event.avg_fill_price,
         filled_notional_delta=filled_notional_delta,

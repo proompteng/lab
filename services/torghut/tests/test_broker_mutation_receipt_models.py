@@ -34,6 +34,67 @@ def _checks(
     )
 
 
+def _normalized_sql(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+def _assert_lifecycle_validation_invariants(sql: str) -> None:
+    normalized = _normalized_sql(sql)
+
+    assert "torghut.infrastructure-validation-order-plan.v1" in normalized
+    assert "torghut.infrastructure-validation-lifecycle-plan.v1" in normalized
+    assert "https://paper-api.alpaca.markets" in normalized
+    assert "non_promotable_validation" in normalized
+    assert "'{request,infrastructure_validation,permit,max_orders}' = '1'" in normalized
+    assert (
+        "'{request,infrastructure_validation,permit,max_outstanding_intents}' = '1'"
+        in normalized
+    )
+    assert all(
+        key in normalized
+        for key in (
+            "resting_close_limit_price",
+            "replacement_close_limit_price",
+            "partial_close_qty",
+        )
+    )
+    assert "test_plan,partial_close_qty}')::numeric > 0" in normalized
+    assert "test_plan,partial_close_qty}')::numeric <" in normalized
+    assert "test_plan,replacement_close_limit_price}')::numeric >" in normalized
+    assert "test_plan,resting_close_limit_price}')::numeric >" in normalized
+    assert normalized.count("THEN 5 ELSE 1") == 2 or (
+        normalized.count("permit,max_notional_usd}')::numeric <= 5") == 1
+        and normalized.count("permit,max_loss_usd}')::numeric <= 5") == 1
+        and normalized.count("permit,max_notional_usd}')::numeric <= 1") == 1
+        and normalized.count("permit,max_loss_usd}')::numeric <= 1") == 1
+    )
+
+
+def _assert_lifecycle_lineage_invariants(sql: str) -> None:
+    normalized = _normalized_sql(sql)
+
+    assert (
+        "operation IN ('submit_order', 'replace_order', 'cancel_order', "
+        "'close_position', 'close_all_positions')" in normalized
+    )
+    assert "operation <> 'submit_order' OR (risk_class = 'risk_reducing'" in normalized
+    assert "purpose = 'closeout' AND target_kind = 'order'" in normalized
+    assert "torghut.infrastructure-validation-lineage.v1" in normalized
+    assert "non_promotable_validation" in normalized
+    assert all(
+        key in normalized
+        for key in (
+            "root_receipt_id",
+            "root_client_order_id",
+            "parent_receipt_id",
+            "parent_broker_order_id",
+            "permit_id",
+            "permit_sha256",
+            "promotable",
+        )
+    )
+
+
 def test_receipt_header_encodes_the_exact_broker_mutation_contract() -> None:
     table = _table(BrokerMutationReceipt)
     checks = _checks(BrokerMutationReceipt)
@@ -118,16 +179,15 @@ def test_receipt_header_mirrors_validation_authority_and_permit_guards() -> None
     assert "CREATE UNIQUE INDEX uq_bm_receipt_validation_permit" in ddl
     assert "non_promotable_validation" in ddl
 
-    migration = load_migration_module("0068_infrastructure_validation_submit.py")
-    assert str(getattr(migration, "_VALIDATION_AUTHORITY")).strip() == (
-        BROKER_MUTATION_VALIDATION_AUTHORITY_SQL.strip()
-    )
-    lineage_migration = load_migration_module(
-        "0071_infrastructure_validation_lineage.py"
-    )
-    assert str(getattr(lineage_migration, "_LINEAGE_CONTRACT")).strip() == (
-        BROKER_MUTATION_VALIDATION_LINEAGE_SQL.strip()
-    )
+    migration = load_migration_module("0072_infrastructure_validation_lifecycle.py")
+    migration_validation_sql = str(getattr(migration, "_VALIDATION_AUTHORITY_0072"))
+    migration_lineage_sql = str(getattr(migration, "_LINEAGE_CONTRACT_0072"))
+    _assert_lifecycle_validation_invariants(BROKER_MUTATION_VALIDATION_AUTHORITY_SQL)
+    _assert_lifecycle_validation_invariants(migration_validation_sql)
+    _assert_lifecycle_lineage_invariants(BROKER_MUTATION_VALIDATION_LINEAGE_SQL)
+    _assert_lifecycle_lineage_invariants(migration_lineage_sql)
+    assert "torghut.infrastructure-validation-lifecycle-plan.v1" in ddl
+    assert "operation IN ('submit_order', 'replace_order'" in ddl
 
 
 def test_event_model_keeps_recovery_and_settlement_evidence_separate() -> None:

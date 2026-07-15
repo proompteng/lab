@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from alpaca.common.exceptions import APIError, RetryException
 from requests.exceptions import RequestException
@@ -28,8 +28,8 @@ from .broker_mutation_receipts import (
     fingerprint_broker_endpoint,
 )
 from .infrastructure_validation import (
-    InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
+    InfrastructureValidationSubmitPlan,
     authorize_infrastructure_validation_order,
     infrastructure_validation_client_order_id,
     infrastructure_validation_request_payload,
@@ -315,6 +315,32 @@ class OrderFirewall:
             )
         )
 
+    def submit_risk_reducing_order(
+        self,
+        request: AlpacaSubmitRequest,
+        *,
+        authority: RiskReductionMutationAuthority,
+    ) -> dict[str, object]:
+        """Submit a broker-observed close order even while entries are blocked."""
+
+        broker_request = alpaca_submit_request_payload(request)
+        _require_submit_request_match(authority.request_payload, broker_request)
+        normalized_symbol = str(broker_request["symbol"])
+        consume_risk_reduction_mutation_authority(
+            authority,
+            RiskReductionMutationExpectation(
+                broker_route="alpaca",
+                account_label=self.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self.broker_endpoint_url
+                ),
+                operation="submit_order",
+                risk_class="risk_reducing",
+                target_key=normalized_symbol,
+            ),
+        )
+        return self._submit_payload(broker_request, request.extra_params)
+
     def cancel_all_orders(
         self,
         *,
@@ -435,7 +461,7 @@ class OrderFirewall:
     def submit_verified_infrastructure_validation_order(
         self,
         permit: InfrastructureValidationPermit,
-        plan: InfrastructureValidationOrderPlan,
+        plan: InfrastructureValidationSubmitPlan,
         *,
         mutation_permit: BrokerMutationIoPermit,
         now: datetime | None = None,
@@ -554,6 +580,41 @@ class OrderFirewall:
 def _positive_decimal(value: object) -> Decimal | None:
     parsed = _finite_decimal(value)
     return parsed if parsed is not None and parsed > 0 else None
+
+
+def _require_submit_request_match(
+    request_payload: Mapping[str, object],
+    broker_request: Mapping[str, object],
+) -> None:
+    for key in ("symbol", "side", "order_type", "time_in_force"):
+        if (
+            str(request_payload.get(key) or "").strip().lower()
+            != str(broker_request.get(key) or "").strip().lower()
+        ):
+            raise ValueError("alpaca_risk_reducing_submit_request_mismatch")
+    if _positive_decimal(request_payload.get("qty")) != _positive_decimal(
+        broker_request.get("qty")
+    ):
+        raise ValueError("alpaca_risk_reducing_submit_request_mismatch")
+    for key in ("limit_price", "stop_price"):
+        if _finite_decimal(request_payload.get(key)) != _finite_decimal(
+            broker_request.get(key)
+        ):
+            raise ValueError("alpaca_risk_reducing_submit_request_mismatch")
+    raw_extra = request_payload.get("extra_params")
+    raw_broker_extra = broker_request.get("extra_params")
+    if not isinstance(raw_extra, Mapping) or not isinstance(raw_broker_extra, Mapping):
+        raise ValueError("alpaca_risk_reducing_submit_request_mismatch")
+    normalized_extra = {
+        str(key): value
+        for key, value in cast(Mapping[object, object], raw_extra).items()
+    }
+    normalized_broker_extra = {
+        str(key): value
+        for key, value in cast(Mapping[object, object], raw_broker_extra).items()
+    }
+    if normalized_extra != normalized_broker_extra:
+        raise ValueError("alpaca_risk_reducing_submit_request_mismatch")
 
 
 def _finite_decimal(value: object) -> Decimal | None:

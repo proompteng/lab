@@ -50,13 +50,23 @@ purpose <> 'control_plane_validation' OR COALESCE((
       > 0
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_notional_usd}')::numeric
-      <= 1
+      <= CASE
+          WHEN canonical_intent_json::jsonb #>>
+               '{request,infrastructure_validation,test_plan,schema_version}' =
+               'torghut.infrastructure-validation-lifecycle-plan.v1'
+          THEN 5 ELSE 1
+         END
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
       > 0
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
-      <= 1
+      <= CASE
+          WHEN canonical_intent_json::jsonb #>>
+               '{request,infrastructure_validation,test_plan,schema_version}' =
+               'torghut.infrastructure-validation-lifecycle-plan.v1'
+          THEN 5 ELSE 1
+         END
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
       <= (canonical_intent_json::jsonb #>>
@@ -105,8 +115,9 @@ purpose <> 'control_plane_validation' OR COALESCE((
       '{request,infrastructure_validation,expected_terminal_state,state}' =
       'no_open_orders_no_positions_no_unsettled_claims'
   AND canonical_intent_json::jsonb #>>
-      '{request,infrastructure_validation,test_plan,schema_version}' =
-      'torghut.infrastructure-validation-order-plan.v1'
+      '{request,infrastructure_validation,test_plan,schema_version}' IN (
+      'torghut.infrastructure-validation-order-plan.v1',
+      'torghut.infrastructure-validation-lifecycle-plan.v1')
   AND canonical_intent_json::jsonb #>>
       '{request,infrastructure_validation,test_plan,venue}' = 'alpaca'
   AND canonical_intent_json::jsonb #>>
@@ -168,6 +179,35 @@ purpose <> 'control_plane_validation' OR COALESCE((
       '{request,broker_request,stop_price}' = 'null'::jsonb
   AND canonical_intent_json::jsonb #>
       '{request,infrastructure_validation,test_plan,stop_price}' = 'null'::jsonb
+  AND (
+      canonical_intent_json::jsonb #>>
+          '{request,infrastructure_validation,test_plan,schema_version}' <>
+          'torghut.infrastructure-validation-lifecycle-plan.v1'
+      OR COALESCE((
+        ((canonical_intent_json::jsonb #>
+          '{request,infrastructure_validation,test_plan}') - ARRAY[
+            'schema_version', 'venue', 'asset_class', 'symbol', 'side', 'qty',
+            'order_type', 'time_in_force', 'limit_price', 'stop_price',
+            'resting_close_limit_price', 'replacement_close_limit_price',
+            'partial_close_qty'
+          ]) = '{}'::jsonb
+        AND (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric
+            > 0
+        AND (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric
+            < (canonical_intent_json::jsonb #>>
+               '{request,infrastructure_validation,test_plan,qty}')::numeric
+        AND (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,resting_close_limit_price}')::numeric
+            > (canonical_intent_json::jsonb #>>
+               '{request,infrastructure_validation,test_plan,limit_price}')::numeric
+        AND (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,replacement_close_limit_price}')::numeric
+            > (canonical_intent_json::jsonb #>>
+               '{request,infrastructure_validation,test_plan,resting_close_limit_price}')::numeric
+      ), FALSE)
+  )
 ), FALSE)
 """
 
@@ -182,8 +222,10 @@ BROKER_MUTATION_VALIDATION_LINEAGE_SQL = r"""
 OR COALESCE((
   broker_route = 'alpaca'
   AND submission_claim_id IS NULL
-  AND operation IN ('replace_order', 'cancel_order',
+  AND operation IN ('submit_order', 'replace_order', 'cancel_order',
                     'close_position', 'close_all_positions')
+  AND (operation <> 'submit_order' OR (risk_class = 'risk_reducing'
+       AND purpose = 'closeout' AND target_kind = 'order'))
   AND jsonb_typeof(canonical_intent_json::jsonb #>
       '{request,infrastructure_validation_lineage}') = 'object'
   AND (canonical_intent_json::jsonb #>

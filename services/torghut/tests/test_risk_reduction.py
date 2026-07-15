@@ -20,6 +20,7 @@ from app.trading.risk_reduction import (
     RiskReductionAuthorization,
     RiskReductionPermitError,
     RiskReductionPermitExpectation,
+    SubmitCloseOrderPlan,
     authorize_risk_reduction,
     consume_risk_reduction_permit,
     evaluate_position_reduction_recovery,
@@ -176,6 +177,46 @@ def test_replace_requires_complete_state_and_cannot_cross_position_zero() -> Non
     action = authorization.evidence_payload["action"]
     assert isinstance(action, dict)
     assert action["quantity"] == "6"
+
+
+def test_close_limit_submit_reserves_existing_reduction_quantity() -> None:
+    position = BrokerPositionObservation(
+        "BTC/USD",
+        Decimal("0.00004"),
+        Decimal("100000"),
+    )
+    plan = SubmitCloseOrderPlan(
+        PositionCloseLeg("BTC/USD", "sell", Decimal("0.00002")),
+        limit_price=Decimal("125000"),
+    )
+    authorization = authorize_risk_reduction(
+        _snapshot(positions=(position,)),
+        plan,
+        now=NOW,
+    )
+
+    assert authorization.permit.operation == "submit_order"
+    assert authorization.permit.target_key == "BTC/USD"
+    action = authorization.evidence_payload["action"]
+    assert isinstance(action, dict)
+    assert action["type"] == "submit_close_order"
+    assert action["existing_reducing_orders"] == []
+
+    reserved = _order(
+        symbol="BTC/USD",
+        side="sell",
+        quantity=Decimal("0.00003"),
+        filled_quantity=Decimal("0.00001"),
+    )
+    with pytest.raises(RiskReductionPermitError, match="cross_position_zero"):
+        authorize_risk_reduction(
+            _snapshot(orders=(reserved,), positions=(position,)),
+            SubmitCloseOrderPlan(
+                PositionCloseLeg("BTC/USD", "sell", Decimal("0.00003")),
+                limit_price=Decimal("125000"),
+            ),
+            now=NOW,
+        )
 
 
 def test_single_position_close_forbids_wrong_side_cross_zero_and_new_symbol() -> None:
