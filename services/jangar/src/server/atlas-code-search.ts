@@ -123,6 +123,7 @@ const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
 const MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 900
 const DEFAULT_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = 60_000
 const RRF_K = 60
+const EXACT_SCORE_BOOST_MIN_RANK = 0.9
 const ATLAS_QUERY_INSTRUCTION = 'Given a query, retrieve relevant source-code chunks from the repository'
 const LEXICAL_STOP_WORDS = new Set([
   'a',
@@ -525,6 +526,7 @@ export const createAtlasCodeSearchHandlers = ({
       ? null
       : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
+    const whereClause = searchWhereClause(filters)
     const contentCandidateUnion = isPathQuery
       ? sql``
       : sql`
@@ -532,7 +534,11 @@ export const createAtlasCodeSearchHandlers = ({
 
           SELECT file_chunks.id AS chunk_id
           FROM atlas.file_chunks AS file_chunks
-          WHERE file_chunks.content IS NOT NULL
+          INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+          INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+          INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+          ${whereClause}
+            AND file_chunks.content IS NOT NULL
             AND file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
         `
     const definitionPattern = buildDefinitionPattern(resolvedQuery)
@@ -540,7 +546,6 @@ export const createAtlasCodeSearchHandlers = ({
       ? sql`WHEN file_chunks.content ~ ${definitionPattern} THEN 0.98`
       : sql``
     const lexicalQuery = buildLexicalQuery(resolvedQuery)
-    const whereClause = searchWhereClause(filters)
     const semanticTimeoutMs = parsePositiveIntEnv(
       'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
       DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS,
@@ -560,8 +565,12 @@ export const createAtlasCodeSearchHandlers = ({
           FROM atlas.file_keys AS file_keys
           INNER JOIN atlas.file_versions AS file_versions ON file_versions.file_key_id = file_keys.id
           INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.file_version_id = file_versions.id
-          WHERE file_keys.path ILIKE ${containsPattern} ESCAPE '\'
-             OR file_keys.path % ${resolvedQuery}::text
+          INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+          ${whereClause}
+            AND (
+              file_keys.path ILIKE ${containsPattern} ESCAPE '\'
+              OR file_keys.path % ${resolvedQuery}::text
+            )
 
           ${contentCandidateUnion}
         )
@@ -650,8 +659,9 @@ export const createAtlasCodeSearchHandlers = ({
         entry.score += weight / (RRF_K + index + 1)
         entry.modes.add(mode)
         if (mode === 'exact') {
-          entry.exactRank = Number(row.exact_rank)
-          if (Number.isFinite(entry.exactRank)) entry.score += entry.exactRank
+          const exactRank = Number(row.exact_rank)
+          entry.exactRank = exactRank
+          if (Number.isFinite(exactRank) && exactRank >= EXACT_SCORE_BOOST_MIN_RANK) entry.score += exactRank
         }
         if (mode === 'lexical') entry.lexicalRank = Number(row.lexical_rank)
         if (mode === 'semantic') entry.semanticDistance = Number(row.semantic_distance)

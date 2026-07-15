@@ -478,6 +478,31 @@ describe('atlas store', () => {
     expect(exactSql?.sql.toLowerCase()).not.toMatch(/file_chunks\.content\s+%\s+\$/)
   })
 
+  it('pushes corpus and caller filters into every materialized exact-candidate scan', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'source search implementation',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      pathPrefix: 'services/jangar',
+      language: 'typescript',
+    })
+
+    const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
+    const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
+    expect(candidates.match(/repositories\.name =/g)).toHaveLength(2)
+    expect(candidates.match(/file_versions\.repository_ref =/g)).toHaveLength(4)
+    expect(candidates.match(/file_keys\.path like/g)).toHaveLength(2)
+    expect(candidates.match(/file_versions\.language =/g)).toHaveLength(2)
+    expect(candidates.match(/repositories\.metadata->>'indexstatus' = 'ready'/g)).toHaveLength(2)
+  })
+
   it('relaxes natural-language lexical queries by one content term', async () => {
     const { db, calls } = makeFakeDb({ selectRows: [] })
     const store = createPostgresAtlasStore({
@@ -511,7 +536,8 @@ describe('atlas store', () => {
     })
 
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
-    expect(exactSql?.sql).not.toMatch(/FROM atlas\.file_chunks AS file_chunks\s+WHERE file_chunks\.content IS NOT NULL/)
+    const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).not.toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(false)
   })
 
@@ -529,7 +555,8 @@ describe('atlas store', () => {
     })
 
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
-    expect(exactSql?.sql).toMatch(/FROM atlas\.file_chunks AS file_chunks\s+WHERE file_chunks\.content IS NOT NULL/)
+    const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(true)
   })
 
@@ -634,6 +661,27 @@ describe('atlas store', () => {
 
     expect(matches.map((match) => match.chunk.id)).toEqual(['exact-chunk', 'weak-chunk'])
     expect(matches[0]?.signals.matchedIdentifiers).toEqual(['BUMBA_ATLAS_CHUNK_INDEXING'])
+  })
+
+  it('keeps generic content substring matches on the RRF score scale', async () => {
+    const generic = makeCodeSearchRow({
+      chunk_id: 'generic-content-chunk',
+      chunk_content: 'source',
+      exact_rank: 0.75,
+      file_key_path: 'generic.ts',
+    })
+    const { db } = makeFakeDb({ exactRows: [generic], lexicalRows: [], semanticRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const matches = await store.codeSearch({ query: 'source', repository: 'proompteng/lab', limit: 1 })
+
+    expect(matches).toHaveLength(1)
+    expect(matches[0]?.signals.exactRank).toBe(0.75)
+    expect(matches[0]?.score).toBeCloseTo(3 / 61)
+    expect(matches[0]?.score).toBeLessThan(0.1)
   })
 
   it('queries only the ready current commit and requested filters', async () => {
