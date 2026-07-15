@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import datetime
+from dataclasses import replace
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
@@ -22,6 +23,7 @@ from ..trading.broker_mutation_recovery_worker import BrokerSubmitRecoveryRead
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidExecutionExchange
 from .models import OrderIntent, OrderResult, OrderSide, OrderStatus
+from .order_policy import CloidIdentity, deterministic_cloid
 from .repository import HyperliquidExecutionRepository
 
 
@@ -89,7 +91,6 @@ class HyperliquidSubmitRecoveryRoute:
             )
         try:
             normalized = _validated_hyperliquid_order(receipt, lookup.order)
-            _order_intent(receipt)
         except ValueError as exc:
             return BrokerSubmitRecoveryRead(
                 outcome="indeterminate",
@@ -136,7 +137,11 @@ class HyperliquidSubmitRecoveryRoute:
     ) -> BrokerMutationSettlement:
         if read.broker_order is None:
             raise ValueError("hyperliquid_recovery_found_order_required")
-        intent = _order_intent(receipt)
+        intent = _order_intent(
+            session,
+            receipt,
+            order_ttl_seconds=self._config.order_ttl_seconds,
+        )
         result = _order_result(receipt, read.broker_order)
         HyperliquidExecutionRepository(session).insert_order(intent, result)
         rejected = result.status == "rejected"
@@ -168,10 +173,19 @@ class HyperliquidSubmitRecoveryRoute:
         }
 
 
-def _order_intent(receipt: BrokerMutationReceiptSnapshot) -> OrderIntent:
+def _order_intent(
+    session: Session,
+    receipt: BrokerMutationReceiptSnapshot,
+    *,
+    order_ttl_seconds: int,
+) -> OrderIntent:
     request = _request_payload(receipt)
-    signal_id = _required_text(request.get("signal_id"), "signal_id")
-    expires_at = _datetime(request.get("expires_at"), "expires_at")
+    signal_id, expires_at = _order_metadata(
+        session,
+        receipt,
+        request,
+        order_ttl_seconds=order_ttl_seconds,
+    )
     return OrderIntent(
         market_id=_required_text(request.get("market_id"), "market_id"),
         coin=_required_text(request.get("coin"), "coin"),
@@ -186,6 +200,93 @@ def _order_intent(receipt: BrokerMutationReceiptSnapshot) -> OrderIntent:
         signal_id=signal_id,
         expires_at=expires_at,
     )
+
+
+def _order_metadata(
+    session: Session,
+    receipt: BrokerMutationReceiptSnapshot,
+    request: Mapping[str, object],
+    *,
+    order_ttl_seconds: int,
+) -> tuple[str, datetime]:
+    raw_signal_id = request.get("signal_id")
+    raw_expires_at = request.get("expires_at")
+    if raw_signal_id is not None and raw_expires_at is not None:
+        return (
+            _required_text(raw_signal_id, "signal_id"),
+            _datetime(raw_expires_at, "expires_at"),
+        )
+    if raw_signal_id is not None or raw_expires_at is not None:
+        raise ValueError("hyperliquid_recovery_order_metadata_incomplete")
+    return _legacy_order_metadata(
+        session,
+        receipt,
+        request,
+        order_ttl_seconds=order_ttl_seconds,
+    )
+
+
+def _legacy_order_metadata(
+    session: Session,
+    receipt: BrokerMutationReceiptSnapshot,
+    request: Mapping[str, object],
+    *,
+    order_ttl_seconds: int,
+) -> tuple[str, datetime]:
+    identity = CloidIdentity(
+        market_id=_required_text(request.get("market_id"), "market_id"),
+        side=_side(request.get("side")),
+        source_event_ts=receipt.created_at,
+        size=_decimal(request.get("size"), "size"),
+        limit_price=_decimal(request.get("limit_price"), "limit_price"),
+        tif=_required_text(request.get("tif"), "tif"),
+        reduce_only=bool(request.get("reduce_only")),
+    )
+    rows = session.execute(
+        text(
+            """
+            SELECT id::text AS signal_id, generated_at, feature_event_ts
+            FROM hyperliquid_execution_signals
+            WHERE market_data_network = 'mainnet'
+              AND execution_network = 'testnet'
+              AND market_id = :market_id
+              AND coin = :coin
+              AND action = :action
+              AND generated_at <= :receipt_created_at + interval '5 seconds'
+            ORDER BY generated_at DESC
+            LIMIT 100
+            """
+        ),
+        {
+            "market_id": identity.market_id,
+            "coin": _required_text(request.get("coin"), "coin"),
+            "action": identity.side,
+            "receipt_created_at": receipt.created_at,
+        },
+    ).mappings()
+    matches: list[tuple[str, datetime]] = []
+    for row in rows:
+        generated_at = _datetime(row["generated_at"], "signal_generated_at")
+        candidate = deterministic_cloid(
+            replace(
+                identity,
+                source_event_ts=_datetime(
+                    row["feature_event_ts"],
+                    "signal_feature_event_ts",
+                ),
+            )
+        )
+        if candidate == receipt.intent.client_request_id:
+            matches.append(
+                (
+                    _required_text(row["signal_id"], "signal_id"),
+                    generated_at + timedelta(seconds=order_ttl_seconds),
+                )
+            )
+    if len(matches) != 1:
+        reason = "not_found" if not matches else "ambiguous"
+        raise ValueError(f"hyperliquid_recovery_legacy_signal_{reason}")
+    return matches[0]
 
 
 def _order_result(

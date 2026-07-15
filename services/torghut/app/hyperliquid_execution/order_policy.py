@@ -15,7 +15,9 @@ _PRICE_QUANTUM = Decimal("0.000001")
 
 
 @dataclass(frozen=True, slots=True)
-class _CloidIdentity:
+class CloidIdentity:
+    """Immutable fields that uniquely identify one Hyperliquid order request."""
+
     market_id: str
     side: str
     source_event_ts: datetime
@@ -61,7 +63,7 @@ def build_order_intent(
         limit_price=price,
         notional_usd=notional,
         cloid=deterministic_cloid(
-            _CloidIdentity(
+            CloidIdentity(
                 market_id=signal.market_id,
                 side=side,
                 source_event_ts=signal.feature.event_ts,
@@ -79,7 +81,7 @@ def build_order_intent(
 
 
 def deterministic_cloid(
-    identity: _CloidIdentity,
+    identity: CloidIdentity,
 ) -> str:
     """Bind a 128-bit CLOID to immutable source and exact broker economics."""
 

@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+import json
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.hyperliquid_execution import submit_recovery
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import (
     HyperliquidExecutionExchange,
     HyperliquidOrderRecoveryLookup,
 )
+from app.hyperliquid_execution.models import OrderIntent, OrderResult
+from app.hyperliquid_execution.order_policy import CloidIdentity, deterministic_cloid
 from app.hyperliquid_execution.submit_recovery import HyperliquidSubmitRecoveryRoute
 from app.models import Base
 from app.trading.broker_mutation_receipts import (
@@ -60,8 +66,33 @@ def _sessions(database_path: Path) -> sessionmaker[Session]:
     )
 
 
-def _receipt(sessions: sessionmaker[Session]) -> BrokerMutationReceiptSnapshot:
+def _receipt(
+    sessions: sessionmaker[Session],
+    *,
+    cloid: str = _CLOID,
+    include_order_metadata: bool = True,
+) -> BrokerMutationReceiptSnapshot:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    request_payload: dict[str, object] = {
+        "market_id": "hl:perp:BTC",
+        "coin": "BTC",
+        "dex": "",
+        "side": "buy",
+        "size": Decimal("1"),
+        "limit_price": Decimal("100"),
+        "notional_usd": Decimal("100"),
+        "cloid": cloid,
+        "tif": "Ioc",
+        "reduce_only": False,
+        "slippage": Decimal("0"),
+    }
+    if include_order_metadata:
+        request_payload.update(
+            {
+                "signal_id": "signal-1",
+                "expires_at": expires_at.isoformat(),
+            }
+        )
     intent = build_broker_mutation_intent(
         BrokerMutationIntentRequest(
             broker_route="hyperliquid",
@@ -70,24 +101,10 @@ def _receipt(sessions: sessionmaker[Session]) -> BrokerMutationReceiptSnapshot:
             operation="submit_order",
             risk_class="risk_increasing",
             purpose="initial_submission",
-            workflow_id="signal/signal-1",
-            client_request_id=_CLOID,
-            target=BrokerMutationTarget(kind="order", key=_CLOID),
-            request_payload={
-                "market_id": "hl:perp:BTC",
-                "coin": "BTC",
-                "dex": "",
-                "side": "buy",
-                "size": Decimal("1"),
-                "limit_price": Decimal("100"),
-                "notional_usd": Decimal("100"),
-                "cloid": _CLOID,
-                "tif": "Ioc",
-                "reduce_only": False,
-                "slippage": Decimal("0"),
-                "signal_id": "signal-1",
-                "expires_at": expires_at.isoformat(),
-            },
+            workflow_id=f"hyperliquid-submit/{cloid}",
+            client_request_id=cloid,
+            target=BrokerMutationTarget(kind="order", key=cloid),
+            request_payload=request_payload,
         )
     )
     with sessions() as session:
@@ -116,6 +133,7 @@ def _order(
     status: str,
     oid: int | None = 123,
     coin: str = "BTC",
+    cloid: str = _CLOID,
 ) -> dict[str, object]:
     order: dict[str, object] = {
         "coin": coin,
@@ -124,7 +142,7 @@ def _order(
         "sz": "0",
         "origSz": "1",
         "tif": "Ioc",
-        "cloid": _CLOID,
+        "cloid": cloid,
     }
     if oid is not None:
         order["oid"] = oid
@@ -329,3 +347,81 @@ def test_partial_fill_proves_submission_without_claiming_terminal_fill(
     assert read.evidence["broker_status"] == "accepted"
     assert read.broker_order is not None
     assert read.broker_order["sz"] == "0.25"
+
+
+def test_legacy_receipt_recovers_signal_metadata_without_resubmission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = _sessions(tmp_path / "legacy-receipt.sqlite")
+    generated_at = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    feature_event_ts = generated_at - timedelta(seconds=1)
+    cloid = deterministic_cloid(
+        CloidIdentity(
+            market_id="hl:perp:BTC",
+            side="buy",
+            source_event_ts=feature_event_ts,
+            size=Decimal("1"),
+            limit_price=Decimal("100"),
+            tif="Ioc",
+            reduce_only=False,
+        )
+    )
+    receipt = _receipt(
+        sessions,
+        cloid=cloid,
+        include_order_metadata=False,
+    )
+    legacy_document = json.loads(receipt.intent.canonical_intent_json)
+    assert "signal_id" not in legacy_document["request"]
+    assert "expires_at" not in legacy_document["request"]
+    receipt = replace(
+        receipt,
+        created_at=generated_at + timedelta(seconds=1),
+    )
+    route, exchange = _route(
+        HyperliquidOrderRecoveryLookup(
+            outcome="found",
+            evidence={"exact_order_status": "found"},
+            order=_order(status="open", cloid=cloid),
+        )
+    )
+    observed_at = generated_at + timedelta(minutes=5)
+
+    read = route.observe(receipt, observed_at=observed_at)
+
+    assert read.outcome == "found"
+    assert len(exchange.calls) == 1
+
+    signal_id = str(uuid.uuid4())
+    session = Mock(spec=Session)
+    rows = Mock()
+    rows.mappings.return_value = [
+        {
+            "signal_id": signal_id,
+            "generated_at": generated_at,
+            "feature_event_ts": feature_event_ts,
+        }
+    ]
+    session.execute.return_value = rows
+    persisted: list[tuple[OrderIntent, OrderResult]] = []
+
+    class _Repository:
+        def __init__(self, repository_session: Session) -> None:
+            assert repository_session is session
+
+        def insert_order(self, intent: OrderIntent, result: OrderResult) -> str:
+            persisted.append((intent, result))
+            return "order-row"
+
+    monkeypatch.setattr(submit_recovery, "HyperliquidExecutionRepository", _Repository)
+
+    settlement = route.build_found_settlement(session, receipt, read)
+
+    assert settlement.outcome == "reconciled"
+    assert len(persisted) == 1
+    recovered_intent, recovered_result = persisted[0]
+    assert recovered_intent.signal_id == signal_id
+    assert recovered_intent.expires_at == generated_at + timedelta(seconds=10)
+    assert recovered_intent.cloid == cloid
+    assert recovered_result.status == "accepted"
