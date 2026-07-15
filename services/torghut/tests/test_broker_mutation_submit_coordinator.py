@@ -63,11 +63,14 @@ class _CloseoutBroker:
         self.submit_calls = 0
         self.position_calls = 0
         self.position_error: Exception | None = None
+        self.position_snapshots: list[list[dict[str, object]]] = []
 
     def list_positions(self) -> list[dict[str, object]]:
         self.position_calls += 1
         if self.position_error is not None:
             raise self.position_error
+        if self.position_snapshots:
+            return self.position_snapshots.pop(0)
         return [{"symbol": "AAPL", "qty": "1"}]
 
     def submit_order(self, **_kwargs: object) -> dict[str, object]:
@@ -262,7 +265,7 @@ def test_alpaca_closeout_submit_is_receipted_and_deduplicated(
 
     assert result["id"] == "closeout-order-1"
     assert broker.submit_calls == 1
-    assert broker.position_calls == 1
+    assert broker.position_calls == 2
     with sessions() as session:
         receipt = session.execute(select(BrokerMutationReceipt)).scalar_one()
         latest = session.execute(
@@ -314,6 +317,46 @@ def test_alpaca_closeout_position_failure_releases_before_broker_io(
     assert broker.submit_calls == 0
     assert broker.position_calls == 1
     assert _states(sessions) == (None, "released", 0)
+
+
+def test_alpaca_closeout_revalidates_position_at_submit_boundary(
+    sessions: sessionmaker[Session],
+) -> None:
+    broker = _CloseoutBroker()
+    broker.position_snapshots = [
+        [{"symbol": "AAPL", "qty": "1"}],
+        [],
+    ]
+    adapter = AlpacaExecutionAdapter(
+        firewall=OrderFirewall(broker, account_label="paper"),
+        read_client=cast(TorghutAlpacaClient, broker),
+        session_factory=sessions,
+        account_label="paper",
+        endpoint_url=broker.endpoint_url,
+    )
+    submission = OrderSubmission(
+        symbol="AAPL",
+        side="sell",
+        qty=1.0,
+        order_type="limit",
+        time_in_force="day",
+        limit_price=100.0,
+        stop_price=None,
+        extra_params={"client_order_id": "torghut-closeout-position-race"},
+    )
+
+    with (
+        patch.object(settings, "trading_kill_switch_enabled", False),
+        pytest.raises(
+            BrokerMutationSubmissionUnresolved,
+            match="OrderFirewallRiskReductionBlocked",
+        ),
+    ):
+        adapter.submit_risk_reducing_order(submission)
+
+    assert broker.position_calls == 2
+    assert broker.submit_calls == 0
+    assert _states(sessions) == (None, "broker_io", 0)
 
 
 def test_invalid_intent_fails_before_claim_or_broker_call(
