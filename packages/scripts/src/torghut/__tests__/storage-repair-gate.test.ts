@@ -183,8 +183,24 @@ const healthySnapshot = (): StorageRepairSnapshot => ({
     },
   },
   workloads: [
-    { name: 'torghut-options-archive', desiredReplicas: 0, readyReplicas: 0 },
-    { name: 'torghut-hyperliquid-clickhouse-writer', desiredReplicas: 0, readyReplicas: 0 },
+    {
+      name: 'torghut-options-archive',
+      desiredReplicas: 0,
+      actualReplicas: 0,
+      readyReplicas: 0,
+      availableReplicas: 0,
+      terminatingReplicas: 0,
+      podNames: [],
+    },
+    {
+      name: 'torghut-hyperliquid-clickhouse-writer',
+      desiredReplicas: 0,
+      actualReplicas: 0,
+      readyReplicas: 0,
+      availableReplicas: 0,
+      terminatingReplicas: 0,
+      podNames: [],
+    },
   ],
   argoApplications: [
     { name: 'kafka', sync: 'Synced', health: 'Healthy' },
@@ -366,6 +382,70 @@ describe('Torghut storage repair gate', () => {
     expect(result.failures.join('\n')).toContain('at least 30 seconds is required')
     expect(result.failures.join('\n')).toContain('torghut-options-archive must remain contained')
     expect(result.failures.join('\n')).toContain('rook-ceph is sync=Synced health=Degraded')
+  })
+
+  it('fails containment while any unready or terminating workload pod still exists', () => {
+    const snapshot = healthySnapshot()
+    snapshot.workloads[0].actualReplicas = 1
+    snapshot.workloads[0].terminatingReplicas = 1
+    snapshot.workloads[0].podNames = ['torghut-options-archive-7d9f8f6f65-abcde']
+
+    const result = evaluateStorageRepairGate(snapshot)
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('observed desired=0 actual=1 ready=0 available=0 terminating=1')
+    expect(result.failures.join('\n')).toContain('pods=[torghut-options-archive-7d9f8f6f65-abcde]')
+  })
+
+  it('records the evidence cutoff after bounded samples and before Talos and Kafka tail collection', async () => {
+    const source = healthySnapshot()
+    const events: string[] = []
+    const collected = await __private.collectStorageRepairSnapshotWith(repairStartedAt, source.talos.node, {
+      now: () => {
+        events.push('cutoff')
+        return new Date(capturedAt)
+      },
+      ceph: async () => {
+        events.push('ceph')
+        return source.ceph
+      },
+      smartDevices: async () => {
+        events.push('smart')
+        return source.smartDevices
+      },
+      postgres: async () => {
+        await Promise.resolve()
+        events.push('postgres-complete')
+        return source.postgres
+      },
+      runtime: async () => {
+        events.push('runtime')
+        return source.runtime
+      },
+      workloads: async () => {
+        events.push('workloads')
+        return source.workloads
+      },
+      argoApplications: async () => {
+        events.push('argo')
+        return source.argoApplications
+      },
+      talos: async () => {
+        events.push('talos-tail')
+        return source.talos
+      },
+      kafka: async () => {
+        events.push('kafka-tail')
+        return source.kafka
+      },
+    })
+
+    expect(collected.capturedAt).toBe(capturedAt)
+    expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('postgres-complete'))
+    expect(events.indexOf('ceph')).toBeGreaterThan(events.indexOf('cutoff'))
+    expect(events.indexOf('workloads')).toBeGreaterThan(events.indexOf('cutoff'))
+    expect(events.indexOf('talos-tail')).toBeGreaterThan(events.indexOf('cutoff'))
+    expect(events.indexOf('kafka-tail')).toBeGreaterThan(events.indexOf('cutoff'))
   })
 
   it('fails closed when feed, scheduler, or current Knative revision readiness regresses', () => {

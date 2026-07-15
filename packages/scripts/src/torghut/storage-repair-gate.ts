@@ -60,7 +60,11 @@ type ArgoApplicationEvidence = {
 type WorkloadEvidence = {
   name: string
   desiredReplicas: number
+  actualReplicas: number
   readyReplicas: number
+  availableReplicas: number
+  terminatingReplicas: number
+  podNames: string[]
 }
 
 type SmartDeviceEvidence = {
@@ -348,6 +352,17 @@ const validateSnapshotShape = (snapshot: StorageRepairSnapshot) => {
   requireString(knative.apiStatus, 'snapshot.runtime.knativeService.apiStatus')
   requireString(knative.apiProcessRole, 'snapshot.runtime.knativeService.apiProcessRole')
   requireString(knative.runtimeOwner, 'snapshot.runtime.knativeService.runtimeOwner')
+  for (const [index, workload] of snapshot.workloads.entries()) {
+    requireString(workload.name, `snapshot.workloads[${index}].name`)
+    requireNumber(workload.desiredReplicas, `snapshot.workloads[${index}].desiredReplicas`)
+    requireNumber(workload.actualReplicas, `snapshot.workloads[${index}].actualReplicas`)
+    requireNumber(workload.readyReplicas, `snapshot.workloads[${index}].readyReplicas`)
+    requireNumber(workload.availableReplicas, `snapshot.workloads[${index}].availableReplicas`)
+    requireNumber(workload.terminatingReplicas, `snapshot.workloads[${index}].terminatingReplicas`)
+    for (const [podIndex, podName] of workload.podNames.entries()) {
+      requireString(podName, `snapshot.workloads[${index}].podNames[${podIndex}]`)
+    }
+  }
 }
 
 export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): StorageRepairGateResult => {
@@ -634,9 +649,16 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
       failures.push(`containment workload evidence is missing for ${expectedWorkload}`)
       continue
     }
-    if (workload.desiredReplicas !== 0 || workload.readyReplicas !== 0) {
+    const isContained =
+      workload.desiredReplicas === 0 &&
+      workload.actualReplicas === 0 &&
+      workload.readyReplicas === 0 &&
+      workload.availableReplicas === 0 &&
+      workload.terminatingReplicas === 0 &&
+      workload.podNames.length === 0
+    if (!isContained) {
       failures.push(
-        `${expectedWorkload} must remain contained at desired=0 ready=0; observed desired=${workload.desiredReplicas} ready=${workload.readyReplicas}`,
+        `${expectedWorkload} must remain contained at desired=0 actual=0 ready=0 available=0 terminating=0 pods=[]; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} pods=[${workload.podNames.join(', ')}]`,
       )
     }
   }
@@ -1149,32 +1171,73 @@ const collectRuntimeEvidence = async (): Promise<RuntimeEvidence> => {
 }
 
 const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
-  const deploymentsValue = await kubectlJson(
-    [
-      '-n',
-      'torghut',
-      'get',
-      'deployment',
-      'torghut-options-archive',
-      'torghut-hyperliquid-clickhouse-writer',
-      '-o',
-      'json',
-    ],
-    'contained Torghut deployments',
-  )
+  const [deploymentsValue, podsValue] = await Promise.all([
+    kubectlJson(
+      [
+        '-n',
+        'torghut',
+        'get',
+        'deployment',
+        'torghut-options-archive',
+        'torghut-hyperliquid-clickhouse-writer',
+        '-o',
+        'json',
+      ],
+      'contained Torghut deployments',
+    ),
+    kubectlJson(['-n', 'torghut', 'get', 'pods', '-o', 'json'], 'Torghut pods for containment proof'),
+  ])
+  const pods = requireArray(requireObject(podsValue, 'Torghut pods').items, 'pods.items').map((value, index) => {
+    const pod = requireObject(value, `contained pod ${index}`)
+    const metadata = requireObject(pod.metadata, `contained pod ${index}.metadata`)
+    const labels = isObject(metadata.labels) ? metadata.labels : {}
+    return {
+      labels: Object.fromEntries(
+        Object.entries(labels).flatMap(([key, labelValue]) =>
+          typeof labelValue === 'string' ? [[key, labelValue]] : [],
+        ),
+      ),
+      name: requireString(metadata.name, `contained pod ${index}.metadata.name`),
+      terminating: metadata.deletionTimestamp !== undefined,
+    }
+  })
   return requireArray(requireObject(deploymentsValue, 'contained Torghut deployments').items, 'deployments.items').map(
     (value, index) => {
       const deployment = requireObject(value, `contained deployment ${index}`)
       const metadata = requireObject(deployment.metadata, `contained deployment ${index}.metadata`)
       const spec = requireObject(deployment.spec, `contained deployment ${index}.spec`)
       const status = isObject(deployment.status) ? deployment.status : {}
+      const name = requireString(metadata.name, `contained deployment ${index}.metadata.name`)
+      const selector = requireObject(spec.selector, `contained deployment ${index}.spec.selector`)
+      const matchLabels = requireObject(selector.matchLabels, `contained deployment ${index}.spec.selector.matchLabels`)
+      const selectorLabels = Object.entries(matchLabels).map(([key, labelValue]) => [
+        key,
+        requireString(labelValue, `contained deployment ${index}.spec.selector.matchLabels.${key}`),
+      ])
+      if (selectorLabels.length === 0) throw new Error(`contained deployment ${name} has no matchLabels selector`)
+      const workloadPods = pods.filter(({ labels }) => selectorLabels.every(([key, value]) => labels[key] === value))
+      const statusTerminatingReplicas =
+        status.terminatingReplicas === undefined
+          ? 0
+          : requireNumber(status.terminatingReplicas, `deployment ${index}.terminatingReplicas`)
       return {
-        name: requireString(metadata.name, `contained deployment ${index}.metadata.name`),
+        name,
         desiredReplicas: requireNumber(spec.replicas, `contained deployment ${index}.spec.replicas`),
+        actualReplicas:
+          status.replicas === undefined ? 0 : requireNumber(status.replicas, `deployment ${index}.replicas`),
         readyReplicas:
           status.readyReplicas === undefined
             ? 0
             : requireNumber(status.readyReplicas, `deployment ${index}.readyReplicas`),
+        availableReplicas:
+          status.availableReplicas === undefined
+            ? 0
+            : requireNumber(status.availableReplicas, `deployment ${index}.availableReplicas`),
+        terminatingReplicas: Math.max(
+          statusTerminatingReplicas,
+          workloadPods.filter(({ terminating }) => terminating).length,
+        ),
+        podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
       }
     },
   )
@@ -1206,24 +1269,48 @@ const collectArgoEvidence = async (): Promise<ArgoApplicationEvidence[]> => {
   )
 }
 
-export const collectStorageRepairSnapshot = async (
-  repairStartedAt: string,
-  talosNode = DEFAULT_TALOS_NODE,
-): Promise<StorageRepairSnapshot> => {
-  parseTimestamp(repairStartedAt, '--repair-start')
-  ensureCli('kubectl')
-  ensureCli('talosctl')
-  const capturedAt = new Date().toISOString()
+type SnapshotCollectors = {
+  now: () => Date
+  talos: typeof collectTalosEvidence
+  ceph: typeof collectCephEvidence
+  smartDevices: typeof collectSmartDeviceEvidence
+  kafka: typeof collectKafkaEvidence
+  postgres: typeof collectPostgresEvidence
+  runtime: typeof collectRuntimeEvidence
+  workloads: typeof collectWorkloadEvidence
+  argoApplications: typeof collectArgoEvidence
+}
 
-  const [talos, ceph, smartDevices, kafka, postgres, runtime, workloads, argoApplications] = await Promise.all([
-    collectTalosEvidence(repairStartedAt, talosNode),
-    collectCephEvidence(),
-    collectSmartDeviceEvidence(),
-    collectKafkaEvidence(repairStartedAt),
-    collectPostgresEvidence(),
-    collectRuntimeEvidence(),
-    collectWorkloadEvidence(),
-    collectArgoEvidence(),
+const defaultSnapshotCollectors: SnapshotCollectors = {
+  now: () => new Date(),
+  talos: collectTalosEvidence,
+  ceph: collectCephEvidence,
+  smartDevices: collectSmartDeviceEvidence,
+  kafka: collectKafkaEvidence,
+  postgres: collectPostgresEvidence,
+  runtime: collectRuntimeEvidence,
+  workloads: collectWorkloadEvidence,
+  argoApplications: collectArgoEvidence,
+}
+
+const collectStorageRepairSnapshotWith = async (
+  repairStartedAt: string,
+  talosNode: string,
+  collectors: SnapshotCollectors,
+): Promise<StorageRepairSnapshot> => {
+  const postgres = await collectors.postgres()
+
+  // End the claimed observation window only after the slow bounded WAL sample finishes. History collectors then read
+  // through this cutoff, while every point-in-time state collector runs at or after it, eliminating a collection tail.
+  const capturedAt = collectors.now().toISOString()
+  const [talos, ceph, smartDevices, kafka, runtime, workloads, argoApplications] = await Promise.all([
+    collectors.talos(repairStartedAt, talosNode),
+    collectors.ceph(),
+    collectors.smartDevices(),
+    collectors.kafka(repairStartedAt),
+    collectors.runtime(),
+    collectors.workloads(),
+    collectors.argoApplications(),
   ])
   return {
     schemaVersion: GATE_SCHEMA_VERSION,
@@ -1238,6 +1325,16 @@ export const collectStorageRepairSnapshot = async (
     workloads,
     argoApplications,
   }
+}
+
+export const collectStorageRepairSnapshot = async (
+  repairStartedAt: string,
+  talosNode = DEFAULT_TALOS_NODE,
+): Promise<StorageRepairSnapshot> => {
+  parseTimestamp(repairStartedAt, '--repair-start')
+  ensureCli('kubectl')
+  ensureCli('talosctl')
+  return collectStorageRepairSnapshotWith(repairStartedAt, talosNode, defaultSnapshotCollectors)
 }
 
 const parseArgs = (argv: string[]): CliOptions => {
@@ -1321,6 +1418,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  collectStorageRepairSnapshotWith,
   controllerEventDurationMs,
   kafkaFailureClass,
   parseKubernetesLogLine,
