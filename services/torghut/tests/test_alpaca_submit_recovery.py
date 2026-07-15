@@ -13,7 +13,11 @@ from alpaca.trading.enums import OrderStatus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.alpaca_client import AlpacaRecoveryOrderHistoryPage, TorghutAlpacaClient
+from app.alpaca_client import (
+    AlpacaRecoveryOrderHistoryPage,
+    AlpacaStrictOrderLookupMalformedError,
+    TorghutAlpacaClient,
+)
 from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
 from app.trading.alpaca_submit_recovery import AlpacaSubmitRecoveryRoute
 from app.trading.broker_mutation_receipts import (
@@ -70,6 +74,20 @@ class _RecoveryClient:
             limit=limit,
             after=after,
             until=until,
+        )
+
+
+class _MalformedExactLookupClient(_RecoveryClient):
+    def __init__(self) -> None:
+        super().__init__(exact=None)
+
+    def get_order_by_client_order_id_strict(
+        self,
+        client_order_id: str,
+    ) -> dict[str, object] | None:
+        self.exact_calls.append(client_order_id)
+        raise AlpacaStrictOrderLookupMalformedError(
+            "alpaca_strict_order_lookup_missing_payload"
         )
 
 
@@ -253,6 +271,24 @@ def test_history_match_recovers_after_exact_lookup_miss(tmp_path: Path) -> None:
     assert after == receipt.lifecycle.broker_io_started_at - timedelta(minutes=5)
     assert until == observed_at
     assert limit == 500
+
+
+def test_malformed_exact_lookup_is_indeterminate_and_retryable(tmp_path: Path) -> None:
+    sessions = _sessions(tmp_path / "malformed-exact.sqlite")
+    receipt = _receipt(sessions)
+    client = _MalformedExactLookupClient()
+
+    read = _route(client).observe(
+        receipt,
+        observed_at=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+
+    assert read.outcome == "indeterminate"
+    assert read.evidence["reason"] == "exact_client_order_lookup_malformed"
+    assert read.evidence["exact_client_order_lookup"] == "malformed"
+    assert read.evidence["absence_proof_complete"] is False
+    assert client.exact_calls == [_CLIENT_ORDER_ID]
+    assert client.history_calls == []
 
 
 def test_conflicting_history_ids_are_indeterminate(tmp_path: Path) -> None:

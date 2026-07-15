@@ -14,7 +14,10 @@ from requests.exceptions import RequestException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..alpaca_client import TorghutAlpacaClient
+from ..alpaca_client import (
+    AlpacaStrictOrderLookupMalformedError,
+    TorghutAlpacaClient,
+)
 from ..models import Execution, ExecutionOrderEvent
 from .broker_mutation_receipts import (
     BrokerMutationLinkedSubmissionSettlementRequest,
@@ -99,6 +102,16 @@ class AlpacaSubmitRecoveryRoute:
     ) -> BrokerSubmitRecoveryRead:
         try:
             return self._observe(receipt, observed_at=observed_at)
+        except AlpacaStrictOrderLookupMalformedError:
+            return self._indeterminate_read(
+                evidence=self._evidence(
+                    exact_lookup="malformed",
+                    history_count=0,
+                    history_complete=False,
+                    match_count=0,
+                ),
+                reason="exact_client_order_lookup_malformed",
+            )
         except (
             APIError,
             RetryException,
