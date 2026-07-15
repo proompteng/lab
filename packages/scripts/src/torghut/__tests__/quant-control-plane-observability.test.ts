@@ -18,6 +18,7 @@ describe('Torghut quant control-plane alerts', () => {
     expect(stalledAlert).toContain('torghut_trading_strategy_events_total')
     expect(stalledAlert).toContain('torghut_trading_rejected_signal_reason_total')
     expect(stalledAlert).toContain('reason=~"missing_executable_quote|spread_bps_exceeded"')
+    expect(stalledAlert.match(/or vector\(0\)/g)).toHaveLength(3)
   })
 
   it('alerts on sustained executable quote coverage failures without weakening safety gates', () => {
