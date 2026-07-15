@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from app.trading.infrastructure_validation_submit import (
     _WorkerResult,
     _race_validation_submissions,
     _require_known_null_terminal_order,
+    _require_submission_validity_window,
 )
 
 
@@ -23,6 +25,26 @@ def _new_race_state() -> _SubmissionRaceState:
         contender_resolved=threading.Event(),
         contender_fenced=threading.Event(),
         call_counter=_BrokerCallCounter(),
+    )
+
+
+def test_submission_window_cannot_reach_permit_expiry() -> None:
+    evaluated_at = datetime(2026, 7, 14, tzinfo=timezone.utc)
+
+    with pytest.raises(
+        ValueError,
+        match="infrastructure_validation_permit_window_too_short",
+    ):
+        _require_submission_validity_window(
+            expires_at=evaluated_at + timedelta(seconds=10),
+            evaluated_at=evaluated_at,
+            timeout_seconds=10,
+        )
+
+    _require_submission_validity_window(
+        expires_at=evaluated_at + timedelta(seconds=10, microseconds=1),
+        evaluated_at=evaluated_at,
+        timeout_seconds=10,
     )
 
 

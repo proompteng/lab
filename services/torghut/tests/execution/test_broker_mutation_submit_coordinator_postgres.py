@@ -18,6 +18,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+import app.trading.broker_mutation_submit_coordinator as submit_coordinator_module
+import app.trading.firewall as firewall_module
+import app.trading.infrastructure_validation_submit as validation_submit_module
 from app.config import settings
 from app.models import (
     BrokerMutationReceipt,
@@ -51,6 +54,7 @@ from app.trading.broker_mutation_submit_coordinator import (
 from app.trading.infrastructure_validation import (
     InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
+    authorize_infrastructure_validation_order,
     infrastructure_validation_client_order_id,
     infrastructure_validation_order_plan_sha256,
     infrastructure_validation_request_payload,
@@ -670,7 +674,36 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
     now = datetime.now(timezone.utc)
     permit, plan = _validation_fixture(now, permit_id="ivp-runner-one")
     client = _FakeValidationAlpacaClient()
+    observed_authorization_times: list[datetime] = []
+
+    def recording_authorize(
+        permit_to_authorize: InfrastructureValidationPermit,
+        plan_to_authorize: InfrastructureValidationOrderPlan,
+        *,
+        account_label: str,
+        broker_base_url: str,
+        now: datetime,
+    ) -> InfrastructureValidationPermit:
+        observed_authorization_times.append(now)
+        return authorize_infrastructure_validation_order(
+            permit_to_authorize,
+            plan_to_authorize,
+            account_label=account_label,
+            broker_base_url=broker_base_url,
+            now=now,
+        )
+
     try:
+        for module in (
+            validation_submit_module,
+            submit_coordinator_module,
+            firewall_module,
+        ):
+            monkeypatch.setattr(
+                module,
+                "authorize_infrastructure_validation_order",
+                recording_authorize,
+            )
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         monkeypatch.setattr(settings, "trading_kill_switch_enabled", False)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
@@ -721,6 +754,7 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
         assert report.evidence_tag == "non_promotable_validation"
         assert report.promotable is False
         assert len(client.submissions) == 1
+        assert observed_authorization_times == [now] * 6
     finally:
         drop_schema(schema, admin_engine, schema_engine)
 

@@ -9,8 +9,8 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from multiprocessing import TimeoutError as MultiprocessingTimeoutError
 from multiprocessing.pool import ThreadPool
@@ -144,6 +144,7 @@ class _BrokerCallCounter:
 class _ValidationPreflight:
     account_label: str
     broker_account_number: str
+    evaluated_at: datetime
     position_count: int
     open_order_count: int
     firewall: OrderFirewall
@@ -230,6 +231,12 @@ def run_infrastructure_validation_submit(
         account_label,
         evaluated_at,
     )
+    preflight = _authorize_submission_window(
+        permit,
+        plan,
+        preflight,
+        context,
+    )
     race = _run_submission_race(permit, plan, preflight, context)
     client_order_id = infrastructure_validation_client_order_id(permit, plan)
     terminal = _collect_terminal_proof(
@@ -298,11 +305,44 @@ def _prepare_validation_preflight(
     return _ValidationPreflight(
         account_label=account_label,
         broker_account_number=broker_account_number,
+        evaluated_at=evaluated_at,
         position_count=len(positions),
         open_order_count=len(open_orders),
         firewall=firewall,
         request=request,
     )
+
+
+def _authorize_submission_window(
+    permit: InfrastructureValidationPermit,
+    plan: InfrastructureValidationOrderPlan,
+    preflight: _ValidationPreflight,
+    context: InfrastructureValidationSubmitContext,
+) -> _ValidationPreflight:
+    evaluated_at = context.evaluated_at or datetime.now(timezone.utc)
+    authorize_infrastructure_validation_order(
+        permit,
+        plan,
+        account_label=preflight.account_label,
+        broker_base_url=context.client.endpoint_url,
+        now=evaluated_at,
+    )
+    _require_submission_validity_window(
+        expires_at=permit.expires_at,
+        evaluated_at=evaluated_at,
+        timeout_seconds=context.race_timeout_seconds,
+    )
+    return replace(preflight, evaluated_at=evaluated_at)
+
+
+def _require_submission_validity_window(
+    *,
+    expires_at: datetime,
+    evaluated_at: datetime,
+    timeout_seconds: float,
+) -> None:
+    if expires_at <= evaluated_at + timedelta(seconds=timeout_seconds):
+        raise ValueError("infrastructure_validation_permit_window_too_short")
 
 
 def _run_submission_race(
@@ -331,6 +371,7 @@ def _run_submission_race(
             session_factory=context.session_factory,
             request=preflight.request,
             callbacks=callbacks,
+            now=preflight.evaluated_at,
         )
 
     race_results = _race_validation_submissions(
@@ -370,6 +411,7 @@ def _build_submission_callbacks(
             permit,
             plan,
             mutation_permit=mutation_permit,
+            now=preflight.evaluated_at,
         )
 
     return UnlinkedOrderSubmissionCallbacks(
@@ -389,6 +431,7 @@ def _submit_validation_candidate(
     session_factory: Callable[[], Session],
     request: InfrastructureValidationOrderSubmission,
     callbacks: UnlinkedOrderSubmissionCallbacks[Mapping[str, object]],
+    now: datetime,
 ) -> _WorkerResult:
     with session_factory() as session:
         try:
@@ -398,6 +441,7 @@ def _submit_validation_candidate(
                 session,
                 request=request,
                 callbacks=callbacks,
+                now=now,
             )
         except BrokerMutationSubmissionAlreadyProcessed as exc:
             return _WorkerResult("already_processed", error=str(exc))
