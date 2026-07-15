@@ -258,12 +258,18 @@ For example, when BTC/USD is below `$70,000`, `qty=0.0004`, `limit_price=70000`,
 Resting and replacement close limits must remain strictly above the entry limit and each other. Recompute the immutable
 plan digest after every price or quantity change; never widen a signed permit in place.
 
-An Alpaca HTTP `400`, `401`, `403`, `404`, or `422` response definitively refuses the request and now settles the
-existing receipt as `rejected`, without a fabricated broker reference or success callback. Every other status,
-including conflict, timeout, rate-limit, transport, and server failures, remains ambiguous and stays in `broker_io` for
-read-only reconciliation. These are the synchronous failures documented by the official
+For the initial submit only, an Alpaca HTTP `400`, `401`, `403`, `404`, or `422` response definitively refuses the
+request and settles the receipt as `rejected`, without a fabricated broker reference or success callback. Every other
+submit status, including conflict, timeout, rate-limit, transport, and server failures, remains ambiguous and stays in
+`broker_io` for read-only reconciliation. These are the synchronous failures documented by the official
 [order endpoint](https://docs.alpaca.markets/us/reference/createorderforaccount); live broker behavior remains the
 authority when published minimum metadata and the order endpoint disagree.
+
+That submit rule does not apply after a cancel, replace, close, or flatten mutation has been authorized. A reduction
+endpoint can return `404` or `422` because its target filled, closed, disappeared, or otherwise became terminal while
+the request raced broker state. Any error after reduction I/O therefore preserves the receipt in `broker_io`. Recovery
+must re-read the sealed order or position identity and settle `acknowledged`, `already_satisfied`, `rejected`, or
+`manual_review` from observed broker truth; it must never retry the mutation blindly.
 
 ### Crypto fee and close-all response correction
 
