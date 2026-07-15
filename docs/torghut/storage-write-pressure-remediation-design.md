@@ -386,6 +386,17 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 
 ### Live gates
 
+- Before activating either contained write workload, run
+  `bun run gate:torghut-storage-repair --repair-start <post-repair RFC3339 timestamp> --output json`. The read-only gate
+  requires a complete 24-hour Talos log window, `HEALTH_OK`, all six OSDs up and in, only clean placement groups, no
+  unacknowledged crashes, no transport/flush errors, and a successful extended SMART test completed after repair on
+  each expected SAS disk with zero critical sector/CRC attributes. It also requires no KRaft request timeout or
+  controller event above two seconds, exactly three KRaft voters with follower lag below 1,000 records and five seconds,
+  no under-replicated or offline partitions, PostgreSQL durability and WAL-budget compliance, and healthy Argo
+  applications. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and ClickHouse
+  true; the scheduler running with fresh trading/reconcile cycles and healthy leadership; and the current Knative API
+  revision ready. Both write workloads must still be at zero replicas. A warning that the temporary Kafka controller
+  timeout overrides remain present is expected at this stage; passing this gate does not authorize their removal.
 - An unchanged catalog page causes zero subscription updates.
 - Subscription updates fall at least 95%; steady target is below 10 per second outside actual membership changes.
 - Torghut PostgreSQL WAL falls below 0.25 MiB per second during discovery.
@@ -397,7 +408,8 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 - ClickHouse and Kafka row/offset reconciliation reports no unexplained gaps under the delete-only or compacted-topic
   contract above.
 - Kafka has three stable voters, full ISR, zero offline partitions, and no fencing.
-- Ceph is `HEALTH_OK` or has only understood, bounded maintenance warnings.
+- Ceph is `HEALTH_OK` before archive or Kafka-writer activation; bounded maintenance warnings are acceptable only while
+  the write workloads remain contained.
 - Torghut feed `/readyz` returns 200 with Kafka and ClickHouse true; trading runtime remains ready.
 
 ## Rollback and containment
