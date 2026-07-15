@@ -20,6 +20,10 @@ from ..alpaca_client import (
     issue_order_firewall_token,
 )
 from ..config import settings
+from .alpaca_observations import (
+    alpaca_order_observation,
+    alpaca_position_observation,
+)
 from .broker_mutation_receipts import (
     BrokerMutationBrokerIoError,
     BrokerMutationExplicitRejection,
@@ -39,7 +43,13 @@ from .risk_reduction_mutation_authority import (
     RiskReductionMutationAuthority,
     RiskReductionMutationExpectation,
     consume_risk_reduction_mutation_authority,
+    validate_risk_reduction_mutation_authority,
 )
+from .risk_reduction import (
+    BrokerReductionSnapshot,
+    RiskReductionPermitError,
+)
+from .risk_reduction_boundary import validate_submit_close_order_boundary
 
 logger = logging.getLogger(__name__)
 _MutationResult = TypeVar("_MutationResult")
@@ -57,6 +67,7 @@ _ALPACA_MUTATION_ERRORS = (
     ValueError,
 )
 _EXPLICIT_ALPACA_REJECTION_STATUSES = frozenset({400, 401, 403, 404, 422})
+_RISK_REDUCTION_OPEN_ORDER_LIMIT = 500
 
 
 def _raise_alpaca_mutation_error(exc: Exception) -> NoReturn:
@@ -380,20 +391,48 @@ class OrderFirewall:
         broker_request = alpaca_submit_request_payload(request)
         _require_submit_request_match(authority.request_payload, broker_request)
         normalized_symbol = str(broker_request["symbol"])
+        expectation = RiskReductionMutationExpectation(
+            broker_route="alpaca",
+            account_label=self.account_label,
+            endpoint_fingerprint=fingerprint_broker_endpoint(self.broker_endpoint_url),
+            operation="submit_order",
+            risk_class="risk_reducing",
+            target_key=normalized_symbol,
+        )
+        validate_risk_reduction_mutation_authority(authority, expectation)
+        reduction_evidence = authority.request_payload.get("risk_reduction")
+        if not isinstance(reduction_evidence, Mapping):
+            raise RiskReductionPermitError("risk_reduction_evidence_required")
+        validate_submit_close_order_boundary(
+            cast(Mapping[str, object], reduction_evidence),
+            self._current_risk_reduction_snapshot(),
+            target_key=normalized_symbol,
+        )
         consume_risk_reduction_mutation_authority(
             authority,
-            RiskReductionMutationExpectation(
-                broker_route="alpaca",
-                account_label=self.account_label,
-                endpoint_fingerprint=fingerprint_broker_endpoint(
-                    self.broker_endpoint_url
-                ),
-                operation="submit_order",
-                risk_class="risk_reducing",
-                target_key=normalized_symbol,
-            ),
+            expectation,
         )
         return self._submit_payload(broker_request, request.extra_params)
+
+    def _current_risk_reduction_snapshot(self) -> BrokerReductionSnapshot:
+        raw_positions = self._client.list_positions()
+        if raw_positions is None:
+            raise RiskReductionPermitError("alpaca_positions_unavailable")
+        raw_orders = self._client.list_orders(
+            status="open",
+            limit=_RISK_REDUCTION_OPEN_ORDER_LIMIT,
+        )
+        return BrokerReductionSnapshot(
+            broker_route="alpaca",
+            account_label=self.account_label,
+            endpoint_fingerprint=fingerprint_broker_endpoint(self.broker_endpoint_url),
+            observed_at=datetime.now(timezone.utc),
+            complete=len(raw_orders) < _RISK_REDUCTION_OPEN_ORDER_LIMIT,
+            orders=tuple(alpaca_order_observation(order) for order in raw_orders),
+            positions=tuple(
+                alpaca_position_observation(position) for position in raw_positions
+            ),
+        )
 
     def cancel_all_orders(
         self,

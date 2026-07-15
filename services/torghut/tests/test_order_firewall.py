@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 from unittest import TestCase
 
+from app.alpaca_client import AlpacaSubmitRequest
 from app.config import settings
 from app.trading.broker_mutation_receipts import BrokerMutationReceiptValidationError
 from app.trading.firewall import (
@@ -27,6 +28,8 @@ from app.trading.risk_reduction import (
     CancelOrderPlan,
     ClosePositionPlan,
     PositionCloseLeg,
+    RiskReductionPermitError,
+    SubmitCloseOrderPlan,
     authorize_risk_reduction,
 )
 from app.trading.risk_reduction_mutation_authority import (
@@ -130,6 +133,34 @@ class FakeAlpacaClient:
     def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any]:
         self.asset_calls.append(symbol_or_asset_id)
         return {"symbol": symbol_or_asset_id, "tradable": True}
+
+
+class BoundaryPositionAlpacaClient(FakeAlpacaClient):
+    def __init__(self, *, quantity: str, side: str = "long") -> None:
+        super().__init__()
+        self.quantity = quantity
+        self.side = side
+
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = limit
+        self.order_list_calls.append(status)
+        return []
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        self.position_calls += 1
+        return [
+            {
+                "symbol": "AAPL",
+                "qty": self.quantity,
+                "side": self.side,
+                "current_price": "100",
+            }
+        ]
 
 
 class TestOrderFirewall(TestCase):
@@ -433,6 +464,101 @@ class TestOrderFirewall(TestCase):
         )
 
         self.assertEqual(response["id"], "close-1")
+
+    def test_risk_reducing_submit_revalidates_position_at_broker_boundary(
+        self,
+    ) -> None:
+        for quantity, side, expected_error in (
+            ("1", "long", None),
+            ("0.5", "long", "close_order_would_cross_position_zero"),
+            ("1", "short", "close_side_does_not_reduce_position"),
+        ):
+            with self.subTest(quantity=quantity, side=side):
+                client = BoundaryPositionAlpacaClient(quantity=quantity, side=side)
+                firewall = OrderFirewall(client)
+                observed_at = datetime.now(timezone.utc)
+                authorization = authorize_risk_reduction(
+                    BrokerReductionSnapshot(
+                        broker_route="alpaca",
+                        account_label=firewall.account_label,
+                        endpoint_fingerprint=fingerprint_broker_endpoint(
+                            firewall.broker_endpoint_url
+                        ),
+                        observed_at=observed_at,
+                        complete=True,
+                        positions=(
+                            BrokerPositionObservation(
+                                symbol="AAPL",
+                                signed_quantity=Decimal("1"),
+                                unit_notional=Decimal("100"),
+                            ),
+                        ),
+                    ),
+                    SubmitCloseOrderPlan(
+                        leg=PositionCloseLeg(
+                            symbol="AAPL",
+                            side="sell",
+                            quantity=Decimal("1"),
+                        ),
+                        limit_price=Decimal("100"),
+                    ),
+                    now=observed_at,
+                )
+                request_payload = {
+                    "extra_params": {},
+                    "limit_price": "100",
+                    "order_type": "limit",
+                    "qty": "1",
+                    "risk_reduction": authorization.evidence_payload,
+                    "schema_version": "torghut.alpaca-reduction-request.v1",
+                    "side": "sell",
+                    "stop_price": None,
+                    "symbol": "AAPL",
+                    "time_in_force": "gtc",
+                }
+                mutation_permit = broker_mutation_test_permit(
+                    request_payload=request_payload,
+                    broker_route="alpaca",
+                    risk_class="risk_reducing",
+                    account_label=firewall.account_label,
+                    endpoint_url=firewall.broker_endpoint_url,
+                    operation="submit_order",
+                )
+                authority = RiskReductionMutationAuthority(
+                    request_payload=request_payload,
+                    mutation_permit=mutation_permit,
+                    reduction_permit=authorization.permit,
+                )
+                request = AlpacaSubmitRequest(
+                    symbol="AAPL",
+                    side="sell",
+                    qty=Decimal("1"),
+                    order_type="limit",
+                    time_in_force="gtc",
+                    limit_price=Decimal("100"),
+                    stop_price=None,
+                    extra_params={},
+                )
+
+                if expected_error is None:
+                    response = firewall.submit_risk_reducing_order(
+                        request,
+                        authority=authority,
+                    )
+                    self.assertEqual(response["id"], "order-1")
+                    self.assertEqual(len(client.submissions), 1)
+                else:
+                    with self.assertRaisesRegex(
+                        RiskReductionPermitError,
+                        expected_error,
+                    ):
+                        firewall.submit_risk_reducing_order(
+                            request,
+                            authority=authority,
+                        )
+                    self.assertEqual(client.submissions, [])
+                self.assertEqual(client.position_calls, 1)
+                self.assertEqual(client.order_list_calls, ["open"])
 
     def test_permit_is_request_bound_and_single_use(self) -> None:
         settings.trading_kill_switch_enabled = False
