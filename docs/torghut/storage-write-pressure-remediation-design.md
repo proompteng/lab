@@ -160,6 +160,12 @@ The repository executes one transaction:
 
 The existing blanket `contract_symbol <> ALL(:symbols)` update is removed from provisional reconciliation.
 
+Ranking-input authority is disjoint. Catalog ranking owns `liquidity_score`, `underlying_activity_score`, `dte_score`,
+and `moneyness_score`; snapshot enrichment owns only `quote_recency_score` and `trade_recency_score`. Enrichment merges
+only its two keys and performs no subscription-row update when the merged JSON is unchanged. Catalog reconciliation
+carries the enrichment-owned values forward but does not replace them with a second interpretation. A ranking-input key
+must never have two writers because alternating values would turn every observation into a non-material index rewrite.
+
 ### Coalescing
 
 Ranking scores are normalized by the maximum observed open interest, which may change during a scan. Candidate changes
