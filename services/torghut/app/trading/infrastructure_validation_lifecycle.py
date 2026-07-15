@@ -56,6 +56,8 @@ class InfrastructureValidationLifecycleReport:
     broker_account_number: str
     symbol: str
     entry_quantity: str
+    net_entry_quantity: str
+    entry_fee_quantity: str
     partial_close_quantity: str
     residual_quantity: str
     root_client_order_id: str
@@ -97,6 +99,7 @@ class _LifecycleState:
 class _EntryResult:
     client_order_id: str
     order_id: str
+    position_quantity: Decimal
     evidence: InfrastructureValidationEvidence
     replay_outcome: str
 
@@ -133,9 +136,16 @@ def run_infrastructure_validation_lifecycle(
     state = _LifecycleState()
     try:
         entry = _enter_position(permit, plan, broker, proof, state)
-        repricing = _exercise_repricing(plan, broker, proof, entry.evidence)
+        repricing = _exercise_repricing(
+            plan,
+            entry.position_quantity,
+            broker,
+            proof,
+            entry.evidence,
+        )
         closeout = _exercise_closeout(
             plan,
+            entry.position_quantity,
             broker,
             proof,
             repricing.replacement_evidence,
@@ -155,13 +165,15 @@ def run_infrastructure_validation_lifecycle(
         )
         terminal = broker.known_null_snapshot()
         report = InfrastructureValidationLifecycleReport(
-            schema_version="torghut.infrastructure-validation-lifecycle-report.v1",
+            schema_version="torghut.infrastructure-validation-lifecycle-report.v2",
             observed_at=datetime.now(timezone.utc).isoformat(),
             permit_id=permit.permit_id,
             permit_sha256=infrastructure_validation_permit_sha256(permit),
             broker_account_number=broker.broker_account_number,
             symbol=plan.symbol,
             entry_quantity=decimal_text(plan.qty),
+            net_entry_quantity=decimal_text(entry.position_quantity),
+            entry_fee_quantity=decimal_text(plan.qty - entry.position_quantity),
             partial_close_quantity=decimal_text(plan.partial_close_qty),
             residual_quantity=decimal_text(closeout.residual_quantity),
             root_client_order_id=entry.client_order_id,
@@ -216,7 +228,7 @@ def _enter_position(
     )
     if order_id(root_response) != order_id_value:
         raise RuntimeError("infrastructure_validation_root_response_mismatch")
-    broker.wait_position(symbol=plan.symbol, quantity=plan.qty)
+    position_quantity = broker.wait_entry_position(plan=plan)
     evidence = proof.wait_lineage(
         client_order_id=client_order_id,
         order_id=order_id_value,
@@ -225,12 +237,13 @@ def _enter_position(
     proof.wait_position(
         evidence=evidence,
         symbol=plan.symbol,
-        quantity=plan.qty,
+        quantity=position_quantity,
         expected_order_id=order_id_value,
     )
     return _EntryResult(
         client_order_id=client_order_id,
         order_id=order_id_value,
+        position_quantity=position_quantity,
         evidence=evidence,
         replay_outcome=replay_outcome,
     )
@@ -238,6 +251,7 @@ def _enter_position(
 
 def _exercise_repricing(
     plan: InfrastructureValidationLifecyclePlan,
+    position_quantity: Decimal,
     broker: AlpacaPaperLifecycleBroker,
     proof: InfrastructureValidationLifecycleProof,
     root_evidence: InfrastructureValidationEvidence,
@@ -246,7 +260,7 @@ def _exercise_repricing(
     resting_order_id = order_id(
         executor.submit_crypto_close_order(
             plan.symbol,
-            plan.qty,
+            position_quantity,
             limit_price=plan.resting_close_limit_price,
             validation_evidence=root_evidence,
         )
@@ -256,7 +270,7 @@ def _exercise_repricing(
         LifecycleOrderExpectation(
             symbol=plan.symbol,
             side="sell",
-            quantity=plan.qty,
+            quantity=position_quantity,
             order_id=resting_order_id,
             price_bound=plan.resting_close_limit_price,
         ),
@@ -279,7 +293,7 @@ def _exercise_repricing(
         LifecycleOrderExpectation(
             symbol=plan.symbol,
             side="sell",
-            quantity=plan.qty,
+            quantity=position_quantity,
             order_id=replacement_order_id,
             price_bound=plan.replacement_close_limit_price,
         ),
@@ -303,6 +317,7 @@ def _exercise_repricing(
 
 def _exercise_closeout(
     plan: InfrastructureValidationLifecyclePlan,
+    position_quantity: Decimal,
     broker: AlpacaPaperLifecycleBroker,
     proof: InfrastructureValidationLifecycleProof,
     replacement_evidence: InfrastructureValidationEvidence,
@@ -325,7 +340,7 @@ def _exercise_closeout(
             order_id=partial_order_id,
         ),
     )
-    residual_quantity = plan.qty - plan.partial_close_qty
+    residual_quantity = position_quantity - plan.partial_close_qty
     broker.wait_position(symbol=plan.symbol, quantity=residual_quantity)
     partial_evidence = proof.wait_lineage(
         client_order_id=None,

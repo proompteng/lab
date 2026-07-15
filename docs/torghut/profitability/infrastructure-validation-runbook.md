@@ -264,3 +264,37 @@ including conflict, timeout, rate-limit, transport, and server failures, remains
 read-only reconciliation. These are the synchronous failures documented by the official
 [order endpoint](https://docs.alpaca.markets/us/reference/createorderforaccount); live broker behavior remains the
 authority when published minimum metadata and the order endpoint disagree.
+
+### Crypto fee and close-all response correction
+
+The next promoted attempt on 2026-07-15 UTC filled the exact `0.00045040` BTC/USD IOC, but the position became
+`0.000449274` BTC. This is the documented broker contract: Alpaca charges the crypto fee against the asset credited by
+a buy, and its current tier-one taker fee is `0.25%`. The fill was complete; treating gross fill quantity as net
+position quantity was incorrect. The historical root receipt, fill event, cleanup receipt, and broker orders must
+remain intact.
+
+Alpaca's position endpoint also reports the same pair as slashless `BTCUSD` while order and order-feed evidence use
+`BTC/USD`. Normalize that broker representation only when `asset_class=crypto`, and retain the original broker symbol
+in the risk-reduction observation. A string mismatch must never be interpreted as an absent position.
+
+The runner must therefore prove both quantities independently. The root order must still be terminal `filled` with
+`filled_qty` exactly equal to the signed plan quantity. The resulting sole long position may equal the gross fill or be
+smaller only within Alpaca's published maximum taker-fee bound plus one broker quantity increment for rounding. Every
+resting, replacement, partial-close, residual, lineage, and terminal check uses the observed net position. Both actual
+close legs must still exceed the `$12` observed-notional guard before the first reduction mutation. An increased
+position, a larger unexplained debit, an invalid increment, or a leg below the guard fails closed and triggers only the
+independently fenced cleanup path. See Alpaca's official
+[Crypto Spot Trading Fees](https://docs.alpaca.markets/us/docs/crypto-fees).
+
+Alpaca crypto quantities and fee-adjusted positions can contain nine fractional digits. Migration
+`0074_crypto_qty_precision` widens only the four order-feed quantity columns to `numeric(21,9)` while preserving the
+existing twelve integer digits; prices and notionals remain at their existing money precision. Do not round broker
+positions to fit the old schema or use the raw event as a substitute for normalized durable evidence.
+
+`DELETE /v2/positions` returns HTTP `207` with an array of close-position responses. A successful item can carry the
+created order under its nested `body` even when top-level `order_id` is null. Settlement and lifecycle readback must
+extract exactly one distinct order ID for this known-single-position proof and reject missing or ambiguous identities.
+See Alpaca's official [Close All Positions](https://docs.alpaca.markets/us/reference/deleteallopenpositions-1)
+contract. The 2026-07-15 cleanup did flatten the account; its initially unresolved receipt was later reconciled from
+flat-account broker truth. That recovery proves safety, not lifecycle success, so a fresh permit and complete receipt
+chain are still required.

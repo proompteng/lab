@@ -27,6 +27,7 @@ from app.trading.infrastructure_validation_lifecycle import (
     InfrastructureValidationLifecycleContext,
     run_infrastructure_validation_lifecycle,
 )
+from app.trading.infrastructure_validation_lifecycle_broker import single_order_id
 from app.trading.infrastructure_validation_records import (
     load_infrastructure_validation_evidence,
     tag_infrastructure_validation_event,
@@ -41,10 +42,16 @@ class _LifecycleBroker:
         self,
         session_factory: Callable[[], Session],
         *,
+        broker_position_symbol: str = "BTC/USD",
+        entry_fee_quantity: Decimal = Decimal("0"),
         fail_mutation: str | None = None,
+        nested_close_all_response: bool = False,
     ) -> None:
         self._session_factory = session_factory
+        self._broker_position_symbol = broker_position_symbol
+        self._entry_fee_quantity = entry_fee_quantity
         self._fail_mutation = fail_mutation
+        self._nested_close_all_response = nested_close_all_response
         self._orders: dict[str, dict[str, object]] = {}
         self._position_quantity = Decimal("0")
         self._position_after_order: dict[str, Decimal] = {}
@@ -105,7 +112,8 @@ class _LifecycleBroker:
             return []
         return [
             {
-                "symbol": "BTC/USD",
+                "asset_class": "crypto",
+                "symbol": self._broker_position_symbol,
                 "qty": str(self._position_quantity),
                 "side": "long",
                 "market_value": str(self._position_quantity * Decimal("100000")),
@@ -151,7 +159,7 @@ class _LifecycleBroker:
         client_order_id = str((extra_params or {})["client_order_id"])
         if side == "buy":
             self._begin_mutation("root_submit")
-            self._position_quantity = quantity
+            self._position_quantity = quantity - self._entry_fee_quantity
             return self._add_order(
                 order_id="root-order-1",
                 client_order_id=client_order_id,
@@ -241,20 +249,28 @@ class _LifecycleBroker:
         self._begin_mutation("close_all_positions")
         quantity = self._position_quantity
         self._position_quantity = Decimal("0")
-        return [
-            self._add_order(
-                order_id="final-flatten-order-1",
-                client_order_id="final-flatten-client-1",
-                symbol="BTC/USD",
-                side="sell",
-                quantity=quantity,
-                order_type="market",
-                time_in_force="gtc",
-                limit_price=None,
-                status="filled",
-                filled_quantity=quantity,
-            )
-        ]
+        order = self._add_order(
+            order_id="final-flatten-order-1",
+            client_order_id="final-flatten-client-1",
+            symbol="BTC/USD",
+            side="sell",
+            quantity=quantity,
+            order_type="market",
+            time_in_force="gtc",
+            limit_price=None,
+            status="filled",
+            filled_quantity=quantity,
+        )
+        if self._nested_close_all_response:
+            return [
+                {
+                    "body": order,
+                    "order_id": None,
+                    "status": 200,
+                    "symbol": "BTC/USD",
+                }
+            ]
+        return [order]
 
     def _begin_mutation(self, name: str) -> None:
         self.mutations.append(name)
@@ -491,7 +507,90 @@ def test_runner_executes_one_bounded_lifecycle_and_proves_exclusion(
     assert report.terminal_position_count == 0
     assert report.terminal_open_order_count == 0
     assert report.promotable is False
+    assert (
+        report.schema_version == "torghut.infrastructure-validation-lifecycle-report.v2"
+    )
+    assert report.net_entry_quantity == "0.0004"
+    assert report.entry_fee_quantity == "0"
     assert report.to_payload()["evidence_tag"] == "non_promotable_validation"
+
+
+def test_runner_uses_fee_adjusted_position_and_nested_close_all_order(
+    lifecycle_runtime: tuple[
+        sessionmaker[Session],
+        InfrastructureValidationPermit,
+        InfrastructureValidationLifecyclePlan,
+    ],
+) -> None:
+    sessions, permit, plan = lifecycle_runtime
+    broker = _LifecycleBroker(
+        cast(Callable[[], Session], sessions),
+        broker_position_symbol="BTCUSD",
+        entry_fee_quantity=Decimal("0.000001"),
+        nested_close_all_response=True,
+    )
+
+    report = run_infrastructure_validation_lifecycle(
+        permit=permit,
+        plan=plan,
+        context=_context(broker, sessions),
+    )
+
+    orders = {str(order["id"]): order for order in broker.list_orders()}
+    assert report.entry_quantity == "0.0004"
+    assert report.net_entry_quantity == "0.000399"
+    assert report.entry_fee_quantity == "0.000001"
+    assert report.partial_close_quantity == "0.0002"
+    assert report.residual_quantity == "0.000199"
+    assert orders["resting-close-order-1"]["qty"] == "0.000399"
+    assert orders["replacement-close-order-1"]["qty"] == "0.000399"
+    assert orders["partial-close-order-1"]["qty"] == "0.0002"
+    assert orders["final-flatten-order-1"]["qty"] == "0.000199"
+    assert report.terminal_position_count == 0
+    assert report.terminal_open_order_count == 0
+
+
+def test_runner_rejects_position_below_documented_maximum_fee_bound(
+    lifecycle_runtime: tuple[
+        sessionmaker[Session],
+        InfrastructureValidationPermit,
+        InfrastructureValidationLifecyclePlan,
+    ],
+) -> None:
+    sessions, permit, plan = lifecycle_runtime
+    broker = _LifecycleBroker(
+        cast(Callable[[], Session], sessions),
+        entry_fee_quantity=Decimal("0.00000101"),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="infrastructure_validation_entry_position_wait_timeout",
+    ):
+        run_infrastructure_validation_lifecycle(
+            permit=permit,
+            plan=plan,
+            context=_context(broker, sessions),
+        )
+
+    assert broker.mutations == ["root_submit", "close_all_positions"]
+    assert broker.list_positions() == []
+
+
+def test_flatten_response_rejects_ambiguous_nested_order_identity() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="infrastructure_validation_flatten_response_identity_invalid",
+    ):
+        single_order_id(
+            [
+                {
+                    "body": {"id": "body-order"},
+                    "order_id": "wrapper-order",
+                    "status": 200,
+                }
+            ]
+        )
 
 
 @pytest.mark.parametrize(

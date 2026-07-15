@@ -71,6 +71,7 @@ def upgrade_reduction_schema(
         if target in {
             "0072_validation_lifecycle",
             "0073_live_paper_bounds",
+            "0074_crypto_qty_precision",
         }:
             connection.execute(
                 text(

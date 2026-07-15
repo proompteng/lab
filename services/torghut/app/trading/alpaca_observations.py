@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
@@ -59,11 +59,36 @@ def alpaca_position_observation(
     if unit_notional is None:
         raise RiskReductionPermitError("alpaca_position_unit_notional_unavailable")
     return BrokerPositionObservation(
-        symbol=str(raw.get("symbol") or ""),
+        symbol=_position_symbol(raw),
         signed_quantity=signed_quantity,
         unit_notional=unit_notional,
         broker_symbol=str(raw.get("symbol") or ""),
     )
+
+
+def alpaca_order_references(raw: object) -> tuple[str, ...]:
+    """Return distinct order IDs from an order or close-position response."""
+
+    references: list[str] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, Mapping):
+            response = cast(Mapping[object, object], value)
+            reference = str(
+                response.get("id") or response.get("order_id") or ""
+            ).strip()
+            if reference and reference not in references:
+                references.append(reference)
+            body = response.get("body")
+            if body is not None:
+                collect(body)
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in cast(Sequence[object], value):
+                collect(item)
+
+    collect(raw)
+    return tuple(references)
 
 
 def optional_decimal(value: object) -> Decimal | None:
@@ -72,6 +97,19 @@ def optional_decimal(value: object) -> Decimal | None:
     except (InvalidOperation, ValueError):
         return None
     return parsed if parsed.is_finite() else None
+
+
+def _position_symbol(raw: Mapping[str, object]) -> str:
+    broker_symbol = str(raw.get("symbol") or "").strip().upper()
+    asset_class = str(raw.get("asset_class") or "").strip().lower()
+    if asset_class != "crypto" or "/" in broker_symbol:
+        return broker_symbol
+    for quote_asset in ("USDT", "USDC", "USD", "BTC"):
+        if broker_symbol.endswith(quote_asset) and len(broker_symbol) > len(
+            quote_asset
+        ):
+            return f"{broker_symbol[: -len(quote_asset)]}/{quote_asset}"
+    raise RiskReductionPermitError("alpaca_crypto_position_symbol_invalid")
 
 
 def _required_decimal(value: object, *, field_name: str) -> Decimal:
@@ -88,6 +126,7 @@ def _optional_order_decimal(value: object, *, field_name: str) -> Decimal | None
 
 
 __all__ = [
+    "alpaca_order_references",
     "alpaca_order_observation",
     "alpaca_position_observation",
     "optional_decimal",

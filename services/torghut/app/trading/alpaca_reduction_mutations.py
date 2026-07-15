@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..alpaca_client import AlpacaSubmitRequest
 from .alpaca_observations import (
     alpaca_order_observation,
+    alpaca_order_references,
     alpaca_position_observation,
 )
 from .broker_mutation_coordinator import (
@@ -872,16 +873,8 @@ def _mapping_response_rejected(response: Mapping[str, object]) -> bool:
 
 
 def _broker_reference(response: object) -> str | None:
-    response_map = _string_mapping(response)
-    if response_map is not None:
-        value = response_map.get("id") or response_map.get("order_id")
-        return str(value).strip() if value else None
-    if isinstance(response, Sequence) and not isinstance(response, (str, bytes)):
-        for item in cast(Sequence[object], response):
-            reference = _broker_reference(item)
-            if reference:
-                return reference
-    return None
+    references = alpaca_order_references(response)
+    return references[0] if references else None
 
 
 def _string_mapping(value: object) -> Mapping[str, object] | None:
