@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { __private, evaluateStorageStabilityGate, type StorageStabilitySnapshot } from '../storage-stability-gate'
 
@@ -6,9 +9,48 @@ const capturedAt = '2026-07-17T12:00:00.000Z'
 const observationStartedAt = '2026-07-15T11:00:00.000Z'
 
 const healthySnapshot = (): StorageStabilitySnapshot => ({
-  schemaVersion: 'torghut.storage-stability-gate.v3',
+  schemaVersion: 'torghut.storage-stability-gate.v4',
   capturedAt,
   observationStartedAt,
+  smartBaseline: {
+    schemaVersion: 'torghut.smart-baseline.v1',
+    capturedAt: observationStartedAt,
+    devices: [
+      {
+        device: '/dev/sda',
+        serial: 'ZXA12R7C',
+        smartPassed: true,
+        criticalAttributes: {
+          reallocatedSectors: 0,
+          currentPendingSectors: 0,
+          offlineUncorrectable: 0,
+          udmaCrcErrors: 0,
+        },
+      },
+      {
+        device: '/dev/sdb',
+        serial: 'ZXA0LKW9',
+        smartPassed: true,
+        criticalAttributes: {
+          reallocatedSectors: 0,
+          currentPendingSectors: 0,
+          offlineUncorrectable: 0,
+          udmaCrcErrors: 0,
+        },
+      },
+      {
+        device: '/dev/sdc',
+        serial: 'ZXA0HS7E',
+        smartPassed: true,
+        criticalAttributes: {
+          reallocatedSectors: 0,
+          currentPendingSectors: 0,
+          offlineUncorrectable: 0,
+          udmaCrcErrors: 0,
+        },
+      },
+    ],
+  },
   talos: {
     node: '100.100.244.142',
     coverageStartedAt: '2026-07-15T10:00:00.000Z',
@@ -276,7 +318,7 @@ describe('Torghut storage stability gate', () => {
     expect(result.failures.join('\n')).toContain('2026-07-14T20:18:05Z_osd3')
   })
 
-  it('requires current SMART health, zero critical counters, and every expected disk', () => {
+  it('requires current SMART health, zero media counters, and every expected disk', () => {
     const snapshot = healthySnapshot()
     snapshot.smartDevices[0].latestExtendedSelfTest = {
       lifetimeHours: 819,
@@ -293,6 +335,89 @@ describe('Torghut storage stability gate', () => {
     expect(result.failures.join('\n')).toContain('currentPendingSectors=1')
     expect(result.failures.join('\n')).toContain('SMART evidence is missing for /dev/sdc')
     expect(result.warnings.join('\n')).toContain("is 'Interrupted (host reset)'")
+  })
+
+  it('accepts a historical UDMA CRC count only when it is unchanged from the observation baseline', () => {
+    const snapshot = healthySnapshot()
+    snapshot.smartBaseline.devices[2].criticalAttributes.udmaCrcErrors = 1
+    snapshot.smartDevices[2].criticalAttributes.udmaCrcErrors = 1
+
+    expect(evaluateStorageStabilityGate(snapshot).ok).toBe(true)
+
+    snapshot.smartDevices[2].criticalAttributes.udmaCrcErrors = 2
+    const increased = evaluateStorageStabilityGate(snapshot)
+    expect(increased.ok).toBe(false)
+    expect(increased.failures.join('\n')).toContain(
+      'SMART lifetime UDMA CRC error counter changed for /dev/sdc from 1 at observation start to 2',
+    )
+
+    snapshot.smartDevices[2].criticalAttributes.udmaCrcErrors = 0
+    const reset = evaluateStorageStabilityGate(snapshot)
+    expect(reset.ok).toBe(false)
+    expect(reset.failures.join('\n')).toContain(
+      'SMART lifetime UDMA CRC error counter changed for /dev/sdc from 1 at observation start to 0',
+    )
+  })
+
+  it('fails when the SMART baseline does not exactly anchor the observation start or is unhealthy', () => {
+    const snapshot = healthySnapshot()
+    snapshot.smartBaseline.capturedAt = '2026-07-15T10:59:59.000Z'
+    snapshot.smartBaseline.devices[0].smartPassed = false
+    snapshot.smartBaseline.devices[1].criticalAttributes.reallocatedSectors = 1
+    snapshot.smartBaseline.devices.pop()
+
+    const result = evaluateStorageStabilityGate(snapshot)
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('must exactly match observation start')
+    expect(result.failures.join('\n')).toContain('overall health failed at observation start for /dev/sda')
+    expect(result.failures.join('\n')).toContain('reallocatedSectors=1')
+    expect(result.failures.join('\n')).toContain('SMART baseline is missing for /dev/sdc')
+  })
+
+  it('creates a no-delta baseline with non-zero lifetime CRC history but rejects unsafe media state', () => {
+    const snapshot = healthySnapshot()
+    snapshot.smartDevices[2].criticalAttributes.udmaCrcErrors = 1
+    const baseline = __private.createSmartBaseline(snapshot.smartDevices, new Date(observationStartedAt))
+
+    expect(baseline.capturedAt).toBe(observationStartedAt)
+    expect(baseline.devices[2].criticalAttributes.udmaCrcErrors).toBe(1)
+    expect(__private.smartBaselineCaptureFailures(baseline)).toEqual([])
+
+    baseline.devices[0].criticalAttributes.currentPendingSectors = 1
+    expect(__private.smartBaselineCaptureFailures(baseline).join('\n')).toContain('currentPendingSectors=1')
+  })
+
+  it('writes a baseline once and never overwrites an existing observation anchor', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'torghut-smart-baseline-'))
+    const path = join(directory, 'baseline.json')
+    const baseline = __private.createSmartBaseline(healthySnapshot().smartDevices, new Date(observationStartedAt))
+
+    try {
+      __private.writeSmartBaseline(path, baseline)
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(baseline)
+
+      writeFileSync(path, 'preserve-me')
+      expect(() => __private.writeSmartBaseline(path, baseline)).toThrow('Unable to write SMART baseline')
+      expect(readFileSync(path, 'utf8')).toBe('preserve-me')
+    } finally {
+      rmSync(directory, { force: true, recursive: true })
+    }
+  })
+
+  it('requires one explicit CLI mode and a baseline for every live observation', () => {
+    expect(__private.parseArgs(['--capture-smart-baseline', '/tmp/baseline.json'])).toMatchObject({
+      captureSmartBaselinePath: '/tmp/baseline.json',
+    })
+    expect(
+      __private.parseArgs(['--observation-start', observationStartedAt, '--smart-baseline', '/tmp/baseline.json']),
+    ).toMatchObject({ observationStartedAt, smartBaselinePath: '/tmp/baseline.json' })
+    expect(() => __private.parseArgs(['--observation-start', observationStartedAt])).toThrow(
+      'live collection requires --smart-baseline',
+    )
+    expect(() =>
+      __private.parseArgs(['--capture-smart-baseline', '/tmp/baseline.json', '--snapshot', '/tmp/snapshot.json']),
+    ).toThrow('select exactly one mode')
   })
 
   it('does not require a new extended SMART test when current device evidence is healthy', () => {
@@ -422,52 +547,58 @@ describe('Torghut storage stability gate', () => {
   it('records the evidence cutoff after bounded samples and before Talos and Kafka tail collection', async () => {
     const source = healthySnapshot()
     const events: string[] = []
-    const collected = await __private.collectStorageStabilitySnapshotWith(observationStartedAt, source.talos.node, {
-      now: () => {
-        events.push('cutoff')
-        return new Date(capturedAt)
+    const collected = await __private.collectStorageStabilitySnapshotWith(
+      observationStartedAt,
+      source.talos.node,
+      source.smartBaseline,
+      {
+        now: () => {
+          events.push('cutoff')
+          return new Date(capturedAt)
+        },
+        ceph: async () => {
+          events.push('ceph')
+          return source.ceph
+        },
+        smartDevices: async () => {
+          events.push('smart')
+          return source.smartDevices
+        },
+        postgres: async () => {
+          await Promise.resolve()
+          events.push('postgres-complete')
+          return source.postgres
+        },
+        jangarPostgres: async () => {
+          await Promise.resolve()
+          events.push('jangar-postgres-complete')
+          return source.jangarPostgres
+        },
+        runtime: async () => {
+          events.push('runtime')
+          return source.runtime
+        },
+        workloads: async () => {
+          events.push('workloads')
+          return source.workloads
+        },
+        argoApplications: async () => {
+          events.push('argo')
+          return source.argoApplications
+        },
+        talos: async () => {
+          events.push('talos-tail')
+          return source.talos
+        },
+        kafka: async () => {
+          events.push('kafka-tail')
+          return source.kafka
+        },
       },
-      ceph: async () => {
-        events.push('ceph')
-        return source.ceph
-      },
-      smartDevices: async () => {
-        events.push('smart')
-        return source.smartDevices
-      },
-      postgres: async () => {
-        await Promise.resolve()
-        events.push('postgres-complete')
-        return source.postgres
-      },
-      jangarPostgres: async () => {
-        await Promise.resolve()
-        events.push('jangar-postgres-complete')
-        return source.jangarPostgres
-      },
-      runtime: async () => {
-        events.push('runtime')
-        return source.runtime
-      },
-      workloads: async () => {
-        events.push('workloads')
-        return source.workloads
-      },
-      argoApplications: async () => {
-        events.push('argo')
-        return source.argoApplications
-      },
-      talos: async () => {
-        events.push('talos-tail')
-        return source.talos
-      },
-      kafka: async () => {
-        events.push('kafka-tail')
-        return source.kafka
-      },
-    })
+    )
 
     expect(collected.capturedAt).toBe(capturedAt)
+    expect(collected.smartBaseline).toEqual(source.smartBaseline)
     expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('postgres-complete'))
     expect(events.indexOf('cutoff')).toBeGreaterThan(events.indexOf('jangar-postgres-complete'))
     expect(events.indexOf('ceph')).toBeGreaterThan(events.indexOf('cutoff'))

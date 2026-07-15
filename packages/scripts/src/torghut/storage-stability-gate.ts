@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
-import { readFileSync } from 'node:fs'
+import { closeSync, fsyncSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
 import { ensureCli, fatal } from '../shared/cli'
 
-const GATE_SCHEMA_VERSION = 'torghut.storage-stability-gate.v3'
-const RESULT_SCHEMA_VERSION = 'torghut.storage-stability-gate-result.v3'
+const GATE_SCHEMA_VERSION = 'torghut.storage-stability-gate.v4'
+const RESULT_SCHEMA_VERSION = 'torghut.storage-stability-gate-result.v4'
+const SMART_BASELINE_SCHEMA_VERSION = 'torghut.smart-baseline.v1'
 const MINIMUM_OBSERVATION_MINUTES = 30
 const EXPECTED_OSD_COUNT = 6
 const MAX_TORGHUT_WAL_BYTES_PER_SECOND = 0.25 * 1024 * 1024
@@ -23,6 +24,7 @@ const EXPECTED_SMART_DEVICES = {
   '/dev/sdb': 'ZXA0LKW9',
   '/dev/sdc': 'ZXA0HS7E',
 } as const
+const SMART_MEDIA_ATTRIBUTE_NAMES = ['reallocatedSectors', 'currentPendingSectors', 'offlineUncorrectable'] as const
 const EXPECTED_ARGO_APPLICATIONS = [
   'jangar',
   'kafka',
@@ -86,6 +88,14 @@ type SmartDeviceEvidence = {
   }
 }
 
+type SmartBaselineDevice = Pick<SmartDeviceEvidence, 'criticalAttributes' | 'device' | 'serial' | 'smartPassed'>
+
+export type SmartBaseline = {
+  schemaVersion: typeof SMART_BASELINE_SCHEMA_VERSION
+  capturedAt: string
+  devices: SmartBaselineDevice[]
+}
+
 type RuntimeEvidence = {
   hyperliquidFeed: {
     httpOk: boolean
@@ -137,6 +147,7 @@ export type StorageStabilitySnapshot = {
   schemaVersion: string
   capturedAt: string
   observationStartedAt: string
+  smartBaseline: SmartBaseline
   talos: {
     node: string
     coverageStartedAt: string
@@ -199,8 +210,10 @@ export type StorageStabilityGateResult = {
 }
 
 type CliOptions = {
+  captureSmartBaselinePath?: string
   output: OutputFormat
   observationStartedAt?: string
+  smartBaselinePath?: string
   snapshotPath?: string
   talosNode: string
 }
@@ -238,6 +251,12 @@ const optionalString = (value: unknown): string | undefined =>
 const requireNumber = (value: unknown, label: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${label} must be a finite number`)
   return value
+}
+
+const requireNonNegativeInteger = (value: unknown, label: string): number => {
+  const number = requireNumber(value, label)
+  if (!Number.isSafeInteger(number) || number < 0) throw new Error(`${label} must be a non-negative safe integer`)
+  return number
 }
 
 const requireBoolean = (value: unknown, label: string): boolean => {
@@ -312,6 +331,32 @@ const validatePostgresEvidenceShape = (evidence: PostgresEvidence, label: string
   requireNumber(evidence.walSampleSeconds, `${label}.walSampleSeconds`)
 }
 
+const validateSmartAttributesShape = (attributes: SmartDeviceEvidence['criticalAttributes'], label: string) => {
+  const value = requireObject(attributes, label)
+  requireNonNegativeInteger(value.reallocatedSectors, `${label}.reallocatedSectors`)
+  requireNonNegativeInteger(value.currentPendingSectors, `${label}.currentPendingSectors`)
+  requireNonNegativeInteger(value.offlineUncorrectable, `${label}.offlineUncorrectable`)
+  requireNonNegativeInteger(value.udmaCrcErrors, `${label}.udmaCrcErrors`)
+}
+
+const validateSmartBaselineShape = (baseline: SmartBaseline, label: string) => {
+  const value = requireObject(baseline, label)
+  if (value.schemaVersion !== SMART_BASELINE_SCHEMA_VERSION) {
+    throw new Error(`${label}.schemaVersion must be ${SMART_BASELINE_SCHEMA_VERSION}`)
+  }
+  parseTimestamp(requireString(value.capturedAt, `${label}.capturedAt`), `${label}.capturedAt`)
+  for (const [index, entry] of requireArray(value.devices, `${label}.devices`).entries()) {
+    const device = requireObject(entry, `${label}.devices[${index}]`)
+    requireString(device.device, `${label}.devices[${index}].device`)
+    requireString(device.serial, `${label}.devices[${index}].serial`)
+    requireBoolean(device.smartPassed, `${label}.devices[${index}].smartPassed`)
+    validateSmartAttributesShape(
+      device.criticalAttributes as SmartDeviceEvidence['criticalAttributes'],
+      `${label}.devices[${index}].criticalAttributes`,
+    )
+  }
+}
+
 const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
   if (snapshot.schemaVersion !== GATE_SCHEMA_VERSION) {
     throw new Error(`snapshot.schemaVersion must be ${GATE_SCHEMA_VERSION}`)
@@ -321,6 +366,7 @@ const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
     requireString(snapshot.observationStartedAt, 'snapshot.observationStartedAt'),
     'snapshot.observationStartedAt',
   )
+  validateSmartBaselineShape(snapshot.smartBaseline, 'snapshot.smartBaseline')
   parseTimestamp(
     requireString(snapshot.talos.coverageStartedAt, 'snapshot.talos.coverageStartedAt'),
     'snapshot.talos.coverageStartedAt',
@@ -331,6 +377,16 @@ const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
   requireNumber(snapshot.ceph.osds.in, 'snapshot.ceph.osds.in')
   requireNumber(snapshot.kafka.generation, 'snapshot.kafka.generation')
   requireNumber(snapshot.kafka.observedGeneration, 'snapshot.kafka.observedGeneration')
+  for (const [index, entry] of requireArray(snapshot.smartDevices, 'snapshot.smartDevices').entries()) {
+    const smart = requireObject(entry, `snapshot.smartDevices[${index}]`)
+    requireString(smart.device, `snapshot.smartDevices[${index}].device`)
+    requireString(smart.serial, `snapshot.smartDevices[${index}].serial`)
+    requireBoolean(smart.smartPassed, `snapshot.smartDevices[${index}].smartPassed`)
+    validateSmartAttributesShape(
+      smart.criticalAttributes as SmartDeviceEvidence['criticalAttributes'],
+      `snapshot.smartDevices[${index}].criticalAttributes`,
+    )
+  }
   validatePostgresEvidenceShape(snapshot.postgres, 'snapshot.postgres')
   validatePostgresEvidenceShape(snapshot.jangarPostgres, 'snapshot.jangarPostgres')
   const feed = snapshot.runtime.hyperliquidFeed
@@ -409,6 +465,37 @@ const appendPostgresGateFailures = (params: {
   }
 }
 
+const appendSmartInventoryFailures = (
+  failures: string[],
+  label: string,
+  devices: Array<Pick<SmartDeviceEvidence, 'device'>>,
+) => {
+  const counts = new Map<string, number>()
+  for (const { device } of devices) counts.set(device, (counts.get(device) ?? 0) + 1)
+  for (const [device, count] of counts) {
+    if (!(device in EXPECTED_SMART_DEVICES)) failures.push(`${label} contains unexpected device ${device}`)
+    if (count > 1) failures.push(`${label} contains ${count} records for ${device}; exactly one is required`)
+  }
+}
+
+const nonZeroSmartMediaAttributes = (attributes: SmartDeviceEvidence['criticalAttributes']) =>
+  SMART_MEDIA_ATTRIBUTE_NAMES.map((name) => [name, attributes[name]] as const).filter(([, value]) => value !== 0)
+
+const smartDevicePairPasses = (
+  current: SmartDeviceEvidence | undefined,
+  baseline: SmartBaselineDevice | undefined,
+  expectedSerial: string,
+): boolean =>
+  current !== undefined &&
+  baseline !== undefined &&
+  current.serial === expectedSerial &&
+  baseline.serial === expectedSerial &&
+  current.smartPassed &&
+  baseline.smartPassed &&
+  nonZeroSmartMediaAttributes(current.criticalAttributes).length === 0 &&
+  nonZeroSmartMediaAttributes(baseline.criticalAttributes).length === 0 &&
+  current.criticalAttributes.udmaCrcErrors === baseline.criticalAttributes.udmaCrcErrors
+
 export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot): StorageStabilityGateResult => {
   validateSnapshotShape(snapshot)
 
@@ -416,7 +503,17 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
   const warnings: string[] = []
   const capturedAtMs = parseTimestamp(snapshot.capturedAt, 'snapshot.capturedAt')
   const observationStartedAtMs = parseTimestamp(snapshot.observationStartedAt, 'snapshot.observationStartedAt')
+  const smartBaselineCapturedAtMs = parseTimestamp(
+    snapshot.smartBaseline.capturedAt,
+    'snapshot.smartBaseline.capturedAt',
+  )
   const observationMinutes = (capturedAtMs - observationStartedAtMs) / 60_000
+
+  if (smartBaselineCapturedAtMs !== observationStartedAtMs) {
+    failures.push(
+      `SMART baseline was captured at ${snapshot.smartBaseline.capturedAt}; it must exactly match observation start ${snapshot.observationStartedAt}`,
+    )
+  }
 
   if (observationMinutes < MINIMUM_OBSERVATION_MINUTES) {
     failures.push(
@@ -475,23 +572,51 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     failures.push(`Ceph has unacknowledged crashes: ${snapshot.ceph.unacknowledgedCrashIds.join(', ')}`)
   }
 
+  appendSmartInventoryFailures(failures, 'current SMART evidence', snapshot.smartDevices)
+  appendSmartInventoryFailures(failures, 'SMART baseline', snapshot.smartBaseline.devices)
   for (const [device, expectedSerial] of Object.entries(EXPECTED_SMART_DEVICES)) {
     const smart = snapshot.smartDevices.find((candidate) => candidate.device === device)
+    const baseline = snapshot.smartBaseline.devices.find((candidate) => candidate.device === device)
     if (!smart) {
       failures.push(`SMART evidence is missing for ${device} (${expectedSerial})`)
-      continue
     }
-    if (smart.serial !== expectedSerial) {
+    if (!baseline) {
+      failures.push(`SMART baseline is missing for ${device} (${expectedSerial})`)
+    }
+    if (smart && smart.serial !== expectedSerial) {
       failures.push(`SMART serial for ${device} is ${smart.serial}, expected ${expectedSerial}`)
     }
-    if (!smart.smartPassed) failures.push(`SMART overall health failed for ${device} (${smart.serial})`)
-    const nonZeroAttributes = Object.entries(smart.criticalAttributes).filter(([, value]) => value !== 0)
-    if (nonZeroAttributes.length > 0) {
+    if (baseline && baseline.serial !== expectedSerial) {
+      failures.push(`SMART baseline serial for ${device} is ${baseline.serial}, expected ${expectedSerial}`)
+    }
+    if (smart && !smart.smartPassed) failures.push(`SMART overall health failed for ${device} (${smart.serial})`)
+    if (baseline && !baseline.smartPassed) {
+      failures.push(`SMART overall health failed at observation start for ${device} (${baseline.serial})`)
+    }
+    const nonZeroCurrentMediaAttributes = smart ? nonZeroSmartMediaAttributes(smart.criticalAttributes) : []
+    if (nonZeroCurrentMediaAttributes.length > 0) {
       failures.push(
-        `SMART critical attributes are non-zero for ${device}: ${nonZeroAttributes.map(([name, value]) => `${name}=${value}`).join(', ')}`,
+        `SMART media attributes are non-zero for ${device}: ${nonZeroCurrentMediaAttributes.map(([name, value]) => `${name}=${value}`).join(', ')}`,
       )
     }
-    if (smart.latestExtendedSelfTest && !smart.latestExtendedSelfTest.passed) {
+    const nonZeroBaselineMediaAttributes = baseline ? nonZeroSmartMediaAttributes(baseline.criticalAttributes) : []
+    if (nonZeroBaselineMediaAttributes.length > 0) {
+      failures.push(
+        `SMART media attributes were non-zero at observation start for ${device}: ${nonZeroBaselineMediaAttributes.map(([name, value]) => `${name}=${value}`).join(', ')}`,
+      )
+    }
+    if (
+      smart &&
+      baseline &&
+      smart.serial === expectedSerial &&
+      baseline.serial === expectedSerial &&
+      smart.criticalAttributes.udmaCrcErrors !== baseline.criticalAttributes.udmaCrcErrors
+    ) {
+      failures.push(
+        `SMART lifetime UDMA CRC error counter changed for ${device} from ${baseline.criticalAttributes.udmaCrcErrors} at observation start to ${smart.criticalAttributes.udmaCrcErrors}`,
+      )
+    }
+    if (smart?.latestExtendedSelfTest && !smart.latestExtendedSelfTest.passed) {
       warnings.push(
         `SMART latest extended self-test for ${device} is '${smart.latestExtendedSelfTest.status}'; this historical test is informational because current overall health and critical media/interface counters are authoritative for this gate`,
       )
@@ -705,11 +830,12 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
   }
 
   const uniqueFailures = [...new Set(failures)]
-  const healthySmartDevices = snapshot.smartDevices.filter(
-    (smart) =>
-      smart.smartPassed &&
-      smart.serial === EXPECTED_SMART_DEVICES[smart.device as keyof typeof EXPECTED_SMART_DEVICES] &&
-      Object.values(smart.criticalAttributes).every((value) => value === 0),
+  const healthySmartDevices = Object.entries(EXPECTED_SMART_DEVICES).filter(([device, expectedSerial]) =>
+    smartDevicePairPasses(
+      snapshot.smartDevices.find((candidate) => candidate.device === device),
+      snapshot.smartBaseline.devices.find((candidate) => candidate.device === device),
+      expectedSerial,
+    ),
   ).length
   const result: StorageStabilityGateResult = {
     schemaVersion: RESULT_SCHEMA_VERSION,
@@ -722,7 +848,7 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     summaryLines: [
       `Storage stability observation: ${rounded(observationMinutes, 2)} minutes`,
       `Ceph: ${snapshot.ceph.health}; OSDs ${snapshot.ceph.osds.up}/${snapshot.ceph.osds.in}/${snapshot.ceph.osds.total}`,
-      `SMART: ${healthySmartDevices}/${Object.keys(EXPECTED_SMART_DEVICES).length} devices passed current health and critical-counter checks`,
+      `SMART: ${healthySmartDevices}/${Object.keys(EXPECTED_SMART_DEVICES).length} devices passed current/baseline health, zero-media, and no-new-CRC checks`,
       `Kafka: ${snapshot.kafka.kafkaVersion} / ${snapshot.kafka.metadataVersion}; ${snapshot.kafka.pods.filter((pod) => pod.ready).length}/${snapshot.kafka.pods.length} broker/controller pods ready`,
       `Torghut PostgreSQL WAL: ${rounded(snapshot.postgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s over ${rounded(snapshot.postgres.walSampleSeconds, 1)} seconds`,
       `Jangar PostgreSQL WAL: ${rounded(snapshot.jangarPostgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s over ${rounded(snapshot.jangarPostgres.walSampleSeconds, 1)} seconds`,
@@ -894,6 +1020,63 @@ const collectSmartDeviceEvidence = async (): Promise<SmartDeviceEvidence[]> => {
       }
     }),
   )
+}
+
+const createSmartBaseline = (devices: SmartDeviceEvidence[], capturedAt: Date): SmartBaseline => ({
+  schemaVersion: SMART_BASELINE_SCHEMA_VERSION,
+  capturedAt: capturedAt.toISOString(),
+  devices: devices.map(({ criticalAttributes, device, serial, smartPassed }) => ({
+    criticalAttributes: { ...criticalAttributes },
+    device,
+    serial,
+    smartPassed,
+  })),
+})
+
+const smartBaselineCaptureFailures = (baseline: SmartBaseline): string[] => {
+  validateSmartBaselineShape(baseline, 'SMART baseline')
+  const failures: string[] = []
+  appendSmartInventoryFailures(failures, 'SMART baseline', baseline.devices)
+  for (const [device, expectedSerial] of Object.entries(EXPECTED_SMART_DEVICES)) {
+    const evidence = baseline.devices.find((candidate) => candidate.device === device)
+    if (!evidence) {
+      failures.push(`SMART baseline is missing for ${device} (${expectedSerial})`)
+      continue
+    }
+    if (evidence.serial !== expectedSerial) {
+      failures.push(`SMART baseline serial for ${device} is ${evidence.serial}, expected ${expectedSerial}`)
+    }
+    if (!evidence.smartPassed) failures.push(`SMART overall health failed for ${device} (${evidence.serial})`)
+    const nonZeroMediaAttributes = nonZeroSmartMediaAttributes(evidence.criticalAttributes)
+    if (nonZeroMediaAttributes.length > 0) {
+      failures.push(
+        `SMART media attributes are non-zero for ${device}: ${nonZeroMediaAttributes.map(([name, value]) => `${name}=${value}`).join(', ')}`,
+      )
+    }
+  }
+  return [...new Set(failures)]
+}
+
+const writeSmartBaseline = (path: string, baseline: SmartBaseline) => {
+  const failures = smartBaselineCaptureFailures(baseline)
+  if (failures.length > 0) throw new Error(`Refusing unsafe SMART baseline: ${failures.join('; ')}`)
+
+  let created = false
+  try {
+    const descriptor = openSync(path, 'wx', 0o600)
+    created = true
+    try {
+      writeFileSync(descriptor, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8')
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+  } catch (error) {
+    if (created) rmSync(path, { force: true })
+    throw new Error(
+      `Unable to write SMART baseline '${path}': ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 }
 
 const conditionIsTrue = (conditions: unknown, type: string): boolean =>
@@ -1369,6 +1552,7 @@ const defaultSnapshotCollectors: SnapshotCollectors = {
 const collectStorageStabilitySnapshotWith = async (
   observationStartedAt: string,
   talosNode: string,
+  smartBaseline: SmartBaseline,
   collectors: SnapshotCollectors,
 ): Promise<StorageStabilitySnapshot> => {
   const [postgres, jangarPostgres] = await Promise.all([collectors.postgres(), collectors.jangarPostgres()])
@@ -1389,6 +1573,7 @@ const collectStorageStabilitySnapshotWith = async (
     schemaVersion: GATE_SCHEMA_VERSION,
     capturedAt,
     observationStartedAt,
+    smartBaseline,
     talos,
     ceph,
     smartDevices,
@@ -1403,12 +1588,22 @@ const collectStorageStabilitySnapshotWith = async (
 
 export const collectStorageStabilitySnapshot = async (
   observationStartedAt: string,
+  smartBaseline: SmartBaseline,
   talosNode = DEFAULT_TALOS_NODE,
 ): Promise<StorageStabilitySnapshot> => {
-  parseTimestamp(observationStartedAt, '--observation-start')
+  const observationStartedAtMs = parseTimestamp(observationStartedAt, '--observation-start')
+  const baselineFailures = smartBaselineCaptureFailures(smartBaseline)
+  if (baselineFailures.length > 0) {
+    throw new Error(`SMART baseline is not safe for observation: ${baselineFailures.join('; ')}`)
+  }
+  if (parseTimestamp(smartBaseline.capturedAt, 'SMART baseline.capturedAt') !== observationStartedAtMs) {
+    throw new Error(
+      `SMART baseline was captured at ${smartBaseline.capturedAt}; it must exactly match --observation-start ${observationStartedAt}`,
+    )
+  }
   ensureCli('kubectl')
   ensureCli('talosctl')
-  return collectStorageStabilitySnapshotWith(observationStartedAt, talosNode, defaultSnapshotCollectors)
+  return collectStorageStabilitySnapshotWith(observationStartedAt, talosNode, smartBaseline, defaultSnapshotCollectors)
 }
 
 const parseArgs = (argv: string[]): CliOptions => {
@@ -1417,11 +1612,14 @@ const parseArgs = (argv: string[]): CliOptions => {
     const arg = argv[index]
     if (arg === '--help' || arg === '-h') {
       console.log(`Usage:
-  bun run gate:torghut-storage-stability --observation-start <RFC3339> [--output text|json] [--talos-node <node>]
+  bun run gate:torghut-storage-stability --capture-smart-baseline <path> [--output text|json]
+  bun run gate:torghut-storage-stability --observation-start <RFC3339> --smart-baseline <path> [--output text|json] [--talos-node <node>]
   bun run gate:torghut-storage-stability --snapshot <path> [--output text|json]
 
-The live mode is read-only. It samples Torghut and Jangar PostgreSQL WAL concurrently for ${WAL_SAMPLE_SECONDS} seconds and requires a complete
-${MINIMUM_OBSERVATION_MINUTES}-minute clean observation window. The command exits non-zero when any activation gate fails.`)
+Capture mode reads current SMART data and writes a new local baseline file without mutating the cluster. Use the emitted
+capture timestamp as --observation-start. Live gate mode is read-only, samples Torghut and Jangar PostgreSQL WAL concurrently
+for ${WAL_SAMPLE_SECONDS} seconds, and requires a complete ${MINIMUM_OBSERVATION_MINUTES}-minute clean observation window. The command exits non-zero
+when any activation gate fails.`)
       process.exit(0)
     }
     if (!arg.startsWith('--')) throw new Error(`Unknown argument: ${arg}`)
@@ -1430,8 +1628,14 @@ ${MINIMUM_OBSERVATION_MINUTES}-minute clean observation window. The command exit
     if (inlineValue === undefined) index += 1
     if (value === undefined) throw new Error(`Missing value for ${flag}`)
     switch (flag) {
+      case '--capture-smart-baseline':
+        options.captureSmartBaselinePath = value
+        break
       case '--observation-start':
         options.observationStartedAt = value
+        break
+      case '--smart-baseline':
+        options.smartBaselinePath = value
         break
       case '--snapshot':
         options.snapshotPath = value
@@ -1447,11 +1651,17 @@ ${MINIMUM_OBSERVATION_MINUTES}-minute clean observation window. The command exit
         throw new Error(`Unknown option: ${flag}`)
     }
   }
-  if (options.snapshotPath && options.observationStartedAt) {
-    throw new Error('--snapshot and --observation-start are mutually exclusive')
+  const modeCount = [options.captureSmartBaselinePath, options.observationStartedAt, options.snapshotPath].filter(
+    Boolean,
+  ).length
+  if (modeCount !== 1) {
+    throw new Error('select exactly one mode: --capture-smart-baseline, --observation-start, or --snapshot')
   }
-  if (!options.snapshotPath && !options.observationStartedAt) {
-    throw new Error('live collection requires --observation-start; offline validation requires --snapshot')
+  if (options.observationStartedAt && !options.smartBaselinePath) {
+    throw new Error('live collection requires --smart-baseline captured at --observation-start')
+  }
+  if (options.smartBaselinePath && !options.observationStartedAt) {
+    throw new Error('--smart-baseline requires --observation-start')
   }
   return options
 }
@@ -1467,6 +1677,20 @@ const readSnapshot = (path: string): StorageStabilitySnapshot => {
   return snapshot as StorageStabilitySnapshot
 }
 
+const readSmartBaseline = (path: string): SmartBaseline => {
+  let value: unknown
+  try {
+    value = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw new Error(
+      `Unable to read SMART baseline '${path}': ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+  const baseline = requireObject(value, 'SMART baseline') as SmartBaseline
+  validateSmartBaselineShape(baseline, 'SMART baseline')
+  return baseline
+}
+
 const printResult = (result: StorageStabilityGateResult, output: OutputFormat) => {
   if (output === 'json') {
     console.log(JSON.stringify(result, null, 2))
@@ -1479,9 +1703,25 @@ const printResult = (result: StorageStabilityGateResult, output: OutputFormat) =
 
 const main = async () => {
   const options = parseArgs(process.argv.slice(2))
+  if (options.captureSmartBaselinePath) {
+    ensureCli('kubectl')
+    const baseline = createSmartBaseline(await collectSmartDeviceEvidence(), new Date())
+    writeSmartBaseline(options.captureSmartBaselinePath, baseline)
+    if (options.output === 'json') {
+      console.log(JSON.stringify({ path: options.captureSmartBaselinePath, baseline }, null, 2))
+    } else {
+      console.log(`SMART baseline written to ${options.captureSmartBaselinePath}`)
+      console.log(`Observation start: ${baseline.capturedAt}`)
+    }
+    return
+  }
   const snapshot = options.snapshotPath
     ? readSnapshot(options.snapshotPath)
-    : await collectStorageStabilitySnapshot(options.observationStartedAt!, options.talosNode)
+    : await collectStorageStabilitySnapshot(
+        options.observationStartedAt!,
+        readSmartBaseline(options.smartBaselinePath!),
+        options.talosNode,
+      )
   const result = evaluateStorageStabilityGate(snapshot)
   printResult(result, options.output)
   if (!result.ok) process.exitCode = 1
@@ -1496,8 +1736,13 @@ export const __private = {
   collectJangarPostgresEvidence,
   collectPostgresEvidence,
   controllerEventDurationMs,
+  createSmartBaseline,
   kafkaFailureClass,
   parseKubernetesLogLine,
+  parseArgs,
   parseTalosLine,
+  readSmartBaseline,
+  smartBaselineCaptureFailures,
   talosFailureClass,
+  writeSmartBaseline,
 }

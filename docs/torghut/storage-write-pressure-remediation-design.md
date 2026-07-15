@@ -398,13 +398,18 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 
 ### Live gates
 
-- Before activating either contained write workload, begin a clean observation window while both workloads remain at
-  zero replicas, then run
-  `bun run gate:torghut-storage-stability --observation-start <RFC3339 timestamp> --output json` after at least 30
-  minutes. The read-only gate requires complete Talos and Kafka log coverage for the window, `HEALTH_OK`, all six OSDs
+- Before activating either contained write workload, keep both workloads at zero replicas and capture the observation
+  anchor with
+  `bun run gate:torghut-storage-stability --capture-smart-baseline <new local path>`. Use the emitted capture timestamp
+  as `--observation-start`, wait at least 30 minutes, then run
+  `bun run gate:torghut-storage-stability --observation-start <capture timestamp> --smart-baseline <same path> --output json`.
+  Capture mode writes a new local evidence file but does not mutate the cluster; the live gate is read-only. It requires
+  complete Talos and Kafka log coverage for the window, `HEALTH_OK`, all six OSDs
   up and in, only clean placement groups, no unacknowledged crashes, and no new SCSI device-reset/recovery, cache-flush,
-  or I/O-error record. Every expected disk must pass current SMART overall health with zero reallocated, pending,
-  offline-uncorrectable, and interface-CRC counters. Historical SMART self-tests are retained as diagnostic context but
+  or I/O-error record. Every expected disk must match its baseline serial and pass SMART overall health both at the
+  observation start and at evaluation. Reallocated, pending, and offline-uncorrectable sectors must remain absolutely
+  zero; the lifetime interface-CRC counter may retain historical events but must be unchanged from the observation
+  baseline. Historical SMART self-tests are retained as diagnostic context but
   are not treated as proof of a physical repair or as an activation prerequisite. The gate also requires no KRaft
   request timeout or
   controller event above two seconds, exactly three KRaft voters with follower lag below 1,000 records and five seconds,

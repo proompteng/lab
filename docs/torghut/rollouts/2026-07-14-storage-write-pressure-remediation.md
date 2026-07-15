@@ -216,22 +216,33 @@ observation evidence and current healthy state.
 
 ### Executable storage-stability gate
 
-Record a timestamp while both contained writers are still off, wait at least 30 minutes, and run:
+While both contained writers are still off, capture a new SMART observation anchor:
 
 ```bash
 bun run gate:torghut-storage-stability \
-  --observation-start 2026-07-15T11:00:00Z \
+  --capture-smart-baseline /tmp/torghut-smart-baseline.json
+```
+
+The command refuses to overwrite an existing file. Use the exact `Observation start` timestamp it prints, wait at least
+30 minutes, and run:
+
+```bash
+bun run gate:torghut-storage-stability \
+  --observation-start <capture timestamp> \
+  --smart-baseline /tmp/torghut-smart-baseline.json \
   --output json
 ```
 
-Replace the example timestamp with the actual clean-observation start. The command is read-only and samples Torghut and
-Jangar PostgreSQL WAL concurrently for 30 seconds. It exits non-zero unless all of the following are simultaneously true:
+Capture mode reads the cluster and writes only the local baseline file. The live gate is read-only and samples Torghut
+and Jangar PostgreSQL WAL concurrently for 30 seconds. It exits non-zero unless all of the following are simultaneously
+true:
 
 - the clean window is at least 30 minutes and retained Talos dmesg plus Kafka controller logs cover it;
 - Talos contains no new SCSI device-reset/recovery, `mpt3sas` fault/reset, `Synchronize Cache`, or I/O-error signature;
 - Ceph is `HEALTH_OK`, all six OSDs are up and in, every placement group is clean, and no crash is unacknowledged;
-- all three expected SAS serials report current SMART overall health passed and zero
-  reallocated/pending/offline-uncorrectable/interface-CRC counters;
+- all three expected SAS serials match the observation baseline and report SMART overall health passed at both reads;
+  reallocated, pending, and offline-uncorrectable sectors are zero, while each lifetime interface-CRC counter is
+  unchanged from its captured value;
 - Kafka remains converged on Strimzi 1.1.0 / Kafka 4.3.0 / metadata `4.3-IV0`, with three ready controllers, three
   ready brokers, all topics ready, complete controller-log coverage, no KRaft request timeout or broker fencing, and no
   controller event above two seconds; its direct quorum readback must show voters 0/1/2, a current leader, follower lag
