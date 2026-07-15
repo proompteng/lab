@@ -22,8 +22,11 @@ from app.trading.infrastructure_validation import (
 from app.trading.broker_mutation_receipts import fingerprint_broker_endpoint
 from app.trading.risk_reduction import (
     BrokerOrderObservation,
+    BrokerPositionObservation,
     BrokerReductionSnapshot,
     CancelOrderPlan,
+    ClosePositionPlan,
+    PositionCloseLeg,
     authorize_risk_reduction,
 )
 from app.trading.risk_reduction_mutation_authority import (
@@ -373,6 +376,63 @@ class TestOrderFirewall(TestCase):
                 authority=authority,
             )
         self.assertEqual(client.cancel_calls, ["order-1"])
+
+    def test_close_position_compares_canonical_decimal_quantity(self) -> None:
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+        now = datetime.now(timezone.utc)
+        authorization = authorize_risk_reduction(
+            BrokerReductionSnapshot(
+                broker_route="alpaca",
+                account_label=firewall.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    firewall.broker_endpoint_url
+                ),
+                observed_at=now,
+                complete=True,
+                positions=(
+                    BrokerPositionObservation(
+                        symbol="AAPL",
+                        signed_quantity=Decimal("1"),
+                        unit_notional=Decimal("100"),
+                    ),
+                ),
+            ),
+            ClosePositionPlan(
+                PositionCloseLeg(
+                    symbol="AAPL",
+                    side="sell",
+                    quantity=Decimal("1"),
+                )
+            ),
+            now=now,
+        )
+        request_payload = {
+            "quantity": "1",
+            "risk_reduction": authorization.evidence_payload,
+            "symbol": "AAPL",
+        }
+        mutation_permit = broker_mutation_test_permit(
+            request_payload=request_payload,
+            broker_route="alpaca",
+            risk_class="risk_reducing",
+            account_label=firewall.account_label,
+            endpoint_url=firewall.broker_endpoint_url,
+            operation="close_position",
+        )
+        authority = RiskReductionMutationAuthority(
+            request_payload=request_payload,
+            mutation_permit=mutation_permit,
+            reduction_permit=authorization.permit,
+        )
+
+        response = firewall.close_position(
+            "AAPL",
+            Decimal("1.0"),
+            authority=authority,
+        )
+
+        self.assertEqual(response["id"], "close-1")
 
     def test_permit_is_request_bound_and_single_use(self) -> None:
         settings.trading_kill_switch_enabled = False

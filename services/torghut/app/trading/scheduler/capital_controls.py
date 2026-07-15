@@ -327,6 +327,7 @@ class CapitalSafetyController:
         try:
             self._cancel_open_orders(purpose=mutation_purpose)
             attempts = max(1, settings.trading_closeout_max_attempts)
+            submitted_positions: tuple[tuple[str, str, Decimal], ...] | None = None
             for attempt in range(1, attempts + 1):
                 positions = self._positions()
                 if not positions:
@@ -334,9 +335,19 @@ class CapitalSafetyController:
                         account_label=self.account_label
                     )
                     return
-                if attempt > 1:
+                observed_positions = self._closeout_position_state(positions)
+                if submitted_positions is None:
+                    self.execution_adapter.close_all_positions(purpose=mutation_purpose)
+                    submitted_positions = observed_positions
+                elif observed_positions != submitted_positions:
+                    if not self._closeout_progressed(
+                        before=submitted_positions,
+                        after=observed_positions,
+                    ):
+                        raise RuntimeError("capital_closeout_position_progress_invalid")
                     self._cancel_open_orders(purpose=mutation_purpose)
-                self.execution_adapter.close_all_positions(purpose=mutation_purpose)
+                    self.execution_adapter.close_all_positions(purpose=mutation_purpose)
+                    submitted_positions = observed_positions
                 self.state.capital_closeout_attempts = attempt
                 self.sleep(max(0.0, settings.trading_closeout_reprice_seconds))
 
@@ -348,6 +359,41 @@ class CapitalSafetyController:
             logger.exception("Capital closeout failed account=%s", self.account_label)
         finally:
             self.state.capital_closeout_in_progress = False
+
+    @staticmethod
+    def _closeout_position_state(
+        positions: list[dict[str, object]],
+    ) -> tuple[tuple[str, str, Decimal], ...]:
+        state: list[tuple[str, str, Decimal]] = []
+        seen_symbols: set[str] = set()
+        for position in positions:
+            symbol = str(position.get("symbol") or "").strip().upper()
+            side = str(position.get("side") or "").strip().lower()
+            qty = CapitalSafetyController._decimal(position.get("qty"))
+            if not symbol or symbol in seen_symbols or side not in {"long", "short"}:
+                raise RuntimeError("capital_closeout_position_identity_invalid")
+            if qty is None or qty <= 0:
+                raise RuntimeError("capital_closeout_position_quantity_invalid")
+            seen_symbols.add(symbol)
+            state.append((symbol, side, qty.normalize()))
+        return tuple(sorted(state))
+
+    @staticmethod
+    def _closeout_progressed(
+        *,
+        before: tuple[tuple[str, str, Decimal], ...],
+        after: tuple[tuple[str, str, Decimal], ...],
+    ) -> bool:
+        before_by_symbol = {
+            symbol: (side, quantity) for symbol, side, quantity in before
+        }
+        progressed = len(after) < len(before)
+        for symbol, side, quantity in after:
+            previous = before_by_symbol.get(symbol)
+            if previous is None or previous[0] != side or quantity > previous[1]:
+                return False
+            progressed = progressed or quantity < previous[1]
+        return progressed
 
     def _positions(self) -> list[dict[str, object]]:
         raw_positions = self.execution_adapter.list_positions()

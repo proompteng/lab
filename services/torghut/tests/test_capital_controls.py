@@ -296,6 +296,129 @@ class TestCapitalSafetyController(TestCase):
         self.assertEqual(adapter.close_calls, ["closeout"])
         self.assertIsNotNone(controller.state.capital_flat_confirmed_at)
 
+    def test_closeout_never_replays_an_unchanged_position_snapshot(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "10",
+                    "side": "long",
+                    "current_price": "100",
+                }
+            ]
+        )
+
+        def accepted_without_fill(*, purpose="flatten"):
+            adapter.close_calls.append(purpose)
+            return [{"id": "close-nvda", "status": "accepted"}]
+
+        adapter.close_all_positions = accepted_without_fill
+        controller = self._controller(adapter)
+
+        with (
+            patch.object(settings, "trading_closeout_max_attempts", 3),
+            patch.object(settings, "trading_closeout_reprice_seconds", 0),
+        ):
+            controller._flatten(
+                reason="scheduled_closeout",
+                now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+            )
+
+        self.assertEqual(adapter.close_calls, ["closeout"])
+        self.assertEqual(adapter.cancel_calls, 2)
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn("closeout_failed", controller.state.emergency_stop_reason)
+        self.assertNotIn("closeout_error", controller.state.emergency_stop_reason)
+
+    def test_closeout_reissues_only_after_monotonic_partial_fill(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "10",
+                    "side": "long",
+                    "current_price": "100",
+                }
+            ]
+        )
+
+        def partially_fill_then_flatten(*, purpose="flatten"):
+            adapter.close_calls.append(purpose)
+            if len(adapter.close_calls) == 1:
+                adapter.positions = [
+                    {
+                        "symbol": "NVDA",
+                        "qty": "5",
+                        "side": "long",
+                        "current_price": "100",
+                    }
+                ]
+            else:
+                adapter.positions = []
+            return [
+                {"id": f"close-nvda-{len(adapter.close_calls)}", "status": "accepted"}
+            ]
+
+        adapter.close_all_positions = partially_fill_then_flatten
+        controller = self._controller(adapter)
+
+        with (
+            patch.object(settings, "trading_closeout_max_attempts", 3),
+            patch.object(settings, "trading_closeout_reprice_seconds", 0),
+        ):
+            controller._flatten(
+                reason="scheduled_closeout",
+                now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+            )
+
+        self.assertEqual(adapter.close_calls, ["closeout", "closeout"])
+        self.assertEqual(adapter.cancel_calls, 2)
+        self.assertFalse(controller.state.emergency_stop_active)
+        self.assertIsNotNone(controller.state.capital_flat_confirmed_at)
+
+    def test_closeout_never_reissues_after_a_position_side_flip(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "10",
+                    "side": "long",
+                    "current_price": "100",
+                }
+            ]
+        )
+
+        def fill_past_zero(*, purpose="flatten"):
+            adapter.close_calls.append(purpose)
+            adapter.positions = [
+                {
+                    "symbol": "NVDA",
+                    "qty": "1",
+                    "side": "short",
+                    "current_price": "100",
+                }
+            ]
+            return [{"id": "close-nvda", "status": "accepted"}]
+
+        adapter.close_all_positions = fill_past_zero
+        controller = self._controller(adapter)
+
+        with (
+            patch.object(settings, "trading_closeout_max_attempts", 3),
+            patch.object(settings, "trading_closeout_reprice_seconds", 0),
+        ):
+            controller._flatten(
+                reason="scheduled_closeout",
+                now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+            )
+
+        self.assertEqual(adapter.close_calls, ["closeout"])
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn(
+            "closeout_error:RuntimeError",
+            controller.state.emergency_stop_reason,
+        )
+
     def test_malformed_position_cannot_be_misreported_as_flat(self) -> None:
         adapter = _ExecutionAdapter(
             [{"symbol": "NVDA", "qty": "not-a-number", "side": "long"}]

@@ -379,11 +379,15 @@ class OrderFirewall:
     ) -> dict[str, object]:
         request_payload = authority.request_payload
         normalized_symbol = symbol.strip().upper()
+        payload_quantity = _positive_decimal(request_payload.get("quantity"))
+        normalized_quantity = _positive_decimal(quantity)
         if str(
             request_payload.get("symbol") or ""
-        ).strip().upper() != normalized_symbol or str(
-            request_payload.get("quantity") or ""
-        ) != str(quantity):
+        ).strip().upper() != normalized_symbol or (
+            payload_quantity is None
+            or normalized_quantity is None
+            or payload_quantity != normalized_quantity
+        ):
             raise ValueError("alpaca_close_position_request_mismatch")
         consume_risk_reduction_mutation_authority(
             authority,

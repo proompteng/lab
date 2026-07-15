@@ -117,6 +117,12 @@ Aggregate gross exposure must decrease and the completed plan must not increase 
 success is not retried from the old snapshot: it remains unresolved, then recovery re-observes positions before any new
 permit is issued.
 
+An acknowledged account flatten is submitted once for a given symbol, side, and quantity state. Confirmation polls do
+not cancel and replay that same action. If broker readback proves a monotonic partial fill, Torghut cancels any remaining
+open close order, confirms cancellation, and may authorize the smaller residual position as a new economic action. An
+unchanged, expanded, side-flipped, or new-symbol state is never a blind retry and fails closed after the confirmation
+budget.
+
 A single-leg close can increase absolute portfolio net exposure when flattening one leg of a hedged book. Torghut does
 not hide this arithmetic. Such a close requires a sealed multi-leg plan whose completed aggregate does not increase
 absolute net exposure, or it remains blocked for operator reconciliation.
