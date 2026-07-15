@@ -1,6 +1,6 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-15 00:09 UTC**
+Last updated: **2026-07-15 01:39 UTC**
 
 Status: **software containment live; write-heavy activation gated on physical SAS repair**
 
@@ -193,6 +193,64 @@ a scheduled storage maintenance outage, not an online controller experiment:
    resets, OSD crashes, or flush errors before starting the archive worker or Kafka staging writer.
 
 Acknowledging or silencing the Ceph warning is not evidence of repair.
+
+### Executable post-repair gate
+
+After the repaired host returns, record the timestamp at which the storage path is fully online and start the evidence
+window with:
+
+```bash
+bun run gate:torghut-storage-repair \
+  --repair-start 2026-07-15T11:00:00Z \
+  --output json
+```
+
+Replace the example timestamp with the actual post-repair start. The command is read-only and samples PostgreSQL WAL
+for 30 seconds. It exits non-zero unless all of the following are simultaneously true:
+
+- the repair window is at least 24 hours and the retained Talos dmesg begins no later than that window;
+- Talos contains no `mpt3sas`, disk reset, `Synchronize Cache`, or I/O-error signature in the window;
+- Ceph is `HEALTH_OK`, all six OSDs are up and in, every placement group is clean, and no crash is unacknowledged;
+- all three expected SAS serials report SMART passed, zero reallocated/pending/offline-uncorrectable/CRC sectors, and a
+  successful extended self-test whose full maximum-duration window started after the repair start;
+- Kafka remains converged on Strimzi 1.1.0 / Kafka 4.3.0 / metadata `4.3-IV0`, with three ready controllers, three
+  ready brokers, all topics ready, complete controller-log coverage, no KRaft request timeout or broker fencing, and no
+  controller event above two seconds; its direct quorum readback must show voters 0/1/2, a current leader, follower lag
+  no greater than 1,000 records or five seconds, and no under-replicated or offline partition;
+- PostgreSQL remains ready with `fsync`, `full_page_writes`, and `synchronous_commit` on, `wal_buffers=16MB`, and WAL
+  below 0.25 MiB/s;
+- the Hyperliquid feed `/readyz` succeeds with ready, WebSocket, Kafka, and ClickHouse true; the scheduler `/readyz`
+  succeeds with fresh trading/reconcile cycles and healthy leadership; and the latest Knative API revision is converged
+  and directly ready;
+- the required Argo applications are `Synced/Healthy`; and
+- both the archive worker and Kafka ClickHouse writer are still declaratively and actually at zero replicas.
+
+The command reports the temporary Kafka controller timeout overrides as a warning rather than a pass condition. They
+remain containment until application activation is proven separately at default controller timeout behavior.
+
+The 24 TB Seagate drives report an extended-test polling time of 2,415 minutes (40.25 hours). The 24-hour reset-free
+window is therefore only the minimum floor; the post-repair extended-test requirement plus one-hour SMART counter
+uncertainty makes the earliest honest activation roughly 41.25 hours after tests begin. The pre-repair SMART readback
+reports overall health passed and zero critical sector/CRC attributes, but the newest extended test is
+`Interrupted (host reset)`, so it is not repair proof.
+
+The current-head live collection completed at `2026-07-15 01:38 UTC`, using `2026-07-14T20:12:00Z` as the start of the
+incident window. It correctly returned `FAIL`; both contained deployments had desired, actual, ready, available, and
+terminating replica counts of zero, with no matching pods. The bounded result reported:
+
+- only 5.45 of the required 24 hours observed;
+- five SAS transport-reset records and two durable cache-flush I/O failures in Talos;
+- Ceph `HEALTH_WARN` with `BLUESTORE_SLOW_OP_ALERT`, `RECENT_CRASH`, and the unacknowledged OSD.3 crash;
+- all three disks' newest extended SMART test was `Interrupted (host reset)` and predates the incident by roughly 3,550
+  power-on hours;
+- 670 KRaft request-timeout records, seven actual broker-fencing records, and 3,765 controller events above two seconds;
+- the direct quorum voter, leader, follower-lag, under-replication, and offline-partition checks passed, demonstrating why
+  pod readiness and a single healthy quorum read are insufficient without the full-window log checks;
+- PostgreSQL WAL at 0.0059 MiB/s over 30.3 seconds, within budget;
+- the Hyperliquid feed, scheduler, and current Knative API revision passed their direct readiness checks; and
+- Rook-Ceph `Degraded` in Argo CD.
+
+No archive, writer, Ceph-warning acknowledgement, Kafka-timeout removal, or other mutation was attempted.
 
 ## Remaining activation gates
 
