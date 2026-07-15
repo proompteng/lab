@@ -384,24 +384,6 @@ type TorghutQuantMetricsLatest = {
   updated_at: Generated<Timestamp>
 }
 
-type TorghutQuantMetricsSeries = {
-  id: Generated<string>
-  strategy_id: string
-  account: string
-  window: string
-  metric_name: string
-  status: string
-  quality: string
-  unit: string
-  value_numeric: number | string | null
-  value_json: JsonValue
-  meta_json: JsonValue
-  formula_version: string
-  as_of: Timestamp
-  freshness_seconds: number
-  created_at: Generated<Timestamp>
-}
-
 type TorghutQuantAlerts = {
   id: Generated<string>
   alert_id: string
@@ -650,7 +632,6 @@ export type Database = {
   'jangar_github.pr_worktrees': JangarGithubPrWorktrees
   'jangar_github.write_actions': JangarGithubWriteActions
   'torghut_control_plane.quant_metrics_latest': TorghutQuantMetricsLatest
-  'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts
   'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
   'torghut_control_plane.quant_pipeline_health_latest': TorghutQuantPipelineHealthLatest

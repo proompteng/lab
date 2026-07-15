@@ -12,7 +12,7 @@ describe('torghut-config', () => {
       JANGAR_TORGHUT_QUANT_CONTROL_PLANE_ENABLED: 'true',
       JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS: '2500',
       JANGAR_TORGHUT_QUANT_HEALTH_SAMPLING_MS: '7500',
-      JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS: '90000',
+      JANGAR_TORGHUT_QUANT_LATEST_SAMPLING_MS: '10000',
       JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT: '1m,15m',
       JANGAR_TORGHUT_QUANT_POLICY_MAX_DRAWDOWN_1D: '0.08',
     })
@@ -20,7 +20,7 @@ describe('torghut-config', () => {
     expect(config.enabled).toBe(true)
     expect(config.computeIntervalMs).toBe(2500)
     expect(config.healthSamplingMs).toBe(7500)
-    expect(config.seriesSamplingMs).toBe(90000)
+    expect(config.latestSamplingMs).toBe(10000)
     expect(config.windowsLight).toEqual(['1m', '15m'])
     expect(config.policy.maxDrawdown1d).toBe(0.08)
   })
@@ -29,7 +29,7 @@ describe('torghut-config', () => {
     const config = resolveTorghutQuantRuntimeConfig({})
 
     expect(config.healthSamplingMs).toBe(5000)
-    expect(config.seriesSamplingMs).toBe(60_000)
+    expect(config.latestSamplingMs).toBe(10_000)
   })
 
   it('rejects unsupported quant windows instead of casting them', () => {

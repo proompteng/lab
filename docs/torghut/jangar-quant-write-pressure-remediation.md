@@ -3,8 +3,8 @@
 ## Decision
 
 Replace append-only pipeline-health persistence with a primary-keyed latest-state table, suppress unchanged latest-metric
-updates, and reduce quant-series persistence from five-second to one-minute samples. Keep the one-second compute loop and
-all trading/alert semantics unchanged.
+updates, bound latest-state persistence to ten seconds, and remove the unused quant-series API, writer, and relations.
+Keep the one-second compute loop and all trading/alert semantics unchanged.
 
 This is an application write-amplification fix. It does not increase Kafka timeouts, weaken PostgreSQL durability, or
 assume a hardware fault.
@@ -58,30 +58,42 @@ The old five-second sampling regime created and later removed far more index ent
 Ordinary vacuum can make dead space reusable but cannot shrink those B-trees. Reindexing or `VACUUM FULL` would scan or
 rewrite the live 146 GiB relation on the already contended pool, so neither is an acceptable incident-time operation.
 
-### No-copy active-series cutover
+### Quant-series removal
 
-The next migration therefore performs only metadata and empty-table work:
+The no-copy active-series cutover was used as containment while production usage was verified. Repository search found
+no Jangar UI, Torghut runtime, trading, alert, or control-plane caller of the historical-series endpoint. Live
+PostgreSQL statistics confirmed the absence of a production reader: since the statistics reset, the legacy relation had
+only 11 index scans, and the most recent composite-key lookup was the cutover verification itself; active-relation reads
+were the bounded rollout diagnostics.
 
-1. Rename the existing table to `quant_metrics_series_legacy`; its rows and indexes remain untouched.
-2. Create a logged `quant_metrics_series_active` table hash-partitioned 16 ways by `strategy_id`. Queries always provide
-   a strategy ID, so partition pruning keeps the active lookup index set bounded without a calendar-partition time bomb.
-3. Give the active table only the required strategy/account/window/metric/time lookup index plus a compact BRIN time
-   index. Do not recreate the unused random-UUID primary-key or global time B-tree write costs.
-4. Recreate `quant_metrics_series` as a `UNION ALL` compatibility view over legacy and active history.
-5. Route inserts on that view to the active table with an `INSTEAD OF INSERT` trigger. Both the new image and the prior
-   image keep the same read/write contract, so an image rollback does not lose access to either side of the cutover.
+The final migration is therefore intentionally destructive and roll-forward only. It uses a five-second local lock
+timeout, drops the compatibility view and insert function, then drops the active partition tree and the retained 146 GiB
+legacy table without broad `CASCADE`. The API route, writer, store queries, database types, runtime state, and
+configuration are removed in the same image. No Torghut trading or alert contract depends on this data.
 
-The forward migration does not select from, copy, reindex, vacuum, truncate, or delete the legacy relation. Its reverse
-path first merges active rows back by UUID before restoring the original table name, preserving data if an explicit
-database rollback is required. A five-second local lock timeout makes the metadata cutover fail closed instead of
-waiting behind a long analytical query.
+### Latest-state write budget
+
+The compact-series rollout completed at `2026-07-15T06:08Z`. It reduced steady Jangar RBD traffic from roughly 67/110
+primary/replica writes per second to 19/15, but two independent 60-second WAL samples still measured **0.391 MiB/s** and
+**0.387 MiB/s**. Per-table PostgreSQL statistics in those same windows identified the remaining source:
+
+- `quant_metrics_latest`: 33,012 and 30,816 updates per minute;
+- `quant_pipeline_health_latest`: 2,208 and 2,301 updates per minute; and
+- `quant_metrics_series_active`: 4,464 and 4,464 inserts per minute.
+
+The one-second compute target is therefore not used as a database-write target. Latest-state persistence is sampled at
+ten seconds per strategy/account/window while compute, alert evaluation, stream deltas, and on-demand materialization
+remain immediate. A process restart and an on-demand request both force a complete latest-state write before the
+sampling clock resumes. The health payload records whether each frame persisted latest state so the write budget is
+observable rather than implicit.
 
 ## Implementation
 
 ### Latest metrics
 
 `quant_metrics_latest` keeps its existing key and freshness contract. Its conflict update now executes only when the
-material row tuple is distinct from the stored tuple. Identical retries produce no heap or index rewrite.
+material row tuple is distinct from the stored tuple. Identical retries produce no heap or index rewrite. The main loop
+attempts that upsert no more than once per ten seconds per frame; direct materialization still writes immediately.
 
 ### Pipeline health
 
@@ -93,28 +105,29 @@ Writers upsert the latest row and refresh `updated_at`. Readers use the explicit
 JSON expression plus `DISTINCT ON`. The legacy append-only table remains untouched for rollback and is dropped only in a
 separate cleanup after live read/write proof.
 
-### Series sampling
+### Series removal
 
-The compute loop remains at one second, while historical series persistence changes from five seconds to 60 seconds.
-The shortest supported analytical window is one minute, so this preserves the available temporal resolution while
-reducing series inserts by up to 12 times. Stream updates, current metrics, alerts, and on-demand materialization remain
-independent of this history sampling interval.
+The compute loop remains at one second. Historical-series persistence and reads no longer exist: there is no API route,
+runtime append path, store function, environment toggle, or database relation. A future approved historical analytics
+requirement must be designed against an explicit consumer and retention contract rather than silently restoring this
+unbounded PostgreSQL cache.
 
 ## Rollout gates
 
 1. Verify the migration creates the empty latest-state table without reading the legacy table.
 2. Verify Jangar becomes ready and active health scopes populate within five seconds.
-3. Verify quant health and snapshot APIs preserve their response contracts.
-4. Compare Jangar WAL rate and both Jangar RBD image write rates with the 0.603 MiB/s pre-change WAL baseline.
-5. Require the shared RBD pool and Kafka controllers to complete a new 30-minute observation with no request timeout,
+3. Verify the quant-series route returns 404 and all four series relations/functions are absent.
+4. Verify quant health and snapshot APIs preserve their response contracts.
+5. Compare Jangar WAL rate and both Jangar RBD image write rates with the 0.603 MiB/s pre-change WAL baseline.
+6. Require the shared RBD pool and Kafka controllers to complete a new 30-minute observation with no request timeout,
    broker fencing, slow controller event above two seconds, or sustained ISR loss.
-6. Only after the observation passes, proceed with the bounded Options archive activation.
+7. Only after the observation passes, proceed with the bounded Options archive activation.
 
 ## Rollback and cleanup
 
-Rollback restores the previous image and five-second manifest value; the legacy pipeline-health table remains available
-throughout that window. Do not drop or truncate it in the activation migration.
+The quant-series deletion is irreversible. After that migration applies, an image rollback to code that expects the
+series table is prohibited; recovery is roll-forward only. The legacy pipeline-health table remains available during
+this slice and is not dropped or truncated by the quant-series migration.
 
-After the new path soaks and repository/runtime searches prove no legacy readers or writers, a follow-up migration may
-drop `quant_pipeline_health`. Historical quant-series retention and partitioning are a separate storage-lifecycle change;
-this rollout only stops the immediate high-frequency growth.
+After the new path soaks and repository/runtime searches prove no legacy pipeline-health readers or writers, a follow-up
+migration may drop `quant_pipeline_health`.

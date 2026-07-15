@@ -23,6 +23,7 @@ import * as atlasCodeSearchPerformanceIndexesMigration from '~/server/migrations
 import * as atlasCurrentCorpusMigration from '~/server/migrations/20260714_atlas_current_corpus'
 import * as torghutQuantPipelineHealthLatestMigration from '~/server/migrations/20260715_torghut_quant_pipeline_health_latest'
 import * as torghutQuantSeriesActiveMigration from '~/server/migrations/20260715_torghut_quant_series_active'
+import * as torghutQuantSeriesRemoveMigration from '~/server/migrations/20260715_torghut_quant_series_remove'
 
 type MigrationMap = Record<string, Migration>
 
@@ -60,6 +61,7 @@ const migrations: MigrationMap = {
   '20260714_atlas_current_corpus': atlasCurrentCorpusMigration,
   '20260715_torghut_quant_pipeline_health_latest': torghutQuantPipelineHealthLatestMigration,
   '20260715_torghut_quant_series_active': torghutQuantSeriesActiveMigration,
+  '20260715_torghut_quant_series_remove': torghutQuantSeriesRemoveMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()

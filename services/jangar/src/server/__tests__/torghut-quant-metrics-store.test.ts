@@ -151,6 +151,25 @@ describe('torghut quant metrics store', () => {
     expect(normalized.join(' ')).not.toContain('create table as select')
   })
 
+  it('drops the unused series API stores without cascading into unrelated relations', async () => {
+    const { db, calls } = makeFakeDb()
+    const { up } = await import('../migrations/20260715_torghut_quant_series_remove')
+
+    await up(db)
+
+    expect(calls).toHaveLength(5)
+    const normalized = calls.map((call) => call.sql.toLowerCase().replace(/\s+/g, ' '))
+    expect(normalized[0]).toContain("set local lock_timeout = '5s'")
+    expect(normalized[1]).toContain('drop view if exists torghut_control_plane.quant_metrics_series')
+    expect(normalized[2]).toContain(
+      'drop function if exists torghut_control_plane.insert_quant_metrics_series_active()',
+    )
+    expect(normalized[3]).toContain('drop table if exists torghut_control_plane.quant_metrics_series_active')
+    expect(normalized[4]).toContain('drop table if exists torghut_control_plane.quant_metrics_series_legacy')
+    expect(normalized.join(' ')).not.toContain('cascade')
+    expect(normalized.join(' ')).not.toContain('insert into')
+  })
+
   it('avoids physical latest-metric updates when every material value is unchanged', async () => {
     const { db, calls } = makeFakeDb()
     dbMocks.getDb.mockReturnValue(db)

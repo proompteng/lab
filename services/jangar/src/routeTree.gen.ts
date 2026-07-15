@@ -91,7 +91,6 @@ import { Route as ApiTorghutDecisionEngineRunsIdRouteImport } from './routes/api
 import { Route as ApiOpenwebuiRichUiRenderRenderIdRouteImport } from './routes/api/openwebui/rich-ui/render/$renderId'
 import { Route as ApiTorghutTradingControlPlaneQuantStreamRouteImport } from './routes/api/torghut/trading/control-plane/quant/stream'
 import { Route as ApiTorghutTradingControlPlaneQuantSnapshotRouteImport } from './routes/api/torghut/trading/control-plane/quant/snapshot'
-import { Route as ApiTorghutTradingControlPlaneQuantSeriesRouteImport } from './routes/api/torghut/trading/control-plane/quant/series'
 import { Route as ApiTorghutTradingControlPlaneQuantHealthRouteImport } from './routes/api/torghut/trading/control-plane/quant/health'
 import { Route as ApiTorghutTradingControlPlaneQuantAlertsRouteImport } from './routes/api/torghut/trading/control-plane/quant/alerts'
 import { Route as ApiTorghutTradingControlPlaneQuantAccountWitnessRouteImport } from './routes/api/torghut/trading/control-plane/quant/account-witness'
@@ -553,12 +552,6 @@ const ApiTorghutTradingControlPlaneQuantSnapshotRoute =
     path: '/api/torghut/trading/control-plane/quant/snapshot',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiTorghutTradingControlPlaneQuantSeriesRoute =
-  ApiTorghutTradingControlPlaneQuantSeriesRouteImport.update({
-    id: '/api/torghut/trading/control-plane/quant/series',
-    path: '/api/torghut/trading/control-plane/quant/series',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiTorghutTradingControlPlaneQuantHealthRoute =
   ApiTorghutTradingControlPlaneQuantHealthRouteImport.update({
     id: '/api/torghut/trading/control-plane/quant/health',
@@ -730,7 +723,6 @@ export interface FileRoutesByFullPath {
   '/api/torghut/trading/control-plane/quant/account-witness': typeof ApiTorghutTradingControlPlaneQuantAccountWitnessRoute
   '/api/torghut/trading/control-plane/quant/alerts': typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
   '/api/torghut/trading/control-plane/quant/health': typeof ApiTorghutTradingControlPlaneQuantHealthRoute
-  '/api/torghut/trading/control-plane/quant/series': typeof ApiTorghutTradingControlPlaneQuantSeriesRoute
   '/api/torghut/trading/control-plane/quant/snapshot': typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   '/api/torghut/trading/control-plane/quant/stream': typeof ApiTorghutTradingControlPlaneQuantStreamRoute
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
@@ -827,7 +819,6 @@ export interface FileRoutesByTo {
   '/api/torghut/trading/control-plane/quant/account-witness': typeof ApiTorghutTradingControlPlaneQuantAccountWitnessRoute
   '/api/torghut/trading/control-plane/quant/alerts': typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
   '/api/torghut/trading/control-plane/quant/health': typeof ApiTorghutTradingControlPlaneQuantHealthRoute
-  '/api/torghut/trading/control-plane/quant/series': typeof ApiTorghutTradingControlPlaneQuantSeriesRoute
   '/api/torghut/trading/control-plane/quant/snapshot': typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   '/api/torghut/trading/control-plane/quant/stream': typeof ApiTorghutTradingControlPlaneQuantStreamRoute
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
@@ -927,7 +918,6 @@ export interface FileRoutesById {
   '/api/torghut/trading/control-plane/quant/account-witness': typeof ApiTorghutTradingControlPlaneQuantAccountWitnessRoute
   '/api/torghut/trading/control-plane/quant/alerts': typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
   '/api/torghut/trading/control-plane/quant/health': typeof ApiTorghutTradingControlPlaneQuantHealthRoute
-  '/api/torghut/trading/control-plane/quant/series': typeof ApiTorghutTradingControlPlaneQuantSeriesRoute
   '/api/torghut/trading/control-plane/quant/snapshot': typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   '/api/torghut/trading/control-plane/quant/stream': typeof ApiTorghutTradingControlPlaneQuantStreamRoute
   '/api/github/pulls/$owner/$repo/$number/checks': typeof ApiGithubPullsOwnerRepoNumberChecksRoute
@@ -1028,7 +1018,6 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/control-plane/quant/account-witness'
     | '/api/torghut/trading/control-plane/quant/alerts'
     | '/api/torghut/trading/control-plane/quant/health'
-    | '/api/torghut/trading/control-plane/quant/series'
     | '/api/torghut/trading/control-plane/quant/snapshot'
     | '/api/torghut/trading/control-plane/quant/stream'
     | '/api/github/pulls/$owner/$repo/$number/checks'
@@ -1125,7 +1114,6 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/control-plane/quant/account-witness'
     | '/api/torghut/trading/control-plane/quant/alerts'
     | '/api/torghut/trading/control-plane/quant/health'
-    | '/api/torghut/trading/control-plane/quant/series'
     | '/api/torghut/trading/control-plane/quant/snapshot'
     | '/api/torghut/trading/control-plane/quant/stream'
     | '/api/github/pulls/$owner/$repo/$number/checks'
@@ -1224,7 +1212,6 @@ export interface FileRouteTypes {
     | '/api/torghut/trading/control-plane/quant/account-witness'
     | '/api/torghut/trading/control-plane/quant/alerts'
     | '/api/torghut/trading/control-plane/quant/health'
-    | '/api/torghut/trading/control-plane/quant/series'
     | '/api/torghut/trading/control-plane/quant/snapshot'
     | '/api/torghut/trading/control-plane/quant/stream'
     | '/api/github/pulls/$owner/$repo/$number/checks'
@@ -1306,7 +1293,6 @@ export interface RootRouteChildren {
   ApiTorghutTradingControlPlaneQuantAccountWitnessRoute: typeof ApiTorghutTradingControlPlaneQuantAccountWitnessRoute
   ApiTorghutTradingControlPlaneQuantAlertsRoute: typeof ApiTorghutTradingControlPlaneQuantAlertsRoute
   ApiTorghutTradingControlPlaneQuantHealthRoute: typeof ApiTorghutTradingControlPlaneQuantHealthRoute
-  ApiTorghutTradingControlPlaneQuantSeriesRoute: typeof ApiTorghutTradingControlPlaneQuantSeriesRoute
   ApiTorghutTradingControlPlaneQuantSnapshotRoute: typeof ApiTorghutTradingControlPlaneQuantSnapshotRoute
   ApiTorghutTradingControlPlaneQuantStreamRoute: typeof ApiTorghutTradingControlPlaneQuantStreamRoute
 }
@@ -1887,13 +1873,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTorghutTradingControlPlaneQuantSnapshotRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/torghut/trading/control-plane/quant/series': {
-      id: '/api/torghut/trading/control-plane/quant/series'
-      path: '/api/torghut/trading/control-plane/quant/series'
-      fullPath: '/api/torghut/trading/control-plane/quant/series'
-      preLoaderRoute: typeof ApiTorghutTradingControlPlaneQuantSeriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/torghut/trading/control-plane/quant/health': {
       id: '/api/torghut/trading/control-plane/quant/health'
       path: '/api/torghut/trading/control-plane/quant/health'
@@ -2266,8 +2245,6 @@ const rootRouteChildren: RootRouteChildren = {
     ApiTorghutTradingControlPlaneQuantAlertsRoute,
   ApiTorghutTradingControlPlaneQuantHealthRoute:
     ApiTorghutTradingControlPlaneQuantHealthRoute,
-  ApiTorghutTradingControlPlaneQuantSeriesRoute:
-    ApiTorghutTradingControlPlaneQuantSeriesRoute,
   ApiTorghutTradingControlPlaneQuantSnapshotRoute:
     ApiTorghutTradingControlPlaneQuantSnapshotRoute,
   ApiTorghutTradingControlPlaneQuantStreamRoute:

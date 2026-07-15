@@ -30,18 +30,3 @@ export const parseQuantWindow = (url: URL) => {
   }
   return { ok: true as const, value: trimmed as QuantWindow }
 }
-
-export const parseIsoUtc = (value: string | null) => {
-  if (!value) return null
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const ms = Date.parse(trimmed)
-  if (Number.isNaN(ms)) return null
-  return new Date(ms).toISOString()
-}
-
-export const parseMetricList = (raw: string | null) =>
-  (raw ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)

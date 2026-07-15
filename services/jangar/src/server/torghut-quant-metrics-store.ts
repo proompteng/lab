@@ -114,37 +114,6 @@ export const upsertQuantLatestMetrics = async (params: {
     .execute()
 }
 
-export const appendQuantSeriesMetrics = async (params: {
-  strategyId: string
-  account: string
-  window: QuantWindow
-  metrics: QuantMetric[]
-}) => {
-  const db = await ensureQuantStoreReady()
-  if (params.metrics.length === 0) return
-
-  await db
-    .insertInto('torghut_control_plane.quant_metrics_series')
-    .values(
-      params.metrics.map((metric) => ({
-        strategy_id: params.strategyId,
-        account: params.account,
-        window: params.window,
-        metric_name: metric.metricName,
-        status: metric.status,
-        quality: metric.quality,
-        unit: metric.unit,
-        value_numeric: metric.valueNumeric,
-        value_json: metric.valueJson ?? {},
-        meta_json: metric.meta ?? {},
-        formula_version: metric.formulaVersion,
-        as_of: toDate(metric.asOf),
-        freshness_seconds: metric.freshnessSeconds,
-      })),
-    )
-    .execute()
-}
-
 export const listQuantLatestMetrics = async (params: { strategyId: string; account: string; window: QuantWindow }) => {
   const db = await ensureQuantStoreReady()
   const rows = await db
@@ -166,60 +135,6 @@ export const listQuantLatestMetrics = async (params: { strategyId: string; accou
     .where('account', '=', params.account)
     .where('window', '=', params.window)
     .orderBy('metric_name', 'asc')
-    .execute()
-
-  return rows.map((row) => ({
-    metricName: row.metric_name,
-    window: row.window as QuantWindow,
-    status: row.status as QuantMetric['status'],
-    quality: row.quality as QuantMetric['quality'],
-    unit: row.unit,
-    valueNumeric: row.value_numeric === null ? null : Number(row.value_numeric),
-    valueJson: (row.value_json as Record<string, unknown>) ?? {},
-    meta: (row.meta_json as Record<string, unknown>) ?? {},
-    formulaVersion: row.formula_version,
-    asOf: new Date(row.as_of as unknown as string | Date).toISOString(),
-    freshnessSeconds: row.freshness_seconds,
-  })) satisfies QuantMetric[]
-}
-
-export const listQuantSeriesMetrics = async (params: {
-  strategyId: string
-  account: string
-  window: QuantWindow
-  metricNames: string[]
-  fromUtc: string
-  toUtc: string
-  limit?: number
-}) => {
-  const db = await ensureQuantStoreReady()
-  const limit = Math.max(1, Math.min(params.limit ?? 25_000, 100_000))
-  const metricNames = params.metricNames.map((name) => name.trim()).filter(Boolean)
-  if (metricNames.length === 0) return []
-
-  const rows = await db
-    .selectFrom('torghut_control_plane.quant_metrics_series')
-    .select([
-      'metric_name',
-      'window',
-      'status',
-      'quality',
-      'unit',
-      'value_numeric',
-      'value_json',
-      'meta_json',
-      'formula_version',
-      'as_of',
-      'freshness_seconds',
-    ])
-    .where('strategy_id', '=', params.strategyId)
-    .where('account', '=', params.account)
-    .where('window', '=', params.window)
-    .where('metric_name', 'in', metricNames)
-    .where('as_of', '>=', toDate(params.fromUtc))
-    .where('as_of', '<=', toDate(params.toUtc))
-    .orderBy('as_of', 'asc')
-    .limit(limit)
     .execute()
 
   return rows.map((row) => ({

@@ -5,12 +5,7 @@ import { recordTorghutQuantComputeDurationMs, recordTorghutQuantComputeError, re
 import { resolveTorghutQuantRuntimeConfig, type TorghutQuantRuntimeConfig } from './torghut-config'
 import type { QuantAlert, QuantSnapshotFrame, QuantWindow } from './torghut-quant-contract'
 import { computeTorghutQuantMetrics, listTorghutStrategyAccounts } from './torghut-quant-metrics'
-import {
-  appendQuantSeriesMetrics,
-  upsertQuantAlerts,
-  upsertQuantLatestMetrics,
-  upsertQuantPipelineHealth,
-} from './torghut-quant-metrics-store'
+import { upsertQuantAlerts, upsertQuantLatestMetrics, upsertQuantPipelineHealth } from './torghut-quant-metrics-store'
 import { listTorghutTradingStrategies } from './torghut-trading'
 import { resolveTorghutDb } from './torghut-trading-db'
 
@@ -56,6 +51,7 @@ export type TorghutQuantRuntimeStatus = {
   alertsEnabled: boolean
   computeIntervalMs: number
   heavyComputeIntervalMs: number
+  latestSamplingMs: number
   streamHeartbeatMs: number
   lastErrorAt: string | null
   lastErrorStage: string | null
@@ -84,7 +80,7 @@ const globalState = globalThis as typeof globalThis & {
     emitter: EventEmitter
     config: RuntimeConfig
     lastFrames: Map<FrameKey, QuantSnapshotFrame>
-    lastSeriesAppendAtMs: Map<FrameKey, number>
+    lastLatestUpsertAtMs: Map<FrameKey, number>
     lastHealthUpsertAtMs: Map<FrameKey, number>
     openAlertsByFrame: Map<FrameKey, Map<string, QuantAlert>>
     alertBreachStreakByFrame: Map<FrameKey, Map<string, number>>
@@ -419,7 +415,7 @@ const ensureGlobal = () => {
     emitter,
     config: loadConfig(),
     lastFrames: new Map(),
-    lastSeriesAppendAtMs: new Map(),
+    lastLatestUpsertAtMs: new Map(),
     lastHealthUpsertAtMs: new Map(),
     openAlertsByFrame: new Map(),
     alertBreachStreakByFrame: new Map(),
@@ -442,6 +438,7 @@ export const getTorghutQuantRuntimeStatus = (): TorghutQuantRuntimeStatus => {
     alertsEnabled: state.config.alertsEnabled,
     computeIntervalMs: state.config.computeIntervalMs,
     heavyComputeIntervalMs: state.config.heavyComputeIntervalMs,
+    latestSamplingMs: state.config.latestSamplingMs,
     streamHeartbeatMs: state.config.streamHeartbeatMs,
     lastErrorAt: state.lastErrorAt,
     lastErrorStage: state.lastErrorStage,
@@ -549,14 +546,8 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
     window: frame.window,
     metrics: frame.metrics,
   })
-
-  await appendQuantSeriesMetrics({
-    strategyId: frame.strategyId,
-    account: frame.account,
-    window: frame.window,
-    metrics: frame.metrics,
-  })
-  state.lastSeriesAppendAtMs.set(frameKey(frame.strategyId, frame.account, frame.window), Date.now())
+  const fkey = frameKey(frame.strategyId, frame.account, frame.window)
+  state.lastLatestUpsertAtMs.set(fkey, Date.now())
 
   const metricsPipelineLag = frame.metrics.find((metric) => metric.metricName === 'metrics_pipeline_lag_seconds')
   const pipelineLag = metricsPipelineLag?.valueNumeric ?? null
@@ -594,13 +585,16 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
         ok: materializationLagSeconds <= config.maxStalenessSeconds,
         lagSeconds: materializationLagSeconds,
         asOf: healthAsOf,
-        details: { window: frame.window, seriesAppended: true, trigger: 'snapshot-fallback' },
+        details: {
+          window: frame.window,
+          latestUpserted: true,
+          trigger: 'snapshot-fallback',
+        },
       },
     ],
   })
   state.lastHealthUpsertAtMs.set(frameKey(frame.strategyId, frame.account, frame.window), Date.now())
 
-  const fkey = frameKey(frame.strategyId, frame.account, frame.window)
   const previous = state.lastFrames.get(fkey) ?? null
   state.lastFrames.set(fkey, frame)
   state.emitter.emit('event', { type: 'quant.metrics.snapshot', frame } satisfies QuantStreamSnapshotEvent)
@@ -665,24 +659,17 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
         const metricsPipelineLag = frame.metrics.find((metric) => metric.metricName === 'metrics_pipeline_lag_seconds')
         const pipelineLag = metricsPipelineLag?.valueNumeric ?? null
 
-        await upsertQuantLatestMetrics({
-          strategyId: frame.strategyId,
-          account: frame.account,
-          window: frame.window,
-          metrics: frame.metrics,
-        })
-
         const fkey = frameKey(frame.strategyId, frame.account, frame.window)
-        const lastAppendAt = state.lastSeriesAppendAtMs.get(fkey) ?? 0
-        const shouldAppendSeries = isSamplingDue(lastAppendAt, config.seriesSamplingMs)
-        if (shouldAppendSeries) {
-          await appendQuantSeriesMetrics({
+        const lastLatestUpsertAt = state.lastLatestUpsertAtMs.get(fkey) ?? 0
+        const shouldUpsertLatest = isSamplingDue(lastLatestUpsertAt, config.latestSamplingMs)
+        if (shouldUpsertLatest) {
+          await upsertQuantLatestMetrics({
             strategyId: frame.strategyId,
             account: frame.account,
             window: frame.window,
             metrics: frame.metrics,
           })
-          state.lastSeriesAppendAtMs.set(fkey, Date.now())
+          state.lastLatestUpsertAtMs.set(fkey, Date.now())
         }
 
         const healthAsOf = frame.frameAsOf
@@ -722,7 +709,10 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
                 ok: materializationLagSeconds <= config.maxStalenessSeconds,
                 lagSeconds: materializationLagSeconds,
                 asOf: healthAsOf,
-                details: { window: frame.window, seriesAppended: shouldAppendSeries },
+                details: {
+                  window: frame.window,
+                  latestUpserted: shouldUpsertLatest,
+                },
               },
             ],
           })
