@@ -342,6 +342,23 @@ stalls. Jangar quant persistence must therefore switch from append-only pipeline
 state, suppress no-op latest-metric updates, and reduce one-minute analytical-series sampling from five seconds to one
 minute before the storage-stability observation can start. Compute, alerting, and trading semantics remain unchanged.
 
+## Post-implementation registry addendum
+
+A later clean-observation attempt isolated another shared-pool writer. Analysis ARC scratch had already moved from an
+RBD PVC to a bounded node-local `emptyDir`, but its image publication still drove the single Distribution registry.
+That registry stores its filesystem on `rook-ceph-block`; during the push Kafka controller 2 recorded twelve controller
+events above two seconds, with a 3.288-second maximum. The DinD daemon was configured for eight concurrent uploads,
+above Docker's default of five, but the observed workflow used the `docker-container` BuildKit driver. Its exporter runs
+inside the BuildKit container and does not inherit the Docker daemon's upload limit.
+
+The Analysis workflow now removes its duplicate `mode=max` registry-cache export, keeps only inline cache metadata, and
+sets BuildKit's OCI worker `max-parallelism` to one. This removes publication of every intermediate build layer while
+preserving final-image cache reuse. All ARC DinD daemons also use `--max-concurrent-uploads=1` as a secondary boundary
+for direct Docker daemon pushes; that flag is not treated as BuildKit proof. The cancelled analysis image workflow must
+be rerun through build and push, and a new 30-minute storage gate must show no controller event above two seconds. If
+the real BuildKit workload still fails that gate, stop the rollout and design a retained local-registry migration with
+explicit copy, outage, recovery, and digest-inventory proof rather than masking the failure with Kafka timeouts.
+
 ## Talos local-storage feasibility and boundary
 
 Talos user volumes already expose sufficient local capacity:

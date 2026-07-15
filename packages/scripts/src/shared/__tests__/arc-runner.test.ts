@@ -83,6 +83,14 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
+  it('serializes registry uploads from every runner scale set', () => {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64']) {
+      const block = runnerScaleSetBlock(scaleSet)
+      expect(block).toContain('--max-concurrent-uploads=1')
+      expect(block).not.toContain('--max-concurrent-uploads=8')
+    }
+  })
+
   it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
     for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
       const block = runnerScaleSetBlock(scaleSet)
