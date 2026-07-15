@@ -664,7 +664,7 @@ class OptionsArchiveRepository:
                     )
                     SELECT catalog.contract_symbol,
                            CASE
-                             WHEN catalog.expiration_date < CAST(:observed_at AS DATE)
+                             WHEN catalog.expiration_date < CAST(:finalize_snapshot_at AS DATE)
                                THEN 'expired'
                              ELSE 'inactive'
                            END,
