@@ -372,10 +372,12 @@ for a registry-wide write boundary.
 The definitive boundary is therefore attached to the singleton registry itself. Its Service terminates at an HAProxy
 sidecar that routes `POST`, `PUT`, `PATCH`, and `DELETE` requests through one backend connection while preserving a
 separate concurrent path for `GET` and `HEAD` image pulls. The write backend closes its server connection after each
-response so the single slot cannot remain captured by an idle publisher, and queues at most 128 write requests for up
-to two hours. A generated ConfigMap name forces a pod rollout on proxy-policy changes, and `Recreate` prevents two
-registry pods from competing for the RWO filesystem during that rollout. This covers Docker, BuildKit, and direct OCI
-publishers at the same shared choke point without reducing pull concurrency.
+response. Client and server inactivity are bounded at five minutes so a canceled or stalled request body cannot retain
+the single write slot; healthy shaped uploads continuously transfer data and therefore reset the inactivity timer. The
+proxy queues at most 128 write requests for up to two hours. A generated ConfigMap name forces a pod rollout on
+proxy-policy changes, and `Recreate` prevents two registry pods from competing for the RWO filesystem during that
+rollout. This covers Docker, BuildKit, and direct OCI publishers at the same shared choke point without reducing pull
+concurrency.
 
 The first post-proxy Analysis run, `29411750432` at source revision `89a019b4`, proved that the proxy serialized all 12
 mutation requests, with a maximum queue time of 10.211 seconds. It also exposed a second-order limit: one

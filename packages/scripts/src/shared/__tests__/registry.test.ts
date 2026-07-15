@@ -31,6 +31,9 @@ describe('private registry write-pressure boundary', () => {
     expect(haproxyConfig).toContain('use_backend registry_manifest_write if manifest_write manifest_path')
     expect(haproxyConfig).toContain('use_backend registry_write if write_request')
     expect(haproxyConfig).toContain('default_backend registry_read')
+    expect(haproxyConfig).toContain('timeout client 5m')
+    expect(haproxyConfig).toContain('timeout server 5m')
+    expect(haproxyConfig).toContain('timeout queue 2h')
     expect(haproxyConfig.indexOf('use_backend registry_manifest_write')).toBeLessThan(
       haproxyConfig.indexOf('use_backend registry_write'),
     )
