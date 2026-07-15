@@ -294,6 +294,11 @@ const buildColdPerformanceQueries = (queries: GoldQuery[], runs: number, nonce: 
     queries.map((fixture, index) => `${fixture.query}\nAtlas latency probe ${nonce}-${run}-${index}`),
   ).flat()
 
+const absentPathSearchError = (path: string, paths: string[]) =>
+  paths.length === 0
+    ? undefined
+    : `deleted path search returned ${paths.length} result(s) for ${path}: ${paths.join(', ')}`
+
 const activeAtlasQueryCount = async (db: SQL) => {
   const rows = (await db`
     SELECT count(DISTINCT activity.pid)::bigint AS active
@@ -381,7 +386,7 @@ const runCancellationProbe = async (input: {
   return { reachedDatabase, observedBlockedQueries, lingeringQueries }
 }
 
-export const __private = { activeAtlasQueryCount, buildColdPerformanceQueries }
+export const __private = { absentPathSearchError, activeAtlasQueryCount, buildColdPerformanceQueries }
 
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
@@ -639,7 +644,8 @@ const main = async () => {
     for (const path of gold.absentPaths) {
       const result = await search(options.baseUrl, options.repository, options.ref, path)
       const paths = validateSearchPayload(path, result.payload)
-      if (paths.includes(path)) errors.push(`deleted path was returned by search: ${path}`)
+      const absentPathError = absentPathSearchError(path, paths)
+      if (absentPathError) errors.push(absentPathError)
       deletedPathResults.push({ query: path, paths, durationMs: result.durationMs })
     }
 

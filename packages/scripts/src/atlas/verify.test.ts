@@ -29,4 +29,11 @@ describe('atlas verify', () => {
     expect(performanceQueries.filter((query) => query.startsWith('exact identifier\n'))).toHaveLength(3)
     expect(performanceQueries.every((query) => query.includes('Atlas latency probe proof-'))).toBe(true)
   })
+
+  it('requires every absent-path search to return zero results', () => {
+    expect(__private.absentPathSearchError('src/deleted.ts', [])).toBeUndefined()
+    expect(__private.absentPathSearchError('src/deleted.ts', ['src/live.ts'])).toBe(
+      'deleted path search returned 1 result(s) for src/deleted.ts: src/live.ts',
+    )
+  })
 })
