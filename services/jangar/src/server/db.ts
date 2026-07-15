@@ -430,6 +430,18 @@ type TorghutQuantPipelineHealth = {
   created_at: Generated<Timestamp>
 }
 
+type TorghutQuantPipelineHealthLatest = {
+  strategy_id: string
+  account: string
+  window: string
+  stage: string
+  ok: boolean
+  lag_seconds: number
+  as_of: Timestamp
+  details: JsonValue
+  updated_at: Generated<Timestamp>
+}
+
 type TorghutSimulationRuns = {
   run_id: string
   idempotency_key: string
@@ -641,6 +653,7 @@ export type Database = {
   'torghut_control_plane.quant_metrics_series': TorghutQuantMetricsSeries
   'torghut_control_plane.quant_alerts': TorghutQuantAlerts
   'torghut_control_plane.quant_pipeline_health': TorghutQuantPipelineHealth
+  'torghut_control_plane.quant_pipeline_health_latest': TorghutQuantPipelineHealthLatest
   'torghut_control_plane.simulation_runs': TorghutSimulationRuns
   'torghut_control_plane.simulation_run_events': TorghutSimulationRunEvents
   'torghut_control_plane.simulation_artifacts': TorghutSimulationArtifacts

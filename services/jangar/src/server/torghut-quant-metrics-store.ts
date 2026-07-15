@@ -87,7 +87,29 @@ export const upsertQuantLatestMetrics = async (params: {
         as_of: eb.ref('excluded.as_of'),
         freshness_seconds: eb.ref('excluded.freshness_seconds'),
         updated_at: sql`now()`,
-      })),
+      })).where(sql<boolean>`
+          (
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.status')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.quality')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.unit')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.value_numeric')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.value_json')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.meta_json')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.formula_version')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.as_of')},
+            ${sql.ref('torghut_control_plane.quant_metrics_latest.freshness_seconds')}
+          ) IS DISTINCT FROM (
+            ${sql.ref('excluded.status')},
+            ${sql.ref('excluded.quality')},
+            ${sql.ref('excluded.unit')},
+            ${sql.ref('excluded.value_numeric')},
+            ${sql.ref('excluded.value_json')},
+            ${sql.ref('excluded.meta_json')},
+            ${sql.ref('excluded.formula_version')},
+            ${sql.ref('excluded.as_of')},
+            ${sql.ref('excluded.freshness_seconds')}
+          )
+        `),
     )
     .execute()
 }
@@ -322,21 +344,37 @@ export const getQuantLatestStoreStatus = async (
   }
 }
 
-export const appendQuantPipelineHealth = async (params: { rows: QuantPipelineHealth[] }) => {
+export const upsertQuantPipelineHealth = async (params: { rows: QuantPipelineHealth[] }) => {
   const db = await ensureQuantStoreReady()
   if (params.rows.length === 0) return
 
+  const rows = params.rows.map((row) => {
+    const window = typeof row.details.window === 'string' ? row.details.window.trim() : ''
+    if (!window) {
+      throw new Error('quant pipeline health details.window is required')
+    }
+    return {
+      strategy_id: row.strategyId,
+      account: row.account,
+      window,
+      stage: row.stage,
+      ok: row.ok,
+      lag_seconds: row.lagSeconds,
+      as_of: toDate(row.asOf),
+      details: row.details,
+    }
+  })
+
   await db
-    .insertInto('torghut_control_plane.quant_pipeline_health')
-    .values(
-      params.rows.map((row) => ({
-        strategy_id: row.strategyId,
-        account: row.account,
-        stage: row.stage,
-        ok: row.ok,
-        lag_seconds: row.lagSeconds,
-        as_of: toDate(row.asOf),
-        details: row.details,
+    .insertInto('torghut_control_plane.quant_pipeline_health_latest')
+    .values(rows)
+    .onConflict((oc) =>
+      oc.columns(['strategy_id', 'account', 'window', 'stage']).doUpdateSet((eb) => ({
+        ok: eb.ref('excluded.ok'),
+        lag_seconds: eb.ref('excluded.lag_seconds'),
+        as_of: eb.ref('excluded.as_of'),
+        details: eb.ref('excluded.details'),
+        updated_at: sql`now()`,
       })),
     )
     .execute()
@@ -352,16 +390,9 @@ export const listLatestQuantPipelineHealth = async (params: {
   const filters: Array<unknown> = []
   if (params.strategyId) filters.push(sql`strategy_id = ${params.strategyId}::uuid`)
   if (params.account) filters.push(sql`account = ${params.account}`)
-  if (params.window) filters.push(sql`details->>'window' = ${params.window}`)
-  if (params.minCreatedAt) filters.push(sql`created_at >= ${toDate(params.minCreatedAt)}`)
+  if (params.window) filters.push(sql`${sql.ref('window')} = ${params.window}`)
+  if (params.minCreatedAt) filters.push(sql`updated_at >= ${toDate(params.minCreatedAt)}`)
   const whereSql = filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``
-  const scopedByAccountAndWindow = Boolean(params.account && params.window)
-  const latestPartitionSql = scopedByAccountAndWindow
-    ? sql`account, (details->>'window'), strategy_id, stage`
-    : sql`strategy_id, account, stage, coalesce(details->>'window', '')`
-  const latestOrderSql = scopedByAccountAndWindow
-    ? sql`account asc, (details->>'window') asc, strategy_id asc, stage asc, created_at desc, as_of desc`
-    : sql`strategy_id asc, account asc, stage asc, coalesce(details->>'window', '') asc, created_at desc, as_of desc`
   const result = await sql<{
     strategy_id: string
     account: string
@@ -369,24 +400,12 @@ export const listLatestQuantPipelineHealth = async (params: {
     ok: boolean
     lag_seconds: number
     as_of: Date | string
-    created_at: Date | string
+    updated_at: Date | string
     details: Record<string, unknown> | null
   }>`
-    select strategy_id, account, stage, ok, lag_seconds, as_of, created_at, details
-    from (
-      select distinct on (${latestPartitionSql})
-        strategy_id,
-        account,
-        stage,
-        ok,
-        lag_seconds,
-        as_of,
-        created_at,
-        details
-      from torghut_control_plane.quant_pipeline_health
-      ${whereSql}
-      order by ${latestOrderSql}
-    ) latest
+    select strategy_id, account, stage, ok, lag_seconds, as_of, updated_at, details
+    from torghut_control_plane.quant_pipeline_health_latest
+    ${whereSql}
     order by stage asc, strategy_id asc, account asc
   `.execute(db)
 
@@ -397,7 +416,7 @@ export const listLatestQuantPipelineHealth = async (params: {
     ok: Boolean(row.ok),
     lagSeconds: Number(row.lag_seconds ?? 0),
     asOf: new Date(row.as_of as string | Date).toISOString(),
-    recordedAt: new Date(row.created_at as string | Date).toISOString(),
+    recordedAt: new Date(row.updated_at as string | Date).toISOString(),
     details: (row.details as Record<string, unknown>) ?? {},
   })) satisfies QuantPipelineHealth[]
 }

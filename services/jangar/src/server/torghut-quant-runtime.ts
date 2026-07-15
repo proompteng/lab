@@ -6,10 +6,10 @@ import { resolveTorghutQuantRuntimeConfig, type TorghutQuantRuntimeConfig } from
 import type { QuantAlert, QuantSnapshotFrame, QuantWindow } from './torghut-quant-contract'
 import { computeTorghutQuantMetrics, listTorghutStrategyAccounts } from './torghut-quant-metrics'
 import {
-  appendQuantPipelineHealth,
   appendQuantSeriesMetrics,
   upsertQuantAlerts,
   upsertQuantLatestMetrics,
+  upsertQuantPipelineHealth,
 } from './torghut-quant-metrics-store'
 import { listTorghutTradingStrategies } from './torghut-trading'
 import { resolveTorghutDb } from './torghut-trading-db'
@@ -85,6 +85,7 @@ const globalState = globalThis as typeof globalThis & {
     config: RuntimeConfig
     lastFrames: Map<FrameKey, QuantSnapshotFrame>
     lastSeriesAppendAtMs: Map<FrameKey, number>
+    lastHealthUpsertAtMs: Map<FrameKey, number>
     openAlertsByFrame: Map<FrameKey, Map<string, QuantAlert>>
     alertBreachStreakByFrame: Map<FrameKey, Map<string, number>>
     lastErrorAt: string | null
@@ -406,6 +407,9 @@ const buildDelta = (previous: QuantSnapshotFrame | null, next: QuantSnapshotFram
   }
 }
 
+const isSamplingDue = (lastPersistedAtMs: number, intervalMs: number, nowMs = Date.now()) =>
+  nowMs - lastPersistedAtMs >= intervalMs
+
 const ensureGlobal = () => {
   if (globalState.__torghutQuantRuntime) return globalState.__torghutQuantRuntime
   const emitter = new EventEmitter()
@@ -416,6 +420,7 @@ const ensureGlobal = () => {
     config: loadConfig(),
     lastFrames: new Map(),
     lastSeriesAppendAtMs: new Map(),
+    lastHealthUpsertAtMs: new Map(),
     openAlertsByFrame: new Map(),
     alertBreachStreakByFrame: new Map(),
     lastErrorAt: null,
@@ -558,7 +563,7 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
   const healthAsOf = frame.frameAsOf
   const computeLagSeconds = Math.max(0, Math.ceil(computeDurationMs / 1000))
   const materializationLagSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(frame.frameAsOf)) / 1000))
-  await appendQuantPipelineHealth({
+  await upsertQuantPipelineHealth({
     rows: [
       {
         strategyId: frame.strategyId,
@@ -593,6 +598,7 @@ export const materializeTorghutQuantFrameOnDemand = async (params: {
       },
     ],
   })
+  state.lastHealthUpsertAtMs.set(frameKey(frame.strategyId, frame.account, frame.window), Date.now())
 
   const fkey = frameKey(frame.strategyId, frame.account, frame.window)
   const previous = state.lastFrames.get(fkey) ?? null
@@ -668,7 +674,7 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
 
         const fkey = frameKey(frame.strategyId, frame.account, frame.window)
         const lastAppendAt = state.lastSeriesAppendAtMs.get(fkey) ?? 0
-        const shouldAppendSeries = Date.now() - lastAppendAt >= config.seriesSamplingMs
+        const shouldAppendSeries = isSamplingDue(lastAppendAt, config.seriesSamplingMs)
         if (shouldAppendSeries) {
           await appendQuantSeriesMetrics({
             strategyId: frame.strategyId,
@@ -682,42 +688,46 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
         const healthAsOf = frame.frameAsOf
         const computeLagSeconds = Math.max(0, Math.ceil(computeDurationMs / 1000))
         const materializationLagSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(frame.frameAsOf)) / 1000))
-        await appendQuantPipelineHealth({
-          rows: [
-            {
-              strategyId: frame.strategyId,
-              account: frame.account,
-              stage: 'ingestion',
-              ok: pipelineLag === null ? false : pipelineLag <= config.policy.maxPipelineLagSeconds,
-              lagSeconds: pipelineLag === null ? config.policy.maxPipelineLagSeconds + 1 : Math.max(0, pipelineLag),
-              asOf: healthAsOf,
-              details: { window: frame.window, source: 'torghut-db-and-upstream-signals' },
-            },
-            {
-              strategyId: frame.strategyId,
-              account: frame.account,
-              stage: 'compute',
-              ok: computeLagSeconds <= Math.ceil(config.computeIntervalMs / 1000) + 2,
-              lagSeconds: computeLagSeconds,
-              asOf: healthAsOf,
-              details: {
-                window: frame.window,
-                metricsCount: frame.metrics.length,
-                compute_interval_ms: config.computeIntervalMs,
-                heavy_compute_interval_ms: config.heavyComputeIntervalMs,
+        const lastHealthUpsertAt = state.lastHealthUpsertAtMs.get(fkey) ?? 0
+        if (isSamplingDue(lastHealthUpsertAt, config.healthSamplingMs)) {
+          await upsertQuantPipelineHealth({
+            rows: [
+              {
+                strategyId: frame.strategyId,
+                account: frame.account,
+                stage: 'ingestion',
+                ok: pipelineLag === null ? false : pipelineLag <= config.policy.maxPipelineLagSeconds,
+                lagSeconds: pipelineLag === null ? config.policy.maxPipelineLagSeconds + 1 : Math.max(0, pipelineLag),
+                asOf: healthAsOf,
+                details: { window: frame.window, source: 'torghut-db-and-upstream-signals' },
               },
-            },
-            {
-              strategyId: frame.strategyId,
-              account: frame.account,
-              stage: 'materialization',
-              ok: materializationLagSeconds <= config.maxStalenessSeconds,
-              lagSeconds: materializationLagSeconds,
-              asOf: healthAsOf,
-              details: { window: frame.window, seriesAppended: shouldAppendSeries },
-            },
-          ],
-        })
+              {
+                strategyId: frame.strategyId,
+                account: frame.account,
+                stage: 'compute',
+                ok: computeLagSeconds <= Math.ceil(config.computeIntervalMs / 1000) + 2,
+                lagSeconds: computeLagSeconds,
+                asOf: healthAsOf,
+                details: {
+                  window: frame.window,
+                  metricsCount: frame.metrics.length,
+                  compute_interval_ms: config.computeIntervalMs,
+                  heavy_compute_interval_ms: config.heavyComputeIntervalMs,
+                },
+              },
+              {
+                strategyId: frame.strategyId,
+                account: frame.account,
+                stage: 'materialization',
+                ok: materializationLagSeconds <= config.maxStalenessSeconds,
+                lagSeconds: materializationLagSeconds,
+                asOf: healthAsOf,
+                details: { window: frame.window, seriesAppended: shouldAppendSeries },
+              },
+            ],
+          })
+          state.lastHealthUpsertAtMs.set(fkey, Date.now())
+        }
 
         if (config.alertsEnabled) {
           const evaluated = evaluateAlerts({ frame, nowIso, policy: config.policy })
@@ -837,4 +847,5 @@ export const __private = {
   isKnownStrategyAccount,
   evaluateAlerts,
   buildDelta,
+  isSamplingDue,
 }
