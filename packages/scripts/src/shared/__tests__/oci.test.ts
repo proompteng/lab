@@ -775,12 +775,18 @@ describe('native OCI build workflows', () => {
   it('gives Skopeo an explicit containers policy on ARC runners', () => {
     expect(ociPushScript).toContain('policy_json="$(mktemp)"')
     expect(ociPushScript).toContain('"type": "insecureAcceptAnything"')
-    expect(ociPushScript).toContain('skopeo --policy "${policy_json}" copy --format oci')
+    expect(ociPushScript).toContain('skopeo --policy "${policy_json}" copy')
+  })
+
+  it('serializes layer uploads against the shaped registry writer', () => {
+    expect(ociPushScript).toContain('copy --image-parallel-copies 1 --format oci')
   })
 
   it('tags platform latest refs without re-copying image layers', () => {
     expect(ociPushScript).toContain('crane tag "${reference}" "${latest_tag}"')
-    expect(ociPushScript).not.toContain('skopeo --policy "${policy_json}" copy --format oci "docker://${reference}"')
+    expect(ociPushScript).not.toContain(
+      'skopeo --policy "${policy_json}" copy --image-parallel-copies 1 --format oci "docker://${reference}"',
+    )
   })
 
   it('does not use Docker Buildx or docker daemon commands in migrated workflows', () => {

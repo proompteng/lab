@@ -79,7 +79,10 @@ EOF
 
 reference="${image}:${tag}"
 echo "Pushing Nix-built OCI image tar to ${reference}."
-skopeo --policy "${policy_json}" copy --format oci "docker-archive:${resolved_tar_path}" "docker://${reference}"
+# The lab registry deliberately admits one shaped bulk writer. Keep each publisher
+# to one layer so concurrent releases queue images fairly instead of six layers each.
+skopeo --policy "${policy_json}" copy --image-parallel-copies 1 --format oci \
+  "docker-archive:${resolved_tar_path}" "docker://${reference}"
 
 if [[ -n "${latest_tag}" ]]; then
   latest_reference="${image}:${latest_tag}"
