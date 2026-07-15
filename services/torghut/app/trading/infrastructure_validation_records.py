@@ -114,6 +114,20 @@ def tag_infrastructure_validation_event(
     return coerce_json_payload(payload)
 
 
+def strip_unproven_infrastructure_validation_evidence(raw_event: object) -> object:
+    """Remove caller-supplied validation evidence before durable persistence."""
+
+    coerced = coerce_json_payload(raw_event)
+    if not isinstance(coerced, Mapping):
+        return coerced
+    payload = {
+        str(key): value
+        for key, value in cast(Mapping[object, object], coerced).items()
+        if str(key) != _EVIDENCE_KEY
+    }
+    return coerce_json_payload(payload)
+
+
 def is_non_promotable_validation_event(raw_event: object) -> bool:
     """Return whether a persisted event carries the exact exclusion marker."""
 
@@ -145,5 +159,6 @@ __all__ = [
     "InfrastructureValidationEvidence",
     "is_non_promotable_validation_event",
     "load_infrastructure_validation_evidence",
+    "strip_unproven_infrastructure_validation_evidence",
     "tag_infrastructure_validation_event",
 ]
