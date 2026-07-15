@@ -7,16 +7,10 @@ suppress_unstable_features_warning = true
 web_search = "live"
 
 [features]
-undo = true
 enable_request_compression = true
-apply_patch_freeform = true
 unified_exec = true
 shell_snapshot = true
-steer = true
 multi_agent = true
-child_agents_md = true
-collaboration_modes = false
-responses_websockets = false
 
 [shell_environment_policy]
 ignore_default_excludes = true

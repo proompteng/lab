@@ -33,7 +33,7 @@ COPY --from=builder /workspace/services/sag/.output ./.output
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 RUN mkdir -p /home/bun/.bun /home/bun/.codex \
-  && bun add -g @openai/codex@latest \
+  && bun add -g @openai/codex@0.144.4 \
   && chown -R bun:bun /home/bun/.bun /home/bun/.codex
 
 USER bun
