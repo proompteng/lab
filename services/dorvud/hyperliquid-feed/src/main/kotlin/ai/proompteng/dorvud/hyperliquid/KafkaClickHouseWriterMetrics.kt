@@ -14,6 +14,7 @@ class KafkaClickHouseWriterMetrics(
   private val registry: MeterRegistry,
 ) {
   private val ready = AtomicInteger(0)
+  private val caughtUp = AtomicInteger(0)
   private val assignedPartitions = AtomicInteger(0)
   private val pendingRecords = AtomicInteger(0)
   private val consumerLag = AtomicLong(0)
@@ -28,6 +29,9 @@ class KafkaClickHouseWriterMetrics(
   init {
     Gauge.builder("torghut_hyperliquid_clickhouse_writer_ready", ready) { it.get().toDouble() }.register(registry)
     Gauge
+      .builder("torghut_hyperliquid_clickhouse_writer_caught_up", caughtUp) { it.get().toDouble() }
+      .register(registry)
+    Gauge
       .builder("torghut_hyperliquid_clickhouse_writer_assigned_partitions", assignedPartitions) { it.get().toDouble() }
       .register(registry)
     Gauge
@@ -41,6 +45,7 @@ class KafkaClickHouseWriterMetrics(
 
   fun update(snapshot: KafkaClickHouseWriterSnapshot) {
     ready.set(if (snapshot.ready) 1 else 0)
+    caughtUp.set(if (snapshot.caughtUp) 1 else 0)
     assignedPartitions.set(snapshot.assignedPartitions)
     pendingRecords.set(snapshot.pendingRecords)
     consumerLag.set(snapshot.consumerLag)

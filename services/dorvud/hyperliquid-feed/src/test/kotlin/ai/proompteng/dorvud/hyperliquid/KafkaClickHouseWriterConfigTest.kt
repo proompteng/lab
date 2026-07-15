@@ -18,12 +18,23 @@ class KafkaClickHouseWriterConfigTest {
     assertEquals(100, config.batchPolicy("hyperliquid_candles").batchSize)
     assertEquals(300_000, config.batchPolicy("hyperliquid_bbo").maxAgeMs)
     assertEquals(360_000, config.readinessMaxAgeMs)
+    assertEquals(1_000, config.catchUpMaxPartitionLagRecords)
     assertEquals(10_000, config.clickHouse.requestTimeoutMs)
     assertEquals(10_000, config.kafkaOperationTimeoutMs)
     assertEquals(
       setOf("torghut.hyperliquid.bbo.v1", "torghut.hyperliquid.candles.v1"),
       config.topicTables.keys,
     )
+  }
+
+  @Test
+  fun `accepts the legacy readiness lag key during rollout`() {
+    val config =
+      KafkaClickHouseWriterConfig.fromEnv(
+        baseEnv() + ("CLICKHOUSE_WRITER_READINESS_MAX_PARTITION_LAG_RECORDS" to "2500"),
+      )
+
+    assertEquals(2_500, config.catchUpMaxPartitionLagRecords)
   }
 
   @Test

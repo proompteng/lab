@@ -22,7 +22,7 @@ data class KafkaClickHouseWriterConfig(
   val consumerCloseTimeoutMs: Long,
   val maxBufferedRecordsPerPartition: Int,
   val readinessMaxAgeMs: Long,
-  val readinessMaxPartitionLagRecords: Long,
+  val catchUpMaxPartitionLagRecords: Long,
   val healthPort: Int,
   val metricsPort: Int,
   val batchPolicies: Map<String, KafkaWriterBatchPolicy>,
@@ -136,8 +136,12 @@ data class KafkaClickHouseWriterConfig(
         readinessMaxAgeMs =
           longEnv(sourceEnv, "CLICKHOUSE_WRITER_READINESS_MAX_AGE_MS", maxAgeMs + 60_000)
             .coerceAtLeast(maxAgeMs + 1_000),
-        readinessMaxPartitionLagRecords =
-          longEnv(sourceEnv, "CLICKHOUSE_WRITER_READINESS_MAX_PARTITION_LAG_RECORDS", 1_000).coerceIn(0, 1_000_000),
+        catchUpMaxPartitionLagRecords =
+          longEnv(
+            sourceEnv,
+            "CLICKHOUSE_WRITER_CATCH_UP_MAX_PARTITION_LAG_RECORDS",
+            sourceEnv["CLICKHOUSE_WRITER_READINESS_MAX_PARTITION_LAG_RECORDS"]?.toLongOrNull() ?: 1_000,
+          ).coerceIn(0, 1_000_000),
         healthPort = intEnv(sourceEnv, "HEALTH_PORT", 8080),
         metricsPort = intEnv(sourceEnv, "METRICS_PORT", 9090),
         batchPolicies = batchPolicies,
