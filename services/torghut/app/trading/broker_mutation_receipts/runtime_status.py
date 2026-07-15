@@ -244,6 +244,7 @@ def unavailable_broker_mutation_runtime_status() -> dict[str, object]:
     )
     payload.update(
         entry_fencing_proven=False,
+        recovery_degraded=True,
         database_status="unavailable",
         receipt_state_counts=None,
         recovery_resolution_state_counts=None,
@@ -254,6 +255,7 @@ def unavailable_broker_mutation_runtime_status() -> dict[str, object]:
         latest_receipt_event_at=None,
         reason_codes=[
             "broker_mutation_database_status_unavailable",
+            "broker_mutation_recovery_database_status_unavailable",
             *existing_reason_codes,
         ],
     )
