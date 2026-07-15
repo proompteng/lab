@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
-import secrets
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,9 +13,18 @@ from typing import Literal, TypeAlias, cast
 
 from .broker_mutation_receipts import (
     BrokerMutationOperation,
-    BrokerMutationReceiptValidationError,
     BrokerMutationRoute,
     canonicalize_broker_mutation_evidence,
+)
+from .risk_reduction_primitives import (
+    RiskReductionPermitError,
+    aware_utc as _aware_utc,
+    decimal_text as _decimal_text,
+    nonnegative_decimal as _nonnegative_decimal,
+    permit_tag as _permit_tag,
+    positive_decimal as _positive_decimal,
+    required_text as _required_text,
+    symbol as _symbol,
 )
 
 
@@ -43,6 +50,7 @@ _OPEN_ORDER_STATUSES = frozenset(
 )
 RISK_REDUCTION_OPERATIONS = frozenset(
     {
+        "submit_order",
         "replace_order",
         "cancel_order",
         "cancel_all_orders",
@@ -50,44 +58,8 @@ RISK_REDUCTION_OPERATIONS = frozenset(
         "close_all_positions",
     }
 )
-_PERMIT_SIGNING_KEY = secrets.token_bytes(32)
 _PERMIT_CONSUMPTION_LOCK = threading.Lock()
 _CONSUMED_PERMIT_EXPIRATIONS: dict[str, datetime] = {}
-
-
-class RiskReductionPermitError(BrokerMutationReceiptValidationError):
-    """The observed broker state cannot authorize the requested reduction."""
-
-
-def _aware_utc(value: datetime, *, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise RiskReductionPermitError(f"{field_name}_timezone_required")
-    return value.astimezone(timezone.utc)
-
-
-def _positive_decimal(value: Decimal, *, field_name: str) -> Decimal:
-    normalized = Decimal(value)
-    if not normalized.is_finite() or normalized <= 0:
-        raise RiskReductionPermitError(f"{field_name}_must_be_positive")
-    return normalized.normalize()
-
-
-def _nonnegative_decimal(value: Decimal, *, field_name: str) -> Decimal:
-    normalized = Decimal(value)
-    if not normalized.is_finite() or normalized < 0:
-        raise RiskReductionPermitError(f"{field_name}_must_be_nonnegative")
-    return Decimal("0") if normalized == 0 else normalized.normalize()
-
-
-def _required_text(value: str, *, field_name: str, maximum: int = 256) -> str:
-    normalized = str(value).strip()
-    if not normalized or len(normalized) > maximum:
-        raise RiskReductionPermitError(f"{field_name}_invalid")
-    return normalized
-
-
-def _symbol(value: str) -> str:
-    return _required_text(value, field_name="symbol", maximum=32).upper()
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +235,20 @@ class PositionCloseLeg:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmitCloseOrderPlan:
+    leg: PositionCloseLeg
+    limit_price: Decimal
+    time_in_force: Literal["gtc"] = "gtc"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "limit_price",
+            _positive_decimal(self.limit_price, field_name="close_limit_price"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ClosePositionPlan:
     leg: PositionCloseLeg
 
@@ -283,6 +269,7 @@ RiskReductionPlan: TypeAlias = (
     CancelOrderPlan
     | CancelAllOrdersPlan
     | ReplaceOrderPlan
+    | SubmitCloseOrderPlan
     | ClosePositionPlan
     | CloseAllPositionsPlan
 )
@@ -772,6 +759,42 @@ def _evaluate_plan(
             },
             positions_after=positions,
         )
+    if isinstance(plan, SubmitCloseOrderPlan):
+        _require_complete(snapshot)
+        position = _required_position(snapshot, plan.leg.symbol)
+        reducing_orders = tuple(
+            order
+            for order in snapshot.orders
+            if order.open
+            and order.symbol == plan.leg.symbol
+            and order.side == plan.leg.side
+        )
+        reserved_quantity = sum(
+            (order.remaining_quantity for order in reducing_orders),
+            Decimal("0"),
+        )
+        if reserved_quantity + plan.leg.quantity > abs(position.signed_quantity):
+            raise RiskReductionPermitError("close_order_would_cross_position_zero")
+        after = _apply_close_leg(positions, plan.leg)
+        return _EvaluatedReduction(
+            operation="submit_order",
+            target_key=plan.leg.symbol,
+            action={
+                "causal_position": _position_identity_payload(position),
+                "existing_reducing_orders": [
+                    _order_payload(order)
+                    for order in sorted(
+                        reducing_orders,
+                        key=lambda value: value.order_id,
+                    )
+                ],
+                "leg": _leg_payload(plan.leg),
+                "limit_price": _decimal_text(plan.limit_price),
+                "time_in_force": plan.time_in_force,
+                "type": "submit_close_order",
+            },
+            positions_after=after,
+        )
     if isinstance(plan, ClosePositionPlan):
         _require_complete(snapshot)
         position = _required_position(snapshot, plan.leg.symbol)
@@ -942,23 +965,6 @@ def _position_identity_payload(
     }
 
 
-def _decimal_text(value: Decimal) -> str:
-    if value == 0:
-        return "0"
-    return format(value.normalize(), "f")
-
-
-def _permit_tag(fields: tuple[object, ...]) -> str:
-    payload = json.dumps(
-        [str(value) for value in fields],
-        ensure_ascii=True,
-        separators=(",", ":"),
-    )
-    return hmac.new(
-        _PERMIT_SIGNING_KEY, payload.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-
-
 __all__ = [
     "BrokerOrderObservation",
     "BrokerPositionObservation",
@@ -975,6 +981,7 @@ __all__ = [
     "RiskReductionPermitError",
     "RiskReductionPermitExpectation",
     "RiskReductionRecoveryEvaluation",
+    "SubmitCloseOrderPlan",
     "authorize_risk_reduction",
     "consume_risk_reduction_permit",
     "evaluate_position_reduction_recovery",

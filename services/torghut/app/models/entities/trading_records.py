@@ -716,6 +716,9 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     status: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
     qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     filled_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    position_qty: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     filled_qty_delta: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True
     )

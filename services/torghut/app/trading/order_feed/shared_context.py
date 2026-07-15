@@ -338,6 +338,7 @@ class NormalizedOrderEvent:
     status: str | None
     qty: Decimal | None
     filled_qty: Decimal | None
+    position_qty: Decimal | None
     filled_qty_delta: Decimal | None
     avg_fill_price: Decimal | None
     filled_notional_delta: Decimal | None

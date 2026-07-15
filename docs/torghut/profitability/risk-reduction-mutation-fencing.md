@@ -175,6 +175,43 @@ receipt is acknowledged or broker-reconciled with an order reference.
 These checks prove evidence isolation and causal ancestry. They do not prove that the paper lifecycle runner exercised
 replace, cancel, partial close, or flatten. That remains a separate runtime gate below.
 
+### Bounded Alpaca-Paper Lifecycle
+
+The existing known-null validation plan remains a maximum-$1 zero-fill submit proof. It is not widened or repurposed:
+Alpaca's current crypto minimum-order economics can make that plan too small to establish position ancestry. A separate
+lifecycle plan has a hard $5 entry-notional and loss cap, and runtime preflight re-reads the asset's current minimum
+size, quantity increment, and price increment before any mutation. If the entry, partial close, residual close, or
+prices do not fit both Alpaca's metadata and PostgreSQL `numeric(20, 8)`, the runner fails before broker I/O.
+
+The runner starts only from one active Alpaca paper account with no positions and no open orders, then executes this
+single control path:
+
+1. submit one permit-bound limit IOC buy and require an exact full fill at or below its limit;
+2. submit one full-position GTC limit sell far enough above the entry limit to remain open with zero fill;
+3. replace only that resting order's price, require Alpaca to return a new order ID, and prove the original ID became
+   `replaced`;
+4. cancel the replacement and prove the account has no open orders;
+5. close an exact partial quantity derived from the current broker position and reconcile the residual `position_qty`;
+6. close the sole residual position, then prove no position, no open order, and a tagged flat-position event.
+
+Cancel is a branch in the receipt chain, not an order-identity parent: the partial close names the terminal replacement
+receipt as its parent because cancellation creates no broker order. The successful proof contains exactly six terminal
+mutation receipts and five order-creating broker identities. Every fill marker names the exact terminal receipt that
+created its broker order, the immutable validation root, and the permit identity. The order-feed `position_qty` value
+must match the fresh broker observation before either close capability is issued.
+
+No lifecycle broker mutation is blindly retried. A failure before a later independent reduction invokes the ordinary
+fenced cancel-all/flatten safety path from a new broker observation. An ambiguous final flatten remains unresolved and
+the runner stops after one broker call; it does not claim a known-null terminal state. A report is emitted only after
+CNPG proves the complete receipt chain and proves zero execution, decision, submission-claim, TigerBeetle, or untagged
+event leakage.
+
+The broker assumptions come from Alpaca's official [crypto trading](https://docs.alpaca.markets/us/docs/crypto-trading),
+[order lifecycle](https://docs.alpaca.markets/us/docs/orders-at-alpaca), and
+[trade-update streaming](https://docs.alpaca.markets/v1.4.2/docs/websocket-streaming) documentation. Runtime readback,
+not the documentation snapshot, remains authoritative for account state, asset increments, order IDs, fills, and
+positions.
+
 ## State And Recovery
 
 The existing receipt states remain sufficient:

@@ -98,7 +98,11 @@ def consume_risk_reduction_mutation_authority(
     authority: RiskReductionMutationAuthority,
     expectation: RiskReductionMutationExpectation,
 ) -> None:
-    """Atomically consume both capabilities at the final broker-I/O boundary."""
+    """Validate both capabilities, then consume both before broker I/O.
+
+    A concurrent consumption race can stop progress after one capability is
+    consumed, but it always fails before the broker call.
+    """
 
     io_expectation = BrokerMutationIoPermitExpectation(
         broker_route=expectation.broker_route,

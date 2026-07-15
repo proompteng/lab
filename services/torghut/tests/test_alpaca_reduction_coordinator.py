@@ -226,6 +226,42 @@ class _CancelAllBroker:
         return list(self.responses)
 
 
+class _CryptoCloseOrderBroker:
+    endpoint_url = "https://paper-api.alpaca.markets"
+
+    def __init__(self) -> None:
+        self.submit_calls: list[dict[str, object]] = []
+        self.positions = [
+            {
+                "symbol": "BTC/USD",
+                "qty": "0.00004",
+                "side": "long",
+                "market_value": "4",
+            }
+        ]
+
+    def list_positions(self) -> list[dict[str, object]]:
+        return list(self.positions)
+
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        del status, limit
+        return []
+
+    def submit_order(self, **kwargs: object) -> dict[str, object]:
+        kwargs.pop("firewall_token", None)
+        self.submit_calls.append(dict(kwargs))
+        return {
+            "client_order_id": kwargs["extra_params"]["client_order_id"],
+            "id": "crypto-close-order-1",
+            "status": "accepted",
+        }
+
+
 @pytest.fixture
 def sessions() -> Iterator[sessionmaker[Session]]:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -458,6 +494,48 @@ def test_repricing_uses_complete_observation_and_exact_broker_request(
             )
             is None
         )
+
+
+def test_crypto_close_limit_submit_is_fenced_and_available_under_kill_switch(
+    sessions: sessionmaker[Session],
+) -> None:
+    broker = _CryptoCloseOrderBroker()
+    executor = AlpacaReductionMutationExecutor(
+        firewall=OrderFirewall(broker, account_label="paper"),
+        read_client=cast(TorghutAlpacaClient, broker),
+        session_factory=sessions,
+        account_label="paper",
+        endpoint_url=broker.endpoint_url,
+        coordinator=BrokerMutationCoordinator("crypto-close-test"),
+    )
+
+    with patch.object(settings, "trading_kill_switch_enabled", True):
+        result = executor.submit_crypto_close_order(
+            "BTC/USD",
+            Decimal("0.00004"),
+            limit_price=Decimal("125000"),
+        )
+
+    assert result["id"] == "crypto-close-order-1"
+    assert len(broker.submit_calls) == 1
+    with sessions() as session:
+        receipt = session.execute(select(BrokerMutationReceipt)).scalar_one()
+        latest = session.execute(
+            select(BrokerMutationReceiptEvent)
+            .where(BrokerMutationReceiptEvent.receipt_id == receipt.id)
+            .order_by(BrokerMutationReceiptEvent.sequence_no.desc())
+            .limit(1)
+        ).scalar_one()
+    request = json.loads(receipt.canonical_intent_json)["request"]
+    assert receipt.operation == "submit_order"
+    assert receipt.risk_class == "risk_reducing"
+    assert receipt.purpose == "closeout"
+    assert receipt.target_key == "BTC/USD"
+    assert receipt.client_request_id.startswith("rr-submit-order-")
+    assert request["extra_params"] == {"client_order_id": receipt.client_request_id}
+    assert request["risk_reduction"]["action"]["type"] == "submit_close_order"
+    assert latest.state == "settled"
+    assert latest.broker_reference == "crypto-close-order-1"
 
 
 def test_repricing_without_a_broker_order_reference_remains_unresolved(

@@ -7,7 +7,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Literal, Mapping
+from typing import Annotated, Literal, Mapping, Self, TypeAlias
 
 from pydantic import (
     AnyHttpUrl,
@@ -21,6 +21,7 @@ from pydantic import (
 
 _MAX_PERMIT_LIFETIME = timedelta(minutes=15)
 _MAX_SUBMIT_PROOF_NOTIONAL_USD = Decimal("1")
+_MAX_LIFECYCLE_NOTIONAL_USD = Decimal("5")
 _VALIDATION_HOSTS = {
     "alpaca": "paper-api.alpaca.markets",
     "hyperliquid": "api.hyperliquid-testnet.xyz",
@@ -128,12 +129,11 @@ class InfrastructureValidationPermit(BaseModel):
         return self
 
 
-class InfrastructureValidationOrderPlan(BaseModel):
-    """One known-null Alpaca IOC submit plan bound into a validation permit."""
+class _InfrastructureValidationPlanBase(BaseModel):
+    """Shared immutable envelope for one bounded Alpaca IOC entry."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal["torghut.infrastructure-validation-order-plan.v1"]
     venue: Literal["alpaca"]
     asset_class: Literal["crypto"]
     symbol: Annotated[str, StringConstraints(min_length=1, max_length=32)]
@@ -157,7 +157,7 @@ class InfrastructureValidationOrderPlan(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_asset_symbol(self) -> "InfrastructureValidationOrderPlan":
+    def _validate_asset_symbol(self) -> Self:
         if not _valid_symbol_for_asset_class(self.symbol, self.asset_class):
             raise ValueError("infrastructure_validation_order_symbol_invalid")
         if not (self.qty * self.limit_price).is_finite():
@@ -167,6 +167,47 @@ class InfrastructureValidationOrderPlan(BaseModel):
     @property
     def notional_usd(self) -> Decimal:
         return self.qty * self.limit_price
+
+
+class InfrastructureValidationOrderPlan(_InfrastructureValidationPlanBase):
+    """One known-null Alpaca IOC submit plan bound into a validation permit."""
+
+    schema_version: Literal["torghut.infrastructure-validation-order-plan.v1"]
+
+
+class InfrastructureValidationLifecyclePlan(_InfrastructureValidationPlanBase):
+    """One bounded fill followed only by independently authorized reductions."""
+
+    schema_version: Literal["torghut.infrastructure-validation-lifecycle-plan.v1"]
+    resting_close_limit_price: Decimal = Field(gt=0)
+    replacement_close_limit_price: Decimal = Field(gt=0)
+    partial_close_qty: Decimal = Field(gt=0)
+
+    @field_validator(
+        "resting_close_limit_price",
+        "replacement_close_limit_price",
+        "partial_close_qty",
+    )
+    @classmethod
+    def _require_finite_lifecycle_decimal(cls, value: Decimal) -> Decimal:
+        if not value.is_finite():
+            raise ValueError("infrastructure_validation_lifecycle_decimal_not_finite")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_reduction_schedule(self) -> "InfrastructureValidationLifecyclePlan":
+        if self.partial_close_qty >= self.qty:
+            raise ValueError("infrastructure_validation_partial_close_not_partial")
+        if self.resting_close_limit_price <= self.limit_price:
+            raise ValueError("infrastructure_validation_close_price_not_resting")
+        if self.replacement_close_limit_price <= self.resting_close_limit_price:
+            raise ValueError("infrastructure_validation_replacement_not_resting")
+        return self
+
+
+InfrastructureValidationSubmitPlan: TypeAlias = (
+    InfrastructureValidationOrderPlan | InfrastructureValidationLifecyclePlan
+)
 
 
 def authorize_infrastructure_validation(
@@ -195,7 +236,7 @@ def authorize_infrastructure_validation(
 
 def authorize_infrastructure_validation_order(
     permit: InfrastructureValidationPermit,
-    plan: InfrastructureValidationOrderPlan,
+    plan: InfrastructureValidationSubmitPlan,
     *,
     account_label: str,
     broker_base_url: str,
@@ -232,13 +273,18 @@ def authorize_infrastructure_validation_order(
         raise ValueError("infrastructure_validation_order_notional_out_of_bounds")
     if plan.notional_usd > permit.max_loss_usd:
         raise ValueError("infrastructure_validation_order_loss_out_of_bounds")
+    absolute_cap = (
+        _MAX_LIFECYCLE_NOTIONAL_USD
+        if isinstance(plan, InfrastructureValidationLifecyclePlan)
+        else _MAX_SUBMIT_PROOF_NOTIONAL_USD
+    )
     if (
-        permit.max_notional_usd > _MAX_SUBMIT_PROOF_NOTIONAL_USD
-        or permit.max_loss_usd > _MAX_SUBMIT_PROOF_NOTIONAL_USD
-        or plan.notional_usd > _MAX_SUBMIT_PROOF_NOTIONAL_USD
+        permit.max_notional_usd > absolute_cap
+        or permit.max_loss_usd > absolute_cap
+        or plan.notional_usd > absolute_cap
     ):
         raise ValueError("infrastructure_validation_submit_exceeds_absolute_cap")
-    if infrastructure_validation_order_plan_sha256(plan) != permit.test_plan_digest:
+    if infrastructure_validation_plan_sha256(plan) != permit.test_plan_digest:
         raise ValueError("infrastructure_validation_order_plan_digest_mismatch")
     if (
         infrastructure_validation_terminal_state_sha256()
@@ -250,6 +296,18 @@ def authorize_infrastructure_validation_order(
 
 def infrastructure_validation_order_plan_sha256(
     plan: InfrastructureValidationOrderPlan,
+) -> str:
+    return infrastructure_validation_plan_sha256(plan)
+
+
+def infrastructure_validation_lifecycle_plan_sha256(
+    plan: InfrastructureValidationLifecyclePlan,
+) -> str:
+    return infrastructure_validation_plan_sha256(plan)
+
+
+def infrastructure_validation_plan_sha256(
+    plan: InfrastructureValidationSubmitPlan,
 ) -> str:
     return _canonical_model_sha256(plan)
 
@@ -274,14 +332,14 @@ def infrastructure_validation_permit_sha256(
 
 def infrastructure_validation_client_order_id(
     permit: InfrastructureValidationPermit,
-    plan: InfrastructureValidationOrderPlan,
+    plan: InfrastructureValidationSubmitPlan,
 ) -> str:
     """Return the sole broker identity available to this immutable permit."""
 
     identity = hashlib.sha256(
         (
             f"{permit.permit_id}\x1f{infrastructure_validation_permit_sha256(permit)}"
-            f"\x1f{infrastructure_validation_order_plan_sha256(plan)}"
+            f"\x1f{infrastructure_validation_plan_sha256(plan)}"
         ).encode("utf-8")
     ).hexdigest()
     return f"ivp-{identity[:44]}"
@@ -289,7 +347,7 @@ def infrastructure_validation_client_order_id(
 
 def infrastructure_validation_request_payload(
     permit: InfrastructureValidationPermit,
-    plan: InfrastructureValidationOrderPlan,
+    plan: InfrastructureValidationSubmitPlan,
 ) -> dict[str, object]:
     """Build the exact non-promotable envelope sealed into the durable intent."""
 
@@ -311,7 +369,7 @@ def infrastructure_validation_request_payload(
             "permit": permit_payload,
             "permit_sha256": infrastructure_validation_permit_sha256(permit),
             "test_plan": plan_payload,
-            "test_plan_sha256": infrastructure_validation_order_plan_sha256(plan),
+            "test_plan_sha256": infrastructure_validation_plan_sha256(plan),
             "expected_terminal_state": infrastructure_validation_terminal_state_payload(),
             "expected_terminal_state_sha256": infrastructure_validation_terminal_state_sha256(),
         },
@@ -370,12 +428,16 @@ def _canonical_json(payload: Mapping[str, object]) -> str:
 
 
 __all__ = [
+    "InfrastructureValidationLifecyclePlan",
     "InfrastructureValidationPermit",
     "InfrastructureValidationOrderPlan",
+    "InfrastructureValidationSubmitPlan",
     "authorize_infrastructure_validation",
     "authorize_infrastructure_validation_order",
     "infrastructure_validation_client_order_id",
+    "infrastructure_validation_lifecycle_plan_sha256",
     "infrastructure_validation_order_plan_sha256",
+    "infrastructure_validation_plan_sha256",
     "infrastructure_validation_permit_sha256",
     "infrastructure_validation_request_payload",
     "infrastructure_validation_terminal_state_payload",

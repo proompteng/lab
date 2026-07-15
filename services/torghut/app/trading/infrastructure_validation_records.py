@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import cast
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     BrokerMutationReceipt,
     BrokerMutationReceiptEvent,
+    ExecutionOrderEvent,
     coerce_json_payload,
 )
 from .evidence_contracts import (
@@ -31,6 +33,7 @@ _EVIDENCE_TAG = ArtifactProvenance.NON_PROMOTABLE_VALIDATION.value
 _EVIDENCE_SEAL = object()
 _LINEAGE_SCHEMA_VERSION = "torghut.infrastructure-validation-lineage.v1"
 _ORDER_CREATING_LINEAGE_OPERATIONS = (
+    "submit_order",
     "replace_order",
     "close_position",
     "close_all_positions",
@@ -64,6 +67,24 @@ class InfrastructureValidationEvidence:
     account_label: str
     endpoint_fingerprint: str
     lineage_parent_terminal: bool
+    _seal: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _EVIDENCE_SEAL:
+            raise PermissionError("infrastructure_validation_evidence_issuer_invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class InfrastructureValidationPositionEvidence:
+    """Latest tagged broker fill reconciled to one observed paper position."""
+
+    lineage: InfrastructureValidationEvidence
+    order_event_id: uuid.UUID
+    alpaca_order_id: str
+    symbol: str
+    filled_quantity: Decimal
+    position_quantity: Decimal
+    average_fill_price: Decimal
     _seal: object = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -160,6 +181,124 @@ def infrastructure_validation_lineage_payload(
         "evidence_tag": _EVIDENCE_TAG,
         "promotable": False,
     }
+
+
+def require_infrastructure_validation_position_evidence(
+    session: Session,
+    *,
+    evidence: InfrastructureValidationEvidence,
+    symbol: str,
+    signed_quantity: Decimal,
+) -> InfrastructureValidationPositionEvidence:
+    """Match a fresh broker position to the latest persisted tagged fill."""
+
+    observed_quantity = Decimal(signed_quantity)
+    if not observed_quantity.is_finite() or observed_quantity <= 0:
+        raise RuntimeError("infrastructure_validation_position_observation_invalid")
+    return _require_infrastructure_validation_position_event(
+        session,
+        evidence=evidence,
+        symbol=symbol,
+        expected_position_quantity=observed_quantity,
+        require_positive_position=True,
+    )
+
+
+def require_infrastructure_validation_flat_position_evidence(
+    session: Session,
+    *,
+    evidence: InfrastructureValidationEvidence,
+    symbol: str,
+) -> InfrastructureValidationPositionEvidence:
+    """Prove that a tagged lifecycle fill left the validation symbol flat."""
+
+    return _require_infrastructure_validation_position_event(
+        session,
+        evidence=evidence,
+        symbol=symbol,
+        expected_position_quantity=Decimal("0"),
+        require_positive_position=False,
+    )
+
+
+def _require_infrastructure_validation_position_event(
+    session: Session,
+    *,
+    evidence: InfrastructureValidationEvidence,
+    symbol: str,
+    expected_position_quantity: Decimal,
+    require_positive_position: bool,
+) -> InfrastructureValidationPositionEvidence:
+    if (
+        evidence.root_plan_schema
+        != "torghut.infrastructure-validation-lifecycle-plan.v1"
+    ):
+        raise RuntimeError("infrastructure_validation_position_ancestry_missing")
+    normalized_symbol = symbol.strip().upper()
+    if not normalized_symbol:
+        raise RuntimeError("infrastructure_validation_position_observation_invalid")
+    root = session.get(BrokerMutationReceipt, evidence.root_receipt_id)
+    if root is None or _root_symbol(root) != normalized_symbol:
+        raise RuntimeError("infrastructure_validation_position_symbol_mismatch")
+    events = (
+        session.execute(
+            select(ExecutionOrderEvent)
+            .where(
+                ExecutionOrderEvent.alpaca_account_label == evidence.account_label,
+                ExecutionOrderEvent.symbol == normalized_symbol,
+                ExecutionOrderEvent.event_type.in_(("fill", "partial_fill")),
+                ExecutionOrderEvent.position_qty.is_not(None),
+                ExecutionOrderEvent.execution_id.is_(None),
+                ExecutionOrderEvent.trade_decision_id.is_(None),
+            )
+            .order_by(
+                ExecutionOrderEvent.event_ts.desc().nullslast(),
+                ExecutionOrderEvent.created_at.desc(),
+                ExecutionOrderEvent.id.desc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    event = next(
+        (
+            item
+            for item in events
+            if _event_matches_validation_root(session, item, evidence=evidence)
+        ),
+        None,
+    )
+    if event is None:
+        raise RuntimeError("infrastructure_validation_position_fill_missing")
+    filled_quantity = _positive_event_decimal(
+        event.filled_qty,
+        field="filled_quantity",
+    )
+    average_fill_price = _positive_event_decimal(
+        event.avg_fill_price,
+        field="average_fill_price",
+    )
+    position_quantity = _event_decimal(
+        event.position_qty,
+        field="position_quantity",
+    )
+    if require_positive_position and position_quantity <= 0:
+        raise RuntimeError("infrastructure_validation_position_quantity_invalid")
+    if position_quantity != expected_position_quantity:
+        raise RuntimeError("infrastructure_validation_position_not_reconciled")
+    alpaca_order_id = str(event.alpaca_order_id or "").strip()
+    if not alpaca_order_id:
+        raise RuntimeError("infrastructure_validation_position_order_missing")
+    return InfrastructureValidationPositionEvidence(
+        lineage=evidence,
+        order_event_id=event.id,
+        alpaca_order_id=alpaca_order_id,
+        symbol=normalized_symbol,
+        filled_quantity=filled_quantity,
+        position_quantity=position_quantity,
+        average_fill_price=average_fill_price,
+        _seal=_EVIDENCE_SEAL,
+    )
 
 
 def _root_receipts(
@@ -291,7 +430,7 @@ def _descendant_evidence(
         parent.account_label != receipt.account_label
         or parent.endpoint_fingerprint != receipt.endpoint_fingerprint
         or _utc(parent.created_at) > _utc(receipt.created_at)
-        or parent.operation not in ("submit_order", *_ORDER_CREATING_LINEAGE_OPERATIONS)
+        or parent.operation not in _ORDER_CREATING_LINEAGE_OPERATIONS
         or not _belongs_to_validation_root(parent, lineage.root_receipt_id)
     ):
         raise RuntimeError("infrastructure_validation_lineage_parent_mismatch")
@@ -405,6 +544,22 @@ def _root_plan_schema(receipt: BrokerMutationReceipt) -> str:
     return schema_version
 
 
+def _root_symbol(receipt: BrokerMutationReceipt) -> str:
+    try:
+        intent = _parse_json_object(receipt.canonical_intent_json)
+        request = _required_object(intent, "request")
+        validation = _required_object(request, "infrastructure_validation")
+        test_plan = _required_object(validation, "test_plan")
+        symbol = str(test_plan["symbol"]).strip().upper()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "infrastructure_validation_receipt_evidence_invalid"
+        ) from exc
+    if not symbol:
+        raise RuntimeError("infrastructure_validation_receipt_evidence_invalid")
+    return symbol
+
+
 def _belongs_to_validation_root(
     receipt: BrokerMutationReceipt,
     root_receipt_id: uuid.UUID,
@@ -447,6 +602,10 @@ def _require_lineage_target(
             "infrastructure_validation_receipt_evidence_invalid"
         ) from exc
     target_matches = {
+        "submit_order": root_plan_schema
+        == "torghut.infrastructure-validation-lifecycle-plan.v1"
+        and receipt.target_key == root_symbol
+        and request.get("symbol") == root_symbol,
         "replace_order": receipt.target_key == parent_broker_order_id,
         "cancel_order": receipt.target_key == parent_broker_order_id,
         "close_position": root_plan_schema
@@ -524,6 +683,80 @@ def _object_mapping(value: object) -> dict[str, object]:
     }
 
 
+def _event_matches_validation_root(
+    session: Session,
+    event: ExecutionOrderEvent,
+    *,
+    evidence: InfrastructureValidationEvidence,
+) -> bool:
+    raw = coerce_json_payload(event.raw_event)
+    marker = (
+        cast(Mapping[object, object], raw).get(_EVIDENCE_KEY)
+        if isinstance(raw, Mapping)
+        else None
+    )
+    if not isinstance(marker, Mapping):
+        return False
+    values = cast(Mapping[object, object], marker)
+    if not (
+        is_non_promotable_validation_event(cast(Mapping[object, object], raw))
+        and values.get("validation_root_receipt_id") == str(evidence.root_receipt_id)
+        and values.get("validation_root_client_order_id")
+        == evidence.root_client_order_id
+        and values.get("permit_id") == evidence.permit_id
+        and values.get("permit_sha256") == evidence.permit_sha256
+    ):
+        return False
+    try:
+        receipt_id = uuid.UUID(str(values.get("broker_mutation_receipt_id") or ""))
+    except ValueError:
+        return False
+    receipt = session.get(BrokerMutationReceipt, receipt_id)
+    if receipt is None:
+        return False
+    try:
+        receipt_evidence = (
+            _root_evidence(
+                session,
+                receipt,
+                expected_client_order_id=evidence.root_client_order_id,
+                observed_broker_order_id=str(event.alpaca_order_id or ""),
+            )
+            if receipt.id == evidence.root_receipt_id
+            else _descendant_evidence(session, receipt)
+        )
+    except RuntimeError:
+        return False
+    return (
+        receipt_evidence is not None
+        and receipt_evidence.receipt_id == receipt_id
+        and receipt_evidence.root_receipt_id == evidence.root_receipt_id
+        and receipt_evidence.root_client_order_id == evidence.root_client_order_id
+        and receipt_evidence.permit_id == evidence.permit_id
+        and receipt_evidence.permit_sha256 == evidence.permit_sha256
+        and receipt_evidence.account_label == evidence.account_label
+        and receipt_evidence.endpoint_fingerprint == evidence.endpoint_fingerprint
+        and receipt_evidence.broker_order_id == str(event.alpaca_order_id or "")
+    )
+
+
+def _event_decimal(value: object, *, field: str) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise RuntimeError(f"infrastructure_validation_{field}_invalid") from exc
+    if not parsed.is_finite():
+        raise RuntimeError(f"infrastructure_validation_{field}_invalid")
+    return parsed
+
+
+def _positive_event_decimal(value: object, *, field: str) -> Decimal:
+    parsed = _event_decimal(value, field=field)
+    if parsed <= 0:
+        raise RuntimeError(f"infrastructure_validation_{field}_invalid")
+    return parsed
+
+
 def tag_infrastructure_validation_event(
     raw_event: object,
     evidence: InfrastructureValidationEvidence,
@@ -598,9 +831,12 @@ def is_non_promotable_validation_event(raw_event: object) -> bool:
 
 __all__ = [
     "InfrastructureValidationEvidence",
+    "InfrastructureValidationPositionEvidence",
     "infrastructure_validation_lineage_payload",
     "is_non_promotable_validation_event",
     "load_infrastructure_validation_evidence",
+    "require_infrastructure_validation_flat_position_evidence",
+    "require_infrastructure_validation_position_evidence",
     "strip_unproven_infrastructure_validation_evidence",
     "tag_infrastructure_validation_event",
 ]

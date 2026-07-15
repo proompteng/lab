@@ -12,11 +12,13 @@ from app.trading.evidence_contracts import (
     parse_evidence_contract,
 )
 from app.trading.infrastructure_validation import (
+    InfrastructureValidationLifecyclePlan,
     InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
     authorize_infrastructure_validation,
     authorize_infrastructure_validation_order,
     infrastructure_validation_client_order_id,
+    infrastructure_validation_lifecycle_plan_sha256,
     infrastructure_validation_order_plan_sha256,
     infrastructure_validation_request_payload,
     infrastructure_validation_terminal_state_sha256,
@@ -183,6 +185,91 @@ def test_crypto_ioc_plan_is_immutably_bound_to_one_non_promotable_identity() -> 
     validation = payload["infrastructure_validation"]
     assert validation["permit"]["evidence_tag"] == "non_promotable_validation"
     assert validation["permit"]["promotable"] is False
+
+
+def test_lifecycle_plan_allows_one_bounded_fill_and_only_resting_reductions() -> None:
+    plan = InfrastructureValidationLifecyclePlan.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "symbol": "BTC/USD",
+            "side": "buy",
+            "qty": "0.00004",
+            "order_type": "limit",
+            "time_in_force": "ioc",
+            "limit_price": "100000",
+            "stop_price": None,
+            "resting_close_limit_price": "125000",
+            "replacement_close_limit_price": "150000",
+            "partial_close_qty": "0.00002",
+        }
+    )
+    permit = InfrastructureValidationPermit.model_validate(
+        _permit_payload(
+            asset_class="crypto",
+            market_session="continuous",
+            symbols=["BTC/USD"],
+            sides=["buy"],
+            order_types=["limit"],
+            max_notional_usd="5",
+            max_loss_usd="5",
+            test_plan_digest=infrastructure_validation_lifecycle_plan_sha256(plan),
+            expected_terminal_state_digest=infrastructure_validation_terminal_state_sha256(),
+        )
+    )
+
+    authorize_infrastructure_validation_order(
+        permit,
+        plan,
+        account_label=permit.account_label,
+        broker_base_url="https://paper-api.alpaca.markets",
+        now=_NOW,
+    )
+
+    assert plan.notional_usd == 4
+    assert (
+        infrastructure_validation_request_payload(permit, plan)["broker_request"][
+            "limit_price"
+        ]
+        == "100000"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"partial_close_qty": "0.00004"}, "partial_close_not_partial"),
+        ({"resting_close_limit_price": "100000"}, "close_price_not_resting"),
+        (
+            {"replacement_close_limit_price": "125000"},
+            "replacement_not_resting",
+        ),
+    ],
+)
+def test_lifecycle_plan_rejects_nonreducing_schedule(
+    overrides: dict[str, object],
+    error: str,
+) -> None:
+    payload: dict[str, object] = {
+        "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+        "venue": "alpaca",
+        "asset_class": "crypto",
+        "symbol": "BTC/USD",
+        "side": "buy",
+        "qty": "0.00004",
+        "order_type": "limit",
+        "time_in_force": "ioc",
+        "limit_price": "100000",
+        "stop_price": None,
+        "resting_close_limit_price": "125000",
+        "replacement_close_limit_price": "150000",
+        "partial_close_qty": "0.00002",
+    }
+    payload.update(overrides)
+
+    with pytest.raises(ValidationError, match=error):
+        InfrastructureValidationLifecyclePlan.model_validate(payload)
 
 
 @pytest.mark.parametrize(

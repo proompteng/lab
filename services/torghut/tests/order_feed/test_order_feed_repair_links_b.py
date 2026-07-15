@@ -524,6 +524,7 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
                     status="filled",
                     qty=Decimal("1"),
                     filled_qty=Decimal("1"),
+                    position_qty=None,
                     filled_qty_delta=None,
                     avg_fill_price=Decimal("190"),
                     filled_notional_delta=None,

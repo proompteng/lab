@@ -80,6 +80,30 @@ class TestOrderFeedCore(OrderFeedTestCase):
             self.assertFalse(is_duplicate)
             self.assertEqual(persisted.symbol, option_symbol)
 
+    def test_fill_persists_broker_position_quantity(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"partial_fill",'
+            b'"position_qty":"0.00003","timestamp":"2026-07-15T12:00:00Z",'
+            b'"order":{"id":"crypto-order-1","client_order_id":"crypto-client-1",'
+            b'"symbol":"BTC/USD","status":"partially_filled","qty":"0.00004",'
+            b'"filled_qty":"0.00003","filled_avg_price":"97000"}},"seq":11}'
+        )
+
+        with Session(self.engine) as session:
+            normalized = normalize_order_feed_record(
+                FakeRecord(value=payload, offset=56),
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+            self.assertEqual(normalized.event.position_qty, Decimal("0.00003"))
+
+            persisted, is_duplicate = persist_order_event(session, normalized.event)
+            session.commit()
+
+            self.assertFalse(is_duplicate)
+            self.assertEqual(persisted.position_qty, Decimal("0.00003000"))
+
     def test_cross_account_order_feed_normalization_defaults_do_not_crosstalk(
         self,
     ) -> None:
@@ -854,6 +878,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 status="filled",
                 qty=Decimal("1"),
                 filled_qty=Decimal("1"),
+                position_qty=None,
                 filled_qty_delta=Decimal("1"),
                 avg_fill_price=Decimal("190.2"),
                 filled_notional_delta=Decimal("190.2"),

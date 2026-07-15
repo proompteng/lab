@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 from alembic import command
@@ -12,7 +14,11 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
-from app.models import BrokerMutationReceipt, BrokerMutationReceiptEvent
+from app.models import (
+    BrokerMutationReceipt,
+    BrokerMutationReceiptEvent,
+    ExecutionOrderEvent,
+)
 from app.trading.broker_mutation_coordinator import (
     BrokerMutationCoordinator,
     InfrastructureValidationOrderSubmission,
@@ -27,15 +33,26 @@ from app.trading.broker_mutation_receipts import (
     build_broker_mutation_settlement,
 )
 from app.trading.infrastructure_validation import (
+    InfrastructureValidationLifecyclePlan,
     InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
     infrastructure_validation_client_order_id,
+    infrastructure_validation_lifecycle_plan_sha256,
     infrastructure_validation_order_plan_sha256,
     infrastructure_validation_terminal_state_sha256,
 )
 from app.trading.infrastructure_validation_records import (
     infrastructure_validation_lineage_payload,
     load_infrastructure_validation_evidence,
+    tag_infrastructure_validation_event,
+)
+from app.trading.risk_reduction import (
+    BrokerPositionObservation,
+    BrokerReductionSnapshot,
+    PositionCloseLeg,
+    RiskReductionAuthorization,
+    SubmitCloseOrderPlan,
+    authorize_risk_reduction,
 )
 from tests.execution.decision_submission_claims_postgres_support import (
     POSTGRES_DSN,
@@ -48,6 +65,8 @@ from tests.execution.decision_submission_claims_postgres_support import (
 def _upgrade_reduction_schema(
     alembic: AlembicConfig,
     schema_engine: Engine,
+    *,
+    target: str = "0071_validation_lineage",
 ) -> None:
     command.stamp(alembic, "0057_generic_multifactor_machine")
     command.upgrade(alembic, "0061_linked_submission_terminal")
@@ -63,7 +82,40 @@ def _upgrade_reduction_schema(
                 """
             )
         )
-    command.upgrade(alembic, "0071_validation_lineage")
+        if target == "0072_validation_lifecycle":
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE execution_order_events (
+                        id UUID PRIMARY KEY,
+                        event_fingerprint VARCHAR(64) NOT NULL UNIQUE,
+                        source_topic VARCHAR(128) NOT NULL,
+                        source_partition INTEGER,
+                        source_offset BIGINT,
+                        alpaca_account_label VARCHAR(64) NOT NULL,
+                        feed_seq BIGINT,
+                        event_ts TIMESTAMPTZ,
+                        symbol VARCHAR(64),
+                        alpaca_order_id VARCHAR(128),
+                        client_order_id VARCHAR(128),
+                        event_type VARCHAR(64),
+                        status VARCHAR(32),
+                        qty NUMERIC(20, 8),
+                        filled_qty NUMERIC(20, 8),
+                        filled_qty_delta NUMERIC(20, 8),
+                        avg_fill_price NUMERIC(20, 8),
+                        filled_notional_delta NUMERIC(20, 8),
+                        fill_quantity_basis VARCHAR(32),
+                        raw_event JSONB NOT NULL,
+                        execution_id UUID,
+                        trade_decision_id UUID,
+                        source_window_id UUID,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+            )
+    command.upgrade(alembic, target)
 
 
 @pytest.mark.skipif(
@@ -381,6 +433,160 @@ def test_postgres_validation_descendant_requires_exact_root_parent_and_target(
         drop_schema(schema, admin_engine, schema_engine)
 
 
+@pytest.mark.skipif(
+    not POSTGRES_DSN,
+    reason="set TORGHUT_TEST_POSTGRES_DSN for the validation lifecycle test",
+)
+def test_postgres_lifecycle_close_requires_reconciled_position_and_fill_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema, admin_engine, schema_engine, schema_dsn = create_schema_engines(
+        "validation_lifecycle"
+    )
+    sessions = sessionmaker(
+        bind=schema_engine,
+        class_=Session,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    try:
+        monkeypatch.setattr(settings, "db_dsn", schema_dsn)
+        alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
+        _upgrade_reduction_schema(
+            alembic,
+            schema_engine,
+            target="0072_validation_lifecycle",
+        )
+        evidence = _seed_validation_lifecycle_root(sessions)
+        lineage = infrastructure_validation_lineage_payload(evidence)
+        authorization = _submit_close_authorization(
+            endpoint_fingerprint=evidence.endpoint_fingerprint,
+        )
+
+        missing_fill = _submit_close_intent(
+            lineage=lineage,
+            endpoint_fingerprint=evidence.endpoint_fingerprint,
+            client_request_id="rr-submit-close-missing-fill",
+            risk_reduction=authorization.evidence_payload,
+        )
+        with sessions() as session:
+            session.add(_receipt_from_intent(missing_fill))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+        event_ts = datetime.now(timezone.utc)
+        with sessions() as session:
+            session.add(
+                _validation_position_event(
+                    evidence=evidence,
+                    event_ts=event_ts,
+                    fingerprint="1" * 64,
+                    source_offset=1,
+                )
+            )
+            session.commit()
+
+        stale_risk = copy.deepcopy(dict(authorization.evidence_payload))
+        stale_risk["observation"]["observed_at"] = (
+            datetime.now(timezone.utc) - timedelta(seconds=10)
+        ).isoformat()
+        stale = _submit_close_intent(
+            lineage=lineage,
+            endpoint_fingerprint=evidence.endpoint_fingerprint,
+            client_request_id="rr-submit-close-stale-position",
+            risk_reduction=stale_risk,
+        )
+        with sessions() as session:
+            session.add(_receipt_from_intent(stale))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+        wrong_quantity_risk = copy.deepcopy(dict(authorization.evidence_payload))
+        wrong_quantity_risk["observation"]["positions"][0]["signed_quantity"] = (
+            "0.00003"
+        )
+        wrong_quantity = _submit_close_intent(
+            lineage=lineage,
+            endpoint_fingerprint=evidence.endpoint_fingerprint,
+            client_request_id="rr-submit-close-wrong-position",
+            risk_reduction=wrong_quantity_risk,
+        )
+        with sessions() as session:
+            session.add(_receipt_from_intent(wrong_quantity))
+            with pytest.raises(IntegrityError):
+                session.commit()
+
+        valid = _submit_close_intent(
+            lineage=lineage,
+            endpoint_fingerprint=evidence.endpoint_fingerprint,
+            client_request_id="rr-submit-close-valid",
+            risk_reduction=authorization.evidence_payload,
+        )
+        with sessions() as session:
+            BrokerMutationCoordinator(
+                "validation-submit-close-pg"
+            ).execute_unlinked_mutation(
+                session,
+                intent=valid,
+                callbacks=UnlinkedMutationCallbacks(
+                    broker_call=lambda _permit: {
+                        "id": "validation-resting-close-order-1",
+                        "status": "accepted",
+                    },
+                    persist_terminal=lambda _result: None,
+                    build_settlement=lambda result: build_broker_mutation_settlement(
+                        BrokerMutationSettlementRequest(
+                            source="primary",
+                            outcome="acknowledged",
+                            broker_reference=str(result["id"]),
+                            execution_id=None,
+                            evidence_payload={"status": result["status"]},
+                        )
+                    ),
+                ),
+            )
+        with sessions() as session:
+            accepted = session.execute(
+                select(BrokerMutationReceipt).where(
+                    BrokerMutationReceipt.client_request_id == "rr-submit-close-valid"
+                )
+            ).scalar_one()
+        assert (accepted.operation, accepted.risk_class, accepted.purpose) == (
+            "submit_order",
+            "risk_reducing",
+            "closeout",
+        )
+
+        forged_event = _validation_position_event(
+            evidence=evidence,
+            event_ts=event_ts + timedelta(seconds=1),
+            fingerprint="2" * 64,
+            source_offset=2,
+        )
+        forged_event.raw_event = copy.deepcopy(forged_event.raw_event)
+        forged_event.raw_event["_torghut_evidence_contract"][
+            "broker_mutation_receipt_id"
+        ] = str(uuid.uuid4())
+        with sessions() as session:
+            session.add(forged_event)
+            session.commit()
+        forged = _submit_close_intent(
+            lineage=lineage,
+            endpoint_fingerprint=evidence.endpoint_fingerprint,
+            client_request_id="rr-submit-close-forged-fill-receipt",
+            risk_reduction=_submit_close_authorization(
+                endpoint_fingerprint=evidence.endpoint_fingerprint,
+            ).evidence_payload,
+        )
+        with sessions() as session:
+            session.add(_receipt_from_intent(forged))
+            with pytest.raises(IntegrityError):
+                session.commit()
+    finally:
+        drop_schema(schema, admin_engine, schema_engine)
+
+
 def _seed_validation_root(sessions: sessionmaker[Session]) -> str:
     now = datetime.now(timezone.utc)
     plan = InfrastructureValidationOrderPlan.model_validate(
@@ -456,6 +662,199 @@ def _seed_validation_root(sessions: sessionmaker[Session]) -> str:
             now=now,
         )
     return infrastructure_validation_client_order_id(permit, plan)
+
+
+def _seed_validation_lifecycle_root(
+    sessions: sessionmaker[Session],
+) -> object:
+    now = datetime.now(timezone.utc)
+    plan = InfrastructureValidationLifecyclePlan.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "symbol": "BTC/USD",
+            "side": "buy",
+            "qty": "0.00002",
+            "order_type": "limit",
+            "time_in_force": "ioc",
+            "limit_price": "100000",
+            "stop_price": None,
+            "resting_close_limit_price": "200000",
+            "replacement_close_limit_price": "210000",
+            "partial_close_qty": "0.00001",
+        }
+    )
+    permit = InfrastructureValidationPermit.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-permit.v2",
+            "permit_id": "ivp-postgres-lifecycle",
+            "purpose": "control_plane_validation",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "account_mode": "paper",
+            "market_session": "continuous",
+            "account_label": "paper",
+            "broker_base_url": "https://paper-api.alpaca.markets",
+            "symbols": ["BTC/USD"],
+            "sides": ["buy"],
+            "order_types": ["limit"],
+            "max_orders": 1,
+            "max_outstanding_intents": 1,
+            "max_notional_usd": "5",
+            "max_loss_usd": "5",
+            "issued_by": "infrastructure-owner",
+            "approved_by": "independent-infrastructure-owner",
+            "issued_at": now - timedelta(seconds=1),
+            "expires_at": now + timedelta(minutes=5),
+            "test_plan_digest": infrastructure_validation_lifecycle_plan_sha256(plan),
+            "expected_terminal_state": (
+                "no_open_orders_no_positions_no_unsettled_claims"
+            ),
+            "expected_terminal_state_digest": (
+                infrastructure_validation_terminal_state_sha256()
+            ),
+            "evidence_tag": "non_promotable_validation",
+            "promotable": False,
+        }
+    )
+    with sessions() as session:
+        BrokerMutationCoordinator(
+            "validation-lifecycle-pg"
+        ).submit_infrastructure_validation_order(
+            session,
+            request=InfrastructureValidationOrderSubmission(
+                permit=permit,
+                plan=plan,
+                account_label="paper",
+                endpoint_url="https://paper-api.alpaca.markets",
+            ),
+            callbacks=UnlinkedMutationCallbacks(
+                broker_call=lambda _permit: {
+                    "id": "validation-lifecycle-root-order-1",
+                    "status": "filled",
+                },
+                persist_terminal=lambda _result: None,
+                build_settlement=lambda result: build_broker_mutation_settlement(
+                    BrokerMutationSettlementRequest(
+                        source="primary",
+                        outcome="acknowledged",
+                        broker_reference=str(result["id"]),
+                        execution_id=None,
+                        evidence_payload={"status": result["status"]},
+                    )
+                ),
+            ),
+            now=now,
+        )
+    with sessions() as session:
+        evidence = load_infrastructure_validation_evidence(
+            session,
+            account_label="paper",
+            client_order_id=infrastructure_validation_client_order_id(permit, plan),
+            alpaca_order_id="validation-lifecycle-root-order-1",
+        )
+    assert evidence is not None
+    return evidence
+
+
+def _submit_close_authorization(
+    *,
+    endpoint_fingerprint: str,
+) -> RiskReductionAuthorization:
+    observed_at = datetime.now(timezone.utc)
+    snapshot = BrokerReductionSnapshot(
+        broker_route="alpaca",
+        account_label="paper",
+        endpoint_fingerprint=endpoint_fingerprint,
+        observed_at=observed_at,
+        complete=True,
+        positions=(
+            BrokerPositionObservation(
+                symbol="BTC/USD",
+                signed_quantity=Decimal("0.00002"),
+                unit_notional=Decimal("100000"),
+            ),
+        ),
+    )
+    return authorize_risk_reduction(
+        snapshot,
+        SubmitCloseOrderPlan(
+            leg=PositionCloseLeg(
+                symbol="BTC/USD",
+                side="sell",
+                quantity=Decimal("0.00002"),
+            ),
+            limit_price=Decimal("200000"),
+        ),
+        now=observed_at,
+    )
+
+
+def _submit_close_intent(
+    *,
+    lineage: dict[str, object],
+    endpoint_fingerprint: str,
+    client_request_id: str,
+    risk_reduction: object,
+) -> BrokerMutationIntent:
+    return build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="alpaca",
+            account_label="paper",
+            endpoint_fingerprint=endpoint_fingerprint,
+            operation="submit_order",
+            risk_class="risk_reducing",
+            purpose="closeout",
+            workflow_id=client_request_id,
+            client_request_id=client_request_id,
+            target=BrokerMutationTarget(kind="order", key="BTC/USD"),
+            request_payload={
+                "schema_version": "torghut.alpaca-reduction-request.v1",
+                "symbol": "BTC/USD",
+                "side": "sell",
+                "qty": "0.00002",
+                "order_type": "limit",
+                "time_in_force": "gtc",
+                "limit_price": "200000",
+                "stop_price": None,
+                "extra_params": {"client_order_id": client_request_id},
+                "risk_reduction": risk_reduction,
+                "infrastructure_validation_lineage": lineage,
+            },
+        )
+    )
+
+
+def _validation_position_event(
+    *,
+    evidence: object,
+    event_ts: datetime,
+    fingerprint: str,
+    source_offset: int,
+) -> ExecutionOrderEvent:
+    return ExecutionOrderEvent(
+        event_fingerprint=fingerprint,
+        source_topic="torghut.trade-updates.v1",
+        source_partition=0,
+        source_offset=source_offset,
+        alpaca_account_label="paper",
+        feed_seq=source_offset,
+        event_ts=event_ts,
+        symbol="BTC/USD",
+        alpaca_order_id="validation-lifecycle-root-order-1",
+        client_order_id=evidence.root_client_order_id,
+        event_type="fill",
+        status="filled",
+        qty=Decimal("0.00002"),
+        filled_qty=Decimal("0.00002"),
+        position_qty=Decimal("0.00002"),
+        avg_fill_price=Decimal("100000"),
+        raw_event=tag_infrastructure_validation_event(
+            {"event": "fill"},
+            evidence,
+        ),
+    )
 
 
 def _replacement_intent(
