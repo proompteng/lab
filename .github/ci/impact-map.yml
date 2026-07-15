@@ -136,19 +136,50 @@ targets:
     kind: delegated
     workflow: agents-ci
     exclude:
+      - '**/*.md'
+      - '**/*.mdx'
       - services/agents/agentctl/**
-      - docs/agents/agentctl-release.md
+      - packages/codex/**/__tests__/**
+      - packages/codex/**/__snapshots__/**
+      - packages/codex/**/*.test.ts
+      - packages/codex/**/*.test.tsx
+      - packages/codex/**/*.spec.ts
+      - packages/codex/**/*.spec.tsx
+      - packages/cx-tools/**/__tests__/**
+      - packages/cx-tools/**/__snapshots__/**
+      - packages/cx-tools/**/*.test.ts
+      - packages/cx-tools/**/*.test.tsx
+      - packages/cx-tools/**/*.spec.ts
+      - packages/cx-tools/**/*.spec.tsx
+      - packages/otel/**/tests/**
+      - packages/otel/**/__snapshots__/**
+      - packages/otel/**/*.test.ts
+      - packages/otel/**/*.test.tsx
+      - packages/otel/**/*.spec.ts
+      - packages/otel/**/*.spec.tsx
+      - packages/temporal-bun-sdk/**/__tests__/**
+      - packages/temporal-bun-sdk/**/__snapshots__/**
+      - packages/temporal-bun-sdk/**/*.test.ts
+      - packages/temporal-bun-sdk/**/*.test.tsx
+      - packages/temporal-bun-sdk/**/*.spec.ts
+      - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
+      - .github/workflows/agents-ci.yml
+      - nix/images/agents.nix
+      - nix/images/bun-workspace-service.nix
+      - nix/images/openai-codex-cli.nix
       - packages/agent-contracts/**
+      - packages/codex/**
       - packages/cx-tools/**
+      - packages/otel/**
       - packages/scripts/src/agents/**
-      - packages/scripts/src/shared/cli.ts
-      - packages/scripts/src/shared/docker.ts
-      - packages/scripts/src/shared/git.ts
+      - packages/temporal-bun-sdk/**
       - services/agents/**
       - charts/agents/**
-      - docs/agents/**
+      - argocd/applications/agents/**
+      - argocd/applications/argo-workflows/**
       - scripts/agents/**
+      - scripts/download_crd_schema.py
 
   agentctl:
     kind: delegated

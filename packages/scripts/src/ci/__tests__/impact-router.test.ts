@@ -46,7 +46,45 @@ describe('impact router', () => {
   test('routes the shared Codex package to its dedicated validation', () => {
     const plan = selectImpactPlan(['packages/codex/src/app-server.ts'], map)
     expect(plan.validationTargets).toEqual(['planner'])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci', 'codex-ci'])
+  })
+
+  test('does not fan Codex tests into Agents runtime validation', () => {
+    const plan = selectImpactPlan(['packages/codex/src/app-server.test.ts'], map)
+    expect(plan.validationTargets).toEqual(['planner'])
     expect(plan.delegatedWorkflows).toEqual(['codex-ci'])
+  })
+
+  test('routes Agents tests to the reusable unit tier', () => {
+    const plan = selectImpactPlan(['services/agents/src/server/health.test.ts'], map)
+    expect(plan.validationTargets).toEqual(['planner'])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
+  })
+
+  test('routes Agents chart changes to published-image smoke', () => {
+    const plan = selectImpactPlan(['charts/agents/templates/deployment.yaml'], map)
+    expect(plan.validationTargets).toEqual(['planner'])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
+  })
+
+  test('keeps Agents documentation off the ARC workflow', () => {
+    const plan = selectImpactPlan(['docs/agents/agentrun-creation-guide.md', 'services/agents/README.md'], map)
+    expect(plan.validationTargets).toEqual(['planner'])
+    expect(plan.delegatedWorkflows).toEqual([])
+  })
+
+  test('runs workflow lint and the reusable Agents contract for Agents workflow changes', () => {
+    const plan = selectImpactPlan(['.github/workflows/agents-ci.yml'], map)
+    expect(plan.validationTargets).toEqual(['workflow-lint'])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
+  })
+
+  test('routes runtime package dependencies through package and Agents validation', () => {
+    expect(selectImpactPlan(['packages/otel/src/api.ts'], map).delegatedWorkflows).toEqual(['agents-ci', 'otel'])
+    expect(selectImpactPlan(['packages/temporal-bun-sdk/src/index.ts'], map).delegatedWorkflows).toEqual([
+      'agents-ci',
+      'temporal-bun-sdk',
+    ])
   })
 
   test('does not fan agentctl changes into the broader agents workflow', () => {
@@ -71,6 +109,18 @@ describe('impact router', () => {
     const plan = selectImpactPlan(['nix/images/jangar.nix'], map)
     expect(plan.validationTargets).toEqual(['shared-compat'])
     expect(plan.delegatedWorkflows).toEqual([])
+  })
+
+  test('routes Agents-owned Nix image changes through compatibility and Agents smoke validation', () => {
+    for (const path of [
+      'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/openai-codex-cli.nix',
+    ]) {
+      const plan = selectImpactPlan([path], map)
+      expect(plan.validationTargets).toEqual(['shared-compat'])
+      expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
+    }
   })
 
   test('routes a package and infrastructure change without duplicate targets', () => {

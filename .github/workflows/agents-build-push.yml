@@ -9,10 +9,26 @@ on:
       - main
     paths:
       - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/cx-tools/**'
+      - 'packages/otel/**'
       - 'packages/scripts/src/agents/update-values.ts'
+      - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
+      - '!services/agents/agentctl/**'
+      - '!services/agents/Dockerfile*'
       - 'charts/agents/crds/**'
       - 'nix/images/agents.nix'
+      - 'nix/images/openai-codex-cli.nix'
+      - '!**/__tests__/**'
+      - '!**/__snapshots__/**'
+      - '!**/tests/**'
+      - '!**/*.test.ts'
+      - '!**/*.test.tsx'
+      - '!**/*.spec.ts'
+      - '!**/*.spec.tsx'
+      - '!**/*.md'
+      - '!**/*.mdx'
   workflow_dispatch:
 
 concurrency:
