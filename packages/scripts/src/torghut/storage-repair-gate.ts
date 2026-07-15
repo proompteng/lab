@@ -14,6 +14,7 @@ const MAX_CONTROLLER_EVENT_MS = 2_000
 const MAX_CONTROLLER_LOG_START_DELAY_MS = 5 * 60 * 1_000
 const MAX_QUORUM_FOLLOWER_LAG = 1_000
 const MAX_QUORUM_FOLLOWER_LAG_TIME_MS = 5_000
+const SMART_POWER_ON_HOUR_RESOLUTION_HOURS = 1
 const WAL_SAMPLE_SECONDS = 30
 const DEFAULT_TALOS_NODE = '100.100.244.142'
 const EXPECTED_SMART_DEVICES = {
@@ -251,6 +252,14 @@ const allowedPlacementGroupState = (state: string): boolean => {
   return tokens.includes('active') && tokens.includes('clean') && tokens.every((token) => allowedTokens.has(token))
 }
 
+const smartExtendedTestStartedAfterRepair = (smart: SmartDeviceEvidence, observationHours: number): boolean => {
+  const extended = smart.latestExtendedSelfTest
+  if (!extended?.passed) return false
+  const completionAgeHours = smart.powerOnHours - extended.lifetimeHours
+  const maximumTestDurationHours = smart.extendedPollingMinutes / 60
+  return completionAgeHours + maximumTestDurationHours + SMART_POWER_ON_HOUR_RESOLUTION_HOURS <= observationHours
+}
+
 const talosFailureClass = (message: string): string | undefined => {
   if (/Power-on or device reset|host reset|COMRESET|mpt3sas.*(?:fault|reset)/i.test(message)) {
     return 'SAS transport reset'
@@ -432,9 +441,12 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
       failures.push(`SMART latest extended self-test failed for ${device}: ${extended.status}`)
     }
     const hoursSinceExtendedTest = smart.powerOnHours - extended.lifetimeHours
-    if (hoursSinceExtendedTest > observationHours + 1) {
+    const maximumTestDurationHours = smart.extendedPollingMinutes / 60
+    const testStartAgeUpperBoundHours =
+      hoursSinceExtendedTest + maximumTestDurationHours + SMART_POWER_ON_HOUR_RESOLUTION_HOURS
+    if (testStartAgeUpperBoundHours > observationHours) {
       failures.push(
-        `SMART latest extended self-test for ${device} predates the repair window: completed ${rounded(hoursSinceExtendedTest, 1)} power-on hours ago`,
+        `SMART latest extended self-test for ${device} does not prove a post-repair start: completion age ${rounded(hoursSinceExtendedTest, 1)} hours + maximum duration ${rounded(maximumTestDurationHours, 2)} hours + ${SMART_POWER_ON_HOUR_RESOLUTION_HOURS} hour counter uncertainty exceeds the ${rounded(observationHours, 2)} hour repair window`,
       )
     }
   }
@@ -641,10 +653,9 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
   }
 
   const uniqueFailures = [...new Set(failures)]
-  const postRepairExtendedTests = snapshot.smartDevices.filter((smart) => {
-    const extended = smart.latestExtendedSelfTest
-    return extended?.passed === true && smart.powerOnHours - extended.lifetimeHours <= observationHours + 1
-  }).length
+  const postRepairExtendedTests = snapshot.smartDevices.filter((smart) =>
+    smartExtendedTestStartedAfterRepair(smart, observationHours),
+  ).length
   const result: StorageRepairGateResult = {
     schemaVersion: RESULT_SCHEMA_VERSION,
     ok: uniqueFailures.length === 0,

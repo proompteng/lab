@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { __private, evaluateStorageRepairGate, type StorageRepairSnapshot } from '../storage-repair-gate'
 
-const capturedAt = '2026-07-16T12:00:00.000Z'
+const capturedAt = '2026-07-17T12:00:00.000Z'
 const repairStartedAt = '2026-07-15T11:00:00.000Z'
 
 const healthySnapshot = (): StorageRepairSnapshot => ({
@@ -201,7 +201,7 @@ describe('Torghut storage repair gate', () => {
     const result = evaluateStorageRepairGate(healthySnapshot())
 
     expect(result.ok).toBe(true)
-    expect(result.observationHours).toBe(25)
+    expect(result.observationHours).toBe(49)
     expect(result.failures).toEqual([])
     expect(result.warnings).toEqual([
       'Kafka controller timeout overrides remain active; this storage gate does not authorize their removal',
@@ -211,8 +211,8 @@ describe('Torghut storage repair gate', () => {
 
   it('fails when the observation is shorter than 24 hours or dmesg coverage starts late', () => {
     const snapshot = healthySnapshot()
-    snapshot.repairStartedAt = '2026-07-15T13:00:00Z'
-    snapshot.talos.coverageStartedAt = '2026-07-15T14:00:00Z'
+    snapshot.repairStartedAt = '2026-07-16T13:00:00Z'
+    snapshot.talos.coverageStartedAt = '2026-07-16T14:00:00Z'
 
     const result = evaluateStorageRepairGate(snapshot)
 
@@ -254,7 +254,7 @@ describe('Torghut storage repair gate', () => {
     expect(result.failures.join('\n')).toContain('2026-07-14T20:18:05Z_osd3')
   })
 
-  it('requires a healthy extended SMART test completed after repair on every SAS disk', () => {
+  it('requires a healthy extended SMART test started after repair on every SAS disk', () => {
     const snapshot = healthySnapshot()
     snapshot.smartDevices[0].latestExtendedSelfTest = {
       lifetimeHours: 819,
@@ -268,9 +268,27 @@ describe('Torghut storage repair gate', () => {
 
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('Interrupted (host reset)')
-    expect(result.failures.join('\n')).toContain('predates the repair window')
+    expect(result.failures.join('\n')).toContain('does not prove a post-repair start')
     expect(result.failures.join('\n')).toContain('currentPendingSectors=1')
     expect(result.failures.join('\n')).toContain('SMART evidence is missing for /dev/sdc')
+  })
+
+  it('rejects a passed extended SMART test that completed after repair but started before it', () => {
+    const snapshot = healthySnapshot()
+    snapshot.repairStartedAt = '2026-07-15T19:00:00Z'
+    for (const smart of snapshot.smartDevices) {
+      smart.latestExtendedSelfTest = {
+        lifetimeHours: smart.powerOnHours,
+        passed: true,
+        status: 'Completed without error',
+      }
+    }
+
+    const result = evaluateStorageRepairGate(snapshot)
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('maximum duration 40.25 hours')
+    expect(result.failures.join('\n')).toContain('exceeds the 41 hour repair window')
   })
 
   it('fails on KRaft timeouts and controller durable events above two seconds', () => {

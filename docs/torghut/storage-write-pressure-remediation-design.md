@@ -389,7 +389,7 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 - Before activating either contained write workload, run
   `bun run gate:torghut-storage-repair --repair-start <post-repair RFC3339 timestamp> --output json`. The read-only gate
   requires a complete 24-hour Talos log window, `HEALTH_OK`, all six OSDs up and in, only clean placement groups, no
-  unacknowledged crashes, no transport/flush errors, and a successful extended SMART test completed after repair on
+  unacknowledged crashes, no transport/flush errors, and a successful extended SMART test started after repair on
   each expected SAS disk with zero critical sector/CRC attributes. It also requires no KRaft request timeout or
   controller event above two seconds, exactly three KRaft voters with follower lag below 1,000 records and five seconds,
   no under-replicated or offline partitions, PostgreSQL durability and WAL-budget compliance, and healthy Argo

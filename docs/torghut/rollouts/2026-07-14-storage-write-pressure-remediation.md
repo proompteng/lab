@@ -212,7 +212,7 @@ for 30 seconds. It exits non-zero unless all of the following are simultaneously
 - Talos contains no `mpt3sas`, disk reset, `Synchronize Cache`, or I/O-error signature in the window;
 - Ceph is `HEALTH_OK`, all six OSDs are up and in, every placement group is clean, and no crash is unacknowledged;
 - all three expected SAS serials report SMART passed, zero reallocated/pending/offline-uncorrectable/CRC sectors, and a
-  successful extended self-test completed after the repair start;
+  successful extended self-test whose full maximum-duration window started after the repair start;
 - Kafka remains converged on Strimzi 1.1.0 / Kafka 4.3.0 / metadata `4.3-IV0`, with three ready controllers, three
   ready brokers, all topics ready, complete controller-log coverage, no KRaft request timeout or broker fencing, and no
   controller event above two seconds; its direct quorum readback must show voters 0/1/2, a current leader, follower lag
@@ -229,9 +229,10 @@ The command reports the temporary Kafka controller timeout overrides as a warnin
 remain containment until application activation is proven separately at default controller timeout behavior.
 
 The 24 TB Seagate drives report an extended-test polling time of 2,415 minutes (40.25 hours). The 24-hour reset-free
-window is therefore only the minimum floor; the post-repair extended-test requirement makes the earliest honest
-activation roughly 40 hours after tests begin. The pre-repair SMART readback reports overall health passed and zero
-critical sector/CRC attributes, but the newest extended test is `Interrupted (host reset)`, so it is not repair proof.
+window is therefore only the minimum floor; the post-repair extended-test requirement plus one-hour SMART counter
+uncertainty makes the earliest honest activation roughly 41.25 hours after tests begin. The pre-repair SMART readback
+reports overall health passed and zero critical sector/CRC attributes, but the newest extended test is
+`Interrupted (host reset)`, so it is not repair proof.
 
 The final pre-PR live collection completed at `2026-07-15T00:46:51Z`, using `2026-07-14T20:12:00Z` as the start of the
 incident window. It correctly returned `FAIL` and preserved both deployments at zero replicas. The bounded result
