@@ -16,6 +16,29 @@ import kotlin.test.assertNull
 
 class FlinkTechnicalAnalysisStatusHeartbeatTest {
   @Test
+  fun `stale restored heartbeat timer is ignored instead of creating a duplicate timer chain`() {
+    assertNull(
+      nextStatusHeartbeatTimer(
+        firedTimestamp = 1_000,
+        scheduledTimestamp = 1_001,
+        intervalMs = 60_000,
+      ),
+    )
+  }
+
+  @Test
+  fun `current heartbeat timer advances exactly one interval`() {
+    assertEquals(
+      61_000,
+      nextStatusHeartbeatTimer(
+        firedTimestamp = 1_000,
+        scheduledTimestamp = 1_000,
+        intervalMs = 60_000,
+      ),
+    )
+  }
+
+  @Test
   fun `startup heartbeat payload is explicit when no input event has arrived`() {
     val payload =
       taStatusPayload(
