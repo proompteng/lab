@@ -58,11 +58,3 @@ test('gates promoted options workloads on the complete migration 0067 schema', (
     })
   }
 })
-
-test('keeps archive activation separate from image promotion', () => {
-  const archive = YAML.parse(readFileSync(join(optionsRoot, 'archive', 'deployment.yaml'), 'utf8')) as {
-    spec?: { replicas?: number }
-  }
-
-  expect(archive.spec?.replicas).toBe(0)
-})

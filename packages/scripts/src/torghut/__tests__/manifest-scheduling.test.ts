@@ -85,6 +85,7 @@ describe('Torghut manifest scheduling', () => {
       'argocd/applications/symphony-torghut/deployment.patch.yaml',
       'argocd/applications/torghut-hyperliquid-feed/deployment.yaml',
       'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml',
+      'argocd/applications/torghut-options/archive/deployment.yaml',
       'argocd/applications/torghut-options/catalog/deployment.yaml',
       'argocd/applications/torghut-options/enricher/deployment.yaml',
       'argocd/applications/torghut/ws/deployment.yaml',
@@ -106,6 +107,18 @@ describe('Torghut manifest scheduling', () => {
         maxUnavailable: 1,
       },
     })
+  })
+
+  it('runs exactly one fenced options archive worker without rollout overlap', () => {
+    const deployment = parseManifest('argocd/applications/torghut-options/archive/deployment.yaml')
+    const spec = getAtPath(deployment, ['spec'])
+    const podSpec = getAtPath(deployment, ['spec', 'template', 'spec'])
+
+    expect(spec.replicas).toBe(1)
+    expect(spec.strategy).toMatchObject({ type: 'Recreate' })
+    expect(podSpec.nodeSelector).toMatchObject({ 'kubernetes.io/arch': 'arm64' })
+    expect(podSpec.serviceAccountName).toBe('torghut-runtime')
+    expect(getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0]).name).toBe('torghut-options-archive')
   })
 
   it('pins arm64-only Torghut image consumers to arm64 nodes', () => {
