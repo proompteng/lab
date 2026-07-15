@@ -534,6 +534,23 @@ describe('Torghut storage repair gate', () => {
     )
   })
 
+  it.each([
+    '[QuorumController id=2] Fencing broker 3 at epoch 42 because its session timed out',
+    'Broker 3 was fenced because its session timed out',
+    'Fenced broker 3 after registration expired',
+  ])('classifies actual broker fencing: %s', (message) => {
+    expect(__private.kafkaFailureClass(message)).toBe('broker fencing')
+  })
+
+  it.each([
+    'Unfenced broker 3 after registration completed',
+    'Broker 3 is unfenced and active',
+    'Unfencing broker 3 after recovery',
+    'Broker 3 registration remains unfenced',
+  ])('does not classify broker recovery as fencing: %s', (message) => {
+    expect(__private.kafkaFailureClass(message)).toBeUndefined()
+  })
+
   it('parses timestamped Talos and Kubernetes log records', () => {
     expect(
       __private.parseTalosLine(

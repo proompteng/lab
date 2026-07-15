@@ -282,7 +282,7 @@ const kafkaFailureClass = (message: string): string | undefined => {
   ) {
     return 'KRaft fetch/request timeout'
   }
-  if (/broker\s+\d+.*(?:was |is )?(?:fenced|fencing)|(?:fenced|fencing)\s+broker\s+\d+/i.test(message)) {
+  if (/\bbroker\s+\d+\b.*?\b(?:fenced|fencing)\b|\b(?:fenced|fencing)\b\s+broker\s+\d+\b/i.test(message)) {
     return 'broker fencing'
   }
   return undefined
