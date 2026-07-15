@@ -269,7 +269,12 @@ class AlpacaExecutionAdapter:
         def preflight() -> None:
             nonlocal verification
             try:
-                verification = self._firewall.verify_risk_reducing_order(alpaca_request)
+                initial_verification = self._firewall.verify_risk_reducing_order(
+                    alpaca_request
+                )
+                verification = self._firewall.verify_risk_reducing_order(
+                    initial_verification.request
+                )
             except OrderFirewallRiskReductionError as exc:
                 raise BrokerMutationSubmissionPreflightFailed(
                     f"risk_reduction_preflight_failed:{type(exc).__name__}"

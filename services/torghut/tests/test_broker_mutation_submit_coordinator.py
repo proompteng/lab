@@ -319,7 +319,7 @@ def test_alpaca_closeout_position_failure_releases_before_broker_io(
     assert _states(sessions) == (None, "released", 0)
 
 
-def test_alpaca_closeout_revalidates_position_at_submit_boundary(
+def test_alpaca_closeout_recheck_releases_before_broker_io(
     sessions: sessionmaker[Session],
 ) -> None:
     broker = _CloseoutBroker()
@@ -348,15 +348,15 @@ def test_alpaca_closeout_revalidates_position_at_submit_boundary(
     with (
         patch.object(settings, "trading_kill_switch_enabled", False),
         pytest.raises(
-            BrokerMutationSubmissionUnresolved,
-            match="OrderFirewallRiskReductionBlocked",
+            BrokerMutationSubmissionPreflightFailed,
+            match="risk_reduction_preflight_failed",
         ),
     ):
         adapter.submit_risk_reducing_order(submission)
 
     assert broker.position_calls == 2
     assert broker.submit_calls == 0
-    assert _states(sessions) == (None, "broker_io", 0)
+    assert _states(sessions) == (None, "released", 0)
 
 
 def test_invalid_intent_fails_before_claim_or_broker_call(

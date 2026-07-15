@@ -346,7 +346,7 @@ class OrderFirewall:
         *,
         mutation_permit: BrokerMutationIoPermit,
     ) -> dict[str, Any]:
-        """Revalidate and submit one reduction under a durable mutation permit."""
+        """Submit one pre-I/O-verified reduction under a durable mutation permit."""
 
         if (
             verification.verification_token
@@ -355,8 +355,7 @@ class OrderFirewall:
             raise OrderFirewallRiskReductionBlocked(
                 "risk_reduction_verification_not_issued_by_firewall"
             )
-        fresh_verification = self.verify_risk_reducing_order(verification.request)
-        normalized_request = fresh_verification.request
+        normalized_request = verification.request
         request_payload = alpaca_submit_request_payload(normalized_request)
         consume_broker_mutation_io_permit(
             mutation_permit,
