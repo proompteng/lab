@@ -43,6 +43,7 @@ class KafkaClickHouseWriterState(
   private val pendingRecords = AtomicInteger(0)
   private val consumerLag = AtomicLong(0)
   private val maxPartitionLag = AtomicLong(0)
+  private val consumerLagObserved = AtomicBoolean(false)
   private val lastPollMs = AtomicLong(0)
   private val lastCommitMs = AtomicLong(0)
   private val failures = ConcurrentHashMap<String, WriterFailure>()
@@ -85,6 +86,11 @@ class KafkaClickHouseWriterState(
   ) {
     consumerLag.set(total.coerceAtLeast(0))
     maxPartitionLag.set(maximum.coerceAtLeast(0))
+    consumerLagObserved.set(true)
+  }
+
+  fun markConsumerLagPending() {
+    consumerLagObserved.set(false)
   }
 
   fun markStopped() {
@@ -107,7 +113,10 @@ class KafkaClickHouseWriterState(
         commitMs > 0 &&
         observedAt - pollMs <= readinessMaxAgeMs &&
         failures.isEmpty()
-    val isCaughtUp = isReady && maxPartitionLag.get() <= catchUpMaxPartitionLagRecords
+    val isCaughtUp =
+      isReady &&
+        consumerLagObserved.get() &&
+        maxPartitionLag.get() <= catchUpMaxPartitionLagRecords
     return KafkaClickHouseWriterSnapshot(
       status =
         when {
