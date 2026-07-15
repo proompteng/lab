@@ -161,7 +161,10 @@ describe('torghut quant metrics store', () => {
     const normalized = calls.map((call) => call.sql.toLowerCase().replace(/\s+/g, ' '))
     expect(normalized[0]).toContain("set local lock_timeout = '5s'")
     expect(normalized[1]).toContain(
-      'lock table torghut_control_plane.quant_metrics_series_active in access exclusive mode',
+      'lock table torghut_control_plane.quant_metrics_series, torghut_control_plane.quant_metrics_series_active in access exclusive mode',
+    )
+    expect(normalized[1].indexOf('quant_metrics_series,')).toBeLessThan(
+      normalized[1].indexOf('quant_metrics_series_active'),
     )
     expect(normalized[2]).toContain('insert into torghut_control_plane.quant_metrics_series_legacy')
     expect(normalized[2]).toContain('from torghut_control_plane.quant_metrics_series_active')
