@@ -1,6 +1,6 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-15 01:18 UTC**
+Last updated: **2026-07-15 01:28 UTC**
 
 Status: **software containment live; write-heavy activation gated on physical SAS repair**
 
@@ -234,19 +234,19 @@ uncertainty makes the earliest honest activation roughly 41.25 hours after tests
 reports overall health passed and zero critical sector/CRC attributes, but the newest extended test is
 `Interrupted (host reset)`, so it is not repair proof.
 
-The current-head live collection completed at `2026-07-15 01:17 UTC`, using `2026-07-14T20:12:00Z` as the start of the
+The current-head live collection completed at `2026-07-15 01:27 UTC`, using `2026-07-14T20:12:00Z` as the start of the
 incident window. It correctly returned `FAIL`; both contained deployments had desired, actual, ready, available, and
 terminating replica counts of zero, with no matching pods. The bounded result reported:
 
-- only 5.09 of the required 24 hours observed;
+- only 5.26 of the required 24 hours observed;
 - five SAS transport-reset records and two durable cache-flush I/O failures in Talos;
 - Ceph `HEALTH_WARN` with `BLUESTORE_SLOW_OP_ALERT`, `RECENT_CRASH`, and the unacknowledged OSD.3 crash;
 - all three disks' newest extended SMART test was `Interrupted (host reset)` and predates the incident by roughly 3,550
   power-on hours;
-- 546 KRaft request-timeout records, seven actual broker-fencing records, and 3,155 controller events above two seconds;
+- 600 KRaft request-timeout records, seven actual broker-fencing records, and 3,443 controller events above two seconds;
 - the direct quorum voter, leader, follower-lag, under-replication, and offline-partition checks passed, demonstrating why
   pod readiness and a single healthy quorum read are insufficient without the full-window log checks;
-- PostgreSQL WAL at 0.0096 MiB/s over 30.2 seconds, within budget;
+- PostgreSQL WAL at 0.0081 MiB/s over 30.3 seconds, within budget;
 - the Hyperliquid feed, scheduler, and current Knative API revision passed their direct readiness checks; and
 - Rook-Ceph `Degraded` in Argo CD.
 

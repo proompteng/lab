@@ -543,12 +543,18 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
   if (!voterIds.includes(snapshot.kafka.quorum.leaderId)) {
     failures.push(`Kafka KRaft leader ${snapshot.kafka.quorum.leaderId} is not a current voter`)
   }
-  if (snapshot.kafka.quorum.maxFollowerLag > MAX_QUORUM_FOLLOWER_LAG) {
+  if (snapshot.kafka.quorum.maxFollowerLag < 0) {
+    failures.push(`Kafka KRaft max follower lag is unknown (${snapshot.kafka.quorum.maxFollowerLag})`)
+  } else if (snapshot.kafka.quorum.maxFollowerLag > MAX_QUORUM_FOLLOWER_LAG) {
     failures.push(
       `Kafka KRaft max follower lag is ${snapshot.kafka.quorum.maxFollowerLag}, limit is ${MAX_QUORUM_FOLLOWER_LAG}`,
     )
   }
-  if (snapshot.kafka.quorum.maxFollowerLagTimeMs > MAX_QUORUM_FOLLOWER_LAG_TIME_MS) {
+  if (snapshot.kafka.quorum.maxFollowerLag > 0 && snapshot.kafka.quorum.maxFollowerLagTimeMs < 0) {
+    failures.push(
+      `Kafka KRaft max follower lag time is unknown (${snapshot.kafka.quorum.maxFollowerLagTimeMs} ms) while follower lag is ${snapshot.kafka.quorum.maxFollowerLag}`,
+    )
+  } else if (snapshot.kafka.quorum.maxFollowerLagTimeMs > MAX_QUORUM_FOLLOWER_LAG_TIME_MS) {
     failures.push(
       `Kafka KRaft max follower lag time is ${snapshot.kafka.quorum.maxFollowerLagTimeMs} ms, limit is ${MAX_QUORUM_FOLLOWER_LAG_TIME_MS} ms`,
     )
@@ -1052,43 +1058,67 @@ const collectKafkaEvidence = async (repairStartedAt: string): Promise<StorageRep
   }
 }
 
-const collectPostgresEvidence = async (): Promise<StorageRepairSnapshot['postgres']> => {
-  const clusterValue = await kubectlJson(
-    ['-n', 'torghut', 'get', 'cluster.postgresql.cnpg.io', 'torghut-db', '-o', 'json'],
-    'Torghut PostgreSQL cluster',
-  )
-  const cluster = requireObject(clusterValue, 'Torghut PostgreSQL cluster')
-  const status = requireObject(cluster.status, 'Torghut PostgreSQL status')
-  const primary = requireString(status.currentPrimary, 'Torghut PostgreSQL status.currentPrimary')
-  const psql = (sql: string) =>
-    kubectl(['-n', 'torghut', 'exec', primary, '-c', 'postgres', '--', 'psql', '-At', '-F', '|', '-c', sql])
-  const settingsRaw = await psql(
-    "select current_setting('fsync'), current_setting('full_page_writes'), current_setting('synchronous_commit'), current_setting('wal_buffers')",
-  )
-  const settings = settingsRaw.split('|')
-  if (settings.length !== 4) throw new Error(`PostgreSQL settings query returned ${settings.length} fields, expected 4`)
+type PostgresCollectorDependencies = {
+  cluster: () => Promise<unknown>
+  psql: (primary: string, sql: string) => Promise<string>
+  sleep: (milliseconds: number) => Promise<unknown>
+  now: () => number
+}
 
-  const walPosition = async (): Promise<number> => {
-    const raw = await psql("select pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::bigint")
+const defaultPostgresCollectorDependencies = (): PostgresCollectorDependencies => ({
+  cluster: () =>
+    kubectlJson(
+      ['-n', 'torghut', 'get', 'cluster.postgresql.cnpg.io', 'torghut-db', '-o', 'json'],
+      'Torghut PostgreSQL cluster',
+    ),
+  psql: (primary, sql) =>
+    kubectl(['-n', 'torghut', 'exec', primary, '-c', 'postgres', '--', 'psql', '-At', '-F', '|', '-c', sql]),
+  sleep: (milliseconds) => Bun.sleep(milliseconds),
+  now: () => Date.now(),
+})
+
+const collectPostgresEvidence = async (
+  dependencies: PostgresCollectorDependencies = defaultPostgresCollectorDependencies(),
+): Promise<StorageRepairSnapshot['postgres']> => {
+  const initialCluster = requireObject(await dependencies.cluster(), 'initial Torghut PostgreSQL cluster')
+  const initialStatus = requireObject(initialCluster.status, 'initial Torghut PostgreSQL status')
+  const initialPrimary = requireString(initialStatus.currentPrimary, 'initial Torghut PostgreSQL status.currentPrimary')
+  const walPosition = async (primary: string): Promise<number> => {
+    const raw = await dependencies.psql(primary, "select pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::bigint")
     const parsed = Number(raw)
     if (!Number.isFinite(parsed)) throw new Error(`PostgreSQL WAL position is not numeric: '${raw}'`)
     return parsed
   }
-  const firstPosition = await walPosition()
-  const sampleStartedAt = Date.now()
-  await Bun.sleep(WAL_SAMPLE_SECONDS * 1_000)
-  const secondPosition = await walPosition()
-  const sampleSeconds = (Date.now() - sampleStartedAt) / 1_000
+  const firstPosition = await walPosition(initialPrimary)
+  const sampleStartedAt = dependencies.now()
+  await dependencies.sleep(WAL_SAMPLE_SECONDS * 1_000)
+
+  const finalCluster = requireObject(await dependencies.cluster(), 'final Torghut PostgreSQL cluster')
+  const finalStatus = requireObject(finalCluster.status, 'final Torghut PostgreSQL status')
+  const finalPrimary = requireString(finalStatus.currentPrimary, 'final Torghut PostgreSQL status.currentPrimary')
+  const [secondPosition, settingsRaw] = await Promise.all([
+    walPosition(finalPrimary),
+    dependencies.psql(
+      finalPrimary,
+      "select current_setting('fsync'), current_setting('full_page_writes'), current_setting('synchronous_commit'), current_setting('wal_buffers')",
+    ),
+  ])
+  if (secondPosition < firstPosition) {
+    throw new Error(`PostgreSQL WAL position moved backwards from ${firstPosition} to ${secondPosition}`)
+  }
+  const sampleSeconds = (dependencies.now() - sampleStartedAt) / 1_000
+  const settings = settingsRaw.split('|')
+  if (settings.length !== 4) throw new Error(`PostgreSQL settings query returned ${settings.length} fields, expected 4`)
 
   return {
-    ready: conditionIsTrue(status.conditions, 'Ready'),
+    ready: conditionIsTrue(finalStatus.conditions, 'Ready'),
     settings: {
       fsync: settings[0],
       fullPageWrites: settings[1],
       synchronousCommit: settings[2],
       walBuffers: settings[3],
     },
-    walBytesPerSecond: Math.max(0, secondPosition - firstPosition) / sampleSeconds,
+    walBytesPerSecond: (secondPosition - firstPosition) / sampleSeconds,
     walSampleSeconds: sampleSeconds,
   }
 }
@@ -1419,6 +1449,7 @@ if (import.meta.main) {
 
 export const __private = {
   collectStorageRepairSnapshotWith,
+  collectPostgresEvidence,
   controllerEventDurationMs,
   kafkaFailureClass,
   parseKubernetesLogLine,

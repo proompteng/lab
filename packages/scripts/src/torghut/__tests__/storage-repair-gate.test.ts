@@ -366,6 +366,17 @@ describe('Torghut storage repair gate', () => {
     expect(result.failures.join('\n')).toContain('offline partitions')
   })
 
+  it('fails when positive KRaft follower lag has an unknown age', () => {
+    const snapshot = healthySnapshot()
+    snapshot.kafka.quorum.maxFollowerLag = 1
+    snapshot.kafka.quorum.maxFollowerLagTimeMs = -1
+
+    const result = evaluateStorageRepairGate(snapshot)
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('max follower lag time is unknown (-1 ms) while follower lag is 1')
+  })
+
   it('fails when durability, WAL, containment, or Argo convergence regresses', () => {
     const snapshot = healthySnapshot()
     snapshot.postgres.settings.fsync = 'off'
@@ -446,6 +457,51 @@ describe('Torghut storage repair gate', () => {
     expect(events.indexOf('workloads')).toBeGreaterThan(events.indexOf('cutoff'))
     expect(events.indexOf('talos-tail')).toBeGreaterThan(events.indexOf('cutoff'))
     expect(events.indexOf('kafka-tail')).toBeGreaterThan(events.indexOf('cutoff'))
+  })
+
+  it('rechecks PostgreSQL readiness, primary, and durability after the WAL sample', async () => {
+    const events: string[] = []
+    let clusterRead = 0
+    let nowRead = 0
+    const evidence = await __private.collectPostgresEvidence({
+      cluster: async () => {
+        clusterRead += 1
+        events.push(`cluster-${clusterRead}`)
+        return {
+          status: {
+            currentPrimary: clusterRead === 1 ? 'torghut-db-1' : 'torghut-db-2',
+            conditions: [{ type: 'Ready', status: clusterRead === 1 ? 'True' : 'False' }],
+          },
+        }
+      },
+      psql: async (primary, sql) => {
+        if (sql.includes("current_setting('fsync')")) {
+          events.push(`settings-${primary}`)
+          return 'off|on|on|16MB'
+        }
+        events.push(`wal-${primary}`)
+        return primary === 'torghut-db-1' ? '1000' : '2000'
+      },
+      sleep: async (milliseconds) => {
+        events.push(`sleep-${milliseconds}`)
+      },
+      now: () => {
+        nowRead += 1
+        return nowRead === 1 ? 0 : 30_100
+      },
+    })
+
+    expect(evidence.ready).toBe(false)
+    expect(evidence.settings.fsync).toBe('off')
+    expect(evidence.walSampleSeconds).toBe(30.1)
+    expect(events).toEqual([
+      'cluster-1',
+      'wal-torghut-db-1',
+      'sleep-30000',
+      'cluster-2',
+      'wal-torghut-db-2',
+      'settings-torghut-db-2',
+    ])
   })
 
   it('fails closed when feed, scheduler, or current Knative revision readiness regresses', () => {
