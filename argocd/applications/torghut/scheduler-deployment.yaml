@@ -10,9 +10,10 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  # Exactly one dedicated writer owns live trading. Knative API revisions run
-  # with TORGHUT_PROCESS_ROLE=api and TRADING_ENABLED=false.
-  replicas: 1
+  # Temporarily quiesced for the bounded Alpaca-paper lifecycle proof. The
+  # promoted API revision runs with TORGHUT_PROCESS_ROLE=api and cannot race
+  # the broker lifecycle. Restore the single scheduler writer after readback.
+  replicas: 0
   revisionHistoryLimit: 1
   strategy:
     type: Recreate
