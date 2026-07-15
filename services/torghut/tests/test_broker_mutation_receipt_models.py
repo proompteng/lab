@@ -42,6 +42,7 @@ def _assert_lifecycle_validation_invariants(
     sql: str,
     *,
     lifecycle_cap: int,
+    leg_floor: int | None,
 ) -> None:
     normalized = _normalized_sql(sql)
 
@@ -66,6 +67,19 @@ def _assert_lifecycle_validation_invariants(
     assert "test_plan,partial_close_qty}')::numeric <" in normalized
     assert "test_plan,replacement_close_limit_price}')::numeric >" in normalized
     assert "test_plan,resting_close_limit_price}')::numeric >" in normalized
+    if leg_floor is not None:
+        assert normalized.count(f">= {leg_floor}") == 2
+        assert (
+            "test_plan,partial_close_qty}')::numeric * "
+            "(canonical_intent_json::jsonb #>> "
+            "'{request,infrastructure_validation,test_plan,limit_price}')::numeric"
+            in normalized
+        )
+        assert (
+            "test_plan,qty}')::numeric - (canonical_intent_json::jsonb #>> "
+            "'{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric"
+            in normalized
+        )
     assert normalized.count(f"THEN {lifecycle_cap} ELSE 1") == 2 or (
         normalized.count(f"permit,max_notional_usd}}')::numeric <= {lifecycle_cap}")
         == 1
@@ -191,10 +205,12 @@ def test_receipt_header_mirrors_validation_authority_and_permit_guards() -> None
     _assert_lifecycle_validation_invariants(
         BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
         lifecycle_cap=30,
+        leg_floor=12,
     )
     _assert_lifecycle_validation_invariants(
         migration_validation_sql,
         lifecycle_cap=5,
+        leg_floor=None,
     )
     _assert_lifecycle_lineage_invariants(BROKER_MUTATION_VALIDATION_LINEAGE_SQL)
     _assert_lifecycle_lineage_invariants(migration_lineage_sql)

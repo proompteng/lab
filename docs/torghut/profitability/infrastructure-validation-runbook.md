@@ -227,7 +227,8 @@ at `$1`. A lifecycle plan must keep the root order at or below `$30` and must al
 residual at a plan notional of at least `$12` each. The `$12` guard is a deterministic buffer over the observed `$10`
 broker floor, not permission to skip fresh quote readback. Immediately before issuance, independently verify that the
 entry limit is marketable and that both close quantities remain above the broker's current minimum cost basis. Stop if
-those conditions cannot coexist under the `$30` root cap.
+those conditions cannot coexist under the `$30` root cap. Application authorization and the PostgreSQL receipt
+authority constraint both enforce the two leg floors, including for direct forged-intent attempts.
 
 For example, when BTC/USD is below `$70,000`, `qty=0.0004`, `limit_price=70000`, and
 `partial_close_qty=0.0002` bind at most `$28` of paper exposure and give each planned close leg `$14` of plan notional.

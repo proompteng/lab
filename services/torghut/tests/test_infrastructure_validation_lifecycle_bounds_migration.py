@@ -10,14 +10,20 @@ from tests.migration_testing import load_migration_module
 MIGRATION_FILENAME = "0073_live_paper_lifecycle_bounds.py"
 
 
-def _definition(module: object, cap: int) -> str:
+def _definition(module: object, cap: int, *, leg_floors: bool = False) -> str:
     cap_fragment = getattr(module, "_cap_fragment")
+    partial_close_bound = getattr(module, "_partial_close_bound_fragment")()
+    floor_clause = " AND ".join(getattr(module, "_leg_floor_fragments")())
+    lifecycle_bounds = partial_close_bound
+    if leg_floors:
+        lifecycle_bounds = f"{lifecycle_bounds} AND {floor_clause}"
     schema = getattr(module, "_LIFECYCLE_SCHEMA")
     return (
         "CHECK (purpose <> 'control_plane_validation' OR ("
         f"plan_schema = '{schema}' AND "
         f"{cap_fragment('max_notional_usd', cap)} AND "
-        f"{cap_fragment('max_loss_usd', cap)}))"
+        f"{cap_fragment('max_loss_usd', cap)} AND "
+        f"{lifecycle_bounds}))"
     )
 
 
@@ -28,18 +34,20 @@ def test_revision_extends_the_released_lifecycle_schema() -> None:
     assert module.down_revision == "0072_validation_lifecycle"
 
 
-def test_cap_rewrite_changes_only_the_two_lifecycle_money_bounds() -> None:
+def test_upgrade_rewrite_changes_caps_and_installs_both_leg_floors() -> None:
     module = load_migration_module(MIGRATION_FILENAME)
     definition = _definition(module, 5)
 
-    condition = module._replace_lifecycle_cap(
+    condition = module._rewrite_lifecycle_authority(
         definition,
         old_cap=5,
         new_cap=30,
+        add_leg_floors=True,
     )
 
     assert module._cap_fragment("max_notional_usd", 30) in condition
     assert module._cap_fragment("max_loss_usd", 30) in condition
+    assert all(fragment in condition for fragment in module._leg_floor_fragments())
     assert "purpose <> 'control_plane_validation'" in condition
     assert "<= 5::numeric" not in condition
 
@@ -55,7 +63,12 @@ def test_cap_rewrite_fails_closed_on_catalog_drift(definition: str) -> None:
     module = load_migration_module(MIGRATION_FILENAME)
 
     with pytest.raises(RuntimeError, match="validation_authority"):
-        module._replace_lifecycle_cap(definition, old_cap=5, new_cap=30)
+        module._rewrite_lifecycle_authority(
+            definition,
+            old_cap=5,
+            new_cap=30,
+            add_leg_floors=True,
+        )
 
 
 def test_upgrade_locks_and_validates_the_rewritten_constraint() -> None:
@@ -77,6 +90,7 @@ def test_upgrade_locks_and_validates_the_rewritten_constraint() -> None:
     assert "ACCESS EXCLUSIVE MODE NOWAIT" in sql
     assert module._cap_fragment("max_notional_usd", 30) in sql
     assert module._cap_fragment("max_loss_usd", 30) in sql
+    assert all(fragment in sql for fragment in module._leg_floor_fragments())
     assert "NOT VALID" in sql
     assert "VALIDATE CONSTRAINT ck_bm_receipt_validation_authority" in sql
     drop_constraint.assert_called_once_with(
@@ -92,6 +106,7 @@ def test_downgrade_refuses_incompatible_evidence_before_restoring_cap() -> None:
     connection.execute.return_value.scalar_one_or_none.return_value = _definition(
         module,
         30,
+        leg_floors=True,
     )
 
     with (
@@ -105,3 +120,4 @@ def test_downgrade_refuses_incompatible_evidence_before_restoring_cap() -> None:
     assert "cannot downgrade with lifecycle receipts above the old cap" in sql
     assert module._cap_fragment("max_notional_usd", 5) in sql
     assert module._cap_fragment("max_loss_usd", 5) in sql
+    assert all(fragment not in sql for fragment in module._leg_floor_fragments())

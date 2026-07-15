@@ -199,6 +199,18 @@ purpose <> 'control_plane_validation' OR COALESCE((
             < (canonical_intent_json::jsonb #>>
                '{request,infrastructure_validation,test_plan,qty}')::numeric
         AND (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric *
+            (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,limit_price}')::numeric
+            >= 12
+        AND ((canonical_intent_json::jsonb #>>
+              '{request,infrastructure_validation,test_plan,qty}')::numeric -
+             (canonical_intent_json::jsonb #>>
+              '{request,infrastructure_validation,test_plan,partial_close_qty}')::numeric) *
+            (canonical_intent_json::jsonb #>>
+             '{request,infrastructure_validation,test_plan,limit_price}')::numeric
+            >= 12
+        AND (canonical_intent_json::jsonb #>>
              '{request,infrastructure_validation,test_plan,resting_close_limit_price}')::numeric
             > (canonical_intent_json::jsonb #>>
                '{request,infrastructure_validation,test_plan,limit_price}')::numeric

@@ -21,18 +21,51 @@ depends_on = None
 _CONSTRAINT = "ck_bm_receipt_validation_authority"
 _OLD_CAP = 5
 _NEW_CAP = 30
+_MIN_LEG_NOTIONAL = 12
 _LIFECYCLE_SCHEMA = "torghut.infrastructure-validation-lifecycle-plan.v1"
 
 
-def _cap_fragment(field: str, cap: int) -> str:
+def _numeric_plan_field(field: str) -> str:
     return (
         "((canonical_intent_json::jsonb #>> "
-        f"'{{request,infrastructure_validation,permit,{field}}}'::text[])::numeric) "
-        f"<= {cap}::numeric"
+        f"'{{request,infrastructure_validation,test_plan,{field}}}'::text[])::numeric)"
     )
 
 
-def _replace_lifecycle_cap(definition: str, *, old_cap: int, new_cap: int) -> str:
+def _numeric_permit_field(field: str) -> str:
+    return (
+        "((canonical_intent_json::jsonb #>> "
+        f"'{{request,infrastructure_validation,permit,{field}}}'::text[])::numeric)"
+    )
+
+
+def _cap_fragment(field: str, cap: int) -> str:
+    return f"{_numeric_permit_field(field)} <= {cap}::numeric"
+
+
+def _partial_close_bound_fragment() -> str:
+    return f"{_numeric_plan_field('partial_close_qty')} < {_numeric_plan_field('qty')}"
+
+
+def _leg_floor_fragments() -> tuple[str, str]:
+    limit_price = _numeric_plan_field("limit_price")
+    partial_close = _numeric_plan_field("partial_close_qty")
+    residual_close = (
+        f"({_numeric_plan_field('qty')} - {_numeric_plan_field('partial_close_qty')})"
+    )
+    return (
+        f"({partial_close} * {limit_price}) >= {_MIN_LEG_NOTIONAL}::numeric",
+        f"({residual_close} * {limit_price}) >= {_MIN_LEG_NOTIONAL}::numeric",
+    )
+
+
+def _rewrite_lifecycle_authority(
+    definition: str,
+    *,
+    old_cap: int,
+    new_cap: int,
+    add_leg_floors: bool,
+) -> str:
     prefix = "CHECK ("
     if not definition.startswith(prefix) or not definition.endswith(")"):
         raise RuntimeError("validation_authority_constraint_shape_invalid")
@@ -48,6 +81,21 @@ def _replace_lifecycle_cap(definition: str, *, old_cap: int, new_cap: int) -> st
             _cap_fragment(field, new_cap),
             1,
         )
+    partial_bound = _partial_close_bound_fragment()
+    floor_clause = " AND ".join(_leg_floor_fragments())
+    if add_leg_floors:
+        if condition.count(partial_bound) != 1 or floor_clause in condition:
+            raise RuntimeError("validation_authority_leg_floor_shape_invalid")
+        condition = condition.replace(
+            partial_bound,
+            f"{partial_bound} AND {floor_clause}",
+            1,
+        )
+    else:
+        bounded_floor_clause = f"{partial_bound} AND {floor_clause}"
+        if condition.count(bounded_floor_clause) != 1:
+            raise RuntimeError("validation_authority_leg_floor_shape_invalid")
+        condition = condition.replace(bounded_floor_clause, partial_bound, 1)
     return condition
 
 
@@ -96,10 +144,11 @@ def upgrade() -> None:
     op.execute(
         sa.text("LOCK TABLE broker_mutation_receipts IN ACCESS EXCLUSIVE MODE NOWAIT")
     )
-    condition = _replace_lifecycle_cap(
+    condition = _rewrite_lifecycle_authority(
         _current_constraint_definition(),
         old_cap=_OLD_CAP,
         new_cap=_NEW_CAP,
+        add_leg_floors=True,
     )
     _install_constraint(condition)
 
@@ -138,9 +187,10 @@ def downgrade() -> None:
             """
         )
     )
-    condition = _replace_lifecycle_cap(
+    condition = _rewrite_lifecycle_authority(
         _current_constraint_definition(),
         old_cap=_NEW_CAP,
         new_cap=_OLD_CAP,
+        add_leg_floors=False,
     )
     _install_constraint(condition)
