@@ -600,6 +600,7 @@ def test_record_failure_retains_cursor_and_caps_exponential_backoff() -> None:
 
 def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
     fingerprint = archive_query_fingerprint(shard=_shard(), page_limit=10_000)
+    finalize_snapshot_at = datetime(2026, 7, 14, 11, tzinfo=UTC)
     session = _ArchiveSession(
         active_count=3,
         transition_count=1,
@@ -620,6 +621,7 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
             status="finalizing",
             page_count=2,
             seen_count=2,
+            finalize_snapshot_at=finalize_snapshot_at,
         ),
         membership_count=2,
         session=session,
@@ -637,7 +639,7 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
             next_eligible_at=None,
             last_success_at=None,
         ),
-        observed_at=datetime(2026, 7, 14, 12, tzinfo=UTC),
+        observed_at=datetime(2026, 7, 15, 12, tzinfo=UTC),
         refresh_seconds=86400,
         batch_size=1000,
         statement_timeout_ms=30000,
@@ -671,7 +673,10 @@ def test_finalize_scans_one_bounded_batch_and_persists_cursor() -> None:
     assert "membership.shard_key = :shard_key" in transition_sql
     assert "subscription.tier IS DISTINCT FROM 'off'" in transition_sql
     assert "ON CONFLICT (contract_symbol) DO UPDATE" in transition_sql
+    assert "CAST(:finalize_snapshot_at AS DATE)" in transition_sql
+    assert "CAST(:observed_at AS DATE)" not in transition_sql
     assert isinstance(transition_parameters, dict)
+    assert transition_parameters["finalize_snapshot_at"] == finalize_snapshot_at
     assert transition_parameters["candidate_expiration_dates"] == [
         date(2026, 7, 14),
         date(2026, 7, 15),
