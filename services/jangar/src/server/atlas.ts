@@ -77,12 +77,12 @@ export const AtlasLive = Layer.scoped(
       )
     })
 
-    const wrap = <T>(message: string, action: (resolved: AtlasStore) => Promise<T>) =>
+    const wrap = <T>(message: string, action: (resolved: AtlasStore, signal: AbortSignal) => Promise<T>) =>
       pipe(
         getStore(),
         Effect.flatMap((resolved) =>
           Effect.tryPromise({
-            try: () => action(resolved),
+            try: (signal) => action(resolved, signal),
             catch: (error) => normalizeError(message, error),
           }),
         ),
@@ -98,7 +98,7 @@ export const AtlasLive = Layer.scoped(
       listIndexedFiles: (input) =>
         wrap('atlas list indexed files failed', (resolved) => resolved.listIndexedFiles(input)),
       getAstPreview: (input) => wrap('atlas get ast preview failed', (resolved) => resolved.getAstPreview(input)),
-      codeSearch: (input) => wrap('atlas code search failed', (resolved) => resolved.codeSearch(input)),
+      codeSearch: (input) => wrap('atlas code search failed', (resolved, signal) => resolved.codeSearch(input, signal)),
       codeSearchHealth: (input) =>
         wrap('atlas code search health failed', (resolved) => resolved.codeSearchHealth(input)),
       stats: () => wrap('atlas stats failed', (resolved) => resolved.stats()),

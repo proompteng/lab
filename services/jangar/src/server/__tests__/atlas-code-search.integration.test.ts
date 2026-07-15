@@ -376,6 +376,12 @@ integration('Atlas code search PostgreSQL integration', () => {
         if (!normalized) throw new Error(`${field} is required`)
         return normalized
       },
+      cancelBackend: async (backendPid) => {
+        const result = await sql<{ canceled: boolean }>`SELECT pg_cancel_backend(${backendPid}) AS canceled;`.execute(
+          lockDb,
+        )
+        if (result.rows[0]?.canceled !== true) throw new Error(`failed to cancel backend ${backendPid}`)
+      },
     })
 
   it('resets only the derived corpus and bootstraps pg_trgm on real PostgreSQL', () => {
@@ -452,6 +458,64 @@ integration('Atlas code search PostgreSQL integration', () => {
     }
     const durationMs = performance.now() - startedAt
     expect(durationMs).toBeLessThan(1_000)
+
+    const active = await sql<{ count: string }>`
+      SELECT count(*)::text AS count
+      FROM pg_stat_activity
+      WHERE state = 'active'
+        AND query ILIKE '%atlas.chunk_embeddings%'
+        AND pid <> pg_backend_pid();
+    `.execute(db)
+    expect(Number(active.rows[0]?.count ?? 0)).toBe(0)
+  })
+
+  it('cancels a lock-blocked PostgreSQL statement when the request signal aborts', async () => {
+    let releaseLock: (() => void) | undefined
+    let lockReady: (() => void) | undefined
+    const ready = new Promise<void>((resolve) => {
+      lockReady = resolve
+    })
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve
+    })
+    const locker = lockDb.transaction().execute(async (transaction) => {
+      await sql`LOCK TABLE atlas.chunk_embeddings IN ACCESS EXCLUSIVE MODE;`.execute(transaction)
+      lockReady?.()
+      await release
+    })
+    await ready
+
+    const controller = new AbortController()
+    const search = handlers().codeSearch(
+      { query: 'request cancellation probe', repository: 'proompteng/lab', ref: 'main' },
+      controller.signal,
+    )
+    let blocked = false
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const active = await sql<{ count: string }>`
+        SELECT count(DISTINCT activity.pid)::text AS count
+        FROM pg_stat_activity AS activity
+        INNER JOIN pg_locks AS relation_lock ON relation_lock.pid = activity.pid
+        WHERE activity.state = 'active'
+          AND relation_lock.locktype = 'relation'
+          AND relation_lock.relation = 'atlas.chunk_embeddings'::regclass
+          AND activity.pid <> pg_backend_pid();
+      `.execute(db)
+      blocked = Number(active.rows[0]?.count ?? 0) > 0
+      if (blocked) break
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    expect(blocked).toBe(true)
+
+    const startedAt = performance.now()
+    controller.abort(new Error('client disconnected'))
+    try {
+      await expect(search).rejects.toThrow(/canceling statement|user request/i)
+    } finally {
+      releaseLock?.()
+      await locker
+    }
+    expect(performance.now() - startedAt).toBeLessThan(1_000)
 
     const active = await sql<{ count: string }>`
       SELECT count(*)::text AS count

@@ -97,6 +97,10 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
       const normalized = compiledQuery.sql.toLowerCase()
       const now = new Date('2020-01-01T00:00:00.000Z')
 
+      if (normalized.includes('pg_backend_pid()')) {
+        return { rows: [{ backend_pid: 4242 }] as R[] }
+      }
+
       if (normalized.includes('select extname from pg_extension')) {
         const extensions = options.extensions ?? ['vector', 'pgcrypto', 'pg_trgm']
         return { rows: extensions.map((ext) => ({ extname: ext })) as R[] }
@@ -464,13 +468,29 @@ describe('atlas store', () => {
     expect(semanticSql).toBeDefined()
     expect(semanticSql?.sql.toLowerCase()).not.toContain('candidate_chunks')
     expect(semanticSql?.sql.toLowerCase()).toContain('order by chunk_embeddings.embedding <=> $')
-    expect(semanticSql?.params.at(-1)).toBe(20)
+    expect(semanticSql?.params.at(-1)).toBe(50)
     const statementTimeouts = calls
       .filter((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))
       .flatMap((call) => call.params)
     expect(statementTimeouts).toEqual(['250ms', '1000ms'])
     const hnswBudgetSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))
-    expect(hnswBudgetSql?.params).toContain('40')
+    expect(hnswBudgetSql?.params).toContain('50')
+  })
+
+  it('keeps the cold semantic statement budget below the request deadline', async () => {
+    delete process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
+
+    const statementTimeouts = calls
+      .filter((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))
+      .flatMap((call) => call.params)
+    expect(statementTimeouts).toEqual(['250ms', '20000ms'])
   })
 
   it('uses an exact materialized semantic scan for narrow caller scopes', async () => {
@@ -679,8 +699,30 @@ describe('atlas store', () => {
 
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).not.toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
+    expect(candidates).toContain('file_keys.path =')
+    expect(candidates).not.toContain('file_keys.path ilike')
+    expect(candidates).not.toContain('file_keys.path %')
+    expect(candidates).not.toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    expect(calls.some((call) => call.sql.toLowerCase().includes(' as lexical_rank'))).toBe(false)
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(false)
+  })
+
+  it('cancels the active PostgreSQL backend when the request is aborted', async () => {
+    const cancelBackend = vi.fn(async () => undefined)
+    const { db } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+      cancelBackend,
+    })
+    const controller = new AbortController()
+    controller.abort(new Error('client disconnected'))
+
+    await store.codeSearch({ query: 'where is source search implemented', limit: 5 }, controller.signal)
+
+    expect(cancelBackend).toHaveBeenCalledOnce()
+    expect(cancelBackend).toHaveBeenCalledWith(4242)
   })
 
   it('keeps indexed content and semantic retrieval for natural-language queries containing a path', async () => {
