@@ -77,6 +77,7 @@ private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
 private const val DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
 private const val ALPACA_BARS_BACKFILL_LIMIT = 10_000
 private const val ALPACA_TRADES_BACKFILL_LIMIT = 10_000
+private const val WEBSOCKET_PING_INTERVAL_MS = 20_000L
 private const val MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK = 0xffffffffL
 private const val MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT = 34
 private const val MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK = 0x00000003ffffffffL
@@ -245,7 +246,7 @@ class ForwarderApp(
     config.enableTradeUpdates && !config.alpacaTradeStreamUrl.isNullOrBlank() && config.topics.tradeUpdates != null
   private val httpClient =
     HttpClient(CIO) {
-      install(WebSockets)
+      install(WebSockets) { pingInterval = WEBSOCKET_PING_INTERVAL_MS }
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
   private val metrics = ForwarderMetrics(Metrics.registry)
@@ -900,12 +901,7 @@ class ForwarderApp(
       }
 
       while (isActive) {
-        val frame =
-          withTimeoutOrNull(config.tradeUpdatesReadIdleTimeoutMs) {
-            incoming.receive()
-          } ?: error(
-            "alpaca trade_updates websocket idle for ${config.tradeUpdatesReadIdleTimeoutMs}ms; reconnecting",
-          )
+        val frame = incoming.receive()
         val text =
           when (frame) {
             is Frame.Text -> frame.readText()

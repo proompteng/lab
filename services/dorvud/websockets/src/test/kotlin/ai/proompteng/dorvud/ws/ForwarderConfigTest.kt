@@ -36,7 +36,6 @@ class ForwarderConfigTest {
     assertEquals(10_000, cfg.kafka.maxBlockMs)
     assertEquals(180_000, cfg.healthNotReadyKillAfterMs)
     assertEquals(180_000, cfg.marketDataReadIdleTimeoutMs)
-    assertEquals(300_000, cfg.tradeUpdatesReadIdleTimeoutMs)
     assertFalse(cfg.enableTradesBackfill)
     assertEquals(24L, cfg.tradesBackfillLookbackHours)
     assertEquals(50_000, cfg.tradesBackfillMaxRecords)
@@ -98,7 +97,6 @@ class ForwarderConfigTest {
           "BARS_BACKFILL_LOOKBACK_HOURS" to "120",
           "HEALTH_NOT_READY_KILL_AFTER_MS" to "120000",
           "ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS" to "240000",
-          "ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS" to "360000",
           "ENABLE_TRADES_BACKFILL" to "true",
           "TRADES_BACKFILL_LOOKBACK_HOURS" to "120",
           "TRADES_BACKFILL_MAX_RECORDS" to "75000",
@@ -113,14 +111,13 @@ class ForwarderConfigTest {
     assertEquals(120L, cfg.barsBackfillLookbackHours)
     assertEquals(120_000, cfg.healthNotReadyKillAfterMs)
     assertEquals(240_000, cfg.marketDataReadIdleTimeoutMs)
-    assertEquals(360_000, cfg.tradeUpdatesReadIdleTimeoutMs)
     assertEquals(true, cfg.enableTradesBackfill)
     assertEquals(120L, cfg.tradesBackfillLookbackHours)
     assertEquals(75_000, cfg.tradesBackfillMaxRecords)
   }
 
   @Test
-  fun `coerces websocket idle read timeouts to safe lower bound`() {
+  fun `coerces market data idle read timeout to safe lower bound`() {
     val cfg =
       ForwarderConfig.fromEnv(
         mapOf(
@@ -128,12 +125,10 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS" to "1000",
-          "ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS" to "2000",
         ),
       )
 
     assertEquals(30_000, cfg.marketDataReadIdleTimeoutMs)
-    assertEquals(30_000, cfg.tradeUpdatesReadIdleTimeoutMs)
   }
 
   @Test
@@ -261,16 +256,6 @@ class ForwarderConfigTest {
           "ALPACA_SECRET_KEY" to "secret",
           "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
           "ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS" to "0",
-        ),
-      )
-    }
-    assertFailsWith<IllegalStateException> {
-      ForwarderConfig.fromEnv(
-        mapOf(
-          "ALPACA_KEY_ID" to "key",
-          "ALPACA_SECRET_KEY" to "secret",
-          "JANGAR_SYMBOLS_URL" to "http://jangar.test/api/torghut/symbols",
-          "ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS" to "0",
         ),
       )
     }
