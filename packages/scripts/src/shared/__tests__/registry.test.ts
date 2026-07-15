@@ -22,8 +22,10 @@ const backendBlock = (name: string): string => {
 }
 
 describe('private registry write-pressure boundary', () => {
-  it('routes every registry mutation through one shared backend connection', () => {
+  it('rate-limits every registry mutation through one shared backend connection', () => {
+    expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 1m default-period 1s')
     expect(haproxyConfig).toContain('acl write_request method POST PUT PATCH DELETE')
+    expect(haproxyConfig).toContain('http-request set-bandwidth-limit registry_upload if write_request')
     expect(haproxyConfig).toContain('use_backend registry_write if write_request')
     expect(haproxyConfig).toContain('default_backend registry_read')
 
@@ -33,9 +35,12 @@ describe('private registry write-pressure boundary', () => {
   })
 
   it('keeps image pulls concurrent and separate from the write queue', () => {
+    expect(haproxyConfig).not.toContain('http-request set-bandwidth-limit registry_upload unless write_request')
+
     const readBackend = backendBlock('registry_read')
     expect(readBackend).toContain('127.0.0.1:5000 maxconn 100 check')
     expect(readBackend).not.toContain('maxconn 1 ')
+    expect(readBackend).not.toContain('set-bandwidth-limit')
   })
 
   it('serves traffic through the pinned non-root proxy and rolls config changes', () => {
