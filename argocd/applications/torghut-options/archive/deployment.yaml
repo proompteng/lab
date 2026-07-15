@@ -6,9 +6,9 @@ metadata:
   labels:
     app: torghut-options-archive
 spec:
-  # Image promotion and schema migration must not activate this write workload.
-  # A separate gated Git change enables it after the shared storage path is healthy.
-  replicas: 0
+  # Exactly one worker owns the PostgreSQL advisory lease. Recreate prevents
+  # Kubernetes from overlapping workers during image or configuration rollouts.
+  replicas: 1
   revisionHistoryLimit: 2
   strategy:
     type: Recreate
