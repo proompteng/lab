@@ -529,6 +529,9 @@ export const createAtlasCodeSearchHandlers = ({
       : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
     const whereClause = searchWhereClause(filters)
+    const indexedContentCandidateClause = /[A-Za-z0-9_$]+/.test(resolvedQuery)
+      ? sql`file_chunks.text_tsvector @@ plainto_tsquery('simple', ${resolvedQuery}::text)`
+      : sql`file_chunks.content ILIKE ${containsPattern} ESCAPE '\'`
     const contentCandidateUnion = isPathQuery
       ? sql``
       : sql`
@@ -541,7 +544,7 @@ export const createAtlasCodeSearchHandlers = ({
           INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
           ${whereClause}
             AND file_chunks.content IS NOT NULL
-            AND file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
+            AND ${indexedContentCandidateClause}
         `
     const definitionPattern = buildDefinitionPattern(resolvedQuery)
     const definitionRankClause = definitionPattern
