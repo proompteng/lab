@@ -237,9 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           if git diff --quiet -- \
-            argocd/applications/torghut-hyperliquid-feed/deployment.yaml \
-            argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml \
-            argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml; then
+            argocd/applications/torghut-hyperliquid-feed/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -261,14 +259,12 @@ jobs:
           delete-branch: true
           add-paths: |
             argocd/applications/torghut-hyperliquid-feed/deployment.yaml
-            argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml
-            argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml
           body: |
             ## Summary
 
             - Promote the immutable Torghut Hyperliquid feed image built from `${{ steps.meta.outputs.source_sha }}`.
-            - Pin the feed, Kafka-backed ClickHouse writer, and suspended parity gate to `${{ steps.digest.outputs.digest }}`.
-            - Preserve one source commit and image digest across all runtime modes.
+            - Pin the single direct feed runtime to `${{ steps.digest.outputs.digest }}`.
+            - Preserve one source commit and image digest for the production feed.
 
             ## Related Issues
 
@@ -278,7 +274,7 @@ jobs:
 
             - The source commit passed its required CI before merge to `main`.
             - The release workflow verified the multi-architecture image contract before creating this PR.
-            - The deploy gate validates both manifests against source `${{ steps.meta.outputs.source_sha }}` and tag `${{ steps.meta.outputs.tag }}`.
+            - The deploy gate validates the manifest against source `${{ steps.meta.outputs.source_sha }}` and tag `${{ steps.meta.outputs.tag }}`.
 
             ## Breaking Changes
 
@@ -288,7 +284,7 @@ jobs:
 
             - [x] Testing section documents the exact automated release validation.
             - [x] Screenshots are not applicable; Breaking Changes is filled in.
-            - [x] All runtime manifests carry the same immutable source and image identity.
+            - [x] The production feed manifest carries the immutable source and image identity.
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

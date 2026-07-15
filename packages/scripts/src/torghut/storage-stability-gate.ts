@@ -34,6 +34,9 @@ const EXPECTED_ARGO_APPLICATIONS = [
   'torghut-hyperliquid-runtime',
   'torghut-options',
 ] as const
+const CONTAINED_WORKLOAD_NAMES = ['torghut-options-archive'] as const
+const REMOVED_WORKLOAD_NAMES = ['torghut-hyperliquid-clickhouse-writer'] as const
+const OBSERVED_WORKLOAD_NAMES = new Set([...CONTAINED_WORKLOAD_NAMES, ...REMOVED_WORKLOAD_NAMES])
 
 type OutputFormat = 'json' | 'text'
 
@@ -798,7 +801,7 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     )
   }
 
-  for (const expectedWorkload of ['torghut-options-archive', 'torghut-hyperliquid-clickhouse-writer']) {
+  for (const expectedWorkload of CONTAINED_WORKLOAD_NAMES) {
     const workload = snapshot.workloads.find(({ name }) => name === expectedWorkload)
     if (!workload) {
       failures.push(`containment workload evidence is missing for ${expectedWorkload}`)
@@ -816,6 +819,14 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
         `${expectedWorkload} must remain contained at desired=0 actual=0 ready=0 available=0 terminating=0 pods=[]; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} pods=[${workload.podNames.join(', ')}]`,
       )
     }
+  }
+
+  for (const removedWorkload of REMOVED_WORKLOAD_NAMES) {
+    const workload = snapshot.workloads.find(({ name }) => name === removedWorkload)
+    if (!workload) continue
+    failures.push(
+      `${removedWorkload} must be absent after shadow-sink removal; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} pods=[${workload.podNames.join(', ')}]`,
+    )
   }
 
   for (const name of EXPECTED_ARGO_APPLICATIONS) {
@@ -1424,23 +1435,7 @@ const collectRuntimeEvidence = async (): Promise<RuntimeEvidence> => {
   }
 }
 
-const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
-  const [deploymentsValue, podsValue] = await Promise.all([
-    kubectlJson(
-      [
-        '-n',
-        'torghut',
-        'get',
-        'deployment',
-        'torghut-options-archive',
-        'torghut-hyperliquid-clickhouse-writer',
-        '-o',
-        'json',
-      ],
-      'contained Torghut deployments',
-    ),
-    kubectlJson(['-n', 'torghut', 'get', 'pods', '-o', 'json'], 'Torghut pods for containment proof'),
-  ])
+const collectWorkloadEvidenceFromValues = (deploymentsValue: unknown, podsValue: unknown): WorkloadEvidence[] => {
   const pods = requireArray(requireObject(podsValue, 'Torghut pods').items, 'pods.items').map((value, index) => {
     const pod = requireObject(value, `contained pod ${index}`)
     const metadata = requireObject(pod.metadata, `contained pod ${index}.metadata`)
@@ -1455,46 +1450,75 @@ const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
       terminating: metadata.deletionTimestamp !== undefined,
     }
   })
-  return requireArray(requireObject(deploymentsValue, 'contained Torghut deployments').items, 'deployments.items').map(
-    (value, index) => {
-      const deployment = requireObject(value, `contained deployment ${index}`)
-      const metadata = requireObject(deployment.metadata, `contained deployment ${index}.metadata`)
-      const spec = requireObject(deployment.spec, `contained deployment ${index}.spec`)
-      const status = isObject(deployment.status) ? deployment.status : {}
-      const name = requireString(metadata.name, `contained deployment ${index}.metadata.name`)
-      const selector = requireObject(spec.selector, `contained deployment ${index}.spec.selector`)
-      const matchLabels = requireObject(selector.matchLabels, `contained deployment ${index}.spec.selector.matchLabels`)
-      const selectorLabels = Object.entries(matchLabels).map(([key, labelValue]) => [
-        key,
-        requireString(labelValue, `contained deployment ${index}.spec.selector.matchLabels.${key}`),
-      ])
-      if (selectorLabels.length === 0) throw new Error(`contained deployment ${name} has no matchLabels selector`)
-      const workloadPods = pods.filter(({ labels }) => selectorLabels.every(([key, value]) => labels[key] === value))
-      const statusTerminatingReplicas =
-        status.terminatingReplicas === undefined
+  const deployments = requireArray(
+    requireObject(deploymentsValue, 'contained Torghut deployments').items,
+    'deployments.items',
+  ).flatMap((value, index) => {
+    const deployment = requireObject(value, `contained deployment candidate ${index}`)
+    const metadata = requireObject(deployment.metadata, `contained deployment candidate ${index}.metadata`)
+    const name = requireString(metadata.name, `contained deployment candidate ${index}.metadata.name`)
+    return OBSERVED_WORKLOAD_NAMES.has(name) ? [{ deployment, index, name }] : []
+  })
+  const deploymentEvidence = deployments.map(({ deployment, index, name }) => {
+    const spec = requireObject(deployment.spec, `contained deployment ${index}.spec`)
+    const status = isObject(deployment.status) ? deployment.status : {}
+    const selector = requireObject(spec.selector, `contained deployment ${index}.spec.selector`)
+    const matchLabels = requireObject(selector.matchLabels, `contained deployment ${index}.spec.selector.matchLabels`)
+    const selectorLabels = Object.entries(matchLabels).map(([key, labelValue]) => [
+      key,
+      requireString(labelValue, `contained deployment ${index}.spec.selector.matchLabels.${key}`),
+    ])
+    if (selectorLabels.length === 0) throw new Error(`contained deployment ${name} has no matchLabels selector`)
+    const workloadPods = pods.filter(({ labels }) => selectorLabels.every(([key, value]) => labels[key] === value))
+    const statusTerminatingReplicas =
+      status.terminatingReplicas === undefined
+        ? 0
+        : requireNumber(status.terminatingReplicas, `deployment ${index}.terminatingReplicas`)
+    return {
+      name,
+      desiredReplicas: requireNumber(spec.replicas, `contained deployment ${index}.spec.replicas`),
+      actualReplicas:
+        status.replicas === undefined ? 0 : requireNumber(status.replicas, `deployment ${index}.replicas`),
+      readyReplicas:
+        status.readyReplicas === undefined
           ? 0
-          : requireNumber(status.terminatingReplicas, `deployment ${index}.terminatingReplicas`)
-      return {
+          : requireNumber(status.readyReplicas, `deployment ${index}.readyReplicas`),
+      availableReplicas:
+        status.availableReplicas === undefined
+          ? 0
+          : requireNumber(status.availableReplicas, `deployment ${index}.availableReplicas`),
+      terminatingReplicas: Math.max(
+        statusTerminatingReplicas,
+        workloadPods.filter(({ terminating }) => terminating).length,
+      ),
+      podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
+    }
+  })
+  const orphanedRemovedWorkloadEvidence = REMOVED_WORKLOAD_NAMES.flatMap((name) => {
+    if (deploymentEvidence.some((workload) => workload.name === name)) return []
+    const workloadPods = pods.filter(({ labels }) => labels.app === name)
+    if (workloadPods.length === 0) return []
+    return [
+      {
         name,
-        desiredReplicas: requireNumber(spec.replicas, `contained deployment ${index}.spec.replicas`),
-        actualReplicas:
-          status.replicas === undefined ? 0 : requireNumber(status.replicas, `deployment ${index}.replicas`),
-        readyReplicas:
-          status.readyReplicas === undefined
-            ? 0
-            : requireNumber(status.readyReplicas, `deployment ${index}.readyReplicas`),
-        availableReplicas:
-          status.availableReplicas === undefined
-            ? 0
-            : requireNumber(status.availableReplicas, `deployment ${index}.availableReplicas`),
-        terminatingReplicas: Math.max(
-          statusTerminatingReplicas,
-          workloadPods.filter(({ terminating }) => terminating).length,
-        ),
+        desiredReplicas: 0,
+        actualReplicas: workloadPods.length,
+        readyReplicas: 0,
+        availableReplicas: 0,
+        terminatingReplicas: workloadPods.filter(({ terminating }) => terminating).length,
         podNames: workloadPods.map(({ name: podName }) => podName).toSorted(),
-      }
-    },
-  )
+      },
+    ]
+  })
+  return [...deploymentEvidence, ...orphanedRemovedWorkloadEvidence]
+}
+
+const collectWorkloadEvidence = async (): Promise<WorkloadEvidence[]> => {
+  const [deploymentsValue, podsValue] = await Promise.all([
+    kubectlJson(['-n', 'torghut', 'get', 'deployment', '-o', 'json'], 'contained Torghut deployments'),
+    kubectlJson(['-n', 'torghut', 'get', 'pods', '-o', 'json'], 'Torghut pods for containment proof'),
+  ])
+  return collectWorkloadEvidenceFromValues(deploymentsValue, podsValue)
 }
 
 const collectArgoEvidence = async (): Promise<ArgoApplicationEvidence[]> => {
@@ -1732,6 +1756,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  collectWorkloadEvidenceFromValues,
   collectStorageStabilitySnapshotWith,
   collectJangarPostgresEvidence,
   collectPostgresEvidence,

@@ -2,7 +2,7 @@
 
 ## Status
 
-- Status: Accepted for implementation
+- Status: Accepted with the Kafka shadow-writer path rejected and removed
 - Date: 2026-07-13
 - Source baseline: `67abf614db0da9404d2363eea0d2d5b17d13dafd`
 - Owners: Torghut options lane, Dorvud Hyperliquid feed, Torghut data stores, Rook-Ceph
@@ -13,7 +13,7 @@
 The immediate production fix is to remove avoidable write amplification before changing storage topology:
 
 1. Make options subscription persistence delta-only and make contract discovery bounded.
-2. Batch ClickHouse inserts by destination table and move ClickHouse persistence behind Kafka.
+2. Batch direct ClickHouse inserts by destination table and retain one acknowledged persistence path.
 3. Tune PostgreSQL checkpoints and Ceph maintenance only after the application fixes establish a new baseline.
 4. Remove the Kafka controller timeout overrides after the storage path is stable at normal timeout values.
 
@@ -69,7 +69,7 @@ Application-generated WAL and ClickHouse merge traffic increase the tail latency
 - Delta-only options subscription reconciliation.
 - Bounded live discovery and restartable archival reconciliation.
 - Per-table ClickHouse batching, acknowledged retries, and backpressure.
-- Kafka-backed ClickHouse ingestion with offset-after-ack semantics.
+- Removal of the rejected Kafka-to-ClickHouse shadow writer and all staging artifacts.
 - Evidence-based PostgreSQL WAL/checkpoint settings.
 - Evidence-based Ceph scrub concurrency and scheduling.
 - Removal of Kafka timeout masking after the underlying pressure is fixed.
@@ -89,7 +89,7 @@ Application-generated WAL and ClickHouse merge traffic increase the tail latency
 1. Partial or failed catalog scans cannot deactivate previously valid subscriptions.
 2. An unchanged provider page must cause zero physical subscription-state updates.
 3. A ClickHouse failure cannot be reported as persisted or silently discarded.
-4. Kafka offsets are committed only after ClickHouse acknowledges the corresponding rows.
+4. Exactly one production ClickHouse sink is active; no shadow, staging, fallback, or dual-write path remains.
 5. PostgreSQL and ClickHouse durability settings remain enabled.
 6. Ceph maintenance cannot create scrub debt indefinitely.
 7. Kafka quorum, ISR, and controller membership are preserved throughout the application rollout.
@@ -106,9 +106,9 @@ flowchart LR
   ArchiveScan --> Catalog[(PostgreSQL catalog)]
   Delta --> Subscription[(PostgreSQL subscription state)]
 
-  Hyperliquid[Hyperliquid websocket] --> Kafka[(Kafka)]
-  Kafka --> Writer[ClickHouse writer consumer]
-  Writer --> Buffers[Per-table acknowledged buffers]
+  Hyperliquid[Hyperliquid websocket] --> Feed[Hyperliquid feed]
+  Feed --> Kafka[(Kafka)]
+  Feed --> Buffers[Per-table acknowledged buffers]
   Buffers --> ClickHouse[(ClickHouse)]
 ```
 
@@ -264,48 +264,25 @@ flush reason. Shutdown drains all acknowledged buffers within a bounded grace pe
 - Readiness becomes false while required tables cannot persist.
 - Sparse tables may use ClickHouse asynchronous inserts only with `wait_for_async_insert=1`.
 
-### Durable Kafka writer
+### Rejected Kafka shadow writer
 
-The final ingestion boundary is a dedicated Kafka consumer:
+A second Kafka-to-ClickHouse consumer was implemented against nine `_kafka_staging` tables as a possible replacement
+path. It was never authoritative and never replaced the direct sink. Production replay proved that design unsuitable:
 
-1. Consume normalized topics with partition ordering.
-2. Buffer and flush by `(destination table, Kafka topic, Kafka partition)`; one insert never mixes partitions.
-3. Add nullable `kafka_topic`, `kafka_partition`, and `kafka_offset` lineage columns to every writer-owned destination
-   table; existing direct-sink rows remain null during migration.
-4. Populate those columns on every consumed row and insert with a deterministic partition-scoped deduplication token
-   derived from topic, partition, and the exact offset range. Retries within a writer process reuse the immutable batch
-   body and token.
-5. Commit offsets only after the insert is acknowledged.
-6. Retry an uncommitted range without changing its token.
-7. Make `(kafka_topic, kafka_partition, kafka_offset)` the logical uniqueness key of the writer-owned tables. On restart,
-   compare an uncommitted range with persisted row lineage before inserting missing offsets, so a crash cannot create a
-   second logical row merely because the new process chose a different batch boundary.
-8. Confirm table engines and materialized views preserve that lineage-based uniqueness; an insert token alone is not
-   accepted as durable deduplication or lineage evidence.
-9. At the cutover high watermark, capture the source record-set manifest per partition. Delete-only topics require
-   contiguous retained offsets. For `compact,delete` topics, require every offset still present in the captured Kafka
-   record set to exist exactly once in ClickHouse while allowing numeric offsets removed by compaction.
+- retained-history replay wrote millions of rows but exhausted the JVM heap at both 1 GiB and 2 GiB limits;
+- restarting the consumer repeated the same unbounded catch-up pressure instead of establishing a stable steady state;
+- the replay added ClickHouse part/merge traffic to the shared RBD pool while Ceph reported BlueStore slow operations;
+  and
+- the duplicate deployment, parity job, lineage columns, consumer group, and staging tables created a second
+  environment-like path in a cluster that has only one production environment.
 
-The direct-sink thresholds above apply only before the Kafka-writer cutover because that sink aggregates all records for
-a table. The writer shards every buffer by Kafka partition, so it uses partition-scoped policies sized from the observed
-post-shard rate:
-
-| Writer table class         | Size threshold | Maximum age |
-| -------------------------- | -------------: | ----------: |
-| BBO per topic partition    |     1,000 rows |   5 minutes |
-| Sparse per topic partition |       100 rows |   5 minutes |
-
-At the observed aggregate BBO rate of roughly 34-40 rows per second across 12 partitions, each partition receives only
-about 2.8-3.3 rows per second. Reusing the direct sink's 30-second age would therefore recreate roughly 85-100-row parts.
-The writer flushes on size during catch-up and on size or age in steady state. Its ClickHouse freshness budget is at
-least 360 seconds so the five-minute age bound does not falsely fail readiness. Kubernetes readiness proves that the
-writer is assigned, polling, committing acknowledged ClickHouse writes, fresh, and free of unresolved errors. Initial
-consumer lag is reported separately through the `caughtUp` status field and
-`torghut_hyperliquid_clickhouse_writer_caught_up` metric, so a healthy retained-history replay does not make the
-Deployment or Argo CD falsely degrade. Size-triggered and age-triggered part sizes are measured separately.
-
-The writer first runs against staging tables. Cutover disables direct feed-to-ClickHouse writes while the writer catches
-up from Kafka, so a deployment gap is replayed rather than lost.
+The decision is removal, not another tuning cycle. The direct acknowledged per-table sink remains the only ClickHouse
+persistence path. Kafka remains an independent normalized event stream for its real consumers; it is not a fallback or
+shadow ClickHouse sink. The writer and parity workloads, Kotlin implementation, configuration, release wiring, schema
+creation, staging tables, unused lineage columns, and inactive consumer groups are removed end to end. The existing
+bounded schema hook carries the idempotent `DROP TABLE IF EXISTS` and `DROP COLUMN IF EXISTS` migration and verifies
+that every ClickHouse host has zero staging tables and zero legacy lineage columns; no permanent cleanup workload is
+introduced.
 
 ## PostgreSQL and Ceph tuning
 
@@ -442,7 +419,7 @@ queueing and replication time but does not remove HDD flush latency or provide a
 2. **PR 1 - options delta reconciliation:** repository transaction, provisional state, metrics, and regression tests.
 3. **PR 2 - bounded discovery:** live-universe policy, archival shards, checkpointing, and partial-scan safety.
 4. **PR 3 - ClickHouse batching:** per-table buffers, acknowledged retries, metrics, and tests.
-5. **PR 4 - durable writer:** Kafka consumer, staging parity, deduplication, and cutover.
+5. **Rejected path cleanup:** remove the Kafka shadow writer, parity job, staging schema, lineage, and consumer groups.
 6. **PR 5 - measured database/storage tuning:** CNPG and Ceph settings after rebaselining.
 7. **PR 6 - timeout cleanup:** remove Kafka timeout overrides and prove stability at defaults.
 
@@ -460,7 +437,7 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 
 ### Live gates
 
-- Before activating either contained write workload, keep both workloads at zero replicas and capture the observation
+- Before activating the contained archive workload, keep it at zero replicas and capture the observation
   anchor with
   `bun run gate:torghut-storage-stability --capture-smart-baseline <new local path>`. Use the emitted capture timestamp
   as `--observation-start`, wait at least 30 minutes, then run
@@ -479,7 +456,7 @@ merge, and is followed through image publication, Argo reconciliation, and live 
   healthy Argo applications. Jangar must remain at or below 0.3015 MiB/s, a 50% reduction from its measured 0.603 MiB/s
   pre-change baseline. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and
   ClickHouse true; the scheduler running with fresh trading/reconcile cycles and healthy leadership; and the current
-  Knative API revision ready. Both write workloads must still be at zero replicas. A warning that the temporary Kafka
+  Knative API revision ready. The archive workload must still be at zero replicas. A warning that the temporary Kafka
   controller timeout overrides remain present is expected at this stage; passing this gate does not authorize their
   removal.
 - An unchanged catalog page causes zero subscription updates.
@@ -487,15 +464,12 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 - Torghut PostgreSQL WAL falls below 0.25 MiB per second during discovery.
 - Jangar PostgreSQL WAL remains at or below 0.3015 MiB per second after its persistence fix.
 - Hot/warm membership remains within provider limits and snapshot freshness remains healthy.
-- During direct-sink batching, BBO median part size is at least 1,000 rows. After partition-scoped writer cutover,
-  size-triggered BBO parts contain 1,000 rows, age-triggered parts are reported separately, and the aggregate `NewPart`
-  reduction remains at least 80%.
+- During direct-sink batching, size-triggered BBO parts contain 1,000 rows, age-triggered parts are reported separately,
+  and the aggregate `NewPart` reduction remains at least 80%.
 - ClickHouse `NewPart` and `MergeParts` rates fall at least 80%.
-- ClickHouse and Kafka row/offset reconciliation reports no unexplained gaps under the delete-only or compacted-topic
-  contract above.
 - Kafka has three stable voters, full ISR, zero offline partitions, and no fencing.
-- Ceph is `HEALTH_OK` before archive or Kafka-writer activation; bounded maintenance warnings are acceptable only while
-  the write workloads remain contained.
+- Ceph is `HEALTH_OK` before archive activation; bounded maintenance warnings are acceptable only while the workload
+  remains contained.
 - Torghut feed `/readyz` returns 200 with Kafka and ClickHouse true; trading runtime remains ready.
 
 ## Rollback and containment
@@ -507,8 +481,6 @@ merge, and is followed through image publication, Argo reconciliation, and live 
   reaches zero, then revert the feed image. This path owns only in-memory retry batches; it must not claim Kafka consumer
   offset replay. If the pod is lost before draining, mark the affected ClickHouse interval incomplete and backfill the
   corresponding retained Kafka record set with a validated replay consumer before restoring parity.
-- Kafka writer before cutover: stop the writer; its uncommitted consumer offsets remain replayable.
-- Writer cutover: re-enable the direct sink only at a recorded Kafka offset boundary.
 - PostgreSQL/Ceph settings: revert one parameter at a time through GitOps.
 - Kafka timeout cleanup: restore the previous values only as temporary containment while reopening the storage incident;
   do not call that restoration a fix.

@@ -7,65 +7,6 @@ import { repoRoot } from '../../shared/cli'
 import { __private } from '../update-hyperliquid-feed-manifest'
 
 describe('update-hyperliquid-feed-manifest', () => {
-  it('updates feed and writer manifests from one release contract', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'torghut-hyperliquid-feed-manifests-test-'))
-    const targets = [
-      { manifestPath: join(dir, 'deployment.yaml'), containerName: 'torghut-hyperliquid-feed' },
-      {
-        manifestPath: join(dir, 'writer-deployment.yaml'),
-        containerName: 'torghut-hyperliquid-clickhouse-writer',
-      },
-      {
-        manifestPath: join(dir, 'parity-cronjob.yaml'),
-        containerName: 'torghut-hyperliquid-clickhouse-parity',
-      },
-    ]
-    for (const target of targets) {
-      writeFileSync(
-        target.manifestPath,
-        `apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-        - name: ${target.containerName}
-          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:1111111111111111111111111111111111111111111111111111111111111111
-          env:
-            - name: TORGHUT_HYPERLIQUID_FEED_VERSION
-              value: old-version
-            - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
-              value: old-commit
-            - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
-              value: sha256:1111111111111111111111111111111111111111111111111111111111111111
-`,
-        'utf8',
-      )
-    }
-
-    const results = __private.updateHyperliquidFeedManifests(
-      'registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed',
-      'sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
-      'main-30c43f62',
-      '30c43f624e57af68cb633b36d136c0fedd29a10e',
-      targets.map((target) => ({
-        manifestPath: relative(repoRoot, target.manifestPath),
-        containerName: target.containerName,
-      })),
-    )
-
-    expect(results.every((result) => result.changed)).toBe(true)
-    for (const target of targets) {
-      const updated = readFileSync(target.manifestPath, 'utf8')
-      expect(updated).toContain(
-        'image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
-      )
-      expect(updated).toContain('value: 30c43f624e57af68cb633b36d136c0fedd29a10e')
-    }
-
-    rmSync(dir, { recursive: true, force: true })
-  })
-
   it('updates the feed image and source metadata', () => {
     const dir = mkdtempSync(join(tmpdir(), 'torghut-hyperliquid-feed-manifest-test-'))
     const manifestPath = join(dir, 'deployment.yaml')

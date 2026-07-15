@@ -1,8 +1,8 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-15 13:45 UTC**
+Last updated: **2026-07-15 17:00 UTC**
 
-Status: **write-heavy activation contained; Jangar write-pressure fix and clean storage observation pending**
+Status: **single direct Hyperliquid sink retained; rejected Kafka shadow path being removed**
 
 Design: `docs/torghut/storage-write-pressure-remediation-design.md`
 
@@ -13,7 +13,7 @@ The application-side write amplification identified in the accepted design has b
 - options subscription reconciliation is delta-only and live discovery is bounded;
 - Hyperliquid and Options TA ClickHouse writes are batched per destination table;
 - archival reconciliation uses bounded, restartable finalization and avoids unchanged catalog rewrites;
-- the Kafka-backed ClickHouse writer and retained-record parity gate are merged, but the writer remains at zero replicas;
+- the Kafka-backed ClickHouse shadow writer and parity path are rejected and removed after failed production replay;
 - PostgreSQL WAL buffers are 16 MiB with durability settings unchanged;
 - Ceph scrub concurrency is one per OSD; and
 - Kafka remains on the in-place Strimzi 1.1.0 / Kafka 4.3.0 cluster with metadata `4.3-IV0`.
@@ -25,8 +25,8 @@ no active alerts.
 
 A later clean-observation attempt proved a separate current problem: small durable writes are contending on the shared
 HDD-backed RBD pool and stalling Kafka controller fsync. Jangar PostgreSQL was the largest sustained RBD writer in that
-capture. The archive worker and Kafka staging writer remain off until Jangar write amplification is removed and the
-executable clean-observation gate passes.
+capture. Its write amplification was removed and a subsequent clean-observation gate passed. The archive worker remains
+separately gated; the Kafka staging writer is not an activation candidate and is being deleted.
 
 There is no third Ceph storage host in this plan. The incoming network hardware remains a separate change window.
 
@@ -42,8 +42,7 @@ There is no third Ceph storage host in this plan. The incoming network hardware 
 | Low-WAL archive finalization and overlap fencing | #12493, #12497, #12500, #12502         | Merged and live; schema-gated image promoted            |
 | Hyperliquid per-table ClickHouse batching        | #12409, #12410                         | Merged and live                                         |
 | Options TA ClickHouse batching                   | #12455, #12495, #12501                 | Merged and live                                         |
-| Kafka-backed ClickHouse writer                   | #12440                                 | Source and staging resources merged; deployment at zero |
-| Retained-record parity gate                      | #12472                                 | Merged; CronJob intentionally suspended                 |
+| Rejected Kafka-backed shadow path                | #12440, #12472, #12604                 | Never authoritative; code, GitOps, and schema removed   |
 | Shared storage observability                     | #12443                                 | Merged and live                                         |
 | Ceph one-scrub-per-OSD limit                     | #12453                                 | Merged and live                                         |
 | Torghut PostgreSQL WAL buffers                   | #12457                                 | Merged and live                                         |
@@ -127,7 +126,7 @@ age-triggered, so rows per part are intentionally below the 1,000-row size thres
 Flink completed 16 of 16 checkpoints with zero failures; the latest acknowledged all 31 subtasks in 932 ms. The job
 manager and both task managers were ready with zero restarts.
 
-### Archive and Kafka staging containment
+### Archive containment and rejected Kafka staging path
 
 The database is at Alembic revision `0067_options_archive_status`. The shared init gate verifies the required archive
 membership table, status table, active-catalog view, and ready composite index before any archive/catalog/enricher
@@ -137,9 +136,17 @@ The archive deployment is declaratively at **zero replicas**; there is no tempor
 Catalog and enricher are ready on digest
 `sha256:dad1156a0e92e551052997de77cd2da733aaf1bb06f3ff59e821d79fe9fc2dbb`.
 
-The Kafka writer deployment is also at **zero replicas**. Nine `_kafka_staging` tables exist and contain zero rows.
-The direct sink remains authoritative. Activation PR #12496 is intentionally draft and cannot merge until the storage
-stability gate passes.
+The Kafka writer was a shadow path only; the direct sink remained authoritative throughout. Before cleanup, live
+ClickHouse verification found 33,104,910 rows across the populated staging tables and zero non-null lineage values in
+the nine authoritative tables. During retained-history replay the writer repeatedly terminated with JVM
+heap exhaustion at both 1 GiB and 2 GiB memory limits. During the replay Ceph again reported an OSD.5 BlueStore slow
+operation warning. A bounded-replay change would reduce one symptom but would preserve an unnecessary second sink.
+
+The production decision is therefore full removal: the writer Deployment and Service, suspended parity CronJob,
+Kotlin writer/parity implementation and tests, configuration and release wiring, nine `_kafka_staging` tables, three
+unused Kafka-lineage columns, and inactive consumer groups are deleted. No fallback, dual-write, shadow, staging, or
+cutover path remains. The existing schema hook performs and verifies the idempotent table/column cleanup without adding
+a permanent cleanup workload. The existing direct per-table acknowledged sink is the single ClickHouse persistence path.
 
 ## Storage incident diagnosis
 
@@ -204,19 +211,18 @@ evidence. Before increasing write load:
 3. Require any remaining BlueStore slow-operation warning to clear through normal recovery; if it persists, inspect
    the current OSD.5 operation queue before changing configuration.
 4. Roll out the Jangar quant-persistence write-amplification fix, verify its WAL and RBD write-rate reduction, and only
-   then record a new observation start while the archive worker and Kafka staging writer remain at zero replicas.
+   then record a new observation start while the archive worker remains at zero replicas.
 5. After at least 30 minutes, run the executable read-only gate below. Any new SCSI reset/recovery, cache-flush EIO, OSD
    crash, Kafka fencing/timeout, unsafe placement group, durability regression, or runtime readiness failure restarts
    containment and investigation.
-6. If the baseline passes, activate exactly one bounded writer at a time and retain the same stop conditions during
-   staged load. The archive and Kafka-writer steps below are the controlled durable-write validation.
+6. If the baseline passes, activate the bounded archive writer and retain the same stop conditions during staged load.
 
 Clearing the understood stale crash record is incident bookkeeping, not proof of repair. Passing requires fresh
 observation evidence and current healthy state.
 
 ### Executable storage-stability gate
 
-While both contained writers are still off, capture a new SMART observation anchor:
+While the contained archive writer is still off, capture a new SMART observation anchor:
 
 ```bash
 bun run gate:torghut-storage-stability \
@@ -255,7 +261,7 @@ true:
   succeeds with fresh trading/reconcile cycles and healthy leadership; and the latest Knative API revision is converged
   and directly ready;
 - the required Argo applications are `Synced/Healthy`; and
-- both the archive worker and Kafka ClickHouse writer are still declaratively and actually at zero replicas.
+- the archive worker is still declaratively and actually at zero replicas.
 
 The command reports the temporary Kafka controller timeout overrides as a warning rather than a pass condition. They
 remain containment until application activation is proven separately at default controller timeout behavior.
@@ -274,12 +280,12 @@ This is a real failed baseline, not a timeout-setting problem.
 After the Jangar write-pressure cleanup and registry mutation rate limit were live, the schema-v4 gate passed at
 `2026-07-15 12:41:51 UTC` against an observation start of `12:05:26 UTC`. The 36.42-minute window returned no failures:
 Ceph was `HEALTH_OK` with all six OSDs up and in; all three SMART devices passed current/baseline health, zero-media, and
-no-new-CRC checks; Kafka 4.3.0 / metadata `4.3-IV0` had all six broker/controller pods ready; and the archive worker and
-Kafka ClickHouse writer remained declaratively and actually at zero replicas. Concurrent WAL samples measured Torghut
+no-new-CRC checks; Kafka 4.3.0 / metadata `4.3-IV0` had all six broker/controller pods ready; and the archive worker
+remained declaratively and actually at zero replicas. Concurrent WAL samples measured Torghut
 at 0.0096 MiB/s and Jangar at 0.0027 MiB/s over 30.6 seconds. The feed, scheduler, and Knative API revision
 `torghut-01477` were ready. The only warnings were the already-documented interrupted historical SMART self-tests and
 the still-active Kafka controller timeout overrides. This `PASS` authorizes the one-replica archive activation below;
-it does not authorize the Kafka writer or timeout-removal stages.
+it does not authorize timeout removal.
 
 The superseded repair-gate collection completed at `2026-07-15 01:38 UTC`, using `2026-07-14T20:12:00Z` as the start
 of the incident window. It correctly returned `FAIL` because that window intentionally contained the incident itself;
@@ -312,17 +318,6 @@ After the storage-stability gate passes:
 5. require PostgreSQL WAL below 0.25 MiB/s and no Ceph/Kafka regression; and
 6. stop and return to zero replicas immediately if any gate fails.
 
-### Kafka-backed ClickHouse writer
-
-After archive proof:
-
-1. merge the current-head activation PR against `_kafka_staging` tables only;
-2. catch up from the retained Kafka record set with offset-after-ClickHouse-ack semantics;
-3. require writer readiness, `caughtUp=true`, bounded lag, and no uncommitted-range duplication;
-4. run the suspended parity gate at fixed partition high watermarks;
-5. require every retained delete-only offset exactly once and the compacted-topic record-set contract to pass; and
-6. record a cutover boundary before disabling the direct sink.
-
 ### Kafka timeout cleanup
 
 The live Kafka resource still contains the temporary 60-second controller election and 180-second controller fetch
@@ -347,8 +342,6 @@ suspended parity CronJob expired after #12498 reconciled. The Ceph warning remai
 crash record is archived and any current BlueStore slow operation clears; future occurrences remain alerting.
 
 - Archive rollback: scale the declarative deployment back to zero; preserve its committed shard cursor.
-- Kafka writer rollback before cutover: stop the writer; uncommitted offsets remain replayable.
-- Direct-sink cutover rollback: re-enable only at the recorded partition boundary.
 - PostgreSQL/Ceph tuning rollback: revert one parameter at a time through GitOps.
 - Kafka timeout rollback: temporary containment only; reopening the storage incident is mandatory.
 
