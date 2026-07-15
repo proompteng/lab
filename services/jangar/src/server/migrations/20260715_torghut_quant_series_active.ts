@@ -132,37 +132,5 @@ export const up = async (db: Kysely<Database>) => {
   `.execute(db)
 }
 
-export const down = async (db: Kysely<Database>) => {
-  await sql`SET LOCAL lock_timeout = '5s';`.execute(db)
-  await sql`
-    LOCK TABLE
-      torghut_control_plane.quant_metrics_series,
-      torghut_control_plane.quant_metrics_series_active
-    IN ACCESS EXCLUSIVE MODE;
-  `.execute(db)
-
-  // Preserve rows written after cutover before restoring the physical legacy
-  // table. Lock the compatibility view first so no writer can hold its lock
-  // while blocking inside the trigger on the active table; both locks remain
-  // held through the destructive rollback steps.
-  await sql
-    .raw(`
-    INSERT INTO torghut_control_plane.quant_metrics_series_legacy (${SERIES_COLUMNS})
-    SELECT ${SERIES_COLUMNS}
-    FROM torghut_control_plane.quant_metrics_series_active
-    ON CONFLICT (id) DO NOTHING;
-  `)
-    .execute(db)
-
-  await sql`
-    DROP TRIGGER IF EXISTS quant_metrics_series_active_insert
-    ON torghut_control_plane.quant_metrics_series;
-  `.execute(db)
-  await sql`DROP VIEW torghut_control_plane.quant_metrics_series;`.execute(db)
-  await sql`DROP FUNCTION torghut_control_plane.insert_quant_metrics_series_active();`.execute(db)
-  await sql`DROP TABLE ${sql.table(ACTIVE_TABLE)} CASCADE;`.execute(db)
-  await sql`
-    ALTER TABLE torghut_control_plane.quant_metrics_series_legacy
-    RENAME TO quant_metrics_series;
-  `.execute(db)
-}
+// Intentionally forward-only. The later quant-series removal migration hard-deletes
+// every series relation, so restoring the compatibility view is unsupported.

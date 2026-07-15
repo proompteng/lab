@@ -151,26 +151,6 @@ describe('torghut quant metrics store', () => {
     expect(normalized.join(' ')).not.toContain('create table as select')
   })
 
-  it('blocks compatibility-view writes before copying rollback rows', async () => {
-    const { db, calls } = makeFakeDb()
-    const { down } = await import('../migrations/20260715_torghut_quant_series_active')
-
-    await down(db)
-
-    expect(calls).toHaveLength(8)
-    const normalized = calls.map((call) => call.sql.toLowerCase().replace(/\s+/g, ' '))
-    expect(normalized[0]).toContain("set local lock_timeout = '5s'")
-    expect(normalized[1]).toContain(
-      'lock table torghut_control_plane.quant_metrics_series, torghut_control_plane.quant_metrics_series_active in access exclusive mode',
-    )
-    expect(normalized[1].indexOf('quant_metrics_series,')).toBeLessThan(
-      normalized[1].indexOf('quant_metrics_series_active'),
-    )
-    expect(normalized[2]).toContain('insert into torghut_control_plane.quant_metrics_series_legacy')
-    expect(normalized[2]).toContain('from torghut_control_plane.quant_metrics_series_active')
-    expect(normalized[3]).toContain('drop trigger if exists quant_metrics_series_active_insert')
-  })
-
   it('drops the unused series API stores without cascading into unrelated relations', async () => {
     const { db, calls } = makeFakeDb()
     const { up } = await import('../migrations/20260715_torghut_quant_series_remove')

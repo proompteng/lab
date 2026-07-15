@@ -99,7 +99,7 @@ describe('migration registration', () => {
     expect(normalized).not.toContain('quant_pipeline_health;')
   })
 
-  it('keeps the no-copy quant-series active-store migration rollback-compatible', () => {
+  it('keeps the no-copy quant-series active-store transition forward-only', () => {
     const migrationPath = new URL('../migrations/20260715_torghut_quant_series_active.ts', import.meta.url)
     const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
 
@@ -108,10 +108,8 @@ describe('migration registration', () => {
     expect(normalized).toContain('using brin (as_of)')
     expect(normalized).toContain('create view torghut_control_plane.quant_metrics_series as')
     expect(normalized).toContain('instead of insert on torghut_control_plane.quant_metrics_series')
-    expect(normalized).toContain('on conflict (id) do nothing')
-    expect(normalized).toContain(
-      'lock table torghut_control_plane.quant_metrics_series, torghut_control_plane.quant_metrics_series_active in access exclusive mode',
-    )
+    expect(normalized).not.toContain('export const down')
+    expect(normalized).not.toContain('on conflict (id) do nothing')
     expect(normalized).not.toContain('vacuum full')
     expect(normalized).not.toContain('reindex')
     expect(normalized).not.toContain('unlogged')
