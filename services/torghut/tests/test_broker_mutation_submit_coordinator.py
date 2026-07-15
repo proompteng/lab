@@ -38,6 +38,7 @@ from app.trading.broker_mutation_receipts import (
 from app.trading.broker_mutation_submit_coordinator import (
     BrokerMutationSubmissionAlreadyProcessed,
     BrokerMutationSubmissionDeferred,
+    BrokerMutationSubmissionPreflightFailed,
     BrokerMutationSubmissionUnresolved,
     BrokerMutationSubmitCoordinator,
     LinkedOrderSubmission,
@@ -60,8 +61,13 @@ class _CloseoutBroker:
 
     def __init__(self) -> None:
         self.submit_calls = 0
+        self.position_calls = 0
+        self.position_error: Exception | None = None
 
     def list_positions(self) -> list[dict[str, object]]:
+        self.position_calls += 1
+        if self.position_error is not None:
+            raise self.position_error
         return [{"symbol": "AAPL", "qty": "1"}]
 
     def submit_order(self, **_kwargs: object) -> dict[str, object]:
@@ -256,6 +262,7 @@ def test_alpaca_closeout_submit_is_receipted_and_deduplicated(
 
     assert result["id"] == "closeout-order-1"
     assert broker.submit_calls == 1
+    assert broker.position_calls == 1
     with sessions() as session:
         receipt = session.execute(select(BrokerMutationReceipt)).scalar_one()
         latest = session.execute(
@@ -270,6 +277,43 @@ def test_alpaca_closeout_submit_is_receipted_and_deduplicated(
         assert receipt.submission_claim_id is None
         assert latest.state == "settled"
         assert latest.settlement_outcome == "acknowledged"
+
+
+def test_alpaca_closeout_position_failure_releases_before_broker_io(
+    sessions: sessionmaker[Session],
+) -> None:
+    broker = _CloseoutBroker()
+    broker.position_error = RuntimeError("position-read-failed")
+    adapter = AlpacaExecutionAdapter(
+        firewall=OrderFirewall(broker, account_label="paper"),
+        read_client=cast(TorghutAlpacaClient, broker),
+        session_factory=sessions,
+        account_label="paper",
+        endpoint_url=broker.endpoint_url,
+    )
+    submission = OrderSubmission(
+        symbol="AAPL",
+        side="sell",
+        qty=1.0,
+        order_type="limit",
+        time_in_force="day",
+        limit_price=100.0,
+        stop_price=None,
+        extra_params={"client_order_id": "torghut-closeout-position-failure"},
+    )
+
+    with (
+        patch.object(settings, "trading_kill_switch_enabled", False),
+        pytest.raises(
+            BrokerMutationSubmissionPreflightFailed,
+            match="risk_reduction_preflight_failed",
+        ),
+    ):
+        adapter.submit_risk_reducing_order(submission)
+
+    assert broker.submit_calls == 0
+    assert broker.position_calls == 1
+    assert _states(sessions) == (None, "released", 0)
 
 
 def test_invalid_intent_fails_before_claim_or_broker_call(
@@ -614,6 +658,68 @@ def test_unlinked_submit_settles_once_and_rejects_duplicate_replay(
         status = load_broker_mutation_runtime_status(session)
     assert status["settled_receipt_count"] == 1
     assert status["unresolved_receipt_count"] == 0
+
+
+def test_unlinked_preflight_failure_releases_and_remains_retryable(
+    sessions: sessionmaker[Session],
+) -> None:
+    coordinator = _coordinator()
+    intent = _unlinked_intent()
+    preflight_calls = 0
+    broker_calls = 0
+    fail_preflight = True
+
+    def preflight() -> None:
+        nonlocal preflight_calls
+        preflight_calls += 1
+        if fail_preflight:
+            raise BrokerMutationSubmissionPreflightFailed("position-read-failed")
+
+    def broker_call(_permit: object) -> Mapping[str, object]:
+        nonlocal broker_calls
+        broker_calls += 1
+        return {"id": "hl-order-preflight", "status": "accepted"}
+
+    def settlement(_result: Mapping[str, object]) -> BrokerMutationSettlement:
+        return build_broker_mutation_settlement(
+            BrokerMutationSettlementRequest(
+                source="primary",
+                outcome="acknowledged",
+                broker_reference="hl-order-preflight",
+                execution_id=None,
+                evidence_payload={"status": "accepted"},
+            )
+        )
+
+    callbacks = UnlinkedOrderSubmissionCallbacks(
+        broker_call=broker_call,
+        persist_terminal=lambda _result: None,
+        build_settlement=settlement,
+        preflight=preflight,
+    )
+    with (
+        sessions() as session,
+        pytest.raises(
+            BrokerMutationSubmissionPreflightFailed,
+            match="position-read-failed",
+        ),
+    ):
+        coordinator.submit_unlinked_order(session, intent=intent, callbacks=callbacks)
+
+    assert (preflight_calls, broker_calls) == (1, 0)
+    assert _states(sessions) == (None, "released", 0)
+
+    fail_preflight = False
+    with sessions() as session:
+        coordinator.submit_unlinked_order(session, intent=intent, callbacks=callbacks)
+
+    assert (preflight_calls, broker_calls) == (2, 1)
+    assert _states(sessions) == (None, "settled", 0)
+
+    fail_preflight = True
+    with sessions() as session, pytest.raises(BrokerMutationSubmissionAlreadyProcessed):
+        coordinator.submit_unlinked_order(session, intent=intent, callbacks=callbacks)
+    assert (preflight_calls, broker_calls) == (2, 1)
 
 
 def test_unlinked_timeout_stays_unresolved_and_is_not_retried(

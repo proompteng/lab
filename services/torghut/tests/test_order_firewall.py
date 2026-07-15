@@ -301,7 +301,7 @@ class TestOrderFirewall(TestCase):
             linked=False,
             risk_class="risk_reducing",
         )
-        response = firewall.submit_verified_risk_reducing_order(
+        verification = firewall.verify_risk_reducing_order(
             AlpacaSubmitRequest(
                 symbol="AAPL",
                 side="sell",
@@ -309,7 +309,10 @@ class TestOrderFirewall(TestCase):
                 order_type="limit",
                 time_in_force="day",
                 limit_price=100,
-            ),
+            )
+        )
+        response = firewall.submit_verified_risk_reducing_order(
+            verification,
             mutation_permit=permit,
         )
 
@@ -320,18 +323,7 @@ class TestOrderFirewall(TestCase):
             ("MSFT", "sell", 1),
         ):
             with self.assertRaisesRegex(RuntimeError, "risk_reduction"):
-                invalid_permit = alpaca_broker_mutation_test_permit(
-                    firewall,
-                    symbol=symbol,
-                    side=side,
-                    qty=qty,
-                    order_type="limit",
-                    time_in_force="day",
-                    limit_price=100,
-                    linked=False,
-                    risk_class="risk_reducing",
-                )
-                firewall.submit_verified_risk_reducing_order(
+                firewall.verify_risk_reducing_order(
                     AlpacaSubmitRequest(
                         symbol=symbol,
                         side=side,
@@ -339,8 +331,7 @@ class TestOrderFirewall(TestCase):
                         order_type="limit",
                         time_in_force="day",
                         limit_price=100,
-                    ),
-                    mutation_permit=invalid_permit,
+                    )
                 )
 
         self.assertEqual(len(client.submissions), 1)
