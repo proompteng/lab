@@ -31,14 +31,14 @@ from app.trading.broker_mutation_receipts import (
     BrokerMutationTarget,
     build_broker_mutation_intent,
     build_broker_mutation_settlement,
+    fingerprint_broker_endpoint,
 )
 from app.trading.infrastructure_validation import (
-    InfrastructureValidationLifecyclePlan,
     InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
     infrastructure_validation_client_order_id,
-    infrastructure_validation_lifecycle_plan_sha256,
     infrastructure_validation_order_plan_sha256,
+    infrastructure_validation_request_payload,
     infrastructure_validation_terminal_state_sha256,
 )
 from app.trading.infrastructure_validation_records import (
@@ -59,6 +59,9 @@ from tests.execution.decision_submission_claims_postgres_support import (
     SERVICE_ROOT,
     create_schema_engines,
     drop_schema,
+)
+from tests.execution.infrastructure_validation_postgres_support import (
+    validation_lifecycle_fixture,
 )
 
 
@@ -82,7 +85,10 @@ def _upgrade_reduction_schema(
                 """
             )
         )
-        if target == "0072_validation_lifecycle":
+        if target in {
+            "0072_validation_lifecycle",
+            "0073_live_paper_bounds",
+        }:
             connection.execute(
                 text(
                     """
@@ -456,8 +462,52 @@ def test_postgres_lifecycle_close_requires_reconciled_position_and_fill_receipt(
         _upgrade_reduction_schema(
             alembic,
             schema_engine,
-            target="0072_validation_lifecycle",
+            target="0073_live_paper_bounds",
         )
+        for permit_suffix, partial_close_qty in (
+            ("partial", "0.00001"),
+            ("residual", "0.00039"),
+        ):
+            invalid_permit, invalid_plan = validation_lifecycle_fixture(
+                datetime.now(timezone.utc),
+                permit_id=f"ivp-postgres-lifecycle-forged-{permit_suffix}",
+                partial_close_qty=partial_close_qty,
+            )
+            invalid_client_order_id = infrastructure_validation_client_order_id(
+                invalid_permit,
+                invalid_plan,
+            )
+            invalid_intent = build_broker_mutation_intent(
+                BrokerMutationIntentRequest(
+                    broker_route="alpaca",
+                    account_label=invalid_permit.account_label,
+                    endpoint_fingerprint=fingerprint_broker_endpoint(
+                        str(invalid_permit.broker_base_url)
+                    ),
+                    operation="submit_order",
+                    risk_class="risk_neutral",
+                    purpose="control_plane_validation",
+                    workflow_id=invalid_client_order_id,
+                    client_request_id=invalid_client_order_id,
+                    target=BrokerMutationTarget(
+                        kind="order",
+                        key=invalid_client_order_id,
+                    ),
+                    request_payload=infrastructure_validation_request_payload(
+                        invalid_permit,
+                        invalid_plan,
+                    ),
+                )
+            )
+            with sessions() as session:
+                session.add(_receipt_from_intent(invalid_intent))
+                with pytest.raises(IntegrityError) as captured:
+                    session.commit()
+            assert (
+                captured.value.orig.diag.constraint_name
+                == "ck_bm_receipt_validation_authority"
+            )
+
         evidence = _seed_validation_lifecycle_root(sessions)
         lineage = infrastructure_validation_lineage_payload(evidence)
         authorization = _submit_close_authorization(
@@ -668,56 +718,7 @@ def _seed_validation_lifecycle_root(
     sessions: sessionmaker[Session],
 ) -> object:
     now = datetime.now(timezone.utc)
-    plan = InfrastructureValidationLifecyclePlan.model_validate(
-        {
-            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
-            "venue": "alpaca",
-            "asset_class": "crypto",
-            "symbol": "BTC/USD",
-            "side": "buy",
-            "qty": "0.00002",
-            "order_type": "limit",
-            "time_in_force": "ioc",
-            "limit_price": "100000",
-            "stop_price": None,
-            "resting_close_limit_price": "200000",
-            "replacement_close_limit_price": "210000",
-            "partial_close_qty": "0.00001",
-        }
-    )
-    permit = InfrastructureValidationPermit.model_validate(
-        {
-            "schema_version": "torghut.infrastructure-validation-permit.v2",
-            "permit_id": "ivp-postgres-lifecycle",
-            "purpose": "control_plane_validation",
-            "venue": "alpaca",
-            "asset_class": "crypto",
-            "account_mode": "paper",
-            "market_session": "continuous",
-            "account_label": "paper",
-            "broker_base_url": "https://paper-api.alpaca.markets",
-            "symbols": ["BTC/USD"],
-            "sides": ["buy"],
-            "order_types": ["limit"],
-            "max_orders": 1,
-            "max_outstanding_intents": 1,
-            "max_notional_usd": "5",
-            "max_loss_usd": "5",
-            "issued_by": "infrastructure-owner",
-            "approved_by": "independent-infrastructure-owner",
-            "issued_at": now - timedelta(seconds=1),
-            "expires_at": now + timedelta(minutes=5),
-            "test_plan_digest": infrastructure_validation_lifecycle_plan_sha256(plan),
-            "expected_terminal_state": (
-                "no_open_orders_no_positions_no_unsettled_claims"
-            ),
-            "expected_terminal_state_digest": (
-                infrastructure_validation_terminal_state_sha256()
-            ),
-            "evidence_tag": "non_promotable_validation",
-            "promotable": False,
-        }
-    )
+    permit, plan = validation_lifecycle_fixture(now)
     with sessions() as session:
         BrokerMutationCoordinator(
             "validation-lifecycle-pg"

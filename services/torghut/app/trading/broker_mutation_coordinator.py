@@ -19,6 +19,7 @@ from ..models import Execution
 from .broker_mutation_receipts import (
     BrokerMutationIntent,
     BrokerMutationIntentRequest,
+    BrokerMutationExplicitRejection,
     BrokerMutationIoPermit,
     BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationReceiptAcquireOptions,
@@ -26,9 +27,11 @@ from .broker_mutation_receipts import (
     BrokerMutationReceiptHandle,
     BrokerMutationReceiptSnapshot,
     BrokerMutationSettlement,
+    BrokerMutationSettlementRequest,
     BrokerMutationTarget,
     acquire_broker_mutation_receipt,
     build_broker_mutation_intent,
+    build_broker_mutation_settlement,
     build_linked_submission_terminal_settlement,
     fingerprint_broker_endpoint,
     mark_broker_mutation_io_started,
@@ -74,7 +77,7 @@ class BrokerMutationAlreadyProcessed(BrokerMutationError):
 
 
 class BrokerMutationRejected(BrokerMutationError):
-    """The linked decision is durably rejected or no longer claimable."""
+    """The mutation is durably rejected or no longer claimable."""
 
 
 class BrokerMutationPreflightFailed(BrokerMutationError):
@@ -174,12 +177,23 @@ class BrokerMutationCoordinator:
             submission_claim_handle=claim.handle,
             scope="linked_submission",
         )
-        broker_result = _call_broker(
-            callbacks.broker_call,
-            permit=permit,
-            receipt_id=handle.receipt_id,
-            scope="linked_submission",
-        )
+        try:
+            broker_result = _call_broker(
+                callbacks.broker_call,
+                permit=permit,
+                receipt_id=handle.receipt_id,
+                scope="linked_submission",
+            )
+        except BrokerMutationExplicitRejection as exc:
+            _settle_linked_broker_rejection(
+                session,
+                handle=handle,
+                claim=claim,
+                rejection=exc,
+            )
+            raise BrokerMutationRejected(
+                _broker_rejection_message("linked_submission", handle.receipt_id, exc)
+            ) from exc
         return _settle_linked_terminal(
             session,
             _LinkedTerminalContext(
@@ -307,12 +321,23 @@ class BrokerMutationCoordinator:
             submission_claim_handle=None,
             scope=scope,
         )
-        broker_result = _call_broker(
-            callbacks.broker_call,
-            permit=permit,
-            receipt_id=handle.receipt_id,
-            scope=scope,
-        )
+        try:
+            broker_result = _call_broker(
+                callbacks.broker_call,
+                permit=permit,
+                receipt_id=handle.receipt_id,
+                scope=scope,
+            )
+        except BrokerMutationExplicitRejection as exc:
+            _settle_unlinked_broker_rejection(
+                session,
+                handle=handle,
+                scope=scope,
+                rejection=exc,
+            )
+            raise BrokerMutationRejected(
+                _broker_rejection_message(scope, handle.receipt_id, exc)
+            ) from exc
         _settle_unlinked_terminal(
             session,
             _UnlinkedTerminalContext(
@@ -494,10 +519,90 @@ def _call_broker(
 ) -> _BrokerResult:
     try:
         return broker_call(permit)
+    except BrokerMutationExplicitRejection:
+        raise
     except _BROKER_CALLBACK_ERRORS as exc:
         raise BrokerMutationUnresolved(
             f"{scope}_broker_io_unresolved:{receipt_id}:{type(exc).__name__}"
         ) from exc
+
+
+def _settle_linked_broker_rejection(
+    session: Session,
+    *,
+    handle: BrokerMutationReceiptHandle,
+    claim: DecisionSubmissionClaimSnapshot,
+    rejection: BrokerMutationExplicitRejection,
+) -> None:
+    try:
+        settlement = build_linked_submission_terminal_settlement(
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="primary",
+                outcome="rejected",
+                claim_handle=claim.handle,
+                broker_status=rejection.broker_status,
+                rejection_code=rejection.rejection_code,
+                broker_reference=None,
+                execution_id=None,
+            )
+        )
+        settle_linked_submission_primary(
+            session,
+            handle=handle,
+            submission_claim_handle=claim.handle,
+            settlement=settlement,
+        )
+    except _TERMINAL_CALLBACK_ERRORS as exc:
+        session.rollback()
+        raise BrokerMutationUnresolved(
+            f"linked_submission_rejection_unresolved:{handle.receipt_id}:"
+            f"{type(exc).__name__}"
+        ) from exc
+
+
+def _settle_unlinked_broker_rejection(
+    session: Session,
+    *,
+    handle: BrokerMutationReceiptHandle,
+    scope: str,
+    rejection: BrokerMutationExplicitRejection,
+) -> None:
+    try:
+        settlement = build_broker_mutation_settlement(
+            BrokerMutationSettlementRequest(
+                source="primary",
+                outcome="rejected",
+                broker_reference=None,
+                execution_id=None,
+                evidence_payload={
+                    "schema_version": ("torghut.broker-mutation-explicit-rejection.v1"),
+                    "broker_status": rejection.broker_status,
+                    "rejection_code": rejection.rejection_code,
+                    "detail": rejection.detail,
+                },
+            )
+        )
+        settle_broker_mutation_primary(
+            session,
+            handle=handle,
+            settlement=settlement,
+        )
+    except _TERMINAL_CALLBACK_ERRORS as exc:
+        session.rollback()
+        raise BrokerMutationUnresolved(
+            f"{scope}_rejection_unresolved:{handle.receipt_id}:{type(exc).__name__}"
+        ) from exc
+
+
+def _broker_rejection_message(
+    scope: str,
+    receipt_id: uuid.UUID,
+    rejection: BrokerMutationExplicitRejection,
+) -> str:
+    return (
+        f"{scope}_broker_rejected:{receipt_id}:"
+        f"{rejection.broker_status}:{rejection.rejection_code}"
+    )
 
 
 def _settle_linked_terminal(

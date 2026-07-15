@@ -195,14 +195,14 @@ def test_lifecycle_plan_allows_one_bounded_fill_and_only_resting_reductions() ->
             "asset_class": "crypto",
             "symbol": "BTC/USD",
             "side": "buy",
-            "qty": "0.00004",
+            "qty": "0.0004",
             "order_type": "limit",
             "time_in_force": "ioc",
-            "limit_price": "100000",
+            "limit_price": "70000",
             "stop_price": None,
-            "resting_close_limit_price": "125000",
-            "replacement_close_limit_price": "150000",
-            "partial_close_qty": "0.00002",
+            "resting_close_limit_price": "130000",
+            "replacement_close_limit_price": "140000",
+            "partial_close_qty": "0.0002",
         }
     )
     permit = InfrastructureValidationPermit.model_validate(
@@ -212,8 +212,8 @@ def test_lifecycle_plan_allows_one_bounded_fill_and_only_resting_reductions() ->
             symbols=["BTC/USD"],
             sides=["buy"],
             order_types=["limit"],
-            max_notional_usd="5",
-            max_loss_usd="5",
+            max_notional_usd="30",
+            max_loss_usd="30",
             test_plan_digest=infrastructure_validation_lifecycle_plan_sha256(plan),
             expected_terminal_state_digest=infrastructure_validation_terminal_state_sha256(),
         )
@@ -227,13 +227,65 @@ def test_lifecycle_plan_allows_one_bounded_fill_and_only_resting_reductions() ->
         now=_NOW,
     )
 
-    assert plan.notional_usd == 4
+    assert plan.notional_usd == 28
     assert (
         infrastructure_validation_request_payload(permit, plan)["broker_request"][
             "limit_price"
         ]
-        == "100000"
+        == "70000"
     )
+
+
+@pytest.mark.parametrize(
+    ("partial_close_qty", "error"),
+    [
+        ("0.0001", "partial_close_plan_notional_below_broker_cost_basis_floor"),
+        ("0.0003", "residual_close_plan_notional_below_broker_cost_basis_floor"),
+    ],
+)
+def test_lifecycle_authority_requires_two_broker_valid_close_legs(
+    partial_close_qty: str,
+    error: str,
+) -> None:
+    plan = InfrastructureValidationLifecyclePlan.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-lifecycle-plan.v1",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "symbol": "BTC/USD",
+            "side": "buy",
+            "qty": "0.0004",
+            "order_type": "limit",
+            "time_in_force": "ioc",
+            "limit_price": "70000",
+            "stop_price": None,
+            "resting_close_limit_price": "130000",
+            "replacement_close_limit_price": "140000",
+            "partial_close_qty": partial_close_qty,
+        }
+    )
+    permit = InfrastructureValidationPermit.model_validate(
+        _permit_payload(
+            asset_class="crypto",
+            market_session="continuous",
+            symbols=["BTC/USD"],
+            sides=["buy"],
+            order_types=["limit"],
+            max_notional_usd="30",
+            max_loss_usd="30",
+            test_plan_digest=infrastructure_validation_lifecycle_plan_sha256(plan),
+            expected_terminal_state_digest=infrastructure_validation_terminal_state_sha256(),
+        )
+    )
+
+    with pytest.raises(ValueError, match=error):
+        authorize_infrastructure_validation_order(
+            permit,
+            plan,
+            account_label=permit.account_label,
+            broker_base_url="https://paper-api.alpaca.markets",
+            now=_NOW,
+        )
 
 
 @pytest.mark.parametrize(

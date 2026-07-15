@@ -78,6 +78,7 @@ from .types import (
 )
 from .validation import (
     BrokerMutationBrokerIoError,
+    BrokerMutationExplicitRejection,
     BrokerMutationReceiptConflictError,
     BrokerMutationReceiptError,
     BrokerMutationReceiptFenceError,
@@ -101,6 +102,7 @@ __all__ = [
     "BrokerMutationOperation",
     "BrokerMutationPurpose",
     "BrokerMutationBrokerIoError",
+    "BrokerMutationExplicitRejection",
     "BrokerMutationReceiptConflictError",
     "BrokerMutationReceiptAcquireOptions",
     "BrokerMutationReceiptAcquireResult",

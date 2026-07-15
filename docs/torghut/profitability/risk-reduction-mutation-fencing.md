@@ -225,6 +225,9 @@ claimed --durable I/O fence--> broker_io --terminal response--> settled
 Safety rules:
 
 - a primary or recovery lease authorizes database transitions, never a second broker mutation;
+- an adapter must translate a definitive non-retryable broker refusal into the shared explicit-rejection contract, so
+  the coordinator atomically settles `rejected`; timeouts, rate limits, transport loss, and server failures remain
+  ambiguous `broker_io` rather than pretending success or rejection;
 - recovery observes exact broker identities and sealed target sets; it never calls cancel, replace, or close;
 - an incomplete lookup records `indeterminate` and preserves `broker_io`;
 - side flip, increased quantity, conflicting replacement identity, or increased exposure requires manual review;
