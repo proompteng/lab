@@ -296,11 +296,13 @@ const buildColdPerformanceQueries = (queries: GoldQuery[], runs: number, nonce: 
 
 const activeAtlasQueryCount = async (db: SQL) => {
   const rows = (await db`
-    SELECT count(*)::bigint AS active
-    FROM pg_stat_activity
-    WHERE state = 'active'
-      AND query ILIKE '%atlas.chunk_embeddings%'
-      AND pid <> pg_backend_pid();
+    SELECT count(DISTINCT activity.pid)::bigint AS active
+    FROM pg_stat_activity AS activity
+    INNER JOIN pg_locks AS relation_lock ON relation_lock.pid = activity.pid
+    WHERE activity.state = 'active'
+      AND relation_lock.locktype = 'relation'
+      AND relation_lock.relation = 'atlas.chunk_embeddings'::regclass
+      AND activity.pid <> pg_backend_pid();
   `) as Array<{ active: unknown }>
   return count(rows[0]?.active)
 }
@@ -379,7 +381,7 @@ const runCancellationProbe = async (input: {
   return { reachedDatabase, observedBlockedQueries, lingeringQueries }
 }
 
-export const __private = { buildColdPerformanceQueries }
+export const __private = { activeAtlasQueryCount, buildColdPerformanceQueries }
 
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
