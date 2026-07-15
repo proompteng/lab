@@ -1,8 +1,8 @@
 # Torghut and Ceph Write-Pressure Remediation Rollout
 
-Last updated: **2026-07-15 02:30 UTC**
+Last updated: **2026-07-15 04:11 UTC**
 
-Status: **software containment live; staged activation gated on a clean storage-stability observation**
+Status: **write-heavy activation contained; Jangar write-pressure fix and clean storage observation pending**
 
 Design: `docs/torghut/storage-write-pressure-remediation-design.md`
 
@@ -18,11 +18,15 @@ The application-side write amplification identified in the accepted design has b
 - Ceph scrub concurrency is one per OSD; and
 - Kafka remains on the in-place Strimzi 1.1.0 / Kafka 4.3.0 cluster with metadata `4.3-IV0`.
 
-The remaining storage alert is not an application timeout problem. Talos and Ceph record one real cache-flush I/O error
-on the Altra storage host followed by an OSD.3 crash. The same log stream contains SCSI device-reset/recovery messages,
-but current evidence does **not** prove failed hardware, a bad cable/backplane, an HBA reset, or raw storage saturation.
-The archive worker and Kafka staging writer therefore remain off only until the understood stale incident state is
-cleared and the executable clean-observation gate below passes.
+The original incident includes one real cache-flush I/O error on the Altra storage host followed by an OSD.3 crash. The
+same log stream contains SCSI device-reset/recovery messages, but current evidence does **not** prove failed hardware, a
+bad cable/backplane, or an HBA reset. The investigated crash is archived, Ceph is now `HEALTH_OK`, and Alertmanager has
+no active alerts.
+
+A later clean-observation attempt proved a separate current problem: small durable writes are contending on the shared
+HDD-backed RBD pool and stalling Kafka controller fsync. Jangar PostgreSQL was the largest sustained RBD writer in that
+capture. The archive worker and Kafka staging writer remain off until Jangar write amplification is removed and the
+executable clean-observation gate passes.
 
 There is no third Ceph storage host in this plan. The incoming network hardware remains a separate change window.
 
@@ -141,8 +145,8 @@ stability gate passes.
 
 ### Evidence
 
-Ceph is `HEALTH_WARN` with six of six OSDs up and in and all placement groups clean or actively scrubbing. The warnings
-are:
+At the time of the incident, Ceph was `HEALTH_WARN` with six of six OSDs up and in and all placement groups clean or
+actively scrubbing. The warnings were:
 
 - OSD.5 BlueStore slow-operation indications; and
 - a recent OSD.3 crash at `2026-07-14T20:18:05Z`.
@@ -172,11 +176,21 @@ All three disks report SMART passed with zero reallocated, pending, offline-unco
 The SAS3008 reports `ioc_reset_count=0`, state `running`, firmware `16.00.14.00`, BIOS `08.37.00.00`, and MPI `205.32`.
 No `mpt3sas` controller fault/reset, PCIe AER event, disk medium error, or SMART media/CRC failure was found. Historical
 metrics around the event showed roughly 2.05 MiB/s and 126 write operations/s on the affected node, with Ceph commit and
-apply latency around 32-68 ms, so raw bandwidth/IOPS saturation is also not proven.
+apply latency around 32-68 ms. Those facts do not establish a physical fault or the initiating cause of the cache-flush
+error.
+
+After the stale incident warning was cleared, a live ten-sample RBD capture proved current shared-pool contention. The
+replicated pool was accepting roughly 6.8 MiB/s and 325 logical write operations/s at replication size two, or roughly
+650 OSD writes/s across six rotational disks. OSD commit/apply latency was 21-24 ms on Turin and 68-88 ms on the Altra
+host. RBD image write latency was broadly 50-400 ms; the active Kafka controller image reached roughly 52-398 ms while
+issuing only 2-7 writes/s. The Jangar primary and asynchronous replica were the largest sustained images, and Jangar
+generated 18.204 MiB of PostgreSQL WAL in 30.182 seconds, or 0.603 MiB/s. This proves small-write IOPS/fsync contention;
+it is not sequential-bandwidth exhaustion and does not prove defective hardware.
 
 The defensible diagnosis is therefore one transient SCSI error-recovery event in which `Synchronize Cache(10)` returned
-an I/O error and BlueStore correctly aborted OSD.3 rather than claiming durability. The initiating cause is unproven.
-This is not fixed by increasing Kafka timeouts, but current evidence also does not justify a physical repair requirement.
+an I/O error and BlueStore correctly aborted OSD.3 rather than claiming durability; its initiating cause remains
+unproven. The continuing Kafka stalls are a separate, measured shared-RBD write-contention problem. Neither problem is
+fixed by increasing Kafka timeouts, and current evidence does not justify a physical repair requirement.
 
 ### Controlled stability validation
 
@@ -189,7 +203,8 @@ evidence. Before increasing write load:
    or suppress future crash/slow-op alerts.
 3. Require any remaining BlueStore slow-operation warning to clear through normal recovery; if it persists, inspect
    the current OSD.5 operation queue before changing configuration.
-4. Record an observation start while the archive worker and Kafka staging writer remain at zero replicas.
+4. Roll out the Jangar quant-persistence write-amplification fix, verify its WAL and RBD write-rate reduction, and only
+   then record a new observation start while the archive worker and Kafka staging writer remain at zero replicas.
 5. After at least 30 minutes, run the executable read-only gate below. Any new SCSI reset/recovery, cache-flush EIO, OSD
    crash, Kafka fencing/timeout, unsafe placement group, durability regression, or runtime readiness failure restarts
    containment and investigation.
@@ -236,6 +251,12 @@ The newest extended SMART tests are `Interrupted (host reset)` and old. They rem
 prove a physical fault, and waiting 40.25-41.25 hours for replacement self-tests is not an activation prerequisite when
 current overall health and critical media/interface counters are clean.
 
+A preliminary stability-gate run at `2026-07-15 03:43 UTC` used an observation start of `03:36:23 UTC`. In addition to
+being shorter than 30 minutes, the 6.94-minute window contained 24 KRaft request timeouts and 125 controller events above
+two seconds while Ceph remained `HEALTH_OK`, all six OSDs remained up and in, and the Torghut runtime checks passed.
+Controllers 0 and 1 continued timing out fetches to controller 2 through at least `04:05 UTC`; controller 2 recorded
+events as slow as 10.7 seconds. This is a real failed baseline, not a timeout-setting problem.
+
 The superseded repair-gate collection completed at `2026-07-15 01:38 UTC`, using `2026-07-14T20:12:00Z` as the start
 of the incident window. It correctly returned `FAIL` because that window intentionally contained the incident itself;
 that result did not prove a continuing fault or a physical root cause. Both contained deployments had desired, actual,
@@ -251,8 +272,8 @@ ready, available, and terminating replica counts of zero, with no matching pods.
 - Rook-Ceph `Degraded` in Argo CD.
 
 No archive, writer, Ceph-warning acknowledgement, Kafka-timeout removal, or other mutation was attempted in that
-collection. A new clean window begins only after the corrected gate is merged and the understood stale crash record is
-archived.
+collection. The stale crash is now archived; a valid new window begins only after the Jangar write-pressure fix is live
+and its reduction is verified.
 
 ## Remaining activation gates
 

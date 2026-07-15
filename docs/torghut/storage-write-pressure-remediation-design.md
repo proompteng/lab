@@ -333,6 +333,15 @@ The current 60-second controller election and 180-second fetch timeout values ma
 and maintenance changes meet their live gates, remove both explicit fields and allow Kafka defaults. No timeout increase
 is an accepted remediation for a failed validation gate.
 
+## Post-implementation Jangar addendum
+
+A clean-observation attempt after the original application slices found another independent shared-pool writer. Jangar
+generated 18.204 MiB of PostgreSQL WAL in 30.182 seconds while its primary and asynchronous replica were the largest
+sustained RBD images. The same capture showed roughly 50-400 ms RBD write latency and recurring Kafka controller fsync
+stalls. Jangar quant persistence must therefore switch from append-only pipeline-health history to primary-keyed latest
+state, suppress no-op latest-metric updates, and reduce one-minute analytical-series sampling from five seconds to one
+minute before the storage-stability observation can start. Compute, alerting, and trading semantics remain unchanged.
+
 ## Talos local-storage feasibility and boundary
 
 Talos user volumes already expose sufficient local capacity:
