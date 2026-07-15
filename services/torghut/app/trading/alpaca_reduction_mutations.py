@@ -350,6 +350,23 @@ class AlpacaReductionMutationExecutor:
             CancelAllOrdersPlan(),
             now=observed_at,
         )
+        if not any(order.open for order in snapshot.orders):
+            observation: Mapping[str, object] = {
+                "complete": snapshot.complete,
+                "orders": [],
+            }
+            self._settle_already_satisfied(
+                _MutationSpec(
+                    operation="cancel_all_orders",
+                    risk_class="risk_neutral",
+                    purpose=purpose,
+                    target_kind="account",
+                    target_key=self._account_label,
+                    request_payload=_already_satisfied_request(observation),
+                ),
+                observation=observation,
+            )
+            return []
         request_payload = _request_payload(
             authorization,
             broker_request={
@@ -358,18 +375,6 @@ class AlpacaReductionMutationExecutor:
                 )
             },
         )
-        if not any(order.open for order in snapshot.orders):
-            self._settle_authorized_preflight(
-                _MutationSpec(
-                    operation="cancel_all_orders",
-                    risk_class="risk_neutral",
-                    purpose=purpose,
-                    target_kind="account",
-                    target_key=self._account_label,
-                    request_payload=request_payload,
-                )
-            )
-            return []
         return self._execute(
             _MutationSpec(
                 operation="cancel_all_orders",
@@ -695,6 +700,7 @@ class AlpacaReductionMutationExecutor:
             spec.request_payload,
             target_kind=spec.target_kind,
             target_key=spec.target_key,
+            purpose=spec.purpose,
         )
         return build_broker_mutation_intent(
             BrokerMutationIntentRequest(
@@ -712,15 +718,6 @@ class AlpacaReductionMutationExecutor:
                 ),
                 request_payload=spec.request_payload,
             )
-        )
-
-    def _settle_authorized_preflight(
-        self,
-        spec: _MutationSpec,
-    ) -> None:
-        self._settle_preflight_intent(
-            self._intent(spec),
-            observation={"reason": "empty_complete_snapshot"},
         )
 
     def _settle_already_satisfied(

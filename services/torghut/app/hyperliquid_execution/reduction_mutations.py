@@ -301,6 +301,7 @@ class HyperliquidReductionMutationExecutor:
             spec.request_payload,
             target_kind=spec.target_kind,
             target_key=spec.target_key,
+            purpose=spec.purpose,
         )
         return build_broker_mutation_intent(
             BrokerMutationIntentRequest(

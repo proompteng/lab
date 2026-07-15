@@ -11,6 +11,7 @@ from .broker_mutation_receipts import (
     BrokerMutationIoPermit,
     BrokerMutationIoPermitExpectation,
     BrokerMutationOperation,
+    BrokerMutationPurpose,
     BrokerMutationRiskClass,
     BrokerMutationRoute,
     BrokerMutationTargetKind,
@@ -53,6 +54,7 @@ def risk_reduction_request_id(
     *,
     target_kind: BrokerMutationTargetKind,
     target_key: str,
+    purpose: BrokerMutationPurpose | None = None,
 ) -> str:
     """Derive one stable economic identity while retaining full observation evidence."""
 
@@ -77,7 +79,12 @@ def risk_reduction_request_id(
             },
         }
     elif request_payload.get("already_satisfied") is True:
-        identity = {"already_satisfied": True}
+        if purpose is None:
+            raise RiskReductionPermitError("risk_reduction_preflight_purpose_required")
+        identity = {
+            "already_satisfied": True,
+            "purpose": purpose,
+        }
     else:
         raise RiskReductionPermitError("risk_reduction_evidence_required")
     canonical_json, _ = canonicalize_broker_mutation_evidence(

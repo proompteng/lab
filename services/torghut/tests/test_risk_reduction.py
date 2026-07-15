@@ -309,22 +309,33 @@ def test_already_satisfied_identity_is_stable_and_target_bound() -> None:
         request,
         target_kind="position",
         target_key="AAPL",
+        purpose="closeout",
     )
     repeated = risk_reduction_request_id(
         "close_position",
         {**request, "observation": {"positions": [], "read": "repeated"}},
         target_kind="position",
         target_key="AAPL",
+        purpose="closeout",
     )
     other_target = risk_reduction_request_id(
         "close_position",
         request,
         target_kind="position",
         target_key="MSFT",
+        purpose="closeout",
+    )
+    other_purpose = risk_reduction_request_id(
+        "close_position",
+        request,
+        target_kind="position",
+        target_key="AAPL",
+        purpose="operator",
     )
 
     assert first == repeated
     assert first != other_target
+    assert first != other_purpose
 
 
 def test_single_leg_of_balanced_book_is_blocked_when_net_exposure_would_increase() -> (
