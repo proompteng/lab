@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Protocol, TypeVar, cast
+from typing import NoReturn, Protocol, TypeVar, cast
 
 from alpaca.common.exceptions import APIError, RetryException
 from requests.exceptions import RequestException
@@ -22,6 +22,7 @@ from ..alpaca_client import (
 from ..config import settings
 from .broker_mutation_receipts import (
     BrokerMutationBrokerIoError,
+    BrokerMutationExplicitRejection,
     BrokerMutationIoPermit,
     BrokerMutationIoPermitExpectation,
     consume_broker_mutation_io_permit,
@@ -55,6 +56,59 @@ _ALPACA_MUTATION_ERRORS = (
     TypeError,
     ValueError,
 )
+_EXPLICIT_ALPACA_REJECTION_STATUSES = frozenset({400, 401, 403, 404, 422})
+
+
+def _raise_alpaca_mutation_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, BrokerMutationExplicitRejection):
+        raise exc
+    if isinstance(exc, APIError):
+        rejection = _explicit_alpaca_rejection(exc)
+        if rejection is not None:
+            raise rejection from exc
+    raise BrokerMutationBrokerIoError(
+        f"alpaca_broker_io_failed:{type(exc).__name__}"
+    ) from exc
+
+
+def _explicit_alpaca_rejection(
+    exc: APIError,
+) -> BrokerMutationExplicitRejection | None:
+    status_code: object = getattr(exc, "status_code", None)
+    if type(status_code) is not int:
+        return None
+    normalized_status = status_code
+    if normalized_status not in _EXPLICIT_ALPACA_REJECTION_STATUSES:
+        return None
+    try:
+        raw_payload: object = json.loads(str(exc))
+    except (TypeError, ValueError):
+        raw_payload = {}
+    payload: Mapping[object, object]
+    if isinstance(raw_payload, Mapping):
+        payload = cast(Mapping[object, object], raw_payload)
+    else:
+        payload = {}
+    return BrokerMutationExplicitRejection(
+        broker_status=f"http_{normalized_status}",
+        rejection_code=_stable_alpaca_rejection_code(
+            payload.get("code"),
+            status_code=normalized_status,
+        ),
+        detail=str(payload.get("message") or "broker_request_rejected"),
+    )
+
+
+def _stable_alpaca_rejection_code(value: object, *, status_code: int) -> str:
+    allowed = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_.:-")
+    raw = str(value or "").strip().lower()
+    normalized = "".join(
+        character if character in allowed else "_" for character in raw
+    )
+    normalized = normalized.strip("_")[:128]
+    if not normalized or normalized[0] not in "abcdefghijklmnopqrstuvwxyz0123456789":
+        return f"http_{status_code}"
+    return normalized
 
 
 class OrderFirewallBlocked(RuntimeError):
@@ -535,18 +589,14 @@ class OrderFirewall:
                 firewall_token=self._token,
             )
         except _ALPACA_MUTATION_ERRORS as exc:
-            raise BrokerMutationBrokerIoError(
-                f"alpaca_broker_io_failed:{type(exc).__name__}"
-            ) from exc
+            _raise_alpaca_mutation_error(exc)
 
     @staticmethod
     def _broker_call(callback: Callable[[], _MutationResult]) -> _MutationResult:
         try:
             return callback()
         except _ALPACA_MUTATION_ERRORS as exc:
-            raise BrokerMutationBrokerIoError(
-                f"alpaca_broker_io_failed:{type(exc).__name__}"
-            ) from exc
+            _raise_alpaca_mutation_error(exc)
 
     def get_order_by_client_order_id(
         self, client_order_id: str

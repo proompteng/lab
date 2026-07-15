@@ -21,7 +21,8 @@ from pydantic import (
 
 _MAX_PERMIT_LIFETIME = timedelta(minutes=15)
 _MAX_SUBMIT_PROOF_NOTIONAL_USD = Decimal("1")
-_MAX_LIFECYCLE_NOTIONAL_USD = Decimal("5")
+_MAX_LIFECYCLE_NOTIONAL_USD = Decimal("30")
+_MIN_LIFECYCLE_LEG_PLAN_NOTIONAL_USD = Decimal("12")
 _VALIDATION_HOSTS = {
     "alpaca": "paper-api.alpaca.markets",
     "hyperliquid": "api.hyperliquid-testnet.xyz",
@@ -284,6 +285,8 @@ def authorize_infrastructure_validation_order(
         or plan.notional_usd > absolute_cap
     ):
         raise ValueError("infrastructure_validation_submit_exceeds_absolute_cap")
+    if isinstance(plan, InfrastructureValidationLifecyclePlan):
+        _validate_lifecycle_leg_plan_notional(plan)
     if infrastructure_validation_plan_sha256(plan) != permit.test_plan_digest:
         raise ValueError("infrastructure_validation_order_plan_digest_mismatch")
     if (
@@ -292,6 +295,21 @@ def authorize_infrastructure_validation_order(
     ):
         raise ValueError("infrastructure_validation_terminal_digest_mismatch")
     return permit
+
+
+def _validate_lifecycle_leg_plan_notional(
+    plan: InfrastructureValidationLifecyclePlan,
+) -> None:
+    residual_quantity = plan.qty - plan.partial_close_qty
+    for field, quantity in (
+        ("partial_close", plan.partial_close_qty),
+        ("residual_close", residual_quantity),
+    ):
+        if quantity * plan.limit_price < _MIN_LIFECYCLE_LEG_PLAN_NOTIONAL_USD:
+            raise ValueError(
+                "infrastructure_validation_"
+                f"{field}_plan_notional_below_broker_cost_basis_floor"
+            )
 
 
 def infrastructure_validation_order_plan_sha256(

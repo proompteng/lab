@@ -28,6 +28,7 @@ MAX_CANONICAL_NESTING = 32
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_BROKER_REJECTION_VALUE = re.compile(r"^[a-z0-9][a-z0-9_.:-]*$")
 _SECRET_BEARING_KEY_MARKERS = (
     "apikey",
     "authorization",
@@ -61,6 +62,49 @@ class BrokerMutationReceiptConflictError(BrokerMutationReceiptError):
 
 class BrokerMutationBrokerIoError(RuntimeError):
     """A known broker dependency failed after durable I/O authorization."""
+
+
+class BrokerMutationExplicitRejection(RuntimeError):
+    """The broker definitively refused a mutation without accepting it."""
+
+    def __init__(
+        self,
+        *,
+        broker_status: str,
+        rejection_code: str,
+        detail: str,
+    ) -> None:
+        self.broker_status = _stable_rejection_value(
+            broker_status,
+            field="broker_status",
+            maximum=64,
+        )
+        self.rejection_code = _stable_rejection_value(
+            rejection_code,
+            field="rejection_code",
+            maximum=128,
+        )
+        normalized_detail = " ".join(
+            "".join(
+                character if character.isprintable() else " " for character in detail
+            ).split()
+        )
+        self.detail = (normalized_detail or "broker_request_rejected")[:512]
+        super().__init__(
+            "broker_mutation_explicit_rejection:"
+            f"{self.broker_status}:{self.rejection_code}"
+        )
+
+
+def _stable_rejection_value(value: str, *, field: str, maximum: int) -> str:
+    normalized = str(value).strip().lower()
+    if (
+        not normalized
+        or len(normalized) > maximum
+        or _BROKER_REJECTION_VALUE.fullmatch(normalized) is None
+    ):
+        raise ValueError(f"broker_mutation_{field}_invalid")
+    return normalized
 
 
 def canonical_broker_request_sha256(payload: Mapping[str, object]) -> str:

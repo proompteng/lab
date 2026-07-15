@@ -82,7 +82,10 @@ def _upgrade_reduction_schema(
                 """
             )
         )
-        if target == "0072_validation_lifecycle":
+        if target in {
+            "0072_validation_lifecycle",
+            "0073_live_paper_bounds",
+        }:
             connection.execute(
                 text(
                     """
@@ -456,7 +459,7 @@ def test_postgres_lifecycle_close_requires_reconciled_position_and_fill_receipt(
         _upgrade_reduction_schema(
             alembic,
             schema_engine,
-            target="0072_validation_lifecycle",
+            target="0073_live_paper_bounds",
         )
         evidence = _seed_validation_lifecycle_root(sessions)
         lineage = infrastructure_validation_lineage_payload(evidence)
@@ -675,14 +678,14 @@ def _seed_validation_lifecycle_root(
             "asset_class": "crypto",
             "symbol": "BTC/USD",
             "side": "buy",
-            "qty": "0.00002",
+            "qty": "0.0004",
             "order_type": "limit",
             "time_in_force": "ioc",
-            "limit_price": "100000",
+            "limit_price": "70000",
             "stop_price": None,
-            "resting_close_limit_price": "200000",
-            "replacement_close_limit_price": "210000",
-            "partial_close_qty": "0.00001",
+            "resting_close_limit_price": "130000",
+            "replacement_close_limit_price": "140000",
+            "partial_close_qty": "0.0002",
         }
     )
     permit = InfrastructureValidationPermit.model_validate(
@@ -701,8 +704,8 @@ def _seed_validation_lifecycle_root(
             "order_types": ["limit"],
             "max_orders": 1,
             "max_outstanding_intents": 1,
-            "max_notional_usd": "5",
-            "max_loss_usd": "5",
+            "max_notional_usd": "30",
+            "max_loss_usd": "30",
             "issued_by": "infrastructure-owner",
             "approved_by": "independent-infrastructure-owner",
             "issued_at": now - timedelta(seconds=1),

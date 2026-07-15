@@ -20,7 +20,10 @@ from app.alpaca_client import (
 from app.alpaca_client import OrderFirewallToken
 from app.config import settings
 from app.trading.firewall import OrderFirewall
-from app.trading.broker_mutation_receipts import BrokerMutationBrokerIoError
+from app.trading.broker_mutation_receipts import (
+    BrokerMutationBrokerIoError,
+    BrokerMutationExplicitRejection,
+)
 from tests.broker_mutation_test_support import alpaca_broker_mutation_test_permit
 
 
@@ -636,7 +639,7 @@ class TestAlpacaClient(TestCase):
     def test_service_created_trading_client_makes_one_broker_mutation_attempt(
         self,
     ) -> None:
-        for status_code in (429, 504):
+        for status_code in (409, 429, 504):
             with self.subTest(status_code=status_code):
                 client = TorghutAlpacaClient(
                     api_key="k",
@@ -677,6 +680,48 @@ class TestAlpacaClient(TestCase):
                 mock_request.assert_called_once()
                 self.assertEqual(mock_request.call_args.args[0], "POST")
                 mock_sleep.assert_not_called()
+
+    def test_explicit_http_403_is_a_terminal_broker_rejection(self) -> None:
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            data_client=DummyDataClient(),
+        )
+        response = Mock(spec=Response)
+        response.status_code = 403
+        response.text = (
+            '{"code":40310000,'
+            '"message":"cost basis must be >= minimal amount of order 10"}'
+        )
+        response.raise_for_status.side_effect = HTTPError(response=response)
+
+        with (
+            patch(
+                "alpaca.common.rest.Session.request", return_value=response
+            ) as request,
+            patch("alpaca.common.rest.time.sleep") as sleep,
+            self.assertRaises(BrokerMutationExplicitRejection) as raised,
+        ):
+            _fenced_submit(
+                OrderFirewall(client),
+                symbol="BTC/USD",
+                side="buy",
+                qty=0.00004,
+                order_type="limit",
+                time_in_force="ioc",
+                limit_price=67000,
+            )
+
+        self.assertEqual(raised.exception.broker_status, "http_403")
+        self.assertEqual(raised.exception.rejection_code, "40310000")
+        self.assertEqual(
+            raised.exception.detail,
+            "cost basis must be >= minimal amount of order 10",
+        )
+        self.assertIsInstance(raised.exception.__cause__, APIError)
+        request.assert_called_once()
+        sleep.assert_not_called()
 
     def test_service_created_read_client_keeps_sdk_retry_behavior(self) -> None:
         for status_code in (429, 504):

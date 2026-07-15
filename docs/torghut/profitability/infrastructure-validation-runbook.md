@@ -213,3 +213,30 @@ This migration is necessary but is not the lifecycle proof. Do not manually comp
 Slice 6 is proven from migration presence. The bounded Alpaca-paper lifecycle runner, immutable image promotion, broker
 readback, CNPG receipt chain, and independent absence from candidate/PnL/ledger evidence must all pass before
 `reduction_fencing_proven` can become true.
+
+### Live broker minimum correction
+
+The first promoted lifecycle attempt on 2026-07-15 UTC disproved the original `$5` assumption. Alpaca paper returned
+HTTP `403`, code `40310000`, and an explicit `$10` minimum-cost-basis rejection even though the Assets response's
+`min_order_size` allowed the requested quantity. The attempt created no broker order, position, open order, execution,
+or trade decision. The old adapter incorrectly collapsed that definitive response into ambiguous broker I/O; retain
+that historical receipt and its absence observations rather than rewriting it.
+
+Migration `0073_live_paper_bounds` raises only the lifecycle-plan ceiling to `$30`; the known-null submit proof remains
+at `$1`. A lifecycle plan must keep the root order at or below `$30` and must allocate both the partial close and final
+residual at a plan notional of at least `$12` each. The `$12` guard is a deterministic buffer over the observed `$10`
+broker floor, not permission to skip fresh quote readback. Immediately before issuance, independently verify that the
+entry limit is marketable and that both close quantities remain above the broker's current minimum cost basis. Stop if
+those conditions cannot coexist under the `$30` root cap.
+
+For example, when BTC/USD is below `$70,000`, `qty=0.0004`, `limit_price=70000`, and
+`partial_close_qty=0.0002` bind at most `$28` of paper exposure and give each planned close leg `$14` of plan notional.
+Resting and replacement close limits must remain strictly above the entry limit and each other. Recompute the immutable
+plan digest after every price or quantity change; never widen a signed permit in place.
+
+An Alpaca HTTP `400`, `401`, `403`, `404`, or `422` response definitively refuses the request and now settles the
+existing receipt as `rejected`, without a fabricated broker reference or success callback. Every other status,
+including conflict, timeout, rate-limit, transport, and server failures, remains ambiguous and stays in `broker_io` for
+read-only reconciliation. These are the synchronous failures documented by the official
+[order endpoint](https://docs.alpaca.markets/us/reference/createorderforaccount); live broker behavior remains the
+authority when published minimum metadata and the order endpoint disagree.

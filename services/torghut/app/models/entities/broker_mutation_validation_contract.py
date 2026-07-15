@@ -54,7 +54,7 @@ purpose <> 'control_plane_validation' OR COALESCE((
           WHEN canonical_intent_json::jsonb #>>
                '{request,infrastructure_validation,test_plan,schema_version}' =
                'torghut.infrastructure-validation-lifecycle-plan.v1'
-          THEN 5 ELSE 1
+          THEN 30 ELSE 1
          END
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric
@@ -65,7 +65,7 @@ purpose <> 'control_plane_validation' OR COALESCE((
           WHEN canonical_intent_json::jsonb #>>
                '{request,infrastructure_validation,test_plan,schema_version}' =
                'torghut.infrastructure-validation-lifecycle-plan.v1'
-          THEN 5 ELSE 1
+          THEN 30 ELSE 1
          END
   AND (canonical_intent_json::jsonb #>>
        '{request,infrastructure_validation,permit,max_loss_usd}')::numeric

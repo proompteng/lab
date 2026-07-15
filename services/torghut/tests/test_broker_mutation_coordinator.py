@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
@@ -21,6 +22,7 @@ from app.models import (
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
     BrokerMutationIntent,
+    BrokerMutationExplicitRejection,
     BrokerMutationIoPermit,
     BrokerMutationIoPermitExpectation,
     BrokerMutationReceiptValidationError,
@@ -36,6 +38,7 @@ from app.trading.broker_mutation_coordinator import (
     BrokerMutationAlreadyProcessed,
     BrokerMutationDeferred,
     BrokerMutationPreflightFailed,
+    BrokerMutationRejected,
     BrokerMutationUnresolved,
     BrokerMutationCoordinator,
     LinkedOrderSubmission,
@@ -220,6 +223,20 @@ def _states(factory: sessionmaker[Session]) -> tuple[str | None, str | None, int
         )
 
 
+def _latest_settlement(
+    factory: sessionmaker[Session],
+) -> tuple[str | None, dict[str, object]]:
+    with factory() as session:
+        latest = session.execute(
+            select(BrokerMutationReceiptEvent)
+            .order_by(BrokerMutationReceiptEvent.sequence_no.desc())
+            .limit(1)
+        ).scalar_one()
+    evidence = json.loads(str(latest.settlement_evidence_json))
+    assert isinstance(evidence, dict)
+    return latest.settlement_outcome, evidence
+
+
 def test_invalid_intent_fails_before_claim_or_broker_call(
     sessions: sessionmaker[Session],
 ) -> None:
@@ -396,6 +413,61 @@ def test_failure_after_io_boundary_is_unresolved_and_never_retried(
 
     assert _states(sessions) == ("broker_io", "broker_io", 0)
     with sessions() as session, pytest.raises(BrokerMutationDeferred):
+        coordinator.submit_linked_order(
+            session,
+            request=_request(decision),
+            callbacks=_linked_callbacks(session, decision, broker_call),
+        )
+    assert broker_calls == 1
+
+
+def test_explicit_linked_broker_rejection_settles_claim_and_receipt(
+    sessions: sessionmaker[Session],
+) -> None:
+    decision = _decision(sessions)
+    coordinator = _coordinator()
+    broker_calls = 0
+
+    def broker_call(_permit: object) -> Mapping[str, object]:
+        nonlocal broker_calls
+        broker_calls += 1
+        raise BrokerMutationExplicitRejection(
+            broker_status="http_403",
+            rejection_code="40310000",
+            detail="cost basis below broker minimum",
+        )
+
+    def forbidden_execution(_response: Mapping[str, object]) -> Execution:
+        raise AssertionError("rejection must not persist an execution")
+
+    with (
+        sessions() as session,
+        pytest.raises(
+            BrokerMutationRejected,
+            match="linked_submission_broker_rejected.*http_403:40310000",
+        ),
+    ):
+        coordinator.submit_linked_order(
+            session,
+            request=_request(decision),
+            callbacks=_linked_callbacks(
+                session,
+                decision,
+                broker_call,
+                persist_execution=forbidden_execution,
+            ),
+        )
+
+    assert broker_calls == 1
+    assert _states(sessions) == ("rejected", "settled", 0)
+    outcome, evidence = _latest_settlement(sessions)
+    assert outcome == "rejected"
+    broker_evidence = evidence["evidence"]
+    assert isinstance(broker_evidence, dict)
+    assert broker_evidence["broker_status"] == "http_403"
+    assert broker_evidence["rejection_code"] == "40310000"
+
+    with sessions() as session, pytest.raises(BrokerMutationRejected):
         coordinator.submit_linked_order(
             session,
             request=_request(decision),
@@ -687,6 +759,68 @@ def test_unlinked_timeout_stays_unresolved_and_is_not_retried(
     assert status["unresolved_submit_receipt_count"] == 1
     assert status["unresolved_reduction_receipt_count"] == 0
     assert status["settled_receipt_count"] == 0
+
+
+def test_explicit_unlinked_broker_rejection_settles_without_terminal_callback(
+    sessions: sessionmaker[Session],
+) -> None:
+    coordinator = _coordinator()
+    intent = _unlinked_intent()
+    broker_calls = 0
+
+    def broker_call(_permit: object) -> Mapping[str, object]:
+        nonlocal broker_calls
+        broker_calls += 1
+        raise BrokerMutationExplicitRejection(
+            broker_status="http_422",
+            rejection_code="42210000",
+            detail="order rejected",
+        )
+
+    def forbidden_terminal(_result: Mapping[str, object]) -> None:
+        raise AssertionError("rejection must not run the success callback")
+
+    def forbidden_settlement(
+        _result: Mapping[str, object],
+    ) -> BrokerMutationSettlement:
+        raise AssertionError("rejection must use the coordinator settlement")
+
+    callbacks = UnlinkedMutationCallbacks(
+        broker_call=broker_call,
+        persist_terminal=forbidden_terminal,
+        build_settlement=forbidden_settlement,
+    )
+    with (
+        sessions() as session,
+        pytest.raises(
+            BrokerMutationRejected,
+            match="unlinked_submission_broker_rejected.*http_422:42210000",
+        ),
+    ):
+        coordinator.execute_unlinked_mutation(
+            session,
+            intent=intent,
+            callbacks=callbacks,
+        )
+
+    assert broker_calls == 1
+    assert _states(sessions) == (None, "settled", 0)
+    outcome, evidence = _latest_settlement(sessions)
+    assert outcome == "rejected"
+    assert evidence["evidence"] == {
+        "broker_status": "http_422",
+        "detail": "order rejected",
+        "rejection_code": "42210000",
+        "schema_version": "torghut.broker-mutation-explicit-rejection.v1",
+    }
+
+    with sessions() as session, pytest.raises(BrokerMutationAlreadyProcessed):
+        coordinator.execute_unlinked_mutation(
+            session,
+            intent=intent,
+            callbacks=callbacks,
+        )
+    assert broker_calls == 1
 
 
 def test_reduction_timeout_uses_operation_specific_error_scope(

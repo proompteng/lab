@@ -38,7 +38,11 @@ def _normalized_sql(sql: str) -> str:
     return " ".join(sql.split())
 
 
-def _assert_lifecycle_validation_invariants(sql: str) -> None:
+def _assert_lifecycle_validation_invariants(
+    sql: str,
+    *,
+    lifecycle_cap: int,
+) -> None:
     normalized = _normalized_sql(sql)
 
     assert "torghut.infrastructure-validation-order-plan.v1" in normalized
@@ -62,9 +66,11 @@ def _assert_lifecycle_validation_invariants(sql: str) -> None:
     assert "test_plan,partial_close_qty}')::numeric <" in normalized
     assert "test_plan,replacement_close_limit_price}')::numeric >" in normalized
     assert "test_plan,resting_close_limit_price}')::numeric >" in normalized
-    assert normalized.count("THEN 5 ELSE 1") == 2 or (
-        normalized.count("permit,max_notional_usd}')::numeric <= 5") == 1
-        and normalized.count("permit,max_loss_usd}')::numeric <= 5") == 1
+    assert normalized.count(f"THEN {lifecycle_cap} ELSE 1") == 2 or (
+        normalized.count(f"permit,max_notional_usd}}')::numeric <= {lifecycle_cap}")
+        == 1
+        and normalized.count(f"permit,max_loss_usd}}')::numeric <= {lifecycle_cap}")
+        == 1
         and normalized.count("permit,max_notional_usd}')::numeric <= 1") == 1
         and normalized.count("permit,max_loss_usd}')::numeric <= 1") == 1
     )
@@ -182,8 +188,14 @@ def test_receipt_header_mirrors_validation_authority_and_permit_guards() -> None
     migration = load_migration_module("0072_infrastructure_validation_lifecycle.py")
     migration_validation_sql = str(getattr(migration, "_VALIDATION_AUTHORITY_0072"))
     migration_lineage_sql = str(getattr(migration, "_LINEAGE_CONTRACT_0072"))
-    _assert_lifecycle_validation_invariants(BROKER_MUTATION_VALIDATION_AUTHORITY_SQL)
-    _assert_lifecycle_validation_invariants(migration_validation_sql)
+    _assert_lifecycle_validation_invariants(
+        BROKER_MUTATION_VALIDATION_AUTHORITY_SQL,
+        lifecycle_cap=30,
+    )
+    _assert_lifecycle_validation_invariants(
+        migration_validation_sql,
+        lifecycle_cap=5,
+    )
     _assert_lifecycle_lineage_invariants(BROKER_MUTATION_VALIDATION_LINEAGE_SQL)
     _assert_lifecycle_lineage_invariants(migration_lineage_sql)
     assert "torghut.infrastructure-validation-lifecycle-plan.v1" in ddl

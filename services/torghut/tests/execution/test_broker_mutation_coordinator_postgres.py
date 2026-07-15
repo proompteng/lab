@@ -5,7 +5,7 @@ import json
 import uuid
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from threading import Barrier, Event, Lock
 from typing import cast
@@ -14,7 +14,6 @@ import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import select, text
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -56,9 +55,7 @@ from app.trading.infrastructure_validation import (
     InfrastructureValidationPermit,
     authorize_infrastructure_validation_order,
     infrastructure_validation_client_order_id,
-    infrastructure_validation_order_plan_sha256,
     infrastructure_validation_request_payload,
-    infrastructure_validation_terminal_state_sha256,
 )
 from app.trading.infrastructure_validation_submit import (
     InfrastructureValidationSubmitContext,
@@ -71,29 +68,11 @@ from tests.execution.decision_submission_claims_postgres_support import (
     drop_schema,
     insert_decision,
 )
-
-
-def _upgrade_validation_submit_schema(
-    alembic: AlembicConfig,
-    schema_engine: Engine,
-) -> None:
-    """Apply the accelerated receipt lineage with its historical catalog prerequisite."""
-
-    command.stamp(alembic, "0057_generic_multifactor_machine")
-    command.upgrade(alembic, "0061_linked_submission_terminal")
-    command.stamp(alembic, "0065_strategy_capital_compat")
-    with schema_engine.begin() as connection:
-        connection.execute(
-            text(
-                """
-                CREATE TABLE torghut_options_contract_catalog (
-                    contract_symbol TEXT PRIMARY KEY,
-                    status TEXT NOT NULL
-                )
-                """
-            )
-        )
-    command.upgrade(alembic, "0068_validation_submit")
+from tests.execution.infrastructure_validation_postgres_support import (
+    upgrade_validation_submit_schema,
+    validation_fixture,
+    validation_settlement,
+)
 
 
 @pytest.mark.skipif(
@@ -383,7 +362,7 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
         future=True,
     )
     now = datetime.now(timezone.utc)
-    permit, plan = _validation_fixture(now)
+    permit, plan = validation_fixture(now)
     request = InfrastructureValidationOrderSubmission(
         permit=permit,
         plan=plan,
@@ -418,13 +397,13 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
     callbacks = UnlinkedMutationCallbacks(
         broker_call=broker_call,
         persist_terminal=lambda _result: None,
-        build_settlement=_validation_settlement,
+        build_settlement=validation_settlement,
     )
 
     try:
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        _upgrade_validation_submit_schema(alembic, schema_engine)
+        upgrade_validation_submit_schema(alembic, schema_engine)
 
         def run(component: str) -> str:
             with sessions() as session:
@@ -487,7 +466,7 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
             "acknowledged",
         )
 
-        reused_permit, reused_plan = _validation_fixture(
+        reused_permit, reused_plan = validation_fixture(
             now,
             permit_id=permit.permit_id,
             symbol="ETH/USD",
@@ -514,7 +493,7 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
 
 def test_control_plane_validation_cannot_use_generic_unlinked_entrypoint() -> None:
     now = datetime.now(timezone.utc)
-    permit, plan = _validation_fixture(now)
+    permit, plan = validation_fixture(now)
     request_payload = infrastructure_validation_request_payload(permit, plan)
     intent = build_broker_mutation_intent(
         BrokerMutationIntentRequest(
@@ -543,7 +522,7 @@ def test_control_plane_validation_cannot_use_generic_unlinked_entrypoint() -> No
             callbacks=UnlinkedMutationCallbacks(
                 broker_call=lambda _permit: {},
                 persist_terminal=lambda _result: None,
-                build_settlement=_validation_settlement,
+                build_settlement=validation_settlement,
             ),
         )
 
@@ -559,7 +538,7 @@ def test_postgres_validation_authority_rejects_forged_or_incomplete_intents(
         "validation_authority"
     )
     now = datetime.now(timezone.utc)
-    permit, plan = _validation_fixture(now, permit_id="ivp-authority-test")
+    permit, plan = validation_fixture(now, permit_id="ivp-authority-test")
     client_order_id = infrastructure_validation_client_order_id(permit, plan)
     intent = build_broker_mutation_intent(
         BrokerMutationIntentRequest(
@@ -578,7 +557,7 @@ def test_postgres_validation_authority_rejects_forged_or_incomplete_intents(
     try:
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        _upgrade_validation_submit_schema(alembic, schema_engine)
+        upgrade_validation_submit_schema(alembic, schema_engine)
 
         base_document = json.loads(intent.canonical_intent_json)
         forged_documents: list[dict[str, object]] = []
@@ -672,7 +651,7 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
         future=True,
     )
     now = datetime.now(timezone.utc)
-    permit, plan = _validation_fixture(now, permit_id="ivp-runner-one")
+    permit, plan = validation_fixture(now, permit_id="ivp-runner-one")
     client = _FakeValidationAlpacaClient()
     observed_authorization_times: list[datetime] = []
 
@@ -707,7 +686,7 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         monkeypatch.setattr(settings, "trading_kill_switch_enabled", False)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        _upgrade_validation_submit_schema(alembic, schema_engine)
+        upgrade_validation_submit_schema(alembic, schema_engine)
         with schema_engine.begin() as connection:
             connection.execute(
                 text(
@@ -824,79 +803,6 @@ class _FakeValidationAlpacaClient:
         }
         self.submissions.append(order)
         return order
-
-
-def _validation_fixture(
-    now: datetime,
-    *,
-    permit_id: str = "ivp-postgres-one",
-    symbol: str = "BTC/USD",
-) -> tuple[InfrastructureValidationPermit, InfrastructureValidationOrderPlan]:
-    plan = InfrastructureValidationOrderPlan.model_validate(
-        {
-            "schema_version": "torghut.infrastructure-validation-order-plan.v1",
-            "venue": "alpaca",
-            "asset_class": "crypto",
-            "symbol": symbol,
-            "side": "buy",
-            "qty": "1",
-            "order_type": "limit",
-            "time_in_force": "ioc",
-            "limit_price": "1",
-            "stop_price": None,
-        }
-    )
-    return (
-        InfrastructureValidationPermit.model_validate(
-            {
-                "schema_version": "torghut.infrastructure-validation-permit.v2",
-                "permit_id": permit_id,
-                "purpose": "control_plane_validation",
-                "venue": "alpaca",
-                "asset_class": "crypto",
-                "account_mode": "paper",
-                "market_session": "continuous",
-                "account_label": "dedicated-validation-paper",
-                "broker_base_url": "https://paper-api.alpaca.markets",
-                "symbols": [symbol],
-                "sides": ["buy"],
-                "order_types": ["limit"],
-                "max_orders": 1,
-                "max_outstanding_intents": 1,
-                "max_notional_usd": "1",
-                "max_loss_usd": "1",
-                "issued_by": "infrastructure-owner",
-                "approved_by": "independent-infrastructure-owner",
-                "issued_at": now - timedelta(seconds=1),
-                "expires_at": now + timedelta(minutes=5),
-                "test_plan_digest": infrastructure_validation_order_plan_sha256(plan),
-                "expected_terminal_state": "no_open_orders_no_positions_no_unsettled_claims",
-                "expected_terminal_state_digest": infrastructure_validation_terminal_state_sha256(),
-                "evidence_tag": "non_promotable_validation",
-                "promotable": False,
-            }
-        ),
-        plan,
-    )
-
-
-def _validation_settlement(
-    result: Mapping[str, object],
-) -> BrokerMutationSettlement:
-    return build_broker_mutation_settlement(
-        BrokerMutationSettlementRequest(
-            source="primary",
-            outcome="acknowledged",
-            broker_reference=str(result.get("id") or "validation-rejected"),
-            execution_id=None,
-            evidence_payload={
-                "schema_version": "torghut.infrastructure-validation-submit-terminal.v1",
-                "evidence_tag": "non_promotable_validation",
-                "promotable": False,
-                "broker_status": str(result.get("status") or "unknown"),
-            },
-        )
-    )
 
 
 def _persist_execution(

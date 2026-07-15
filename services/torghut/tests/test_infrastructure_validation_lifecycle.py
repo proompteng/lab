@@ -275,6 +275,9 @@ class _LifecycleBroker:
         status: str,
         filled_quantity: Decimal,
     ) -> dict[str, object]:
+        fill_price = (
+            limit_price - Decimal("1") if limit_price is not None else Decimal("65000")
+        )
         order = {
             "id": order_id,
             "client_order_id": client_order_id,
@@ -286,7 +289,7 @@ class _LifecycleBroker:
             "limit_price": str(limit_price) if limit_price is not None else None,
             "status": status,
             "filled_qty": str(filled_quantity),
-            "filled_avg_price": "99999" if filled_quantity else None,
+            "filled_avg_price": str(fill_price) if filled_quantity else None,
         }
         self._orders[order_id] = order
         self._position_after_order[order_id] = self._position_quantity
@@ -396,14 +399,14 @@ def lifecycle_runtime(
             "asset_class": "crypto",
             "symbol": "BTC/USD",
             "side": "buy",
-            "qty": "0.00004",
+            "qty": "0.0004",
             "order_type": "limit",
             "time_in_force": "ioc",
-            "limit_price": "100000",
+            "limit_price": "70000",
             "stop_price": None,
-            "resting_close_limit_price": "200000",
-            "replacement_close_limit_price": "210000",
-            "partial_close_qty": "0.00002",
+            "resting_close_limit_price": "130000",
+            "replacement_close_limit_price": "140000",
+            "partial_close_qty": "0.0002",
         }
     )
     now = datetime.now(timezone.utc)
@@ -423,8 +426,8 @@ def lifecycle_runtime(
             "order_types": ["limit"],
             "max_orders": 1,
             "max_outstanding_intents": 1,
-            "max_notional_usd": "5",
-            "max_loss_usd": "5",
+            "max_notional_usd": "30",
+            "max_loss_usd": "30",
             "issued_by": "infrastructure-owner",
             "approved_by": "independent-infrastructure-owner",
             "issued_at": now - timedelta(seconds=1),
