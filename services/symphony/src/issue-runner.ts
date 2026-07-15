@@ -308,14 +308,14 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                   issueState: issue.state,
                 }
 
-                yield* withSymphonyEffectSpan(
-                  'symphony.worker_attempt.before_run_hook',
-                  { 'issue.identifier': issue.identifier, 'workspace.path': workspaceInfo.path },
-                  workspace.runBeforeRun(workspaceInfo.path, hookContext),
-                  { parentSpan: runSpan },
-                )
-
                 const result = yield* Effect.gen(function* () {
+                  yield* withSymphonyEffectSpan(
+                    'symphony.worker_attempt.before_run_hook',
+                    { 'issue.identifier': issue.identifier, 'workspace.path': workspaceInfo.path },
+                    workspace.runBeforeRun(workspaceInfo.path, hookContext),
+                    { parentSpan: runSpan },
+                  )
+
                   for (let turnNumber = 1; turnNumber <= config.agent.maxTurns; turnNumber += 1) {
                     const prompt =
                       turnNumber === 1
