@@ -274,7 +274,9 @@ spec:
           scaleSetLabels:
             - arc-arm64
           minRunners: 1
-          maxRunners: 5
+          # The Altra node currently has about 94Gi of kubelet-local free space. Keep one hard-capped analysis
+          # workspace until additional local capacity is provisioned instead of letting concurrent jobs evict pods.
+          maxRunners: 1
           listenerTemplate:
             spec:
               dnsConfig:
@@ -292,7 +294,7 @@ spec:
               securityContext:
                 runAsNonRoot: false
                 # ARC runners need a writable tool cache under /home/runner/_work/_tool.
-                # With PVC-backed work dirs, the volume is root-owned by default; set an fsGroup so the
+                # The analysis work directory is a disposable node-local emptyDir; set an fsGroup so the
                 # non-root runner user can create directories before any workflow steps run.
                 fsGroup: 1001
                 fsGroupChangePolicy: OnRootMismatch
@@ -376,14 +378,8 @@ spec:
                       mountPath: /home/runner/externals
               volumes:
                 - name: work
-                  ephemeral:
-                    volumeClaimTemplate:
-                      spec:
-                        accessModes: ["ReadWriteOnce"]
-                        storageClassName: "rook-ceph-block"
-                        resources:
-                          requests:
-                            storage: 20Gi
+                  emptyDir:
+                    sizeLimit: 20Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals

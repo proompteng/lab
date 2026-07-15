@@ -48,7 +48,7 @@ const releaseGuardFragmentForPath = (path: string): string => {
 }
 
 describe('ARC Nix runner toolchain', () => {
-  it('keeps lab ARC runners on local work dirs while making runner images releasable by digest', () => {
+  it('keeps ARC runner scratch writes off shared Ceph while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
@@ -60,7 +60,11 @@ describe('ARC Nix runner toolchain', () => {
       expect(block).not.toContain('storageClassName: "rook-ceph-block"')
       expect(block).not.toContain('volumeClaimTemplate:')
     }
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('storageClassName: "rook-ceph-block"')
+    const analysisBlock = runnerScaleSetBlock('analysis-arm64')
+    expect(analysisBlock).toContain('emptyDir:')
+    expect(analysisBlock).toContain('sizeLimit: 20Gi')
+    expect(analysisBlock).not.toContain('volumeClaimTemplate:')
+    expect(analysisBlock).not.toContain('storageClassName: "rook-ceph-block"')
     expect(arcRunnerReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/arc-runner')
     expect(arcRunnerReleaseWorkflow).toContain('arc-runner\\@sha256')
     expect(arcRunnerReleaseWorkflow).toContain('test "$(grep -cF "image: ${IMAGE_REF}"')
@@ -75,7 +79,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
@@ -88,8 +92,8 @@ describe('ARC Nix runner toolchain', () => {
       expect(block).not.toContain('storage: 20Gi')
     }
 
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('storageClassName: "rook-ceph-block"')
-    expect(runnerScaleSetBlock('analysis-arm64')).toContain('storage: 20Gi')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('sizeLimit: 20Gi')
+    expect(runnerScaleSetBlock('analysis-arm64')).not.toContain('volumeClaimTemplate:')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {

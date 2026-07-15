@@ -6,7 +6,8 @@ These runners are not pinned to any specific node by default.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
 - Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
 - The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.
-- Runner workspace storage uses dynamic PVCs (20Gi) and must target an existing RWO StorageClass (currently `local-path`).
+- Runner workspaces use bounded node-local `emptyDir` volumes; analysis is hard-capped at one 20Gi workspace on the
+  Altra node while local kubelet capacity is constrained. No ephemeral runner work directory uses replicated Ceph RBD.
 - Tailscale connectivity now comes from the node-level installation managed by OpenTofu (`tofu/harvester/main.tf`) and Ansible (`ansible/playbooks/install_tailscale.yml`); no sidecar or additional secret is required in the runner pods.
 - ARC runner and listener pods append the tailnet search suffix `ide-newton.ts.net` via `dnsConfig.searches`, so bare tailnet hosts such as `temporal-grpc` resolve from GitHub Actions jobs without hardcoding the full `*.ts.net` name.
 - Generate the `github-token` SealedSecret with `scripts/generate-arc-github-token-secret.sh`. The script reads the token from 1Password via `${ARC_GITHUB_TOKEN_OP_PATH}` (defaults to `op://infra/github personal token/token`) and writes the sealed manifest to `argocd/applications/arc/github-token.yaml`.
