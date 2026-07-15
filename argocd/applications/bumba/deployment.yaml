@@ -134,9 +134,9 @@ spec:
               value: "2"
             - name: BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS
               value: "30000"
-            # Keep event ingestion stopped through the destructive Atlas rebuild. Re-enable only after atlas:verify.
+            # One consumer reconciles default-branch events after the Atlas production verification gates pass.
             - name: BUMBA_GITHUB_EVENT_CONSUMER_ENABLED
-              value: "false"
+              value: "true"
             - name: BUMBA_ATLAS_DEFAULT_REF
               value: main
             - name: BUMBA_ATLAS_PREPARE_CONCURRENCY
