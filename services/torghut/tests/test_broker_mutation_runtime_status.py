@@ -26,5 +26,9 @@ def test_database_status_unavailability_fails_entry_capability_closed() -> None:
 
     assert payload["runtime_wired"] is True
     assert payload["entry_fencing_proven"] is False
+    assert payload["recovery_degraded"] is True
     assert payload["database_status"] == "unavailable"
-    assert payload["reason_codes"][0] == "broker_mutation_database_status_unavailable"
+    assert payload["reason_codes"][:2] == [
+        "broker_mutation_database_status_unavailable",
+        "broker_mutation_recovery_database_status_unavailable",
+    ]
