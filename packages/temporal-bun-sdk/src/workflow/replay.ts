@@ -1065,9 +1065,9 @@ export const resolveNexusOperationHistoryIdentities = (
     }
     const operationId =
       event.attributes.value.nexusHeader?.[NEXUS_OPERATION_ID_HEADER] ??
-      operationIdsByScheduledEventId.get(scheduledEventId) ??
       markerOperationIdByEvent ??
       markerOperationIdByOrder ??
+      operationIdsByScheduledEventId.get(scheduledEventId) ??
       `nexus-${scheduledEventId}`
 
     operationIdsByScheduledEventId.set(scheduledEventId, operationId)

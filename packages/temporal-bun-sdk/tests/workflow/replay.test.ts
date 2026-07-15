@@ -1157,6 +1157,60 @@ test('resolveNexusOperationHistoryIdentities aliases headerless events to persis
   expect(identities.scheduledEventIdsByOperationId.get('nexus-0')).toBe('42')
 })
 
+test('resolveNexusOperationHistoryIdentities ignores drifted sticky aliases when marker identity is available', () => {
+  const scheduledEvent = create(HistoryEventSchema, {
+    eventId: 42n,
+    eventType: EventType.NEXUS_OPERATION_SCHEDULED,
+    attributes: {
+      case: 'nexusOperationScheduledEventAttributes',
+      value: create(NexusOperationScheduledEventAttributesSchema, {
+        endpoint: 'payments',
+        service: 'billing',
+        operation: 'charge',
+      }),
+    },
+  })
+  const markerState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'marker-operation-id',
+          nexusHeader: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 43n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: DETERMINISM_MARKER_NAME,
+      }),
+    },
+  })
+  const knownScheduleEventIds = new Map([['stale-sticky-operation-id', '42']])
+
+  const identities = resolveNexusOperationHistoryIdentities([scheduledEvent, markerEvent], {
+    markerState,
+    knownScheduleEventIds,
+  })
+
+  expect(identities.operationIdsByScheduledEventId.get('42')).toBe('marker-operation-id')
+  expect(identities.scheduledEventIdsByOperationId.get('marker-operation-id')).toBe('42')
+})
+
 test('ingestWorkflowHistory preserves explicit marker-backed Nexus operation IDs', async () => {
   const converter = createDefaultDataConverter()
   const info: WorkflowInfo = {
