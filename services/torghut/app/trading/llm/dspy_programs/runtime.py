@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from typing import Any, Literal, Mapping, cast
 
 from ....config import settings
-from ..dspy_compile.hashing import hash_payload
+from ..dspy_compile.hashing import canonical_artifact_uri_for_hash, hash_payload
 from ..schema import LLMReviewRequest, LLMReviewResponse
 from .adapters import dspy_output_to_llm_response, review_request_to_dspy_input
 from .committee_programs import (
@@ -290,7 +290,10 @@ class DSPyReviewRuntime:
             row = (
                 session.execute(
                     select(LLMDSPyWorkflowArtifact)
-                    .where(LLMDSPyWorkflowArtifact.artifact_hash == artifact_hash)
+                    .where(
+                        LLMDSPyWorkflowArtifact.artifact_hash == artifact_hash,
+                        LLMDSPyWorkflowArtifact.gate_compatibility == "pass",
+                    )
                     .order_by(LLMDSPyWorkflowArtifact.created_at.desc())
                 )
                 .scalars()
@@ -300,7 +303,7 @@ class DSPyReviewRuntime:
         if row is None:
             return None
 
-        if row.gate_compatibility and row.gate_compatibility != "pass":
+        if row.gate_compatibility != "pass":
             raise DSPyRuntimeUnsupportedStateError(
                 "dspy_artifact_gate_compatibility_failed"
             )
@@ -322,18 +325,31 @@ class DSPyReviewRuntime:
                 "dspy_artifact_missing_reproducibility_fields"
             )
 
-        computed_hash = hash_payload(
-            {
-                "program_name": program_name,
-                "signature_versions": signature_versions,
-                "optimizer": row.optimizer,
-                "dataset_hash": row.dataset_hash,
-                "compiled_prompt_hash": row.compiled_prompt_hash,
-                "compiled_artifact_uri": row.artifact_uri,
-                "reproducibility_hash": row.reproducibility_hash,
-            }
-        )
-        if computed_hash != artifact_hash:
+        hash_payload_base = {
+            "program_name": program_name,
+            "signature_versions": signature_versions,
+            "optimizer": row.optimizer,
+            "dataset_hash": row.dataset_hash,
+            "compiled_prompt_hash": row.compiled_prompt_hash,
+            "reproducibility_hash": row.reproducibility_hash,
+        }
+        accepted_hashes = {
+            hash_payload(
+                {
+                    **hash_payload_base,
+                    "compiled_artifact_uri": canonical_artifact_uri_for_hash(
+                        row.artifact_uri
+                    ),
+                }
+            ),
+            hash_payload(
+                {
+                    **hash_payload_base,
+                    "compiled_artifact_uri": row.artifact_uri,
+                }
+            ),
+        }
+        if artifact_hash not in accepted_hashes:
             raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_mismatch")
 
         metadata: dict[str, Any] = {}

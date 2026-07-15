@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 
 from .....config import settings
 from .....models import LLMDSPyWorkflowArtifact, coerce_json_payload
-from ..hashing import hash_payload
+from ..hashing import (
+    canonical_artifact_uri_for_hash,
+    canonical_metric_bundle_for_hash,
+    hash_payload,
+)
 from ..schemas import (
     DSPyArtifactBundle,
     DSPyCompileResult,
@@ -160,7 +164,7 @@ def build_compile_result(
             "dataset_hash": dataset_hash,
             "compiled_prompt_hash": compiled_prompt_hash,
             "seed": seed,
-            "metric_bundle": dict(metric_bundle),
+            "metric_bundle": canonical_metric_bundle_for_hash(metric_bundle),
         }
     )
     artifact_hash = hash_payload(
@@ -170,7 +174,9 @@ def build_compile_result(
             "optimizer": optimizer,
             "dataset_hash": dataset_hash,
             "compiled_prompt_hash": compiled_prompt_hash,
-            "compiled_artifact_uri": compiled_artifact_uri,
+            "compiled_artifact_uri": canonical_artifact_uri_for_hash(
+                compiled_artifact_uri
+            ),
             "reproducibility_hash": reproducibility_hash,
         }
     )

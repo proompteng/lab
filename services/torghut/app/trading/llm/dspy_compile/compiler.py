@@ -13,7 +13,7 @@ from urllib.parse import unquote, urlsplit
 import yaml
 
 from ..schema import LLMReviewResponse
-from .hashing import canonical_json, hash_payload
+from .hashing import canonical_json, canonical_metric_bundle_for_hash, hash_payload
 from .schemas import DSPyCompileResult
 from .workflow import build_compile_result
 
@@ -101,16 +101,16 @@ def compile_dspy_program_artifacts(
     metric_policy_path = _resolve_local_ref_path(
         normalized_metric_policy_ref, field_name="metric_policy_ref"
     )
-    canonical_dataset_ref = _canonical_local_ref(dataset_path)
-    canonical_metric_policy_ref = _canonical_local_ref(metric_policy_path)
-
-    canonical_dataset_ref = str(dataset_path)
-    canonical_metric_policy_ref = str(metric_policy_path)
 
     dataset_payload = _load_json_mapping(dataset_path, field_name="dataset_ref")
     metric_policy_payload = _load_yaml_mapping(
         metric_policy_path, field_name="metric_policy_ref"
     )
+
+    dataset_hash = hash_payload(dataset_payload)
+    metric_policy_hash = hash_payload(metric_policy_payload)
+    canonical_dataset_ref = f"sha256:{dataset_hash}"
+    canonical_metric_policy_ref = f"sha256:{metric_policy_hash}"
 
     output_dir = Path(normalized_artifact_ref).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -122,8 +122,6 @@ def compile_dspy_program_artifacts(
     compiled_artifact_path = output_dir / normalized_compiled_artifact_name
 
     signature_versions = {"trade_review": normalized_signature_version}
-    dataset_hash = hash_payload(dataset_payload)
-    metric_policy_hash = hash_payload(metric_policy_payload)
     row_counts_by_split = _count_rows_by_split(dataset_payload.get("rows"))
     dataset_rows = sum(row_counts_by_split.values())
 
@@ -146,7 +144,7 @@ def compile_dspy_program_artifacts(
         latency_p95_ms=latency_p95_ms,
     )
     metric_bundle.update(observed_metrics)
-    metric_bundle_hash = hash_payload(metric_bundle)
+    metric_bundle_hash = hash_payload(canonical_metric_bundle_for_hash(metric_bundle))
 
     compiled_artifact_payload: dict[str, Any] = {
         "schemaVersion": COMPILED_ARTIFACT_SCHEMA_VERSION,
@@ -253,10 +251,6 @@ def _resolve_local_ref_path(ref: str, *, field_name: str) -> Path:
     if not candidate.exists() or not candidate.is_file():
         raise ValueError(f"{field_name}_not_found")
     return candidate.resolve()
-
-
-def _canonical_local_ref(path: Path) -> str:
-    return path.resolve().as_uri()
 
 
 def _load_json_mapping(path: Path, *, field_name: str) -> dict[str, Any]:
