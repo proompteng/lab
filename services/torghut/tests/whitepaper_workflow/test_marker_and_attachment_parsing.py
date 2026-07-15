@@ -525,6 +525,130 @@ https://example.com/paper.pdf
                 contradiction_events[0].required_action, "revalidate_linked_family"
             )
 
+            second_result = service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={"status": "completed"},
+            )
+            self.assertEqual(second_result["status"], "completed")
+            session.commit()
+
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaim)).scalars().all()), 2
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaimRelation)).scalars().all()),
+                1,
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+                ),
+                1,
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()),
+                1,
+            )
+            self.assertEqual(
+                len(session.execute(select(VNextExperimentSpec)).scalars().all()), 1
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperContradictionEvent))
+                    .scalars()
+                    .all()
+                ),
+                1,
+            )
+
+            third_result = service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={
+                    "status": "completed",
+                    "synthesis": {"executive_summary": "narrative-only refresh"},
+                },
+            )
+            self.assertEqual(third_result["status"], "completed")
+            session.commit()
+
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaim)).scalars().all()), 2
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaimRelation)).scalars().all()),
+                1,
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+                ),
+                1,
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()),
+                1,
+            )
+            self.assertEqual(
+                len(session.execute(select(VNextExperimentSpec)).scalars().all()), 1
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperContradictionEvent))
+                    .scalars()
+                    .all()
+                ),
+                1,
+            )
+
+            fourth_result = service.finalize_run(
+                session,
+                run_id=run_row.run_id,
+                payload={
+                    "status": "completed",
+                    "synthesis": {
+                        "executive_summary": "explicit structured replacement",
+                        "claims": [],
+                        "claim_relations": [],
+                        "strategy_templates": [],
+                        "experiment_specs": [],
+                        "contradiction_events": [],
+                    },
+                },
+            )
+            self.assertEqual(fourth_result["status"], "completed")
+            session.commit()
+
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaim)).scalars().all()), 0
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperClaimRelation)).scalars().all()),
+                0,
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperStrategyTemplate)).scalars().all()
+                ),
+                0,
+            )
+            self.assertEqual(
+                len(session.execute(select(WhitepaperExperimentSpec)).scalars().all()),
+                0,
+            )
+            self.assertEqual(
+                len(session.execute(select(VNextExperimentSpec)).scalars().all()), 0
+            )
+            self.assertEqual(
+                len(
+                    session.execute(select(WhitepaperContradictionEvent))
+                    .scalars()
+                    .all()
+                ),
+                0,
+            )
+
     def test_structured_output_helpers_cover_direct_nested_and_gating_merge(
         self,
     ) -> None:
