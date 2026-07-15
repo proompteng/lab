@@ -515,6 +515,24 @@ describe('atlas store', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(false)
   })
 
+  it('keeps content and semantic retrieval for natural-language queries containing a path', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'where is services/deleted/old-atlas.ts implemented',
+      repository: 'proompteng/lab',
+      ref: 'main',
+    })
+
+    const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
+    expect(exactSql?.sql).toMatch(/FROM atlas\.file_chunks AS file_chunks\s+WHERE file_chunks\.content IS NOT NULL/)
+    expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(true)
+  })
+
   it('reports complete reconciliation metadata without sampling rows', async () => {
     const { db, calls } = makeFakeDb({
       repositoryRows: [
