@@ -7,6 +7,8 @@ metadata:
   namespace: registry
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: registry
@@ -15,12 +17,21 @@ spec:
       labels:
         app: registry
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: registry
-          image: registry:3
+          image: registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
           env:
             - name: REGISTRY_CONFIGURATION_PATH
               value: /etc/docker/registry/config.yml
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
           resources:
             limits:
               cpu: "1"
@@ -29,12 +40,56 @@ spec:
               cpu: "200m"
               memory: "64Mi"
           ports:
-            - containerPort: 5000
+            - name: registry-api
+              containerPort: 5000
           volumeMounts:
             - name: registry-config
               mountPath: /etc/docker/registry
             - name: registry-data
               mountPath: /var/lib/registry
+        - name: registry-proxy
+          image: haproxy:3.2.21-alpine@sha256:66e25cc9a8332635f4e897f7f4b1e5622c25f09f0ee23cddc6ce9bdb3a24772a
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 99
+            runAsNonRoot: true
+            runAsUser: 99
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+          ports:
+            - name: registry-http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /v2/
+              port: registry-http
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry-http
+            failureThreshold: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: registry-http
+            failureThreshold: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: registry-proxy-config
+              mountPath: /usr/local/etc/haproxy/haproxy.cfg
+              subPath: haproxy.cfg
+              readOnly: true
       volumes:
         - name: registry-config
           configMap:
@@ -42,3 +97,6 @@ spec:
         - name: registry-data
           persistentVolumeClaim:
             claimName: registry-data
+        - name: registry-proxy-config
+          configMap:
+            name: registry-proxy
