@@ -50,16 +50,10 @@ spec:
         suppress_unstable_features_warning = true
 
         [features]
-        undo = true
         enable_request_compression = true
-        apply_patch_freeform = true
         unified_exec = true
         shell_snapshot = true
-        steer = true
         multi_agent = true
-        child_agents_md = true
-        collaboration_modes = true
-        responses_websockets = false
         goals = true
 
         [shell_environment_policy]

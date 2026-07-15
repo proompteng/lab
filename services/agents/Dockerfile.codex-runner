@@ -10,7 +10,7 @@ FROM node:${NODE_VERSION}-bookworm-slim AS node-runtime
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS codex-cli
 
-ARG CODEX_VERSION=0.130.0
+ARG CODEX_VERSION=0.144.4
 
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
