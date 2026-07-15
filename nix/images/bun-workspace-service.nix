@@ -10,6 +10,7 @@
   depsHash,
   installFilters,
   sourcePaths,
+  runtimeSourceFilter ? (_path: _type: true),
   buildCommands ? [ ],
   runtimeInstallPhase ? null,
   depsName ? serviceName,
@@ -20,6 +21,8 @@
   exposedPorts ? { },
   workingDir ? "/app",
   maxLayers ? 24,
+  runtimeRoot ? null,
+  returnRuntimeRoot ? false,
 }:
 
 let
@@ -66,7 +69,7 @@ let
       || rel == "bunfig.toml"
       || rel == ".npmrc"
       || rel == "tsconfig.base.json"
-      || lib.any (prefix: isUnder prefix rel) sourcePaths;
+      || (lib.any (prefix: isUnder prefix rel) sourcePaths && runtimeSourceFilter rel type);
   };
 
   installFilterArgs = lib.concatMapStringsSep " " (filter: "--filter ${lib.escapeShellArg filter}") installFilters;
@@ -162,7 +165,7 @@ let
     '';
   };
 
-  appRoot = pkgs.stdenvNoCC.mkDerivation {
+  builtRuntimeRoot = pkgs.stdenvNoCC.mkDerivation {
     pname = "${serviceName}-runtime-root";
     version = "0";
     src = runtimeSource;
@@ -243,18 +246,20 @@ let
     '';
   };
 
+  resolvedRuntimeRoot = if runtimeRoot == null then builtRuntimeRoot else runtimeRoot;
+
   runtimePath = lib.makeBinPath ([
     bun
     pkgs.busybox
     pkgs.coreutils
   ] ++ extraContents);
 in
-pkgs.dockerTools.buildLayeredImage {
+if returnRuntimeRoot then builtRuntimeRoot else pkgs.dockerTools.buildLayeredImage {
   name = "registry.ide-newton.ts.net/lab/${imageName}";
   tag = "nix";
   inherit maxLayers;
   contents = [
-    appRoot
+    resolvedRuntimeRoot
     bun
     pkgs.busybox
     pkgs.cacert

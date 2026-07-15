@@ -1,368 +1,122 @@
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'bun:test'
 
 import { classifyAgentsImageMode } from '../resolve-agents-image-mode'
 
 describe('classifyAgentsImageMode', () => {
-  it('reuses the published image for chart-only changes', () => {
-    expect(
-      classifyAgentsImageMode(['scripts/agents/values-ci.yaml', 'charts/agents/templates/deployment.yaml']),
-    ).toEqual({
-      mode: 'reuse-published-image',
-      needsLocalAgentsImage: false,
-      matchedPaths: [],
-    })
-  })
-
-  it('builds a local image for smoke harness changes', () => {
+  it('keeps test-only changes on the Ubuntu unit tier', () => {
     expect(
       classifyAgentsImageMode([
-        'packages/scripts/src/agents/smoke-agents.ts',
+        'services/agents/src/server/health.test.ts',
         'packages/scripts/src/agents/__tests__/smoke-agents.test.ts',
       ]),
     ).toEqual({
-      mode: 'build-local-image',
-      needsLocalAgentsImage: true,
-      matchedPaths: ['packages/scripts/src/agents/smoke-agents.ts'],
-    })
-  })
-
-  it('reuses the published image for agents-ci workflow-only changes', () => {
-    expect(classifyAgentsImageMode(['.github/workflows/agents-ci.yml', 'scripts/agents/values-ci.yaml'])).toEqual({
+      tier: 'unit',
       mode: 'reuse-published-image',
       needsLocalAgentsImage: false,
+      runUnit: true,
+      runStatic: false,
+      runIntegration: false,
+      imageTargets: [],
       matchedPaths: [],
     })
   })
 
-  it('reuses the published image for image classifier-only changes', () => {
+  it('uses published images for chart and smoke-harness changes', () => {
     expect(
       classifyAgentsImageMode([
-        'packages/scripts/src/agents/resolve-agents-image-mode.ts',
-        'packages/scripts/src/agents/__tests__/resolve-agents-image-mode.test.ts',
-        'scripts/agents/values-ci.yaml',
+        'charts/agents/templates/deployment.yaml',
+        'packages/scripts/src/agents/smoke-agents.ts',
       ]),
     ).toEqual({
+      tier: 'published-smoke',
       mode: 'reuse-published-image',
       needsLocalAgentsImage: false,
+      runUnit: true,
+      runStatic: true,
+      runIntegration: true,
+      imageTargets: [],
       matchedPaths: [],
     })
   })
 
-  it('reuses the published image for manual image builder changes', () => {
-    expect(
-      classifyAgentsImageMode([
-        'packages/scripts/src/agents/build-image.ts',
-        'packages/scripts/src/agents/__tests__/build-image.test.ts',
-      ]),
-    ).toEqual({
-      mode: 'reuse-published-image',
-      needsLocalAgentsImage: false,
-      matchedPaths: [],
-    })
+  it('builds only the runner image for runner implementation changes', () => {
+    const result = classifyAgentsImageMode(['services/agents/scripts/codex/agent-runner.ts'])
+
+    expect(result.tier).toBe('local-smoke')
+    expect(result.imageTargets).toEqual(['runner'])
+    expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
-  it('reuses the published image for Jangar build workflow-only changes', () => {
-    expect(
-      classifyAgentsImageMode([
-        '.github/workflows/jangar-build-push.yaml',
-        '.github/workflows/jangar-release.yml',
-        '.github/workflows/jangar-post-deploy-verify.yml',
-      ]),
-    ).toEqual({
-      mode: 'reuse-published-image',
-      needsLocalAgentsImage: false,
-      matchedPaths: [],
-    })
-  })
-
-  it('builds a local image for Agents service changes', () => {
-    const result = classifyAgentsImageMode(['services/agents/src/server/agents-controller/runtime-config.ts'])
-    expect(result.mode).toBe('build-local-image')
-    expect(result.needsLocalAgentsImage).toBe(true)
-    expect(result.matchedPaths).toEqual(['services/agents/src/server/agents-controller/runtime-config.ts'])
-  })
-
-  it('reuses the published Agents image for Jangar-only runtime changes', () => {
-    const result = classifyAgentsImageMode(['services/jangar/src/server/control-plane-status.ts'])
-    expect(result.mode).toBe('reuse-published-image')
-    expect(result.needsLocalAgentsImage).toBe(false)
-    expect(result.matchedPaths).toEqual([])
-  })
-
-  it('reuses the published image for non-Agents product package changes', () => {
-    const result = classifyAgentsImageMode([
-      'apps/froussard/src/app.tsx',
-      'packages/bumba/src/index.ts',
-      'packages/design/src/index.ts',
-      'packages/discord/src/index.ts',
-      'services/bumba/src/main.ts',
-      'services/facteur/internal/server.go',
-      'services/graf/src/main/kotlin/App.kt',
-      'services/torghut/app/main.py',
-    ])
-    expect(result.mode).toBe('reuse-published-image')
-    expect(result.needsLocalAgentsImage).toBe(false)
-    expect(result.matchedPaths).toEqual([])
-  })
-
-  it('builds a local image when bun.lock changes', () => {
-    const result = classifyAgentsImageMode(['bun.lock'])
-    expect(result.mode).toBe('build-local-image')
-    expect(result.matchedPaths).toEqual(['bun.lock'])
-  })
-
-  it('reuses the published image for root package script-only changes', () => {
-    const result = classifyAgentsImageMode(['package.json'])
-    expect(result.mode).toBe('reuse-published-image')
-    expect(result.matchedPaths).toEqual([])
-  })
-
-  it('builds a local image for Agents Nix image input changes', () => {
-    const result = classifyAgentsImageMode([
-      'flake.lock',
-      'nix/images/agents.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/openai-codex-cli.nix',
-      'nix/packages.nix',
-      'packages/scripts/src/shared/nix-oci-deploy.ts',
-      'tsconfig.base.json',
-    ])
-    expect(result.mode).toBe('build-local-image')
-    expect(result.matchedPaths).toEqual([
-      'flake.lock',
-      'nix/images/agents.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/openai-codex-cli.nix',
-      'nix/packages.nix',
-      'packages/scripts/src/shared/nix-oci-deploy.ts',
-      'tsconfig.base.json',
+  it('builds every image that embeds the Codex workspace package', () => {
+    expect(classifyAgentsImageMode(['packages/codex/src/app-server.ts']).imageTargets).toEqual([
+      'control-plane',
+      'controller',
+      'runner',
     ])
   })
 
-  it('reuses the published image for Docker helper changes', () => {
-    const result = classifyAgentsImageMode(['packages/scripts/src/shared/docker.ts'])
-    expect(result.mode).toBe('reuse-published-image')
-    expect(result.matchedPaths).toEqual([])
-  })
-
-  it('builds a local image for shared Agents runtime dependency package changes', () => {
-    const result = classifyAgentsImageMode(['packages/temporal-bun-sdk/src/index.ts'])
-    expect(result.mode).toBe('build-local-image')
-    expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
-  })
-
-  it('builds a local image for Agents public contract changes', () => {
-    const result = classifyAgentsImageMode(['packages/agent-contracts/src/control-plane-status.ts'])
-    expect(result.mode).toBe('build-local-image')
-    expect(result.matchedPaths).toEqual(['packages/agent-contracts/src/control-plane-status.ts'])
-  })
-
-  it('reuses the published image for documentation-only changes under local image prefixes', () => {
-    expect(
-      classifyAgentsImageMode([
-        'services/agents/README.md',
-        'services/jangar/README.md',
-        'packages/temporal-bun-sdk/CHANGELOG.md',
-        'packages/codex/docs/worker.mdx',
-      ]),
-    ).toEqual({
-      mode: 'reuse-published-image',
-      needsLocalAgentsImage: false,
-      matchedPaths: [],
-    })
-  })
-
-  it('ignores documentation paths while still matching source changes', () => {
+  it('builds the service pair for control-plane dependencies', () => {
     const result = classifyAgentsImageMode([
-      'packages/temporal-bun-sdk/CHANGELOG.md',
+      'packages/agent-contracts/src/control-plane-status.ts',
+      'packages/otel/src/api.ts',
       'packages/temporal-bun-sdk/src/index.ts',
     ])
 
-    expect(result.mode).toBe('build-local-image')
-    expect(result.matchedPaths).toEqual(['packages/temporal-bun-sdk/src/index.ts'])
-  })
-})
-
-describe('agents-ci workflow local Agents image build', () => {
-  it('keeps local image integration validation on the amd64 ARC pool', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
-
-    expect(workflow).toContain('integration:\n    runs-on: arc-amd64')
-    expect(workflow).not.toContain('integration:\n    runs-on: arc-arm64')
+    expect(result.imageTargets).toEqual(['control-plane', 'controller'])
+    expect(result.needsLocalAgentsImage).toBe(true)
+    expect(result.runIntegration).toBe(true)
   })
 
-  it('sets up Nix for local CI image archive builds', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('builds the service pair for Agents server source changes', () => {
+    const result = classifyAgentsImageMode(['services/agents/src/server/agents-controller/runtime-config.ts'])
 
-    expect(workflow).toContain('Set up Nix for local Agents image archives')
-    expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
-    expect(workflow).toContain("require-preinstalled: 'true'")
-    expect(workflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
-    expect(workflow).not.toContain('BUN_BASE_IMAGE=docker.io/oven/bun')
+    expect(result.imageTargets).toEqual(['control-plane', 'controller'])
+    expect(result.tier).toBe('local-smoke')
   })
 
-  it('runs Agents CI for shared Nix image input changes', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
-    const nixImageInputs = [
-      'flake.lock',
-      'nix/images/agents.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/openai-codex-cli.nix',
-      'nix/packages.nix',
-      'tsconfig.base.json',
-    ]
-
-    for (const input of nixImageInputs) {
-      expect(workflow.split(`- '${input}'`).length - 1).toBe(2)
-    }
-    expect(workflow.split("- 'services/agents/**'").length - 1).toBe(2)
-    expect(workflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
+  it('builds all runtime images for the shared Agents package manifest', () => {
+    expect(classifyAgentsImageMode(['services/agents/package.json']).imageTargets).toEqual([
+      'control-plane',
+      'controller',
+      'runner',
+    ])
   })
 
-  it('classifies pull request changes from the merge base', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('does not turn docs or Dockerfile-only changes into image builds', () => {
+    const result = classifyAgentsImageMode([
+      'services/agents/README.md',
+      'packages/codex/docs/worker.mdx',
+      'services/agents/Dockerfile',
+    ])
 
-    expect(workflow).toContain('git diff --name-only "${BASE_SHA}...${HEAD_SHA}"')
+    expect(result.tier).toBe('unit')
+    expect(result.imageTargets).toEqual([])
+    expect(result.runIntegration).toBe(false)
   })
 
-  it('builds local kind smoke images when the published registry is unreachable', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('merges mixed image impact in stable component order', () => {
+    const result = classifyAgentsImageMode([
+      'services/agents/scripts/codex/agent-runner.ts',
+      'services/agents/src/server/index.ts',
+      'services/agents/src/server/index.ts',
+    ])
 
-    expect(workflow).toContain('PUBLISHED_AGENTS_REGISTRY_HOST="registry.ide-newton.ts.net"')
-    expect(workflow).toContain('getent hosts "${PUBLISHED_AGENTS_REGISTRY_HOST}"')
-    expect(workflow).toContain('registry-unreachable:${PUBLISHED_AGENTS_REGISTRY_HOST}')
-    expect(workflow).toContain('AGENTS_IMAGE_MODE="build-local-image"')
+    expect(result.imageTargets).toEqual(['control-plane', 'controller', 'runner'])
+    expect(result.matchedPaths).toEqual([
+      'services/agents/scripts/codex/agent-runner.ts',
+      'services/agents/src/server/index.ts',
+    ])
   })
 
-  it('bounds and emits progress for ARC local image prep', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('keeps shared workspace and Nix inputs out of Agents runtime CI', () => {
+    const result = classifyAgentsImageMode(['bun.lock', 'flake.lock', 'nix/packages.nix', 'tsconfig.base.json'])
 
-    expect(workflow).toContain('timeout-minutes: 45')
-    expect(workflow).toContain('run_with_progress "Nix image build"')
-    expect(workflow).toContain('run_with_progress "kind load image-archive"')
-    expect(workflow).not.toContain('run_step "Prune turbo context"')
-  })
-
-  it('installs kubectl without sudo so ARC runners cannot hang on password prompts', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
-
-    expect(workflow).toContain('install_dir="${RUNNER_TEMP:-/tmp}/agents-ci-bin"')
-    expect(workflow).toContain('echo "${install_dir}" >> "${GITHUB_PATH}"')
-    expect(workflow).not.toContain('sudo mv kubectl')
-  })
-
-  it('resolves published smoke images from Agents GitOps values instead of Jangar release contracts', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
-
-    expect(workflow).toContain('resolve-published-agents-images.ts')
-    expect(workflow).toContain('--values-path argocd/applications/agents/values.yaml')
-    expect(workflow).toContain('AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY')
-    expect(workflow).toContain('AGENTS_CONTROLLER_IMAGE_REPOSITORY')
-    expect(workflow).toContain('AGENTS_RUNNER_IMAGE_REPOSITORY')
-    expect(workflow).not.toContain('resolve-published-jangar-image.ts')
-    expect(workflow).not.toContain('jangar-release-contract')
-  })
-
-  it('keeps Agents CI detached from Jangar service and GitOps paths', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
-
-    expect(workflow).not.toContain('apps/froussard/src/**')
-    expect(workflow).not.toContain('argocd/applications/facteur/**')
-    expect(workflow).not.toContain('argocd/applications/froussard/**')
-    expect(workflow).not.toContain('argocd/applications/graf/**')
-    expect(workflow).not.toContain('argocd/applications/torghut/**')
-    expect(workflow).not.toContain('services/jangar/**')
-    expect(workflow).not.toContain('argocd/applications/jangar/**')
-    expect(workflow).not.toContain('docs/jangar/application-architecture.md')
-    expect(workflow).not.toContain('packages/scripts/src/jangar/**')
-    expect(workflow).not.toContain('packages/scripts/src/jangar/verify-deployment.ts')
-    expect(workflow).not.toContain('--filter @proompteng/jangar')
-    expect(workflow).not.toContain('packages/scripts/src/jangar/__tests__/release-contract.test.ts')
-    expect(workflow).not.toContain('packages/bumba/**')
-    expect(workflow).not.toContain('packages/design/**')
-    expect(workflow).not.toContain('packages/discord/**')
-    expect(workflow).not.toContain('services/bumba/**')
-    expect(workflow).not.toContain('services/facteur/')
-    expect(workflow).not.toContain('services/graf/')
-    expect(workflow).not.toContain('services/torghut/')
-    expect(workflow).not.toContain('--filter @proompteng/source')
-    expect(workflow).not.toContain('--filter @proompteng/bumba')
-    expect(workflow).not.toContain('--filter @proompteng/design')
-    expect(workflow).not.toContain('--filter @proompteng/discord')
-  })
-
-  it('keeps Agents image publication detached from Jangar-only source changes', () => {
-    const workflow = readFileSync(
-      new URL('../../../../../.github/workflows/agents-build-push.yml', import.meta.url),
-      'utf8',
-    )
-
-    expect(workflow).not.toContain("      - 'services/jangar/**'")
-    expect(workflow).toContain('services/agents/**')
-    expect(workflow).toContain('packages/scripts/src/agents/update-values.ts')
-    expect(workflow).not.toContain('packages/scripts/src/agents/**')
-    expect(workflow).toContain('group: agents-build-${{ github.ref }}')
-    expect(workflow).not.toContain('group: agents-build-${{ github.ref }}-${{ github.sha }}')
-  })
-
-  it('publishes Agents service images with the shared Nix OCI workflow', () => {
-    const workflow = readFileSync(
-      new URL('../../../../../.github/workflows/agents-build-push.yml', import.meta.url),
-      'utf8',
-    )
-
-    expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
-    expect(workflow).toContain('package_attr: agents-controller-image')
-    expect(workflow).toContain('package_attr: agents-control-plane-image')
-    expect(workflow).toContain('package_attr: agents-shell-image')
-    expect(workflow).toContain('package_attr: agents-codex-runner-image')
-    expect(workflow).not.toContain('Resolve preserved runner image pin')
-    expect(workflow).toContain('--runner-tag "${TAG}"')
-    expect(workflow).toContain('--runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner')
-    expect(workflow).not.toContain('docker/setup-buildx-action')
-    expect(workflow).not.toContain('docker buildx')
-    expect(workflow).not.toContain('AGENTS_RUNNER_BUILD_CACHE_REF')
-    expect(workflow).toContain('registry.ide-newton.ts.net/lab/agents-controller')
-    expect(workflow).toContain('registry.ide-newton.ts.net/lab/agents-control-plane')
-    expect(workflow).toContain('registry.ide-newton.ts.net/lab/agents-shell')
-    expect(workflow).toContain('packages/scripts/src/agents/update-values.ts')
-  })
-
-  it('builds local Agents smoke images from Nix image archives', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
-
-    expect(workflow).toContain('Build and preload local Nix Agents image archives into kind')
-    expect(workflow).toContain('build_nix_image_archive "${CONTROL_PLANE_IMAGE}" agents-control-plane-image')
-    expect(workflow).toContain('build_nix_image_archive "${CONTROLLER_IMAGE}" agents-controller-image')
-    expect(workflow).toContain('build_nix_image_archive "${RUNNER_IMAGE}" agents-codex-runner-image')
-    expect(workflow).toContain('load_nix_image_archive "${CONTROL_PLANE_IMAGE}" "${CONTROL_PLANE_ARCHIVE}"')
-    expect(workflow).toContain('load_nix_image_archive "${CONTROLLER_IMAGE}" "${CONTROLLER_ARCHIVE}"')
-    expect(workflow).toContain('load_nix_image_archive "${RUNNER_IMAGE}" "${RUNNER_ARCHIVE}"')
-    expect(workflow).toContain('packages/agent-contracts/**')
-    expect(workflow).toContain('BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY')
-    expect(workflow).toContain('BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY')
-    expect(workflow).not.toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
-    expect(workflow).not.toContain('-f "${WORKSPACE}/services/agents/Dockerfile.codex-runner"')
-    expect(workflow).not.toContain('docker build')
-    expect(workflow).not.toContain('docker run')
-    expect(workflow).not.toContain('-f "${WORKSPACE}/services/jangar/Dockerfile"')
-  })
-})
-
-describe('agents-release workflow', () => {
-  it('can manually promote a specific Agents build artifact by run id and source SHA', () => {
-    const workflow = readFileSync(
-      new URL('../../../../../.github/workflows/agents-release.yml', import.meta.url),
-      'utf8',
-    )
-
-    expect(workflow).toContain('workflow_dispatch:')
-    expect(workflow).toContain('run_id:')
-    expect(workflow).toContain('source_sha:')
-    expect(workflow).toContain("github.event_name == 'workflow_dispatch'")
-    expect(workflow).toContain('run-id: ${{ steps.meta.outputs.run_id }}')
-    expect(workflow).toContain('Promotion source: `${{ steps.meta.outputs.promotion_source }}`')
+    expect(result).toMatchObject({
+      tier: 'unit',
+      runUnit: false,
+      runStatic: false,
+      runIntegration: false,
+      imageTargets: [],
+    })
   })
 })

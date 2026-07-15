@@ -266,7 +266,7 @@ let
     "@proompteng/temporal-bun-sdk"
   ];
 
-  sourcePaths = [
+  serviceSourcePaths = [
     "charts/agents/crds"
     "packages/agent-contracts"
     "packages/codex"
@@ -276,7 +276,35 @@ let
     "services/agents"
   ];
 
-  buildCommands = [
+  runnerSourcePaths = [
+    "packages/codex"
+    "services/agents/package.json"
+    "services/agents/scripts/codex"
+    "services/agents/scripts/codex-config-container.toml"
+    "services/agents/src/runner"
+    "services/agents/tsconfig.json"
+  ];
+
+  runtimeSourceFilter = rel: _type:
+    !(lib.hasPrefix "services/agents/Dockerfile" rel
+      || lib.hasPrefix "services/agents/agentctl/" rel
+      || lib.hasInfix "/__snapshots__/" rel
+      || lib.hasInfix "/__tests__/" rel
+      || lib.hasInfix "/tests/" rel
+      || lib.hasSuffix ".md" rel
+      || lib.hasSuffix ".mdx" rel
+      || lib.hasSuffix ".snap" rel
+      || lib.hasSuffix ".spec.ts" rel
+      || lib.hasSuffix ".spec.tsx" rel
+      || lib.hasSuffix ".test.ts" rel
+      || lib.hasSuffix ".test.tsx" rel);
+
+  serviceRuntimeSourceFilter = rel: type:
+    runtimeSourceFilter rel type
+    && !(lib.hasPrefix "services/agents/scripts/codex/" rel
+      || lib.hasPrefix "services/agents/src/runner/" rel);
+
+  serviceBuildCommands = [
     "patchShebangs --build node_modules"
     "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/codex run build"
@@ -285,6 +313,14 @@ let
     "bun --cwd=packages/cx-tools run build"
     "bun --cwd=services/agents run tsc"
     "bun --cwd=services/agents run build"
+  ];
+
+  runnerBuildCommands = [
+    "patchShebangs --build node_modules"
+    "bun --cwd=packages/codex run build"
+    ''mkdir -p "$TMPDIR/agents-runner"''
+    ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
+    ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
   ];
 
   runtimeInstallPhase = ''
@@ -394,6 +430,31 @@ let
     runnerPython
   ];
 
+  # Control-plane, controller, and shell images contain the same compiled Agents
+  # workspace. Realize that workspace once and keep each final OCI image thin.
+  agentsRuntimeRoot = import ./bun-workspace-service.nix {
+    inherit
+      pkgs
+      lib
+      repoRoot
+      bun
+      nodejs
+      depsHash
+      installFilters
+      runtimeInstallPhase
+      ;
+    sourcePaths = serviceSourcePaths;
+    runtimeSourceFilter = serviceRuntimeSourceFilter;
+    buildCommands = serviceBuildCommands;
+    depsName = "agents-controller";
+    packageName = "@proompteng/agents";
+    serviceName = "agents";
+    imageName = "agents-runtime-root";
+    dependencyClosure = "bunCache";
+    command = [ ];
+    returnRuntimeRoot = true;
+  };
+
   mkImage =
     {
       serviceName,
@@ -412,18 +473,20 @@ let
         nodejs
         depsHash
         installFilters
-        sourcePaths
-        buildCommands
         runtimeInstallPhase
         command
         env
         extraContents
         exposedPorts
         ;
+      sourcePaths = serviceSourcePaths;
+      runtimeSourceFilter = serviceRuntimeSourceFilter;
+      buildCommands = serviceBuildCommands;
       depsName = "agents-controller";
       packageName = "@proompteng/agents";
       inherit serviceName imageName;
       dependencyClosure = "bunCache";
+      runtimeRoot = agentsRuntimeRoot;
       workingDir = "/app/services/agents";
     };
 
@@ -488,18 +551,15 @@ let
         nodejs
         depsHash
         installFilters
-        sourcePaths
         ;
+      sourcePaths = runnerSourcePaths;
+      inherit runtimeSourceFilter;
       depsName = "agents-controller";
       packageName = "@proompteng/agents-codex-runner";
       serviceName = "agents-codex-runner";
       imageName = "agents-codex-runner";
       dependencyClosure = "bunCache";
-      buildCommands = buildCommands ++ [
-        ''mkdir -p "$TMPDIR/agents-runner"''
-        ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
-        ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
-      ];
+      buildCommands = runnerBuildCommands;
       runtimeInstallPhase = runnerRuntimeInstallPhase;
       command = [ "bash" ];
       workingDir = "/workspace";

@@ -4,6 +4,7 @@ on:
   pull_request:
 
 permissions:
+  actions: read
   contents: read
   pull-requests: read
 
@@ -291,18 +292,29 @@ jobs:
               ;;
           esac
 
+  agents:
+    name: Agents CI
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci') }}
+    uses: ./.github/workflows/agents-ci.yml
+    with:
+      changed_files_json: ${{ needs.plan.outputs.changed_files }}
+    secrets: inherit
+
   ci-pr:
     name: ci-pr
     if: ${{ always() }}
     needs:
       - plan
       - validate
+      - agents
     runs-on: ubuntu-latest
     steps:
       - name: Enforce selected validation results
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          AGENTS_RESULT: ${{ needs.agents.result }}
           DELEGATED: ${{ needs.plan.outputs.delegated }}
         run: |
           set -euo pipefail
@@ -310,4 +322,8 @@ jobs:
             echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}" >&2
             exit 1
           fi
-          echo "Router validation passed. Delegated workflows: ${DELEGATED}"
+          if [ "${AGENTS_RESULT}" != success ] && [ "${AGENTS_RESULT}" != skipped ]; then
+            echo "Agents validation failed: agents=${AGENTS_RESULT}" >&2
+            exit 1
+          fi
+          echo "Router validation passed: agents=${AGENTS_RESULT}. Delegated workflows: ${DELEGATED}"

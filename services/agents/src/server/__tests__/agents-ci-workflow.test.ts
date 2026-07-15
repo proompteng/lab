@@ -2,47 +2,71 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
+const readWorkflow = (name: string) =>
+  readFileSync(new URL(`../../../../../.github/workflows/${name}`, import.meta.url), 'utf8')
+
 describe('agents-ci workflow', () => {
-  it('builds local Agents integration images from Nix archives', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('is called by the central PR router with its changed-file payload', () => {
+    const agentsWorkflow = readWorkflow('agents-ci.yml')
+    const pullRequestWorkflow = readWorkflow('pull-request.yml')
 
-    expect(workflow).toContain('Build and preload local Nix Agents image archives into kind')
-    expect(workflow).toContain('nix build ".#${1}" --print-out-paths --no-link')
-    expect(workflow).toContain(
-      'build_nix_image_archive "${CONTROL_PLANE_IMAGE}" agents-control-plane-image CONTROL_PLANE_ARCHIVE',
-    )
-    expect(workflow).toContain(
-      'build_nix_image_archive "${CONTROLLER_IMAGE}" agents-controller-image CONTROLLER_ARCHIVE',
-    )
-    expect(workflow).toContain('build_nix_image_archive "${RUNNER_IMAGE}" agents-codex-runner-image RUNNER_ARCHIVE')
-    expect(workflow).toContain('kind load image-archive')
-    expect(workflow).not.toContain('--build-arg "BUN_BASE_IMAGE=')
+    expect(agentsWorkflow).toContain('workflow_call:')
+    expect(agentsWorkflow).toContain('changed_files_json:')
+    expect(pullRequestWorkflow).toContain("contains(fromJSON(needs.plan.outputs.delegated), 'agents-ci')")
+    expect(pullRequestWorkflow).toContain('uses: ./.github/workflows/agents-ci.yml')
+    expect(pullRequestWorkflow).toContain('changed_files_json: ${{ needs.plan.outputs.changed_files }}')
+  })
+
+  it('keeps cheap validation off ARC and gates integration on it', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+
+    expect(workflow).toContain('unit:\n    name: Agents typecheck and unit tests\n    needs: plan')
+    expect(workflow).toContain('static:\n    name: Validate Agents chart and CRDs\n    needs: plan')
+    expect(workflow).toContain('runs-on: ubuntu-latest')
+    expect(workflow).toContain('integration:\n    name: Agents Kind smoke (${{ needs.plan.outputs.tier }})')
+    expect(workflow).toContain('runs-on: arc-amd64')
+    expect(workflow).toContain("needs.plan.outputs.run_integration == 'true'")
+    expect(workflow).toContain("needs.unit.result == 'success' || needs.unit.result == 'skipped'")
+    expect(workflow).toContain("needs.static.result == 'success' || needs.static.result == 'skipped'")
+  })
+
+  it('builds selected Nix images in one realization and one Kind preload command', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+
+    expect(workflow).toContain('Build and preload selected local Nix Agents images')
+    expect(workflow).toContain('IMAGE_TARGETS: ${{ needs.plan.outputs.image_targets }}')
+    expect(workflow).toContain('installables+=(".#$(image_attr "${target}")")')
+    expect(workflow).toContain('run_with_progress \'Nix image build\' 30 nix build --no-link "${installables[@]}"')
+    expect(workflow).toContain('nix path-info ".#${package_attr}"')
+    expect(workflow).toContain('kind load image-archive --name "${KIND_CLUSTER_NAME}" "${load_archives[@]}"')
+    expect(workflow.match(/nix build --no-link/g)).toHaveLength(1)
+    expect(workflow.match(/kind load image-archive/g)).toHaveLength(1)
     expect(workflow).not.toContain('docker build')
-    expect(workflow).not.toContain('kind load docker-image')
   })
 
-  it('bounds kubectl downloads so integration runners fail instead of hanging', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('uses published images for unaffected components without DNS-triggered rebuilding', () => {
+    const workflow = readWorkflow('agents-ci.yml')
 
-    expect(workflow).toContain('--connect-timeout 20')
-    expect(workflow).toContain('--max-time 120')
-    expect(workflow).toContain('--retry 3')
-    expect(workflow).toContain('--retry-all-errors')
-    expect(workflow).toContain('timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts')
+    expect(workflow).toContain('Resolve published Agents images from GitOps values')
+    expect(workflow).toContain('Published Agents registry is required for this tier but is not resolvable')
+    expect(workflow).toContain('refusing an unrelated local rebuild')
+    expect(workflow).not.toContain('registry-unreachable:')
+    expect(workflow).not.toContain('AGENTS_IMAGE_MODE="build-local-image"')
   })
 
-  it('runs for Nix Agents image input changes', () => {
-    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+  it('does not trigger Agents runtime CI for generic shared dependency inputs', () => {
+    const workflow = readWorkflow('agents-ci.yml')
 
-    for (const path of [
-      'flake.lock',
-      'nix/images/agents.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/openai-codex-cli.nix',
-      'nix/packages.nix',
-      'tsconfig.base.json',
-    ]) {
-      expect(workflow.split(`- '${path}'`).length - 1).toBe(2)
+    for (const path of ['bun.lock', 'flake.lock', 'flake.nix', 'nix/packages.nix', 'tsconfig.base.json']) {
+      expect(workflow).not.toContain(`- '${path}'`)
     }
+  })
+
+  it('lets the Kind action install its pinned kubectl instead of downloading it twice', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+
+    expect(workflow).toContain('uses: helm/kind-action@v1')
+    expect(workflow).toContain('kubectl_version: v1.29.4')
+    expect(workflow).not.toContain('https://dl.k8s.io/release/')
   })
 })

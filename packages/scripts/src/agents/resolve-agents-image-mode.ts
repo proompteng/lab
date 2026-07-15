@@ -1,38 +1,64 @@
 #!/usr/bin/env bun
 
-const LOCAL_IMAGE_PREFIXES = [
-  'services/agents/',
-  'packages/scripts/src/agents/deploy-service.ts',
-  'packages/scripts/src/agents/smoke-agents.ts',
-  'packages/otel/',
-  'packages/agent-contracts/',
-  'packages/temporal-bun-sdk/',
-  'packages/codex/',
-  'packages/cx-tools/',
-]
+import { appendFileSync } from 'node:fs'
 
-const LOCAL_IMAGE_EXACT_PATHS = new Set([
-  'bun.lock',
-  'flake.lock',
-  'nix/images/agents.nix',
-  'nix/images/bun-workspace-service.nix',
-  'nix/images/openai-codex-cli.nix',
-  'nix/packages.nix',
-  'packages/scripts/src/agents/deploy-service.ts',
-  'packages/scripts/src/agents/smoke-agents.ts',
-  'packages/scripts/src/shared/nix-oci-deploy.ts',
-  'tsconfig.base.json',
-])
+export const AGENTS_IMAGE_TARGETS = ['control-plane', 'controller', 'runner'] as const
 
-const DOCUMENTATION_EXTENSIONS = ['.md', '.mdx']
-
+export type AgentsImageTarget = (typeof AGENTS_IMAGE_TARGETS)[number]
 export type AgentsImageMode = 'build-local-image' | 'reuse-published-image'
+export type AgentsCiTier = 'unit' | 'published-smoke' | 'local-smoke'
 
 export type AgentsImageModeResult = {
+  tier: AgentsCiTier
   mode: AgentsImageMode
   needsLocalAgentsImage: boolean
+  runUnit: boolean
+  runStatic: boolean
+  runIntegration: boolean
+  imageTargets: AgentsImageTarget[]
   matchedPaths: string[]
 }
+
+const DOCUMENTATION_EXTENSIONS = ['.md', '.mdx']
+const TEST_PATH_MARKERS = ['/__tests__/', '/tests/', '.test.', '.spec.', '/__snapshots__/']
+
+const UNIT_PREFIXES = [
+  'packages/agent-contracts/',
+  'packages/codex/',
+  'packages/cx-tools/',
+  'packages/otel/',
+  'packages/scripts/src/agents/',
+  'packages/temporal-bun-sdk/',
+  'services/agents/',
+]
+
+const STATIC_PREFIXES = [
+  'argocd/applications/agents/',
+  'argocd/applications/argo-workflows/',
+  'charts/agents/',
+  'scripts/agents/',
+]
+
+const STATIC_EXACT_PATHS = new Set([
+  'packages/scripts/src/agents/deploy-service.ts',
+  'packages/scripts/src/agents/smoke-agents.ts',
+  'scripts/download_crd_schema.py',
+])
+
+const ALL_IMAGE_EXACT_PATHS = new Set([
+  'services/agents/package.json',
+  'nix/images/agents.nix',
+  'nix/images/bun-workspace-service.nix',
+])
+
+const RUNNER_IMAGE_EXACT_PATHS = new Set(['nix/images/openai-codex-cli.nix'])
+
+const CONTROL_PLANE_IMAGE_PREFIXES = [
+  'packages/agent-contracts/',
+  'packages/cx-tools/',
+  'packages/otel/',
+  'packages/temporal-bun-sdk/',
+]
 
 const normalizePath = (value: string) => value.trim().replace(/\\/g, '/')
 
@@ -41,20 +67,58 @@ const isDocumentationPath = (path: string) => {
   return DOCUMENTATION_EXTENSIONS.some((extension) => lowerPath.endsWith(extension))
 }
 
-const needsLocalImageForPath = (path: string) => {
-  const normalized = normalizePath(path)
-  if (!normalized) return false
-  if (isDocumentationPath(normalized)) return false
-  if (LOCAL_IMAGE_EXACT_PATHS.has(normalized)) return true
-  return LOCAL_IMAGE_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+const isTestPath = (path: string) => TEST_PATH_MARKERS.some((marker) => path.includes(marker))
+
+const isStaticPath = (path: string) =>
+  STATIC_EXACT_PATHS.has(path) || STATIC_PREFIXES.some((prefix) => path.startsWith(prefix))
+
+const imageTargetsForPath = (path: string): AgentsImageTarget[] => {
+  if (isDocumentationPath(path) || isTestPath(path)) return []
+  if (ALL_IMAGE_EXACT_PATHS.has(path)) return [...AGENTS_IMAGE_TARGETS]
+  if (RUNNER_IMAGE_EXACT_PATHS.has(path)) return ['runner']
+  if (path.startsWith('packages/codex/')) return [...AGENTS_IMAGE_TARGETS]
+  if (path.startsWith('services/agents/src/runner/') || path.startsWith('services/agents/scripts/codex/')) {
+    return ['runner']
+  }
+  if (CONTROL_PLANE_IMAGE_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+    return ['control-plane', 'controller']
+  }
+  if (path.startsWith('services/agents/')) {
+    if (path.startsWith('services/agents/agentctl/') || path.startsWith('services/agents/Dockerfile')) return []
+    return ['control-plane', 'controller']
+  }
+  return []
+}
+
+const sortImageTargets = (targets: Iterable<AgentsImageTarget>): AgentsImageTarget[] => {
+  const selected = new Set(targets)
+  return AGENTS_IMAGE_TARGETS.filter((target) => selected.has(target))
 }
 
 export const classifyAgentsImageMode = (paths: string[]): AgentsImageModeResult => {
-  const normalizedPaths = paths.map((path) => normalizePath(path)).filter((path) => path.length > 0)
-  const matchedPaths = normalizedPaths.filter((path) => needsLocalImageForPath(path))
+  const normalizedPaths = [...new Set(paths.map(normalizePath).filter(Boolean))].sort()
+  const activePaths = normalizedPaths.filter((path) => !isDocumentationPath(path))
+  const runStatic = activePaths.some(isStaticPath)
+  const runUnit = activePaths.some(
+    (path) =>
+      path === '.github/workflows/agents-ci.yml' ||
+      path === '.github/ci/impact-map.yml' ||
+      UNIT_PREFIXES.some((prefix) => path.startsWith(prefix)),
+  )
+  const imageTargets = sortImageTargets(activePaths.flatMap(imageTargetsForPath))
+  const matchedPaths = activePaths.filter((path) => imageTargetsForPath(path).length > 0)
+  const needsLocalAgentsImage = imageTargets.length > 0
+  const runIntegration = runStatic || needsLocalAgentsImage
+  const tier: AgentsCiTier = needsLocalAgentsImage ? 'local-smoke' : runStatic ? 'published-smoke' : 'unit'
+
   return {
-    mode: matchedPaths.length > 0 ? 'build-local-image' : 'reuse-published-image',
-    needsLocalAgentsImage: matchedPaths.length > 0,
+    tier,
+    mode: needsLocalAgentsImage ? 'build-local-image' : 'reuse-published-image',
+    needsLocalAgentsImage,
+    runUnit,
+    runStatic,
+    runIntegration,
+    imageTargets,
     matchedPaths,
   }
 }
@@ -67,16 +131,41 @@ const readStdin = async () => {
     .filter(Boolean)
 }
 
+const readArg = (args: string[], name: string): string | undefined => {
+  const index = args.indexOf(name)
+  return index >= 0 ? args[index + 1] : undefined
+}
+
+const outputLines = (result: AgentsImageModeResult) => [
+  `tier=${result.tier}`,
+  `run_unit=${result.runUnit}`,
+  `run_static=${result.runStatic}`,
+  `run_integration=${result.runIntegration}`,
+  `NEEDS_LOCAL_AGENTS_IMAGE=${result.needsLocalAgentsImage}`,
+  `AGENTS_IMAGE_MODE=${result.mode}`,
+  `image_targets=${JSON.stringify(result.imageTargets)}`,
+  `matched_paths=${JSON.stringify(result.matchedPaths)}`,
+]
+
 const main = async () => {
   const args = process.argv.slice(2).filter((arg) => arg !== '--')
-  const paths = args.length > 0 ? args : await readStdin()
+  const githubOutput = readArg(args, '--github-output')
+  const positionalArgs = args.filter((arg, index) => arg !== '--github-output' && args[index - 1] !== '--github-output')
+  const paths = positionalArgs.length > 0 ? positionalArgs : await readStdin()
   const result = classifyAgentsImageMode(paths)
+  const lines = outputLines(result)
 
-  process.stdout.write(`NEEDS_LOCAL_AGENTS_IMAGE=${result.needsLocalAgentsImage}\n`)
-  process.stdout.write(`AGENTS_IMAGE_MODE=${result.mode}\n`)
-  process.stdout.write(`matched_paths=${result.matchedPaths.join(',')}\n`)
+  process.stdout.write(`${lines.join('\n')}\n`)
+  if (githubOutput) appendFileSync(githubOutput, `${lines.join('\n')}\n`)
 }
 
 if (import.meta.main) {
   await main()
+}
+
+export const __private = {
+  imageTargetsForPath,
+  isStaticPath,
+  isTestPath,
+  outputLines,
 }

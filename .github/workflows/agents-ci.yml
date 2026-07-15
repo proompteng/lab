@@ -5,35 +5,12 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'argocd/applications/argo-workflows/**'
-      - 'argocd/applications/agents/**'
-      - 'charts/agents/**'
-      - 'docs/agents/**'
-      - '!docs/agents/agentctl-release.md'
-      - 'docs/autonomous-codex-design.md'
-      - 'docs/runbooks/codex-docker.md'
-      - 'docs/runbooks/kafka-broker-storage-recovery.md'
-      - 'flake.lock'
-      - 'nix/images/agents.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/images/openai-codex-cli.nix'
-      - 'nix/packages.nix'
-      - 'tsconfig.base.json'
-      - 'packages/agent-contracts/**'
-      - 'packages/cx-tools/**'
-      - 'packages/scripts/src/agents/**'
-      - '!packages/scripts/src/agents/__tests__/**'
-      - '!packages/scripts/src/agents/**/*.test.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
-      - 'packages/scripts/src/shared/git.ts'
-      - 'packages/scripts/src/shared/__tests__/docker.test.ts'
-      - 'services/agents/**'
-      - '!services/agents/agentctl/**'
-      - 'scripts/agents/**'
-      - 'scripts/download_crd_schema.py'
+  workflow_call:
+    inputs:
+      changed_files_json:
+        description: JSON array produced by the central PR impact router
+        required: true
+        type: string
   push:
     branches:
       - main
@@ -41,147 +18,133 @@ on:
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
-      - 'docs/agents/**'
-      - '!docs/agents/agentctl-release.md'
-      - 'docs/autonomous-codex-design.md'
-      - 'docs/runbooks/codex-docker.md'
-      - 'docs/runbooks/kafka-broker-storage-recovery.md'
-      - 'flake.lock'
-      - 'nix/images/agents.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/images/openai-codex-cli.nix'
-      - 'nix/packages.nix'
-      - 'tsconfig.base.json'
       - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
       - 'packages/cx-tools/**'
+      - 'packages/otel/**'
       - 'packages/scripts/src/agents/**'
-      - '!packages/scripts/src/agents/__tests__/**'
-      - '!packages/scripts/src/agents/**/*.test.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
-      - 'packages/scripts/src/shared/git.ts'
-      - 'packages/scripts/src/shared/__tests__/docker.test.ts'
+      - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
       - '!services/agents/agentctl/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
+      - '!**/__tests__/**'
+      - '!**/__snapshots__/**'
+      - '!**/tests/**'
+      - '!**/*.test.ts'
+      - '!**/*.test.tsx'
+      - '!**/*.spec.ts'
+      - '!**/*.spec.tsx'
+      - '!**/*.md'
+      - '!**/*.mdx'
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: agents-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate:
+  plan:
+    name: Plan Agents validation tier
     runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.4
-
-      - name: Install kustomize
-        run: |
-          KUSTOMIZE_VERSION="5.8.0"
-          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          ARCH="$(uname -m)"
-          case "${ARCH}" in
-            x86_64|amd64) ARCH="amd64" ;;
-            aarch64|arm64) ARCH="arm64" ;;
-            *)
-              echo "Unsupported architecture: ${ARCH}" >&2
-              exit 1
-              ;;
-          esac
-          TARBALL="kustomize_v${KUSTOMIZE_VERSION}_${OS}_${ARCH}.tar.gz"
-          URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/${TARBALL}"
-          curl -fsSL -o kustomize.tar.gz "${URL}"
-          tar -xzf kustomize.tar.gz kustomize
-          chmod +x kustomize
-          sudo mv kustomize /usr/local/bin/
-          kustomize version
-
-      - name: Install kubeconform
-        run: |
-          KUBECONFORM_VERSION="v0.7.0"
-          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          ARCH="$(uname -m)"
-          case "${ARCH}" in
-            x86_64|amd64) ARCH="amd64" ;;
-            aarch64|arm64) ARCH="arm64" ;;
-            *)
-              echo "Unsupported architecture: ${ARCH}" >&2
-              exit 1
-              ;;
-          esac
-          TARBALL="kubeconform-${OS}-${ARCH}.tar.gz"
-          URL="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/${TARBALL}"
-          curl -fsSL -o kubeconform.tar.gz "${URL}"
-          tar -xzf kubeconform.tar.gz kubeconform
-          chmod +x kubeconform
-          sudo mv kubeconform /usr/local/bin/
-          kubeconform -v
-
-      - name: Validate Agents chart and CRDs
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/agents/validate-agents.sh
-
-  integration:
-    runs-on: arc-amd64
-    env:
-      # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
-      # Use a per-run docker network for kind to keep routing deterministic.
-      KIND_DOCKER_NETWORK_NAME: kind-${{ github.run_id }}-${{ github.run_attempt }}
-      KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    timeout-minutes: 5
+    outputs:
+      tier: ${{ steps.classify.outputs.tier }}
+      run_unit: ${{ steps.classify.outputs.run_unit }}
+      run_static: ${{ steps.classify.outputs.run_static }}
+      run_integration: ${{ steps.classify.outputs.run_integration }}
+      needs_local_agents_image: ${{ steps.classify.outputs.NEEDS_LOCAL_AGENTS_IMAGE }}
+      image_mode: ${{ steps.classify.outputs.AGENTS_IMAGE_MODE }}
+      image_targets: ${{ steps.classify.outputs.image_targets }}
+      matched_paths: ${{ steps.classify.outputs.matched_paths }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
+      - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
 
-      - name: Install kubectl
+      - name: Resolve changed files
+        id: files
+        shell: bash
+        env:
+          CHANGED_FILES_JSON: ${{ inputs.changed_files_json }}
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          KUBECTL_VERSION="v1.29.4"
-          ARCH="$(uname -m)"
-          case "${ARCH}" in
-            x86_64|amd64) ARCH="amd64" ;;
-            aarch64|arm64) ARCH="arm64" ;;
-            *)
-              echo "Unsupported architecture: ${ARCH}" >&2
-              exit 1
-              ;;
-          esac
-          curl \
-            --connect-timeout 20 \
-            --max-time 120 \
-            --retry 3 \
-            --retry-all-errors \
-            --retry-delay 5 \
-            -fsSL \
-            -o kubectl \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
-          chmod +x kubectl
-          install_dir="${RUNNER_TEMP:-/tmp}/agents-ci-bin"
-          mkdir -p "${install_dir}"
-          mv kubectl "${install_dir}/kubectl"
-          echo "${install_dir}" >> "${GITHUB_PATH}"
+          set -euo pipefail
+          changed_files="${RUNNER_TEMP}/agents-changed-files.txt"
 
-      - name: Install Helm
-        uses: azure/setup-helm@v4
+          if [ -n "${CHANGED_FILES_JSON}" ]; then
+            jq -e 'type == "array" and all(.[]; type == "string")' <<< "${CHANGED_FILES_JSON}" >/dev/null
+            jq -r '.[]' <<< "${CHANGED_FILES_JSON}" > "${changed_files}"
+          elif [ "${EVENT_NAME}" = workflow_dispatch ]; then
+            printf '%s\n' 'nix/images/agents.nix' > "${changed_files}"
+          elif [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = 0000000000000000000000000000000000000000 ]; then
+            git ls-files > "${changed_files}"
+          else
+            git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > "${changed_files}"
+          fi
+
+          echo 'Changed files considered by Agents CI:'
+          cat "${changed_files}"
+          printf 'path=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
+
+      - name: Classify Agents validation
+        id: classify
+        env:
+          CHANGED_FILES: ${{ steps.files.outputs.path }}
+        run: |
+          set -euo pipefail
+          bun run packages/scripts/src/agents/resolve-agents-image-mode.ts \
+            --github-output "${GITHUB_OUTPUT}" \
+            < "${CHANGED_FILES}" \
+            | tee "${RUNNER_TEMP}/agents-ci-plan.txt"
+
+      - name: Summarize Agents plan
+        env:
+          TIER: ${{ steps.classify.outputs.tier }}
+          RUN_UNIT: ${{ steps.classify.outputs.run_unit }}
+          RUN_STATIC: ${{ steps.classify.outputs.run_static }}
+          RUN_INTEGRATION: ${{ steps.classify.outputs.run_integration }}
+          IMAGE_TARGETS: ${{ steps.classify.outputs.image_targets }}
+          MATCHED_PATHS: ${{ steps.classify.outputs.matched_paths }}
+        run: |
+          {
+            echo '### Agents CI plan'
+            echo
+            echo "- Tier: \`${TIER}\`"
+            echo "- Unit: \`${RUN_UNIT}\`"
+            echo "- Static: \`${RUN_STATIC}\`"
+            echo "- Integration: \`${RUN_INTEGRATION}\`"
+            echo "- Local images: \`${IMAGE_TARGETS}\`"
+            echo "- Runtime inputs: \`${MATCHED_PATHS}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  unit:
+    name: Agents typecheck and unit tests
+    needs: plan
+    if: ${{ needs.plan.outputs.run_unit == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: v3.14.4
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/agent-contracts
           --filter @proompteng/agentctl
           --filter @proompteng/codex
           --filter @proompteng/cx-tools
@@ -203,67 +166,127 @@ jobs:
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
-      - name: Run Agents service unit tests
+      - name: Run Agents service typecheck and unit tests
         run: |
           bun run --cwd services/agents tsc
           bun run --cwd services/agents test
 
-      - name: Classify Agents image mode
-        id: agents_image_mode
+  static:
+    name: Validate Agents chart and CRDs
+    needs: plan
+    if: ${{ needs.plan.outputs.run_static == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Install kustomize
         run: |
           set -euo pipefail
+          KUSTOMIZE_VERSION="5.8.0"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH=amd64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          TARBALL="kustomize_v${KUSTOMIZE_VERSION}_${OS}_${ARCH}.tar.gz"
+          URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/${TARBALL}"
+          curl -fsSL --retry 3 --retry-all-errors -o kustomize.tar.gz "${URL}"
+          tar -xzf kustomize.tar.gz kustomize
+          chmod +x kustomize
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
 
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            BASE_SHA="${{ github.event.before }}"
-            HEAD_SHA="${{ github.sha }}"
-          fi
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          KUBECONFORM_VERSION="v0.7.0"
+          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64|amd64) ARCH=amd64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *)
+              echo "Unsupported architecture: ${ARCH}" >&2
+              exit 1
+              ;;
+          esac
+          TARBALL="kubeconform-${OS}-${ARCH}.tar.gz"
+          URL="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/${TARBALL}"
+          curl -fsSL --retry 3 --retry-all-errors -o kubeconform.tar.gz "${URL}"
+          tar -xzf kubeconform.tar.gz kubeconform
+          chmod +x kubeconform
+          sudo mv kubeconform /usr/local/bin/
+          kubeconform -v
 
-          CHANGED_FILES="$(mktemp)"
-          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
-            git ls-files > "${CHANGED_FILES}"
-          else
-            git diff --name-only "${BASE_SHA}...${HEAD_SHA}" > "${CHANGED_FILES}"
-          fi
+      - name: Validate Agents chart and CRDs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/agents/validate-agents.sh
 
-          echo "Changed files for image classification:"
-          cat "${CHANGED_FILES}"
-          CLASSIFICATION_OUTPUT="$(mktemp)"
-          bun packages/scripts/src/agents/resolve-agents-image-mode.ts < "${CHANGED_FILES}" > "${CLASSIFICATION_OUTPUT}"
-          cat "${CLASSIFICATION_OUTPUT}"
+  integration:
+    name: Agents Kind smoke (${{ needs.plan.outputs.tier }})
+    needs:
+      - plan
+      - unit
+      - static
+    if: >-
+      ${{
+        always() &&
+        needs.plan.result == 'success' &&
+        needs.plan.outputs.run_integration == 'true' &&
+        (needs.unit.result == 'success' || needs.unit.result == 'skipped') &&
+        (needs.static.result == 'success' || needs.static.result == 'skipped')
+      }}
+    runs-on: arc-amd64
+    timeout-minutes: 50
+    env:
+      KIND_DOCKER_NETWORK_NAME: kind-${{ github.run_id }}-${{ github.run_attempt }}
+      KIND_CLUSTER_NAME: agents-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      IMAGE_TARGETS: ${{ needs.plan.outputs.image_targets }}
+      NEEDS_LOCAL_AGENTS_IMAGE: ${{ needs.plan.outputs.needs_local_agents_image }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
 
-          NEEDS_LOCAL_AGENTS_IMAGE="$(awk -F= '$1 == "NEEDS_LOCAL_AGENTS_IMAGE" { print $2 }' "${CLASSIFICATION_OUTPUT}" | tail -n 1)"
-          AGENTS_IMAGE_MODE="$(awk -F= '$1 == "AGENTS_IMAGE_MODE" { print $2 }' "${CLASSIFICATION_OUTPUT}" | tail -n 1)"
-          MATCHED_PATHS="$(awk -F= '$1 == "matched_paths" { print substr($0, index($0, "=") + 1) }' "${CLASSIFICATION_OUTPUT}" | tail -n 1)"
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
 
-          PUBLISHED_AGENTS_REGISTRY_HOST="registry.ide-newton.ts.net"
-          if [ "${NEEDS_LOCAL_AGENTS_IMAGE}" != "true" ] && ! getent hosts "${PUBLISHED_AGENTS_REGISTRY_HOST}" >/dev/null 2>&1; then
-            echo "Published Agents registry host ${PUBLISHED_AGENTS_REGISTRY_HOST} is not resolvable from this runner; building local images for kind smoke."
-            NEEDS_LOCAL_AGENTS_IMAGE="true"
-            AGENTS_IMAGE_MODE="build-local-image"
-            if [ -n "${MATCHED_PATHS}" ]; then
-              MATCHED_PATHS="${MATCHED_PATHS},registry-unreachable:${PUBLISHED_AGENTS_REGISTRY_HOST}"
-            else
-              MATCHED_PATHS="registry-unreachable:${PUBLISHED_AGENTS_REGISTRY_HOST}"
-            fi
-          fi
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
 
-          {
-            echo "NEEDS_LOCAL_AGENTS_IMAGE=${NEEDS_LOCAL_AGENTS_IMAGE}"
-            echo "AGENTS_IMAGE_MODE=${AGENTS_IMAGE_MODE}"
-            echo "matched_paths=${MATCHED_PATHS}"
-          } >> "${GITHUB_OUTPUT}"
-
-          echo "Selected Agents image mode:"
-          cat "${GITHUB_OUTPUT}" | tail -n 3
+      - name: Install dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/agent-contracts
+          --filter @proompteng/agentctl
+          --filter @proompteng/codex
+          --filter @proompteng/cx-tools
+          --filter @proompteng/agents
+          --filter @proompteng/otel
+          --filter @proompteng/scripts
+          --filter @proompteng/temporal-bun-sdk
 
       - name: Build agentctl binary
         run: bun run --filter @proompteng/agentctl build:bin
 
-      - name: Set up Nix for local Agents image archives
-        if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
+      - name: Set up Nix for selected local Agents images
+        if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -275,22 +298,7 @@ jobs:
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
             fallback = true
 
-      - name: Ensure kind Docker network
-        run: scripts/agents/ensure-kind-network.sh
-
-      - name: Create kind cluster
-        uses: helm/kind-action@v1
-        env:
-          KIND_EXPERIMENTAL_DOCKER_NETWORK: ${{ env.KIND_DOCKER_NETWORK_NAME }}
-        with:
-          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
-          version: v0.31.0
-          node_image: mirror.gcr.io/kindest/node:v1.29.4
-          kubectl_version: v1.29.4
-          wait: 180s
-
       - name: Resolve published Agents images from GitOps values
-        if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE != 'true'
         id: published_agents_images
         run: |
           set -euo pipefail
@@ -298,30 +306,44 @@ jobs:
             --values-path argocd/applications/agents/values.yaml \
             --output "${GITHUB_OUTPUT}"
 
-      - name: Select published Agents images
-        if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE != 'true'
+      - name: Select published defaults for the smoke test
+        env:
+          CONTROL_PLANE_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.control_plane_image_repository }}
+          CONTROL_PLANE_IMAGE_TAG: ${{ steps.published_agents_images.outputs.control_plane_image_tag }}
+          CONTROL_PLANE_IMAGE_DIGEST: ${{ steps.published_agents_images.outputs.control_plane_image_digest }}
+          CONTROLLER_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.controller_image_repository }}
+          CONTROLLER_IMAGE_TAG: ${{ steps.published_agents_images.outputs.controller_image_tag }}
+          CONTROLLER_IMAGE_DIGEST: ${{ steps.published_agents_images.outputs.controller_image_digest }}
+          RUNNER_IMAGE_REPOSITORY: ${{ steps.published_agents_images.outputs.runner_image_repository }}
+          RUNNER_IMAGE_TAG: ${{ steps.published_agents_images.outputs.runner_image_tag }}
+          RUNNER_IMAGE_DIGEST: ${{ steps.published_agents_images.outputs.runner_image_digest }}
+          IMAGE_SOURCE_SHA: ${{ steps.published_agents_images.outputs.source_sha }}
         run: |
           set -euo pipefail
-          CONTROL_PLANE_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.control_plane_image_repository }}"
-          CONTROL_PLANE_IMAGE_TAG="${{ steps.published_agents_images.outputs.control_plane_image_tag }}"
-          CONTROL_PLANE_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.control_plane_image_digest }}"
-          CONTROLLER_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.controller_image_repository }}"
-          CONTROLLER_IMAGE_TAG="${{ steps.published_agents_images.outputs.controller_image_tag }}"
-          CONTROLLER_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.controller_image_digest }}"
-          RUNNER_IMAGE_REPOSITORY="${{ steps.published_agents_images.outputs.runner_image_repository }}"
-          RUNNER_IMAGE_TAG="${{ steps.published_agents_images.outputs.runner_image_tag }}"
-          RUNNER_IMAGE_DIGEST="${{ steps.published_agents_images.outputs.runner_image_digest }}"
-          IMAGE_SOURCE_SHA="${{ steps.published_agents_images.outputs.source_sha }}"
 
-          if [ -z "${CONTROL_PLANE_IMAGE_DIGEST}" ] || [ -z "${CONTROLLER_IMAGE_DIGEST}" ] || [ -z "${RUNNER_IMAGE_DIGEST}" ]; then
-            echo "Published Agents image digest is empty."
-            exit 1
+          require_published_digest() {
+            local target="$1"
+            local digest="$2"
+            if ! jq -e --arg target "${target}" 'index($target) != null' <<< "${IMAGE_TARGETS}" >/dev/null && [ -z "${digest}" ]; then
+              echo "Published Agents ${target} image digest is required for an unaffected component." >&2
+              exit 1
+            fi
+          }
+          require_published_digest control-plane "${CONTROL_PLANE_IMAGE_DIGEST}"
+          require_published_digest controller "${CONTROLLER_IMAGE_DIGEST}"
+          require_published_digest runner "${RUNNER_IMAGE_DIGEST}"
+
+          if [ "$(jq 'length' <<< "${IMAGE_TARGETS}")" -lt 3 ]; then
+            if ! getent hosts registry.ide-newton.ts.net >/dev/null 2>&1; then
+              echo 'Published Agents registry is required for this tier but is not resolvable; refusing an unrelated local rebuild.' >&2
+              exit 1
+            fi
           fi
 
-          echo "Using published Agents control-plane image ${CONTROL_PLANE_IMAGE_REPOSITORY}:${CONTROL_PLANE_IMAGE_TAG}@${CONTROL_PLANE_IMAGE_DIGEST}"
-          echo "Using published Agents controller image ${CONTROLLER_IMAGE_REPOSITORY}:${CONTROLLER_IMAGE_TAG}@${CONTROLLER_IMAGE_DIGEST}"
-          echo "Using published Agents runner image ${RUNNER_IMAGE_REPOSITORY}:${RUNNER_IMAGE_TAG}@${RUNNER_IMAGE_DIGEST}"
           {
+            echo "BUILT_AGENTS_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
+            echo "BUILT_AGENTS_IMAGE_TAG=${CONTROL_PLANE_IMAGE_TAG}"
+            echo "BUILT_AGENTS_IMAGE_DIGEST=${CONTROL_PLANE_IMAGE_DIGEST}"
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_TAG=${CONTROL_PLANE_IMAGE_TAG}"
             echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_DIGEST=${CONTROL_PLANE_IMAGE_DIGEST}"
@@ -334,30 +356,34 @@ jobs:
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${IMAGE_SOURCE_SHA}"
           } >> "${GITHUB_ENV}"
 
-      - name: Build and preload local Nix Agents image archives into kind
-        if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
-        timeout-minutes: 45
-        run: |
-          set -euxo pipefail
+      - name: Ensure Kind Docker network
+        run: scripts/agents/ensure-kind-network.sh
 
-          CONTROL_PLANE_IMAGE_REPOSITORY="registry.ide-newton.ts.net/lab/agents-control-plane"
-          CONTROLLER_IMAGE_REPOSITORY="registry.ide-newton.ts.net/lab/agents-controller"
-          RUNNER_IMAGE_REPOSITORY="registry.ide-newton.ts.net/lab/agents-codex-runner"
-          IMAGE_TAG="nix"
-          NIX_IMAGE_OUTPUT_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/agents-nix-images-XXXXXX")"
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        env:
+          KIND_EXPERIMENTAL_DOCKER_NETWORK: ${{ env.KIND_DOCKER_NETWORK_NAME }}
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
+          version: v0.31.0
+          node_image: mirror.gcr.io/kindest/node:v1.29.4
+          kubectl_version: v1.29.4
+          wait: 180s
+
+      - name: Build and preload selected local Nix Agents images
+        if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+
           KIND_ARCHIVE_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/agents-kind-archives-XXXXXX")"
-          BUILD_HEARTBEAT_PID=0
-          KIND_HEARTBEAT_PID=0
+          HEARTBEAT_PID=0
           cleanup_preload_resources() {
-            if [ "${BUILD_HEARTBEAT_PID}" != "0" ]; then
-              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+            if [ "${HEARTBEAT_PID}" != 0 ]; then
+              kill "${HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${HEARTBEAT_PID}" 2>/dev/null || true
             fi
-            if [ "${KIND_HEARTBEAT_PID}" != "0" ]; then
-              kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-              wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-            fi
-            rm -rf "${NIX_IMAGE_OUTPUT_DIR}" "${KIND_ARCHIVE_DIR}"
+            rm -rf "${KIND_ARCHIVE_DIR}"
           }
           trap cleanup_preload_resources EXIT
 
@@ -366,144 +392,119 @@ jobs:
             local timeout_minutes="$2"
             shift 2
 
-            local heartbeat_pid
-            local timeout_status=0
-            local status=0
-
             (
               while :; do
-                echo "[progress] ${phase} for ${IMAGE} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+                echo "[progress] ${phase}: ${IMAGE_LABEL} at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
                 sleep 120
               done
             ) &
-            heartbeat_pid=$!
+            HEARTBEAT_PID=$!
 
-            if [[ "${phase}" == kind* ]]; then
-              KIND_HEARTBEAT_PID="${heartbeat_pid}"
-            else
-              BUILD_HEARTBEAT_PID="${heartbeat_pid}"
-            fi
+            set +e
+            timeout -k 30s "${timeout_minutes}m" "$@"
+            local status=$?
+            set -e
 
-            if timeout -k 30s "${timeout_minutes}m" "$@"; then
-              status=0
-            else
-              status=$?
-              timeout_status="$status"
-            fi
-
-            if [[ "${phase}" == kind* ]]; then
-              kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-              wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
-              KIND_HEARTBEAT_PID=0
-            else
-              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-              BUILD_HEARTBEAT_PID=0
-            fi
+            kill "${HEARTBEAT_PID}" 2>/dev/null || true
+            wait "${HEARTBEAT_PID}" 2>/dev/null || true
+            HEARTBEAT_PID=0
 
             if [ "${status}" -ne 0 ]; then
-              echo "::error::${phase} failed with exit code ${status} for ${IMAGE}."
-              if [ "${timeout_status}" -eq 124 ]; then
-                echo "::error::${phase} exceeded ${timeout_minutes}m timeout for ${IMAGE}."
-              fi
+              echo "::error::${phase} failed with exit code ${status}: ${IMAGE_LABEL}."
             fi
-
             return "${status}"
           }
 
-          build_nix_image_archive() {
-            local image_ref="$1"
-            local package_attr="$2"
-            local out_var="$3"
-            local path_file="${NIX_IMAGE_OUTPUT_DIR}/${package_attr}.path"
-            local archive_path
-
-            IMAGE="${image_ref}"
-            rm -f "${path_file}"
-            if run_with_progress "Nix image build" "${BUILD_TIMEOUT_MINUTES}" bash -c \
-              'set -euo pipefail; nix build ".#${1}" --print-out-paths --no-link | tee "${2}"' \
-              _ "${package_attr}" "${path_file}"; then
-              :
-            else
-              status=$?
-              run_step_failure "Failed to build Nix image archive ${package_attr}" "${status}"
-            fi
-
-            archive_path="$(tail -n 1 "${path_file}")"
-            if [ ! -f "${archive_path}" ]; then
-              run_step_failure "Nix image archive ${package_attr} did not produce a file at ${archive_path}" 1
-            fi
-
-            printf -v "${out_var}" '%s' "${archive_path}"
-            echo "Built Nix image archive ${package_attr}: ${archive_path}"
+          image_attr() {
+            case "$1" in
+              control-plane) echo agents-control-plane-image ;;
+              controller) echo agents-controller-image ;;
+              runner) echo agents-codex-runner-image ;;
+              *) echo "Unknown Agents image target: $1" >&2; return 2 ;;
+            esac
           }
 
-          load_nix_image_archive() {
-            local image_ref="$1"
-            local archive_path="$2"
-            local load_archive="${archive_path}"
+          image_repository() {
+            case "$1" in
+              control-plane) echo registry.ide-newton.ts.net/lab/agents-control-plane ;;
+              controller) echo registry.ide-newton.ts.net/lab/agents-controller ;;
+              runner) echo registry.ide-newton.ts.net/lab/agents-codex-runner ;;
+              *) echo "Unknown Agents image target: $1" >&2; return 2 ;;
+            esac
+          }
 
-            IMAGE="${image_ref}"
+          mapfile -t targets < <(jq -r '.[]' <<< "${IMAGE_TARGETS}")
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo 'Local image mode selected without image targets.' >&2
+            exit 2
+          fi
+
+          installables=()
+          for target in "${targets[@]}"; do
+            installables+=(".#$(image_attr "${target}")")
+          done
+
+          IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"
+          run_with_progress 'Nix image build' 30 nix build --no-link "${installables[@]}"
+
+          load_archives=()
+          for target in "${targets[@]}"; do
+            package_attr="$(image_attr "${target}")"
+            archive_path="$(nix path-info ".#${package_attr}")"
+            if [ ! -f "${archive_path}" ]; then
+              echo "Nix image ${package_attr} did not produce an archive at ${archive_path}." >&2
+              exit 1
+            fi
+
+            load_archive="${archive_path}"
             if [[ "${archive_path}" == *.gz ]]; then
               load_archive="${KIND_ARCHIVE_DIR}/$(basename "${archive_path%.gz}")"
-              if run_with_progress "decompress image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" bash -c \
-                'set -euo pipefail; gzip -dc "${1}" > "${2}"' \
-                _ "${archive_path}" "${load_archive}"; then
-                :
-              else
-                status=$?
-                run_step_failure "Failed to decompress Nix image archive ${archive_path}" "${status}"
-              fi
+              IMAGE_LABEL="${target}"
+              # The positional arguments expand inside the nested Bash process.
+              # shellcheck disable=SC2016
+              run_with_progress 'decompress image archive' 10 bash -c \
+                'set -euo pipefail; gzip -dc "$1" > "$2"' \
+                _ "${archive_path}" "${load_archive}"
             fi
+            load_archives+=("${load_archive}")
+          done
 
-            if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${load_archive}" --name "${KIND_CLUSTER_NAME}"; then
-              echo "Loaded Nix image archive ${load_archive} for ${image_ref} into kind cluster ${KIND_CLUSTER_NAME}."
-            else
-              status=$?
-              run_step_failure "Failed to preload local image ${image_ref} into kind cluster ${KIND_CLUSTER_NAME}" "${status}"
-            fi
-          }
+          IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"
+          run_with_progress 'Kind image preload' 20 \
+            kind load image-archive --name "${KIND_CLUSTER_NAME}" "${load_archives[@]}"
 
-          run_step_failure() {
-            local message="$1"
-            local code="$2"
-            echo "${message}; exit code=${code}." >&2
-            echo "${message}" >&2
-            exit 1
-          }
+          for target in "${targets[@]}"; do
+            repository="$(image_repository "${target}")"
+            case "${target}" in
+              control-plane)
+                {
+                  echo "BUILT_AGENTS_IMAGE_REPOSITORY=${repository}"
+                  echo 'BUILT_AGENTS_IMAGE_TAG=nix'
+                  echo 'BUILT_AGENTS_IMAGE_DIGEST='
+                  echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY=${repository}"
+                  echo 'BUILT_AGENTS_CONTROL_PLANE_IMAGE_TAG=nix'
+                  echo 'BUILT_AGENTS_CONTROL_PLANE_IMAGE_DIGEST='
+                } >> "${GITHUB_ENV}"
+                ;;
+              controller)
+                {
+                  echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${repository}"
+                  echo 'BUILT_AGENTS_CONTROLLER_IMAGE_TAG=nix'
+                  echo 'BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST='
+                } >> "${GITHUB_ENV}"
+                ;;
+              runner)
+                {
+                  echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${repository}"
+                  echo 'BUILT_AGENTS_RUNNER_IMAGE_TAG=nix'
+                  echo 'BUILT_AGENTS_RUNNER_IMAGE_DIGEST='
+                } >> "${GITHUB_ENV}"
+                ;;
+            esac
+          done
+          echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}" >> "${GITHUB_ENV}"
 
-          CONTROL_PLANE_IMAGE="${CONTROL_PLANE_IMAGE_REPOSITORY}:${IMAGE_TAG}"
-          CONTROLLER_IMAGE="${CONTROLLER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
-          RUNNER_IMAGE="${RUNNER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
-
-          BUILD_TIMEOUT_MINUTES=30
-          KIND_LOAD_TIMEOUT_MINUTES=20
-
-          build_nix_image_archive "${CONTROL_PLANE_IMAGE}" agents-control-plane-image CONTROL_PLANE_ARCHIVE
-          build_nix_image_archive "${CONTROLLER_IMAGE}" agents-controller-image CONTROLLER_ARCHIVE
-          build_nix_image_archive "${RUNNER_IMAGE}" agents-codex-runner-image RUNNER_ARCHIVE
-
-          load_nix_image_archive "${CONTROL_PLANE_IMAGE}" "${CONTROL_PLANE_ARCHIVE}"
-          load_nix_image_archive "${CONTROLLER_IMAGE}" "${CONTROLLER_ARCHIVE}"
-          load_nix_image_archive "${RUNNER_IMAGE}" "${RUNNER_ARCHIVE}"
-
-          {
-            echo "BUILT_AGENTS_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
-            echo "BUILT_AGENTS_IMAGE_TAG=${IMAGE_TAG}"
-            echo "BUILT_AGENTS_IMAGE_DIGEST="
-            echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
-            echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_TAG=${IMAGE_TAG}"
-            echo "BUILT_AGENTS_CONTROL_PLANE_IMAGE_DIGEST="
-            echo "BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY=${CONTROLLER_IMAGE_REPOSITORY}"
-            echo "BUILT_AGENTS_CONTROLLER_IMAGE_TAG=${IMAGE_TAG}"
-            echo "BUILT_AGENTS_CONTROLLER_IMAGE_DIGEST="
-            echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${RUNNER_IMAGE_REPOSITORY}"
-            echo "BUILT_AGENTS_RUNNER_IMAGE_TAG=${IMAGE_TAG}"
-            echo "BUILT_AGENTS_RUNNER_IMAGE_DIGEST="
-            echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${GITHUB_SHA}"
-          } >> "${GITHUB_ENV}"
-
-      - name: Run agents integration smoke test
+      - name: Run Agents integration smoke test
         env:
           AGENTS_NAMESPACE: agents-ci
           AGENTS_RELEASE_NAME: agents-ci
@@ -529,11 +530,10 @@ jobs:
           set -euo pipefail
           timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts
 
-      - name: Cleanup agents integration release
+      - name: Cleanup Agents integration resources
         if: always()
         run: |
           set -euo pipefail
-          # Kind cluster is ephemeral; prefer cleanup that does not depend on kubectl connectivity.
           if command -v docker >/dev/null 2>&1; then
             docker rm -f "${KIND_CLUSTER_NAME}-control-plane" >/dev/null 2>&1 || true
             docker network rm "${KIND_DOCKER_NETWORK_NAME}" >/dev/null 2>&1 || true
