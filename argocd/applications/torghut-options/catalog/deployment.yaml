@@ -110,9 +110,9 @@ spec:
                   name: torghut-ws-config
                   key: SYMBOLS_ALLOWLIST
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-1948-g7bdbf1ac3
+              value: v0.596.0-1958-gb623a4551
             - name: TORGHUT_OPTIONS_COMMIT
-              value: 7bdbf1ac3c9169feaaf5f86f34deb19f4d2926a3
+              value: b623a45511f912a51bdfdc6408224dda62091c0c
           ports:
             - name: http
               containerPort: 8080
