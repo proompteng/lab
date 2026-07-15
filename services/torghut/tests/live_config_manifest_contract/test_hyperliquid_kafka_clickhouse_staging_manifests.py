@@ -22,3 +22,5 @@ def test_kafka_clickhouse_writer_is_active_only_against_staging_tables() -> None
     assert data.get("CLICKHOUSE_ENABLED") == "true"
     assert data.get("CLICKHOUSE_WRITER_AUTO_OFFSET_RESET") == "earliest"
     assert data.get("CLICKHOUSE_WRITER_DESTINATION_SUFFIX") == "_kafka_staging"
+    assert data.get("CLICKHOUSE_WRITER_CATCH_UP_MAX_PARTITION_LAG_RECORDS") == "1000"
+    assert "CLICKHOUSE_WRITER_READINESS_MAX_PARTITION_LAG_RECORDS" not in data
