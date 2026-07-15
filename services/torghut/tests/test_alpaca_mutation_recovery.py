@@ -19,12 +19,13 @@ from app.alpaca_client import (
     TorghutAlpacaClient,
 )
 from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
-from app.trading.alpaca_submit_recovery import AlpacaSubmitRecoveryRoute
+from app.trading.alpaca_mutation_recovery import AlpacaMutationRecoveryRoute
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
     BrokerMutationReceiptAcquireOptions,
     BrokerMutationReceiptSnapshot,
     BrokerMutationTarget,
+    BrokerMutationTargetKind,
     acquire_broker_mutation_receipt,
     build_broker_mutation_intent,
     fingerprint_broker_endpoint,
@@ -33,6 +34,18 @@ from app.trading.broker_mutation_receipts import (
 from app.trading.decision_submission_claims import DecisionSubmissionClaimHandle
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision
+from app.trading.risk_reduction import (
+    BrokerOrderObservation,
+    BrokerPositionObservation,
+    BrokerReductionSnapshot,
+    CancelAllOrdersPlan,
+    CancelOrderPlan,
+    ClosePositionPlan,
+    PositionCloseLeg,
+    ReplaceOrderPlan,
+    authorize_risk_reduction,
+    flatten_observed_positions,
+)
 
 
 _ENDPOINT = "https://paper-api.alpaca.markets"
@@ -46,12 +59,18 @@ class _RecoveryClient:
         exact: dict[str, object] | None,
         history: Iterable[dict[str, object]] = (),
         history_complete: bool = True,
+        orders_by_id: dict[str, dict[str, object] | None] | None = None,
+        open_orders: Iterable[dict[str, object]] = (),
+        positions: Iterable[dict[str, object]] = (),
     ) -> None:
         self.exact = exact
         self.history = tuple(history)
         self.history_complete = history_complete
         self.exact_calls: list[str] = []
         self.history_calls: list[tuple[datetime, datetime, int]] = []
+        self.orders_by_id = dict(orders_by_id or {})
+        self.open_orders = tuple(open_orders)
+        self.positions = tuple(positions)
 
     def get_order_by_client_order_id_strict(
         self,
@@ -75,6 +94,22 @@ class _RecoveryClient:
             after=after,
             until=until,
         )
+
+    def get_order_by_id_strict(self, order_id: str) -> dict[str, object] | None:
+        return self.orders_by_id.get(order_id)
+
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        assert status == "open"
+        assert limit == 500
+        return list(self.open_orders)
+
+    def list_positions(self) -> list[dict[str, object]]:
+        return list(self.positions)
 
 
 class _MalformedExactLookupClient(_RecoveryClient):
@@ -163,6 +198,84 @@ def _receipt(sessions: sessionmaker[Session]) -> BrokerMutationReceiptSnapshot:
     return started.receipt
 
 
+def _reduction_receipt(
+    sessions: sessionmaker[Session],
+    *,
+    operation: str,
+    target_kind: str,
+    target_key: str,
+    broker_request: dict[str, object],
+    risk_reduction: dict[str, object],
+) -> BrokerMutationReceiptSnapshot:
+    purpose_by_operation = {
+        "cancel_order": "operator",
+        "cancel_all_orders": "operator",
+        "replace_order": "repricing",
+        "close_position": "closeout",
+        "close_all_positions": "flatten",
+    }
+    intent = build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="alpaca",
+            account_label="paper",
+            endpoint_fingerprint=fingerprint_broker_endpoint(_ENDPOINT),
+            operation=operation,
+            risk_class=(
+                "risk_reducing"
+                if operation in {"close_position", "close_all_positions"}
+                else "risk_neutral"
+            ),
+            purpose=purpose_by_operation[operation],
+            workflow_id=f"recovery-test/{uuid.uuid4().hex}",
+            client_request_id=f"rr-{uuid.uuid4().hex}",
+            target=BrokerMutationTarget(
+                kind=cast(BrokerMutationTargetKind, target_kind),
+                key=target_key,
+            ),
+            request_payload={
+                **broker_request,
+                "risk_reduction": risk_reduction,
+                "schema_version": "torghut.alpaca-reduction-request.v1",
+            },
+        )
+    )
+    with sessions() as session:
+        acquired = acquire_broker_mutation_receipt(
+            session,
+            intent=intent,
+            primary_owner="alpaca-reduction-recovery-test",
+            writer_generation=1,
+            options=BrokerMutationReceiptAcquireOptions(
+                primary_token=uuid.uuid4(),
+                lease_seconds=30,
+            ),
+        )
+    with sessions() as session:
+        started = mark_broker_mutation_io_started(
+            session,
+            handle=acquired.receipt.primary_handle,
+            recovery_seconds=30,
+        )
+    assert started.authorized
+    return started.receipt
+
+
+def _risk_snapshot(
+    *,
+    orders: tuple[BrokerOrderObservation, ...] = (),
+    positions: tuple[BrokerPositionObservation, ...] = (),
+) -> BrokerReductionSnapshot:
+    return BrokerReductionSnapshot(
+        broker_route="alpaca",
+        account_label="paper",
+        endpoint_fingerprint=fingerprint_broker_endpoint(_ENDPOINT),
+        observed_at=datetime.now(timezone.utc),
+        complete=True,
+        orders=orders,
+        positions=positions,
+    )
+
+
 def _order(
     *,
     broker_order_id: str = "broker-order-1",
@@ -184,8 +297,8 @@ def _order(
     }
 
 
-def _route(client: _RecoveryClient) -> AlpacaSubmitRecoveryRoute:
-    return AlpacaSubmitRecoveryRoute(
+def _route(client: _RecoveryClient) -> AlpacaMutationRecoveryRoute:
+    return AlpacaMutationRecoveryRoute(
         client=cast(TorghutAlpacaClient, client),
         firewall=Mock(),
         executor=Mock(),
@@ -248,7 +361,7 @@ def test_exact_client_id_match_recovers_without_history_scan(tmp_path: Path) -> 
     )
 
     assert read.outcome == "found"
-    assert read.broker_order == _order()
+    assert read.broker_result == _order()
     assert read.evidence["exact_client_order_lookup"] == "found"
     assert client.exact_calls == [_CLIENT_ORDER_ID]
     assert client.history_calls == []
@@ -341,7 +454,7 @@ def test_exact_order_identity_mismatch_requires_operator_review(tmp_path: Path) 
     assert read.outcome == "indeterminate"
     assert read.evidence["reason"] == "alpaca_recovery_order_qty_mismatch"
     assert read.evidence["absence_proof_complete"] is False
-    assert read.broker_order is None
+    assert read.broker_result is None
 
 
 _KNOWN_ALPACA_ORDER_STATUSES = {
@@ -576,3 +689,264 @@ def test_complete_exact_and_history_absence_is_only_nonterminal_read(
     assert read.evidence["absence_proof_complete"] is True
     assert read.evidence["history_status"] == "all"
     assert read.evidence["history_limit"] == 500
+
+
+def test_cancel_recovery_distinguishes_open_terminal_and_absent_order(
+    tmp_path: Path,
+) -> None:
+    sessions = _sessions(tmp_path / "cancel-recovery.sqlite")
+    order = BrokerOrderObservation(
+        order_id="order-1",
+        client_order_id="client-1",
+        symbol="AAPL",
+        side="buy",
+        quantity=Decimal("1"),
+        filled_quantity=Decimal("0"),
+        status="new",
+    )
+    snapshot = _risk_snapshot(orders=(order,))
+    authorization = authorize_risk_reduction(
+        snapshot,
+        CancelOrderPlan("order-1"),
+        now=snapshot.observed_at,
+    )
+    receipt = _reduction_receipt(
+        sessions,
+        operation="cancel_order",
+        target_kind="order",
+        target_key="order-1",
+        broker_request={"order_id": "order-1"},
+        risk_reduction=dict(authorization.evidence_payload),
+    )
+    open_order = _order(
+        broker_order_id="order-1",
+        client_order_id="client-1",
+        status="new",
+    )
+    terminal_order = {**open_order, "status": "filled", "filled_qty": "1"}
+
+    open_read = _route(
+        _RecoveryClient(exact=None, orders_by_id={"order-1": open_order})
+    ).observe(receipt, observed_at=datetime.now(timezone.utc))
+    terminal_route = _route(
+        _RecoveryClient(exact=None, orders_by_id={"order-1": terminal_order})
+    )
+    terminal_read = terminal_route.observe(
+        receipt,
+        observed_at=datetime.now(timezone.utc),
+    )
+    absent_read = _route(
+        _RecoveryClient(exact=None, orders_by_id={"order-1": None})
+    ).observe(receipt, observed_at=datetime.now(timezone.utc))
+
+    assert (open_read.outcome, open_read.evidence["reason"]) == (
+        "not_found",
+        "target_order_still_open",
+    )
+    assert terminal_read.outcome == "found"
+    assert absent_read.outcome == "found"
+    settlement = terminal_route.build_found_settlement(
+        Mock(spec=Session),
+        receipt,
+        terminal_read,
+    )
+    assert settlement.outcome == "reconciled"
+    assert settlement.broker_reference == "order-1"
+
+
+def test_cancel_all_recovery_checks_only_the_sealed_order_set(tmp_path: Path) -> None:
+    sessions = _sessions(tmp_path / "cancel-all-recovery.sqlite")
+    orders = (
+        BrokerOrderObservation(
+            "order-1", "AAPL", "buy", Decimal("1"), Decimal("0"), "new"
+        ),
+        BrokerOrderObservation(
+            "order-2", "MSFT", "sell", Decimal("1"), Decimal("0"), "new"
+        ),
+    )
+    snapshot = _risk_snapshot(orders=orders)
+    authorization = authorize_risk_reduction(
+        snapshot,
+        CancelAllOrdersPlan(),
+        now=snapshot.observed_at,
+    )
+    receipt = _reduction_receipt(
+        sessions,
+        operation="cancel_all_orders",
+        target_kind="account",
+        target_key="paper",
+        broker_request={"target_order_ids": ["order-1", "order-2"]},
+        risk_reduction=dict(authorization.evidence_payload),
+    )
+
+    unresolved = _route(
+        _RecoveryClient(
+            exact=None,
+            open_orders=(
+                _order(broker_order_id="order-2", status="new"),
+                _order(broker_order_id="unrelated", status="new"),
+            ),
+        )
+    ).observe(receipt, observed_at=datetime.now(timezone.utc))
+    resolved = _route(
+        _RecoveryClient(
+            exact=None,
+            open_orders=(_order(broker_order_id="unrelated", status="new"),),
+        )
+    ).observe(receipt, observed_at=datetime.now(timezone.utc))
+    malformed = _route(
+        _RecoveryClient(exact=None, open_orders=({"id": "order-2"},))
+    ).observe(receipt, observed_at=datetime.now(timezone.utc))
+
+    assert unresolved.outcome == "not_found"
+    assert unresolved.evidence["remaining_target_order_ids"] == ["order-2"]
+    assert resolved.outcome == "found"
+    assert malformed.outcome == "indeterminate"
+    assert malformed.evidence["reason"] == "alpaca_order_side_invalid"
+
+
+def test_replace_recovery_requires_causal_replacement_fields(tmp_path: Path) -> None:
+    sessions = _sessions(tmp_path / "replace-recovery.sqlite")
+    observed = BrokerOrderObservation(
+        "order-1",
+        "AAPL",
+        "buy",
+        Decimal("10"),
+        Decimal("4"),
+        "partially_filled",
+        limit_price=Decimal("190.25"),
+    )
+    snapshot = _risk_snapshot(orders=(observed,))
+    authorization = authorize_risk_reduction(
+        snapshot,
+        ReplaceOrderPlan("order-1", Decimal("191")),
+        now=snapshot.observed_at,
+    )
+    receipt = _reduction_receipt(
+        sessions,
+        operation="replace_order",
+        target_kind="order",
+        target_key="order-1",
+        broker_request={"limit_price": "191", "order_id": "order-1"},
+        risk_reduction=dict(authorization.evidence_payload),
+    )
+    original = {
+        **_order(broker_order_id="order-1", qty="10", status="replaced"),
+        "filled_qty": "4",
+        "replaced_by": "order-2",
+    }
+    replacement = {
+        **_order(broker_order_id="order-2", qty="6", status="new"),
+        "client_order_id": "replacement-client",
+        "limit_price": "191",
+        "replaces": "order-1",
+    }
+    client = _RecoveryClient(
+        exact=None,
+        orders_by_id={"order-1": original, "order-2": replacement},
+    )
+    route = _route(client)
+
+    found = route.observe(receipt, observed_at=datetime.now(timezone.utc))
+    wrong_price = client.orders_by_id["order-2"]
+    assert isinstance(wrong_price, dict)
+    wrong_price["limit_price"] = "192"
+    conflict = route.observe(receipt, observed_at=datetime.now(timezone.utc))
+
+    assert found.outcome == "found"
+    assert conflict.outcome == "indeterminate"
+    assert conflict.evidence["reason"] == "alpaca_replace_recovery_limit_price_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("positions", "outcome", "reason"),
+    [
+        (
+            ({"symbol": "AAPL", "side": "long", "qty": "3", "current_price": "200"},),
+            "found",
+            "target_position_reduced",
+        ),
+        (
+            ({"symbol": "AAPL", "side": "long", "qty": "5", "current_price": "200"},),
+            "not_found",
+            "target_position_unchanged",
+        ),
+        (
+            ({"symbol": "AAPL", "side": "short", "qty": "1", "current_price": "200"},),
+            "indeterminate",
+            "position_side_flipped",
+        ),
+    ],
+)
+def test_close_recovery_uses_fresh_broker_position_delta(
+    tmp_path: Path,
+    positions: tuple[dict[str, object], ...],
+    outcome: str,
+    reason: str,
+) -> None:
+    sessions = _sessions(tmp_path / f"close-{outcome}.sqlite")
+    snapshot = _risk_snapshot(
+        positions=(BrokerPositionObservation("AAPL", Decimal("5"), Decimal("200")),)
+    )
+    authorization = authorize_risk_reduction(
+        snapshot,
+        ClosePositionPlan(PositionCloseLeg("AAPL", "sell", Decimal("2"))),
+        now=snapshot.observed_at,
+    )
+    receipt = _reduction_receipt(
+        sessions,
+        operation="close_position",
+        target_kind="position",
+        target_key="AAPL",
+        broker_request={"quantity": "2", "symbol": "AAPL"},
+        risk_reduction=dict(authorization.evidence_payload),
+    )
+
+    read = _route(_RecoveryClient(exact=None, positions=positions)).observe(
+        receipt,
+        observed_at=datetime.now(timezone.utc),
+    )
+
+    assert (read.outcome, read.evidence["reason"]) == (outcome, reason)
+
+
+def test_close_all_recovery_requires_final_flatten(tmp_path: Path) -> None:
+    sessions = _sessions(tmp_path / "close-all-recovery.sqlite")
+    snapshot = _risk_snapshot(
+        positions=(BrokerPositionObservation("AAPL", Decimal("1"), Decimal("200")),)
+    )
+    authorization = authorize_risk_reduction(
+        snapshot,
+        flatten_observed_positions(snapshot),
+        now=snapshot.observed_at,
+    )
+    receipt = _reduction_receipt(
+        sessions,
+        operation="close_all_positions",
+        target_kind="account",
+        target_key="paper",
+        broker_request={"symbols": ["AAPL"]},
+        risk_reduction=dict(authorization.evidence_payload),
+    )
+
+    flat = _route(_RecoveryClient(exact=None, positions=())).observe(
+        receipt,
+        observed_at=datetime.now(timezone.utc),
+    )
+    partial = _route(
+        _RecoveryClient(
+            exact=None,
+            positions=(
+                {
+                    "symbol": "AAPL",
+                    "side": "long",
+                    "qty": "0.5",
+                    "current_price": "200",
+                },
+            ),
+        )
+    ).observe(receipt, observed_at=datetime.now(timezone.utc))
+
+    assert flat.outcome == "found"
+    assert partial.outcome == "not_found"
+    assert partial.evidence["reason"] == "flatten_incomplete"

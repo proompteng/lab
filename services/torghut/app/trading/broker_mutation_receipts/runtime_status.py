@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from ...models import BrokerMutationReceiptEvent
+from ...models import BrokerMutationReceipt, BrokerMutationReceiptEvent
 from ...config import settings
 from ..action_authority import BROKER_MUTATION_RUNTIME_STATUS_SCHEMA_VERSION
 
@@ -39,6 +39,8 @@ def build_broker_mutation_runtime_status() -> dict[str, object]:
         "recovery_worker_enabled": recovery_enabled,
         "recovery_degraded": not recovery_enabled,
         "database_status": "not_checked",
+        "unresolved_submit_receipt_count": None,
+        "unresolved_reduction_receipt_count": None,
         "reason_codes": reason_codes,
     }
 
@@ -68,6 +70,19 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
     ).all()
     state_counts = Counter(
         {state: int(count) for state, count in state_rows if isinstance(state, str)}
+    )
+    unresolved_operation_rows = session.execute(
+        select(BrokerMutationReceipt.operation, func.count())
+        .join(latest, latest.c.receipt_id == BrokerMutationReceipt.id)
+        .where(latest.c.state == "broker_io")
+        .group_by(BrokerMutationReceipt.operation)
+    ).all()
+    unresolved_operation_counts = Counter(
+        {
+            operation: int(count)
+            for operation, count in unresolved_operation_rows
+            if isinstance(operation, str)
+        }
     )
     settlement_rows = session.execute(
         select(latest.c.settlement_outcome, func.count())
@@ -151,10 +166,22 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
     ).scalar_one_or_none()
     payload = build_broker_mutation_runtime_status()
     unresolved_count = state_counts.get("broker_io", 0)
+    unresolved_submit_count = unresolved_operation_counts.get("submit_order", 0)
+    unresolved_reduction_count = unresolved_count - unresolved_submit_count
     if unresolved_count > 0:
         reason_codes = payload.get("reason_codes")
         payload["reason_codes"] = [
-            "broker_mutation_submit_unresolved",
+            "broker_mutation_unresolved",
+            *(
+                ["broker_mutation_submit_unresolved"]
+                if unresolved_submit_count > 0
+                else []
+            ),
+            *(
+                ["broker_mutation_reduction_unresolved"]
+                if unresolved_reduction_count > 0
+                else []
+            ),
             *(
                 [
                     reason
@@ -217,6 +244,8 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
             state_counts.get("claimed", 0) + state_counts.get("released", 0)
         ),
         unresolved_receipt_count=unresolved_count,
+        unresolved_submit_receipt_count=unresolved_submit_count,
+        unresolved_reduction_receipt_count=unresolved_reduction_count,
         recovery_due_receipt_count=recovery_due_count,
         settled_receipt_count=state_counts.get("settled", 0),
         latest_receipt_event_at=(
@@ -250,6 +279,8 @@ def unavailable_broker_mutation_runtime_status() -> dict[str, object]:
         recovery_resolution_state_counts=None,
         pre_io_receipt_count=None,
         unresolved_receipt_count=None,
+        unresolved_submit_receipt_count=None,
+        unresolved_reduction_receipt_count=None,
         recovery_due_receipt_count=None,
         settled_receipt_count=None,
         latest_receipt_event_at=None,

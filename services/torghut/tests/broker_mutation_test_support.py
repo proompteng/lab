@@ -10,17 +10,20 @@ from app.trading.broker_mutation_receipts.types import (
     BrokerMutationIntent,
     BrokerMutationIoPermit,
     BrokerMutationIoPermitIssueRequest,
+    BrokerMutationOperation,
+    BrokerMutationReceiptSnapshot,
     BrokerMutationRiskClass,
     BrokerMutationRoute,
+    BrokerMutationSettlement,
     issue_broker_mutation_io_permit,
 )
 from app.trading.broker_mutation_receipts.validation import (
     canonical_broker_request_sha256,
 )
 from app.trading.broker_mutation_receipts import fingerprint_broker_endpoint
-from app.trading.broker_mutation_submit_coordinator import (
-    BrokerMutationSubmitCoordinator,
-    UnlinkedOrderSubmissionCallbacks,
+from app.trading.broker_mutation_coordinator import (
+    BrokerMutationCoordinator,
+    UnlinkedMutationCallbacks,
 )
 from app.trading.firewall import (
     AlpacaSubmitRequest,
@@ -52,6 +55,7 @@ def broker_mutation_test_permit(
     risk_class: str = "risk_increasing",
     account_label: str | None = None,
     endpoint_url: str | None = None,
+    operation: str = "submit_order",
 ) -> BrokerMutationIoPermit:
     claim_id = uuid.uuid4() if linked else None
     route = broker_route or ("alpaca" if linked else "hyperliquid")
@@ -70,7 +74,7 @@ def broker_mutation_test_permit(
             primary_epoch=1,
             event_sequence_no=2,
             broker_route=route,
-            operation="submit_order",
+            operation=cast(BrokerMutationOperation, operation),
             risk_class=cast(BrokerMutationRiskClass, risk_class),
             account_label=resolved_account,
             endpoint_fingerprint=fingerprint_broker_endpoint(resolved_endpoint),
@@ -161,18 +165,18 @@ def hyperliquid_broker_mutation_test_permit(
     )
 
 
-class PassthroughBrokerMutationSubmitCoordinator(BrokerMutationSubmitCoordinator):
+class PassthroughBrokerMutationCoordinator(BrokerMutationCoordinator):
     """Unit-test seam for repositories backed by SQL-recording fake sessions."""
 
     def __init__(self) -> None:
         super().__init__("test-passthrough")
 
-    def submit_unlinked_order(
+    def execute_unlinked_mutation(
         self,
         session: Session,
         *,
         intent: BrokerMutationIntent,
-        callbacks: UnlinkedOrderSubmissionCallbacks[_Result],
+        callbacks: UnlinkedMutationCallbacks[_Result],
     ) -> _Result:
         del session
         result = callbacks.broker_call(broker_mutation_test_permit_for_intent(intent))
@@ -180,9 +184,19 @@ class PassthroughBrokerMutationSubmitCoordinator(BrokerMutationSubmitCoordinator
         callbacks.build_settlement(result)
         return result
 
+    def settle_preflight(
+        self,
+        session: Session,
+        *,
+        intent: BrokerMutationIntent,
+        settlement: BrokerMutationSettlement,
+    ) -> BrokerMutationReceiptSnapshot:
+        del session, intent, settlement
+        return cast(BrokerMutationReceiptSnapshot, object())
+
 
 __all__ = [
-    "PassthroughBrokerMutationSubmitCoordinator",
+    "PassthroughBrokerMutationCoordinator",
     "alpaca_broker_mutation_test_permit",
     "broker_mutation_test_permit",
     "broker_mutation_test_permit_for_intent",

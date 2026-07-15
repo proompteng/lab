@@ -465,7 +465,7 @@ def _assert_raw_submit_header_guards(
     intent: BrokerMutationIntent,
 ) -> None:
     assert intent.submission_claim_id is not None
-    invalid_requests = (
+    invalid_submit = build_broker_mutation_intent(
         BrokerMutationIntentRequest(
             broker_route="alpaca",
             account_label=intent.account_label,
@@ -478,23 +478,20 @@ def _assert_raw_submit_header_guards(
             target=BrokerMutationTarget(kind="order", key="d" * 64),
             request_payload={"symbol": "AAPL", "qty": Decimal("1")},
             submission_claim_id=intent.submission_claim_id,
-        ),
-        BrokerMutationIntentRequest(
-            broker_route="alpaca",
-            account_label=intent.account_label,
-            endpoint_fingerprint="d" * 64,
-            operation="replace_order",
-            risk_class="risk_neutral",
-            purpose="repricing",
-            workflow_id="replace-disabled",
-            client_request_id=intent.client_request_id,
-            target=BrokerMutationTarget(kind="order", key=intent.client_request_id),
-            request_payload={"order_id": "broker-order-1", "limit_price": "100"},
-            submission_claim_id=intent.submission_claim_id,
-        ),
+        )
     )
-    for request in invalid_requests:
-        invalid_intent = build_broker_mutation_intent(request)
+    # Current application code refuses this historical linked-replace shape. Forge
+    # only the immutable header fields so the 0060 database trigger remains tested.
+    invalid_replace = replace(
+        intent,
+        endpoint_fingerprint="d" * 64,
+        operation="replace_order",
+        risk_class="risk_neutral",
+        purpose="repricing",
+        workflow_id="replace-disabled",
+        target=BrokerMutationTarget(kind="order", key=intent.client_request_id),
+    )
+    for invalid_intent in (invalid_submit, invalid_replace):
         with sessions() as session:
             with pytest.raises(DBAPIError):
                 insert_receipt_header_if_absent(

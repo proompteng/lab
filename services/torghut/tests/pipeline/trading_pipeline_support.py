@@ -425,8 +425,12 @@ class FakeAlpacaClient:
         return True
 
     def cancel_all_orders(
-        self, *, firewall_token: object | None = None
+        self,
+        *,
+        firewall_token: object | None = None,
+        purpose: str | None = None,
     ) -> list[dict[str, str]]:
+        del firewall_token, purpose
         self.cancel_all_calls += 1
         return [{"id": "order-1"}]
 

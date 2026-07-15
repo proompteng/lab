@@ -7,7 +7,7 @@ import time as time_module
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
+from decimal import Decimal
 from typing import cast
 from zoneinfo import ZoneInfo
 
@@ -18,12 +18,9 @@ from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import PositionSnapshot
-from ..broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionPreflightFailed,
-)
-from ..execution_adapters import ExecutionAdapter, OrderSubmission
-from ..models import SignalEnvelope, StrategyDecision
-from ..prices import PriceFetcher
+from ..broker_mutation_receipts import BrokerMutationPurpose
+from ..execution_adapters import ExecutionAdapter
+from ..models import StrategyDecision
 from ..session_context import regular_session_open_utc_for
 from ..tigerbeetle_client import check_tigerbeetle_health
 from ..tigerbeetle_reconcile.latest_tigerbeetle_reconciliation_status_p import (
@@ -52,13 +49,11 @@ class CapitalSafetyController:
         self,
         *,
         execution_adapter: ExecutionAdapter,
-        price_fetcher: PriceFetcher,
         state: TradingState,
         account_label: str,
         sleep: Callable[[float], None] = time_module.sleep,
     ) -> None:
         self.execution_adapter = execution_adapter
-        self.price_fetcher = price_fetcher
         self.state = state
         self.account_label = account_label
         self.sleep = sleep
@@ -326,9 +321,13 @@ class CapitalSafetyController:
             return
         self.state.capital_closeout_in_progress = True
         self.state.capital_closeout_reason = reason
+        mutation_purpose: BrokerMutationPurpose = (
+            "closeout" if reason == "scheduled_closeout" else "kill_switch"
+        )
         try:
-            self._cancel_open_orders()
+            self._cancel_open_orders(purpose=mutation_purpose)
             attempts = max(1, settings.trading_closeout_max_attempts)
+            submitted_positions: tuple[tuple[str, str, Decimal], ...] | None = None
             for attempt in range(1, attempts + 1):
                 positions = self._positions()
                 if not positions:
@@ -336,27 +335,23 @@ class CapitalSafetyController:
                         account_label=self.account_label
                     )
                     return
-                if attempt > 1:
-                    self._cancel_open_orders()
-                for position in positions:
-                    submission = self._close_submission(
-                        position,
-                        now=now,
-                        attempt=attempt,
-                    )
-                    try:
-                        self.execution_adapter.submit_risk_reducing_order(submission)
-                    except BrokerMutationSubmissionPreflightFailed:
-                        logger.info(
-                            "Capital closeout position changed before broker I/O; "
-                            "continuing account=%s symbol=%s",
-                            self.account_label,
-                            submission.symbol,
-                        )
+                observed_positions = self._closeout_position_state(positions)
+                if submitted_positions is None:
+                    self.execution_adapter.close_all_positions(purpose=mutation_purpose)
+                    submitted_positions = observed_positions
+                elif observed_positions != submitted_positions:
+                    if not self._closeout_progressed(
+                        before=submitted_positions,
+                        after=observed_positions,
+                    ):
+                        raise RuntimeError("capital_closeout_position_progress_invalid")
+                    self._cancel_open_orders(purpose=mutation_purpose)
+                    self.execution_adapter.close_all_positions(purpose=mutation_purpose)
+                    submitted_positions = observed_positions
                 self.state.capital_closeout_attempts = attempt
                 self.sleep(max(0.0, settings.trading_closeout_reprice_seconds))
 
-            self._cancel_open_orders()
+            self._cancel_open_orders(purpose=mutation_purpose)
             if self._positions():
                 self._latch_stop("closeout_failed", now=now)
         except (APIError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -364,6 +359,41 @@ class CapitalSafetyController:
             logger.exception("Capital closeout failed account=%s", self.account_label)
         finally:
             self.state.capital_closeout_in_progress = False
+
+    @staticmethod
+    def _closeout_position_state(
+        positions: list[dict[str, object]],
+    ) -> tuple[tuple[str, str, Decimal], ...]:
+        state: list[tuple[str, str, Decimal]] = []
+        seen_symbols: set[str] = set()
+        for position in positions:
+            symbol = str(position.get("symbol") or "").strip().upper()
+            side = str(position.get("side") or "").strip().lower()
+            qty = CapitalSafetyController._decimal(position.get("qty"))
+            if not symbol or symbol in seen_symbols or side not in {"long", "short"}:
+                raise RuntimeError("capital_closeout_position_identity_invalid")
+            if qty is None or qty <= 0:
+                raise RuntimeError("capital_closeout_position_quantity_invalid")
+            seen_symbols.add(symbol)
+            state.append((symbol, side, qty.normalize()))
+        return tuple(sorted(state))
+
+    @staticmethod
+    def _closeout_progressed(
+        *,
+        before: tuple[tuple[str, str, Decimal], ...],
+        after: tuple[tuple[str, str, Decimal], ...],
+    ) -> bool:
+        before_by_symbol = {
+            symbol: (side, quantity) for symbol, side, quantity in before
+        }
+        progressed = len(after) < len(before)
+        for symbol, side, quantity in after:
+            previous = before_by_symbol.get(symbol)
+            if previous is None or previous[0] != side or quantity > previous[1]:
+                return False
+            progressed = progressed or quantity < previous[1]
+        return progressed
 
     def _positions(self) -> list[dict[str, object]]:
         raw_positions = self.execution_adapter.list_positions()
@@ -377,18 +407,27 @@ class CapitalSafetyController:
                 str(key): value
                 for key, value in cast(Mapping[object, object], raw_position).items()
             }
-            qty = self._decimal(position.get("qty") or position.get("quantity"))
-            if qty is not None and qty != 0:
-                if qty < 0:
-                    position["qty"] = str(abs(qty))
-                    position["side"] = "short"
-                elif str(position.get("side") or "").strip().lower() == "short":
-                    position["qty"] = str(abs(qty))
-                positions.append(position)
+            raw_qty = position.get("qty")
+            if raw_qty is None:
+                raw_qty = position.get("quantity")
+            qty = self._decimal(raw_qty)
+            if qty is None:
+                raise RuntimeError("capital_closeout_position_quantity_invalid")
+            if qty == 0:
+                continue
+            side = str(position.get("side") or "").strip().lower()
+            if qty < 0:
+                position["qty"] = str(abs(qty))
+                position["side"] = "short"
+            elif side not in {"long", "short"}:
+                raise RuntimeError("capital_closeout_position_side_invalid")
+            elif side == "short":
+                position["qty"] = str(abs(qty))
+            positions.append(position)
         return positions
 
-    def _cancel_open_orders(self) -> None:
-        self.execution_adapter.cancel_all_orders()
+    def _cancel_open_orders(self, *, purpose: BrokerMutationPurpose) -> None:
+        self.execution_adapter.cancel_all_orders(purpose=purpose)
         list_orders = getattr(self.execution_adapter, "list_orders", None)
         if not callable(list_orders):
             raise RuntimeError("capital_closeout_order_read_unavailable")
@@ -402,45 +441,6 @@ class CapitalSafetyController:
                 self.sleep(0.1)
         raise RuntimeError("capital_closeout_cancel_unconfirmed")
 
-    def _close_submission(
-        self,
-        position: Mapping[str, object],
-        *,
-        now: datetime,
-        attempt: int,
-    ) -> OrderSubmission:
-        symbol = str(position.get("symbol") or "").strip().upper()
-        qty = self._decimal(position.get("qty") or position.get("quantity"))
-        if not symbol or qty is None or qty <= 0:
-            raise RuntimeError("capital_closeout_position_invalid")
-        side = "buy" if str(position.get("side") or "").lower() == "short" else "sell"
-        snapshot = self.price_fetcher.fetch_market_snapshot(
-            SignalEnvelope(event_ts=now, symbol=symbol, source="capital_closeout")
-        )
-        reference = None
-        if snapshot is not None:
-            reference = snapshot.ask if side == "buy" else snapshot.bid
-            reference = reference or snapshot.price
-        if reference is None:
-            reference = self._decimal(position.get("current_price"))
-        limit_price = self._marketable_limit(reference, side=side)
-        if limit_price is None:
-            raise RuntimeError("capital_closeout_price_unavailable")
-        return OrderSubmission(
-            symbol=symbol,
-            side=side,
-            qty=float(qty),
-            order_type="limit",
-            time_in_force="day",
-            limit_price=float(limit_price),
-            stop_price=None,
-            extra_params={
-                "client_order_id": (
-                    f"torghut-close-{now:%Y%m%d%H%M%S}-{symbol[:8]}-{attempt}"
-                )
-            },
-        )
-
     @staticmethod
     def _decimal(value: object) -> Decimal | None:
         try:
@@ -448,20 +448,6 @@ class CapitalSafetyController:
         except (ArithmeticError, ValueError):
             return None
         return parsed if parsed.is_finite() else None
-
-    @staticmethod
-    def _marketable_limit(reference: Decimal | None, *, side: str) -> Decimal | None:
-        if reference is None or reference <= 0:
-            return None
-        slippage = Decimal(str(settings.trading_closeout_slippage_bps)) / Decimal(
-            "10000"
-        )
-        multiplier = (
-            Decimal("1") + slippage if side == "buy" else Decimal("1") - slippage
-        )
-        tick = Decimal("0.0001") if reference < 1 else Decimal("0.01")
-        rounding = ROUND_UP if side == "buy" else ROUND_DOWN
-        return (reference * multiplier).quantize(tick, rounding=rounding)
 
 
 __all__ = ["CapitalRiskSnapshot", "CapitalSafetyController"]

@@ -18,7 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-import app.trading.broker_mutation_submit_coordinator as submit_coordinator_module
+import app.trading.broker_mutation_coordinator as mutation_coordinator_module
 import app.trading.firewall as firewall_module
 import app.trading.infrastructure_validation_submit as validation_submit_module
 from app.config import settings
@@ -41,15 +41,15 @@ from app.trading.broker_mutation_receipts import (
     fingerprint_broker_endpoint,
     validate_broker_mutation_io_permit,
 )
-from app.trading.broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionAlreadyProcessed,
-    BrokerMutationSubmissionDeferred,
-    BrokerMutationSubmissionRejected,
-    BrokerMutationSubmitCoordinator,
+from app.trading.broker_mutation_coordinator import (
+    BrokerMutationAlreadyProcessed,
+    BrokerMutationDeferred,
+    BrokerMutationRejected,
+    BrokerMutationCoordinator,
     InfrastructureValidationOrderSubmission,
     LinkedOrderSubmission,
     LinkedOrderSubmissionCallbacks,
-    UnlinkedOrderSubmissionCallbacks,
+    UnlinkedMutationCallbacks,
 )
 from app.trading.infrastructure_validation import (
     InfrastructureValidationOrderPlan,
@@ -104,7 +104,7 @@ def test_postgres_two_leaders_make_exactly_one_broker_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     schema, admin_engine, schema_engine, schema_dsn = create_schema_engines(
-        "submit_coordinator"
+        "mutation_coordinator"
     )
     sessions = sessionmaker(
         bind=schema_engine,
@@ -183,7 +183,7 @@ def test_postgres_two_leaders_make_exactly_one_broker_call(
             entrants.wait(timeout=10)
             with sessions() as session:
                 try:
-                    BrokerMutationSubmitCoordinator(component).submit_linked_order(
+                    BrokerMutationCoordinator(component).submit_linked_order(
                         session,
                         request=request,
                         callbacks=LinkedOrderSubmissionCallbacks(
@@ -196,9 +196,9 @@ def test_postgres_two_leaders_make_exactly_one_broker_call(
                             ),
                         ),
                     )
-                except BrokerMutationSubmissionAlreadyProcessed:
+                except BrokerMutationAlreadyProcessed:
                     return "already_processed"
-                except BrokerMutationSubmissionDeferred:
+                except BrokerMutationDeferred:
                     return "deferred"
             return "submitted"
 
@@ -288,7 +288,7 @@ def test_postgres_unlinked_alpaca_closeout_settles_once(
                 request_payload=request_payload,
             )
         )
-        coordinator = BrokerMutationSubmitCoordinator("alpaca-closeout-pg")
+        coordinator = BrokerMutationCoordinator("alpaca-closeout-pg")
         broker_calls = 0
 
         def broker_call(permit: BrokerMutationIoPermit) -> Mapping[str, object]:
@@ -319,10 +319,10 @@ def test_postgres_unlinked_alpaca_closeout_settles_once(
             )
 
         with sessions() as session:
-            coordinator.submit_unlinked_order(
+            coordinator.execute_unlinked_mutation(
                 session,
                 intent=intent,
-                callbacks=UnlinkedOrderSubmissionCallbacks(
+                callbacks=UnlinkedMutationCallbacks(
                     broker_call=broker_call,
                     persist_terminal=lambda _result: None,
                     build_settlement=settlement,
@@ -330,12 +330,12 @@ def test_postgres_unlinked_alpaca_closeout_settles_once(
             )
         with (
             sessions() as session,
-            pytest.raises(BrokerMutationSubmissionAlreadyProcessed),
+            pytest.raises(BrokerMutationAlreadyProcessed),
         ):
-            coordinator.submit_unlinked_order(
+            coordinator.execute_unlinked_mutation(
                 session,
                 intent=intent,
-                callbacks=UnlinkedOrderSubmissionCallbacks(
+                callbacks=UnlinkedMutationCallbacks(
                     broker_call=broker_call,
                     persist_terminal=lambda _result: None,
                     build_settlement=settlement,
@@ -415,7 +415,7 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
         assert release_broker.wait(timeout=10)
         return {"id": "validation-order-1", "status": "canceled"}
 
-    callbacks = UnlinkedOrderSubmissionCallbacks(
+    callbacks = UnlinkedMutationCallbacks(
         broker_call=broker_call,
         persist_terminal=lambda _result: None,
         build_settlement=_validation_settlement,
@@ -429,7 +429,7 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
         def run(component: str) -> str:
             with sessions() as session:
                 try:
-                    BrokerMutationSubmitCoordinator(
+                    BrokerMutationCoordinator(
                         component
                     ).submit_infrastructure_validation_order(
                         session,
@@ -437,9 +437,9 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
                         callbacks=callbacks,
                         now=now,
                     )
-                except BrokerMutationSubmissionAlreadyProcessed:
+                except BrokerMutationAlreadyProcessed:
                     return "already_processed"
-                except BrokerMutationSubmissionDeferred:
+                except BrokerMutationDeferred:
                     return "deferred"
             return "submitted"
 
@@ -453,9 +453,9 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
 
         with (
             sessions() as session,
-            pytest.raises(BrokerMutationSubmissionAlreadyProcessed),
+            pytest.raises(BrokerMutationAlreadyProcessed),
         ):
-            BrokerMutationSubmitCoordinator(
+            BrokerMutationCoordinator(
                 "validation-replay"
             ).submit_infrastructure_validation_order(
                 session,
@@ -492,8 +492,8 @@ def test_postgres_validation_permit_race_makes_one_non_promotable_broker_call(
             permit_id=permit.permit_id,
             symbol="ETH/USD",
         )
-        with sessions() as session, pytest.raises(BrokerMutationSubmissionDeferred):
-            BrokerMutationSubmitCoordinator(
+        with sessions() as session, pytest.raises(BrokerMutationDeferred):
+            BrokerMutationCoordinator(
                 "validation-reuse"
             ).submit_infrastructure_validation_order(
                 session,
@@ -534,13 +534,13 @@ def test_control_plane_validation_cannot_use_generic_unlinked_entrypoint() -> No
     )
 
     with pytest.raises(
-        BrokerMutationSubmissionRejected,
+        BrokerMutationRejected,
         match="requires_dedicated_submit_authority",
     ):
-        BrokerMutationSubmitCoordinator("validation-bypass").submit_unlinked_order(
+        BrokerMutationCoordinator("validation-bypass").execute_unlinked_mutation(
             cast(Session, object()),
             intent=intent,
-            callbacks=UnlinkedOrderSubmissionCallbacks(
+            callbacks=UnlinkedMutationCallbacks(
                 broker_call=lambda _permit: {},
                 persist_terminal=lambda _result: None,
                 build_settlement=_validation_settlement,
@@ -696,7 +696,7 @@ def test_postgres_validation_runner_proves_known_null_terminal_state(
     try:
         for module in (
             validation_submit_module,
-            submit_coordinator_module,
+            mutation_coordinator_module,
             firewall_module,
         ):
             monkeypatch.setattr(

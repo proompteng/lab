@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import cast
+
+import pytest
+from sqlalchemy.orm import Session
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
@@ -17,7 +21,11 @@ from app.hyperliquid_execution.models import (
 from app.hyperliquid_execution.reconciliation_keys import (
     market_id_by_reconciliation_coin,
 )
+from app.hyperliquid_execution.reduction_mutations import (
+    HyperliquidReductionMutationExecutor,
+)
 from tests.broker_mutation_test_support import (
+    PassthroughBrokerMutationCoordinator,
     hyperliquid_broker_mutation_test_permit,
 )
 
@@ -27,6 +35,41 @@ def _submit(exchange: _FakeExchange, intent: OrderIntent) -> OrderResult:
         intent,
         mutation_permit=hyperliquid_broker_mutation_test_permit(exchange, intent),
     )
+
+
+def _reduction_executor(
+    exchange: _FakeExchange,
+) -> HyperliquidReductionMutationExecutor:
+    return HyperliquidReductionMutationExecutor(
+        exchange=exchange,
+        session=cast(Session, object()),
+        coordinator=PassthroughBrokerMutationCoordinator(),
+        account_label=exchange.account_label,
+        endpoint_url=exchange.broker_endpoint_url,
+    )
+
+
+def _order_status_payload(
+    *,
+    oid: int = 123,
+    cloid: str = "0xabc",
+    coin: str = "NVDA",
+    status: str = "open",
+) -> dict[str, object]:
+    return {
+        "status": "order",
+        "order": {
+            "order": {
+                "cloid": cloid,
+                "coin": coin,
+                "limitPx": "100",
+                "oid": oid,
+                "side": "B",
+                "sz": "1",
+            },
+            "status": status,
+        },
+    }
 
 
 def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None:
@@ -163,12 +206,18 @@ def test_exchange_reconciles_spot_state_fallback_paths() -> None:
     assert missing_balance_account.account.withdrawable_usd == Decimal("0.102402")
 
 
-def test_exchange_rejects_unsupported_tif_missing_key_and_local_cancel() -> None:
-    exchange = _FakeExchange(HyperliquidExecutionConfig.from_env({}), sdk=_FakeSdk())
+def test_exchange_rejects_unsupported_tif_and_recovers_cancel_id_from_broker() -> None:
+    sdk = _FakeSdk()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc"}
+        ),
+        sdk=sdk,
+    )
 
     unsupported_tif = _submit(exchange, _intent("NVDA", tif="Alo"))
     missing_key = _submit(exchange, _intent("NVDA", tif="Ioc"))
-    local_cancel = exchange.cancel_order(
+    local_cancel = _reduction_executor(exchange).cancel_order(
         OpenOrder(
             order_id="order",
             coin="NVDA",
@@ -182,10 +231,12 @@ def test_exchange_rejects_unsupported_tif_missing_key_and_local_cancel() -> None
 
     assert unsupported_tif.rejection_reason == "unsupported_limit_tif"
     assert missing_key.rejection_reason == "api_wallet_private_key_missing"
-    assert local_cancel.rejection_reason == "missing_exchange_order_id"
+    assert local_cancel.status == "cancelled"
+    assert local_cancel.exchange_order_id == "123"
+    assert sdk.cancels == [("xyz:NVDA", 123)]
 
 
-def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
+def test_fenced_reduce_only_close_uses_sdk_market_close() -> None:
     sdk = _FakeSdk()
     exchange = _FakeExchange(
         HyperliquidExecutionConfig.from_env(
@@ -198,24 +249,163 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
     )
     exchange.filter_supported_markets((_market("NVDA", "xyz"),))
 
-    default_result = exchange.close_position_reduce_only(
-        "NVDA", size=Decimal("1.0"), slippage=Decimal("0.02")
+    default_result = _reduction_executor(exchange).close_position_reduce_only(
+        "NVDA",
+        size=Decimal("0.1"),
+        slippage=Decimal("0.02"),
+        expected_signed_quantity=Decimal("0.1"),
     )
-    scoped_result = exchange.close_position_reduce_only(
-        "xyz:NVDA", size=Decimal("0.5"), slippage=Decimal("0.02")
+    scoped_exchange = _FakeExchange(
+        exchange._config,
+        sdk=sdk,
+        info=_ScopedReconciliationInfo(),
     )
-    spx_result = exchange.close_position_reduce_only(
-        "SPX", size=Decimal("275.2"), slippage=Decimal("0.02")
+    scoped_exchange.filter_supported_markets((_market("NVDA", "xyz"),))
+    scoped_result = _reduction_executor(scoped_exchange).close_position_reduce_only(
+        "xyz:NVDA",
+        size=Decimal("0.1"),
+        slippage=Decimal("0.02"),
+        expected_signed_quantity=Decimal("0.1"),
     )
+    with pytest.raises(ValueError, match="broker_symbol_changed"):
+        _reduction_executor(scoped_exchange).close_position_reduce_only(
+            "XYZ:NVDA",
+            size=Decimal("0.1"),
+            expected_signed_quantity=Decimal("0.1"),
+        )
 
     assert default_result.status == "filled"
     assert scoped_result.status == "filled"
-    assert spx_result.exchange_order_id == "789"
     assert sdk.market_closes == [
-        ("NVDA", 1.0, 0.02),
-        ("xyz:NVDA", 0.5, 0.02),
-        ("SPX", 275.2, 0.02),
+        ("NVDA", 0.1, 0.02),
+        ("xyz:NVDA", 0.1, 0.02),
     ]
+
+
+@pytest.mark.parametrize(
+    ("size", "slippage", "reason"),
+    [
+        (Decimal("-0.1"), Decimal("0.05"), "close_size_invalid"),
+        (Decimal("0.1"), Decimal("-0.01"), "close_slippage_invalid"),
+        (Decimal("0.1"), Decimal("1"), "close_slippage_invalid"),
+    ],
+)
+def test_reduce_only_close_rejects_invalid_size_and_slippage(
+    size: Decimal,
+    slippage: Decimal,
+    reason: str,
+) -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc"}
+        ),
+        sdk=_FakeSdk(),
+    )
+
+    with pytest.raises(ValueError, match=reason):
+        _reduction_executor(exchange).close_position_reduce_only(
+            "NVDA",
+            size=size,
+            slippage=slippage,
+        )
+
+
+def test_reduction_observation_reads_every_authoritative_perp_dex() -> None:
+    info = _CompleteDexInfo()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc"}
+        ),
+        sdk=_FakeSdk(),
+        info=info,
+    )
+
+    _observed_at, positions = exchange.observe_reduction_positions()
+
+    assert info.state_reads == ["", "xyz", "hedge"]
+    assert {position.symbol for position in positions} == {
+        "BTC",
+        "HEDGE:AMD",
+        "NVDA",
+    }
+
+
+def test_open_order_observation_binds_exact_broker_identity() -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc"}
+        ),
+        sdk=_FakeSdk(),
+        info=_FakeInfo(),
+    )
+    order = _open_order()
+
+    observed = exchange.observe_open_order(order)
+
+    assert observed is not None
+    assert observed.order_id == "123"
+    assert observed.client_order_id == "0xabc"
+    assert observed.symbol == "NVDA"
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (["not-a-row"], "order_status_invalid"),
+        ({"status": "unexpected"}, "order_status_invalid"),
+        ({"status": "order", "order": "bad"}, "order_status_payload_invalid"),
+        (
+            _order_status_payload(oid=456),
+            "open_order_id_mismatch",
+        ),
+        (
+            _order_status_payload(cloid="wrong"),
+            "open_order_cloid_mismatch",
+        ),
+        (
+            _order_status_payload(coin="AMD"),
+            "open_order_coin_mismatch",
+        ),
+    ],
+)
+def test_open_order_observation_rejects_incomplete_or_mismatched_payload(
+    payload: object,
+    reason: str,
+) -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc"}
+        ),
+        sdk=_FakeSdk(),
+        info=_OpenOrdersPayloadInfo(payload),
+    )
+
+    with pytest.raises(ValueError, match=reason):
+        exchange.observe_open_order(_open_order())
+
+
+@pytest.mark.parametrize(
+    ("info_factory", "reason"),
+    [
+        (lambda: _MalformedPerpDexInfo(), "perp_dex_catalog_invalid"),
+        (lambda: _MalformedPositionInfo(), "asset_positions_invalid"),
+    ],
+)
+def test_reduction_observation_rejects_incomplete_broker_shapes(
+    info_factory: Callable[[], _FakeInfo],
+    reason: str,
+) -> None:
+    info = info_factory()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {"HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc"}
+        ),
+        sdk=_FakeSdk(),
+        info=info,
+    )
+
+    with pytest.raises(ValueError, match=reason):
+        exchange.observe_reduction_positions()
 
 
 class _FakeSdkInfo:
@@ -237,7 +427,7 @@ class _FakeSdkInfo:
 class _FakeSdk:
     def __init__(self) -> None:
         self.info = _FakeSdkInfo()
-        self.market_opens: list[dict[str, Any]] = []
+        self.market_opens: list[dict[str, object]] = []
         self.cancels: list[tuple[str, int]] = []
         self.market_closes: list[tuple[str, float | None, float]] = []
         self.next_order_response: dict[str, object] = {
@@ -267,6 +457,9 @@ class _FakeSdk:
 
 
 class _FakeInfo:
+    def perp_dexs(self) -> list[object]:
+        return [None, {"name": "xyz"}]
+
     def meta(self, *, dex: str = "") -> dict[str, object]:
         if dex == "xyz":
             return {
@@ -325,7 +518,77 @@ class _FakeInfo:
         return {"balances": [], "tokenToAvailableAfterMaintenance": []}
 
     def open_orders(self, _account: str, *, dex: str = "") -> list[dict[str, object]]:
-        return [{"coin": "NVDA"}] if dex == "xyz" else [{"coin": "BTC"}]
+        if dex == "xyz":
+            return [
+                {
+                    "cloid": "0xabc",
+                    "coin": "NVDA",
+                    "oid": 123,
+                    "side": "B",
+                    "sz": "1",
+                }
+            ]
+        return [{"coin": "BTC"}]
+
+    def query_order_by_oid(self, _account: str, oid: int) -> dict[str, object]:
+        assert oid == 123
+        return _order_status_payload()
+
+    def query_order_by_cloid(
+        self,
+        _account: str,
+        _cloid: object,
+    ) -> dict[str, object]:
+        return _order_status_payload()
+
+
+class _CompleteDexInfo(_FakeInfo):
+    def __init__(self) -> None:
+        self.state_reads: list[str] = []
+
+    def perp_dexs(self) -> list[object]:
+        return [None, {"name": "xyz"}, {"name": "hedge"}]
+
+    def user_state(self, account: str, dex: str = "") -> dict[str, object]:
+        self.state_reads.append(dex)
+        if dex == "hedge":
+            return {
+                "assetPositions": [
+                    {
+                        "position": {
+                            "coin": "hedge:AMD",
+                            "positionValue": "50",
+                            "szi": "-0.5",
+                        }
+                    }
+                ]
+            }
+        return super().user_state(account, dex=dex)
+
+
+class _MalformedPerpDexInfo(_FakeInfo):
+    def perp_dexs(self) -> list[object]:
+        return [{"name": "missing-core-marker"}]
+
+
+class _MalformedPositionInfo(_FakeInfo):
+    def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
+        return {"assetPositions": "not-a-list"}
+
+
+class _OpenOrdersPayloadInfo(_FakeInfo):
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    def open_orders(self, _account: str, *, dex: str = "") -> list[dict[str, object]]:
+        del dex
+        return cast(list[dict[str, object]], self.payload)
+
+    def query_order_by_oid(self, _account: str, _oid: int) -> object:
+        return self.payload
+
+    def query_order_by_cloid(self, _account: str, _cloid: object) -> object:
+        return self.payload
 
 
 class _UnifiedAccountInfo(_FakeInfo):
@@ -484,6 +747,18 @@ def _intent(coin: str, *, tif: str = "Ioc") -> OrderIntent:
         tif=tif,
         reduce_only=False,
         signal_id="signal",
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=45),
+    )
+
+
+def _open_order() -> OpenOrder:
+    return OpenOrder(
+        order_id="123",
+        coin="NVDA",
+        dex="xyz",
+        exchange_order_id="123",
+        cloid="0xabc",
+        status="accepted",
         expires_at=datetime.now(timezone.utc) + timedelta(seconds=45),
     )
 

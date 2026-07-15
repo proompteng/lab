@@ -249,10 +249,33 @@ def _mutation_authority_reasons(
         ):
             return ("broker_mutation_status_contract_invalid",)
         if unresolved_count > 0:
-            return ("broker_mutation_submit_unresolved",)
+            return _unresolved_mutation_reasons(status, unresolved_count)
     if status.get("runtime_wired") is True and status.get(required_field) is True:
         return ()
     return _strings(status.get("reason_codes")) or (fallback_reason,)
+
+
+def _unresolved_mutation_reasons(
+    status: Mapping[str, object],
+    unresolved_count: int,
+) -> tuple[str, ...]:
+    submit_count = status.get("unresolved_submit_receipt_count")
+    reduction_count = status.get("unresolved_reduction_receipt_count")
+    if submit_count is None and reduction_count is None:
+        return ("broker_mutation_submit_unresolved",)
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in (submit_count, reduction_count)
+    ):
+        return ("broker_mutation_status_contract_invalid",)
+    assert isinstance(submit_count, int)
+    assert isinstance(reduction_count, int)
+    if submit_count + reduction_count != unresolved_count:
+        return ("broker_mutation_status_contract_invalid",)
+    return (
+        *(["broker_mutation_submit_unresolved"] if submit_count > 0 else []),
+        *(["broker_mutation_reduction_unresolved"] if reduction_count > 0 else []),
+    )
 
 
 def _mutation_recovery_reasons(

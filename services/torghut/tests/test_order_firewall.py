@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from unittest import TestCase
 
 from app.config import settings
 from app.trading.broker_mutation_receipts import BrokerMutationReceiptValidationError
 from app.trading.firewall import (
-    AlpacaSubmitRequest,
     OrderFirewall,
     OrderFirewallBlocked,
 )
@@ -18,6 +18,19 @@ from app.trading.infrastructure_validation import (
     infrastructure_validation_order_plan_sha256,
     infrastructure_validation_request_payload,
     infrastructure_validation_terminal_state_sha256,
+)
+from app.trading.broker_mutation_receipts import fingerprint_broker_endpoint
+from app.trading.risk_reduction import (
+    BrokerOrderObservation,
+    BrokerPositionObservation,
+    BrokerReductionSnapshot,
+    CancelOrderPlan,
+    ClosePositionPlan,
+    PositionCloseLeg,
+    authorize_risk_reduction,
+)
+from app.trading.risk_reduction_mutation_authority import (
+    RiskReductionMutationAuthority,
 )
 from tests.broker_mutation_test_support import (
     alpaca_broker_mutation_test_permit,
@@ -31,6 +44,7 @@ class FakeAlpacaClient:
     def __init__(self) -> None:
         self.submissions: list[dict[str, Any]] = []
         self.cancel_all_calls = 0
+        self.cancel_calls: list[str] = []
         self.account_calls = 0
         self.asset_calls: list[str] = []
         self.position_calls = 0
@@ -70,8 +84,20 @@ class FakeAlpacaClient:
     def cancel_order(
         self, alpaca_order_id: str, *, firewall_token: object | None = None
     ) -> bool:
-        _ = alpaca_order_id
+        self.cancel_calls.append(alpaca_order_id)
         return True
+
+    def replace_order(self, *args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
+        return {"id": "replacement-1", "status": "accepted"}
+
+    def close_position(self, *args: object, **kwargs: object) -> dict[str, Any]:
+        del args, kwargs
+        return {"id": "close-1", "status": "accepted"}
+
+    def close_all_positions(self, **kwargs: object) -> list[dict[str, Any]]:
+        del kwargs
+        return [{"id": "close-1", "status": "accepted"}]
 
     def get_order_by_client_order_id(
         self, client_order_id: str
@@ -83,7 +109,13 @@ class FakeAlpacaClient:
         self.order_lookup_calls.append(alpaca_order_id)
         return {"id": alpaca_order_id, "status": "accepted"}
 
-    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = limit
         self.order_list_calls.append(status)
         return [{"id": "order-1", "status": status}]
 
@@ -107,13 +139,11 @@ class TestOrderFirewall(TestCase):
     def tearDown(self) -> None:
         settings.trading_kill_switch_enabled = self.original_kill_switch
 
-    def test_kill_switch_cancels_and_blocks(self) -> None:
+    def test_kill_switch_blocks_entry_submit(self) -> None:
         settings.trading_kill_switch_enabled = True
         client = FakeAlpacaClient()
         firewall = OrderFirewall(client)
 
-        self.assertTrue(firewall.cancel_open_orders_if_kill_switch())
-        self.assertEqual(client.cancel_all_calls, 1)
         self.assertEqual(firewall.status().reason, "kill_switch_enabled")
 
         with self.assertRaises(OrderFirewallBlocked):
@@ -284,57 +314,125 @@ class TestOrderFirewall(TestCase):
 
         self.assertEqual(client.submissions, [])
 
-    def test_fenced_closeout_allows_only_broker_observed_reduction(
+    def test_cancel_requires_matching_durable_and_broker_observed_permits(
         self,
     ) -> None:
         client = FakeAlpacaClient()
         firewall = OrderFirewall(client)
-
-        permit = alpaca_broker_mutation_test_permit(
-            firewall,
-            symbol="AAPL",
-            side="sell",
-            qty=1,
-            order_type="limit",
-            time_in_force="day",
-            limit_price=100,
-            linked=False,
-            risk_class="risk_reducing",
+        now = datetime.now(timezone.utc)
+        authorization = authorize_risk_reduction(
+            BrokerReductionSnapshot(
+                broker_route="alpaca",
+                account_label=firewall.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    firewall.broker_endpoint_url
+                ),
+                observed_at=now,
+                complete=True,
+                orders=(
+                    BrokerOrderObservation(
+                        order_id="order-1",
+                        client_order_id="client-1",
+                        symbol="AAPL",
+                        side="buy",
+                        quantity=Decimal("1"),
+                        filled_quantity=Decimal("0"),
+                        status="new",
+                    ),
+                ),
+            ),
+            CancelOrderPlan("order-1"),
+            now=now,
         )
-        verification = firewall.verify_risk_reducing_order(
-            AlpacaSubmitRequest(
-                symbol="AAPL",
-                side="sell",
-                qty=1,
-                order_type="limit",
-                time_in_force="day",
-                limit_price=100,
+        request_payload = {
+            "order_id": "order-1",
+            "risk_reduction": authorization.evidence_payload,
+        }
+        mutation_permit = broker_mutation_test_permit(
+            request_payload=request_payload,
+            broker_route="alpaca",
+            risk_class="risk_neutral",
+            account_label=firewall.account_label,
+            endpoint_url=firewall.broker_endpoint_url,
+            operation="cancel_order",
+        )
+        authority = RiskReductionMutationAuthority(
+            request_payload=request_payload,
+            mutation_permit=mutation_permit,
+            reduction_permit=authorization.permit,
+        )
+
+        self.assertTrue(
+            firewall.cancel_order(
+                "order-1",
+                authority=authority,
             )
         )
-        response = firewall.submit_verified_risk_reducing_order(
-            verification,
-            mutation_permit=permit,
+        self.assertEqual(client.cancel_calls, ["order-1"])
+
+        with self.assertRaises(ValueError):
+            firewall.cancel_order(
+                "other-order",
+                authority=authority,
+            )
+        self.assertEqual(client.cancel_calls, ["order-1"])
+
+    def test_close_position_compares_canonical_decimal_quantity(self) -> None:
+        client = FakeAlpacaClient()
+        firewall = OrderFirewall(client)
+        now = datetime.now(timezone.utc)
+        authorization = authorize_risk_reduction(
+            BrokerReductionSnapshot(
+                broker_route="alpaca",
+                account_label=firewall.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    firewall.broker_endpoint_url
+                ),
+                observed_at=now,
+                complete=True,
+                positions=(
+                    BrokerPositionObservation(
+                        symbol="AAPL",
+                        signed_quantity=Decimal("1"),
+                        unit_notional=Decimal("100"),
+                    ),
+                ),
+            ),
+            ClosePositionPlan(
+                PositionCloseLeg(
+                    symbol="AAPL",
+                    side="sell",
+                    quantity=Decimal("1"),
+                )
+            ),
+            now=now,
+        )
+        request_payload = {
+            "quantity": "1",
+            "risk_reduction": authorization.evidence_payload,
+            "symbol": "AAPL",
+        }
+        mutation_permit = broker_mutation_test_permit(
+            request_payload=request_payload,
+            broker_route="alpaca",
+            risk_class="risk_reducing",
+            account_label=firewall.account_label,
+            endpoint_url=firewall.broker_endpoint_url,
+            operation="close_position",
+        )
+        authority = RiskReductionMutationAuthority(
+            request_payload=request_payload,
+            mutation_permit=mutation_permit,
+            reduction_permit=authorization.permit,
         )
 
-        self.assertEqual(response["side"], "sell")
-        for symbol, side, qty in (
-            ("AAPL", "buy", 1),
-            ("AAPL", "sell", 2),
-            ("MSFT", "sell", 1),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "risk_reduction"):
-                firewall.verify_risk_reducing_order(
-                    AlpacaSubmitRequest(
-                        symbol=symbol,
-                        side=side,
-                        qty=qty,
-                        order_type="limit",
-                        time_in_force="day",
-                        limit_price=100,
-                    )
-                )
+        response = firewall.close_position(
+            "AAPL",
+            Decimal("1.0"),
+            authority=authority,
+        )
 
-        self.assertEqual(len(client.submissions), 1)
+        self.assertEqual(response["id"], "close-1")
 
     def test_permit_is_request_bound_and_single_use(self) -> None:
         settings.trading_kill_switch_enabled = False
@@ -382,12 +480,12 @@ class TestOrderFirewall(TestCase):
             )
         self.assertEqual(len(client.submissions), 1)
 
-    def test_kill_switch_noop_when_disabled(self) -> None:
+    def test_kill_switch_status_is_clear_when_disabled(self) -> None:
         settings.trading_kill_switch_enabled = False
         client = FakeAlpacaClient()
         firewall = OrderFirewall(client)
 
-        self.assertFalse(firewall.cancel_open_orders_if_kill_switch())
+        self.assertFalse(firewall.status().kill_switch_enabled)
         self.assertEqual(client.cancel_all_calls, 0)
         self.assertEqual(firewall.status().reason, "ok")
 

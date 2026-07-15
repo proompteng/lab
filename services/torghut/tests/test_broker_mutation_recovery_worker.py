@@ -29,7 +29,7 @@ from app.trading.broker_mutation_receipts.runtime_status import (
 from app.trading.broker_mutation_recovery_worker import (
     BrokerMutationRecoveryPolicy,
     BrokerMutationRecoveryWorker,
-    BrokerSubmitRecoveryRead,
+    BrokerMutationRecoveryRead,
 )
 
 
@@ -37,6 +37,7 @@ from tests.broker_mutation_recovery_test_support import (
     _ObservationOnlyRoute,
     _complete_not_found,
     _create_linked_submit,
+    _create_unlinked_cancel,
     _create_unlinked_submit,
     _force_due,
     _found,
@@ -117,6 +118,32 @@ def test_lost_response_accepted_order_is_recovered_without_submit_surface(
     assert receipt.settlement.source == "recovery"
     assert receipt.settlement.broker_reference == "broker-order-1"
     assert status["recovery_resolution_state_counts"]["acknowledged"] == 1
+
+
+def test_worker_recovers_non_submit_mutation_receipts(tmp_path: Path) -> None:
+    sessions = _sessions(tmp_path / "cancel-recovery.sqlite")
+    endpoint = "c" * 64
+    receipt_id = _create_unlinked_cancel(
+        sessions,
+        order_id="order-1",
+        endpoint_fingerprint=endpoint,
+    )
+    route = _ObservationOnlyRoute(
+        broker_route="hyperliquid",
+        account_label="hyperliquid-testnet",
+        endpoint_fingerprint=endpoint,
+        reads=deque([_found("hyperliquid", "order-1")]),
+    )
+
+    result = _worker(sessions, route, component="cancel-test").run_once()
+
+    assert result.outcomes == {"reconciled": 1}
+    assert result.unresolved == 0
+    with sessions() as session:
+        receipt = get_broker_mutation_receipt(session, receipt_id)
+    assert receipt is not None
+    assert receipt.intent.operation == "cancel_order"
+    assert receipt.state == "settled"
 
 
 def test_confirmed_broker_order_does_not_depend_on_absence_activity_read(
@@ -242,6 +269,9 @@ def test_two_complete_absence_observations_expire_into_operator_review(
     assert expired.recovery.outcome == "not_found"
     evidence = json.loads(expired.recovery.evidence_json or "{}")
     observation = evidence["observation"]
+    assert observation["schema_version"] == (
+        "torghut.broker-submit-recovery-observation.v1"
+    )
     assert observation["resolution_state"] == "expired"
     assert observation["automatic_resubmission_attempted"] is False
     assert observation["operator_confirmation_required"] is True
@@ -249,6 +279,46 @@ def test_two_complete_absence_observations_expire_into_operator_review(
     assert status["recovery_resolution_state_counts"]["expired"] == 1
     assert status["unresolved_receipt_count"] == 1
     assert status["recovery_degraded"] is True
+
+
+def test_reduction_absence_never_inherits_submission_expiry(tmp_path: Path) -> None:
+    sessions = _sessions(tmp_path / "cancel-absence.sqlite")
+    endpoint = "7" * 64
+    receipt_id = _create_unlinked_cancel(
+        sessions,
+        order_id="order-absence",
+        endpoint_fingerprint=endpoint,
+    )
+    route = _ObservationOnlyRoute(
+        broker_route="hyperliquid",
+        account_label="hyperliquid-testnet",
+        endpoint_fingerprint=endpoint,
+        reads=deque(
+            [_complete_not_found("hyperliquid"), _complete_not_found("hyperliquid")]
+        ),
+        independent_activity_error=AssertionError(
+            "reduction recovery must not run submission activity checks"
+        ),
+    )
+    worker = _worker(sessions, route, component="cancel-absence-test")
+
+    assert worker.run_once().outcomes == {"not_found": 1}
+    _force_due(sessions, receipt_id)
+    assert worker.run_once().outcomes == {"not_found": 1}
+
+    with sessions() as session:
+        receipt = get_broker_mutation_receipt(session, receipt_id)
+    assert receipt is not None
+    assert receipt.state == "broker_io"
+    evidence = json.loads(receipt.recovery.evidence_json or "{}")
+    observation = evidence["observation"]
+    assert observation["schema_version"] == (
+        "torghut.broker-mutation-recovery-observation.v1"
+    )
+    assert observation["resolution_state"] == "submitted_unknown"
+    assert observation["operator_confirmation_required"] is False
+    assert observation["automatic_broker_mutation_attempted"] is False
+    assert "automatic_resubmission_attempted" not in observation
 
 
 def test_changed_broker_read_contract_restarts_absence_confirmation(
@@ -262,7 +332,7 @@ def test_changed_broker_read_contract_restarts_absence_confirmation(
         endpoint_fingerprint=endpoint,
     )
     first_read = _complete_not_found("hyperliquid")
-    second_read = BrokerSubmitRecoveryRead(
+    second_read = BrokerMutationRecoveryRead(
         outcome="not_found",
         evidence={
             **dict(_complete_not_found("hyperliquid").evidence),

@@ -31,7 +31,7 @@ from .metrics import HyperliquidExecutionMetrics
 from .models import CycleResult, RuntimeDependencyStatus
 from .repository import HyperliquidExecutionRepository
 from .service import HyperliquidExecutionService, runtime_readiness
-from .submit_recovery import HyperliquidSubmitRecoveryRoute
+from .mutation_recovery import HyperliquidMutationRecoveryRoute
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class RuntimeAppState:
         recovery_worker = BrokerMutationRecoveryWorker(
             session_factory=SessionLocal,
             routes=(
-                HyperliquidSubmitRecoveryRoute(
+                HyperliquidMutationRecoveryRoute(
                     config=self.config,
                     exchange=exchange,
                 ),

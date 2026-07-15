@@ -185,12 +185,6 @@ def test_canonical_payloads_reject_recursive_secret_bearing_keys(
             uuid.uuid4(),
         ),
         (
-            "replace_order",
-            BrokerMutationTarget(kind="order", key="order-1"),
-            "risk_increasing",
-            uuid.uuid4(),
-        ),
-        (
             "cancel_order",
             BrokerMutationTarget(kind="order", key="order-1"),
             "risk_increasing",
@@ -227,6 +221,63 @@ def test_non_close_operations_preserve_the_callers_honest_risk_class(
     )
 
     assert intent.risk_class == risk_class
+
+
+def test_replace_is_only_unlinked_risk_neutral_repricing() -> None:
+    valid = build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="alpaca",
+            account_label="paper",
+            endpoint_fingerprint="a" * 64,
+            operation="replace_order",
+            risk_class="risk_neutral",
+            purpose="repricing",
+            workflow_id="replace-order-1",
+            client_request_id="replace-order-1",
+            target=BrokerMutationTarget(kind="order", key="order-1"),
+            request_payload={"limit_price": Decimal("100")},
+        )
+    )
+    assert valid.submission_claim_id is None
+
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="replace_order_contract_invalid",
+    ):
+        build_broker_mutation_intent(
+            BrokerMutationIntentRequest(
+                broker_route="alpaca",
+                account_label="paper",
+                endpoint_fingerprint="a" * 64,
+                operation="replace_order",
+                risk_class="risk_increasing",
+                purpose="operator",
+                workflow_id="replace-order-linked",
+                client_request_id="replace-order-linked",
+                target=BrokerMutationTarget(kind="order", key="order-1"),
+                request_payload={"limit_price": Decimal("100")},
+                submission_claim_id=uuid.uuid4(),
+            )
+        )
+
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="replace_order_contract_invalid",
+    ):
+        build_broker_mutation_intent(
+            BrokerMutationIntentRequest(
+                broker_route="hyperliquid",
+                account_label="testnet",
+                endpoint_fingerprint="b" * 64,
+                operation="replace_order",
+                risk_class="risk_neutral",
+                purpose="repricing",
+                workflow_id="replace-order-hyperliquid",
+                client_request_id="replace-order-hyperliquid",
+                target=BrokerMutationTarget(kind="order", key="order-1"),
+                request_payload={"limit_price": Decimal("100")},
+            )
+        )
 
 
 def test_submit_claim_contract_is_route_specific() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Protocol, cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
@@ -24,16 +24,55 @@ from app.trading.broker_mutation_receipts import BrokerMutationBrokerIoError
 from tests.broker_mutation_test_support import alpaca_broker_mutation_test_permit
 
 
-def _fenced_submit(firewall: OrderFirewall, **kwargs: Any) -> dict[str, Any]:
-    permit = alpaca_broker_mutation_test_permit(firewall, **kwargs)
-    return firewall.submit_order(**kwargs, mutation_permit=permit)
+def _fenced_submit(
+    firewall: OrderFirewall,
+    *,
+    symbol: object,
+    side: object,
+    qty: object,
+    order_type: object,
+    time_in_force: object,
+    limit_price: object = None,
+    stop_price: object = None,
+    extra_params: dict[str, object] | None = None,
+) -> dict[str, object]:
+    permit = alpaca_broker_mutation_test_permit(
+        firewall,
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        order_type=order_type,
+        time_in_force=time_in_force,
+        limit_price=limit_price,
+        stop_price=stop_price,
+        extra_params=extra_params,
+    )
+    return firewall.submit_order(
+        symbol=cast(str, symbol),
+        side=cast(str, side),
+        qty=cast(float, qty),
+        order_type=cast(str, order_type),
+        time_in_force=cast(str, time_in_force),
+        limit_price=cast(float | None, limit_price),
+        stop_price=cast(float | None, stop_price),
+        extra_params=extra_params,
+        mutation_permit=permit,
+    )
+
+
+class _OrderRequestLike(Protocol):
+    symbol: object
+    side: object
+    qty: object
+    type: object
+    time_in_force: object
 
 
 class DummyModel:
-    def __init__(self, **data: Any) -> None:
+    def __init__(self, **data: object) -> None:
         self._data = data
 
-    def model_dump(self) -> dict[str, Any]:
+    def model_dump(self) -> dict[str, object]:
         return self._data
 
 
@@ -66,7 +105,7 @@ class DummyTradingClient:
     def get_order_by_client_id(self, client_id: str) -> DummyModel | None:
         return DummyModel(id="order-xyz", client_order_id=client_id)
 
-    def submit_order(self, order_data: Any) -> DummyModel:
+    def submit_order(self, order_data: _OrderRequestLike) -> DummyModel:
         return DummyModel(
             id="order-123",
             symbol=order_data.symbol,
@@ -147,9 +186,6 @@ class TestAlpacaClient(TestCase):
         bars = client.get_bars(symbols=["AAPL"], timeframe="1Min", lookback_bars=1)
         self.assertIn("AAPL", bars)
         self.assertEqual(len(bars["AAPL"]), 1)
-
-        cancelled = firewall.cancel_all_orders()
-        self.assertEqual(len(cancelled), 2)
 
     def test_order_extra_params_cannot_override_wrapper_owned_fields(self) -> None:
         trading_client = DummyTradingClient()
@@ -236,9 +272,9 @@ class TestAlpacaClient(TestCase):
         class RecordingTradingClient(DummyTradingClient):
             def __init__(self) -> None:
                 super().__init__()
-                self.submitted_order: Any | None = None
+                self.submitted_order: _OrderRequestLike | None = None
 
-            def submit_order(self, order_data: Any) -> DummyModel:
+            def submit_order(self, order_data: _OrderRequestLike) -> DummyModel:
                 self.submitted_order = order_data
                 return super().submit_order(order_data)
 
@@ -338,7 +374,7 @@ class TestAlpacaClient(TestCase):
                 super().__init__()
                 self.payload = payload
 
-            def get_order_by_client_id(self, client_id: str) -> Any:
+            def get_order_by_client_id(self, client_id: str) -> object:
                 del client_id
                 return self.payload
 

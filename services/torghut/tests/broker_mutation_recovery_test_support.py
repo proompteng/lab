@@ -37,7 +37,7 @@ from app.trading.broker_mutation_receipts import (
 from app.trading.broker_mutation_recovery_worker import (
     BrokerMutationRecoveryPolicy,
     BrokerMutationRecoveryWorker,
-    BrokerSubmitRecoveryRead,
+    BrokerMutationRecoveryRead,
 )
 from app.trading.decision_submission_claims import (
     DecisionSubmissionClaimAcquireOptions,
@@ -77,8 +77,8 @@ def _recovery_policy(
     )
 
 
-def _complete_not_found(route: str) -> BrokerSubmitRecoveryRead:
-    return BrokerSubmitRecoveryRead(
+def _complete_not_found(route: str) -> BrokerMutationRecoveryRead:
+    return BrokerMutationRecoveryRead(
         outcome="not_found",
         evidence={
             "schema_version": f"torghut.test-{route}-read.v1",
@@ -88,15 +88,15 @@ def _complete_not_found(route: str) -> BrokerSubmitRecoveryRead:
     )
 
 
-def _found(route: str, broker_order_id: str) -> BrokerSubmitRecoveryRead:
-    return BrokerSubmitRecoveryRead(
+def _found(route: str, broker_order_id: str) -> BrokerMutationRecoveryRead:
+    return BrokerMutationRecoveryRead(
         outcome="found",
         evidence={
             "schema_version": f"torghut.test-{route}-read.v1",
             "route": route,
             "absence_proof_complete": False,
         },
-        broker_order={"id": broker_order_id, "status": "accepted"},
+        broker_result={"id": broker_order_id, "status": "accepted"},
     )
 
 
@@ -105,7 +105,7 @@ class _ObservationOnlyRoute:
     broker_route: str
     account_label: str
     endpoint_fingerprint: str
-    reads: deque[BrokerSubmitRecoveryRead]
+    reads: deque[BrokerMutationRecoveryRead]
     activity: tuple[str, ...] = ()
     independent_activity_error: Exception | None = None
     fail_found_persistence_once: bool = False
@@ -118,7 +118,7 @@ class _ObservationOnlyRoute:
         _receipt: BrokerMutationReceiptSnapshot,
         *,
         observed_at: datetime,
-    ) -> BrokerSubmitRecoveryRead:
+    ) -> BrokerMutationRecoveryRead:
         assert observed_at.tzinfo is not None
         self.observe_calls += 1
         if not self.reads:
@@ -138,9 +138,9 @@ class _ObservationOnlyRoute:
         self,
         session: Session,
         receipt: BrokerMutationReceiptSnapshot,
-        read: BrokerSubmitRecoveryRead,
+        read: BrokerMutationRecoveryRead,
     ) -> BrokerMutationSettlement:
-        order = read.broker_order
+        order = read.broker_result
         assert isinstance(order, Mapping)
         broker_order_id = str(order["id"])
         if self.fail_found_persistence_once:
@@ -254,6 +254,48 @@ def _create_unlinked_submit(
                 "side": "buy",
                 "size": Decimal("0.001"),
             },
+        )
+    )
+    with sessions() as session:
+        acquired = acquire_broker_mutation_receipt(
+            session,
+            intent=intent,
+            primary_owner="test-writer",
+            writer_generation=1,
+            options=BrokerMutationReceiptAcquireOptions(
+                primary_token=uuid.uuid4(),
+                lease_seconds=30,
+            ),
+        )
+    with sessions() as session:
+        io_start = mark_broker_mutation_io_started(
+            session,
+            handle=acquired.receipt.primary_handle,
+            recovery_seconds=30,
+        )
+    assert io_start.authorized
+    _force_due(sessions, io_start.receipt.receipt_id)
+    return io_start.receipt.receipt_id
+
+
+def _create_unlinked_cancel(
+    sessions: sessionmaker[Session],
+    *,
+    order_id: str,
+    endpoint_fingerprint: str,
+) -> uuid.UUID:
+    intent = build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="hyperliquid",
+            account_label="hyperliquid-testnet",
+            endpoint_fingerprint=endpoint_fingerprint,
+            operation="cancel_order",
+            risk_class="risk_neutral",
+            purpose="operator",
+            workflow_id=f"cancel/{order_id}",
+            client_request_id=f"cancel-{order_id}",
+            target=BrokerMutationTarget(kind="order", key=order_id),
+            request_payload={"order_id": order_id},
         )
     )
     with sessions() as session:

@@ -1,4 +1,4 @@
-"""Shared Hyperliquid submit-recovery test doubles."""
+"""Shared Hyperliquid mutation-recovery test doubles."""
 
 from __future__ import annotations
 

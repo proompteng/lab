@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from ....config import settings
 from ...firewall import OrderFirewallBlocked
-from ...broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionDeferred,
+from ...broker_mutation_coordinator import (
+    BrokerMutationDeferred,
 )
 from ...lean_runtime import evaluate_strategy_shadow
 from ...models import StrategyDecision
@@ -390,7 +390,7 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
                 request=request,
                 exc=exc,
             )
-        except BrokerMutationSubmissionDeferred as exc:
+        except BrokerMutationDeferred as exc:
             return self._handle_broker_mutation_deferred(request=request, exc=exc)
         except (
             APIError,
@@ -538,7 +538,7 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
         self,
         *,
         request: OrderSubmissionRequest,
-        exc: BrokerMutationSubmissionDeferred,
+        exc: BrokerMutationDeferred,
     ) -> tuple[None, bool]:
         reason = str(exc)
         stage = (

@@ -12,7 +12,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _LowEdgeServiceFeed,
     _ServiceExchange,
     _ServiceFeed,
-    _SUBMIT_COORDINATOR,
+    _MUTATION_COORDINATOR,
     _TwoExecutableServiceFeed,
     _account_state,
     _now,
@@ -36,7 +36,7 @@ def test_service_cycle_submits_at_most_one_order() -> None:
         config=config,
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -66,7 +66,7 @@ def test_service_blocks_low_after_cost_edge_before_exchange_submission() -> None
         config=config,
         feed=_LowEdgeServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -83,7 +83,7 @@ def test_service_blocks_low_after_cost_edge_before_exchange_submission() -> None
     }
 
 
-def test_service_blocks_low_after_cost_flip_before_reduce_only_close() -> None:
+def test_service_reduces_opposite_position_before_profitability_gate() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
         {
@@ -94,26 +94,27 @@ def test_service_blocks_low_after_cost_flip_before_reduce_only_close() -> None:
         }
     )
     session = _FakeSession(position_size=Decimal("-0.1"))
-    exchange = _ServiceExchange(now)
+    exchange = _ServiceExchange(
+        now,
+        account_state=_account_state(now, position_size=Decimal("-0.1")),
+    )
     service = HyperliquidExecutionService(
         config=config,
         feed=_LowEdgeServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
     result = service.run_once(session)
 
     assert result.signals_written == 1
-    assert result.orders_submitted == 0
+    assert result.orders_submitted == 1
     assert exchange.submitted_coins == []
-    assert exchange.reduce_only_closes == []
-    gate = result.universe_details["profitability_gate"]
-    assert isinstance(gate, dict)
-    assert gate["allowed"] is False
+    assert exchange.reduce_only_closes == [("NVDA", Decimal("0.1"), Decimal("0.05"))]
+    assert "profitability_gate" not in result.universe_details
     assert result.universe_details["risk_blocks_by_reason"] == {
-        "profitability_after_cost_edge_below_floor": 1
+        "reduce_only_close_before_opposite_entry": 1
     }
 
 
@@ -128,12 +129,15 @@ def test_service_closes_opposite_position_reduce_only_before_new_entry() -> None
         }
     )
     session = _FakeSession(position_size=Decimal("-0.1"))
-    exchange = _ServiceExchange(now)
+    exchange = _ServiceExchange(
+        now,
+        account_state=_account_state(now, position_size=Decimal("-0.1")),
+    )
     service = HyperliquidExecutionService(
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -165,12 +169,19 @@ def test_service_closes_scoped_opposite_position_reduce_only() -> None:
         position_size=Decimal("-0.1"),
         position_sdk_coin="xyz:NVDA",
     )
-    exchange = _ServiceExchange(now)
+    exchange = _ServiceExchange(
+        now,
+        account_state=_account_state(
+            now,
+            position_size=Decimal("-0.1"),
+            position_sdk_coin="xyz:NVDA",
+        ),
+    )
     service = HyperliquidExecutionService(
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -198,12 +209,15 @@ def test_service_stops_cycle_after_submitted_reduce_only_close() -> None:
         }
     )
     session = _PositionOnceSession(position_size=Decimal("-0.1"))
-    exchange = _ServiceExchange(now)
+    exchange = _ServiceExchange(
+        now,
+        account_state=_account_state(now, position_size=Decimal("-0.1")),
+    )
     service = HyperliquidExecutionService(
         config=config,
         feed=_TwoExecutableServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -246,7 +260,7 @@ def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 

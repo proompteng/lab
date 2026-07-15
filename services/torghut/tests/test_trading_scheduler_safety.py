@@ -19,9 +19,6 @@ from app.trading.scheduler.safety import (
 
 
 class _OrderFirewallStub:
-    def __init__(self) -> None:
-        self.cancel_all_calls = 0
-
     def status(self) -> object:
         class _Status:
             kill_switch_enabled = False
@@ -29,7 +26,14 @@ class _OrderFirewallStub:
 
         return _Status()
 
-    def cancel_all_orders(self) -> list[dict[str, object]]:
+
+class _ExecutionAdapterStub:
+    def __init__(self) -> None:
+        self.cancel_all_calls = 0
+
+    def cancel_all_orders(self, *, purpose: str) -> list[dict[str, object]]:
+        if purpose != "governance":
+            raise ValueError("unexpected_cancel_purpose")
         self.cancel_all_calls += 1
         return [{"id": "o-1"}]
 
@@ -37,6 +41,7 @@ class _OrderFirewallStub:
 class _PipelineStub:
     def __init__(self) -> None:
         self.order_firewall = _OrderFirewallStub()
+        self.execution_adapter = _ExecutionAdapterStub()
 
 
 _EmergencyStopReasonCollector = Callable[[], tuple[list[str], float, float | None]]
@@ -224,7 +229,9 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertIn(
                 "signal_lag_exceeded", scheduler.state.emergency_stop_reason or ""
             )
-            self.assertEqual(scheduler.pipeline_stub.order_firewall.cancel_all_calls, 1)
+            self.assertEqual(
+                scheduler.pipeline_stub.execution_adapter.cancel_all_calls, 1
+            )
             evidence_path = Path(scheduler.state.rollback_incident_evidence_path or "")
             self.assertTrue(evidence_path.exists())
             payload = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -242,7 +249,9 @@ class TestTradingSchedulerSafety(TestCase):
 
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
-            self.assertEqual(scheduler.pipeline_stub.order_firewall.cancel_all_calls, 0)
+            self.assertEqual(
+                scheduler.pipeline_stub.execution_adapter.cancel_all_calls, 0
+            )
 
     def test_critical_no_signal_streak_is_suppressed_when_market_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -404,7 +413,9 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertIsNone(scheduler.state.emergency_stop_reason)
             self.assertIsNone(scheduler.state.emergency_stop_triggered_at)
-            self.assertEqual(scheduler.pipeline_stub.order_firewall.cancel_all_calls, 0)
+            self.assertEqual(
+                scheduler.pipeline_stub.execution_adapter.cancel_all_calls, 0
+            )
 
     def test_split_emergency_stop_reasons_normalizes_and_dedupes(self) -> None:
         reason = (

@@ -28,6 +28,7 @@ class MaintenanceExchange(Protocol):
         *,
         size: Decimal | None = None,
         slippage: Decimal = Decimal("0.05"),
+        expected_signed_quantity: Decimal | None = None,
     ) -> OrderResult:
         """Close a position through a reduce-only exchange order."""
         ...
@@ -92,6 +93,7 @@ def close_excluded_positions(
                 str(candidate["coin"]),
                 size=abs(Decimal(str(candidate["size"]))),
                 slippage=slippage,
+                expected_signed_quantity=Decimal(str(candidate["size"])),
             )
             action.update(
                 {
@@ -213,13 +215,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     config = HyperliquidExecutionConfig.from_env()
-    report = close_excluded_positions(
-        config=config,
-        exchange=HyperliquidSdkExecutionExchange(config),
-        requested_coins=tuple(str(coin) for coin in args.coin),
-        execute=bool(args.execute),
-        slippage=Decimal(str(args.slippage)),
-    )
+    sdk_exchange = HyperliquidSdkExecutionExchange(config)
+    if args.execute:
+        from ..db import SessionLocal
+        from ..trading.broker_mutation_coordinator import BrokerMutationCoordinator
+        from .reduction_mutations import HyperliquidReductionMutationExecutor
+
+        with SessionLocal() as session:
+            report = close_excluded_positions(
+                config=config,
+                exchange=HyperliquidReductionMutationExecutor(
+                    exchange=sdk_exchange,
+                    session=session,
+                    coordinator=BrokerMutationCoordinator("hyperliquid-maintenance"),
+                    account_label=config.account_label,
+                    endpoint_url=config.exchange_api_url,
+                ),
+                requested_coins=tuple(str(coin) for coin in args.coin),
+                execute=True,
+                slippage=Decimal(str(args.slippage)),
+            )
+    else:
+        report = close_excluded_positions(
+            config=config,
+            exchange=cast(MaintenanceExchange, sdk_exchange),
+            requested_coins=tuple(str(coin) for coin in args.coin),
+            execute=False,
+            slippage=Decimal(str(args.slippage)),
+        )
     print(json.dumps(report, sort_keys=True))
     return 2 if args.execute and report["blockers"] else 0
 
@@ -410,6 +433,7 @@ def _reduce_only_close(
         str(candidate["coin"]),
         size=abs(Decimal(str(candidate["size"]))),
         slippage=request.slippage,
+        expected_signed_quantity=Decimal(str(candidate["size"])),
     )
     return {
         "status": result.status,

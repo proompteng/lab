@@ -230,7 +230,9 @@ class _MaintenanceExchange:
         *,
         size: Decimal | None = None,
         slippage: Decimal = Decimal("0.05"),
+        expected_signed_quantity: Decimal | None = None,
     ) -> OrderResult:
+        assert expected_signed_quantity is not None
         self.closed.append((coin, size, slippage))
         return OrderResult(
             status="filled",

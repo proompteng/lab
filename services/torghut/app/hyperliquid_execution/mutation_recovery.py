@@ -1,4 +1,4 @@
-"""Observation-only recovery route for Hyperliquid CLOID submissions."""
+"""Observation-only recovery for Hyperliquid submissions and reductions."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import cast
+from typing import Literal, cast
 
+from requests.exceptions import RequestException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -19,10 +20,17 @@ from ..trading.broker_mutation_receipts import (
     build_broker_mutation_settlement,
     fingerprint_broker_endpoint,
 )
-from ..trading.broker_mutation_recovery_worker import BrokerSubmitRecoveryRead
+from ..trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryRouteError,
+    BrokerMutationRecoveryRead,
+)
+from ..trading.risk_reduction import (
+    RiskReductionPermitError,
+    evaluate_position_reduction_recovery,
+)
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidExecutionExchange
-from .models import OrderIntent, OrderResult, OrderSide, OrderStatus
+from .models import OpenOrder, OrderIntent, OrderResult, OrderSide, OrderStatus
 from .order_policy import CloidIdentity, deterministic_cloid
 from .repository import HyperliquidExecutionRepository
 
@@ -30,9 +38,12 @@ from .repository import HyperliquidExecutionRepository
 HYPERLIQUID_SUBMIT_RECOVERY_READ_SCHEMA_VERSION = (
     "torghut.hyperliquid-submit-recovery-read.v1"
 )
+HYPERLIQUID_REDUCTION_RECOVERY_READ_SCHEMA_VERSION = (
+    "torghut.hyperliquid-reduction-recovery-read.v1"
+)
 
 
-class HyperliquidSubmitRecoveryRoute:
+class HyperliquidMutationRecoveryRoute:
     broker_route = "hyperliquid"
 
     def __init__(
@@ -57,10 +68,34 @@ class HyperliquidSubmitRecoveryRoute:
         receipt: BrokerMutationReceiptSnapshot,
         *,
         observed_at: datetime,
-    ) -> BrokerSubmitRecoveryRead:
+    ) -> BrokerMutationRecoveryRead:
+        try:
+            if receipt.intent.operation == "submit_order":
+                return self._observe_submit(receipt, observed_at=observed_at)
+            return self._observe_reduction(receipt, observed_at=observed_at)
+        except (
+            ArithmeticError,
+            AttributeError,
+            LookupError,
+            OSError,
+            RequestException,
+            RuntimeError,
+            TimeoutError,
+            TypeError,
+        ) as exc:
+            raise BrokerMutationRecoveryRouteError(
+                f"hyperliquid_mutation_recovery_read_failed:{type(exc).__name__}"
+            ) from exc
+
+    def _observe_submit(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+        *,
+        observed_at: datetime,
+    ) -> BrokerMutationRecoveryRead:
         started_at = receipt.lifecycle.broker_io_started_at
         if started_at is None:
-            return BrokerSubmitRecoveryRead(
+            return BrokerMutationRecoveryRead(
                 outcome="indeterminate",
                 evidence=self._evidence(
                     {
@@ -76,12 +111,12 @@ class HyperliquidSubmitRecoveryRoute:
         )
         evidence = self._evidence(lookup.evidence)
         if lookup.outcome != "found":
-            return BrokerSubmitRecoveryRead(
+            return BrokerMutationRecoveryRead(
                 outcome=lookup.outcome,
                 evidence=evidence,
             )
         if lookup.order is None:
-            return BrokerSubmitRecoveryRead(
+            return BrokerMutationRecoveryRead(
                 outcome="indeterminate",
                 evidence={
                     **evidence,
@@ -92,7 +127,7 @@ class HyperliquidSubmitRecoveryRoute:
         try:
             normalized = _validated_hyperliquid_order(receipt, lookup.order)
         except ValueError as exc:
-            return BrokerSubmitRecoveryRead(
+            return BrokerMutationRecoveryRead(
                 outcome="indeterminate",
                 evidence={
                     **evidence,
@@ -101,14 +136,144 @@ class HyperliquidSubmitRecoveryRoute:
                     "absence_proof_complete": False,
                 },
             )
-        return BrokerSubmitRecoveryRead(
+        return BrokerMutationRecoveryRead(
             outcome="found",
             evidence={
                 **evidence,
                 "broker_order_found": True,
                 "broker_status": normalized["status"],
             },
-            broker_order=lookup.order,
+            broker_result=lookup.order,
+        )
+
+    def _observe_reduction(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+        *,
+        observed_at: datetime,
+    ) -> BrokerMutationRecoveryRead:
+        try:
+            if receipt.intent.operation == "cancel_order":
+                return self._observe_cancel_order(receipt, observed_at=observed_at)
+            if receipt.intent.operation == "close_position":
+                return self._observe_position_reduction(receipt)
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason="recovery_operation_unsupported",
+            )
+        except (RiskReductionPermitError, ValueError) as exc:
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason=str(exc) or type(exc).__name__,
+            )
+
+    def _observe_cancel_order(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+        *,
+        observed_at: datetime,
+    ) -> BrokerMutationRecoveryRead:
+        request = _request_payload(receipt)
+        target_key = receipt.intent.target.key
+        order = OpenOrder(
+            order_id=target_key,
+            coin=_required_text(request.get("coin"), "coin"),
+            dex=str(request.get("dex") or "").strip(),
+            exchange_order_id=target_key,
+            cloid=_required_text(request.get("cloid"), "cloid"),
+            status="accepted",
+            expires_at=observed_at,
+        )
+        observed = self._exchange.observe_open_order(order)
+        if observed is None:
+            return self._reduction_read(
+                receipt,
+                outcome="found",
+                reason="target_order_absent",
+                broker_result={
+                    "broker_reference": target_key,
+                    "status": "absent",
+                },
+            )
+        if observed.order_id != target_key:
+            raise ValueError("hyperliquid_cancel_recovery_order_identity_mismatch")
+        if observed.open:
+            return self._reduction_read(
+                receipt,
+                outcome="not_found",
+                reason="target_order_still_open",
+                details={"broker_status": observed.status},
+            )
+        return self._reduction_read(
+            receipt,
+            outcome="found",
+            reason="target_order_terminal",
+            broker_result={
+                "broker_reference": target_key,
+                "status": observed.status,
+            },
+        )
+
+    def _observe_position_reduction(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+    ) -> BrokerMutationRecoveryRead:
+        _observed_at, positions = self._exchange.observe_reduction_positions()
+        evaluation = evaluate_position_reduction_recovery(
+            _risk_reduction_evidence(receipt),
+            positions,
+            operation=receipt.intent.operation,
+            target_key=receipt.intent.target.key,
+        )
+        outcome: Literal["found", "not_found", "indeterminate"]
+        if evaluation.outcome == "resolved":
+            outcome = "found"
+        elif evaluation.outcome == "unresolved":
+            outcome = "not_found"
+        else:
+            outcome = "indeterminate"
+        current = {
+            position.symbol: str(position.signed_quantity) for position in positions
+        }
+        return self._reduction_read(
+            receipt,
+            outcome=outcome,
+            reason=evaluation.reason,
+            broker_result=(
+                {
+                    "broker_reference": receipt.intent.target.key,
+                    "current_positions": current,
+                    "status": "reduced",
+                }
+                if outcome == "found"
+                else None
+            ),
+            details={"current_positions": current},
+        )
+
+    @staticmethod
+    def _reduction_read(
+        receipt: BrokerMutationReceiptSnapshot,
+        *,
+        outcome: Literal["found", "not_found", "indeterminate"],
+        reason: str,
+        broker_result: Mapping[str, object] | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> BrokerMutationRecoveryRead:
+        return BrokerMutationRecoveryRead(
+            outcome=outcome,
+            broker_result=broker_result,
+            evidence={
+                "schema_version": HYPERLIQUID_REDUCTION_RECOVERY_READ_SCHEMA_VERSION,
+                "route": "hyperliquid",
+                "operation": receipt.intent.operation,
+                "target_key": receipt.intent.target.key,
+                "reason": reason,
+                "absence_proof_complete": False,
+                **dict(details or {}),
+            },
         )
 
     def independent_activity(
@@ -133,16 +298,18 @@ class HyperliquidSubmitRecoveryRoute:
         self,
         session: Session,
         receipt: BrokerMutationReceiptSnapshot,
-        read: BrokerSubmitRecoveryRead,
+        read: BrokerMutationRecoveryRead,
     ) -> BrokerMutationSettlement:
-        if read.broker_order is None:
+        if receipt.intent.operation != "submit_order":
+            return _reduction_settlement(receipt, read)
+        if read.broker_result is None:
             raise ValueError("hyperliquid_recovery_found_order_required")
         intent = _order_intent(
             session,
             receipt,
             order_ttl_seconds=self._config.order_ttl_seconds,
         )
-        result = _order_result(receipt, read.broker_order)
+        result = _order_result(receipt, read.broker_result)
         HyperliquidExecutionRepository(session).insert_order(intent, result)
         rejected = result.status == "rejected"
         return build_broker_mutation_settlement(
@@ -171,6 +338,51 @@ class HyperliquidSubmitRecoveryRoute:
             "route": "hyperliquid",
             **dict(payload),
         }
+
+
+def _risk_reduction_evidence(
+    receipt: BrokerMutationReceiptSnapshot,
+) -> Mapping[str, object]:
+    request = _request_payload(receipt)
+    evidence = request.get("risk_reduction")
+    if not isinstance(evidence, dict):
+        raise ValueError("hyperliquid_recovery_risk_reduction_evidence_invalid")
+    evidence_map = cast(dict[str, object], evidence)
+    if evidence_map.get("broker_route") != "hyperliquid":
+        raise ValueError("hyperliquid_recovery_risk_reduction_route_mismatch")
+    if evidence_map.get("target_key") != receipt.intent.target.key:
+        raise ValueError("hyperliquid_recovery_risk_reduction_target_mismatch")
+    return evidence_map
+
+
+def _reduction_settlement(
+    receipt: BrokerMutationReceiptSnapshot,
+    read: BrokerMutationRecoveryRead,
+) -> BrokerMutationSettlement:
+    result = read.broker_result
+    if not isinstance(result, Mapping):
+        raise ValueError("hyperliquid_reduction_recovery_result_required")
+    broker_reference = _required_text(
+        result.get("broker_reference"),
+        "reduction_broker_reference",
+    )
+    return build_broker_mutation_settlement(
+        BrokerMutationSettlementRequest(
+            source="recovery",
+            outcome="reconciled",
+            broker_reference=broker_reference,
+            execution_id=None,
+            evidence_payload={
+                "schema_version": HYPERLIQUID_REDUCTION_RECOVERY_READ_SCHEMA_VERSION,
+                "route": "hyperliquid",
+                "operation": receipt.intent.operation,
+                "target_key": receipt.intent.target.key,
+                "observation": dict(read.evidence),
+                "broker_result": dict(result),
+                "automatic_broker_mutation_attempted": False,
+            },
+        )
+    )
 
 
 def _order_intent(
@@ -448,5 +660,5 @@ def _datetime(value: object, field: str) -> datetime:
 
 __all__ = [
     "HYPERLIQUID_SUBMIT_RECOVERY_READ_SCHEMA_VERSION",
-    "HyperliquidSubmitRecoveryRoute",
+    "HyperliquidMutationRecoveryRoute",
 ]

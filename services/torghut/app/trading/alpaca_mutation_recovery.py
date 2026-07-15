@@ -1,4 +1,4 @@
-"""Strict Alpaca reads and terminal persistence for submit recovery."""
+"""Strict Alpaca reads and terminal persistence for mutation recovery."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import cast
+from typing import Literal, cast
 
 from alpaca.common.exceptions import APIError, RetryException
 from requests.exceptions import RequestException
@@ -19,6 +19,11 @@ from ..alpaca_client import (
     TorghutAlpacaClient,
 )
 from ..models import Execution, ExecutionOrderEvent
+from .alpaca_observations import (
+    alpaca_order_observation,
+    alpaca_position_observation,
+    optional_decimal,
+)
 from .broker_mutation_receipts import (
     BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationReceiptSnapshot,
@@ -30,13 +35,21 @@ from .broker_mutation_receipts import (
 )
 from .broker_mutation_recovery_worker import (
     BrokerMutationRecoveryRouteError,
-    BrokerSubmitRecoveryRead,
+    BrokerMutationRecoveryRead,
 )
 from .execution import OrderExecutor
 from .firewall import OrderFirewall
+from .risk_reduction import (
+    BrokerPositionObservation,
+    RiskReductionPermitError,
+    evaluate_position_reduction_recovery,
+)
 
 
 ALPACA_SUBMIT_RECOVERY_READ_SCHEMA_VERSION = "torghut.alpaca-submit-recovery-read.v1"
+ALPACA_REDUCTION_RECOVERY_READ_SCHEMA_VERSION = (
+    "torghut.alpaca-reduction-recovery-read.v1"
+)
 _HISTORY_LIMIT = 500
 _HISTORY_PRE_IO_MARGIN = timedelta(minutes=5)
 _STABLE_STATUS = re.compile(r"^[a-z0-9][a-z0-9_.:-]*$")
@@ -64,7 +77,7 @@ _ALPACA_ACKNOWLEDGED_ORDER_STATUSES = frozenset(
 _ALPACA_REJECTED_ORDER_STATUSES = frozenset({"rejected"})
 
 
-class AlpacaSubmitRecoveryRoute:
+class AlpacaMutationRecoveryRoute:
     """Alpaca recovery route that has no broker-mutation surface."""
 
     broker_route = "alpaca"
@@ -99,10 +112,18 @@ class AlpacaSubmitRecoveryRoute:
         receipt: BrokerMutationReceiptSnapshot,
         *,
         observed_at: datetime,
-    ) -> BrokerSubmitRecoveryRead:
+    ) -> BrokerMutationRecoveryRead:
         try:
-            return self._observe(receipt, observed_at=observed_at)
+            if receipt.intent.operation == "submit_order":
+                return self._observe_submit(receipt, observed_at=observed_at)
+            return self._observe_reduction(receipt)
         except AlpacaStrictOrderLookupMalformedError:
+            if receipt.intent.operation != "submit_order":
+                return self._reduction_read(
+                    receipt,
+                    outcome="indeterminate",
+                    reason="strict_order_lookup_malformed",
+                )
             return self._indeterminate_read(
                 evidence=self._evidence(
                     exact_lookup="malformed",
@@ -120,15 +141,15 @@ class AlpacaSubmitRecoveryRoute:
             TimeoutError,
         ) as exc:
             raise BrokerMutationRecoveryRouteError(
-                f"alpaca_submit_recovery_read_failed:{type(exc).__name__}"
+                f"alpaca_mutation_recovery_read_failed:{type(exc).__name__}"
             ) from exc
 
-    def _observe(
+    def _observe_submit(
         self,
         receipt: BrokerMutationReceiptSnapshot,
         *,
         observed_at: datetime,
-    ) -> BrokerSubmitRecoveryRead:
+    ) -> BrokerMutationRecoveryRead:
         client_order_id = receipt.intent.client_request_id
         exact = self._client.get_order_by_client_order_id_strict(client_order_id)
         if exact is not None:
@@ -195,9 +216,228 @@ class AlpacaSubmitRecoveryRoute:
             history_complete=history.complete,
             match_count=0,
         )
-        return BrokerSubmitRecoveryRead(
+        return BrokerMutationRecoveryRead(
             outcome="not_found" if history.complete else "indeterminate",
             evidence=evidence,
+        )
+
+    def _observe_reduction(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+    ) -> BrokerMutationRecoveryRead:
+        try:
+            operation = receipt.intent.operation
+            if operation == "cancel_order":
+                return self._observe_cancel_order(receipt)
+            if operation == "cancel_all_orders":
+                return self._observe_cancel_all_orders(receipt)
+            if operation == "replace_order":
+                return self._observe_replace_order(receipt)
+            if operation in {"close_position", "close_all_positions"}:
+                return self._observe_position_reduction(receipt)
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason="recovery_operation_unsupported",
+            )
+        except (RiskReductionPermitError, ValueError) as exc:
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason=str(exc) or type(exc).__name__,
+            )
+
+    def _observe_cancel_order(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+    ) -> BrokerMutationRecoveryRead:
+        order_id = receipt.intent.target.key
+        raw = self._client.get_order_by_id_strict(order_id)
+        if raw is None:
+            return self._reduction_read(
+                receipt,
+                outcome="found",
+                reason="target_order_absent",
+                payload={"broker_reference": order_id, "status": "absent"},
+            )
+        order = alpaca_order_observation(raw)
+        if order.order_id != order_id:
+            raise ValueError("alpaca_cancel_recovery_order_identity_mismatch")
+        if order.open:
+            return self._reduction_read(
+                receipt,
+                outcome="not_found",
+                reason="target_order_still_open",
+                payload={"broker_status": order.status},
+            )
+        return self._reduction_read(
+            receipt,
+            outcome="found",
+            reason="target_order_terminal",
+            payload={
+                "broker_reference": order.order_id,
+                "status": order.status,
+            },
+        )
+
+    def _observe_cancel_all_orders(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+    ) -> BrokerMutationRecoveryRead:
+        request = _broker_request(receipt)
+        target_ids = _required_string_set(
+            request.get("target_order_ids"),
+            field="target_order_ids",
+        )
+        raw_open = self._client.list_orders(status="open", limit=_HISTORY_LIMIT)
+        if len(raw_open) >= _HISTORY_LIMIT:
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason="open_order_snapshot_incomplete",
+                payload={"open_order_count": len(raw_open)},
+            )
+        observed_orders = tuple(alpaca_order_observation(order) for order in raw_open)
+        observed_ids = [order.order_id for order in observed_orders]
+        if len(set(observed_ids)) != len(observed_ids):
+            raise ValueError("alpaca_cancel_all_recovery_duplicate_order_id")
+        open_ids = {order.order_id for order in observed_orders if order.open}
+        remaining = sorted(target_ids & open_ids)
+        if remaining:
+            return self._reduction_read(
+                receipt,
+                outcome="not_found",
+                reason="sealed_orders_still_open",
+                payload={"remaining_target_order_ids": remaining},
+            )
+        return self._reduction_read(
+            receipt,
+            outcome="found",
+            reason="sealed_orders_absent",
+            payload={
+                "broker_reference": receipt.intent.target.key,
+                "target_order_ids": sorted(target_ids),
+            },
+        )
+
+    def _observe_replace_order(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+    ) -> BrokerMutationRecoveryRead:
+        original_id = receipt.intent.target.key
+        original = self._client.get_order_by_id_strict(original_id)
+        if original is None:
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason="original_order_absent_without_replacement_identity",
+            )
+        original_observation = alpaca_order_observation(original)
+        if original_observation.order_id != original_id:
+            raise ValueError("alpaca_replace_recovery_order_identity_mismatch")
+        if original_observation.status != "replaced":
+            outcome = "not_found" if original_observation.open else "indeterminate"
+            return self._reduction_read(
+                receipt,
+                outcome=outcome,
+                reason=(
+                    "original_order_still_open"
+                    if original_observation.open
+                    else "original_order_terminal_without_replacement"
+                ),
+                payload={"broker_status": original_observation.status},
+            )
+        replacement_id = _text(original.get("replaced_by"))
+        if not replacement_id:
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason="replacement_identity_missing",
+            )
+        replacement = self._client.get_order_by_id_strict(replacement_id)
+        if replacement is None:
+            return self._reduction_read(
+                receipt,
+                outcome="indeterminate",
+                reason="replacement_order_absent",
+            )
+        _validate_alpaca_replacement(receipt, original_id, replacement)
+        return self._reduction_read(
+            receipt,
+            outcome="found",
+            reason="replacement_observed",
+            payload={
+                "broker_reference": replacement_id,
+                "original_order_id": original_id,
+                "status": _text(replacement.get("status")),
+            },
+        )
+
+    def _observe_position_reduction(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+    ) -> BrokerMutationRecoveryRead:
+        current = self._current_positions()
+        evaluation = evaluate_position_reduction_recovery(
+            _risk_reduction_evidence(receipt),
+            current,
+            operation=receipt.intent.operation,
+            target_key=receipt.intent.target.key,
+        )
+        current_quantities = {
+            position.symbol: str(position.signed_quantity) for position in current
+        }
+        outcome: Literal["found", "not_found", "indeterminate"]
+        if evaluation.outcome == "resolved":
+            outcome = "found"
+        elif evaluation.outcome == "unresolved":
+            outcome = "not_found"
+        else:
+            outcome = "indeterminate"
+        return self._reduction_read(
+            receipt,
+            outcome=outcome,
+            reason=evaluation.reason,
+            payload={
+                "current_positions": current_quantities,
+                **(
+                    {
+                        "broker_reference": receipt.intent.target.key,
+                        "status": "reduced",
+                    }
+                    if outcome == "found"
+                    else {}
+                ),
+            },
+        )
+
+    def _current_positions(self) -> tuple[BrokerPositionObservation, ...]:
+        positions: list[BrokerPositionObservation] = []
+        for raw in self._client.list_positions():
+            positions.append(alpaca_position_observation(raw))
+        return tuple(positions)
+
+    def _reduction_read(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+        *,
+        outcome: Literal["found", "not_found", "indeterminate"],
+        reason: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> BrokerMutationRecoveryRead:
+        result_payload = dict(payload or {})
+        return BrokerMutationRecoveryRead(
+            outcome=outcome,
+            broker_result=result_payload if outcome == "found" and payload else None,
+            evidence={
+                "schema_version": ALPACA_REDUCTION_RECOVERY_READ_SCHEMA_VERSION,
+                "route": self.broker_route,
+                "operation": receipt.intent.operation,
+                "target_key": receipt.intent.target.key,
+                "reason": reason,
+                "absence_proof_complete": False,
+                **result_payload,
+            },
         )
 
     def independent_activity(
@@ -234,9 +474,11 @@ class AlpacaSubmitRecoveryRoute:
         self,
         session: Session,
         receipt: BrokerMutationReceiptSnapshot,
-        read: BrokerSubmitRecoveryRead,
+        read: BrokerMutationRecoveryRead,
     ) -> BrokerMutationSettlement:
-        order = read.broker_order
+        if receipt.intent.operation != "submit_order":
+            return self._build_reduction_settlement(receipt, read)
+        order = read.broker_result
         if not isinstance(order, Mapping):
             raise ValueError("alpaca_recovery_found_order_required")
         normalized = _validated_alpaca_order(receipt, order)
@@ -299,13 +541,42 @@ class AlpacaSubmitRecoveryRoute:
             )
         )
 
+    def _build_reduction_settlement(
+        self,
+        receipt: BrokerMutationReceiptSnapshot,
+        read: BrokerMutationRecoveryRead,
+    ) -> BrokerMutationSettlement:
+        result = read.broker_result
+        if not isinstance(result, Mapping):
+            raise ValueError("alpaca_reduction_recovery_result_required")
+        broker_reference = _text(result.get("broker_reference"))
+        if not broker_reference:
+            raise ValueError("alpaca_reduction_recovery_reference_required")
+        return build_broker_mutation_settlement(
+            BrokerMutationSettlementRequest(
+                source="recovery",
+                outcome="reconciled",
+                broker_reference=broker_reference,
+                execution_id=None,
+                evidence_payload={
+                    "schema_version": ALPACA_REDUCTION_RECOVERY_READ_SCHEMA_VERSION,
+                    "route": self.broker_route,
+                    "operation": receipt.intent.operation,
+                    "target_key": receipt.intent.target.key,
+                    "observation": dict(read.evidence),
+                    "broker_result": dict(result),
+                    "automatic_broker_mutation_attempted": False,
+                },
+            )
+        )
+
     def _found_read(
         self,
         receipt: BrokerMutationReceiptSnapshot,
         *,
         order: Mapping[str, object],
         evidence: Mapping[str, object],
-    ) -> BrokerSubmitRecoveryRead:
+    ) -> BrokerMutationRecoveryRead:
         try:
             normalized = _validated_alpaca_order(receipt, order)
         except ValueError as exc:
@@ -313,9 +584,9 @@ class AlpacaSubmitRecoveryRoute:
                 evidence=evidence,
                 reason=str(exc),
             )
-        return BrokerSubmitRecoveryRead(
+        return BrokerMutationRecoveryRead(
             outcome="found",
-            broker_order=order,
+            broker_result=order,
             evidence={
                 **dict(evidence),
                 "broker_status": normalized["status"],
@@ -329,8 +600,8 @@ class AlpacaSubmitRecoveryRoute:
         *,
         evidence: Mapping[str, object],
         reason: str,
-    ) -> BrokerSubmitRecoveryRead:
-        return BrokerSubmitRecoveryRead(
+    ) -> BrokerMutationRecoveryRead:
+        return BrokerMutationRecoveryRead(
             outcome="indeterminate",
             evidence={
                 **dict(evidence),
@@ -360,6 +631,68 @@ class AlpacaSubmitRecoveryRoute:
                 exact_lookup == "not_found" and history_complete and match_count == 0
             ),
         }
+
+
+def _required_string_set(value: object, *, field: str) -> set[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"alpaca_recovery_{field}_invalid")
+    normalized = {_text(item) for item in cast(list[object], value)}
+    if not normalized or "" in normalized:
+        raise ValueError(f"alpaca_recovery_{field}_invalid")
+    return normalized
+
+
+def _risk_reduction_evidence(
+    receipt: BrokerMutationReceiptSnapshot,
+) -> Mapping[str, object]:
+    request = _intent_request(receipt)
+    evidence = request.get("risk_reduction")
+    if not isinstance(evidence, dict):
+        raise ValueError("alpaca_recovery_risk_reduction_evidence_invalid")
+    evidence_map = cast(dict[str, object], evidence)
+    if evidence_map.get("broker_route") != "alpaca":
+        raise ValueError("alpaca_recovery_risk_reduction_route_mismatch")
+    if evidence_map.get("target_key") != receipt.intent.target.key:
+        raise ValueError("alpaca_recovery_risk_reduction_target_mismatch")
+    return evidence_map
+
+
+def _validate_alpaca_replacement(
+    receipt: BrokerMutationReceiptSnapshot,
+    original_id: str,
+    replacement: Mapping[str, object],
+) -> None:
+    request = _broker_request(receipt)
+    desired_limit = optional_decimal(request.get("limit_price"))
+    if desired_limit is None or desired_limit <= 0:
+        raise ValueError("alpaca_replace_recovery_limit_price_invalid")
+    evidence = _risk_reduction_evidence(receipt)
+    action = evidence.get("action")
+    if not isinstance(action, dict):
+        raise ValueError("alpaca_replace_recovery_action_invalid")
+    action_map = cast(dict[str, object], action)
+    causal_order = action_map.get("causal_order")
+    if not isinstance(causal_order, dict):
+        raise ValueError("alpaca_replace_recovery_causal_order_invalid")
+    causal = cast(dict[str, object], causal_order)
+    expected_quantity = optional_decimal(action_map.get("quantity"))
+    if expected_quantity is None or expected_quantity <= 0:
+        raise ValueError("alpaca_replace_recovery_quantity_invalid")
+
+    observed = alpaca_order_observation(replacement)
+    if observed.symbol != _text(causal.get("symbol")).upper():
+        raise ValueError("alpaca_replace_recovery_symbol_mismatch")
+    if observed.side != _text(causal.get("side")).lower():
+        raise ValueError("alpaca_replace_recovery_side_mismatch")
+    if observed.remaining_quantity > expected_quantity:
+        raise ValueError("alpaca_replace_recovery_quantity_increased")
+    if optional_decimal(replacement.get("limit_price")) != desired_limit:
+        raise ValueError("alpaca_replace_recovery_limit_price_mismatch")
+    replaces = _text(replacement.get("replaces"))
+    if replaces and replaces != original_id:
+        raise ValueError("alpaca_replace_recovery_causal_identity_mismatch")
+    if not observed.open and observed.status != "filled":
+        raise ValueError("alpaca_replace_recovery_status_invalid")
 
 
 def _validated_alpaca_order(
@@ -409,7 +742,7 @@ def _validated_alpaca_order(
     }
 
 
-def _broker_request(receipt: BrokerMutationReceiptSnapshot) -> Mapping[str, object]:
+def _intent_request(receipt: BrokerMutationReceiptSnapshot) -> Mapping[str, object]:
     try:
         document = json.loads(receipt.intent.canonical_intent_json)
     except (TypeError, ValueError) as exc:  # pragma: no cover - receipt verifier
@@ -420,10 +753,15 @@ def _broker_request(receipt: BrokerMutationReceiptSnapshot) -> Mapping[str, obje
     request = payload.get("request")
     if not isinstance(request, dict):
         raise ValueError("alpaca_recovery_request_invalid")
-    nested = cast(dict[str, object], request).get("broker_request")
+    return cast(dict[str, object], request)
+
+
+def _broker_request(receipt: BrokerMutationReceiptSnapshot) -> Mapping[str, object]:
+    request = _intent_request(receipt)
+    nested = request.get("broker_request")
     if isinstance(nested, dict):
         return cast(dict[str, object], nested)
-    return cast(dict[str, object], request)
+    return request
 
 
 def _text(value: object) -> str:
@@ -452,5 +790,5 @@ def _optional_decimal(value: object) -> Decimal | None:
 
 __all__ = [
     "ALPACA_SUBMIT_RECOVERY_READ_SCHEMA_VERSION",
-    "AlpacaSubmitRecoveryRoute",
+    "AlpacaMutationRecoveryRoute",
 ]

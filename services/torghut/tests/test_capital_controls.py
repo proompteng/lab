@@ -8,10 +8,6 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from app.config import settings
-from app.trading.broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionPreflightFailed,
-)
-from app.trading.prices import MarketSnapshot
 from app.trading.models import StrategyDecision
 from app.trading.scheduler.capital_controls import (
     CapitalRiskSnapshot,
@@ -23,10 +19,12 @@ class _ExecutionAdapter:
     def __init__(self, positions: list[dict[str, str]]) -> None:
         self.positions = positions
         self.cancel_calls = 0
-        self.submissions = []
+        self.cancel_purposes: list[str] = []
+        self.close_calls: list[str] = []
 
-    def cancel_all_orders(self):
+    def cancel_all_orders(self, *, purpose="operator"):
         self.cancel_calls += 1
+        self.cancel_purposes.append(purpose)
         return []
 
     def list_positions(self):
@@ -36,23 +34,10 @@ class _ExecutionAdapter:
         _ = status
         return []
 
-    def submit_risk_reducing_order(self, submission):
-        self.submissions.append(submission)
+    def close_all_positions(self, *, purpose="flatten"):
+        self.close_calls.append(purpose)
         self.positions = []
-        return {"id": "close-1", "status": "accepted"}
-
-
-class _PriceFetcher:
-    def fetch_market_snapshot(self, signal):
-        return MarketSnapshot(
-            symbol=signal.symbol,
-            as_of=signal.event_ts,
-            price=Decimal("100"),
-            spread=Decimal("0.02"),
-            source="alpaca_latest_quote",
-            bid=Decimal("99.99"),
-            ask=Decimal("100.01"),
-        )
+        return [{"id": "close-1", "status": "accepted"}]
 
 
 def _state() -> SimpleNamespace:
@@ -79,7 +64,6 @@ class TestCapitalSafetyController(TestCase):
     def _controller(self, adapter: _ExecutionAdapter | None = None):
         return CapitalSafetyController(
             execution_adapter=adapter or _ExecutionAdapter([]),
-            price_fetcher=_PriceFetcher(),
             state=_state(),
             account_label="live-account",
             sleep=lambda _seconds: None,
@@ -287,9 +271,11 @@ class TestCapitalSafetyController(TestCase):
         self.assertFalse(controller.state.capital_new_exposure_allowed)
         self.assertFalse(controller.state.emergency_stop_active)
         self.assertEqual(adapter.cancel_calls, 0)
-        self.assertEqual(adapter.submissions, [])
+        self.assertEqual(adapter.close_calls, [])
 
-    def test_closeout_uses_marketable_limit_and_confirms_flat(self) -> None:
+    def test_closeout_uses_broker_enforced_account_flatten_and_confirms_flat(
+        self,
+    ) -> None:
         adapter = _ExecutionAdapter(
             [
                 {
@@ -306,28 +292,165 @@ class TestCapitalSafetyController(TestCase):
         controller._flatten(reason="scheduled_closeout", now=now)
 
         self.assertEqual(adapter.cancel_calls, 1)
-        self.assertEqual(len(adapter.submissions), 1)
-        submission = adapter.submissions[0]
-        self.assertEqual(submission.symbol, "NVDA")
-        self.assertEqual(submission.side, "sell")
-        self.assertEqual(submission.order_type, "limit")
-        self.assertEqual(submission.limit_price, 99.91)
+        self.assertEqual(adapter.cancel_purposes, ["closeout"])
+        self.assertEqual(adapter.close_calls, ["closeout"])
         self.assertIsNotNone(controller.state.capital_flat_confirmed_at)
 
-    def test_missing_quote_blocks_unbounded_market_exit(self) -> None:
-        controller = self._controller()
-        controller.price_fetcher = SimpleNamespace(
-            fetch_market_snapshot=lambda _signal: None
+    def test_closeout_never_replays_an_unchanged_position_snapshot(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "10",
+                    "side": "long",
+                    "current_price": "100",
+                }
+            ]
         )
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "capital_closeout_price_unavailable",
+
+        def accepted_without_fill(*, purpose="flatten"):
+            adapter.close_calls.append(purpose)
+            return [{"id": "close-nvda", "status": "accepted"}]
+
+        adapter.close_all_positions = accepted_without_fill
+        controller = self._controller(adapter)
+
+        with (
+            patch.object(settings, "trading_closeout_max_attempts", 3),
+            patch.object(settings, "trading_closeout_reprice_seconds", 0),
         ):
-            controller._close_submission(
-                {"symbol": "AMD", "qty": "2", "side": "short"},
+            controller._flatten(
+                reason="scheduled_closeout",
                 now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
-                attempt=1,
             )
+
+        self.assertEqual(adapter.close_calls, ["closeout"])
+        self.assertEqual(adapter.cancel_calls, 2)
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn("closeout_failed", controller.state.emergency_stop_reason)
+        self.assertNotIn("closeout_error", controller.state.emergency_stop_reason)
+
+    def test_closeout_reissues_only_after_monotonic_partial_fill(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "10",
+                    "side": "long",
+                    "current_price": "100",
+                }
+            ]
+        )
+
+        def partially_fill_then_flatten(*, purpose="flatten"):
+            adapter.close_calls.append(purpose)
+            if len(adapter.close_calls) == 1:
+                adapter.positions = [
+                    {
+                        "symbol": "NVDA",
+                        "qty": "5",
+                        "side": "long",
+                        "current_price": "100",
+                    }
+                ]
+            else:
+                adapter.positions = []
+            return [
+                {"id": f"close-nvda-{len(adapter.close_calls)}", "status": "accepted"}
+            ]
+
+        adapter.close_all_positions = partially_fill_then_flatten
+        controller = self._controller(adapter)
+
+        with (
+            patch.object(settings, "trading_closeout_max_attempts", 3),
+            patch.object(settings, "trading_closeout_reprice_seconds", 0),
+        ):
+            controller._flatten(
+                reason="scheduled_closeout",
+                now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+            )
+
+        self.assertEqual(adapter.close_calls, ["closeout", "closeout"])
+        self.assertEqual(adapter.cancel_calls, 2)
+        self.assertFalse(controller.state.emergency_stop_active)
+        self.assertIsNotNone(controller.state.capital_flat_confirmed_at)
+
+    def test_closeout_never_reissues_after_a_position_side_flip(self) -> None:
+        adapter = _ExecutionAdapter(
+            [
+                {
+                    "symbol": "NVDA",
+                    "qty": "10",
+                    "side": "long",
+                    "current_price": "100",
+                }
+            ]
+        )
+
+        def fill_past_zero(*, purpose="flatten"):
+            adapter.close_calls.append(purpose)
+            adapter.positions = [
+                {
+                    "symbol": "NVDA",
+                    "qty": "1",
+                    "side": "short",
+                    "current_price": "100",
+                }
+            ]
+            return [{"id": "close-nvda", "status": "accepted"}]
+
+        adapter.close_all_positions = fill_past_zero
+        controller = self._controller(adapter)
+
+        with (
+            patch.object(settings, "trading_closeout_max_attempts", 3),
+            patch.object(settings, "trading_closeout_reprice_seconds", 0),
+        ):
+            controller._flatten(
+                reason="scheduled_closeout",
+                now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+            )
+
+        self.assertEqual(adapter.close_calls, ["closeout"])
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn(
+            "closeout_error:RuntimeError",
+            controller.state.emergency_stop_reason,
+        )
+
+    def test_malformed_position_cannot_be_misreported_as_flat(self) -> None:
+        adapter = _ExecutionAdapter(
+            [{"symbol": "NVDA", "qty": "not-a-number", "side": "long"}]
+        )
+        controller = self._controller(adapter)
+
+        controller._flatten(
+            reason="scheduled_closeout",
+            now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+        )
+
+        self.assertIsNone(controller.state.capital_flat_confirmed_at)
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn(
+            "closeout_error:RuntimeError", controller.state.emergency_stop_reason
+        )
+        self.assertEqual(adapter.close_calls, [])
+
+    def test_broker_outage_during_flatten_latches_unresolved_stop(self) -> None:
+        adapter = _ExecutionAdapter([{"symbol": "AMD", "qty": "2", "side": "short"}])
+        adapter.close_all_positions = lambda **_kwargs: (_ for _ in ()).throw(
+            OSError("broker unavailable")
+        )
+        controller = self._controller(adapter)
+
+        controller._flatten(
+            reason="scheduled_closeout",
+            now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
+        )
+
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn("closeout_error:OSError", controller.state.emergency_stop_reason)
 
     def test_closeout_normalizes_negative_short_quantity(self) -> None:
         adapter = _ExecutionAdapter(
@@ -342,56 +465,17 @@ class TestCapitalSafetyController(TestCase):
         )
         controller = self._controller(adapter)
 
-        controller._flatten(
-            reason="scheduled_closeout",
-            now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
-        )
-
-        self.assertEqual(len(adapter.submissions), 1)
-        submission = adapter.submissions[0]
-        self.assertEqual(submission.side, "buy")
-        self.assertEqual(submission.qty, 2.0)
-
-    def test_closeout_continues_after_released_preflight_race(self) -> None:
-        adapter = _ExecutionAdapter(
+        self.assertEqual(
+            controller._positions(),
             [
-                {
-                    "symbol": "NVDA",
-                    "qty": "1",
-                    "side": "long",
-                    "current_price": "100",
-                },
                 {
                     "symbol": "AMD",
                     "qty": "2",
-                    "side": "long",
+                    "side": "short",
                     "current_price": "100",
-                },
-            ]
+                }
+            ],
         )
-        submitted_symbols: list[str] = []
-
-        def submit(submission):
-            submitted_symbols.append(submission.symbol)
-            if submission.symbol == "NVDA":
-                adapter.positions = [adapter.positions[1]]
-                raise BrokerMutationSubmissionPreflightFailed(
-                    "risk_reduction_preflight_failed:position_disappeared"
-                )
-            adapter.positions = []
-            return {"id": "close-amd", "status": "accepted"}
-
-        adapter.submit_risk_reducing_order = submit
-        controller = self._controller(adapter)
-
-        controller._flatten(
-            reason="scheduled_closeout",
-            now=datetime(2026, 7, 10, 19, 45, tzinfo=ZoneInfo("UTC")),
-        )
-
-        self.assertEqual(submitted_symbols, ["NVDA", "AMD"])
-        self.assertFalse(controller.state.emergency_stop_active)
-        self.assertIsNotNone(controller.state.capital_flat_confirmed_at)
 
     def test_closeout_fails_closed_when_order_cancellation_is_not_confirmed(
         self,
@@ -412,7 +496,7 @@ class TestCapitalSafetyController(TestCase):
             "closeout_error:RuntimeError",
             controller.state.emergency_stop_reason,
         )
-        self.assertEqual(adapter.submissions, [])
+        self.assertEqual(adapter.close_calls, [])
 
     def test_pair_fill_delta_must_remain_dollar_balanced(self) -> None:
         decisions = [

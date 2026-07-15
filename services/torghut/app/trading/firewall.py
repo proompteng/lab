@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Any, Protocol
+from typing import Protocol, TypeVar
 
 from alpaca.common.exceptions import APIError, RetryException
 from requests.exceptions import RequestException
@@ -17,6 +17,7 @@ from ..alpaca_client import (
     AlpacaSubmitRequest,
     OrderFirewallToken,
     build_alpaca_order_request,
+    issue_order_firewall_token,
 )
 from ..config import settings
 from .broker_mutation_receipts import (
@@ -33,8 +34,14 @@ from .infrastructure_validation import (
     infrastructure_validation_client_order_id,
     infrastructure_validation_request_payload,
 )
+from .risk_reduction_mutation_authority import (
+    RiskReductionMutationAuthority,
+    RiskReductionMutationExpectation,
+    consume_risk_reduction_mutation_authority,
+)
 
 logger = logging.getLogger(__name__)
+_MutationResult = TypeVar("_MutationResult")
 
 _ALPACA_MUTATION_ERRORS = (
     APIError,
@@ -54,29 +61,10 @@ class OrderFirewallBlocked(RuntimeError):
     """Raised when the order firewall blocks submission."""
 
 
-class OrderFirewallRiskReductionError(RuntimeError):
-    """Base failure for broker-observed risk-reduction verification."""
-
-
-class OrderFirewallRiskReductionBlocked(OrderFirewallRiskReductionError):
-    """Raised when broker-observed position state cannot prove a reduction."""
-
-
-class OrderFirewallRiskReductionObservationError(OrderFirewallRiskReductionError):
-    """Raised when current broker position state cannot be observed."""
-
-
 @dataclass(frozen=True)
 class OrderFirewallStatus:
     kill_switch_enabled: bool
     reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class OrderFirewallRiskReductionVerification:
-    request: AlpacaSubmitRequest
-    observed_position_qty: Decimal
-    verification_token: object = field(repr=False, compare=False)
 
 
 def alpaca_submit_request_payload(request: AlpacaSubmitRequest) -> dict[str, object]:
@@ -148,9 +136,9 @@ class OrderFirewallBrokerClient(Protocol):
         time_in_force: str,
         limit_price: float | None = None,
         stop_price: float | None = None,
-        extra_params: dict[str, Any] | None = None,
+        extra_params: dict[str, object] | None = None,
         firewall_token: OrderFirewallToken,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, object]: ...
 
     def cancel_order(
         self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken
@@ -158,25 +146,50 @@ class OrderFirewallBrokerClient(Protocol):
 
     def cancel_all_orders(
         self, *, firewall_token: OrderFirewallToken
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[dict[str, object]]: ...
+
+    def replace_order(
+        self,
+        alpaca_order_id: str,
+        *,
+        limit_price: float,
+        firewall_token: OrderFirewallToken,
+    ) -> dict[str, object]: ...
+
+    def close_position(
+        self,
+        symbol_or_asset_id: str,
+        *,
+        qty: Decimal,
+        firewall_token: OrderFirewallToken,
+    ) -> dict[str, object]: ...
+
+    def close_all_positions(
+        self, *, firewall_token: OrderFirewallToken
+    ) -> list[dict[str, object]]: ...
 
     def get_order_by_client_order_id(
         self, client_order_id: str
-    ) -> dict[str, Any] | None: ...
+    ) -> dict[str, object] | None: ...
 
-    def get_order(self, alpaca_order_id: str) -> dict[str, Any]: ...
+    def get_order(self, alpaca_order_id: str) -> dict[str, object]: ...
 
-    def list_orders(self, status: str = "all") -> list[dict[str, Any]]: ...
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]: ...
 
-    def list_positions(self) -> list[dict[str, Any]] | None: ...
+    def list_positions(self) -> list[dict[str, object]] | None: ...
 
-    def get_account(self) -> dict[str, Any] | None: ...
+    def get_account(self) -> dict[str, object] | None: ...
 
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None: ...
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, object] | None: ...
 
 
 class OrderFirewall:
-    """Single audited gateway for order submission/cancellation."""
+    """Single audited gateway for every Alpaca broker mutation."""
 
     def __init__(
         self,
@@ -185,13 +198,12 @@ class OrderFirewall:
         account_label: str | None = None,
     ) -> None:
         self._client = client
-        self._token = OrderFirewallToken()
+        self._token = issue_order_firewall_token()
         self._account_label = str(
             account_label or settings.trading_account_label
         ).strip()
         if not self._account_label:
             raise ValueError("order_firewall_account_label_required")
-        self._risk_reduction_verification_token = object()
 
     def status(self) -> OrderFirewallStatus:
         if settings.trading_kill_switch_enabled:
@@ -233,19 +245,6 @@ class OrderFirewall:
             )
         )
 
-    def cancel_open_orders_if_kill_switch(self) -> bool:
-        status = self.status()
-        if not status.kill_switch_enabled:
-            return False
-        try:
-            cancelled = self._client.cancel_all_orders(firewall_token=self._token)
-            logger.warning(
-                "Kill switch enabled; canceled %s open orders", len(cancelled)
-            )
-        except _ALPACA_MUTATION_ERRORS:
-            logger.exception("Kill switch enabled; failed to cancel open orders")
-        return True
-
     def submit_order(
         self,
         symbol: str,
@@ -255,10 +254,10 @@ class OrderFirewall:
         time_in_force: str,
         limit_price: float | None = None,
         stop_price: float | None = None,
-        extra_params: dict[str, Any] | None = None,
+        extra_params: dict[str, object] | None = None,
         *,
         mutation_permit: BrokerMutationIoPermit,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         request = AlpacaSubmitRequest(
             symbol=symbol,
             side=side,
@@ -287,90 +286,151 @@ class OrderFirewall:
         )
         return self._submit_payload(request_payload, request.extra_params)
 
-    def verify_risk_reducing_order(
+    def cancel_order(
         self,
-        request: AlpacaSubmitRequest,
-    ) -> OrderFirewallRiskReductionVerification:
-        """Verify one closeout against broker-observed position state before I/O."""
-
-        normalized_symbol = str(request.symbol).strip().upper()
-        normalized_side = str(request.side).strip().lower()
-        requested_qty = _positive_decimal(request.qty)
-        try:
-            positions = self._client.list_positions()
-        except _ALPACA_MUTATION_ERRORS as exc:
-            raise OrderFirewallRiskReductionObservationError(
-                "risk_reduction_position_observation_failed"
-            ) from exc
-        matching = [
-            position
-            for position in positions or []
-            if str(position.get("symbol") or "").strip().upper() == normalized_symbol
-        ]
-        if len(matching) != 1:
-            raise OrderFirewallRiskReductionBlocked(
-                "risk_reduction_position_not_uniquely_observed"
-            )
-        position = matching[0]
-        observed_qty = _position_signed_qty(position)
-        expected_side = "buy" if observed_qty < 0 else "sell"
-        if (
-            requested_qty is None
-            or observed_qty == 0
-            or normalized_side != expected_side
-            or requested_qty > abs(observed_qty)
-        ):
-            raise OrderFirewallRiskReductionBlocked(
-                "risk_reduction_would_not_strictly_reduce_position"
-            )
-        normalized_request = AlpacaSubmitRequest(
-            symbol=normalized_symbol,
-            side=normalized_side,
-            qty=requested_qty,
-            order_type=request.order_type,
-            time_in_force=request.time_in_force,
-            limit_price=request.limit_price,
-            stop_price=request.stop_price,
-            extra_params=dict(request.extra_params or {}),
-        )
-        alpaca_submit_request_payload(normalized_request)
-        return OrderFirewallRiskReductionVerification(
-            request=normalized_request,
-            observed_position_qty=observed_qty,
-            verification_token=self._risk_reduction_verification_token,
-        )
-
-    def submit_verified_risk_reducing_order(
-        self,
-        verification: OrderFirewallRiskReductionVerification,
+        alpaca_order_id: str,
         *,
-        mutation_permit: BrokerMutationIoPermit,
-    ) -> dict[str, Any]:
-        """Submit one pre-I/O-verified reduction under a durable mutation permit."""
-
-        if (
-            verification.verification_token
-            is not self._risk_reduction_verification_token
-        ):
-            raise OrderFirewallRiskReductionBlocked(
-                "risk_reduction_verification_not_issued_by_firewall"
-            )
-        normalized_request = verification.request
-        request_payload = alpaca_submit_request_payload(normalized_request)
-        consume_broker_mutation_io_permit(
-            mutation_permit,
-            expectation=BrokerMutationIoPermitExpectation(
+        authority: RiskReductionMutationAuthority,
+    ) -> bool:
+        request_payload = authority.request_payload
+        if str(request_payload.get("order_id") or "").strip() != alpaca_order_id:
+            raise ValueError("alpaca_cancel_order_request_mismatch")
+        consume_risk_reduction_mutation_authority(
+            authority,
+            RiskReductionMutationExpectation(
                 broker_route="alpaca",
-                operation="submit_order",
-                risk_class="risk_reducing",
                 account_label=self.account_label,
                 endpoint_fingerprint=fingerprint_broker_endpoint(
                     self.broker_endpoint_url
                 ),
-                request_payload=request_payload,
+                operation="cancel_order",
+                risk_class="risk_neutral",
+                target_key=alpaca_order_id,
             ),
         )
-        return self._submit_payload(request_payload, normalized_request.extra_params)
+        return self._broker_call(
+            lambda: self._client.cancel_order(
+                alpaca_order_id,
+                firewall_token=self._token,
+            )
+        )
+
+    def cancel_all_orders(
+        self,
+        *,
+        authority: RiskReductionMutationAuthority,
+    ) -> list[dict[str, object]]:
+        consume_risk_reduction_mutation_authority(
+            authority,
+            RiskReductionMutationExpectation(
+                broker_route="alpaca",
+                account_label=self.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self.broker_endpoint_url
+                ),
+                operation="cancel_all_orders",
+                risk_class="risk_neutral",
+                target_key=self.account_label,
+            ),
+        )
+        return self._broker_call(
+            lambda: self._client.cancel_all_orders(firewall_token=self._token)
+        )
+
+    def replace_order(
+        self,
+        alpaca_order_id: str,
+        *,
+        limit_price: Decimal,
+        authority: RiskReductionMutationAuthority,
+    ) -> dict[str, object]:
+        request_payload = authority.request_payload
+        if str(request_payload.get("order_id") or "").strip() != alpaca_order_id or str(
+            request_payload.get("limit_price") or ""
+        ) != str(limit_price):
+            raise ValueError("alpaca_replace_order_request_mismatch")
+        consume_risk_reduction_mutation_authority(
+            authority,
+            RiskReductionMutationExpectation(
+                broker_route="alpaca",
+                account_label=self.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self.broker_endpoint_url
+                ),
+                operation="replace_order",
+                risk_class="risk_neutral",
+                target_key=alpaca_order_id,
+            ),
+        )
+        return self._broker_call(
+            lambda: self._client.replace_order(
+                alpaca_order_id,
+                limit_price=float(limit_price),
+                firewall_token=self._token,
+            )
+        )
+
+    def close_position(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        *,
+        authority: RiskReductionMutationAuthority,
+    ) -> dict[str, object]:
+        request_payload = authority.request_payload
+        normalized_symbol = symbol.strip().upper()
+        payload_quantity = _positive_decimal(request_payload.get("quantity"))
+        normalized_quantity = _positive_decimal(quantity)
+        if str(
+            request_payload.get("symbol") or ""
+        ).strip().upper() != normalized_symbol or (
+            payload_quantity is None
+            or normalized_quantity is None
+            or payload_quantity != normalized_quantity
+        ):
+            raise ValueError("alpaca_close_position_request_mismatch")
+        consume_risk_reduction_mutation_authority(
+            authority,
+            RiskReductionMutationExpectation(
+                broker_route="alpaca",
+                account_label=self.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self.broker_endpoint_url
+                ),
+                operation="close_position",
+                risk_class="risk_reducing",
+                target_key=normalized_symbol,
+            ),
+        )
+        return self._broker_call(
+            lambda: self._client.close_position(
+                normalized_symbol,
+                qty=quantity,
+                firewall_token=self._token,
+            )
+        )
+
+    def close_all_positions(
+        self,
+        *,
+        authority: RiskReductionMutationAuthority,
+    ) -> list[dict[str, object]]:
+        consume_risk_reduction_mutation_authority(
+            authority,
+            RiskReductionMutationExpectation(
+                broker_route="alpaca",
+                account_label=self.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    self.broker_endpoint_url
+                ),
+                operation="close_all_positions",
+                risk_class="risk_reducing",
+                target_key=self.account_label,
+            ),
+        )
+        return self._broker_call(
+            lambda: self._client.close_all_positions(firewall_token=self._token)
+        )
 
     def submit_verified_infrastructure_validation_order(
         self,
@@ -379,7 +439,7 @@ class OrderFirewall:
         *,
         mutation_permit: BrokerMutationIoPermit,
         now: datetime | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Submit one exact paper IOC whose evidence can never promote capital."""
 
         evaluated_at = now or datetime.now(timezone.utc)
@@ -427,7 +487,7 @@ class OrderFirewall:
         self,
         request_payload: Mapping[str, object],
         extra_params: Mapping[str, object] | None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         try:
             return self._client.submit_order(
                 symbol=str(request_payload["symbol"]),
@@ -453,31 +513,41 @@ class OrderFirewall:
                 f"alpaca_broker_io_failed:{type(exc).__name__}"
             ) from exc
 
-    def cancel_order(self, alpaca_order_id: str) -> bool:
-        return self._client.cancel_order(alpaca_order_id, firewall_token=self._token)
-
-    def cancel_all_orders(self) -> list[dict[str, Any]]:
-        return self._client.cancel_all_orders(firewall_token=self._token)
+    @staticmethod
+    def _broker_call(callback: Callable[[], _MutationResult]) -> _MutationResult:
+        try:
+            return callback()
+        except _ALPACA_MUTATION_ERRORS as exc:
+            raise BrokerMutationBrokerIoError(
+                f"alpaca_broker_io_failed:{type(exc).__name__}"
+            ) from exc
 
     def get_order_by_client_order_id(
         self, client_order_id: str
-    ) -> dict[str, Any] | None:
+    ) -> dict[str, object] | None:
         # Reads are always allowed; this is used for idempotency backfills.
         return self._client.get_order_by_client_order_id(client_order_id)
 
-    def get_order(self, alpaca_order_id: str) -> dict[str, Any]:
+    def get_order(self, alpaca_order_id: str) -> dict[str, object]:
         return self._client.get_order(alpaca_order_id)
 
-    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
-        return self._client.list_orders(status=status)
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, object]]:
+        if limit is None:
+            return self._client.list_orders(status=status)
+        return self._client.list_orders(status=status, limit=limit)
 
-    def list_positions(self) -> list[dict[str, Any]] | None:
+    def list_positions(self) -> list[dict[str, object]] | None:
         return self._client.list_positions()
 
-    def get_account(self) -> dict[str, Any] | None:
+    def get_account(self) -> dict[str, object] | None:
         return self._client.get_account()
 
-    def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None:
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, object] | None:
         return self._client.get_asset(symbol_or_asset_id)
 
 
@@ -492,11 +562,3 @@ def _finite_decimal(value: object) -> Decimal | None:
     except (InvalidOperation, ValueError):
         return None
     return parsed if parsed.is_finite() else None
-
-
-def _position_signed_qty(position: dict[str, Any]) -> Decimal:
-    qty = _finite_decimal(position.get("qty") or position.get("quantity"))
-    if qty is None or qty == 0:
-        raise OrderFirewallRiskReductionBlocked("risk_reduction_position_qty_invalid")
-    side = str(position.get("side") or "").strip().lower()
-    return -abs(qty) if side == "short" else qty
