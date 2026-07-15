@@ -67,7 +67,6 @@ data class ForwarderConfig(
   val marketDataChannelFreshnessMaxMs: Long = 180_000,
   val marketDataChannelFreshnessWarmupMs: Long = 120_000,
   val marketDataReadIdleTimeoutMs: Long = 180_000,
-  val tradeUpdatesReadIdleTimeoutMs: Long = 300_000,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -232,9 +231,6 @@ data class ForwarderConfig(
         mergedEnv["ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS"]?.toLongOrNull()
           ?: marketDataChannelFreshnessMaxMs
       if (marketDataReadIdleTimeoutMs <= 0) error("ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS must be > 0")
-      val tradeUpdatesReadIdleTimeoutMs =
-        mergedEnv["ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS"]?.toLongOrNull() ?: 300_000
-      if (tradeUpdatesReadIdleTimeoutMs <= 0) error("ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS must be > 0")
 
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
@@ -273,7 +269,6 @@ data class ForwarderConfig(
         marketDataChannelFreshnessMaxMs = marketDataChannelFreshnessMaxMs,
         marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
         marketDataReadIdleTimeoutMs = marketDataReadIdleTimeoutMs.coerceAtLeast(30_000),
-        tradeUpdatesReadIdleTimeoutMs = tradeUpdatesReadIdleTimeoutMs.coerceAtLeast(30_000),
       )
     }
 
