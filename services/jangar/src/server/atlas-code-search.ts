@@ -112,15 +112,16 @@ type CreateAtlasCodeSearchHandlersOptions = {
   loadEmbeddingConfig: () => EmbeddingConfig
   embedText: (text: string, config: EmbeddingConfig) => Promise<number[]>
   normalizeText: (value: string, field: string, fallback?: string) => string
+  cancelBackend: (backendPid: number) => Promise<void>
 }
 
 const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 200
-const MIN_SEMANTIC_CANDIDATES = 20
+const MIN_SEMANTIC_CANDIDATES = 50
 const SEMANTIC_CANDIDATE_MULTIPLIER = 2
 const MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES = 500
 const MIN_HNSW_EF_SEARCH = 40
-const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 12_000
+const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 20_000
 const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
 const MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 900
 const DEFAULT_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = 60_000
@@ -385,6 +386,7 @@ export const createAtlasCodeSearchHandlers = ({
   loadEmbeddingConfig,
   embedText,
   normalizeText,
+  cancelBackend,
 }: CreateAtlasCodeSearchHandlersOptions) => {
   const queryEmbeddingCache = new Map<string, { embedding: number[]; expiresAt: number }>()
 
@@ -500,20 +502,19 @@ export const createAtlasCodeSearchHandlers = ({
     }
   }
 
-  const codeSearch = async ({
-    query,
-    limit,
-    repository,
-    ref,
-    pathPrefix,
-    language,
-  }: AtlasCodeSearchInput): Promise<AtlasCodeSearchMatch[]> => {
+  const codeSearch = async (
+    { query, limit, repository, ref, pathPrefix, language }: AtlasCodeSearchInput,
+    signal?: AbortSignal,
+  ): Promise<AtlasCodeSearchMatch[]> => {
+    signal?.throwIfAborted()
     await ensureSchema()
+    signal?.throwIfAborted()
 
     const resolvedQuery = normalizeText(query, 'query')
     const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
     const filters = resolveCodeSearchFilters({ repository, ref, pathPrefix, language })
     const health = await codeSearchHealth({ repository, ref, pathPrefix, language })
+    signal?.throwIfAborted()
     if (health.status !== 'ok') throw new Error(`Atlas code search is not ready: ${health.message}`)
 
     const isPathQuery = isStandalonePathQuery(resolvedQuery)
@@ -527,8 +528,12 @@ export const createAtlasCodeSearchHandlers = ({
     const vectorString = isPathQuery
       ? null
       : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
+    signal?.throwIfAborted()
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
     const whereClause = searchWhereClause(filters)
+    const pathCandidateClause = isPathQuery
+      ? sql`file_keys.path = ${resolvedQuery}`
+      : sql`(file_keys.path ILIKE ${containsPattern} ESCAPE '\' OR file_keys.path % ${resolvedQuery}::text)`
     const indexedContentCandidateClause = /[A-Za-z0-9_$]+/.test(resolvedQuery)
       ? sql`file_chunks.text_tsvector @@ plainto_tsquery('simple', ${resolvedQuery}::text)`
       : sql`file_chunks.content ILIKE ${containsPattern} ESCAPE '\'`
@@ -562,9 +567,35 @@ export const createAtlasCodeSearchHandlers = ({
     )
 
     const { exactRows, lexicalRows, semanticRows } = await db.transaction().execute(async (trx) => {
-      await sql`SELECT set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true);`.execute(trx)
+      let cancellation: Promise<void> | null = null
+      let backendPid: number | null = null
+      const abortTransaction = () => {
+        if (backendPid === null || cancellation) return
+        cancellation = cancelBackend(backendPid).catch((error) => {
+          console.warn('[atlas] failed to cancel code-search backend', {
+            backendPid,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+      }
 
-      const exactResult = await sql<AtlasCodeSearchRow>`
+      try {
+        if (signal) {
+          const backendResult = await sql<{
+            backend_pid: number | string
+          }>`SELECT pg_backend_pid() AS backend_pid;`.execute(trx)
+          const resolvedBackendPid = Number(backendResult.rows[0]?.backend_pid)
+          if (!Number.isInteger(resolvedBackendPid) || resolvedBackendPid <= 0) {
+            throw new Error('Atlas code search could not resolve its PostgreSQL backend PID')
+          }
+          backendPid = resolvedBackendPid
+          signal.addEventListener('abort', abortTransaction, { once: true })
+          signal.throwIfAborted()
+        }
+
+        await sql`SELECT set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true);`.execute(trx)
+
+        const exactResult = await sql<AtlasCodeSearchRow>`
         WITH exact_candidates AS MATERIALIZED (
           SELECT file_chunks.id AS chunk_id
           FROM atlas.file_keys AS file_keys
@@ -572,10 +603,7 @@ export const createAtlasCodeSearchHandlers = ({
           INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.file_version_id = file_versions.id
           INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
           ${whereClause}
-            AND (
-              file_keys.path ILIKE ${containsPattern} ESCAPE '\'
-              OR file_keys.path % ${resolvedQuery}::text
-            )
+            AND ${pathCandidateClause}
 
           ${contentCandidateUnion}
         )
@@ -599,26 +627,30 @@ export const createAtlasCodeSearchHandlers = ({
         LIMIT ${candidateLimit};
       `.execute(trx)
 
-      const lexicalResult = await sql<AtlasCodeSearchRow>`
-        SELECT
-          ${sql.raw(codeSearchRawSelectColumns)},
-          ts_rank_cd(file_chunks.text_tsvector, websearch_to_tsquery('simple', ${lexicalQuery}::text)) AS lexical_rank
-        FROM atlas.file_chunks AS file_chunks
-        INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
-        INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
-        INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
-        ${whereClause}
-          AND file_chunks.text_tsvector @@ websearch_to_tsquery('simple', ${lexicalQuery}::text)
-        ORDER BY lexical_rank DESC, file_keys.path, file_chunks.chunk_index
-        LIMIT ${candidateLimit};
-      `.execute(trx)
+        let lexicalRows: AtlasCodeSearchRow[] = []
+        if (!isPathQuery) {
+          const lexicalResult = await sql<AtlasCodeSearchRow>`
+          SELECT
+            ${sql.raw(codeSearchRawSelectColumns)},
+            ts_rank_cd(file_chunks.text_tsvector, websearch_to_tsquery('simple', ${lexicalQuery}::text)) AS lexical_rank
+          FROM atlas.file_chunks AS file_chunks
+          INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+          INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+          INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+          ${whereClause}
+            AND file_chunks.text_tsvector @@ websearch_to_tsquery('simple', ${lexicalQuery}::text)
+          ORDER BY lexical_rank DESC, file_keys.path, file_chunks.chunk_index
+          LIMIT ${candidateLimit};
+        `.execute(trx)
+          lexicalRows = lexicalResult.rows as AtlasCodeSearchRow[]
+        }
 
-      let semanticRows: AtlasCodeSearchRow[] = []
-      if (vectorString !== null) {
-        await sql`SELECT set_config('statement_timeout', ${`${semanticTimeoutMs}ms`}, true);`.execute(trx)
-        let requiresExactScopedSemanticScan = false
-        if (filters.pathPrefix) {
-          const scopedCount = await sql<{ candidate_count: number | string }>`
+        let semanticRows: AtlasCodeSearchRow[] = []
+        if (vectorString !== null) {
+          await sql`SELECT set_config('statement_timeout', ${`${semanticTimeoutMs}ms`}, true);`.execute(trx)
+          let requiresExactScopedSemanticScan = false
+          if (filters.pathPrefix) {
+            const scopedCount = await sql<{ candidate_count: number | string }>`
             SELECT count(*)::int AS candidate_count
             FROM (
               SELECT chunk_embeddings.chunk_id
@@ -633,12 +665,12 @@ export const createAtlasCodeSearchHandlers = ({
               LIMIT ${MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES + 1}
             ) AS scoped_semantic_probe;
           `.execute(trx)
-          const candidateCount = Number(scopedCount.rows[0]?.candidate_count)
-          requiresExactScopedSemanticScan =
-            Number.isFinite(candidateCount) && candidateCount <= MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES
-        }
-        if (requiresExactScopedSemanticScan) {
-          const semanticResult = await sql<AtlasCodeSearchRow>`
+            const candidateCount = Number(scopedCount.rows[0]?.candidate_count)
+            requiresExactScopedSemanticScan =
+              Number.isFinite(candidateCount) && candidateCount <= MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES
+          }
+          if (requiresExactScopedSemanticScan) {
+            const semanticResult = await sql<AtlasCodeSearchRow>`
             WITH scoped_semantic_candidates AS MATERIALIZED (
               SELECT
                 ${sql.raw(codeSearchRawSelectColumns)},
@@ -659,13 +691,13 @@ export const createAtlasCodeSearchHandlers = ({
             ORDER BY scoped_semantic_candidates.candidate_embedding <=> ${vectorString}::vector
             LIMIT ${semanticCandidateLimit};
           `.execute(trx)
-          semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
-        } else {
-          await sql`SELECT set_config('hnsw.ef_search', ${String(
-            Math.max(MIN_HNSW_EF_SEARCH, semanticCandidateLimit),
-          )}, true);`.execute(trx)
+            semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
+          } else {
+            await sql`SELECT set_config('hnsw.ef_search', ${String(
+              Math.max(MIN_HNSW_EF_SEARCH, semanticCandidateLimit),
+            )}, true);`.execute(trx)
 
-          const semanticResult = await sql<AtlasCodeSearchRow>`
+            const semanticResult = await sql<AtlasCodeSearchRow>`
             SELECT
               ${sql.raw(codeSearchRawSelectColumns)},
               chunk_embeddings.embedding <=> ${vectorString}::vector AS semantic_distance
@@ -680,14 +712,19 @@ export const createAtlasCodeSearchHandlers = ({
             ORDER BY chunk_embeddings.embedding <=> ${vectorString}::vector
             LIMIT ${semanticCandidateLimit};
           `.execute(trx)
-          semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
+            semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
+          }
         }
-      }
 
-      return {
-        exactRows: exactResult.rows as AtlasCodeSearchRow[],
-        lexicalRows: lexicalResult.rows as AtlasCodeSearchRow[],
-        semanticRows,
+        return {
+          exactRows: exactResult.rows as AtlasCodeSearchRow[],
+          lexicalRows,
+          semanticRows,
+        }
+      } finally {
+        signal?.removeEventListener('abort', abortTransaction)
+        const cancellationPromise = cancellation
+        if (cancellationPromise) await cancellationPromise
       }
     })
 

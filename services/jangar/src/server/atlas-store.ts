@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 
-import { resolveStoreDb, type Db } from '~/server/db'
+import { createKyselyDb, resolveStoreDb, type Db } from '~/server/db'
 import { requestEmbedding } from '~/server/embedding-client'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import {
@@ -376,7 +376,7 @@ export type AtlasStore = {
   getAstPreview: (input: { fileVersionId: string; limit?: number }) => Promise<AtlasAstPreview>
   search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
   searchCount: (input: AtlasSearchInput) => Promise<number>
-  codeSearch: (input: AtlasCodeSearchInput) => Promise<AtlasCodeSearchMatch[]>
+  codeSearch: (input: AtlasCodeSearchInput, signal?: AbortSignal) => Promise<AtlasCodeSearchMatch[]>
   codeSearchHealth: (input: Omit<AtlasCodeSearchInput, 'query' | 'limit'>) => Promise<AtlasCodeSearchHealth>
   stats: () => Promise<AtlasStats>
   close: () => Promise<void>
@@ -385,6 +385,7 @@ export type AtlasStore = {
 type PostgresAtlasStoreOptions = {
   url?: string
   createDb?: (url: string) => Db
+  cancelBackend?: (backendPid: number) => Promise<void>
 }
 
 const DEFAULT_INDEX_LIMIT = 50
@@ -469,13 +470,27 @@ const toIso = (value: string | Date | null | undefined) => {
 
 export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}): AtlasStore => {
   const resolved = resolveStoreDb(options)
-  if (!resolved.db) {
+  if (!resolved.db || !resolved.url) {
     throw new Error('DATABASE_URL is required for Atlas storage')
   }
   const db = resolved.db
+  const databaseUrl = resolved.url
+  let cancellationDb: Db | null = null
   let schemaReady: Promise<void> | null = null
   const expectedEmbeddingDimension = resolveEmbeddingConfig(process.env).dimension
   const expectedChunkEmbeddingDimension = resolveAtlasCodeSearchEmbeddingConfig(process.env).dimension
+
+  const cancelBackend =
+    options.cancelBackend ??
+    (async (backendPid: number) => {
+      cancellationDb ??= createKyselyDb(databaseUrl, { poolMax: 1 })
+      const result = await sql<{ canceled: boolean }>`SELECT pg_cancel_backend(${backendPid}) AS canceled;`.execute(
+        cancellationDb,
+      )
+      if (result.rows[0]?.canceled !== true) {
+        throw new Error(`PostgreSQL did not cancel Atlas backend ${backendPid}`)
+      }
+    })
 
   const ensureEmbeddingDimensionMatches = async () => {
     const { rows } = await sql<{ embedding_type: string | null }>`
@@ -1725,6 +1740,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     loadEmbeddingConfig: loadAtlasCodeSearchEmbeddingConfig,
     embedText,
     normalizeText,
+    cancelBackend,
   })
 
   const stats: AtlasStore['stats'] = async () => {
@@ -1774,6 +1790,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
   }
 
   const close: AtlasStore['close'] = async () => {
+    await cancellationDb?.destroy()
     await db.destroy()
   }
 

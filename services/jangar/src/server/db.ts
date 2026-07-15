@@ -654,16 +654,11 @@ let db: Db | null | undefined
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 const DEFAULT_QUERY_TIMEOUT_MS = 20_000
 
-const parsePositiveInt = (rawValue: string | undefined, field: string, fallback: number) => {
-  if (!rawValue) return fallback
-  const parsed = Number.parseInt(rawValue, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${field} must be a positive integer`)
-  }
-  return parsed
+type CreateDbClientOptions = {
+  poolMax?: number
 }
 
-const createDbClient = (rawUrl: string): Db => {
+const createDbClient = (rawUrl: string, options: CreateDbClientOptions = {}): Db => {
   const url = rawUrl.trim()
   const sslmode = resolveEffectiveSslMode(url)
   const databaseConfig = resolveDatabaseConfig()
@@ -677,7 +672,7 @@ const createDbClient = (rawUrl: string): Db => {
     connectionString: url,
     ssl,
     keepAlive: true,
-    max: databaseConfig.poolMax,
+    max: options.poolMax ?? databaseConfig.poolMax,
     connectionTimeoutMillis,
     query_timeout: queryTimeoutMillis,
   })
@@ -713,7 +708,7 @@ export const getDb = () => {
   return db
 }
 
-export const createKyselyDb = (url: string) => createDbClient(url)
+export const createKyselyDb = (url: string, options?: CreateDbClientOptions) => createDbClient(url, options)
 
 export const resolveStoreDb = (options: { url?: string; createDb?: (url: string) => Db } = {}): StoreDbResolution => {
   const url = normalizeDbUrl(options.url) || normalizeDbUrl(resolveDatabaseConfig().url ?? undefined)
