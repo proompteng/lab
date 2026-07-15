@@ -458,6 +458,22 @@ describe('atlas store', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))).toBe(true)
   })
 
+  it('isolates exact-match candidates without whole-content similarity scans', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'createAtlasCodeSearchHandlers', repository: 'proompteng/lab', ref: 'main' })
+
+    const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
+    expect(exactSql).toBeDefined()
+    expect(exactSql?.sql.toLowerCase()).toContain('with exact_candidates as materialized')
+    expect(exactSql?.sql.toLowerCase()).toContain('file_chunks.content ilike')
+    expect(exactSql?.sql.toLowerCase()).not.toMatch(/file_chunks\.content\s+%\s+\$/)
+  })
+
   it('reports complete reconciliation metadata without sampling rows', async () => {
     const { db, calls } = makeFakeDb({
       repositoryRows: [

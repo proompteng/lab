@@ -488,6 +488,21 @@ export const createAtlasCodeSearchHandlers = ({
       await sql`SELECT set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true);`.execute(trx)
 
       const exactResult = await sql<AtlasCodeSearchRow>`
+        WITH exact_candidates AS MATERIALIZED (
+          SELECT file_chunks.id AS chunk_id
+          FROM atlas.file_chunks AS file_chunks
+          WHERE file_chunks.content IS NOT NULL
+            AND file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
+
+          UNION
+
+          SELECT file_chunks.id AS chunk_id
+          FROM atlas.file_keys AS file_keys
+          INNER JOIN atlas.file_versions AS file_versions ON file_versions.file_key_id = file_keys.id
+          INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.file_version_id = file_versions.id
+          WHERE file_keys.path ILIKE ${containsPattern} ESCAPE '\'
+             OR file_keys.path % ${resolvedQuery}::text
+        )
         SELECT
           ${sql.raw(codeSearchRawSelectColumns)},
           CASE
@@ -495,22 +510,14 @@ export const createAtlasCodeSearchHandlers = ({
             WHEN lower(file_keys.path) = lower(${resolvedQuery}) THEN 0.99
             WHEN file_chunks.content ILIKE ${containsPattern} ESCAPE '\' THEN 0.95
             WHEN file_keys.path ILIKE ${containsPattern} ESCAPE '\' THEN 0.90
-            ELSE GREATEST(
-              similarity(file_keys.path, ${resolvedQuery}::text),
-              similarity(file_chunks.content, ${resolvedQuery}::text)
-            )
+            ELSE similarity(file_keys.path, ${resolvedQuery}::text)
           END AS exact_rank
-        FROM atlas.file_chunks AS file_chunks
+        FROM exact_candidates
+        INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.id = exact_candidates.chunk_id
         INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
         INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
         INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
         ${whereClause}
-          AND (
-            file_keys.path ILIKE ${containsPattern} ESCAPE '\'
-            OR file_chunks.content ILIKE ${containsPattern} ESCAPE '\'
-            OR file_keys.path % ${resolvedQuery}::text
-            OR file_chunks.content % ${resolvedQuery}::text
-          )
         ORDER BY exact_rank DESC, file_keys.path, file_chunks.chunk_index
         LIMIT ${candidateLimit};
       `.execute(trx)
