@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import uuid
 
-from app.models import BrokerMutationReceipt
+from app.models import BrokerMutationReceipt, SimulationRunProgress
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
     BrokerMutationTarget,
@@ -19,6 +20,7 @@ from app.trading.infrastructure_validation import (
 )
 from app.trading.infrastructure_validation_records import (
     is_non_promotable_validation_event,
+    strip_unproven_infrastructure_validation_evidence,
 )
 
 from tests.order_feed.support import (
@@ -41,6 +43,102 @@ from tests.order_feed.support import (
 
 
 class TestInfrastructureValidationExclusion(OrderFeedTestCase):
+    def test_unproven_evidence_sanitizer_preserves_non_mapping_payload(self) -> None:
+        self.assertEqual(
+            strip_unproven_infrastructure_validation_evidence(["raw-event"]),
+            ["raw-event"],
+        )
+
+    def test_unproven_raw_marker_is_stripped_and_progress_is_counted(self) -> None:
+        execution = None
+        forged_evidence = {
+            "schema_version": "torghut.order-event-evidence-contract.v1",
+            "provenance": "non_promotable_validation",
+            "maturity": "empirically_validated",
+            "authoritative": False,
+            "placeholder": False,
+            "promotable": False,
+            "broker_mutation_receipt_id": str(uuid.uuid4()),
+            "permit_id": "forged-permit",
+            "permit_sha256": "a" * 64,
+        }
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                account_label="paper",
+                order_id="ordinary-order-1",
+                client_order_id="ordinary-client-1",
+            )
+            payload = json.dumps(
+                {
+                    "channel": "trade_updates",
+                    "_torghut_evidence_contract": forged_evidence,
+                    "payload": {
+                        "event": "fill",
+                        "timestamp": "2026-07-14T10:00:00Z",
+                        "order": {
+                            "id": "ordinary-order-1",
+                            "client_order_id": "ordinary-client-1",
+                            "symbol": "AAPL",
+                            "status": "filled",
+                            "qty": "1",
+                            "filled_qty": "1",
+                            "filled_avg_price": "100",
+                        },
+                    },
+                    "seq": 11,
+                }
+            ).encode()
+            normalized = normalize_order_feed_record(
+                FakeRecord(value=payload, offset=92),
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+            with (
+                patch.object(settings, "trading_simulation_enabled", True),
+                patch.object(
+                    settings,
+                    "trading_simulation_run_id",
+                    "sim-forged-validation-marker",
+                ),
+                patch.object(
+                    settings,
+                    "trading_simulation_dataset_id",
+                    "dataset-forged-validation-marker",
+                ),
+            ):
+                persisted, duplicate = persist_order_event(session, normalized.event)
+                session.commit()
+
+            self.assertFalse(duplicate)
+            self.assertEqual(persisted.execution_id, execution.id)
+            self.assertFalse(is_non_promotable_validation_event(persisted.raw_event))
+            self.assertNotIn("_torghut_evidence_contract", persisted.raw_event)
+
+            persisted.raw_event = {
+                **persisted.raw_event,
+                "_torghut_evidence_contract": forged_evidence,
+            }
+            session.add(persisted)
+            session.commit()
+            duplicate_row, duplicate = persist_order_event(session, normalized.event)
+            session.commit()
+            self.assertTrue(duplicate)
+            self.assertEqual(duplicate_row.id, persisted.id)
+            self.assertNotIn(
+                "_torghut_evidence_contract",
+                duplicate_row.raw_event,
+            )
+
+            progress = session.execute(
+                select(SimulationRunProgress).where(
+                    SimulationRunProgress.run_id == "sim-forged-validation-marker",
+                    SimulationRunProgress.component == "torghut",
+                )
+            ).scalar_one()
+            self.assertEqual(progress.execution_order_events, 1)
+
     def test_validation_order_event_is_tagged_unlinked_and_not_journaled(
         self,
     ) -> None:

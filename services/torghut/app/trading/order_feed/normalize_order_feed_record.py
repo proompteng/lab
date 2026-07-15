@@ -24,6 +24,7 @@ from ..tca import upsert_execution_tca_metric
 from ..tigerbeetle_journal import TigerBeetleLedgerJournal
 from ..infrastructure_validation_records import (
     load_infrastructure_validation_evidence,
+    strip_unproven_infrastructure_validation_evidence,
     tag_infrastructure_validation_event,
 )
 
@@ -385,6 +386,13 @@ def persist_order_event(
             session.add(existing)
             if existing.source_window_id is not None:
                 _refresh_source_window_linkage_counts(session, existing)
+        else:
+            sanitized_raw_event = strip_unproven_infrastructure_validation_evidence(
+                existing.raw_event
+            )
+            if sanitized_raw_event != coerce_json_payload(existing.raw_event):
+                existing.raw_event = sanitized_raw_event
+                session.add(existing)
         if existing.source_window_id is None and source_window_id is not None:
             existing.source_window_id = source_window_id
             session.add(existing)
@@ -396,7 +404,7 @@ def persist_order_event(
         session, event
     )
     execution = None
-    raw_event = event.raw_event
+    raw_event = strip_unproven_infrastructure_validation_evidence(event.raw_event)
     trade_decision_id = None
     if validation_evidence is not None:
         raw_event = tag_infrastructure_validation_event(
@@ -414,7 +422,7 @@ def persist_order_event(
         execution = execution_linkage.execution
         if execution is not None:
             trade_decision_id = execution.trade_decision_id
-            raw_event = _raw_event_with_linkage_blockers(event.raw_event, ())
+            raw_event = _raw_event_with_linkage_blockers(raw_event, ())
         elif not execution_linkage.blockers:
             decision_linkage = _resolve_trade_decision_linkage_for_identity(
                 session,
@@ -432,12 +440,12 @@ def persist_order_event(
             )
             linkage_blockers.extend(decision_linkage.blockers)
             raw_event = _raw_event_with_linkage_blockers(
-                event.raw_event,
+                raw_event,
                 linkage_blockers,
             )
         else:
             raw_event = _raw_event_with_linkage_blockers(
-                event.raw_event,
+                raw_event,
                 execution_linkage.blockers,
             )
 
