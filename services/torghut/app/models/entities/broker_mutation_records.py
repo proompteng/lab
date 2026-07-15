@@ -94,7 +94,7 @@ class BrokerMutationReceipt(Base):
             "purpose IN ('initial_submission', 'repricing', "
             "'inventory_conflict', 'opposite_side_cleanup', 'kill_switch', "
             "'governance', 'closeout', 'flatten', "
-            "'operator')",
+            "'operator', 'control_plane_validation')",
             name="purpose",
         ),
         CheckConstraint(
@@ -114,6 +114,9 @@ class BrokerMutationReceipt(Base):
             "((broker_route = 'alpaca' AND (submission_claim_id IS NOT NULL OR "
             "(submission_claim_id IS NULL AND risk_class = 'risk_reducing' "
             "AND purpose IN ('closeout', 'flatten')))) OR "
+            "(broker_route = 'alpaca' AND submission_claim_id IS NULL "
+            "AND risk_class = 'risk_neutral' "
+            "AND purpose = 'control_plane_validation') OR "
             "(broker_route = 'hyperliquid' AND submission_claim_id IS NULL "
             "AND risk_class = 'risk_increasing' "
             "AND purpose = 'initial_submission'))) OR "

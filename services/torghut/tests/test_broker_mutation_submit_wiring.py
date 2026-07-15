@@ -20,6 +20,7 @@ def test_every_production_entry_submit_uses_the_durable_coordinator() -> None:
     alpaca_firewall = _source("app/trading/firewall.py")
     hyperliquid_entry = _source("app/hyperliquid_execution/entry_processing.py")
     hyperliquid_exchange = _source("app/hyperliquid_execution/exchange.py")
+    validation_runner = _source("app/trading/infrastructure_validation_submit.py")
 
     assert "BrokerMutationSubmitCoordinator" in alpaca_executor
     assert ".submit_linked_order(" in alpaca_executor
@@ -28,6 +29,21 @@ def test_every_production_entry_submit_uses_the_durable_coordinator() -> None:
 
     assert ".submit_unlinked_order(" in hyperliquid_entry
     assert "consume_broker_mutation_io_permit(" in hyperliquid_exchange
+    assert ".submit_infrastructure_validation_order(" in validation_runner
+    assert "submit_verified_infrastructure_validation_order(" in alpaca_firewall
+
+
+def test_validation_authority_cannot_fall_through_generic_unlinked_submit() -> None:
+    coordinator = _source("app/trading/broker_mutation_submit_coordinator.py")
+    migration = _source("migrations/versions/0068_infrastructure_validation_submit.py")
+
+    assert (
+        "infrastructure_validation_requires_dedicated_submit_authority" in coordinator
+    )
+    assert 'purpose="control_plane_validation"' in coordinator
+    assert 'risk_class="risk_neutral"' in coordinator
+    assert "non_promotable_validation" in migration
+    assert "uq_bm_receipt_validation_permit" in migration
 
 
 def test_retired_live_submit_adapters_cannot_reintroduce_a_bypass() -> None:

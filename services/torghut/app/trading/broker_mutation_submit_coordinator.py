@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Generic, TypeVar
 
@@ -39,6 +40,13 @@ from .decision_submission_claims.types import (
     DecisionSubmissionClaimSnapshot,
 )
 from .decision_submission_claims import acquire_decision_submission_claim
+from .infrastructure_validation import (
+    InfrastructureValidationOrderPlan,
+    InfrastructureValidationPermit,
+    authorize_infrastructure_validation_order,
+    infrastructure_validation_client_order_id,
+    infrastructure_validation_request_payload,
+)
 
 
 _BrokerResult = TypeVar("_BrokerResult")
@@ -94,6 +102,14 @@ class UnlinkedOrderSubmissionCallbacks(Generic[_BrokerResult]):
     broker_call: Callable[[BrokerMutationIoPermit], _BrokerResult]
     persist_terminal: Callable[[_BrokerResult], None]
     build_settlement: Callable[[_BrokerResult], BrokerMutationSettlement]
+
+
+@dataclass(frozen=True, slots=True)
+class InfrastructureValidationOrderSubmission:
+    permit: InfrastructureValidationPermit
+    plan: InfrastructureValidationOrderPlan
+    account_label: str
+    endpoint_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +181,68 @@ class BrokerMutationSubmitCoordinator:
         )
 
     def submit_unlinked_order(
+        self,
+        session: Session,
+        *,
+        intent: BrokerMutationIntent,
+        callbacks: UnlinkedOrderSubmissionCallbacks[_BrokerResult],
+    ) -> _BrokerResult:
+        if intent.purpose == "control_plane_validation":
+            raise BrokerMutationSubmissionRejected(
+                "infrastructure_validation_requires_dedicated_submit_authority"
+            )
+        return self._submit_unlinked_order(
+            session,
+            intent=intent,
+            callbacks=callbacks,
+        )
+
+    def submit_infrastructure_validation_order(
+        self,
+        session: Session,
+        *,
+        request: InfrastructureValidationOrderSubmission,
+        callbacks: UnlinkedOrderSubmissionCallbacks[_BrokerResult],
+        now: datetime | None = None,
+    ) -> _BrokerResult:
+        """Submit one permit-bound, non-promotable paper validation order."""
+
+        evaluated_at = now or datetime.now(timezone.utc)
+        authorize_infrastructure_validation_order(
+            request.permit,
+            request.plan,
+            account_label=request.account_label,
+            broker_base_url=request.endpoint_url,
+            now=evaluated_at,
+        )
+        client_order_id = infrastructure_validation_client_order_id(
+            request.permit,
+            request.plan,
+        )
+        intent = build_broker_mutation_intent(
+            BrokerMutationIntentRequest(
+                broker_route="alpaca",
+                account_label=request.account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(request.endpoint_url),
+                operation="submit_order",
+                risk_class="risk_neutral",
+                purpose="control_plane_validation",
+                workflow_id=client_order_id,
+                client_request_id=client_order_id,
+                target=BrokerMutationTarget(kind="order", key=client_order_id),
+                request_payload=infrastructure_validation_request_payload(
+                    request.permit,
+                    request.plan,
+                ),
+            )
+        )
+        return self._submit_unlinked_order(
+            session,
+            intent=intent,
+            callbacks=callbacks,
+        )
+
+    def _submit_unlinked_order(
         self,
         session: Session,
         *,
@@ -440,6 +518,7 @@ __all__ = [
     "BrokerMutationSubmissionRejected",
     "BrokerMutationSubmissionUnresolved",
     "BrokerMutationSubmitCoordinator",
+    "InfrastructureValidationOrderSubmission",
     "LinkedOrderSubmission",
     "LinkedOrderSubmissionCallbacks",
     "UnlinkedOrderSubmissionCallbacks",

@@ -22,6 +22,7 @@ from ..models.entities import (
     TradeCursor,
     TradeDecision,
 )
+from .infrastructure_validation_records import is_non_promotable_validation_event
 
 logger = logging.getLogger(__name__)
 
@@ -540,6 +541,8 @@ def _execution_order_event_after_insert(
     connection: Connection,
     target: ExecutionOrderEvent,
 ) -> None:
+    if is_non_promotable_validation_event(target.raw_event):
+        return
     upsert_simulation_progress(
         connection,
         component=COMPONENT_TORGHUT,

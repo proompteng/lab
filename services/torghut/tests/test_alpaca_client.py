@@ -745,6 +745,67 @@ class TestAlpacaClient(TestCase):
         finally:
             config.settings.trading_mode = original
 
+    def test_paper_endpoint_is_authoritative_over_live_runtime_label(self) -> None:
+        from app import config
+
+        original = config.settings.trading_mode
+        config.settings.trading_mode = "live"
+
+        try:
+            with (
+                patch("app.alpaca_client.TradingClient") as mock_read_trading_client,
+                patch(
+                    "app.alpaca_client._SingleAttemptTradingClient"
+                ) as mock_mutation_trading_client,
+                patch(
+                    "app.alpaca_client.StockHistoricalDataClient"
+                ) as mock_data_client,
+            ):
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                )
+
+                self.assertEqual(client.endpoint_class, "paper")
+                self.assertTrue(mock_read_trading_client.call_args.kwargs["paper"])
+                self.assertTrue(mock_mutation_trading_client.call_args.kwargs["paper"])
+                self.assertTrue(mock_data_client.call_args.kwargs["sandbox"])
+        finally:
+            config.settings.trading_mode = original
+
+    def test_explicit_mode_cannot_conflict_with_endpoint(self) -> None:
+        with self.assertRaisesRegex(ValueError, "alpaca_endpoint_paper_mode_mismatch"):
+            TorghutAlpacaClient(
+                api_key="k",
+                secret_key="s",
+                base_url="https://paper-api.alpaca.markets",
+                paper=False,
+                trading_client=DummyTradingClient(),
+                data_client=DummyDataClient(),
+            )
+
+    def test_trading_endpoint_rejects_noncanonical_paths_or_queries(self) -> None:
+        for endpoint in (
+            "https://paper-api.alpaca.markets/proxy",
+            "https://paper-api.alpaca.markets?route=paper",
+            "https://paper-api.alpaca.markets#paper",
+        ):
+            with (
+                self.subTest(endpoint=endpoint),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "alpaca_trading_endpoint_invalid",
+                ),
+            ):
+                TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url=endpoint,
+                    trading_client=DummyTradingClient(),
+                    data_client=DummyDataClient(),
+                )
+
     def test_alpaca_base_url_strips_v2_suffix(self) -> None:
         with (
             patch("app.alpaca_client.TradingClient") as mock_read_trading_client,

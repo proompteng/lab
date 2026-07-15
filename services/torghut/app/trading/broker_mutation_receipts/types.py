@@ -47,6 +47,7 @@ BrokerMutationPurpose = Literal[
     "closeout",
     "flatten",
     "operator",
+    "control_plane_validation",
 ]
 BrokerMutationTargetKind = Literal["order", "position", "account"]
 BrokerMutationReceiptState = Literal["claimed", "released", "broker_io", "settled"]

@@ -12,8 +12,14 @@ from app.trading.evidence_contracts import (
     parse_evidence_contract,
 )
 from app.trading.infrastructure_validation import (
+    InfrastructureValidationOrderPlan,
     InfrastructureValidationPermit,
     authorize_infrastructure_validation,
+    authorize_infrastructure_validation_order,
+    infrastructure_validation_client_order_id,
+    infrastructure_validation_order_plan_sha256,
+    infrastructure_validation_request_payload,
+    infrastructure_validation_terminal_state_sha256,
 )
 
 
@@ -22,10 +28,11 @@ _NOW = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
 
 def _permit_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "schema_version": "torghut.infrastructure-validation-permit.v1",
+        "schema_version": "torghut.infrastructure-validation-permit.v2",
         "permit_id": "ivp-20260714-001",
         "purpose": "control_plane_validation",
         "venue": "alpaca",
+        "asset_class": "equity",
         "account_mode": "paper",
         "market_session": "regular",
         "account_label": "dedicated-validation-paper",
@@ -118,6 +125,7 @@ def test_hyperliquid_permit_requires_the_testnet_boundary() -> None:
     permit = InfrastructureValidationPermit.model_validate(
         _permit_payload(
             venue="hyperliquid",
+            asset_class="perpetual",
             account_mode="sandbox",
             market_session="continuous",
             broker_base_url="https://api.hyperliquid-testnet.xyz",
@@ -126,6 +134,155 @@ def test_hyperliquid_permit_requires_the_testnet_boundary() -> None:
 
     assert permit.venue == "hyperliquid"
     assert permit.account_mode == "sandbox"
+
+
+def test_crypto_ioc_plan_is_immutably_bound_to_one_non_promotable_identity() -> None:
+    plan = InfrastructureValidationOrderPlan.model_validate(
+        {
+            "schema_version": "torghut.infrastructure-validation-order-plan.v1",
+            "venue": "alpaca",
+            "asset_class": "crypto",
+            "symbol": "BTC/USD",
+            "side": "buy",
+            "qty": "1",
+            "order_type": "limit",
+            "time_in_force": "ioc",
+            "limit_price": "1",
+            "stop_price": None,
+        }
+    )
+    permit = InfrastructureValidationPermit.model_validate(
+        _permit_payload(
+            asset_class="crypto",
+            market_session="continuous",
+            symbols=["BTC/USD"],
+            sides=["buy"],
+            order_types=["limit"],
+            max_notional_usd="1",
+            max_loss_usd="1",
+            test_plan_digest=infrastructure_validation_order_plan_sha256(plan),
+            expected_terminal_state_digest=infrastructure_validation_terminal_state_sha256(),
+        )
+    )
+
+    authorize_infrastructure_validation_order(
+        permit,
+        plan,
+        account_label=permit.account_label,
+        broker_base_url="https://paper-api.alpaca.markets",
+        now=_NOW,
+    )
+    client_order_id = infrastructure_validation_client_order_id(permit, plan)
+    payload = infrastructure_validation_request_payload(permit, plan)
+
+    assert len(client_order_id) == 48
+    assert client_order_id.startswith("ivp-")
+    assert payload["broker_request"]["extra_params"] == {
+        "client_order_id": client_order_id
+    }
+    validation = payload["infrastructure_validation"]
+    assert validation["permit"]["evidence_tag"] == "non_promotable_validation"
+    assert validation["permit"]["promotable"] is False
+
+
+@pytest.mark.parametrize(
+    ("permit_overrides", "plan_overrides", "error"),
+    [
+        ({"max_orders": 2}, {}, "requires_single_intent"),
+        ({"symbols": ["BTC/USD", "ETH/USD"]}, {}, "bounds_not_exact"),
+        ({"sides": ["buy", "sell"]}, {}, "bounds_not_exact"),
+        ({"order_types": ["limit", "market"]}, {}, "bounds_not_exact"),
+        (
+            {"max_notional_usd": "0.5", "max_loss_usd": "0.5"},
+            {},
+            "notional_out_of_bounds",
+        ),
+        (
+            {"max_notional_usd": "2", "max_loss_usd": "1"},
+            {},
+            "exceeds_absolute_cap",
+        ),
+        ({"symbols": ["ETH/USD"]}, {}, "symbol_out_of_bounds"),
+        ({"sides": ["sell"]}, {}, "side_out_of_bounds"),
+    ],
+)
+def test_order_plan_cannot_escape_permit_bounds(
+    permit_overrides: dict[str, object],
+    plan_overrides: dict[str, object],
+    error: str,
+) -> None:
+    plan_payload: dict[str, object] = {
+        "schema_version": "torghut.infrastructure-validation-order-plan.v1",
+        "venue": "alpaca",
+        "asset_class": "crypto",
+        "symbol": "BTC/USD",
+        "side": "buy",
+        "qty": "1",
+        "order_type": "limit",
+        "time_in_force": "ioc",
+        "limit_price": "1",
+        "stop_price": None,
+    }
+    plan_payload.update(plan_overrides)
+    plan = InfrastructureValidationOrderPlan.model_validate(plan_payload)
+    permit_payload = _permit_payload(
+        asset_class="crypto",
+        market_session="continuous",
+        symbols=["BTC/USD"],
+        sides=["buy"],
+        order_types=["limit"],
+        max_notional_usd="1",
+        max_loss_usd="1",
+        test_plan_digest=infrastructure_validation_order_plan_sha256(plan),
+        expected_terminal_state_digest=infrastructure_validation_terminal_state_sha256(),
+    )
+    permit_payload.update(permit_overrides)
+    permit = InfrastructureValidationPermit.model_validate(permit_payload)
+
+    with pytest.raises(ValueError, match=error):
+        authorize_infrastructure_validation_order(
+            permit,
+            plan,
+            account_label=permit.account_label,
+            broker_base_url="https://paper-api.alpaca.markets",
+            now=_NOW,
+        )
+
+
+def test_submit_plan_rejects_a_short_or_sell_probe() -> None:
+    with pytest.raises(ValidationError):
+        InfrastructureValidationOrderPlan.model_validate(
+            {
+                "schema_version": "torghut.infrastructure-validation-order-plan.v1",
+                "venue": "alpaca",
+                "asset_class": "crypto",
+                "symbol": "BTC/USD",
+                "side": "sell",
+                "qty": "1",
+                "order_type": "limit",
+                "time_in_force": "ioc",
+                "limit_price": "1",
+                "stop_price": None,
+            }
+        )
+
+
+def test_submit_plan_does_not_claim_unimplemented_equity_session_authority() -> None:
+    with pytest.raises(ValidationError):
+        InfrastructureValidationOrderPlan.model_validate(
+            {
+                "schema_version": "torghut.infrastructure-validation-order-plan.v1",
+                "venue": "alpaca",
+                "asset_class": "equity",
+                "symbol": "AAPL",
+                "side": "buy",
+                "qty": "1",
+                "order_type": "limit",
+                "time_in_force": "ioc",
+                "limit_price": "1",
+                "stop_price": None,
+            }
+        )
 
 
 def test_validation_provenance_is_non_authoritative() -> None:
