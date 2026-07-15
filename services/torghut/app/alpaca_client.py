@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
@@ -21,22 +20,39 @@ from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import (
+    ClosePositionRequest,
     GetOrdersRequest,
     LimitOrderRequest,
     MarketOrderRequest,
     StopLimitOrderRequest,
     StopOrderRequest,
+    ReplaceOrderRequest,
 )
 
 from .config import settings
 
 
+_ORDER_FIREWALL_TOKEN_SEAL = object()
+
+
 class OrderFirewallToken:
-    """Marker token required for broker order submission/cancellation."""
+    """Opaque process-local capability required for raw Alpaca mutations."""
+
+    __slots__ = ()
+
+    def __init__(self, seal: object) -> None:
+        if seal is not _ORDER_FIREWALL_TOKEN_SEAL:
+            raise OrderFirewallViolation("order_firewall_token_issuer_invalid")
 
 
 class OrderFirewallViolation(PermissionError):
     """Raised when broker mutation methods are called outside OrderFirewall."""
+
+
+def issue_order_firewall_token() -> OrderFirewallToken:
+    """Mint the one narrow capability consumed by the Alpaca client boundary."""
+
+    return OrderFirewallToken(_ORDER_FIREWALL_TOKEN_SEAL)
 
 
 class AlpacaStrictOrderLookupMalformedError(RuntimeError):
@@ -174,6 +190,17 @@ class _TradingClientLike(_ReadOnlyTradingClientLike, Protocol):
     def cancel_order_by_id(self, order_id: str) -> Any: ...
 
     def cancel_orders(self) -> Iterable[Any]: ...
+
+    def replace_order_by_id(self, order_id: str, _order_data: Any, /) -> Any: ...
+
+    def close_position(
+        self,
+        symbol_or_asset_id: str,
+        _close_options: Any,
+        /,
+    ) -> Any: ...
+
+    def close_all_positions(self, cancel_orders: bool = False) -> Any: ...
 
 
 class _StockDataClientLike(Protocol):
@@ -365,9 +392,16 @@ class TorghutAlpacaClient:
         orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
-    def list_orders(self, status: str = "all") -> List[Dict[str, Any]]:
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> List[Dict[str, Any]]:
         status_value = QueryOrderStatus(status.lower())
-        request = GetOrdersRequest(status=status_value)
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
+            raise ValueError("alpaca_order_list_limit_outside_bounds")
+        request = GetOrdersRequest(status=status_value, limit=limit)
         orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
@@ -398,6 +432,28 @@ class TorghutAlpacaClient:
             raise ValueError("alpaca_client_order_id_required")
         try:
             order = self._recovery_trading.get_order_by_client_id(client_order_id)
+        except APIError as exc:
+            if _is_explicit_http_not_found(exc):
+                return None
+            raise
+        if order is None:
+            raise AlpacaStrictOrderLookupMalformedError(
+                "alpaca_strict_order_lookup_missing_payload"
+            )
+        raw = self._extract_model_payload(order)
+        if any(not isinstance(key, str) for key in raw):
+            raise AlpacaStrictOrderLookupMalformedError(
+                "alpaca_strict_order_lookup_non_string_key"
+            )
+        return {cast(str, key): value for key, value in raw.items()}
+
+    def get_order_by_id_strict(self, order_id: str) -> dict[str, object] | None:
+        """Read one broker order ID once; only an explicit 404 proves absence."""
+
+        if not order_id.strip():
+            raise ValueError("alpaca_order_id_required")
+        try:
+            order = self._recovery_trading.get_order_by_id(order_id)
         except APIError as exc:
             if _is_explicit_http_not_found(exc):
                 return None
@@ -462,7 +518,6 @@ class TorghutAlpacaClient:
         *,
         firewall_token: OrderFirewallToken,
     ) -> Dict[str, Any]:
-        self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         request = build_alpaca_order_request(
             AlpacaSubmitRequest(
@@ -482,7 +537,6 @@ class TorghutAlpacaClient:
     def cancel_order(
         self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken
     ) -> bool:
-        self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         self._trading.cancel_order_by_id(alpaca_order_id)
         return True
@@ -490,10 +544,48 @@ class TorghutAlpacaClient:
     def cancel_all_orders(
         self, *, firewall_token: OrderFirewallToken
     ) -> List[Dict[str, Any]]:
-        self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
         responses = self._trading.cancel_orders()
         return [self._model_to_dict(resp) for resp in responses]
+
+    def replace_order(
+        self,
+        alpaca_order_id: str,
+        *,
+        limit_price: float,
+        firewall_token: OrderFirewallToken,
+    ) -> Dict[str, Any]:
+        self._require_firewall_token(firewall_token)
+        order = self._trading.replace_order_by_id(
+            alpaca_order_id,
+            ReplaceOrderRequest(limit_price=limit_price),
+        )
+        return self._model_to_dict(order)
+
+    def close_position(
+        self,
+        symbol_or_asset_id: str,
+        *,
+        qty: Decimal,
+        firewall_token: OrderFirewallToken,
+    ) -> Dict[str, Any]:
+        self._require_firewall_token(firewall_token)
+        order = self._trading.close_position(
+            symbol_or_asset_id,
+            ClosePositionRequest(qty=str(qty)),
+        )
+        return self._model_to_dict(order)
+
+    def close_all_positions(
+        self,
+        *,
+        firewall_token: OrderFirewallToken,
+    ) -> List[Dict[str, Any]]:
+        self._require_firewall_token(firewall_token)
+        raw = self._trading.close_all_positions(cancel_orders=False)
+        if isinstance(raw, Mapping):
+            return [self._model_to_dict(raw)]
+        return [self._model_to_dict(response) for response in raw]
 
     # ------------------- Market data -------------------
     def get_bars(
@@ -610,23 +702,7 @@ class TorghutAlpacaClient:
     @staticmethod
     def _require_firewall_token(token: object) -> None:
         if not isinstance(token, OrderFirewallToken):
-            raise PermissionError("order_firewall_token_required")
-
-    @staticmethod
-    def _require_firewall_caller() -> None:
-        frame = inspect.currentframe()
-        try:
-            caller = frame.f_back if frame is not None else None
-            if caller is not None and caller.f_globals.get("__name__", "") == __name__:
-                caller = caller.f_back
-            caller_module = (
-                caller.f_globals.get("__name__", "") if caller is not None else ""
-            )
-            if caller_module == "app.trading.firewall":
-                return
-            raise OrderFirewallViolation("order_firewall_boundary_violation")
-        finally:
-            del frame
+            raise OrderFirewallViolation("order_firewall_token_required")
 
 
 def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
@@ -664,4 +740,5 @@ __all__ = [
     "OrderFirewallToken",
     "OrderFirewallViolation",
     "TorghutAlpacaClient",
+    "issue_order_firewall_token",
 ]

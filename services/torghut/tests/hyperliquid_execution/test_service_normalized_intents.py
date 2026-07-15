@@ -13,7 +13,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _FakeSession,
     _ServiceExchange,
     _ServiceFeed,
-    _SUBMIT_COORDINATOR,
+    _MUTATION_COORDINATOR,
     _now,
     _ready_recovery_worker,
 )
@@ -35,7 +35,7 @@ def test_service_persists_exchange_normalized_order_intent() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 

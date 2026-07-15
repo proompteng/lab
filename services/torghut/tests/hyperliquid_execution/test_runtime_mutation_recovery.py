@@ -22,13 +22,13 @@ from app.hyperliquid_execution.service import (
 from app.trading.broker_mutation_recovery_worker import (
     BrokerMutationRecoveryRunResult,
 )
-from app.trading.broker_mutation_submit_coordinator import (
-    BrokerMutationSubmitCoordinator,
-    BrokerMutationSubmissionUnresolved,
+from app.trading.broker_mutation_coordinator import (
+    BrokerMutationCoordinator,
+    BrokerMutationUnresolved,
 )
 
 
-from tests.hyperliquid_execution.submit_recovery_test_support import (
+from tests.hyperliquid_execution.mutation_recovery_test_support import (
     _FailingRecoveryWorker,
     _RecoveryWorker,
     _ready_recovery_worker,
@@ -37,7 +37,7 @@ from tests.hyperliquid_execution.test_runtime_surfaces import (
     _FakeSession,
     _ServiceExchange,
     _ServiceFeed,
-    _SUBMIT_COORDINATOR,
+    _MUTATION_COORDINATOR,
     _now,
 )
 
@@ -92,9 +92,9 @@ class _UnresolvedSubmitCoordinator:
     def __init__(self) -> None:
         self.calls = 0
 
-    def submit_unlinked_order(self, *_args: object, **_kwargs: object) -> object:
+    def execute_unlinked_mutation(self, *_args: object, **_kwargs: object) -> object:
         self.calls += 1
-        raise BrokerMutationSubmissionUnresolved("ambiguous broker response")
+        raise BrokerMutationUnresolved("ambiguous broker response")
 
 
 class _RecoveryOrderingService(HyperliquidExecutionService):
@@ -129,7 +129,7 @@ def test_recovery_precedes_account_and_open_order_context_reads() -> None:
         config=HyperliquidExecutionConfig.from_env({}),
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_OrderingRecoveryWorker(events),
     )
     service._ordering_events = events
@@ -160,7 +160,7 @@ def test_disabled_recovery_is_a_fail_closed_execution_dependency() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=recovery,
     )
 
@@ -196,7 +196,7 @@ def test_unwired_recovery_is_a_fail_closed_execution_dependency() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
     )
 
     result = service.run_once(_FakeSession())
@@ -231,7 +231,7 @@ def test_recovery_failure_blocks_entry_without_crashing_reconciliation() -> None
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=recovery,
     )
 
@@ -281,7 +281,7 @@ def test_unresolved_recovery_count_blocks_entry() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=recovery,
     )
 
@@ -313,12 +313,12 @@ def test_ambiguous_submit_aborts_cycle_and_latches_recovery() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=cast(BrokerMutationSubmitCoordinator, coordinator),
+        mutation_coordinator=cast(BrokerMutationCoordinator, coordinator),
         recovery_worker=_ready_recovery_worker(),
     )
     session = _FakeSession()
 
-    with pytest.raises(BrokerMutationSubmissionUnresolved):
+    with pytest.raises(BrokerMutationUnresolved):
         service.run_once(session)
 
     assert coordinator.calls == 1
@@ -348,7 +348,7 @@ def test_recovery_runs_at_most_once_per_configured_interval() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=recovery,
         recovery_clock=lambda: next(monotonic_values),
     )

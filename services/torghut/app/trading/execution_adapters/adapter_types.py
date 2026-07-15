@@ -15,28 +15,10 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from ...alpaca_client import TorghutAlpacaClient
-from ..broker_mutation_receipts import (
-    BrokerMutationIntentRequest,
-    BrokerMutationIoPermit,
-    BrokerMutationSettlement,
-    BrokerMutationSettlementRequest,
-    BrokerMutationTarget,
-    build_broker_mutation_intent,
-    build_broker_mutation_settlement,
-    fingerprint_broker_endpoint,
-)
-from ..broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionPreflightFailed,
-    BrokerMutationSubmitCoordinator,
-    UnlinkedOrderSubmissionCallbacks,
-)
-from ..firewall import (
-    AlpacaSubmitRequest,
-    OrderFirewall,
-    OrderFirewallRiskReductionError,
-    OrderFirewallRiskReductionVerification,
-    alpaca_submit_request_payload,
-)
+from ..alpaca_reduction_mutations import AlpacaReductionMutationExecutor
+from ..broker_mutation_coordinator import BrokerMutationCoordinator
+from ..broker_mutation_receipts import BrokerMutationPurpose
+from ..firewall import OrderFirewall
 from ..simulation_progress import active_simulation_runtime_context
 from ..time_source import trading_now
 
@@ -143,15 +125,39 @@ class ExecutionAdapter(Protocol):
         /,
     ) -> dict[str, Any]: ...
 
-    def submit_risk_reducing_order(
+    def cancel_order(
         self,
-        request: OrderSubmission,
-        /,
+        order_id: str,
+        *,
+        purpose: BrokerMutationPurpose = "operator",
+    ) -> bool: ...
+
+    def cancel_all_orders(
+        self,
+        *,
+        purpose: BrokerMutationPurpose = "operator",
+    ) -> list[dict[str, Any]]: ...
+
+    def replace_order(
+        self,
+        order_id: str,
+        *,
+        limit_price: Decimal,
     ) -> dict[str, Any]: ...
 
-    def cancel_order(self, order_id: str) -> bool: ...
+    def close_position(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        *,
+        purpose: BrokerMutationPurpose = "closeout",
+    ) -> dict[str, Any]: ...
 
-    def cancel_all_orders(self) -> list[dict[str, Any]]: ...
+    def close_all_positions(
+        self,
+        *,
+        purpose: BrokerMutationPurpose = "flatten",
+    ) -> list[dict[str, Any]]: ...
 
     def get_order(self, order_id: str) -> dict[str, Any]: ...
 
@@ -159,40 +165,18 @@ class ExecutionAdapter(Protocol):
         self, client_order_id: str
     ) -> dict[str, Any] | None: ...
 
-    def list_orders(self, status: str = "all") -> list[dict[str, Any]]: ...
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
 
     def list_positions(self) -> list[dict[str, Any]] | None: ...
 
 
-def _alpaca_closeout_settlement(
-    response: Mapping[str, object],
-    *,
-    client_order_id: str,
-) -> BrokerMutationSettlement:
-    status = str(response.get("status") or "accepted").strip().lower()
-    if not status:
-        status = "accepted"
-    rejected = status in {"cancelled", "canceled", "expired", "rejected"}
-    broker_reference = str(response.get("id") or response.get("order_id") or "").strip()
-    if not rejected and not broker_reference:
-        raise ValueError("alpaca_closeout_response_order_id_required")
-    return build_broker_mutation_settlement(
-        BrokerMutationSettlementRequest(
-            source="primary",
-            outcome="rejected" if rejected else "acknowledged",
-            broker_reference=None if rejected else broker_reference,
-            execution_id=None,
-            evidence_payload={
-                "schema_version": "torghut.alpaca-closeout-submit-terminal.v1",
-                "client_order_id": client_order_id,
-                "broker_status": status,
-            },
-        )
-    )
-
-
 class AlpacaExecutionAdapter:
-    """Alpaca reads plus explicitly classified risk-reduction submission."""
+    """Alpaca reads plus one fenced broker-mutation boundary."""
 
     name = "alpaca"
 
@@ -204,7 +188,7 @@ class AlpacaExecutionAdapter:
         session_factory: Callable[[], Session],
         account_label: str,
         endpoint_url: str,
-        submit_coordinator: BrokerMutationSubmitCoordinator | None = None,
+        mutation_coordinator: BrokerMutationCoordinator | None = None,
     ) -> None:
         self._firewall = firewall
         self._read_client = read_client
@@ -213,8 +197,16 @@ class AlpacaExecutionAdapter:
         self._endpoint_url = endpoint_url.strip()
         if not self._account_label or not self._endpoint_url:
             raise ValueError("alpaca_execution_adapter_identity_required")
-        self._submit_coordinator = (
-            submit_coordinator or BrokerMutationSubmitCoordinator("alpaca-closeout")
+        self._mutation_coordinator = mutation_coordinator or BrokerMutationCoordinator(
+            "alpaca-mutation"
+        )
+        self._reductions = AlpacaReductionMutationExecutor(
+            firewall=firewall,
+            read_client=read_client,
+            session_factory=session_factory,
+            account_label=self._account_label,
+            endpoint_url=self._endpoint_url,
+            coordinator=self._mutation_coordinator,
         )
         self.last_route = self.name
 
@@ -225,93 +217,56 @@ class AlpacaExecutionAdapter:
     ) -> dict[str, Any]:
         raise RuntimeError("alpaca_entry_submit_requires_durable_order_firewall")
 
-    def submit_risk_reducing_order(
+    def cancel_order(
         self,
-        request: OrderSubmission,
-        /,
+        order_id: str,
+        *,
+        purpose: BrokerMutationPurpose = "operator",
+    ) -> bool:
+        self.last_route = self.name
+        return self._reductions.cancel_order(order_id, purpose=purpose)
+
+    def cancel_all_orders(
+        self,
+        *,
+        purpose: BrokerMutationPurpose = "operator",
+    ) -> list[dict[str, Any]]:
+        self.last_route = self.name
+        return self._reductions.cancel_all_orders(purpose=purpose)
+
+    def replace_order(
+        self,
+        order_id: str,
+        *,
+        limit_price: Decimal,
     ) -> dict[str, Any]:
-        alpaca_request = AlpacaSubmitRequest(
-            symbol=request.symbol,
-            side=request.side,
-            qty=request.qty,
-            order_type=request.order_type,
-            time_in_force=request.time_in_force,
-            limit_price=request.limit_price,
-            stop_price=request.stop_price,
-            extra_params=request.extra_params,
-        )
-        request_payload = alpaca_submit_request_payload(alpaca_request)
-        raw_extra_params = request_payload["extra_params"]
-        extra_params: Mapping[str, object] = (
-            cast(Mapping[str, object], raw_extra_params)
-            if isinstance(raw_extra_params, Mapping)
-            else {}
-        )
-        client_order_id = str(extra_params.get("client_order_id") or "").strip()
-        if not client_order_id:
-            raise ValueError("risk_reduction_client_order_id_required")
-        intent = build_broker_mutation_intent(
-            BrokerMutationIntentRequest(
-                broker_route="alpaca",
-                account_label=self._account_label,
-                endpoint_fingerprint=fingerprint_broker_endpoint(self._endpoint_url),
-                operation="submit_order",
-                risk_class="risk_reducing",
-                purpose="closeout",
-                workflow_id=client_order_id,
-                client_request_id=client_order_id,
-                target=BrokerMutationTarget(kind="order", key=client_order_id),
-                request_payload=request_payload,
-            )
-        )
-        verification: OrderFirewallRiskReductionVerification | None = None
-
-        def preflight() -> None:
-            nonlocal verification
-            try:
-                initial_verification = self._firewall.verify_risk_reducing_order(
-                    alpaca_request
-                )
-                verification = self._firewall.verify_risk_reducing_order(
-                    initial_verification.request
-                )
-            except OrderFirewallRiskReductionError as exc:
-                raise BrokerMutationSubmissionPreflightFailed(
-                    f"risk_reduction_preflight_failed:{type(exc).__name__}"
-                ) from exc
-
-        def broker_call(permit: BrokerMutationIoPermit) -> dict[str, Any]:
-            if verification is None:
-                raise RuntimeError("risk_reduction_preflight_verification_missing")
-            return self._firewall.submit_verified_risk_reducing_order(
-                verification,
-                mutation_permit=permit,
-            )
-
-        with self._session_factory() as session:
-            payload = self._submit_coordinator.submit_unlinked_order(
-                session,
-                intent=intent,
-                callbacks=UnlinkedOrderSubmissionCallbacks(
-                    broker_call=broker_call,
-                    persist_terminal=lambda _payload: None,
-                    build_settlement=lambda response: _alpaca_closeout_settlement(
-                        response,
-                        client_order_id=client_order_id,
-                    ),
-                    preflight=preflight,
-                ),
-            )
         self.last_route = self.name
-        return dict(payload)
+        return self._reductions.replace_order(
+            order_id,
+            limit_price=limit_price,
+        )
 
-    def cancel_order(self, order_id: str) -> bool:
+    def close_position(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        *,
+        purpose: BrokerMutationPurpose = "closeout",
+    ) -> dict[str, Any]:
         self.last_route = self.name
-        return self._firewall.cancel_order(order_id)
+        return self._reductions.close_position(
+            symbol,
+            quantity,
+            purpose=purpose,
+        )
 
-    def cancel_all_orders(self) -> list[dict[str, Any]]:
+    def close_all_positions(
+        self,
+        *,
+        purpose: BrokerMutationPurpose = "flatten",
+    ) -> list[dict[str, Any]]:
         self.last_route = self.name
-        return self._firewall.cancel_all_orders()
+        return self._reductions.close_all_positions(purpose=purpose)
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         return self._read_client.get_order(order_id)
@@ -319,13 +274,17 @@ class AlpacaExecutionAdapter:
     def get_order_by_client_order_id(
         self, client_order_id: str
     ) -> dict[str, Any] | None:
-        try:
-            return self._read_client.get_order_by_client_order_id(client_order_id)
-        except Exception:
-            return None
+        return self._read_client.get_order_by_client_order_id(client_order_id)
 
-    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
-        return self._read_client.list_orders(status=status)
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if limit is None:
+            return self._read_client.list_orders(status=status)
+        return self._read_client.list_orders(status=status, limit=limit)
 
     def list_positions(self) -> list[dict[str, Any]]:
         return self._read_client.list_positions()
@@ -462,13 +421,6 @@ class SimulationExecutionAdapter:
         )
         return dict(order)
 
-    def submit_risk_reducing_order(
-        self,
-        request: OrderSubmission,
-        /,
-    ) -> dict[str, Any]:
-        return self.submit_order(request)
-
     def _simulation_order_draft(self, request: OrderSubmission) -> SimulationOrderDraft:
         payload = dict(request.extra_params or {})
         requested_client_order_id = payload.get("client_order_id")
@@ -564,7 +516,13 @@ class SimulationExecutionAdapter:
         self._orders_by_id[draft.order_id] = dict(order)
         self._order_id_by_client_id[draft.client_order_id] = draft.order_id
 
-    def cancel_order(self, order_id: str) -> bool:
+    def cancel_order(
+        self,
+        order_id: str,
+        *,
+        purpose: BrokerMutationPurpose = "operator",
+    ) -> bool:
+        del purpose
         self._sync_runtime_context()
         order = self._orders_by_id.get(order_id)
         if order is None:
@@ -581,14 +539,96 @@ class SimulationExecutionAdapter:
         self.last_route = self.name
         return True
 
-    def cancel_all_orders(self) -> list[dict[str, Any]]:
+    def cancel_all_orders(
+        self,
+        *,
+        purpose: BrokerMutationPurpose = "operator",
+    ) -> list[dict[str, Any]]:
         self._sync_runtime_context()
         canceled: list[dict[str, Any]] = []
         for order_id in list(self._orders_by_id):
-            if self.cancel_order(order_id):
+            if self.cancel_order(order_id, purpose=purpose):
                 canceled.append({"id": order_id})
         self.last_route = self.name
         return canceled
+
+    def replace_order(
+        self,
+        order_id: str,
+        *,
+        limit_price: Decimal,
+    ) -> dict[str, Any]:
+        self._sync_runtime_context()
+        if not limit_price.is_finite() or limit_price <= 0:
+            raise ValueError("simulation_replace_order_limit_price_invalid")
+        order = self._orders_by_id.get(order_id)
+        if order is None:
+            raise ValueError("simulation_replace_order_not_found")
+        if str(order.get("status") or "").strip().lower() not in {
+            "accepted",
+            "new",
+            "partially_filled",
+        }:
+            raise ValueError("simulation_replace_order_not_open")
+        order["limit_price"] = decimal_to_order_text(limit_price)
+        order["updated_at"] = trading_now(account_label=self._account_label).isoformat()
+        self.last_route = self.name
+        return dict(order)
+
+    def close_position(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        *,
+        purpose: BrokerMutationPurpose = "closeout",
+    ) -> dict[str, Any]:
+        del purpose
+        self._sync_runtime_context()
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("simulation_close_position_symbol_required")
+        current = self._positions_by_symbol.get(normalized_symbol, Decimal("0"))
+        normalized_quantity = Decimal(quantity)
+        if not normalized_quantity.is_finite() or normalized_quantity <= 0:
+            raise ValueError("simulation_close_position_quantity_invalid")
+        if current == 0:
+            return {"status": "already_satisfied", "symbol": normalized_symbol}
+        if normalized_quantity > abs(current):
+            raise ValueError("simulation_close_position_quantity_invalid")
+        updated = (
+            current - normalized_quantity
+            if current > 0
+            else current + normalized_quantity
+        )
+        if updated == 0:
+            self._positions_by_symbol.pop(normalized_symbol, None)
+            self._position_market_value_by_symbol.pop(normalized_symbol, None)
+        else:
+            self._positions_by_symbol[normalized_symbol] = updated
+            market_value = self._position_market_value_by_symbol.get(normalized_symbol)
+            if market_value is not None:
+                self._position_market_value_by_symbol[normalized_symbol] = (
+                    market_value * updated / current
+                )
+        self.last_route = self.name
+        return {
+            "id": f"sim-close-{uuid4().hex[:20]}",
+            "qty": decimal_to_order_text(normalized_quantity),
+            "status": "filled",
+            "symbol": normalized_symbol,
+        }
+
+    def close_all_positions(
+        self,
+        *,
+        purpose: BrokerMutationPurpose = "flatten",
+    ) -> list[dict[str, Any]]:
+        results = [
+            self.close_position(symbol, abs(quantity), purpose=purpose)
+            for symbol, quantity in list(self._positions_by_symbol.items())
+        ]
+        self.last_route = self.name
+        return results
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         self._sync_runtime_context()
@@ -615,18 +655,27 @@ class SimulationExecutionAdapter:
             return None
         return dict(existing)
 
-    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
+    def list_orders(
+        self,
+        status: str = "all",
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         self._sync_runtime_context()
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
+            raise ValueError("simulation_order_list_limit_outside_bounds")
         self.last_route = self.name
         normalized = status.strip().lower()
         values = list(self._orders_by_id.values())
         if normalized in {"all", ""}:
-            return [dict(value) for value in values]
-        return [
-            dict(value)
-            for value in values
-            if str(value.get("status", "")).strip().lower() == normalized
-        ]
+            filtered = [dict(value) for value in values]
+        else:
+            filtered = [
+                dict(value)
+                for value in values
+                if str(value.get("status", "")).strip().lower() == normalized
+            ]
+        return filtered[:limit] if limit is not None else filtered
 
     def list_positions(self) -> list[dict[str, Any]]:
         self._sync_runtime_context()

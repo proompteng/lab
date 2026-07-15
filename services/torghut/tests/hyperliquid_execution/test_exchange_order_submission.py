@@ -19,6 +19,7 @@ from tests.hyperliquid_execution.test_exchange_policy import (
     _FakeExchange,
     _FakeSdk,
     _market,
+    _reduction_executor,
 )
 
 
@@ -148,7 +149,10 @@ def test_exchange_cancels_by_oid() -> None:
     sdk = _FakeSdk()
     exchange = _FakeExchange(
         HyperliquidExecutionConfig.from_env(
-            {"HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1"}
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
         ),
         sdk=sdk,
     )
@@ -162,7 +166,7 @@ def test_exchange_cancels_by_oid() -> None:
         expires_at=datetime.now(timezone.utc),
     )
 
-    result = exchange.cancel_order(order)
+    result = _reduction_executor(exchange).cancel_order(order)
 
     assert result.status == "cancelled"
     assert sdk.info.name_to_coin["xyz:NVDA"] == "xyz:NVDA"

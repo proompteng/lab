@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from app.hyperliquid_execution.exchange import _fill_from_payload
+from app.hyperliquid_execution.exchange_reconciliation import fill_from_payload
 
 
 def test_exchange_fill_identity_prefers_trade_id_over_order_hash() -> None:
-    fill = _fill_from_payload(
+    fill = fill_from_payload(
         {
             "coin": "NVDA",
             "px": "100",

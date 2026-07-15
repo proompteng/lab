@@ -634,10 +634,14 @@ def _validate_operation_contract(
             )
         return
     if operation == "replace_order":
-        if target.kind != "order" or submission_claim_id is None:
-            raise BrokerMutationReceiptValidationError(
-                "replace_order_requires_order_target_and_submission_claim"
-            )
+        repricing_valid = (
+            broker_route == "alpaca"
+            and submission_claim_id is None
+            and risk_class == "risk_neutral"
+            and purpose == "repricing"
+        )
+        if target.kind != "order" or not repricing_valid:
+            raise BrokerMutationReceiptValidationError("replace_order_contract_invalid")
         return
     if submission_claim_id is not None:
         raise BrokerMutationReceiptValidationError(

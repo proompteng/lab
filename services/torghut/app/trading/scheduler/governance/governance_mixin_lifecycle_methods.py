@@ -558,7 +558,9 @@ class TradingSchedulerGovernanceLifecycleMethods(
         )
         firewall_status = self._pipeline.order_firewall.status()
         try:
-            canceled = self._pipeline.order_firewall.cancel_all_orders()
+            canceled = self._pipeline.execution_adapter.cancel_all_orders(
+                purpose="governance"
+            )
             cancelled_count = len(canceled)
         except Exception:
             logger.exception("Emergency stop failed to cancel open orders")

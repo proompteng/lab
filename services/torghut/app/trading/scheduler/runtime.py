@@ -50,7 +50,7 @@ from .leadership import (
     scheduler_advisory_lock_id,
 )
 from .broker_mutation_recovery_runtime import (
-    build_alpaca_submit_recovery_worker,
+    build_alpaca_mutation_recovery_worker,
     reconcile_broker_mutation_recovery,
 )
 from .pipeline import TradingPipeline
@@ -470,7 +470,7 @@ class TradingScheduler(
                 self._pipeline = self._pipelines[0] if self._pipelines else None
             if self._broker_mutation_recovery_worker is None:
                 self._broker_mutation_recovery_worker = (
-                    build_alpaca_submit_recovery_worker(
+                    build_alpaca_mutation_recovery_worker(
                         self._pipelines,
                         enabled=settings.trading_broker_mutation_recovery_enabled,
                     )

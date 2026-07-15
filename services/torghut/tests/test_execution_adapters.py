@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 from types import SimpleNamespace
 from unittest import TestCase
@@ -49,9 +50,6 @@ class FakeOrderFirewall:
             "symbol": kwargs.get("symbol", "AAPL"),
             "qty": str(kwargs.get("qty", 1)),
         }
-
-    def submit_verified_risk_reducing_order(self, **kwargs: Any) -> dict[str, Any]:
-        return self.submit_order(**kwargs)
 
     def cancel_order(self, order_id: str) -> bool:
         _ = order_id
@@ -477,6 +475,48 @@ class TestExecutionAdapters(TestCase):
                 },
             ],
         )
+
+    def test_simulation_reduction_preserves_position_and_market_value_contract(
+        self,
+    ) -> None:
+        adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic="torghut.sim.trade-updates.v1",
+            account_label="paper",
+            simulation_run_id="sim-2026-02-27-01",
+            dataset_id="dataset-1",
+        )
+        adapter.seed_positions_snapshot(
+            [
+                {"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"},
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "quantity_invalid"):
+            adapter.close_position("AAPL", Decimal("-0.5"))
+        self.assertEqual(adapter.list_positions()[0]["qty"], "2")
+
+        result = adapter.close_position("aapl", Decimal("0.5"))
+
+        self.assertEqual(result["status"], "filled")
+        self.assertEqual(
+            adapter.list_positions(),
+            [
+                {
+                    "symbol": "AAPL",
+                    "qty": "1.5",
+                    "side": "long",
+                    "market_value": "150",
+                    "alpaca_account_label": "paper",
+                }
+            ],
+        )
+        self.assertEqual(len(adapter.close_all_positions()), 1)
+        self.assertEqual(adapter.list_positions(), [])
 
     def test_simulation_adapter_preserves_integer_magnitude_in_positions(self) -> None:
         adapter = SimulationExecutionAdapter(

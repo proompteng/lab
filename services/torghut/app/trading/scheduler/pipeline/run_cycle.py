@@ -134,7 +134,6 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
             self.decision_engine.price_fetcher = self.price_fetcher
         self.capital_safety = CapitalSafetyController(
             execution_adapter=self.execution_adapter,
-            price_fetcher=self.price_fetcher,
             state=self.state,
             account_label=self.account_label,
         )
@@ -215,7 +214,8 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
 
     def _prepare_run_once(self, session: Session) -> None:
         self._ingest_order_feed(session)
-        self.order_firewall.cancel_open_orders_if_kill_switch()
+        if self.order_firewall.status().kill_switch_enabled:
+            self.execution_adapter.cancel_all_orders(purpose="kill_switch")
         if self.strategy_catalog is not None:
             self.strategy_catalog.refresh(session)
 

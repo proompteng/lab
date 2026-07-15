@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from typing import Protocol
 
 from ...db import SessionLocal
-from ..alpaca_submit_recovery import AlpacaSubmitRecoveryRoute
+from ..alpaca_mutation_recovery import AlpacaMutationRecoveryRoute
 from ..broker_mutation_recovery_worker import (
     BrokerMutationRecoveryPolicy,
     BrokerMutationRecoveryRunError,
@@ -37,13 +37,13 @@ class _RuntimeFailureEmitter(Protocol):
     ) -> None: ...
 
 
-def build_alpaca_submit_recovery_worker(
+def build_alpaca_mutation_recovery_worker(
     pipelines: Iterable[TradingPipeline],
     *,
     enabled: bool,
 ) -> BrokerMutationRecoveryWorker:
     routes = tuple(
-        AlpacaSubmitRecoveryRoute(
+        AlpacaMutationRecoveryRoute(
             client=pipeline.alpaca_client,
             firewall=pipeline.order_firewall,
             executor=pipeline.executor,

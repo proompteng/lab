@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from unittest.mock import Mock
 
+import pytest
 from fastapi import Response
 
 from app.hyperliquid_execution import api
@@ -31,10 +32,10 @@ from app.hyperliquid_execution.models import (
 )
 from tests import broker_mutation_test_support as mutation_support
 from tests.hyperliquid_execution.runtime_surface_test_support import (
-    _FakeResult,
+    _FakeSession,
     _now,
 )
-from tests.hyperliquid_execution.submit_recovery_test_support import (
+from tests.hyperliquid_execution.mutation_recovery_test_support import (
     _ready_recovery_worker,
 )
 
@@ -45,6 +46,14 @@ from app.hyperliquid_execution.service import (
     _CycleCounts,
     _feature_status,
     runtime_readiness,
+)
+from app.trading.risk_reduction import (
+    BrokerOrderObservation,
+    BrokerPositionObservation,
+)
+from app.trading.broker_mutation_coordinator import (
+    BrokerMutationAlreadyProcessed,
+    BrokerMutationCoordinator,
 )
 
 
@@ -312,7 +321,7 @@ def test_repository_cooldowns_repeated_broker_rejects() -> None:
         )
 
 
-_SUBMIT_COORDINATOR = mutation_support.PassthroughBrokerMutationSubmitCoordinator()
+_MUTATION_COORDINATOR = mutation_support.PassthroughBrokerMutationCoordinator()
 
 
 def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
@@ -330,7 +339,7 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
         config=config,
         feed=_ServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -362,6 +371,41 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     assert cycle_calls[0] < signal_call < cycle_calls[-1]
 
 
+def test_service_blocks_entry_when_prior_reduction_effect_is_still_unconfirmed() -> (
+    None
+):
+    now = _now()
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
+        }
+    )
+    coordinator = Mock(spec=BrokerMutationCoordinator)
+    coordinator.execute_unlinked_mutation.side_effect = BrokerMutationAlreadyProcessed(
+        "broker_mutation_already_processed"
+    )
+    service = HyperliquidExecutionService(
+        config=config,
+        feed=_ServiceFeed(now),
+        exchange=_ServiceExchange(now),
+        mutation_coordinator=coordinator,
+        recovery_worker=_ready_recovery_worker(),
+    )
+
+    with pytest.raises(BrokerMutationAlreadyProcessed):
+        service.run_once(_FakeSession())
+
+    status = service._latest_recovery_status
+    assert status is not None
+    assert status.ready is False
+    assert status.reason == "broker_mutation_effect_unconfirmed"
+    assert status.details["unresolved"] == 0
+    assert status.details["effect_unconfirmed"] is True
+
+
 def test_service_selects_only_fresh_execution_markets() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
@@ -378,7 +422,7 @@ def test_service_selects_only_fresh_execution_markets() -> None:
         config=config,
         feed=_PartialFeatureServiceFeed(now),
         exchange=exchange,
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -414,7 +458,7 @@ def test_service_reports_blocked_signal_reasons() -> None:
         config=config,
         feed=_SellServiceFeed(now),
         exchange=_ServiceExchange(now),
-        submit_coordinator=_SUBMIT_COORDINATOR,
+        mutation_coordinator=_MUTATION_COORDINATOR,
         recovery_worker=_ready_recovery_worker(),
     )
 
@@ -686,12 +730,39 @@ class _ServiceExchange:
         *,
         size: Decimal | None = None,
         slippage: Decimal = Decimal("0.05"),
+        **_kwargs: object,
     ) -> OrderResult:
         self.reduce_only_closes.append((coin, size, slippage))
         return OrderResult("filled", "789", {"filled": {"oid": 789}})
 
-    def cancel_order(self, _order: Any) -> OrderResult:
+    def cancel_order(self, _order: Any, **_kwargs: object) -> OrderResult:
         return OrderResult("cancelled", "123", {"ok": True})
+
+    def observe_open_order(self, order: Any) -> BrokerOrderObservation:
+        return BrokerOrderObservation(
+            order_id=str(order.exchange_order_id),
+            client_order_id=order.cloid,
+            symbol=order.coin,
+            side="buy",
+            quantity=Decimal("1"),
+            filled_quantity=Decimal("0"),
+            status="open",
+        )
+
+    def observe_reduction_positions(
+        self,
+    ) -> tuple[datetime, tuple[BrokerPositionObservation, ...]]:
+        positions = tuple(
+            BrokerPositionObservation(
+                symbol=position.sdk_coin or position.coin,
+                signed_quantity=position.size,
+                unit_notional=abs(position.notional_usd / position.size),
+                broker_symbol=position.sdk_coin or position.coin,
+            )
+            for position in self.account_state.positions
+            if position.size != 0
+        )
+        return datetime.now(timezone.utc), positions
 
     def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Fill]:
         self.reconciled_coins.update(_market_id_by_coin)
@@ -712,179 +783,6 @@ class _ServiceExchange:
 
     def execution_metadata_details(self) -> dict[str, object]:
         return {}
-
-
-class _FakeSession:
-    def __init__(
-        self,
-        *,
-        reject_count: int = 0,
-        risk_open_coin: bool = False,
-        risk_gross_exposure_usd: Decimal = Decimal("10"),
-        risk_exposure_usd: Decimal = Decimal("0"),
-        risk_cooldown: bool = False,
-        profitability_net_pnl_24h: Decimal = Decimal("1"),
-        profitability_notional_1h: Decimal = Decimal("10"),
-        position_size: Decimal = Decimal("0"),
-        position_sdk_coin: str | None = None,
-        open_order_market_id: str = "hl:perp:xyz:NVDA",
-    ) -> None:
-        self.reject_count = reject_count
-        self.risk_open_coin = risk_open_coin
-        self.risk_gross_exposure_usd = risk_gross_exposure_usd
-        self.risk_exposure_usd = risk_exposure_usd
-        self.risk_cooldown = risk_cooldown
-        self.profitability_net_pnl_24h = profitability_net_pnl_24h
-        self.profitability_notional_1h = profitability_notional_1h
-        self.position_size = position_size
-        self.position_sdk_coin = position_sdk_coin
-        self.open_order_market_id = open_order_market_id
-        self.calls: list[tuple[str, Mapping[str, object] | None]] = []
-        self.closed = False
-        self.committed = False
-        self.rolled_back = False
-
-    def execute(
-        self,
-        statement: Any,
-        params: Mapping[str, object] | None = None,
-    ) -> "_FakeResult":
-        sql = str(statement)
-        self.calls.append((sql, params))
-        return _FakeResult(self._rows_for(sql))
-
-    def commit(self) -> None:
-        self.committed = True
-
-    def rollback(self) -> None:
-        self.rolled_back = True
-
-    def close(self) -> None:
-        self.closed = True
-
-    def _rows_for(self, sql: str) -> list[dict[str, object]]:
-        if "INSERT INTO hyperliquid_execution_orders" in sql and "RETURNING id" in sql:
-            return [{"id": "order-1"}]
-        if "SELECT count(*) AS rejects" in sql:
-            return [{"rejects": self.reject_count}]
-        if "daily_realized_pnl_usd" in sql:
-            return [
-                {
-                    "account_value_usd": "1000",
-                    "withdrawable_usd": "900",
-                    "gross_exposure_usd": str(self.risk_gross_exposure_usd),
-                    "daily_realized_pnl_usd": "1",
-                }
-            ]
-        if "SELECT DISTINCT coin" in sql:
-            return [{"coin": "NVDA"}] if self.risk_open_coin else []
-        if "SUM(ABS(notional_usd))" in sql:
-            return [{"coin": "NVDA", "exposure_usd": str(self.risk_exposure_usd)}]
-        if "GROUP BY coin" in sql and "exposures" in sql:
-            return [{"coin": "NVDA", "exposure_usd": str(self.risk_exposure_usd)}]
-        if "cooldown_reason" in sql and "cooldown_until > now()" in sql:
-            if self.risk_cooldown:
-                return [{"coin": "NVDA", "cooldown_reason": "symbol_reject_cooldown"}]
-            return []
-        if "net_pnl_after_fees_usd_24h" in sql and "notional_usd_1h" in sql:
-            return self._profitability_rows()
-        if "FROM hyperliquid_execution_positions" in sql and "LIMIT 1" in sql:
-            return self._position_rows()
-        if "expires_at <= :now" in sql:
-            return [
-                {
-                    "id": "order-1",
-                    "market_id": self.open_order_market_id,
-                    "coin": "NVDA",
-                    "exchange_order_id": "123",
-                    "cloid": "0xabc",
-                    "status": "accepted",
-                    "expires_at": _now() - timedelta(seconds=1),
-                }
-            ]
-        if "WITH" in sql and "fills_24h" in sql:
-            return [
-                {
-                    "fills_24h": 1,
-                    "notional_24h": "10",
-                    "fees_24h": "0.01",
-                    "net_pnl_24h": "0.50",
-                    "fills_7d": 1,
-                    "notional_7d": "10",
-                    "fees_7d": "0.01",
-                    "net_pnl_7d": "0.50",
-                    "orders_24h": 2,
-                    "filled_orders_24h": 1,
-                    "cancelled_orders_24h": 1,
-                    "rejected_orders_24h": 0,
-                    "all_fills": 41,
-                }
-            ]
-        if "FROM hyperliquid_execution_fills" in sql and "GROUP BY coin" in sql:
-            return [
-                {
-                    "coin": "NVDA",
-                    "fills": 1,
-                    "notional_usd": "10",
-                    "fees_usd": "0.01",
-                    "net_pnl_after_fees_usd": "0.50",
-                }
-            ]
-        if (
-            "FROM hyperliquid_execution_account_snapshots" in sql
-            and "raw_payload" in sql
-        ):
-            return [
-                {
-                    "observed_at": str(_now()),
-                    "account_value_usd": "1000",
-                    "withdrawable_usd": "900",
-                    "gross_exposure_usd": "99.32",
-                    "raw_payload": {
-                        "assetPositions": [
-                            {
-                                "position": {
-                                    "coin": "SPX",
-                                    "szi": "275.2",
-                                    "entryPx": "0.36091",
-                                    "positionValue": "99.32",
-                                    "unrealizedPnl": "-0.1",
-                                }
-                            }
-                        ]
-                    },
-                }
-            ]
-        return [{"coin": "NVDA", "value": Decimal("1"), "observed_at": _now()}]
-
-    def _profitability_rows(self) -> list[dict[str, object]]:
-        return [
-            {
-                "net_pnl_after_fees_usd_24h": str(self.profitability_net_pnl_24h),
-                "notional_usd_1h": str(self.profitability_notional_1h),
-                "last_entry_at": None,
-                "last_side": None,
-                "last_side_at": None,
-                "last_position_close_side": None,
-                "last_position_close_at": None,
-            }
-        ]
-
-    def _position_rows(self) -> list[dict[str, object]]:
-        if self.position_size == Decimal("0"):
-            return []
-        return [
-            {
-                "market_id": "hl:perp:xyz:NVDA",
-                "coin": "NVDA",
-                "size": str(self.position_size),
-                "entry_price": "100",
-                "notional_usd": "10",
-                "unrealized_pnl_usd": "0.25",
-                "observed_at": _now(),
-                "raw_payload": {"coin": self.position_sdk_coin or "NVDA"},
-            }
-        ]
 
 
 def _market() -> ExecutionMarket:
@@ -966,6 +864,7 @@ def _account_state(
     gross_exposure_usd: Decimal = Decimal("10"),
     position_size: Decimal = Decimal("0.1"),
     position_notional_usd: Decimal = Decimal("10"),
+    position_sdk_coin: str | None = None,
 ) -> AccountState:
     return AccountState(
         account=AccountSnapshot(
@@ -984,7 +883,11 @@ def _account_state(
                 notional_usd=position_notional_usd,
                 unrealized_pnl_usd=Decimal("0.25"),
                 observed_at=now,
-                raw_payload={"coin": "NVDA", "maxLeverage": "20"},
+                raw_payload={
+                    "coin": position_sdk_coin or "NVDA",
+                    "maxLeverage": "20",
+                },
+                sdk_coin=position_sdk_coin,
             ),
         ),
     )

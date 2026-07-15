@@ -10,9 +10,13 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Protocol, cast
 
-from ..trading.broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionDeferred,
-    BrokerMutationSubmitCoordinator,
+from sqlalchemy.orm import Session
+
+from ..trading.broker_mutation_coordinator import (
+    BrokerMutationAlreadyProcessed,
+    BrokerMutationDeferred,
+    BrokerMutationError,
+    BrokerMutationCoordinator,
 )
 from ..trading.broker_mutation_recovery_worker import (
     BrokerMutationRecoveryRunError,
@@ -35,6 +39,7 @@ from .models import (
     RuntimeDependencyStatus,
 )
 from .repository import HyperliquidExecutionRepository
+from .reduction_mutations import HyperliquidReductionMutationExecutor
 from .reconciliation_keys import market_id_by_reconciliation_coin
 from .runtime_details import risk_state_details, universe_details
 from .universe import UniverseSelectionConfig, select_configured_markets
@@ -66,15 +71,15 @@ class HyperliquidExecutionService:
         config: HyperliquidExecutionConfig,
         feed: HyperliquidExecutionFeed,
         exchange: HyperliquidExecutionExchange,
-        submit_coordinator: BrokerMutationSubmitCoordinator | None = None,
+        mutation_coordinator: BrokerMutationCoordinator | None = None,
         recovery_worker: BrokerMutationRecoveryRunner | None = None,
         recovery_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._feed = feed
         self._exchange = exchange
-        self._submit_coordinator = (
-            submit_coordinator or BrokerMutationSubmitCoordinator("hyperliquid-submit")
+        self._mutation_coordinator = mutation_coordinator or BrokerMutationCoordinator(
+            "hyperliquid-mutation"
         )
         self._recovery_worker = recovery_worker
         self._recovery_clock = recovery_clock
@@ -87,6 +92,13 @@ class HyperliquidExecutionService:
         started_at = datetime.now(timezone.utc)
         cycle_id = str(uuid.uuid4())
         repository = HyperliquidExecutionRepository(session)
+        reductions = HyperliquidReductionMutationExecutor(
+            exchange=self._exchange,
+            session=cast(Session, session),
+            coordinator=self._mutation_coordinator,
+            account_label=self._config.account_label,
+            endpoint_url=self._config.exchange_api_url,
+        )
         context = self._load_context(repository, started_at)
         context = replace(
             context,
@@ -113,24 +125,31 @@ class HyperliquidExecutionService:
             )
         )
 
-        counts.orders_cancelled = self._cancel_expired_orders(repository, started_at)
+        try:
+            counts.orders_cancelled = self._cancel_expired_orders(
+                repository,
+                reductions,
+                started_at,
+            )
 
-        risk_state = repository.risk_state(
-            trading_enabled=self._config.order_submission_enabled(),
-            dependencies=context.dependencies,
-            max_leverage_by_coin={
-                market.coin: market.max_leverage
-                for market in context.markets
-                if market.max_leverage is not None
-            },
-        )
-        context.universe_details["risk_state"] = risk_state_details(
-            risk_state, self._config
-        )
-        maintenance_reduce_only = self._reduce_over_cap_exposure(risk_state)
-        counts.record_maintenance_reduce_only(maintenance_reduce_only)
-        if not _maintenance_reduce_only_ran(maintenance_reduce_only):
-            try:
+            risk_state = repository.risk_state(
+                trading_enabled=self._config.order_submission_enabled(),
+                dependencies=context.dependencies,
+                max_leverage_by_coin={
+                    market.coin: market.max_leverage
+                    for market in context.markets
+                    if market.max_leverage is not None
+                },
+            )
+            context.universe_details["risk_state"] = risk_state_details(
+                risk_state, self._config
+            )
+            maintenance_reduce_only = self._reduce_over_cap_exposure(
+                risk_state,
+                reductions,
+            )
+            counts.record_maintenance_reduce_only(maintenance_reduce_only)
+            if not _maintenance_reduce_only_ran(maintenance_reduce_only):
                 self._process_features(
                     repository=repository,
                     context=_FeatureProcessingContext(
@@ -140,10 +159,11 @@ class HyperliquidExecutionService:
                         risk_state=risk_state,
                     ),
                     counts=counts,
+                    reductions=reductions,
                 )
-            except BrokerMutationSubmissionDeferred as exc:
-                self._latch_unresolved_submission(started_at, exc)
-                raise
+        except (BrokerMutationAlreadyProcessed, BrokerMutationDeferred) as exc:
+            self._latch_unresolved_mutation(started_at, exc)
+            raise
 
         repository.insert_performance_snapshot(observed_at=started_at)
         repository.insert_multifactor_attribution_snapshot(
@@ -254,22 +274,28 @@ class HyperliquidExecutionService:
         self._latest_recovery_status = status
         return status
 
-    def _latch_unresolved_submission(
+    def _latch_unresolved_mutation(
         self,
         observed_at: datetime,
-        exc: BrokerMutationSubmissionDeferred,
+        exc: BrokerMutationError,
     ) -> None:
-        """Block later entries until a fresh worker read proves no unresolved submit."""
+        """Block risk-increasing progress until broker observation resolves state."""
 
+        effect_unconfirmed = isinstance(exc, BrokerMutationAlreadyProcessed)
         self._latest_recovery_status = RuntimeDependencyStatus(
             name="broker_mutation_recovery",
             ready=False,
             observed_at=observed_at,
-            reason="broker_mutation_recovery_unresolved",
+            reason=(
+                "broker_mutation_effect_unconfirmed"
+                if effect_unconfirmed
+                else "broker_mutation_recovery_unresolved"
+            ),
             details={
                 "enabled": self._config.broker_mutation_recovery_enabled,
                 "run_sequence": self._recovery_run_sequence,
-                "unresolved": 1,
+                "unresolved": 0 if effect_unconfirmed else 1,
+                "effect_unconfirmed": effect_unconfirmed,
                 "error_class": type(exc).__name__,
                 "interval_seconds": (
                     self._config.broker_mutation_recovery_interval_seconds
@@ -281,23 +307,29 @@ class HyperliquidExecutionService:
     def _cancel_expired_orders(
         self,
         repository: HyperliquidExecutionRepository,
+        reductions: HyperliquidReductionMutationExecutor,
         started_at: datetime,
     ) -> int:
         cancelled = 0
         for expired in repository.expired_open_orders(now=started_at):
-            self._cancel_order(repository, expired)
+            self._cancel_order(repository, reductions, expired)
             cancelled += 1
         return cancelled
 
     def _cancel_order(
         self,
         repository: HyperliquidExecutionRepository,
+        reductions: HyperliquidReductionMutationExecutor,
         expired: OpenOrder,
     ) -> None:
-        result = self._exchange.cancel_order(expired)
+        result = reductions.cancel_order(expired, purpose="operator")
         repository.mark_order_cancelled(expired, result)
 
-    def _reduce_over_cap_exposure(self, risk_state: RiskState) -> dict[str, object]:
+    def _reduce_over_cap_exposure(
+        self,
+        risk_state: RiskState,
+        reductions: HyperliquidReductionMutationExecutor,
+    ) -> dict[str, object]:
         if not risk_state_over_cap(risk_state, self._config):
             return {
                 "schema_version": "torghut.hyperliquid-execution-over-cap-maintenance.v1",
@@ -309,7 +341,7 @@ class HyperliquidExecutionService:
             }
         return close_largest_positions_over_cap(
             config=self._config,
-            exchange=self._exchange,
+            exchange=reductions,
             execute=True,
             max_actions=1,
         )
@@ -320,6 +352,7 @@ class HyperliquidExecutionService:
         repository: HyperliquidExecutionRepository,
         context: "_FeatureProcessingContext",
         counts: "_CycleCounts",
+        reductions: HyperliquidReductionMutationExecutor,
     ) -> None:
         process_features(
             repository=repository,
@@ -327,7 +360,8 @@ class HyperliquidExecutionService:
             exchange=self._exchange,
             context=context,
             counts=counts,
-            submit_coordinator=self._submit_coordinator,
+            mutation_coordinator=self._mutation_coordinator,
+            reductions=reductions,
         )
 
     def _cycle_record(

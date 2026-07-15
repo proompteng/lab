@@ -1,4 +1,4 @@
-"""Observation-only recovery for ambiguous durable broker submissions."""
+"""Observation-only recovery for ambiguous durable broker mutations."""
 
 from __future__ import annotations
 
@@ -45,10 +45,13 @@ logger = logging.getLogger(__name__)
 
 
 BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION = (
+    "torghut.broker-mutation-recovery-observation.v1"
+)
+BROKER_SUBMIT_RECOVERY_OBSERVATION_SCHEMA_VERSION = (
     "torghut.broker-submit-recovery-observation.v1"
 )
-BrokerSubmitRecoveryReadOutcome = Literal["found", "not_found", "indeterminate"]
-BrokerSubmitRecoveryResolutionState = Literal[
+BrokerMutationRecoveryReadOutcome = Literal["found", "not_found", "indeterminate"]
+BrokerMutationRecoveryResolutionState = Literal[
     "submitted_unknown",
     "expired",
     "manual_review",
@@ -92,20 +95,20 @@ _RECOVERY_ACTIVITY_ERRORS = (
 
 
 @dataclass(frozen=True, slots=True)
-class BrokerSubmitRecoveryRead:
-    """One broker observation with no authority to submit or mutate an order."""
+class BrokerMutationRecoveryRead:
+    """One broker observation with no authority to perform a mutation."""
 
-    outcome: BrokerSubmitRecoveryReadOutcome
+    outcome: BrokerMutationRecoveryReadOutcome
     evidence: Mapping[str, object]
-    broker_order: Mapping[str, object] | None = None
+    broker_result: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class _BrokerSubmitRecoveryAttempt:
+class _BrokerMutationRecoveryAttempt:
     receipt: BrokerMutationReceiptSnapshot
     receipt_handle: BrokerMutationRecoveryHandle
     claim_handle: DecisionSubmissionRecoveryHandle | None
-    read: BrokerSubmitRecoveryRead
+    read: BrokerMutationRecoveryRead
     observed_at: datetime
     independent_activity: tuple[str, ...] = ()
 
@@ -127,7 +130,7 @@ class BrokerMutationRecoveryRoute(Protocol):
         receipt: BrokerMutationReceiptSnapshot,
         *,
         observed_at: datetime,
-    ) -> BrokerSubmitRecoveryRead: ...
+    ) -> BrokerMutationRecoveryRead: ...
 
     def independent_activity(
         self,
@@ -139,7 +142,7 @@ class BrokerMutationRecoveryRoute(Protocol):
         self,
         session: Session,
         receipt: BrokerMutationReceiptSnapshot,
-        read: BrokerSubmitRecoveryRead,
+        read: BrokerMutationRecoveryRead,
     ) -> BrokerMutationSettlement: ...
 
 
@@ -230,7 +233,7 @@ def _recovery_writer_identity(component: str) -> tuple[str, int]:
 
 
 class BrokerMutationRecoveryWorker:
-    """Recover due submit receipts using reads only; this class cannot resubmit."""
+    """Recover due mutation receipts using reads only; this class cannot mutate."""
 
     def __init__(
         self,
@@ -277,7 +280,6 @@ class BrokerMutationRecoveryWorker:
                 session,
                 limit=self._policy.batch_size,
                 route_identities=tuple(sorted(self._routes)),
-                operation="submit_order",
             )
         outcomes: Counter[str] = Counter()
         scanned = 0
@@ -287,11 +289,6 @@ class BrokerMutationRecoveryWorker:
                 outcomes["receipt_disappeared"] += 1
                 continue
             route, receipt = route_receipt
-            if (
-                receipt.intent.operation != "submit_order"
-            ):  # pragma: no cover - query contract
-                outcomes["query_contract_mismatch"] += 1
-                continue
             scanned += 1
             try:
                 outcome = self._recover_one(route, receipt)
@@ -308,7 +305,6 @@ class BrokerMutationRecoveryWorker:
             unresolved = count_unresolved_broker_mutation_receipts(
                 session,
                 route_identities=tuple(sorted(self._routes)),
-                operation="submit_order",
             )
         return BrokerMutationRecoveryRunResult(
             enabled=True,
@@ -366,10 +362,10 @@ class BrokerMutationRecoveryWorker:
         try:
             read = _validated_read(route.observe(receipt, observed_at=observed_at))
         except _RECOVERY_OBSERVATION_ERRORS as exc:
-            read = BrokerSubmitRecoveryRead(
+            read = BrokerMutationRecoveryRead(
                 outcome="indeterminate",
                 evidence={
-                    "schema_version": BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION,
+                    "schema_version": _observation_schema_version(receipt),
                     "route": receipt.intent.broker_route,
                     "lookup_error_class": type(exc).__name__,
                     "absence_proof_complete": False,
@@ -377,12 +373,12 @@ class BrokerMutationRecoveryWorker:
             )
 
         independent_activity: tuple[str, ...] = ()
-        if read.outcome == "not_found":
+        if read.outcome == "not_found" and receipt.intent.operation == "submit_order":
             try:
                 with self._session_factory() as session:
                     independent_activity = route.independent_activity(session, receipt)
             except _RECOVERY_ACTIVITY_ERRORS as exc:
-                read = BrokerSubmitRecoveryRead(
+                read = BrokerMutationRecoveryRead(
                     outcome="indeterminate",
                     evidence={
                         **dict(read.evidence),
@@ -392,7 +388,7 @@ class BrokerMutationRecoveryWorker:
                 )
             else:
                 if independent_activity:
-                    read = BrokerSubmitRecoveryRead(
+                    read = BrokerMutationRecoveryRead(
                         outcome="indeterminate",
                         evidence={
                             **dict(read.evidence),
@@ -402,7 +398,7 @@ class BrokerMutationRecoveryWorker:
                         },
                     )
 
-        attempt = _BrokerSubmitRecoveryAttempt(
+        attempt = _BrokerMutationRecoveryAttempt(
             receipt=receipt,
             receipt_handle=receipt_handle,
             claim_handle=claim_handle,
@@ -442,7 +438,7 @@ class BrokerMutationRecoveryWorker:
     def _settle_found(
         self,
         route: BrokerMutationRecoveryRoute,
-        attempt: _BrokerSubmitRecoveryAttempt,
+        attempt: _BrokerMutationRecoveryAttempt,
     ) -> str:
         with self._session_factory() as session:
             settlement = route.build_found_settlement(
@@ -469,29 +465,36 @@ class BrokerMutationRecoveryWorker:
 
     def _record_nonterminal(
         self,
-        attempt: _BrokerSubmitRecoveryAttempt,
+        attempt: _BrokerMutationRecoveryAttempt,
         *,
-        resolution_state: BrokerSubmitRecoveryResolutionState | None = None,
+        resolution_state: BrokerMutationRecoveryResolutionState | None = None,
     ) -> str:
         age_seconds = _recovery_age_seconds(attempt.receipt, attempt.observed_at)
         manual_review = (
             attempt.read.outcome == "indeterminate"
             and age_seconds >= self._policy.manual_review_after_seconds
         )
-        resolved_state: BrokerSubmitRecoveryResolutionState = resolution_state or (
+        resolved_state: BrokerMutationRecoveryResolutionState = resolution_state or (
             "manual_review" if manual_review else "submitted_unknown"
         )
-        evidence_payload = {
+        submit_recovery = attempt.receipt.intent.operation == "submit_order"
+        evidence_payload: dict[str, object] = {
             **dict(attempt.read.evidence),
-            "schema_version": BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION,
+            "schema_version": _observation_schema_version(attempt.receipt),
             "broker_read_schema_version": attempt.read.evidence["schema_version"],
             "route": attempt.receipt.intent.broker_route,
             "resolution_state": resolved_state,
             "automatic_recovery_age_seconds": age_seconds,
-            "automatic_resubmission_attempted": False,
             "operator_confirmation_required": resolved_state
             in {"expired", "manual_review"},
         }
+        evidence_payload[
+            (
+                "automatic_resubmission_attempted"
+                if submit_recovery
+                else "automatic_broker_mutation_attempted"
+            )
+        ] = False
         observation = build_broker_mutation_recovery_observation(
             BrokerMutationRecoveryObservationRequest(
                 checked_client_request_id=attempt.receipt.intent.client_request_id,
@@ -529,10 +532,11 @@ class BrokerMutationRecoveryWorker:
 
     def _absence_window_expired(
         self,
-        attempt: _BrokerSubmitRecoveryAttempt,
+        attempt: _BrokerMutationRecoveryAttempt,
     ) -> bool:
         if (
-            attempt.read.outcome != "not_found"
+            attempt.receipt.intent.operation != "submit_order"
+            or attempt.read.outcome != "not_found"
             or attempt.independent_activity
             or attempt.read.evidence.get("absence_proof_complete") is not True
             or _recovery_age_seconds(attempt.receipt, attempt.observed_at)
@@ -555,12 +559,12 @@ class BrokerMutationRecoveryWorker:
             release_broker_mutation_recovery(session, handle=handle)
 
 
-def _validated_read(read: BrokerSubmitRecoveryRead) -> BrokerSubmitRecoveryRead:
+def _validated_read(read: BrokerMutationRecoveryRead) -> BrokerMutationRecoveryRead:
     if read.outcome not in {"found", "not_found", "indeterminate"}:
         raise ValueError("broker_mutation_recovery_read_outcome_invalid")
-    if read.outcome == "found" and not isinstance(read.broker_order, Mapping):
+    if read.outcome == "found" and not isinstance(read.broker_result, Mapping):
         raise ValueError("broker_mutation_recovery_found_order_required")
-    if read.outcome != "found" and read.broker_order is not None:
+    if read.outcome != "found" and read.broker_result is not None:
         raise ValueError("broker_mutation_recovery_non_found_order_forbidden")
     schema_version = read.evidence.get("schema_version")
     if (
@@ -610,10 +614,16 @@ def _recovery_age_seconds(
     return max(0, int((observed_at - started_at).total_seconds()))
 
 
+def _observation_schema_version(receipt: BrokerMutationReceiptSnapshot) -> str:
+    if receipt.intent.operation == "submit_order":
+        return BROKER_SUBMIT_RECOVERY_OBSERVATION_SCHEMA_VERSION
+    return BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION
+
+
 def _prior_absence_proof_is_compatible(
     receipt: BrokerMutationReceiptSnapshot,
     *,
-    read: BrokerSubmitRecoveryRead,
+    read: BrokerMutationRecoveryRead,
 ) -> bool:
     raw = receipt.recovery.evidence_json
     if not isinstance(raw, str):
@@ -631,7 +641,7 @@ def _prior_absence_proof_is_compatible(
     payload = cast(dict[str, object], observation)
     return (
         payload.get("schema_version")
-        == BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION
+        == BROKER_SUBMIT_RECOVERY_OBSERVATION_SCHEMA_VERSION
         and payload.get("broker_read_schema_version")
         == read.evidence.get("schema_version")
         and payload.get("route") == receipt.intent.broker_route
@@ -642,9 +652,10 @@ def _prior_absence_proof_is_compatible(
 
 __all__ = [
     "BROKER_MUTATION_RECOVERY_OBSERVATION_SCHEMA_VERSION",
+    "BROKER_SUBMIT_RECOVERY_OBSERVATION_SCHEMA_VERSION",
     "BrokerMutationRecoveryPolicy",
     "BrokerMutationRecoveryRoute",
     "BrokerMutationRecoveryRunResult",
     "BrokerMutationRecoveryWorker",
-    "BrokerSubmitRecoveryRead",
+    "BrokerMutationRecoveryRead",
 ]

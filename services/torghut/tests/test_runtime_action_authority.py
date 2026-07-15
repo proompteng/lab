@@ -202,6 +202,27 @@ def test_unresolved_submit_blocks_new_entry_without_disabling_reduction() -> Non
     assert authority.reason_codes["entry"] == ("broker_mutation_submit_unresolved",)
 
 
+def test_unresolved_receipt_reason_preserves_operation_truth() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(
+            unresolved_receipt_count=2,
+            unresolved_submit_receipt_count=1,
+            unresolved_reduction_receipt_count=1,
+        ),
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is False
+    assert authority.reduce_only_allowed is True
+    assert authority.reason_codes["entry"] == (
+        "broker_mutation_submit_unresolved",
+        "broker_mutation_reduction_unresolved",
+    )
+
+
 def test_disabled_recovery_blocks_new_entry_without_disabling_reduction() -> None:
     authority = reduce_runtime_action_authority(
         service_status=_service(),

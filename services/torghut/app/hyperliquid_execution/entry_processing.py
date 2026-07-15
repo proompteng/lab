@@ -20,11 +20,11 @@ from ..trading.broker_mutation_receipts import (
     build_broker_mutation_settlement,
     fingerprint_broker_endpoint,
 )
-from ..trading.broker_mutation_submit_coordinator import (
-    BrokerMutationSubmissionAlreadyProcessed,
-    BrokerMutationSubmissionDeferred,
-    BrokerMutationSubmitCoordinator,
-    UnlinkedOrderSubmissionCallbacks,
+from ..trading.broker_mutation_coordinator import (
+    BrokerMutationAlreadyProcessed,
+    BrokerMutationDeferred,
+    BrokerMutationCoordinator,
+    UnlinkedMutationCallbacks,
 )
 
 from .config import HyperliquidExecutionConfig
@@ -47,6 +47,7 @@ from .profitability import (
     profitability_blocked_verdict,
 )
 from .repository import HyperliquidExecutionRepository
+from .reduction_mutations import HyperliquidReductionMutationExecutor
 from .risk import evaluate_signal_risk
 from .strategy import generate_signal
 
@@ -106,7 +107,8 @@ class _EntryRuntime:
     exchange: HyperliquidExecutionExchange
     context: FeatureProcessingContext
     counts: CycleCountsWriter
-    submit_coordinator: BrokerMutationSubmitCoordinator
+    mutation_coordinator: BrokerMutationCoordinator
+    reductions: HyperliquidReductionMutationExecutor
 
 
 def process_features(
@@ -116,7 +118,8 @@ def process_features(
     exchange: HyperliquidExecutionExchange,
     context: FeatureProcessingContext,
     counts: CycleCountsWriter,
-    submit_coordinator: BrokerMutationSubmitCoordinator,
+    mutation_coordinator: BrokerMutationCoordinator,
+    reductions: HyperliquidReductionMutationExecutor,
 ) -> None:
     runtime = _EntryRuntime(
         repository,
@@ -124,7 +127,8 @@ def process_features(
         exchange,
         context,
         counts,
-        submit_coordinator,
+        mutation_coordinator,
+        reductions,
     )
     for feature in context.features:
         submitted = _process_feature(runtime, feature)
@@ -161,17 +165,17 @@ def _process_allowed_signal(
     signal_id: str,
     verdict: RiskVerdict,
 ) -> bool:
-    gate = _evaluate_profitability(runtime, signal, verdict)
-    if not gate.allowed:
-        blocked = profitability_blocked_verdict(verdict, gate.reason)
-        _record_blocked_verdict(runtime, signal, blocked)
-        return False
     reduce_only = _position_reduce_only_action(runtime, signal)
     if reduce_only is not None:
         runtime.counts.record_position_reduce_only(reduce_only)
         blocked = profitability_blocked_verdict(verdict, str(reduce_only["reason"]))
         _record_blocked_verdict(runtime, signal, blocked)
         return _reduce_only_consumed_order_slot(reduce_only)
+    gate = _evaluate_profitability(runtime, signal, verdict)
+    if not gate.allowed:
+        blocked = profitability_blocked_verdict(verdict, gate.reason)
+        _record_blocked_verdict(runtime, signal, blocked)
+        return False
     runtime.repository.insert_multifactor_risk_and_target(
         run_id=runtime.context.cycle_id,
         verdict=verdict,
@@ -186,7 +190,7 @@ def _position_reduce_only_action(
     try:
         return _close_opposite_position_before_entry(
             runtime.repository,
-            runtime.exchange,
+            runtime.reductions,
             signal,
         )
     except _POSITION_CHECK_ERRORS as exc:
@@ -251,10 +255,10 @@ def _submit_order(
                 request_payload=hyperliquid_submit_request_payload(intent),
             )
         )
-        runtime.submit_coordinator.submit_unlinked_order(
+        runtime.mutation_coordinator.execute_unlinked_mutation(
             cast(Session, runtime.repository.session),
             intent=mutation_intent,
-            callbacks=UnlinkedOrderSubmissionCallbacks(
+            callbacks=UnlinkedMutationCallbacks(
                 broker_call=lambda permit: runtime.exchange.submit_order(
                     intent,
                     mutation_permit=permit,
@@ -271,9 +275,9 @@ def _submit_order(
                 ),
             ),
         )
-    except BrokerMutationSubmissionAlreadyProcessed:
+    except BrokerMutationAlreadyProcessed:
         return False
-    except BrokerMutationSubmissionDeferred as exc:
+    except BrokerMutationDeferred as exc:
         runtime.counts.record_order_error(type(exc).__name__)
         raise
     except _ORDER_SUBMISSION_ERRORS as exc:
@@ -351,7 +355,7 @@ def _reduce_only_consumed_order_slot(action: dict[str, object]) -> bool:
 
 def _close_opposite_position_before_entry(
     repository: HyperliquidExecutionRepository,
-    exchange: HyperliquidExecutionExchange,
+    reductions: HyperliquidReductionMutationExecutor,
     signal: Signal,
 ) -> dict[str, object] | None:
     if signal.action not in {"buy", "sell"}:
@@ -368,7 +372,12 @@ def _close_opposite_position_before_entry(
     if not opposite_position:
         return None
     close_coin = position.sdk_coin or signal.coin
-    result = exchange.close_position_reduce_only(close_coin, size=abs(position.size))
+    result = reductions.close_position_reduce_only(
+        close_coin,
+        size=abs(position.size),
+        expected_signed_quantity=position.size,
+        purpose="opposite_side_cleanup",
+    )
     return {
         "schema_version": "torghut.hyperliquid-position-aware-reduce-only.v1",
         "coin": signal.coin,
