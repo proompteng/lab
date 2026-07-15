@@ -212,6 +212,9 @@ const buildAtlasQueryInstruction = (query: string) => `Instruct: ${ATLAS_QUERY_I
 
 const escapeLikePattern = (value: string) => value.replace(/[\\%_]/g, (match) => `\\${match}`)
 
+const isStandalonePathQuery = (query: string) =>
+  /^(?:\.{0,2}\/|\/)?[A-Za-z0-9_@+~%#=.,()[\]{}$-]+(?:\/[A-Za-z0-9_@+~%#=.,()[\]{}$-]+)+\/?$/.test(query)
+
 const buildDefinitionPattern = (query: string) => {
   if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(query)) return null
   const escaped = query.replace(/\$/g, '\\$')
@@ -510,7 +513,7 @@ export const createAtlasCodeSearchHandlers = ({
     const health = await codeSearchHealth({ repository, ref, pathPrefix, language })
     if (health.status !== 'ok') throw new Error(`Atlas code search is not ready: ${health.message}`)
 
-    const isPathQuery = resolvedQuery.includes('/')
+    const isPathQuery = isStandalonePathQuery(resolvedQuery)
     const identifiers = extractIdentifierTokens(resolvedQuery)
     const candidateLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
     const semanticCandidateLimit = Math.min(
