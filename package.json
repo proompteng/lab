@@ -96,7 +96,7 @@
     "whitepapers:replay": "bun run packages/scripts/src/torghut/generate-whitepaper-replay-workflows.ts",
     "build:bumba": "bun run packages/scripts/src/bumba/build-image.ts",
     "deploy:torghut": "bun run packages/scripts/src/torghut/deploy-service.ts",
-    "gate:torghut-storage-repair": "bun run packages/scripts/src/torghut/storage-repair-gate.ts",
+    "gate:torghut-storage-stability": "bun run packages/scripts/src/torghut/storage-stability-gate.ts",
     "smoke:torghut-market-data": "bun run packages/scripts/src/torghut/market-data-smoke.ts",
     "bumba:deploy": "bun run packages/scripts/src/bumba/deploy-service.ts",
     "symphony:deploy": "bun run packages/scripts/src/symphony/deploy-service.ts",

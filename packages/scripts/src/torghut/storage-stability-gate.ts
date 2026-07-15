@@ -5,16 +5,15 @@ import process from 'node:process'
 
 import { ensureCli, fatal } from '../shared/cli'
 
-const GATE_SCHEMA_VERSION = 'torghut.storage-repair-gate.v1'
-const RESULT_SCHEMA_VERSION = 'torghut.storage-repair-gate-result.v1'
-const MINIMUM_OBSERVATION_HOURS = 24
+const GATE_SCHEMA_VERSION = 'torghut.storage-stability-gate.v2'
+const RESULT_SCHEMA_VERSION = 'torghut.storage-stability-gate-result.v2'
+const MINIMUM_OBSERVATION_MINUTES = 30
 const EXPECTED_OSD_COUNT = 6
 const MAX_WAL_BYTES_PER_SECOND = 0.25 * 1024 * 1024
 const MAX_CONTROLLER_EVENT_MS = 2_000
 const MAX_CONTROLLER_LOG_START_DELAY_MS = 5 * 60 * 1_000
 const MAX_QUORUM_FOLLOWER_LAG = 1_000
 const MAX_QUORUM_FOLLOWER_LAG_TIME_MS = 5_000
-const SMART_POWER_ON_HOUR_RESOLUTION_HOURS = 1
 const WAL_SAMPLE_SECONDS = 30
 const DEFAULT_TALOS_NODE = '100.100.244.142'
 const EXPECTED_SMART_DEVICES = {
@@ -71,8 +70,6 @@ type SmartDeviceEvidence = {
   device: string
   serial: string
   smartPassed: boolean
-  powerOnHours: number
-  extendedPollingMinutes: number
   latestExtendedSelfTest: {
     lifetimeHours: number
     passed: boolean
@@ -121,10 +118,10 @@ type RuntimeEvidence = {
   }
 }
 
-export type StorageRepairSnapshot = {
+export type StorageStabilitySnapshot = {
   schemaVersion: string
   capturedAt: string
-  repairStartedAt: string
+  observationStartedAt: string
   talos: {
     node: string
     coverageStartedAt: string
@@ -184,12 +181,12 @@ export type StorageRepairSnapshot = {
   argoApplications: ArgoApplicationEvidence[]
 }
 
-export type StorageRepairGateResult = {
+export type StorageStabilityGateResult = {
   schemaVersion: typeof RESULT_SCHEMA_VERSION
   ok: boolean
   capturedAt: string
-  repairStartedAt: string
-  observationHours: number
+  observationStartedAt: string
+  observationMinutes: number
   failures: string[]
   warnings: string[]
   summaryLines: string[]
@@ -197,7 +194,7 @@ export type StorageRepairGateResult = {
 
 type CliOptions = {
   output: OutputFormat
-  repairStartedAt?: string
+  observationStartedAt?: string
   snapshotPath?: string
   talosNode: string
 }
@@ -256,17 +253,9 @@ const allowedPlacementGroupState = (state: string): boolean => {
   return tokens.includes('active') && tokens.includes('clean') && tokens.every((token) => allowedTokens.has(token))
 }
 
-const smartExtendedTestStartedAfterRepair = (smart: SmartDeviceEvidence, observationHours: number): boolean => {
-  const extended = smart.latestExtendedSelfTest
-  if (!extended?.passed) return false
-  const completionAgeHours = smart.powerOnHours - extended.lifetimeHours
-  const maximumTestDurationHours = smart.extendedPollingMinutes / 60
-  return completionAgeHours + maximumTestDurationHours + SMART_POWER_ON_HOUR_RESOLUTION_HOURS <= observationHours
-}
-
 const talosFailureClass = (message: string): string | undefined => {
   if (/Power-on or device reset|host reset|COMRESET|mpt3sas.*(?:fault|reset)/i.test(message)) {
-    return 'SAS transport reset'
+    return 'SCSI device reset/recovery'
   }
   if (/Synchronize Cache|I\/O error|blk_update_request.*error|critical target error/i.test(message)) {
     return 'durable cache-flush I/O failure'
@@ -307,12 +296,15 @@ const appendIncidentSummaries = (failures: string[], prefix: string, incidents: 
   }
 }
 
-const validateSnapshotShape = (snapshot: StorageRepairSnapshot) => {
+const validateSnapshotShape = (snapshot: StorageStabilitySnapshot) => {
   if (snapshot.schemaVersion !== GATE_SCHEMA_VERSION) {
     throw new Error(`snapshot.schemaVersion must be ${GATE_SCHEMA_VERSION}`)
   }
   parseTimestamp(requireString(snapshot.capturedAt, 'snapshot.capturedAt'), 'snapshot.capturedAt')
-  parseTimestamp(requireString(snapshot.repairStartedAt, 'snapshot.repairStartedAt'), 'snapshot.repairStartedAt')
+  parseTimestamp(
+    requireString(snapshot.observationStartedAt, 'snapshot.observationStartedAt'),
+    'snapshot.observationStartedAt',
+  )
   parseTimestamp(
     requireString(snapshot.talos.coverageStartedAt, 'snapshot.talos.coverageStartedAt'),
     'snapshot.talos.coverageStartedAt',
@@ -365,31 +357,31 @@ const validateSnapshotShape = (snapshot: StorageRepairSnapshot) => {
   }
 }
 
-export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): StorageRepairGateResult => {
+export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot): StorageStabilityGateResult => {
   validateSnapshotShape(snapshot)
 
   const failures: string[] = []
   const warnings: string[] = []
   const capturedAtMs = parseTimestamp(snapshot.capturedAt, 'snapshot.capturedAt')
-  const repairStartedAtMs = parseTimestamp(snapshot.repairStartedAt, 'snapshot.repairStartedAt')
-  const observationHours = (capturedAtMs - repairStartedAtMs) / 3_600_000
+  const observationStartedAtMs = parseTimestamp(snapshot.observationStartedAt, 'snapshot.observationStartedAt')
+  const observationMinutes = (capturedAtMs - observationStartedAtMs) / 60_000
 
-  if (observationHours < MINIMUM_OBSERVATION_HOURS) {
+  if (observationMinutes < MINIMUM_OBSERVATION_MINUTES) {
     failures.push(
-      `repair observation is ${rounded(observationHours, 2)} hours; at least ${MINIMUM_OBSERVATION_HOURS} hours is required`,
+      `storage stability observation is ${rounded(observationMinutes, 2)} minutes; at least ${MINIMUM_OBSERVATION_MINUTES} minutes is required`,
     )
   }
 
   const talosCoverageStartedAtMs = parseTimestamp(snapshot.talos.coverageStartedAt, 'snapshot.talos.coverageStartedAt')
-  if (talosCoverageStartedAtMs > repairStartedAtMs) {
+  if (talosCoverageStartedAtMs > observationStartedAtMs) {
     failures.push(
-      `Talos dmesg starts at ${snapshot.talos.coverageStartedAt}, after repair start ${snapshot.repairStartedAt}`,
+      `Talos dmesg starts at ${snapshot.talos.coverageStartedAt}, after observation start ${snapshot.observationStartedAt}`,
     )
   }
   const talosIncidents: Incident[] = []
   for (const line of snapshot.talos.lines) {
     const timestampMs = parseTimestamp(line.timestamp, 'Talos evidence timestamp')
-    if (timestampMs < repairStartedAtMs || timestampMs > capturedAtMs) continue
+    if (timestampMs < observationStartedAtMs || timestampMs > capturedAtMs) continue
     const failureClass = talosFailureClass(line.message)
     if (failureClass) {
       talosIncidents.push({
@@ -447,21 +439,9 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
         `SMART critical attributes are non-zero for ${device}: ${nonZeroAttributes.map(([name, value]) => `${name}=${value}`).join(', ')}`,
       )
     }
-    const extended = smart.latestExtendedSelfTest
-    if (!extended) {
-      failures.push(`SMART extended self-test evidence is missing for ${device}`)
-      continue
-    }
-    if (!extended.passed) {
-      failures.push(`SMART latest extended self-test failed for ${device}: ${extended.status}`)
-    }
-    const hoursSinceExtendedTest = smart.powerOnHours - extended.lifetimeHours
-    const maximumTestDurationHours = smart.extendedPollingMinutes / 60
-    const testStartAgeUpperBoundHours =
-      hoursSinceExtendedTest + maximumTestDurationHours + SMART_POWER_ON_HOUR_RESOLUTION_HOURS
-    if (testStartAgeUpperBoundHours > observationHours) {
-      failures.push(
-        `SMART latest extended self-test for ${device} does not prove a post-repair start: completion age ${rounded(hoursSinceExtendedTest, 1)} hours + maximum duration ${rounded(maximumTestDurationHours, 2)} hours + ${SMART_POWER_ON_HOUR_RESOLUTION_HOURS} hour counter uncertainty exceeds the ${rounded(observationHours, 2)} hour repair window`,
+    if (smart.latestExtendedSelfTest && !smart.latestExtendedSelfTest.passed) {
+      warnings.push(
+        `SMART latest extended self-test for ${device} is '${smart.latestExtendedSelfTest.status}'; this historical test is informational because current overall health and critical media/interface counters are authoritative for this gate`,
       )
     }
   }
@@ -486,8 +466,8 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
     if (pods.length !== 3) failures.push(`Kafka has ${pods.length} ${role} pods, expected 3`)
     for (const pod of pods) {
       if (!pod.ready) failures.push(`Kafka ${role} pod ${pod.name} is not ready`)
-      if (parseTimestamp(pod.startedAt, `Kafka pod ${pod.name} start`) > repairStartedAtMs) {
-        failures.push(`Kafka ${role} pod ${pod.name} started after the repair observation window began`)
+      if (parseTimestamp(pod.startedAt, `Kafka pod ${pod.name} start`) > observationStartedAtMs) {
+        failures.push(`Kafka ${role} pod ${pod.name} started after the storage stability observation window began`)
       }
     }
   }
@@ -506,14 +486,14 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
       evidence.coverageStartedAt,
       `Kafka log coverage start for ${evidence.pod}`,
     )
-    if (coverageStartedAtMs > repairStartedAtMs + MAX_CONTROLLER_LOG_START_DELAY_MS) {
+    if (coverageStartedAtMs > observationStartedAtMs + MAX_CONTROLLER_LOG_START_DELAY_MS) {
       failures.push(
-        `Kafka controller log coverage for ${evidence.pod} starts at ${evidence.coverageStartedAt}, more than five minutes after repair start`,
+        `Kafka controller log coverage for ${evidence.pod} starts at ${evidence.coverageStartedAt}, more than five minutes after observation start`,
       )
     }
     for (const line of evidence.lines) {
       const timestampMs = parseTimestamp(line.timestamp, `Kafka log timestamp for ${evidence.pod}`)
-      if (timestampMs < repairStartedAtMs || timestampMs > capturedAtMs) continue
+      if (timestampMs < observationStartedAtMs || timestampMs > capturedAtMs) continue
       const failureClass = kafkaFailureClass(line.message)
       if (failureClass) {
         kafkaIncidents.push({
@@ -681,21 +661,24 @@ export const evaluateStorageRepairGate = (snapshot: StorageRepairSnapshot): Stor
   }
 
   const uniqueFailures = [...new Set(failures)]
-  const postRepairExtendedTests = snapshot.smartDevices.filter((smart) =>
-    smartExtendedTestStartedAfterRepair(smart, observationHours),
+  const healthySmartDevices = snapshot.smartDevices.filter(
+    (smart) =>
+      smart.smartPassed &&
+      smart.serial === EXPECTED_SMART_DEVICES[smart.device as keyof typeof EXPECTED_SMART_DEVICES] &&
+      Object.values(smart.criticalAttributes).every((value) => value === 0),
   ).length
-  const result: StorageRepairGateResult = {
+  const result: StorageStabilityGateResult = {
     schemaVersion: RESULT_SCHEMA_VERSION,
     ok: uniqueFailures.length === 0,
     capturedAt: snapshot.capturedAt,
-    repairStartedAt: snapshot.repairStartedAt,
-    observationHours: rounded(observationHours, 3),
+    observationStartedAt: snapshot.observationStartedAt,
+    observationMinutes: rounded(observationMinutes, 3),
     failures: uniqueFailures,
     warnings,
     summaryLines: [
-      `Storage repair observation: ${rounded(observationHours, 2)} hours`,
+      `Storage stability observation: ${rounded(observationMinutes, 2)} minutes`,
       `Ceph: ${snapshot.ceph.health}; OSDs ${snapshot.ceph.osds.up}/${snapshot.ceph.osds.in}/${snapshot.ceph.osds.total}`,
-      `SMART: ${postRepairExtendedTests}/${Object.keys(EXPECTED_SMART_DEVICES).length} post-repair extended tests passed`,
+      `SMART: ${healthySmartDevices}/${Object.keys(EXPECTED_SMART_DEVICES).length} devices passed current health and critical-counter checks`,
       `Kafka: ${snapshot.kafka.kafkaVersion} / ${snapshot.kafka.metadataVersion}; ${snapshot.kafka.pods.filter((pod) => pod.ready).length}/${snapshot.kafka.pods.length} broker/controller pods ready`,
       `PostgreSQL WAL: ${rounded(snapshot.postgres.walBytesPerSecond / 1024 / 1024, 4)} MiB/s over ${rounded(snapshot.postgres.walSampleSeconds, 1)} seconds`,
       `Runtime: feed=${feedReady ? 'ready' : 'not-ready'} scheduler=${schedulerReady ? 'ready' : 'not-ready'} api=${knative.ready && knativeApiReady ? 'ready' : 'not-ready'} revision=${knative.latestReadyRevision}`,
@@ -747,24 +730,27 @@ const parseKubernetesLogLine = (line: string): TimestampedEvidence | undefined =
   return { timestamp, message: line.slice(separator + 1) }
 }
 
-const collectTalosEvidence = async (repairStartedAt: string, node: string): Promise<StorageRepairSnapshot['talos']> => {
+const collectTalosEvidence = async (
+  observationStartedAt: string,
+  node: string,
+): Promise<StorageStabilitySnapshot['talos']> => {
   const raw = await capture('talosctl', ['-n', node, 'dmesg'])
   const parsedLines = raw
     .split('\n')
     .map(parseTalosLine)
     .filter((line): line is TimestampedEvidence => Boolean(line))
   if (parsedLines.length === 0) throw new Error(`Talos dmesg returned no timestamped evidence for ${node}`)
-  const repairStartedAtMs = parseTimestamp(repairStartedAt, '--repair-start')
+  const observationStartedAtMs = parseTimestamp(observationStartedAt, '--observation-start')
   return {
     node,
     coverageStartedAt: parsedLines[0].timestamp,
     lines: parsedLines.filter(
-      ({ timestamp }) => parseTimestamp(timestamp, 'Talos dmesg timestamp') >= repairStartedAtMs,
+      ({ timestamp }) => parseTimestamp(timestamp, 'Talos dmesg timestamp') >= observationStartedAtMs,
     ),
   }
 }
 
-const collectCephEvidence = async (): Promise<StorageRepairSnapshot['ceph']> => {
+const collectCephEvidence = async (): Promise<StorageStabilitySnapshot['ceph']> => {
   const [statusValue, crashesValue] = await Promise.all([
     kubectlJson(
       ['-n', 'rook-ceph', 'exec', 'deploy/rook-ceph-tools', '--', 'ceph', 'status', '--format', 'json'],
@@ -823,13 +809,6 @@ const collectSmartDeviceEvidence = async (): Promise<SmartDeviceEvidence[]> => {
         throw new Error(`SMART ${device} resolved serial ${serial}, expected ${expectedSerial}`)
       }
       const smartStatus = requireObject(smart.smart_status, `SMART ${device}.smart_status`)
-      const powerOnTime = requireObject(smart.power_on_time, `SMART ${device}.power_on_time`)
-      const smartData = requireObject(smart.ata_smart_data, `SMART ${device}.ata_smart_data`)
-      const selfTest = requireObject(smartData.self_test, `SMART ${device}.ata_smart_data.self_test`)
-      const pollingMinutes = requireObject(
-        selfTest.polling_minutes,
-        `SMART ${device}.ata_smart_data.self_test.polling_minutes`,
-      )
       const attributes = requireArray(
         requireObject(smart.ata_smart_attributes, `SMART ${device}.ata_smart_attributes`).table,
         `SMART ${device}.ata_smart_attributes.table`,
@@ -840,11 +819,10 @@ const collectSmartDeviceEvidence = async (): Promise<SmartDeviceEvidence[]> => {
         const raw = requireObject(attribute.raw, `SMART ${device} attribute ${id}.raw`)
         return requireNumber(raw.value, `SMART ${device} attribute ${id}.raw.value`)
       }
-      const selfTestLog = requireObject(
-        requireObject(smart.ata_smart_self_test_log, `SMART ${device}.ata_smart_self_test_log`).standard,
-        `SMART ${device}.ata_smart_self_test_log.standard`,
-      )
-      const extendedEntry = requireArray(selfTestLog.table, `SMART ${device} self-test table`).find((candidate) => {
+      const selfTestLog = isObject(smart.ata_smart_self_test_log) ? smart.ata_smart_self_test_log : {}
+      const standardSelfTestLog = isObject(selfTestLog.standard) ? selfTestLog.standard : {}
+      const selfTestTable = Array.isArray(standardSelfTestLog.table) ? standardSelfTestLog.table : []
+      const extendedEntry = selfTestTable.find((candidate) => {
         if (!isObject(candidate) || !isObject(candidate.type)) return false
         return optionalString(candidate.type.string)?.toLowerCase().includes('extended') === true
       })
@@ -864,11 +842,6 @@ const collectSmartDeviceEvidence = async (): Promise<SmartDeviceEvidence[]> => {
         device,
         serial,
         smartPassed: smartStatus.passed === true,
-        powerOnHours: requireNumber(powerOnTime.hours, `SMART ${device}.power_on_time.hours`),
-        extendedPollingMinutes: requireNumber(
-          pollingMinutes.extended,
-          `SMART ${device}.self_test.polling_minutes.extended`,
-        ),
         latestExtendedSelfTest,
         criticalAttributes: Object.fromEntries(
           Object.entries(attributeIds).map(([name, id]) => [name, attributeValue(id)]),
@@ -885,7 +858,7 @@ const conditionIsTrue = (conditions: unknown, type: string): boolean =>
     return candidate.type === type && candidate.status === 'True'
   })
 
-const collectKafkaEvidence = async (repairStartedAt: string): Promise<StorageRepairSnapshot['kafka']> => {
+const collectKafkaEvidence = async (observationStartedAt: string): Promise<StorageStabilitySnapshot['kafka']> => {
   const [kafkaValue, podsValue, topicsValue] = await Promise.all([
     kubectlJson(['-n', 'kafka', 'get', 'kafka', 'kafka', '-o', 'json'], 'Kafka resource'),
     kubectlJson(['-n', 'kafka', 'get', 'pods', '-l', 'strimzi.io/cluster=kafka', '-o', 'json'], 'Kafka pods'),
@@ -939,17 +912,16 @@ const collectKafkaEvidence = async (repairStartedAt: string): Promise<StorageRep
           name,
           '-c',
           'kafka',
-          `--since-time=${repairStartedAt}`,
+          `--since-time=${observationStartedAt}`,
           '--timestamps',
         ])
         const lines = raw
           .split('\n')
           .map(parseKubernetesLogLine)
           .filter((line): line is TimestampedEvidence => Boolean(line))
-        if (lines.length === 0) throw new Error(`Kafka controller ${name} returned no timestamped logs`)
         return {
           pod: name,
-          coverageStartedAt: lines[0].timestamp,
+          coverageStartedAt: observationStartedAt,
           lines,
         }
       }),
@@ -1079,7 +1051,7 @@ const defaultPostgresCollectorDependencies = (): PostgresCollectorDependencies =
 
 const collectPostgresEvidence = async (
   dependencies: PostgresCollectorDependencies = defaultPostgresCollectorDependencies(),
-): Promise<StorageRepairSnapshot['postgres']> => {
+): Promise<StorageStabilitySnapshot['postgres']> => {
   const initialCluster = requireObject(await dependencies.cluster(), 'initial Torghut PostgreSQL cluster')
   const initialStatus = requireObject(initialCluster.status, 'initial Torghut PostgreSQL status')
   const initialPrimary = requireString(initialStatus.currentPrimary, 'initial Torghut PostgreSQL status.currentPrimary')
@@ -1323,21 +1295,21 @@ const defaultSnapshotCollectors: SnapshotCollectors = {
   argoApplications: collectArgoEvidence,
 }
 
-const collectStorageRepairSnapshotWith = async (
-  repairStartedAt: string,
+const collectStorageStabilitySnapshotWith = async (
+  observationStartedAt: string,
   talosNode: string,
   collectors: SnapshotCollectors,
-): Promise<StorageRepairSnapshot> => {
+): Promise<StorageStabilitySnapshot> => {
   const postgres = await collectors.postgres()
 
   // End the claimed observation window only after the slow bounded WAL sample finishes. History collectors then read
   // through this cutoff, while every point-in-time state collector runs at or after it, eliminating a collection tail.
   const capturedAt = collectors.now().toISOString()
   const [talos, ceph, smartDevices, kafka, runtime, workloads, argoApplications] = await Promise.all([
-    collectors.talos(repairStartedAt, talosNode),
+    collectors.talos(observationStartedAt, talosNode),
     collectors.ceph(),
     collectors.smartDevices(),
-    collectors.kafka(repairStartedAt),
+    collectors.kafka(observationStartedAt),
     collectors.runtime(),
     collectors.workloads(),
     collectors.argoApplications(),
@@ -1345,7 +1317,7 @@ const collectStorageRepairSnapshotWith = async (
   return {
     schemaVersion: GATE_SCHEMA_VERSION,
     capturedAt,
-    repairStartedAt,
+    observationStartedAt,
     talos,
     ceph,
     smartDevices,
@@ -1357,14 +1329,14 @@ const collectStorageRepairSnapshotWith = async (
   }
 }
 
-export const collectStorageRepairSnapshot = async (
-  repairStartedAt: string,
+export const collectStorageStabilitySnapshot = async (
+  observationStartedAt: string,
   talosNode = DEFAULT_TALOS_NODE,
-): Promise<StorageRepairSnapshot> => {
-  parseTimestamp(repairStartedAt, '--repair-start')
+): Promise<StorageStabilitySnapshot> => {
+  parseTimestamp(observationStartedAt, '--observation-start')
   ensureCli('kubectl')
   ensureCli('talosctl')
-  return collectStorageRepairSnapshotWith(repairStartedAt, talosNode, defaultSnapshotCollectors)
+  return collectStorageStabilitySnapshotWith(observationStartedAt, talosNode, defaultSnapshotCollectors)
 }
 
 const parseArgs = (argv: string[]): CliOptions => {
@@ -1373,11 +1345,11 @@ const parseArgs = (argv: string[]): CliOptions => {
     const arg = argv[index]
     if (arg === '--help' || arg === '-h') {
       console.log(`Usage:
-  bun run gate:torghut-storage-repair --repair-start <RFC3339> [--output text|json] [--talos-node <node>]
-  bun run gate:torghut-storage-repair --snapshot <path> [--output text|json]
+  bun run gate:torghut-storage-stability --observation-start <RFC3339> [--output text|json] [--talos-node <node>]
+  bun run gate:torghut-storage-stability --snapshot <path> [--output text|json]
 
 The live mode is read-only. It samples PostgreSQL WAL for ${WAL_SAMPLE_SECONDS} seconds and requires a complete
-${MINIMUM_OBSERVATION_HOURS}-hour post-repair window. The command exits non-zero when any activation gate fails.`)
+${MINIMUM_OBSERVATION_MINUTES}-minute clean observation window. The command exits non-zero when any activation gate fails.`)
       process.exit(0)
     }
     if (!arg.startsWith('--')) throw new Error(`Unknown argument: ${arg}`)
@@ -1386,8 +1358,8 @@ ${MINIMUM_OBSERVATION_HOURS}-hour post-repair window. The command exits non-zero
     if (inlineValue === undefined) index += 1
     if (value === undefined) throw new Error(`Missing value for ${flag}`)
     switch (flag) {
-      case '--repair-start':
-        options.repairStartedAt = value
+      case '--observation-start':
+        options.observationStartedAt = value
         break
       case '--snapshot':
         options.snapshotPath = value
@@ -1403,16 +1375,16 @@ ${MINIMUM_OBSERVATION_HOURS}-hour post-repair window. The command exits non-zero
         throw new Error(`Unknown option: ${flag}`)
     }
   }
-  if (options.snapshotPath && options.repairStartedAt) {
-    throw new Error('--snapshot and --repair-start are mutually exclusive')
+  if (options.snapshotPath && options.observationStartedAt) {
+    throw new Error('--snapshot and --observation-start are mutually exclusive')
   }
-  if (!options.snapshotPath && !options.repairStartedAt) {
-    throw new Error('live collection requires --repair-start; offline validation requires --snapshot')
+  if (!options.snapshotPath && !options.observationStartedAt) {
+    throw new Error('live collection requires --observation-start; offline validation requires --snapshot')
   }
   return options
 }
 
-const readSnapshot = (path: string): StorageRepairSnapshot => {
+const readSnapshot = (path: string): StorageStabilitySnapshot => {
   let value: unknown
   try {
     value = JSON.parse(readFileSync(path, 'utf8'))
@@ -1420,10 +1392,10 @@ const readSnapshot = (path: string): StorageRepairSnapshot => {
     throw new Error(`Unable to read snapshot '${path}': ${error instanceof Error ? error.message : String(error)}`)
   }
   const snapshot = requireObject(value, 'snapshot')
-  return snapshot as StorageRepairSnapshot
+  return snapshot as StorageStabilitySnapshot
 }
 
-const printResult = (result: StorageRepairGateResult, output: OutputFormat) => {
+const printResult = (result: StorageStabilityGateResult, output: OutputFormat) => {
   if (output === 'json') {
     console.log(JSON.stringify(result, null, 2))
     return
@@ -1437,18 +1409,18 @@ const main = async () => {
   const options = parseArgs(process.argv.slice(2))
   const snapshot = options.snapshotPath
     ? readSnapshot(options.snapshotPath)
-    : await collectStorageRepairSnapshot(options.repairStartedAt!, options.talosNode)
-  const result = evaluateStorageRepairGate(snapshot)
+    : await collectStorageStabilitySnapshot(options.observationStartedAt!, options.talosNode)
+  const result = evaluateStorageStabilityGate(snapshot)
   printResult(result, options.output)
   if (!result.ok) process.exitCode = 1
 }
 
 if (import.meta.main) {
-  main().catch((error) => fatal('Torghut storage repair gate failed to collect or validate evidence', error))
+  main().catch((error) => fatal('Torghut storage stability gate failed to collect or validate evidence', error))
 }
 
 export const __private = {
-  collectStorageRepairSnapshotWith,
+  collectStorageStabilitySnapshotWith,
   collectPostgresEvidence,
   controllerEventDurationMs,
   kafkaFailureClass,

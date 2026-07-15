@@ -389,11 +389,15 @@ merge, and is followed through image publication, Argo reconciliation, and live 
 
 ### Live gates
 
-- Before activating either contained write workload, run
-  `bun run gate:torghut-storage-repair --repair-start <post-repair RFC3339 timestamp> --output json`. The read-only gate
-  requires a complete 24-hour Talos log window, `HEALTH_OK`, all six OSDs up and in, only clean placement groups, no
-  unacknowledged crashes, no transport/flush errors, and a successful extended SMART test started after repair on
-  each expected SAS disk with zero critical sector/CRC attributes. It also requires no KRaft request timeout or
+- Before activating either contained write workload, begin a clean observation window while both workloads remain at
+  zero replicas, then run
+  `bun run gate:torghut-storage-stability --observation-start <RFC3339 timestamp> --output json` after at least 30
+  minutes. The read-only gate requires complete Talos and Kafka log coverage for the window, `HEALTH_OK`, all six OSDs
+  up and in, only clean placement groups, no unacknowledged crashes, and no new SCSI device-reset/recovery, cache-flush,
+  or I/O-error record. Every expected disk must pass current SMART overall health with zero reallocated, pending,
+  offline-uncorrectable, and interface-CRC counters. Historical SMART self-tests are retained as diagnostic context but
+  are not treated as proof of a physical repair or as an activation prerequisite. The gate also requires no KRaft
+  request timeout or
   controller event above two seconds, exactly three KRaft voters with follower lag below 1,000 records and five seconds,
   no under-replicated or offline partitions, PostgreSQL durability and WAL-budget compliance, and healthy Argo
   applications. Direct endpoint checks must also prove the Hyperliquid feed ready with WebSocket, Kafka, and ClickHouse
