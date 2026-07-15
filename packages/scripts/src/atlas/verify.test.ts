@@ -3,6 +3,19 @@ import { describe, expect, it } from 'bun:test'
 import { __private } from './verify'
 
 describe('atlas verify', () => {
+  it('observes Atlas queries by relation lock instead of truncated activity text', async () => {
+    let statement = ''
+    const db = ((strings: TemplateStringsArray) => {
+      statement = strings.join('')
+      return Promise.resolve([{ active: 2n }])
+    }) as Parameters<typeof __private.activeAtlasQueryCount>[0]
+
+    expect(await __private.activeAtlasQueryCount(db)).toBe(2)
+    expect(statement).toContain('INNER JOIN pg_locks AS relation_lock')
+    expect(statement).toContain("relation_lock.relation = 'atlas.chunk_embeddings'::regclass")
+    expect(statement).not.toContain('activity.query')
+  })
+
   it('uses a unique cold query for every performance request', () => {
     const queries = [
       { query: 'exact identifier', expectedPaths: ['src/exact.ts'] },
