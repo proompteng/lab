@@ -521,6 +521,7 @@ export const createAtlasCodeSearchHandlers = ({
       MAX_SEARCH_LIMIT,
       Math.max(MIN_SEMANTIC_CANDIDATES, resolvedLimit * SEMANTIC_CANDIDATE_MULTIPLIER),
     )
+    const requiresExactScopedSemanticScan = Boolean(filters.pathPrefix || filters.language)
     const embeddingConfig = loadEmbeddingConfig()
     const vectorString = isPathQuery
       ? null
@@ -610,24 +611,49 @@ export const createAtlasCodeSearchHandlers = ({
 
       let semanticRows: AtlasCodeSearchRow[] = []
       if (vectorString !== null) {
-        await sql`SELECT set_config('hnsw.ef_search', ${String(semanticCandidateLimit)}, true);`.execute(trx)
+        if (requiresExactScopedSemanticScan) {
+          const semanticResult = await sql<AtlasCodeSearchRow>`
+            WITH scoped_semantic_candidates AS MATERIALIZED (
+              SELECT
+                ${sql.raw(codeSearchRawSelectColumns)},
+                chunk_embeddings.embedding AS candidate_embedding
+              FROM atlas.chunk_embeddings AS chunk_embeddings
+              INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.id = chunk_embeddings.chunk_id
+              INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+              INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+              INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+              ${whereClause}
+                AND chunk_embeddings.model = ${embeddingConfig.model}
+                AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
+            )
+            SELECT
+              scoped_semantic_candidates.*,
+              scoped_semantic_candidates.candidate_embedding <=> ${vectorString}::vector AS semantic_distance
+            FROM scoped_semantic_candidates
+            ORDER BY scoped_semantic_candidates.candidate_embedding <=> ${vectorString}::vector
+            LIMIT ${semanticCandidateLimit};
+          `.execute(trx)
+          semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
+        } else {
+          await sql`SELECT set_config('hnsw.ef_search', ${String(semanticCandidateLimit)}, true);`.execute(trx)
 
-        const semanticResult = await sql<AtlasCodeSearchRow>`
-          SELECT
-            ${sql.raw(codeSearchRawSelectColumns)},
-            chunk_embeddings.embedding <=> ${vectorString}::vector AS semantic_distance
-          FROM atlas.chunk_embeddings AS chunk_embeddings
-          INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.id = chunk_embeddings.chunk_id
-          INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
-          INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
-          INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
-          ${whereClause}
-            AND chunk_embeddings.model = ${embeddingConfig.model}
-            AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
-          ORDER BY chunk_embeddings.embedding <=> ${vectorString}::vector
-          LIMIT ${semanticCandidateLimit};
-        `.execute(trx)
-        semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
+          const semanticResult = await sql<AtlasCodeSearchRow>`
+            SELECT
+              ${sql.raw(codeSearchRawSelectColumns)},
+              chunk_embeddings.embedding <=> ${vectorString}::vector AS semantic_distance
+            FROM atlas.chunk_embeddings AS chunk_embeddings
+            INNER JOIN atlas.file_chunks AS file_chunks ON file_chunks.id = chunk_embeddings.chunk_id
+            INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+            INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+            INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+            ${whereClause}
+              AND chunk_embeddings.model = ${embeddingConfig.model}
+              AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
+            ORDER BY chunk_embeddings.embedding <=> ${vectorString}::vector
+            LIMIT ${semanticCandidateLimit};
+          `.execute(trx)
+          semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
+        }
       }
 
       return {
