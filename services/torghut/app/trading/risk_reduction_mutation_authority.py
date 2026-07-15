@@ -111,21 +111,9 @@ def consume_risk_reduction_mutation_authority(
     consumed, but it always fails before the broker call.
     """
 
-    io_expectation = BrokerMutationIoPermitExpectation(
-        broker_route=expectation.broker_route,
-        operation=expectation.operation,
-        risk_class=expectation.risk_class,
-        account_label=expectation.account_label,
-        endpoint_fingerprint=expectation.endpoint_fingerprint,
-        request_payload=authority.request_payload,
-    )
-    reduction_expectation = RiskReductionPermitExpectation(
-        broker_route=expectation.broker_route,
-        account_label=expectation.account_label,
-        endpoint_fingerprint=expectation.endpoint_fingerprint,
-        operation=expectation.operation,
-        target_key=expectation.target_key,
-        request_payload=authority.request_payload,
+    io_expectation, reduction_expectation = _authority_expectations(
+        authority,
+        expectation,
     )
     validate_broker_mutation_io_permit(
         authority.mutation_permit,
@@ -145,9 +133,53 @@ def consume_risk_reduction_mutation_authority(
     )
 
 
+def validate_risk_reduction_mutation_authority(
+    authority: RiskReductionMutationAuthority,
+    expectation: RiskReductionMutationExpectation,
+) -> None:
+    """Validate both capabilities without consuming them."""
+
+    io_expectation, reduction_expectation = _authority_expectations(
+        authority,
+        expectation,
+    )
+    validate_broker_mutation_io_permit(
+        authority.mutation_permit,
+        expectation=io_expectation,
+    )
+    validate_risk_reduction_permit(
+        authority.reduction_permit,
+        expectation=reduction_expectation,
+    )
+
+
+def _authority_expectations(
+    authority: RiskReductionMutationAuthority,
+    expectation: RiskReductionMutationExpectation,
+) -> tuple[BrokerMutationIoPermitExpectation, RiskReductionPermitExpectation]:
+    io_expectation = BrokerMutationIoPermitExpectation(
+        broker_route=expectation.broker_route,
+        operation=expectation.operation,
+        risk_class=expectation.risk_class,
+        account_label=expectation.account_label,
+        endpoint_fingerprint=expectation.endpoint_fingerprint,
+        request_payload=authority.request_payload,
+    )
+    reduction_expectation = RiskReductionPermitExpectation(
+        broker_route=expectation.broker_route,
+        account_label=expectation.account_label,
+        endpoint_fingerprint=expectation.endpoint_fingerprint,
+        operation=expectation.operation,
+        target_key=expectation.target_key,
+        request_payload=authority.request_payload,
+    )
+    return io_expectation, reduction_expectation
+
+
 __all__ = [
     "RiskReductionMutationAuthority",
     "RiskReductionMutationExpectation",
     "consume_risk_reduction_mutation_authority",
     "risk_reduction_request_id",
+    "validate_risk_reduction_mutation_authority",
 ]
