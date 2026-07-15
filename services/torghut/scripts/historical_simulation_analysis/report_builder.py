@@ -37,6 +37,9 @@ from .report_helpers import (
     _decimal_to_str,
     _extract_run_scope_decisions,
     _extract_signal_event_ts,
+    _filter_rows_by_any_scope_id,
+    _filter_rows_by_scope_ids,
+    _resolve_scoped_execution_id,
     _fifo_trade_pnl,
     _json_default,
     _load_json,
@@ -109,32 +112,37 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "execution_actual_adapter, execution_fallback_reason, execution_fallback_count "
             "FROM executions ORDER BY created_at ASC",
         )
-        if decision_ids:
-            executions = [
-                row
-                for row in executions_all
-                if str(row.get("trade_decision_id") or "") in decision_ids
-            ]
-        else:
-            executions = executions_all
+        executions = _filter_rows_by_scope_ids(
+            executions_all,
+            foreign_key="trade_decision_id",
+            scope_ids=decision_ids,
+        )
         execution_ids = {str(row.get("id")) for row in executions}
+        execution_ids_by_decision: dict[str, list[str]] = {}
+        for execution in executions:
+            decision_id = str(execution.get("trade_decision_id") or "")
+            execution_id = str(execution.get("id") or "")
+            if decision_id and execution_id:
+                execution_ids_by_decision.setdefault(decision_id, []).append(
+                    execution_id
+                )
 
         order_events_all = _query_rows(
             conn,
-            "SELECT execution_id, event_ts, created_at, status, event_type FROM execution_order_events ORDER BY created_at ASC",
+            "SELECT execution_id, trade_decision_id, event_ts, created_at, status, event_type "
+            "FROM execution_order_events ORDER BY created_at ASC",
         )
         order_events_total = len(order_events_all)
-        order_events_unlinked = sum(
-            1 for row in order_events_all if row.get("execution_id") is None
+        order_events = _filter_rows_by_any_scope_id(
+            order_events_all,
+            scope_ids_by_foreign_key={
+                "execution_id": execution_ids,
+                "trade_decision_id": decision_ids,
+            },
         )
-        if execution_ids:
-            order_events = [
-                row
-                for row in order_events_all
-                if str(row.get("execution_id") or "") in execution_ids
-            ]
-        else:
-            order_events = order_events_all
+        order_events_unlinked = sum(
+            1 for row in order_events if row.get("execution_id") is None
+        )
 
         tca_all = _query_rows(
             conn,
@@ -142,14 +150,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "arrival_price, shortfall_notional, slippage_bps, realized_shortfall_bps, divergence_bps, computed_at "
             "FROM execution_tca_metrics ORDER BY computed_at ASC",
         )
-        if execution_ids:
-            tca_rows = [
-                row
-                for row in tca_all
-                if str(row.get("execution_id") or "") in execution_ids
-            ]
-        else:
-            tca_rows = tca_all
+        tca_rows = _filter_rows_by_scope_ids(
+            tca_all,
+            foreign_key="execution_id",
+            scope_ids=execution_ids,
+        )
 
         llm_reviews_all = _query_rows(
             conn,
@@ -157,14 +162,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             "tokens_completion, risk_flags, response_json, created_at "
             "FROM llm_decision_reviews ORDER BY created_at ASC",
         )
-        if decision_ids:
-            llm_reviews = [
-                row
-                for row in llm_reviews_all
-                if str(row.get("trade_decision_id") or "") in decision_ids
-            ]
-        else:
-            llm_reviews = llm_reviews_all
+        llm_reviews = _filter_rows_by_scope_ids(
+            llm_reviews_all,
+            foreign_key="trade_decision_id",
+            scope_ids=decision_ids,
+        )
 
         trade_cursor_rows = _query_rows(
             conn,
@@ -206,7 +208,11 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
 
     first_order_event_by_execution: dict[str, datetime] = {}
     for event in order_events:
-        execution_id = str(event.get("execution_id") or "")
+        execution_id = _resolve_scoped_execution_id(
+            event,
+            execution_ids=execution_ids,
+            execution_ids_by_decision=execution_ids_by_decision,
+        )
         event_ts = event.get("event_ts")
         created_at = event.get("created_at")
         resolved_ts: datetime | None = None
@@ -214,7 +220,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
             resolved_ts = event_ts
         elif isinstance(created_at, datetime):
             resolved_ts = created_at
-        if execution_id and resolved_ts is not None:
+        if execution_id is not None and resolved_ts is not None:
             existing = first_order_event_by_execution.get(execution_id)
             if existing is None or resolved_ts < existing:
                 first_order_event_by_execution[execution_id] = resolved_ts
@@ -494,7 +500,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "unlinked_order_event_count": order_events_unlinked,
         "unlinked_order_event_ratio": (
-            (order_events_unlinked / order_events_total) if order_events_total else 0.0
+            (order_events_unlinked / len(order_events)) if order_events else 0.0
         ),
         "latency_ms": {
             "signal_to_decision_p50": _percentile(signal_to_decision_ms, 50),
@@ -609,7 +615,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         stability_anomalies.append("no_trade_decisions")
     if len(executions) == 0:
         stability_anomalies.append("no_executions")
-    if len(executions) > 0 and len(order_events) == 0:
+    if len(executions) > 0 and executions_with_events == 0:
         stability_anomalies.append("no_execution_order_events")
     if coverage_ratio is not None and coverage_ratio < strict_coverage_ratio:
         stability_anomalies.append("dump_coverage_below_95pct")
@@ -637,9 +643,13 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     if coverage_ratio is not None and coverage_ratio < strict_coverage_ratio:
         fail_reasons.append("window_coverage_ratio_below_95pct")
 
-    if len(executions) > 0 and len(order_events) == 0:
+    if len(executions) > 0 and executions_with_events == 0:
         warn_reasons.append("execution_order_events_missing")
-    if len(executions) > 0 and len(order_events) == 0 and order_events_total > 0:
+    if (
+        len(executions) > 0
+        and executions_with_events == 0
+        and order_events_unlinked > 0
+    ):
         warn_reasons.append("execution_order_events_unlinked")
     if execution_quality["adapter_mismatch_ratio"] > 0:
         warn_reasons.append("execution_adapter_mismatch_detected")

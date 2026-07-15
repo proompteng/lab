@@ -14,6 +14,9 @@ from scripts.historical_simulation_analysis.report_builder import _build_report
 from scripts.historical_simulation_analysis.report_helpers import (
     _build_last_price_map,
     _extract_run_scope_decisions,
+    _filter_rows_by_any_scope_id,
+    _filter_rows_by_scope_ids,
+    _resolve_scoped_execution_id,
     _fifo_trade_pnl,
     _query_rows,
 )
@@ -181,6 +184,135 @@ class TestAnalyzeHistoricalSimulation(TestCase):
         scoped = _extract_run_scope_decisions(decisions, run_id="run-b")
         self.assertEqual(len(scoped), 1)
         self.assertEqual(scoped[0]["id"], "d2")
+
+    def test_empty_run_scope_does_not_admit_unrelated_child_rows(self) -> None:
+        decisions = [
+            {
+                "id": "decision-other",
+                "decision_json": {
+                    "params": {
+                        "simulation_context": {
+                            "simulation_run_id": "other-run",
+                        }
+                    }
+                },
+            }
+        ]
+
+        scoped_decisions = _extract_run_scope_decisions(
+            decisions,
+            run_id="requested-run",
+        )
+        decision_ids = {str(row.get("id")) for row in scoped_decisions}
+        executions = _filter_rows_by_scope_ids(
+            [
+                {
+                    "id": "execution-other",
+                    "trade_decision_id": "decision-other",
+                }
+            ],
+            foreign_key="trade_decision_id",
+            scope_ids=decision_ids,
+        )
+        execution_ids = {str(row.get("id")) for row in executions}
+
+        self.assertEqual(scoped_decisions, [])
+        self.assertEqual(executions, [])
+        self.assertEqual(
+            _filter_rows_by_any_scope_id(
+                [
+                    {
+                        "execution_id": "execution-other",
+                        "trade_decision_id": "decision-other",
+                    }
+                ],
+                scope_ids_by_foreign_key={
+                    "execution_id": execution_ids,
+                    "trade_decision_id": decision_ids,
+                },
+            ),
+            [],
+        )
+        self.assertEqual(
+            _filter_rows_by_scope_ids(
+                [{"trade_decision_id": "decision-other"}],
+                foreign_key="trade_decision_id",
+                scope_ids=decision_ids,
+            ),
+            [],
+        )
+
+    def test_order_events_accept_scoped_decision_without_execution_link(self) -> None:
+        scoped = _filter_rows_by_any_scope_id(
+            [
+                {
+                    "execution_id": None,
+                    "trade_decision_id": "decision-scoped",
+                },
+                {
+                    "execution_id": "execution-other",
+                    "trade_decision_id": "decision-other",
+                },
+            ],
+            scope_ids_by_foreign_key={
+                "execution_id": set(),
+                "trade_decision_id": {"decision-scoped"},
+            },
+        )
+
+        self.assertEqual(
+            scoped,
+            [
+                {
+                    "execution_id": None,
+                    "trade_decision_id": "decision-scoped",
+                }
+            ],
+        )
+
+    def test_decision_linked_order_event_resolves_only_when_execution_is_unique(
+        self,
+    ) -> None:
+        event = {
+            "execution_id": None,
+            "trade_decision_id": "decision-scoped",
+        }
+
+        self.assertEqual(
+            _resolve_scoped_execution_id(
+                event,
+                execution_ids={"execution-1"},
+                execution_ids_by_decision={
+                    "decision-scoped": ["execution-1"],
+                },
+            ),
+            "execution-1",
+        )
+        self.assertIsNone(
+            _resolve_scoped_execution_id(
+                event,
+                execution_ids={"execution-1", "execution-2"},
+                execution_ids_by_decision={
+                    "decision-scoped": ["execution-1", "execution-2"],
+                },
+            )
+        )
+
+    def test_decision_fallback_does_not_override_mismatched_execution_link(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            _resolve_scoped_execution_id(
+                {
+                    "execution_id": "execution-other",
+                    "trade_decision_id": "decision-scoped",
+                },
+                execution_ids={"execution-scoped"},
+                execution_ids_by_decision={
+                    "decision-scoped": ["execution-scoped"],
+                },
+            )
+        )
 
     def test_fifo_trade_pnl_computes_realized_and_unrealized(self) -> None:
         executions = [
@@ -437,7 +569,15 @@ class TestAnalyzeHistoricalSimulation(TestCase):
 
             self.assertEqual(report["verdict"]["status"], "WARN")
             self.assertEqual(report["funnel"]["trade_decisions"], 1)
+            self.assertEqual(report["funnel"]["execution_order_events_total"], 2)
+            self.assertEqual(report["funnel"]["execution_order_events_unlinked"], 0)
             self.assertEqual(report["execution_quality"]["adapter_mismatch_count"], 1)
+            self.assertEqual(
+                report["execution_quality"]["unlinked_order_event_count"], 0
+            )
+            self.assertEqual(
+                report["execution_quality"]["unlinked_order_event_ratio"], 0.0
+            )
             self.assertEqual(report["llm"]["tokens"]["total"], 15)
             self.assertEqual(report["pnl"]["realized_pnl"], "3")
             self.assertTrue((report_dir / "simulation-report.json").exists())
