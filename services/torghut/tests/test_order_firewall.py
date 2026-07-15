@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
 
+from alpaca.common.exceptions import APIError
+
 from app.alpaca_client import AlpacaSubmitRequest
 from app.config import settings
-from app.trading.broker_mutation_receipts import BrokerMutationReceiptValidationError
+from app.trading.broker_mutation_receipts import (
+    BrokerMutationBrokerIoError,
+    BrokerMutationReceiptValidationError,
+)
 from app.trading.firewall import (
     OrderFirewall,
     OrderFirewallBlocked,
@@ -464,6 +471,28 @@ class TestOrderFirewall(TestCase):
         )
 
         self.assertEqual(response["id"], "close-1")
+
+    def test_reduction_http_rejections_remain_broker_io_ambiguous(self) -> None:
+        for status_code in (404, 422):
+            with self.subTest(status_code=status_code):
+                error = APIError(
+                    json.dumps(
+                        {
+                            "code": f"{status_code}10000",
+                            "message": "broker reduction response",
+                        }
+                    ),
+                    SimpleNamespace(
+                        response=SimpleNamespace(status_code=status_code),
+                        request=None,
+                    ),
+                )
+
+                with self.assertRaisesRegex(
+                    BrokerMutationBrokerIoError,
+                    "alpaca_broker_io_failed:APIError",
+                ):
+                    OrderFirewall._broker_call(lambda: (_ for _ in ()).throw(error))
 
     def test_risk_reducing_submit_revalidates_position_at_broker_boundary(
         self,
