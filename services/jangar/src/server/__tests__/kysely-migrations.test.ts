@@ -127,6 +127,20 @@ describe('migration registration', () => {
     expect(normalized).not.toContain('export const down')
   })
 
+  it('makes rebuildable quant state unlogged without a compatibility path', () => {
+    const migrationPath = new URL('../migrations/20260715_torghut_quant_state_cache_unlogged.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('drop index torghut_control_plane.torghut_quant_pipeline_health_latest_freshness_idx')
+    expect(normalized).toContain('alter table torghut_control_plane.quant_metrics_latest set (fillfactor = 70)')
+    expect(normalized).toContain('alter table torghut_control_plane.quant_metrics_latest set unlogged')
+    expect(normalized).toContain('alter table torghut_control_plane.quant_pipeline_health_latest set (fillfactor = 70)')
+    expect(normalized).toContain('alter table torghut_control_plane.quant_pipeline_health_latest set unlogged')
+    expect(normalized).not.toContain('if exists')
+    expect(normalized).not.toContain('set logged')
+    expect(normalized).not.toContain('export const down')
+  })
+
   it('keeps the Codex judge AgentRun column migration registered as a retired Agents backfill handoff', () => {
     expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
     expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')

@@ -24,6 +24,7 @@ import * as atlasCurrentCorpusMigration from '~/server/migrations/20260714_atlas
 import * as torghutQuantPipelineHealthLatestMigration from '~/server/migrations/20260715_torghut_quant_pipeline_health_latest'
 import * as torghutQuantSeriesActiveMigration from '~/server/migrations/20260715_torghut_quant_series_active'
 import * as torghutQuantSeriesRemoveMigration from '~/server/migrations/20260715_torghut_quant_series_remove'
+import * as torghutQuantStateCacheUnloggedMigration from '~/server/migrations/20260715_torghut_quant_state_cache_unlogged'
 
 type MigrationMap = Record<string, Migration>
 
@@ -62,6 +63,7 @@ const migrations: MigrationMap = {
   '20260715_torghut_quant_pipeline_health_latest': torghutQuantPipelineHealthLatestMigration,
   '20260715_torghut_quant_series_active': torghutQuantSeriesActiveMigration,
   '20260715_torghut_quant_series_remove': torghutQuantSeriesRemoveMigration,
+  '20260715_torghut_quant_state_cache_unlogged': torghutQuantStateCacheUnloggedMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()

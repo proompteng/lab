@@ -87,6 +87,31 @@ remain immediate. A process restart and an on-demand request both force a comple
 sampling clock resumes. The health payload records whether each frame persisted latest state so the write budget is
 observable rather than implicit.
 
+### Latest-state cache durability
+
+The destructive series-removal rollout completed at `2026-07-15T07:30Z`: the migration ledger recorded
+`20260715_torghut_quant_series_remove`, all series relations and the insert function were absent, the removed endpoint
+returned `404`, and Jangar health, readiness, quant health, and snapshot requests remained healthy.
+
+That hard deletion did not by itself clear the storage gate. A transaction-separated 60.119-second sample produced
+35.922 MiB of WAL, or **0.5975 MiB/s**, while `quant_metrics_latest` performed 18,252 updates and
+`quant_pipeline_health_latest` performed 2,628 updates. The primary and replica Jangar RBD images remained around
+18-38 and 20-51 writes per second in the corresponding sample, with periodic checkpoint-sized byte spikes. The
+remaining pressure is therefore the durability and replica replay cost of rebuildable latest-state projections, not
+historical-series persistence.
+
+Both latest-state tables are converted to `UNLOGGED` with `fillfactor=70`. PostgreSQL then retains the single
+database-backed Jangar read path without WAL-logging or replicating projection contents. A crash or standby promotion
+can empty the caches; the one-second quant loop repopulates active frames, and witness/health readers report explicit
+empty or stale state until repopulation completes. They do not read a legacy table or restore a compatibility path.
+This matches PostgreSQL 17's documented [unlogged-table semantics](https://www.postgresql.org/docs/17/sql-createtable.html)
+and uses its supported [`ALTER TABLE ... SET UNLOGGED`](https://www.postgresql.org/docs/17/sql-altertable.html) transition.
+
+The `quant_pipeline_health_latest` index containing `updated_at` is removed. The live table has only 378 rows, while the
+index prevented every five-second heartbeat update from using HOT. Account/window/freshness reads remain bounded by
+that compact cardinality, and the lower fillfactor reserves page space for HOT replacements on both latest-state
+tables.
+
 ## Implementation
 
 ### Latest metrics
@@ -117,17 +142,25 @@ unbounded PostgreSQL cache.
 1. Verify the migration creates the empty latest-state table without reading the legacy table.
 2. Verify Jangar becomes ready and active health scopes populate within five seconds.
 3. Verify the quant-series route returns 404 and all four series relations/functions are absent.
-4. Verify quant health and snapshot APIs preserve their response contracts.
-5. Compare Jangar WAL rate and both Jangar RBD image write rates with the 0.603 MiB/s pre-change WAL baseline.
-6. Require the shared RBD pool and Kafka controllers to complete a new 30-minute observation with no request timeout,
+4. Verify both latest-state tables report `relpersistence='u'`, `fillfactor=70`, and the update-hostile health freshness
+   index is absent.
+5. Verify quant health and snapshot APIs preserve their response contracts, including explicit empty/stale behavior
+   while a cleared cache repopulates.
+6. Compare Jangar WAL rate, HOT-update ratio, and both Jangar RBD image write rates with the 0.603 MiB/s pre-change WAL
+   baseline and require WAL below 0.3015 MiB/s.
+7. Require the shared RBD pool and Kafka controllers to complete a new 30-minute observation with no request timeout,
    broker fencing, slow controller event above two seconds, or sustained ISR loss.
-7. Only after the observation passes, proceed with the bounded Options archive activation.
+8. Only after the observation passes, proceed with the bounded Options archive activation.
 
 ## Rollback and cleanup
 
 The quant-series deletion is irreversible. After that migration applies, an image rollback to code that expects the
 series table is prohibited; recovery is roll-forward only. The legacy pipeline-health table remains available during
 this slice and is not dropped or truncated by the quant-series migration.
+
+The cache-persistence migration is also roll-forward only. Re-logging the derived tables would restore the measured WAL
+and asynchronous-replica amplification. Authoritative Torghut trading, order, execution, accounting, and market-data
+tables are not changed.
 
 After the new path soaks and repository/runtime searches prove no legacy pipeline-health readers or writers, a follow-up
 migration may drop `quant_pipeline_health`.

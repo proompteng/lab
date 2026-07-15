@@ -170,6 +170,29 @@ describe('torghut quant metrics store', () => {
     expect(normalized.join(' ')).not.toContain('insert into')
   })
 
+  it('converts rebuildable quant state to update-friendly unlogged caches', async () => {
+    const { db, calls } = makeFakeDb()
+    const { up } = await import('../migrations/20260715_torghut_quant_state_cache_unlogged')
+
+    await up(db)
+
+    expect(calls).toHaveLength(9)
+    const normalized = calls.map((call) => call.sql.toLowerCase().replace(/\s+/g, ' '))
+    expect(normalized[0]).toContain("set local lock_timeout = '5s'")
+    expect(normalized[1]).toContain("set local statement_timeout = '60s'")
+    expect(normalized[2]).toContain(
+      'drop index torghut_control_plane.torghut_quant_pipeline_health_latest_freshness_idx',
+    )
+    expect(normalized[3]).toContain('alter table torghut_control_plane.quant_metrics_latest set (fillfactor = 70)')
+    expect(normalized[4]).toContain('alter table torghut_control_plane.quant_metrics_latest set unlogged')
+    expect(normalized[5]).toContain(
+      'alter table torghut_control_plane.quant_pipeline_health_latest set (fillfactor = 70)',
+    )
+    expect(normalized[6]).toContain('alter table torghut_control_plane.quant_pipeline_health_latest set unlogged')
+    expect(normalized[7]).toContain('analyze torghut_control_plane.quant_metrics_latest')
+    expect(normalized[8]).toContain('analyze torghut_control_plane.quant_pipeline_health_latest')
+  })
+
   it('avoids physical latest-metric updates when every material value is unchanged', async () => {
     const { db, calls } = makeFakeDb()
     dbMocks.getDb.mockReturnValue(db)
