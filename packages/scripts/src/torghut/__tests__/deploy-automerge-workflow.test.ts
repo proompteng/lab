@@ -149,26 +149,20 @@ describe('torghut-deploy-automerge workflow', () => {
 
   test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {
     const manifestPath = 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
-    const writerManifestPath = 'argocd/applications/torghut-hyperliquid-feed/writer-deployment.yaml'
-    const parityManifestPath = 'argocd/applications/torghut-hyperliquid-feed/parity-cronjob.yaml'
 
     expect(hyperliquidFeedReleaseWorkflow).toContain(manifestPath)
-    expect(hyperliquidFeedReleaseWorkflow).toContain(writerManifestPath)
-    expect(hyperliquidFeedReleaseWorkflow).toContain(parityManifestPath)
+    expect(hyperliquidFeedReleaseWorkflow).not.toContain('writer-deployment.yaml')
+    expect(hyperliquidFeedReleaseWorkflow).not.toContain('parity-cronjob.yaml')
     expect(hyperliquidFeedReleaseWorkflow).toContain(
       'codex/torghut-hyperliquid-feed-release-${{ steps.meta.outputs.tag }}',
     )
     expect(countOccurrences(deployAutomergeWorkflow, `'${manifestPath}'`)).toBeGreaterThanOrEqual(2)
-    expect(countOccurrences(deployAutomergeWorkflow, `'${writerManifestPath}'`)).toBeGreaterThanOrEqual(2)
-    expect(countOccurrences(deployAutomergeWorkflow, `'${parityManifestPath}'`)).toBeGreaterThanOrEqual(2)
+    expect(deployAutomergeWorkflow).not.toContain('writer-deployment.yaml')
+    expect(deployAutomergeWorkflow).not.toContain('parity-cronjob.yaml')
     expect(deployAutomergeWorkflow).toContain(
       "startsWith(github.event.pull_request.head.ref, 'codex/torghut-hyperliquid-feed-release-')",
     )
     expect(deployAutomergeWorkflow).toContain("steps.gates.outputs.release_lane == 'hyperliquid-feed'")
-    expect(deployAutomergeWorkflow).toContain(
-      'Hyperliquid feed and Kafka ClickHouse writer release metadata do not match',
-    )
-    expect(deployAutomergeWorkflow).toContain('Hyperliquid feed and ClickHouse parity release metadata do not match')
     expect(deployAutomergeWorkflow).toContain('name: Verify source Hyperliquid feed image digest contract')
     expect(deployAutomergeWorkflow).toContain('Hyperliquid feed release manifest pins a multi-arch image digest')
     expect(deployAutomergeWorkflow).toContain('TORGHUT_HYPERLIQUID_FEED_COMMIT')
