@@ -67,7 +67,6 @@ import type {
   NexusOperationCanceledEventAttributes,
   NexusOperationCompletedEventAttributes,
   NexusOperationFailedEventAttributes,
-  NexusOperationScheduledEventAttributes,
   NexusOperationTimedOutEventAttributes,
   WorkflowExecutionSignaledEventAttributes,
 } from '../proto/temporal/api/history/v1/message_pb'
@@ -123,6 +122,7 @@ import {
   encodeDeterminismMarkerDetailsWithSize,
   ingestWorkflowHistory,
   type ReplayResult,
+  resolveNexusOperationHistoryIdentities,
   resolveHistoryLastEventId,
 } from '../workflow/replay'
 import { type ActivityContext, type ActivityInfo, runWithActivityContext } from './activity-context'
@@ -141,6 +141,7 @@ import {
 } from './plugins'
 import {
   makeStickyCache,
+  resolveStickyNexusScheduleEventIds,
   type StickyCache,
   type StickyCacheEntry,
   type StickyCacheHooks,
@@ -1382,12 +1383,14 @@ export class WorkerRuntime {
     })
     const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
     let previousState: WorkflowDeterminismState | undefined
+    let stickyCacheMatchesHistory = false
 
     if (stickyEntry && this.#isValidDeterminismSnapshot(stickyEntry.determinismState)) {
       const historyBaselineEventId = this.#resolvePreviousHistoryEventId(response) ?? historyReplay?.lastEventId ?? null
       const cacheMatchesHistory = (stickyEntry.lastEventId ?? null) === historyBaselineEventId
 
       if (cacheMatchesHistory) {
+        stickyCacheMatchesHistory = true
         previousState = stickyEntry.determinismState
         this.#log('debug', 'sticky cache hit', {
           ...baseLogFields,
@@ -1429,12 +1432,18 @@ export class WorkerRuntime {
     }
 
     const expectedDeterminismState = previousState
+    const stickyNexusScheduleEventIds = resolveStickyNexusScheduleEventIds(stickyEntry, stickyCacheMatchesHistory)
 
     try {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
         await this.#extractActivityResolutions(historyEvents)
-      const { results: nexusResults, scheduledEventIds: nexusScheduleEventIds } =
-        await this.#extractNexusResolutions(historyEvents)
+      const { results: nexusResults, scheduledEventIds: nexusScheduleEventIds } = await this.#extractNexusResolutions(
+        historyEvents,
+        {
+          markerState: historyReplay?.hasDeterminismMarker ? historyReplay.determinismState : undefined,
+          knownScheduleEventIds: stickyNexusScheduleEventIds,
+        },
+      )
       const timerResults = await this.#extractTimerResolutions(historyEvents)
       const mergedActivityResults = new Map<string, ActivityResolution>(stickyEntry?.activityResults ?? [])
       for (const [activityId, resolution] of activityResults.entries()) {
@@ -1448,7 +1457,7 @@ export class WorkerRuntime {
       for (const [activityId, scheduleId] of activityScheduleEventIds.entries()) {
         mergedScheduleEventIds.set(activityId, scheduleId)
       }
-      const mergedNexusScheduleEventIds = new Map<string, string>(stickyEntry?.nexusScheduleEventIds ?? [])
+      const mergedNexusScheduleEventIds = new Map<string, string>(stickyNexusScheduleEventIds ?? [])
       for (const [operationId, scheduleId] of nexusScheduleEventIds.entries()) {
         mergedNexusScheduleEventIds.set(operationId, scheduleId)
       }
@@ -2107,13 +2116,20 @@ export class WorkerRuntime {
     return { results: resolutions, scheduledEventIds: activityScheduleById }
   }
 
-  async #extractNexusResolutions(events: HistoryEvent[]): Promise<{
+  async #extractNexusResolutions(
+    events: HistoryEvent[],
+    identityOptions: {
+      markerState?: WorkflowDeterminismState
+      knownScheduleEventIds?: ReadonlyMap<string, string>
+    } = {},
+  ): Promise<{
     results: Map<string, NexusOperationResolution>
     scheduledEventIds: Map<string, string>
   }> {
     const resolutions = new Map<string, NexusOperationResolution>()
-    const scheduledOperationIds = new Map<string, string>()
-    const operationScheduleById = new Map<string, string>()
+    const identities = resolveNexusOperationHistoryIdentities(events, identityOptions)
+    const scheduledOperationIds = identities.operationIdsByScheduledEventId
+    const operationScheduleById = identities.scheduledEventIdsByOperationId
 
     const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
       if (value === undefined || value === null) {
@@ -2142,22 +2158,8 @@ export class WorkerRuntime {
 
     for (const event of events) {
       switch (event.eventType) {
-        case EventType.NEXUS_OPERATION_SCHEDULED: {
-          if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
-            break
-          }
-          const attrs = event.attributes.value as NexusOperationScheduledEventAttributes
-          const scheduledKey = normalizeEventId(event.eventId)
-          if (!scheduledKey) {
-            break
-          }
-          const operationId = resolveOperationId(attrs, event.eventId)
-          if (operationId) {
-            scheduledOperationIds.set(scheduledKey, operationId)
-            operationScheduleById.set(operationId, scheduledKey)
-          }
+        case EventType.NEXUS_OPERATION_SCHEDULED:
           break
-        }
         case EventType.NEXUS_OPERATION_COMPLETED: {
           if (event.attributes?.case !== 'nexusOperationCompletedEventAttributes') {
             break
@@ -2222,7 +2224,10 @@ export class WorkerRuntime {
       }
     }
 
-    return { results: resolutions, scheduledEventIds: operationScheduleById }
+    return {
+      results: resolutions,
+      scheduledEventIds: new Map(operationScheduleById),
+    }
   }
 
   async #extractSignalDeliveries(events: HistoryEvent[]): Promise<WorkflowSignalDeliveryInput[]> {

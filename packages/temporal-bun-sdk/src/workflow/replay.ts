@@ -338,7 +338,8 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
     const extractedFailureMetadata = extractFailureMetadata(events)
     const historyLastEventId = resolveHistoryLastEventId(events) ?? null
     if (shouldUseDeterminismMarker && hasMarker && !markerInvalid && markerState && markerEventIndex !== null) {
-      const historyKinds = collectCommandKinds(events.slice(0, markerEventIndex + 1))
+      const markerHistory = events.slice(0, markerEventIndex + 1)
+      const historyKinds = collectCommandKinds(markerHistory)
       const markerKinds = markerState.commandHistory.map((entry) => entry.intent.kind)
       if (!commandKindsMatch(markerKinds, historyKinds)) {
         markerInvalid = true
@@ -990,6 +991,93 @@ const commandKindsMatch = (
     }
   }
   return true
+}
+
+export interface NexusOperationHistoryIdentities {
+  readonly operationIdsByScheduledEventId: ReadonlyMap<string, string>
+  readonly scheduledEventIdsByOperationId: ReadonlyMap<string, string>
+}
+
+export interface ResolveNexusOperationHistoryIdentitiesOptions {
+  readonly markerState?: WorkflowDeterminismState
+  readonly knownScheduleEventIds?: ReadonlyMap<string, string>
+}
+
+export const resolveNexusOperationHistoryIdentities = (
+  events: readonly HistoryEvent[],
+  options: ResolveNexusOperationHistoryIdentitiesOptions = {},
+): NexusOperationHistoryIdentities => {
+  const operationIdsByScheduledEventId = new Map<string, string>()
+  const scheduledEventIdsByOperationId = new Map<string, string>()
+
+  for (const [operationId, scheduledEventId] of options.knownScheduleEventIds ?? []) {
+    operationIdsByScheduledEventId.set(scheduledEventId, operationId)
+    scheduledEventIdsByOperationId.set(operationId, scheduledEventId)
+  }
+
+  const markerSchedules =
+    options.markerState?.commandHistory.filter(
+      (entry): entry is WorkflowCommandHistoryEntry & { intent: ScheduleNexusOperationCommandIntent } =>
+        entry.intent.kind === 'schedule-nexus-operation',
+    ) ?? []
+  const markerOperationIdsByScheduledEventId = new Map<string, string>()
+  for (const entry of markerSchedules) {
+    const eventId = normalizeEventId(entry.metadata?.eventId)
+    if (eventId) {
+      markerOperationIdsByScheduledEventId.set(eventId, entry.intent.operationId)
+    }
+  }
+  let markerEventIndex = -1
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    if (
+      event?.eventType === EventType.MARKER_RECORDED &&
+      event.attributes?.case === 'markerRecordedEventAttributes' &&
+      event.attributes.value.markerName === DETERMINISM_MARKER_NAME
+    ) {
+      markerEventIndex = index
+    }
+  }
+  let markerScheduleIndex = 0
+
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    const event = events[eventIndex]
+    if (
+      !event ||
+      event.eventType !== EventType.NEXUS_OPERATION_SCHEDULED ||
+      event.attributes?.case !== 'nexusOperationScheduledEventAttributes'
+    ) {
+      continue
+    }
+
+    const scheduledEventId = normalizeEventId(event.eventId)
+    if (!scheduledEventId) {
+      continue
+    }
+
+    const markerOperationIdByEvent = markerOperationIdsByScheduledEventId.get(scheduledEventId)
+    const markerOperationIdByOrder =
+      markerEventIndex >= 0 && eventIndex < markerEventIndex
+        ? markerSchedules[markerScheduleIndex]?.intent.operationId
+        : undefined
+    if (markerEventIndex >= 0 && eventIndex < markerEventIndex) {
+      markerScheduleIndex += 1
+    }
+    const operationId =
+      event.attributes.value.nexusHeader?.[NEXUS_OPERATION_ID_HEADER] ??
+      markerOperationIdByEvent ??
+      markerOperationIdByOrder ??
+      operationIdsByScheduledEventId.get(scheduledEventId) ??
+      `nexus-${scheduledEventId}`
+
+    operationIdsByScheduledEventId.set(scheduledEventId, operationId)
+    scheduledEventIdsByOperationId.set(operationId, scheduledEventId)
+  }
+
+  return {
+    operationIdsByScheduledEventId,
+    scheduledEventIdsByOperationId,
+  }
 }
 
 const collectCommandKinds = (events: readonly HistoryEvent[]): WorkflowCommandKind[] => {

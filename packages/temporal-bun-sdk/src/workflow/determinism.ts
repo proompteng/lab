@@ -371,10 +371,23 @@ const DEFAULT_WORKFLOW_EXECUTION_TIMEOUT_MS = 0
 const DEFAULT_WORKFLOW_ID_REUSE_POLICY = WorkflowIdReusePolicy.ALLOW_DUPLICATE
 const DEFAULT_PARENT_CLOSE_POLICY = ParentClosePolicy.TERMINATE
 
+const normalizeRequestCancelNexusOperationIntent = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
+  if (intent.kind !== 'request-cancel-nexus-operation' || intent.scheduledEventId === undefined) {
+    return intent
+  }
+  return {
+    ...intent,
+    id: `request-cancel-nexus-operation-${intent.sequence}`,
+    operationId: `nexus-${intent.scheduledEventId}`,
+  }
+}
+
 const normalizeIntentForComparison = (intent: WorkflowCommandIntent): WorkflowCommandIntent => {
   switch (intent.kind) {
     case 'schedule-activity':
       return normalizeScheduleActivityIntent(intent)
+    case 'request-cancel-nexus-operation':
+      return normalizeRequestCancelNexusOperationIntent(intent)
     case 'start-child-workflow':
       return normalizeStartChildWorkflowIntent(intent)
     default:

@@ -6,11 +6,13 @@ import { createDefaultDataConverter, encodeValuesToPayloads } from '../../src/co
 import type { WorkflowInfo } from '../../src/workflow/context'
 import type { WorkflowDeterminismState } from '../../src/workflow/determinism'
 import {
+  DETERMINISM_MARKER_NAME,
   decodeDeterminismMarkerEnvelope,
   diffDeterminismState,
   encodeDeterminismMarkerDetails,
   encodeDeterminismMarkerDetailsWithSize,
   ingestWorkflowHistory,
+  resolveNexusOperationHistoryIdentities,
   resolveHistoryLastEventId,
 } from '../../src/workflow/replay'
 import type { DeterminismMismatchCommand, DeterminismStateDelta } from '../../src/workflow/replay'
@@ -19,6 +21,7 @@ import {
   ActivityTaskCancelRequestedEventAttributesSchema,
   HistoryEventSchema,
   MarkerRecordedEventAttributesSchema,
+  NexusOperationCancelRequestedEventAttributesSchema,
   NexusOperationScheduledEventAttributesSchema,
   SignalExternalWorkflowExecutionInitiatedEventAttributesSchema,
   StartChildWorkflowExecutionInitiatedEventAttributesSchema,
@@ -1001,6 +1004,289 @@ test('ingestWorkflowHistory derives Nexus fallback operation IDs from the schedu
   const intent = replay.determinismState.commandHistory[0]?.intent
   expect(intent?.kind).toBe('schedule-nexus-operation')
   expect(intent?.kind === 'schedule-nexus-operation' ? intent.operationId : null).toBe('nexus-42')
+})
+
+test('ingestWorkflowHistory preserves ambiguous marker-backed headerless Nexus operation IDs', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-nexus-marker-fallback',
+    runId: 'run-nexus-marker-fallback',
+    workflowType: 'nexusWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'nexus-0',
+          nexusHeader: {},
+        },
+      },
+      {
+        intent: {
+          id: 'request-cancel-nexus-operation-1',
+          kind: 'request-cancel-nexus-operation',
+          sequence: 1,
+          operationId: 'nexus-0',
+          scheduledEventId: '42',
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '44',
+      recordedAt: new Date('2026-07-14T00:00:00Z'),
+    }),
+  )
+  const scheduledEvent = create(HistoryEventSchema, {
+    eventId: 42n,
+    eventType: EventType.NEXUS_OPERATION_SCHEDULED,
+    attributes: {
+      case: 'nexusOperationScheduledEventAttributes',
+      value: create(NexusOperationScheduledEventAttributesSchema, {
+        endpoint: 'payments',
+        service: 'billing',
+        operation: 'charge',
+      }),
+    },
+  })
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 44n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details,
+      }),
+    },
+  })
+  const cancelEvent = create(HistoryEventSchema, {
+    eventId: 43n,
+    eventType: EventType.NEXUS_OPERATION_CANCEL_REQUESTED,
+    attributes: {
+      case: 'nexusOperationCancelRequestedEventAttributes',
+      value: create(NexusOperationCancelRequestedEventAttributesSchema, {
+        scheduledEventId: 42n,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [scheduledEvent, cancelEvent, markerEvent],
+      dataConverter: converter,
+    }),
+  )
+  const intent = replay.determinismState.commandHistory[0]?.intent
+  const cancelIntent = replay.determinismState.commandHistory[1]?.intent
+  const markerIntent = replay.markerState?.commandHistory[0]?.intent
+  const markerCancelIntent = replay.markerState?.commandHistory[1]?.intent
+
+  expect(replay.hasDeterminismMarker).toBe(true)
+  expect(intent?.kind === 'schedule-nexus-operation' ? intent.operationId : null).toBe('nexus-0')
+  expect(markerIntent?.kind === 'schedule-nexus-operation' ? markerIntent.operationId : null).toBe('nexus-0')
+  expect(cancelIntent?.kind === 'request-cancel-nexus-operation' ? cancelIntent.operationId : null).toBe('nexus-0')
+  expect(markerCancelIntent?.kind === 'request-cancel-nexus-operation' ? markerCancelIntent.operationId : null).toBe(
+    'nexus-0',
+  )
+})
+
+test('resolveNexusOperationHistoryIdentities aliases headerless events to persisted marker IDs', () => {
+  const scheduledEvent = create(HistoryEventSchema, {
+    eventId: 42n,
+    eventType: EventType.NEXUS_OPERATION_SCHEDULED,
+    attributes: {
+      case: 'nexusOperationScheduledEventAttributes',
+      value: create(NexusOperationScheduledEventAttributesSchema, {
+        endpoint: 'payments',
+        service: 'billing',
+        operation: 'charge',
+      }),
+    },
+  })
+  const markerState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'nexus-0',
+          nexusHeader: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 43n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: DETERMINISM_MARKER_NAME,
+      }),
+    },
+  })
+
+  const identities = resolveNexusOperationHistoryIdentities([scheduledEvent, markerEvent], { markerState })
+
+  expect(identities.operationIdsByScheduledEventId.get('42')).toBe('nexus-0')
+  expect(identities.scheduledEventIdsByOperationId.get('nexus-0')).toBe('42')
+})
+
+test('resolveNexusOperationHistoryIdentities ignores drifted sticky aliases when marker identity is available', () => {
+  const scheduledEvent = create(HistoryEventSchema, {
+    eventId: 42n,
+    eventType: EventType.NEXUS_OPERATION_SCHEDULED,
+    attributes: {
+      case: 'nexusOperationScheduledEventAttributes',
+      value: create(NexusOperationScheduledEventAttributesSchema, {
+        endpoint: 'payments',
+        service: 'billing',
+        operation: 'charge',
+      }),
+    },
+  })
+  const markerState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'marker-operation-id',
+          nexusHeader: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 43n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: DETERMINISM_MARKER_NAME,
+      }),
+    },
+  })
+  const knownScheduleEventIds = new Map([['stale-sticky-operation-id', '42']])
+
+  const identities = resolveNexusOperationHistoryIdentities([scheduledEvent, markerEvent], {
+    markerState,
+    knownScheduleEventIds,
+  })
+
+  expect(identities.operationIdsByScheduledEventId.get('42')).toBe('marker-operation-id')
+  expect(identities.scheduledEventIdsByOperationId.get('marker-operation-id')).toBe('42')
+})
+
+test('ingestWorkflowHistory preserves explicit marker-backed Nexus operation IDs', async () => {
+  const converter = createDefaultDataConverter()
+  const info: WorkflowInfo = {
+    namespace: 'default',
+    taskQueue: 'replay-fixtures',
+    workflowId: 'wf-nexus-marker-explicit-id',
+    runId: 'run-nexus-marker-explicit-id',
+    workflowType: 'nexusWorkflow',
+  }
+  const determinismState: WorkflowDeterminismState = {
+    commandHistory: [
+      {
+        intent: {
+          id: 'schedule-nexus-operation-0',
+          kind: 'schedule-nexus-operation',
+          sequence: 0,
+          endpoint: 'payments',
+          service: 'billing',
+          operation: 'charge',
+          operationId: 'caller-supplied-operation',
+          nexusHeader: {},
+        },
+      },
+    ],
+    randomValues: [],
+    timeValues: [],
+    signals: [],
+    queries: [],
+  }
+  const details = await Effect.runPromise(
+    encodeDeterminismMarkerDetails(converter, {
+      info,
+      determinismState,
+      lastEventId: '43',
+      recordedAt: new Date('2026-07-14T00:00:00Z'),
+    }),
+  )
+  const scheduledEvent = create(HistoryEventSchema, {
+    eventId: 42n,
+    eventType: EventType.NEXUS_OPERATION_SCHEDULED,
+    attributes: {
+      case: 'nexusOperationScheduledEventAttributes',
+      value: create(NexusOperationScheduledEventAttributesSchema, {
+        endpoint: 'payments',
+        service: 'billing',
+        operation: 'charge',
+      }),
+    },
+  })
+  const markerEvent = create(HistoryEventSchema, {
+    eventId: 43n,
+    eventType: EventType.MARKER_RECORDED,
+    attributes: {
+      case: 'markerRecordedEventAttributes',
+      value: create(MarkerRecordedEventAttributesSchema, {
+        markerName: 'temporal-bun-sdk/determinism',
+        details,
+      }),
+    },
+  })
+
+  const replay = await Effect.runPromise(
+    ingestWorkflowHistory({
+      info,
+      history: [scheduledEvent, markerEvent],
+      dataConverter: converter,
+    }),
+  )
+  const intent = replay.determinismState.commandHistory[0]?.intent
+  const markerIntent = replay.markerState?.commandHistory[0]?.intent
+
+  expect(replay.hasDeterminismMarker).toBe(true)
+  expect(intent?.kind === 'schedule-nexus-operation' ? intent.operationId : null).toBe('caller-supplied-operation')
+  expect(markerIntent?.kind === 'schedule-nexus-operation' ? markerIntent.operationId : null).toBe(
+    'caller-supplied-operation',
+  )
 })
 
 test('ingestWorkflowHistory captures failure metadata from workflow events', async () => {

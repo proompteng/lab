@@ -192,6 +192,24 @@ test('Nexus schedule defaults reuse headerless replay operation ids', async () =
   }
 })
 
+test('intentsEqual compares Nexus cancels by scheduled event when available', () => {
+  const expected = {
+    id: 'request-cancel-nexus-operation-1',
+    kind: 'request-cancel-nexus-operation',
+    sequence: 1,
+    operationId: 'nexus-0',
+    scheduledEventId: '42',
+  } as const
+  const actual = {
+    ...expected,
+    id: 'cancel-nexus-operation-1',
+    operationId: 'nexus-42',
+  }
+
+  expect(intentsEqual(expected, actual)).toBe(true)
+  expect(intentsEqual(expected, { ...actual, scheduledEventId: '43' })).toBe(false)
+})
+
 test('intentsEqual normalizes activity timeout defaults', () => {
   const expected = {
     id: 'schedule-activity-0',
