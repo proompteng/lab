@@ -1494,7 +1494,17 @@ data:
                       }[5m]
                     )
                   )
-                  or vector(0)
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
+                  )
                 ) == 0
               )
               and
@@ -1509,7 +1519,17 @@ data:
                       }[5m]
                     )
                   )
-                  or vector(0)
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
+                  )
                 ) == 0
               )
               and
@@ -1525,8 +1545,28 @@ data:
                       }[5m]
                     )
                   )
-                  or vector(0)
+                  or on()
+                  (
+                    0
+                    * max(
+                      up{
+                        job="torghut",
+                        namespace="torghut",
+                        service="torghut-scheduler"
+                      } == 1
+                    )
+                  )
                 ) == 0
+              )
+              and on()
+              (
+                max(
+                  up{
+                    job="torghut",
+                    namespace="torghut",
+                    service="torghut-scheduler"
+                  }
+                ) == 1
               )
               and on()
               (
