@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
-import { makeStickyCache } from '../src/worker/sticky-cache'
+import { makeStickyCache, resolveStickyNexusScheduleEventIds } from '../src/worker/sticky-cache'
 import type { WorkflowDeterminismState } from '../src/workflow/determinism'
 
 const EMPTY_STATE: WorkflowDeterminismState = {
@@ -11,6 +11,20 @@ const EMPTY_STATE: WorkflowDeterminismState = {
   signals: [],
   queries: [],
 }
+
+test('sticky Nexus aliases are accepted only when the cache matches history', () => {
+  const nexusScheduleEventIds = new Map([['stale-operation-id', '42']])
+  const entry = {
+    key: { namespace: 'default', workflowId: 'wf-nexus', runId: 'run-nexus' },
+    determinismState: EMPTY_STATE,
+    lastEventId: '41',
+    lastAccessed: Date.now(),
+    nexusScheduleEventIds,
+  }
+
+  expect(resolveStickyNexusScheduleEventIds(entry, true)).toBe(nexusScheduleEventIds)
+  expect(resolveStickyNexusScheduleEventIds(entry, false)).toBeUndefined()
+})
 
 const makeFakeCounter = () => {
   let value = 0

@@ -141,6 +141,7 @@ import {
 } from './plugins'
 import {
   makeStickyCache,
+  resolveStickyNexusScheduleEventIds,
   type StickyCache,
   type StickyCacheEntry,
   type StickyCacheHooks,
@@ -1382,12 +1383,14 @@ export class WorkerRuntime {
     })
     const hasHistorySnapshot = this.#isValidDeterminismSnapshot(historyReplay?.determinismState)
     let previousState: WorkflowDeterminismState | undefined
+    let stickyCacheMatchesHistory = false
 
     if (stickyEntry && this.#isValidDeterminismSnapshot(stickyEntry.determinismState)) {
       const historyBaselineEventId = this.#resolvePreviousHistoryEventId(response) ?? historyReplay?.lastEventId ?? null
       const cacheMatchesHistory = (stickyEntry.lastEventId ?? null) === historyBaselineEventId
 
       if (cacheMatchesHistory) {
+        stickyCacheMatchesHistory = true
         previousState = stickyEntry.determinismState
         this.#log('debug', 'sticky cache hit', {
           ...baseLogFields,
@@ -1429,6 +1432,7 @@ export class WorkerRuntime {
     }
 
     const expectedDeterminismState = previousState
+    const stickyNexusScheduleEventIds = resolveStickyNexusScheduleEventIds(stickyEntry, stickyCacheMatchesHistory)
 
     try {
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
@@ -1437,7 +1441,7 @@ export class WorkerRuntime {
         historyEvents,
         {
           markerState: historyReplay?.hasDeterminismMarker ? historyReplay.determinismState : undefined,
-          knownScheduleEventIds: stickyEntry?.nexusScheduleEventIds,
+          knownScheduleEventIds: stickyNexusScheduleEventIds,
         },
       )
       const timerResults = await this.#extractTimerResolutions(historyEvents)
@@ -1453,7 +1457,7 @@ export class WorkerRuntime {
       for (const [activityId, scheduleId] of activityScheduleEventIds.entries()) {
         mergedScheduleEventIds.set(activityId, scheduleId)
       }
-      const mergedNexusScheduleEventIds = new Map<string, string>(stickyEntry?.nexusScheduleEventIds ?? [])
+      const mergedNexusScheduleEventIds = new Map<string, string>(stickyNexusScheduleEventIds ?? [])
       for (const [operationId, scheduleId] of nexusScheduleEventIds.entries()) {
         mergedNexusScheduleEventIds.set(operationId, scheduleId)
       }

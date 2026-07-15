@@ -60,6 +60,11 @@ export interface StickyCacheHooks {
   readonly onEvict?: (entry: StickyCacheEntry, reason: StickyCacheEvictionReason) => Effect.Effect<void, never, never>
 }
 
+export const resolveStickyNexusScheduleEventIds = (
+  entry: StickyCacheEntry | undefined,
+  cacheMatchesHistory: boolean,
+): ReadonlyMap<string, string> | undefined => (cacheMatchesHistory ? entry?.nexusScheduleEventIds : undefined)
+
 type StickyCacheLookupResult =
   | { readonly kind: 'miss' }
   | { readonly kind: 'expired'; readonly entry: StickyCacheEntry }
