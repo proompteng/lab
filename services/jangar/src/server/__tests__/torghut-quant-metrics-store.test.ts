@@ -85,7 +85,7 @@ describe('torghut quant metrics store', () => {
     migrationMocks.ensureMigrations.mockClear()
   })
 
-  it('uses an indexable account/window recent latest-stage lookup', async () => {
+  it('uses the primary-keyed pipeline-health latest table', async () => {
     const { db, calls } = makeFakeDb()
     dbMocks.getDb.mockReturnValue(db)
     const { listLatestQuantPipelineHealth } = await import('../torghut-quant-metrics-store')
@@ -96,15 +96,107 @@ describe('torghut quant metrics store', () => {
       minCreatedAt: '2026-05-05T15:00:00.000Z',
     })
 
-    const pipelineHealthSql = calls.find((call) => call.sql.includes('quant_pipeline_health'))?.sql
+    const pipelineHealthSql = calls.find((call) => call.sql.includes('quant_pipeline_health_latest'))?.sql
     expect(pipelineHealthSql).toBeTruthy()
     const normalized = String(pipelineHealthSql).toLowerCase().replace(/\s+/g, ' ')
 
-    expect(normalized).toContain("select distinct on (account, (details->>'window'), strategy_id, stage)")
-    expect(normalized).toContain("where account = $1 and details->>'window' = $2 and created_at >= $3")
-    expect(normalized).toContain(
-      "order by account asc, (details->>'window') asc, strategy_id asc, stage asc, created_at desc, as_of desc",
+    expect(normalized).toContain('from torghut_control_plane.quant_pipeline_health_latest')
+    expect(normalized).toContain('where account = $1 and "window" = $2 and updated_at >= $3')
+    expect(normalized).not.toContain('distinct on')
+    expect(normalized).not.toContain('torghut_control_plane.quant_pipeline_health where')
+  })
+
+  it('creates the latest-state table and index without scanning legacy health history', async () => {
+    const { db, calls } = makeFakeDb()
+    const { up } = await import('../migrations/20260715_torghut_quant_pipeline_health_latest')
+
+    await up(db)
+
+    expect(calls).toHaveLength(2)
+    const normalized = calls.map((call) => call.sql.toLowerCase().replace(/\s+/g, ' '))
+    expect(normalized[0]).toContain('create table if not exists "torghut_control_plane"."quant_pipeline_health_latest"')
+    expect(normalized[0]).toContain('primary key (strategy_id, account, "window", stage)')
+    expect(normalized[1]).toContain(
+      'on "torghut_control_plane"."quant_pipeline_health_latest" (account, "window", updated_at desc)',
     )
-    expect(normalized).not.toContain('row_number() over')
+    expect(normalized.join(' ')).not.toContain('torghut_control_plane.quant_pipeline_health ')
+  })
+
+  it('avoids physical latest-metric updates when every material value is unchanged', async () => {
+    const { db, calls } = makeFakeDb()
+    dbMocks.getDb.mockReturnValue(db)
+    const { upsertQuantLatestMetrics } = await import('../torghut-quant-metrics-store')
+
+    await upsertQuantLatestMetrics({
+      strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      account: 'paper',
+      window: '1m',
+      metrics: [
+        {
+          metricName: 'net_pnl',
+          window: '1m',
+          status: 'ok',
+          quality: 'good',
+          unit: 'usd',
+          valueNumeric: 12.5,
+          formulaVersion: 'v1',
+          asOf: '2026-07-15T03:00:00.000Z',
+          freshnessSeconds: 1,
+        },
+      ],
+    })
+
+    const latestSql = calls.find((call) => call.sql.includes('quant_metrics_latest'))?.sql
+    const normalized = String(latestSql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain('on conflict')
+    expect(normalized).toContain('do update set')
+    expect(normalized).toContain('is distinct from')
+  })
+
+  it('upserts one pipeline-health row per strategy, account, window, and stage', async () => {
+    const { db, calls } = makeFakeDb()
+    dbMocks.getDb.mockReturnValue(db)
+    const { upsertQuantPipelineHealth } = await import('../torghut-quant-metrics-store')
+
+    await upsertQuantPipelineHealth({
+      rows: [
+        {
+          strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          account: 'paper',
+          stage: 'compute',
+          ok: true,
+          lagSeconds: 1,
+          asOf: '2026-07-15T03:00:00.000Z',
+          details: { window: '1m' },
+        },
+      ],
+    })
+
+    const healthSql = calls.find((call) => call.sql.includes('quant_pipeline_health_latest'))?.sql
+    const normalized = String(healthSql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain('insert into "torghut_control_plane"."quant_pipeline_health_latest"')
+    expect(normalized).toContain('on conflict ("strategy_id", "account", "window", "stage") do update set')
+  })
+
+  it('rejects pipeline-health rows without an explicit window', async () => {
+    const { db } = makeFakeDb()
+    dbMocks.getDb.mockReturnValue(db)
+    const { upsertQuantPipelineHealth } = await import('../torghut-quant-metrics-store')
+
+    await expect(
+      upsertQuantPipelineHealth({
+        rows: [
+          {
+            strategyId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            account: 'paper',
+            stage: 'compute',
+            ok: true,
+            lagSeconds: 1,
+            asOf: '2026-07-15T03:00:00.000Z',
+            details: {},
+          },
+        ],
+      }),
+    ).rejects.toThrow('quant pipeline health details.window is required')
   })
 })

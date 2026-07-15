@@ -6,10 +6,10 @@ const recordTorghutQuantComputeError = vi.fn()
 const recordTorghutQuantFrame = vi.fn()
 const computeTorghutQuantMetrics = vi.fn()
 const listTorghutStrategyAccounts = vi.fn()
-const appendQuantPipelineHealth = vi.fn()
 const appendQuantSeriesMetrics = vi.fn()
 const upsertQuantAlerts = vi.fn()
 const upsertQuantLatestMetrics = vi.fn()
+const upsertQuantPipelineHealth = vi.fn()
 const listTorghutTradingStrategies = vi.fn()
 const resolveTorghutDb = vi.fn()
 
@@ -29,10 +29,10 @@ vi.mock('../torghut-quant-metrics', () => ({
 }))
 
 vi.mock('../torghut-quant-metrics-store', () => ({
-  appendQuantPipelineHealth,
   appendQuantSeriesMetrics,
   upsertQuantAlerts,
   upsertQuantLatestMetrics,
+  upsertQuantPipelineHealth,
 }))
 
 vi.mock('../torghut-trading', () => ({
@@ -52,10 +52,10 @@ describe('materializeTorghutQuantFrameOnDemand', () => {
     recordTorghutQuantFrame.mockReset()
     computeTorghutQuantMetrics.mockReset()
     listTorghutStrategyAccounts.mockReset()
-    appendQuantPipelineHealth.mockReset()
     appendQuantSeriesMetrics.mockReset()
     upsertQuantAlerts.mockReset()
     upsertQuantLatestMetrics.mockReset()
+    upsertQuantPipelineHealth.mockReset()
     listTorghutTradingStrategies.mockReset()
     resolveTorghutDb.mockReset()
 
@@ -85,9 +85,9 @@ describe('materializeTorghutQuantFrameOnDemand', () => {
       ],
     })
     appendQuantSeriesMetrics.mockResolvedValue(undefined)
-    appendQuantPipelineHealth.mockResolvedValue(undefined)
     upsertQuantLatestMetrics.mockResolvedValue(undefined)
     upsertQuantAlerts.mockResolvedValue(undefined)
+    upsertQuantPipelineHealth.mockResolvedValue(undefined)
 
     const runtimeGlobal = globalThis as typeof globalThis & { __torghutQuantRuntime?: unknown }
     delete runtimeGlobal.__torghutQuantRuntime

@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { __private } from '../torghut-quant-runtime'
 
 describe('torghut quant runtime account selection', () => {
+  it('persists sampled state only after the configured interval', () => {
+    expect(__private.isSamplingDue(10_000, 5000, 14_999)).toBe(false)
+    expect(__private.isSamplingDue(10_000, 5000, 15_000)).toBe(true)
+    expect(__private.isSamplingDue(0, 60_000, 60_000)).toBe(true)
+  })
+
   it('always includes aggregate account frame when no accounts are present', () => {
     expect(__private.resolveStrategyAccountsForCompute([])).toEqual([''])
   })

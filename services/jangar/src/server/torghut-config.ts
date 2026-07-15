@@ -20,6 +20,7 @@ export type TorghutQuantRuntimeConfig = {
   computeIntervalMs: number
   heavyComputeIntervalMs: number
   seriesSamplingMs: number
+  healthSamplingMs: number
   streamHeartbeatMs: number
   maxStalenessSeconds: number
   windowsLight: QuantWindow[]
@@ -115,7 +116,8 @@ export const resolveTorghutQuantRuntimeConfig = (
     DEFAULT_QUANT_CONTROL_PLANE_ENABLED_FLAG_KEY,
   computeIntervalMs: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_COMPUTE_INTERVAL_MS, 1000),
   heavyComputeIntervalMs: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS, 30_000),
-  seriesSamplingMs: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS, 5000),
+  seriesSamplingMs: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS, 60_000),
+  healthSamplingMs: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_HEALTH_SAMPLING_MS, 5000),
   streamHeartbeatMs: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_STREAM_HEARTBEAT_MS, 15_000),
   maxStalenessSeconds: parsePositiveInt(env.JANGAR_TORGHUT_QUANT_MAX_STALENESS_SECONDS, 15),
   windowsLight: parseWindowList(env.JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT, ['1m', '5m', '15m', '1h', '1d']),

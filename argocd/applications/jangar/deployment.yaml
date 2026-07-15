@@ -227,6 +227,8 @@ spec:
             - name: JANGAR_TORGHUT_QUANT_HEAVY_COMPUTE_INTERVAL_MS
               value: "30000"
             - name: JANGAR_TORGHUT_QUANT_SERIES_SAMPLING_MS
+              value: "60000"
+            - name: JANGAR_TORGHUT_QUANT_HEALTH_SAMPLING_MS
               value: "5000"
             - name: JANGAR_TORGHUT_QUANT_STREAM_HEARTBEAT_MS
               value: "15000"

@@ -87,6 +87,18 @@ describe('migration registration', () => {
     expect(normalized).toContain('on torghut_control_plane.quant_metrics_latest(account, "window")')
   })
 
+  it('creates the constant-time pipeline-health latest-state replacement', () => {
+    const migrationPath = new URL('../migrations/20260715_torghut_quant_pipeline_health_latest.ts', import.meta.url)
+    const normalized = readFileSync(fileURLToPath(migrationPath), 'utf8').toLowerCase().replace(/\s+/g, ' ')
+
+    expect(normalized).toContain('create table if not exists')
+    expect(normalized).toContain('quant_pipeline_health_latest')
+    expect(normalized).toContain('primary key (strategy_id, account, "window", stage)')
+    expect(normalized).not.toContain('select distinct')
+    expect(normalized).not.toContain('insert into')
+    expect(normalized).not.toContain('quant_pipeline_health;')
+  })
+
   it('keeps the Codex judge AgentRun column migration registered as a retired Agents backfill handoff', () => {
     expect(__test__.getRegisteredMigrations()).toContain('20260520_codex_judge_agentrun_columns')
     expect(__test__.getRetiredMigrationNames()).toContain('20260520_codex_judge_agentrun_columns')
