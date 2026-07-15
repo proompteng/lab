@@ -6,9 +6,8 @@ metadata:
   labels:
     app: torghut-options-archive
 spec:
-  # Keep the worker disabled until the fixed image is promoted and a separate
-  # activation change can prove a complete archive shard against production.
-  replicas: 0
+  # Run exactly one fenced worker so archive finalization has a single writer.
+  replicas: 1
   revisionHistoryLimit: 2
   strategy:
     type: Recreate
