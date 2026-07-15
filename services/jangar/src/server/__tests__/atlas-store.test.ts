@@ -579,13 +579,13 @@ describe('atlas store', () => {
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
     const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
     expect(normalized).toContain('with exact_candidates as materialized')
-    expect(candidates).toContain("file_chunks.text_tsvector @@ websearch_to_tsquery('simple', $")
+    expect(candidates).toContain("file_chunks.text_tsvector @@ plainto_tsquery('simple', $")
     expect(candidates).not.toContain('file_chunks.content ilike')
     expect(normalized).toContain('file_chunks.content ~ $')
     expect(normalized).not.toMatch(/file_chunks\.content\s+%\s+\$/)
   })
 
-  it('keeps literal exact candidates through indexed text terms', async () => {
+  it('keeps punctuation-bearing literals indexed without treating them as web-search operators', async () => {
     const { db, calls } = makeFakeDb({ selectRows: [] })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
@@ -598,7 +598,8 @@ describe('atlas store', () => {
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
     const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
     expect(candidates).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
-    expect(candidates).toContain("file_chunks.text_tsvector @@ websearch_to_tsquery('simple', $")
+    expect(candidates).toContain("file_chunks.text_tsvector @@ plainto_tsquery('simple', $")
+    expect(candidates).not.toContain('websearch_to_tsquery')
     expect(candidates).not.toContain('file_chunks.content ilike')
     expect(normalized).toContain('file_chunks.content ilike')
   })
@@ -699,7 +700,7 @@ describe('atlas store', () => {
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
     const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
     expect(candidates).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
-    expect(candidates).toContain("file_chunks.text_tsvector @@ websearch_to_tsquery('simple', $")
+    expect(candidates).toContain("file_chunks.text_tsvector @@ plainto_tsquery('simple', $")
     expect(candidates).not.toContain('file_chunks.content ilike')
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(true)
   })
