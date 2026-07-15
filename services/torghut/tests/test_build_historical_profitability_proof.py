@@ -430,6 +430,62 @@ class TestBuildHistoricalProfitabilityProof(TestCase):
                     output_dir=root / "out",
                 )
 
+    def test_rejects_baseline_with_different_trading_days(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            candidate_a = _write_run(
+                root=root,
+                run_name="candidate-a",
+                trading_day="2026-03-02",
+                net_pnl="10",
+                decision_count=8,
+                execution_count=4,
+                avg_confidence="0.9",
+                dump_hash="dump-a",
+            )
+            candidate_b = _write_run(
+                root=root,
+                run_name="candidate-b",
+                trading_day="2026-03-03",
+                net_pnl="5",
+                decision_count=7,
+                execution_count=3,
+                avg_confidence="0.85",
+                dump_hash="dump-b",
+            )
+            baseline_a = _write_run(
+                root=root,
+                run_name="baseline-a",
+                trading_day="2026-03-02",
+                net_pnl="0",
+                decision_count=1,
+                execution_count=1,
+                avg_confidence="0.8",
+                dump_hash="baseline-a",
+                candidate_id="cash-flat@baseline",
+            )
+            baseline_b = _write_run(
+                root=root,
+                run_name="baseline-b",
+                trading_day="2026-03-04",
+                net_pnl="0",
+                decision_count=1,
+                execution_count=1,
+                avg_confidence="0.8",
+                dump_hash="baseline-b",
+                candidate_id="cash-flat@baseline",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "baseline_trading_days_mismatch",
+            ):
+                build_historical_profitability_bundle(
+                    run_dirs=[candidate_a, candidate_b],
+                    baseline_run_dirs=[baseline_a, baseline_b],
+                    output_dir=root / "out",
+                )
+
 
 def _write_run(
     *,
