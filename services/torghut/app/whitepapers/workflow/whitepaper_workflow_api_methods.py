@@ -54,6 +54,22 @@ else:
 
 
 class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
+    @staticmethod
+    def _has_structured_research_outputs(payload: Mapping[str, Any]) -> bool:
+        keys = (
+            "claims",
+            "claim_relations",
+            "strategy_templates",
+            "experiment_specs",
+            "contradiction_events",
+        )
+        if any(key in payload for key in keys):
+            return True
+        synthesis_payload = payload.get("synthesis")
+        return isinstance(synthesis_payload, Mapping) and any(
+            key in synthesis_payload for key in keys
+        )
+
     def _compiled_experiment_specs_from_templates(
         self,
         *,
@@ -172,6 +188,9 @@ class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
         run: WhitepaperAnalysisRun,
         payload: Mapping[str, Any],
     ) -> None:
+        if not self._has_structured_research_outputs(payload):
+            return
+
         claims = self._structured_output_list(payload, key="claims")
         relations = self._structured_output_list(payload, key="claim_relations")
         templates = self._structured_output_list(payload, key="strategy_templates")
