@@ -1000,6 +1000,12 @@ describe('native OCI build workflows', () => {
     expect(sagReleaseWorkflow).toContain('test "${service}" = "sag"')
     expect(sagReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
     expect(sagReleaseWorkflow).not.toContain('docker buildx')
+    expect(sagPostDeployVerifyWorkflow).toContain('Determine Sag ApplicationSet state')
+    expect(sagPostDeployVerifyWorkflow).toContain('argocd/applicationsets/product.yaml')
+    expect(sagPostDeployVerifyWorkflow).toContain("if: steps.sag.outputs.enabled == 'true'")
+    expect(sagPostDeployVerifyWorkflow).toContain(
+      'Sag is disabled in the product ApplicationSet; post-deploy verification is not applicable.',
+    )
     expect(sagPostDeployVerifyWorkflow).toContain('kubectl -n sag rollout status deployment/sag')
     expect(sagPostDeployVerifyWorkflow).toContain('desired_replicas=')
     expect(sagPostDeployVerifyWorkflow).toContain(
