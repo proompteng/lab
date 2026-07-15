@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
 data class KafkaClickHouseWriterSnapshot(
   val status: String,
   val ready: Boolean,
+  val caughtUp: Boolean,
   val alive: Boolean,
   val phase: String,
   val assignedPartitions: Int,
@@ -33,7 +34,7 @@ private data class WriterFailure(
 
 class KafkaClickHouseWriterState(
   private val readinessMaxAgeMs: Long,
-  private val readinessMaxPartitionLagRecords: Long = 1_000,
+  private val catchUpMaxPartitionLagRecords: Long = 1_000,
   private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
   private val alive = AtomicBoolean(true)
@@ -105,11 +106,17 @@ class KafkaClickHouseWriterState(
         pollMs > 0 &&
         commitMs > 0 &&
         observedAt - pollMs <= readinessMaxAgeMs &&
-        maxPartitionLag.get() <= readinessMaxPartitionLagRecords &&
         failures.isEmpty()
+    val isCaughtUp = isReady && maxPartitionLag.get() <= catchUpMaxPartitionLagRecords
     return KafkaClickHouseWriterSnapshot(
-      status = if (isReady) "ready" else "not_ready",
+      status =
+        when {
+          !isReady -> "not_ready"
+          !isCaughtUp -> "backfilling"
+          else -> "ready"
+        },
       ready = isReady,
+      caughtUp = isCaughtUp,
       alive = alive.get(),
       phase = phase.get(),
       assignedPartitions = assignedPartitions.get(),

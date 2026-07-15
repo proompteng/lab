@@ -292,8 +292,11 @@ post-shard rate:
 At the observed aggregate BBO rate of roughly 34-40 rows per second across 12 partitions, each partition receives only
 about 2.8-3.3 rows per second. Reusing the direct sink's 30-second age would therefore recreate roughly 85-100-row parts.
 The writer flushes on size during catch-up and on size or age in steady state. Its ClickHouse freshness budget is at
-least 360 seconds so the five-minute age bound does not falsely fail readiness. Size-triggered and age-triggered part
-sizes are measured separately.
+least 360 seconds so the five-minute age bound does not falsely fail readiness. Kubernetes readiness proves that the
+writer is assigned, polling, committing acknowledged ClickHouse writes, fresh, and free of unresolved errors. Initial
+consumer lag is reported separately through the `caughtUp` status field and
+`torghut_hyperliquid_clickhouse_writer_caught_up` metric, so a healthy retained-history replay does not make the
+Deployment or Argo CD falsely degrade. Size-triggered and age-triggered part sizes are measured separately.
 
 The writer first runs against staging tables. Cutover disables direct feed-to-ClickHouse writes while the writer catches
 up from Kafka, so a deployment gap is replayed rather than lost.

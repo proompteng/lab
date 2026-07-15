@@ -135,15 +135,22 @@ class KafkaClickHouseWriterTest {
 
     state.markCommit("partition:a:0")
     assertTrue(state.snapshot().ready)
+    assertTrue(state.snapshot().caughtUp)
+    assertEquals("ready", state.snapshot().status)
 
     state.markConsumerLag(total = 48_000, maximum = 1_000)
     assertTrue(state.snapshot().ready)
+    assertTrue(state.snapshot().caughtUp)
     state.markConsumerLag(total = 1_001, maximum = 1_001)
-    assertFalse(state.snapshot().ready)
+    assertTrue(state.snapshot().ready)
+    assertFalse(state.snapshot().caughtUp)
+    assertEquals("backfilling", state.snapshot().status)
     state.markConsumerLag(total = 0, maximum = 0)
+    assertTrue(state.snapshot().caughtUp)
 
     nowMs += 1_001
     assertFalse(state.snapshot().ready)
+    assertFalse(state.snapshot().caughtUp)
   }
 
   @Test
@@ -162,6 +169,22 @@ class KafkaClickHouseWriterTest {
 
     state.markCommit("partition:a:1")
     assertTrue(state.snapshot().ready)
+  }
+
+  @Test
+  fun `metrics distinguish operational readiness from catch up`() {
+    val registry = SimpleMeterRegistry()
+    val metrics = KafkaClickHouseWriterMetrics(registry)
+    val state = KafkaClickHouseWriterState(readinessMaxAgeMs = 360_000)
+    state.markRunning(1)
+    state.markPoll()
+    state.markCommit("partition:a:0")
+    state.markConsumerLag(total = 2_000, maximum = 2_000)
+
+    metrics.update(state.snapshot())
+
+    assertEquals(1.0, registry.get("torghut_hyperliquid_clickhouse_writer_ready").gauge().value())
+    assertEquals(0.0, registry.get("torghut_hyperliquid_clickhouse_writer_caught_up").gauge().value())
   }
 
   private fun writer(
@@ -220,7 +243,7 @@ class KafkaClickHouseWriterTest {
       consumerCloseTimeoutMs = 10_000,
       maxBufferedRecordsPerPartition = 100,
       readinessMaxAgeMs = 360_000,
-      readinessMaxPartitionLagRecords = 1_000,
+      catchUpMaxPartitionLagRecords = 1_000,
       healthPort = 8080,
       metricsPort = 9090,
       batchPolicies = mapOf(TABLE to KafkaWriterBatchPolicy(batchSize = batchSize, maxAgeMs = 300_000)),

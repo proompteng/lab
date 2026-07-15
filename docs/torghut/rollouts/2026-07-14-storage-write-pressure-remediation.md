@@ -271,7 +271,7 @@ After archive proof:
 
 1. merge the current-head activation PR against `_kafka_staging` tables only;
 2. catch up from the retained Kafka record set with offset-after-ClickHouse-ack semantics;
-3. require writer readiness, bounded lag, and no uncommitted-range duplication;
+3. require writer readiness, `caughtUp=true`, bounded lag, and no uncommitted-range duplication;
 4. run the suspended parity gate at fixed partition high watermarks;
 5. require every retained delete-only offset exactly once and the compacted-topic record-set contract to pass; and
 6. record a cutover boundary before disabling the direct sink.

@@ -28,7 +28,7 @@ internal fun runKafkaClickHouseWriter() {
   val state =
     KafkaClickHouseWriterState(
       readinessMaxAgeMs = config.readinessMaxAgeMs,
-      readinessMaxPartitionLagRecords = config.readinessMaxPartitionLagRecords,
+      catchUpMaxPartitionLagRecords = config.catchUpMaxPartitionLagRecords,
     )
   val metrics = KafkaClickHouseWriterMetrics(Metrics.registry)
   val store = HttpKafkaClickHouseStore(config.clickHouse, HttpClient(CIO), json)
