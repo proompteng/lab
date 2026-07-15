@@ -193,10 +193,11 @@ recoverable.
   cross-scope validation ancestry, descendant order-feed exclusion, and broker outage during emergency reduction.
 - Runtime proof: an infrastructure-validation paper/sandbox lifecycle exercises each mutation, reconciles a single
   causal chain, and remains excluded from every promotion/trial query.
-- Lifecycle shape: preserve the original maximum-$1 known-null submit proof and use one separate maximum-$5 Alpaca
+- Lifecycle shape: preserve the original maximum-$1 known-null submit proof and use one separate maximum-$30 Alpaca
   paper lifecycle: filled limit IOC entry, zero-fill GTC close, replacement with rotated order ID, cancellation,
-  partial broker close, and final flatten. Current broker asset minima and increments are runtime preconditions; cancel
-  never becomes an order-identity parent, and an ambiguous mutation is never retried from the old observation.
+  partial broker close, and final flatten. Both planned reduction legs must remain at least $12 at the entry limit.
+  Current broker asset minima and increments are runtime preconditions; cancel never becomes an order-identity parent,
+  and an ambiguous mutation is never retried from the old observation.
 - Dependency: slices 4-5. Effort: `L`.
 - Rollback: keep submit blocked; preserve the already-fenced reduce-only closeout path and disable replace.
 
