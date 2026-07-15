@@ -470,10 +470,14 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
                 "paper",
             )
 
-            self.assertIsNone(execution)
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            self.assertEqual(execution.client_order_id, retry_client_order_id)
+            self.assertEqual(execution.alpaca_order_id, "order-retry-3")
             self.assertEqual(len(alpaca_client.submitted), 1)
             persisted = session.execute(select(Execution)).scalars().all()
             self.assertEqual(len(persisted), 1)
+            self.assertEqual(persisted[0].id, execution.id)
             self.assertEqual(persisted[0].client_order_id, retry_client_order_id)
             self.assertEqual(persisted[0].alpaca_order_id, "order-retry-3")
 
