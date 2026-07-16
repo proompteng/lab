@@ -130,6 +130,20 @@ const parseIsoMs = (value: string | null | undefined): number | null => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const terminalFailedCondition = (conditions: KubeGatewayCondition[]) => {
+  let selected: KubeGatewayCondition | null = null
+  let selectedAt = Number.MIN_SAFE_INTEGER
+  for (const condition of conditions) {
+    if (condition.type !== 'Failed' || condition.status?.toLowerCase() !== 'true') continue
+    const occurredAt = parseIsoMs(condition.lastTransitionTime)
+    if (selected === null || (occurredAt !== null && occurredAt > selectedAt)) {
+      selected = condition
+      selectedAt = occurredAt ?? selectedAt
+    }
+  }
+  return selected
+}
+
 const isBackoffLimitExceededCondition = (condition: KubeGatewayCondition) => condition.reason === 'BackoffLimitExceeded'
 
 const collectWorkflows = async ({
@@ -163,35 +177,26 @@ const collectWorkflows = async ({
         const active = safeNumber(job.status.active)
         if (active > 0) activeJobRuns += 1
 
-        const failed = safeNumber(job.status.failed)
-        const referenceMs =
-          parseIsoMs(job.status.completionTime) ??
-          parseIsoMs(job.status.startTime) ??
-          parseIsoMs(job.metadata.creationTimestamp)
+        const failedCondition = terminalFailedCondition(job.status.conditions)
+        const referenceMs = failedCondition
+          ? (parseIsoMs(failedCondition.lastTransitionTime) ??
+            parseIsoMs(job.status.completionTime) ??
+            parseIsoMs(job.status.startTime) ??
+            parseIsoMs(job.metadata.creationTimestamp))
+          : null
         const failedInWindow =
-          failed > 0 && referenceMs !== null && referenceMs >= windowStartMs && referenceMs <= nowMs
+          failedCondition !== null && referenceMs !== null && referenceMs >= windowStartMs && referenceMs <= nowMs
 
         if (failedInWindow) {
           recentFailedJobs += 1
         }
 
-        const conditionReasons = new Set<string>()
-        let hasBackoffLimitExceeded = false
-        for (const condition of job.status.conditions) {
-          const reason = condition.reason?.trim()
-          const eventMs = parseIsoMs(condition.lastTransitionTime) ?? referenceMs
-          if (!reason || eventMs === null || eventMs < windowStartMs || eventMs > nowMs) continue
-          conditionReasons.add(reason)
-          if (isBackoffLimitExceededCondition(condition)) {
-            hasBackoffLimitExceeded = true
-          }
-        }
-
         if (failedInWindow) {
-          for (const reason of conditionReasons) {
+          const reason = failedCondition.reason?.trim()
+          if (reason) {
             reasonsMap.set(reason, (reasonsMap.get(reason) ?? 0) + 1)
           }
-          if (hasBackoffLimitExceeded) {
+          if (isBackoffLimitExceededCondition(failedCondition)) {
             backoffLimitExceededJobs += 1
           }
         }

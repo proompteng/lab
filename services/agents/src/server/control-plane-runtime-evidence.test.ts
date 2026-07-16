@@ -129,6 +129,42 @@ describe('control-plane runtime evidence', () => {
     })
   })
 
+  it('does not count failed pods on an active retrying Job as a terminal workflow failure', async () => {
+    const listJobs = vi.fn(async () => [
+      job({
+        status: {
+          active: 1,
+          failed: 1,
+          startTime: '2026-05-20T11:55:00.000Z',
+          completionTime: null,
+          conditions: [
+            {
+              type: 'FailureTarget',
+              status: 'True',
+              reason: 'FailedCreate',
+              lastTransitionTime: '2026-05-20T11:56:00.000Z',
+            },
+          ],
+        },
+      }),
+    ])
+    const service = createControlPlaneRuntimeEvidenceService({
+      kubeGateway: {
+        listJobs,
+        listDeployments: vi.fn(async () => [deployment('agents'), deployment('agents-controllers')]),
+      },
+    })
+
+    const result = await Effect.runPromise(service.collect({ namespace: 'agents', now }))
+
+    expect(result.workflows).toMatchObject({
+      active_job_runs: 1,
+      recent_failed_jobs: 0,
+      backoff_limit_exceeded_jobs: 0,
+      top_failure_reasons: [],
+    })
+  })
+
   it('downgrades workflow confidence when a namespace collection fails', async () => {
     const service = createControlPlaneRuntimeEvidenceService({
       env: { AGENTS_WORKFLOW_RELIABILITY_NAMESPACES: 'agents,agents-ci' },
