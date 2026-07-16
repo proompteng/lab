@@ -29,14 +29,13 @@ _DIVIDEND_ACTIVITY_TYPES = frozenset(
         "DIV",
         "DIVCGL",
         "DIVCGS",
-        "DIVFT",
-        "DIVNRA",
-        "DIVTW",
         "DIVTXEX",
     }
 )
-_INTEREST_ACTIVITY_TYPES = frozenset({"INT", "INTNRA", "INTTW"})
+_INTEREST_ACTIVITY_TYPES = frozenset({"INT"})
+_WITHHOLDING_ACTIVITY_TYPES = frozenset({"DIVFT", "DIVNRA", "DIVTW", "INTNRA", "INTTW"})
 _CASH_FEE_ACTIVITY_TYPES = frozenset({"DIVFEE", "FEE", "PTC"})
+_CASH_EXPENSE_ACTIVITY_TYPES = _CASH_FEE_ACTIVITY_TYPES | _WITHHOLDING_ACTIVITY_TYPES
 
 
 @dataclass(slots=True)
@@ -96,7 +95,7 @@ class _StateReducer:
             or activity_type in _EXTERNAL_FLOW_TYPES
             or activity_type in _DIVIDEND_ACTIVITY_TYPES
             or activity_type in _INTEREST_ACTIVITY_TYPES
-            or activity_type in _CASH_FEE_ACTIVITY_TYPES
+            or activity_type in _CASH_EXPENSE_ACTIVITY_TYPES
             or (
                 activity_type == "JNL"
                 and activity.symbol is None
@@ -133,7 +132,7 @@ class _StateReducer:
                 self.interest + amount,
                 field_name="interest",
             )
-        elif activity_type in _CASH_FEE_ACTIVITY_TYPES:
+        elif activity_type in _CASH_EXPENSE_ACTIVITY_TYPES:
             amount = _required_amount(activity, "fee")
             self._add_cash(activity, amount)
             self.fees = quantize_ledger_decimal(

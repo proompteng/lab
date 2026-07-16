@@ -32,14 +32,13 @@ _DIVIDEND_TYPES = frozenset(
         "DIV",
         "DIVCGL",
         "DIVCGS",
-        "DIVFT",
-        "DIVNRA",
-        "DIVTW",
         "DIVTXEX",
     }
 )
-_INTEREST_TYPES = frozenset({"INT", "INTNRA", "INTTW"})
+_INTEREST_TYPES = frozenset({"INT"})
+_WITHHOLDING_TYPES = frozenset({"DIVFT", "DIVNRA", "DIVTW", "INTNRA", "INTTW"})
 _FEE_TYPES = frozenset({"DIVFEE", "FEE", "PTC"})
+_CASH_EXPENSE_TYPES = _FEE_TYPES | _WITHHOLDING_TYPES
 _REGULATORY_FEE_SUBTYPES = frozenset({"CAT", "OCC", "ORF", "REG", "TAF"})
 
 
@@ -123,7 +122,7 @@ class _JournalWriter:
                 account="income:interest",
                 rule="interest",
             )
-        elif activity_type in _FEE_TYPES:
+        elif activity_type in _CASH_EXPENSE_TYPES:
             transaction = self._cash_fee(activity)
         else:
             self.unsupported.add(activity.external_activity_id)
@@ -221,7 +220,9 @@ class _JournalWriter:
         if amount == ZERO:
             return None
         subtype = activity.activity_subtype or ""
-        if activity.activity_type == "DIVFEE":
+        if activity.activity_type == "DIVFEE" or (
+            activity.activity_type in _WITHHOLDING_TYPES
+        ):
             account = "expense:withholding"
         elif subtype.upper() in _REGULATORY_FEE_SUBTYPES:
             account = "expense:regulatory_fee"

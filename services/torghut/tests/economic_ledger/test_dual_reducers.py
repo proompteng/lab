@@ -257,6 +257,33 @@ def test_occ_and_dividend_withholding_use_distinct_expense_accounts() -> None:
     assert result.journal.projection.fees == Decimal("0.53")
 
 
+@pytest.mark.parametrize(
+    "activity_type",
+    ("DIVFT", "DIVNRA", "DIVTW", "INTNRA", "INTTW"),
+)
+def test_tax_withholding_is_expense_not_negative_income(
+    activity_type: str,
+) -> None:
+    result = reduce_and_compare(
+        [activity("withholding", activity_type, net_amount="-1.25")]
+    )
+
+    assert result.comparison.equivalent
+    assert cash(result.journal.projection) == Decimal("-1.25")
+    assert result.journal.projection.fees == Decimal("1.25")
+    assert result.journal.projection.dividends == Decimal("0")
+    assert result.journal.projection.interest == Decimal("0")
+    assert result.independent.fees == Decimal("1.25")
+    assert result.independent.dividends == Decimal("0")
+    assert result.independent.interest == Decimal("0")
+    assert {
+        line.account
+        for transaction in result.journal.transactions
+        for line in transaction.lines
+        if line.account.startswith("expense:")
+    } == {"expense:withholding"}
+
+
 def test_crypto_asset_fee_reduces_units_and_records_after_cost_economics() -> None:
     result = reduce_and_compare(
         [

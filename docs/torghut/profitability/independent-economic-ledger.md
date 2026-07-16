@@ -136,7 +136,9 @@ equity. A flat round trip must converge exactly regardless of lot-display method
 
 - positive `CSD`, `JNLC`, `JNL`, or cash-transfer net amount debits cash and credits external flow;
 - negative cash flow reverses those legs;
-- USD `FEE`, `DIVFEE`, pass-through charge, and withholding debits the matching expense and credits cash;
+- USD `FEE`, `DIVFEE`, pass-through charge, and withholding debits the matching expense and credits cash. Alpaca
+  `DIVFT`, `DIVNRA`, `DIVTW`, `INTNRA`, and `INTTW` rows are withholding expenses, never negative dividend or interest
+  income;
 - positive dividend or interest net amount debits cash and credits income; negative adjustments reverse the original
   economic category;
 - `CFEE` with nonzero `net_amount` posts as a cash fee;
