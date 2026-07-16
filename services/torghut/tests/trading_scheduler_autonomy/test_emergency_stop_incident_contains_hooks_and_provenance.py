@@ -460,6 +460,13 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
             pipeline.order_feed_ingestor.default_account_label,
             "paper-x",
         )
+        self.assertTrue(
+            pipeline.order_feed_ingestor.immutable_broker_source_enabled,
+        )
+        self.assertEqual(
+            pipeline.order_feed_ingestor.broker_environment,
+            "paper",
+        )
         self.assertEqual(
             pipeline.broker_account_activity_ingestor.account_label,
             "paper-x",

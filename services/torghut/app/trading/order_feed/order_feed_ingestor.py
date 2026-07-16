@@ -79,6 +79,17 @@ class OrderFeedIngestor:
     def default_account_label(self) -> str:
         return self._default_account_label
 
+    @property
+    def immutable_broker_source_enabled(self) -> bool:
+        return (
+            self._broker_environment is not None
+            and self._broker_endpoint_fingerprint is not None
+        )
+
+    @property
+    def broker_environment(self) -> str | None:
+        return self._broker_environment
+
     def ingest_once(self, session: Session) -> dict[str, int]:
         counters = self._new_counters()
         if not self._preconditions_met():
