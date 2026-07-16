@@ -12,6 +12,7 @@ from app.trading.economic_ledger import (
     EconomicLedgerSourceContradiction,
     LedgerLine,
     LedgerTransaction,
+    PositionBalance,
     prepare_activities,
     reduce_and_compare,
     reduce_balanced_journal,
@@ -118,6 +119,18 @@ def test_fill_notional_below_ledger_quantum_is_rejected_by_both_reducers() -> No
             match="economic_fill_notional_below_ledger_quantum",
         ):
             reducer([tiny_fill])
+
+
+def test_nonzero_position_cannot_have_zero_carrying_cost() -> None:
+    with pytest.raises(
+        EconomicLedgerError,
+        match="economic_position_nonzero_quantity_zero_cost",
+    ):
+        PositionBalance(
+            symbol="AAPL",
+            quantity=Decimal("0.000000000000000001"),
+            signed_cost=Decimal("0"),
+        )
 
 
 def test_side_flip_cannot_open_nonzero_units_with_zero_cost() -> None:

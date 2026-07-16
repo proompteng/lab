@@ -337,6 +337,8 @@ class PositionBalance:
         )
         if self.quantity == ZERO and self.signed_cost != ZERO:
             raise EconomicLedgerError("economic_position_flat_cost_nonzero")
+        if self.quantity != ZERO and self.signed_cost == ZERO:
+            raise EconomicLedgerError("economic_position_nonzero_quantity_zero_cost")
         if self.quantity * self.signed_cost < ZERO:
             raise EconomicLedgerError("economic_position_cost_sign_mismatch")
 
