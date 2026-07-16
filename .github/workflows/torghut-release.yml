@@ -318,6 +318,7 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml \
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/generated-resource-retention-cronjob.yaml \
+            argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml \
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml \
@@ -357,6 +358,7 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/generated-resource-retention-cronjob.yaml
+            argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
@@ -400,6 +402,7 @@ jobs:
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/generated-resource-retention-cronjob.yaml
+            argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml

@@ -53,6 +53,7 @@ describe('torghut-deploy-automerge workflow', () => {
   test('allowlists every Torghut maintenance manifest promoted by torghut-release', () => {
     const promotedMaintenanceManifests = [
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
+      'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
       'argocd/applications/torghut/tigerbeetle-smoke-job.yaml',
     ]
 

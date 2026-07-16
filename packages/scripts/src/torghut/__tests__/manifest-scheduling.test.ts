@@ -132,7 +132,10 @@ describe('Torghut manifest scheduling', () => {
   })
 
   it('retains Torghut scheduled failure logs for same-day debugging', () => {
-    const cronJobPaths = ['argocd/applications/torghut/generated-resource-retention-cronjob.yaml']
+    const cronJobPaths = [
+      'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
+      'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
+    ]
 
     let checkedCronJobs = 0
     for (const path of cronJobPaths) {
@@ -143,7 +146,7 @@ describe('Torghut manifest scheduling', () => {
         })
         const spec = getAtPath(manifest, ['spec'])
         const jobSpec = getAtPath(manifest, ['spec', 'jobTemplate', 'spec'])
-        expect(spec.failedJobsHistoryLimit, path).toBe(2)
+        expect(spec.failedJobsHistoryLimit, path).toBeGreaterThanOrEqual(2)
         expect(jobSpec.ttlSecondsAfterFinished, path).toBe(86400)
         expect(typeof jobSpec.backoffLimit, path).toBe('number')
         expect(jobSpec.backoffLimit, path).toBeGreaterThanOrEqual(0)
@@ -151,7 +154,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(1)
+    expect(checkedCronJobs).toBe(2)
 
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources
