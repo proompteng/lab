@@ -225,6 +225,8 @@ def _create_cursor_table() -> None:
         ],
         unique=True,
     )
+
+
 def _create_activity_guard() -> None:
     op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
     op.execute(
