@@ -238,9 +238,9 @@ def _mutation_authority_reasons(
 ) -> tuple[str, ...]:
     if not _valid_mutation_status(status):
         return ("broker_mutation_status_contract_invalid",)
+    if status.get("database_status") != "current":
+        return ("broker_mutation_database_status_not_current",)
     if required_field == "entry_fencing_proven":
-        if status.get("database_status") != "current":
-            return ("broker_mutation_database_status_not_current",)
         unresolved_count = status.get("unresolved_receipt_count")
         if (
             not isinstance(unresolved_count, int)

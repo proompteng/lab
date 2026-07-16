@@ -216,12 +216,12 @@ def test_recovery_routes_have_no_broker_mutation_calls() -> None:
     }
 
 
-def test_runtime_status_claims_only_the_entry_capability_now_wired() -> None:
+def test_runtime_status_claims_entry_and_reduction_capabilities() -> None:
     status = build_broker_mutation_runtime_status()
 
     assert status["runtime_wired"] is True
     assert status["entry_fencing_proven"] is True
-    assert status["reduction_fencing_proven"] is False
+    assert status["reduction_fencing_proven"] is True
     assert status["recovery_worker_wired"] is True
     assert status["recovery_worker_enabled"] is True
     assert status["recovery_degraded"] is False
