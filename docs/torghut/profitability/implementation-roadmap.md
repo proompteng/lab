@@ -225,6 +225,8 @@ Detailed design: [Broker Economic Source Ingestion](broker-economic-source-inges
 **Invariant:** profitability is reconstructed from broker economic events by a reducer independent of trading decisions
 and the existing runtime ledger.
 
+Detailed design: [Independent Broker-Economic Ledger](independent-economic-ledger.md).
+
 - Deliverable: deterministic double-entry projections for positions, cash, equity, realized/unrealized P&L, fees,
   dividends, corrections, and corporate actions; retain both canonical and independent reducers.
 - Primary surfaces: new isolated ledger package, CNPG migrations/views, reconciliation API, and deterministic replay CLI.
