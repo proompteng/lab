@@ -43,6 +43,9 @@ account data:
 - the latest 100 fills contained both equities and crypto, buys and sells, and no broker-provided `net_amount`.
 - the full REST history contained 31 historical equity fills with `side=sell_short`, despite the current Alpaca
   activity documentation describing only `buy` and `sell`.
+- all 309,552 broker cash snapshots retained at audit time were cent-denominated. Time-aligned crypto round trips showed
+  that each broker cash movement equaled the sum of per-fill USD amounts rounded to cents plus separately accrued fees,
+  while a contemporaneous open position retained sub-cent `quantity * average_entry_price` cost basis.
 
 Therefore a credible projection must calculate fill notionals, account for order-independent regulatory fees, handle
 crypto fees charged in the received asset, and retain external cash journals. A fill-only realized-PnL counter is not
@@ -91,6 +94,12 @@ fractional digits or at least 20 integer digits fail closed instead of being sil
 an 80-digit local decimal context and persist every derived notional, released cost, carrying value, fee, and realized
 amount at 18 fractional digits using decimal `ROUND_HALF_UP`, matching Torghut's existing TigerBeetle conversion rule.
 
+Derived USD fill cash is the one narrower boundary: Alpaca books it at the currency quantum, so each fill is rounded
+with decimal `ROUND_HALF_UP` to `$0.01` after quantity, price, and any option multiplier are applied. The exact
+18-decimal notional remains the position-cost and realized-PnL input. Their difference is an explicit signed
+`cash_rounding` expense rather than hidden in cost basis or labeled as trading PnL. Unsupported quote currencies fail
+closed until their broker precision is established from authoritative evidence.
+
 Weighted-average partial closes round the released cost once. The retained position receives the exact residual carrying
 cost; a full close releases the complete remaining carrying cost without division. Realized PnL is the exact balancing
 residual of fixed-point cash and carrying-cost deltas. This keeps every commodity transaction exactly balanced and makes
@@ -109,6 +118,7 @@ USD accounts:
 - `asset:position_cost:<symbol>` for long inventory or a credit balance for short inventory;
 - `equity:external_flow` for deposits, withdrawals, and cash journals;
 - `income:realized_pnl`;
+- `expense:cash_rounding` for the signed difference between exact fill notional and broker-booked USD cash;
 - `income:dividend` and `income:interest`;
 - `expense:broker_fee`, `expense:regulatory_fee`, and `expense:withholding`;
 - `equity:corporate_action` only for an explicitly broker-reported cash or basis adjustment.
@@ -127,7 +137,8 @@ a derived mark, not historical cost and not a source mutation.
 ### Fills
 
 For each `FILL`, quantity and price must be positive, and side must be `buy`, `sell`, or the empirically observed
-historical `sell_short` alias. USD notional is `quantity * price * multiplier` with no binary floating point. The
+historical `sell_short` alias. Exact USD notional is `quantity * price * multiplier` with no binary floating point;
+the cash leg is then rounded once to the observed USD cent quantum, while cost basis retains exact notional. The
 OCC symbol shape identifies option activities, but it does not determine their multiplier. The exact contract size is
 copied under a share lock from Torghut's persisted Alpaca contract catalog and bound into every affected immutable input
 manifest; missing catalog metadata or a size change between dry run and publication fails closed. Alpaca exposes this
@@ -199,6 +210,7 @@ Each reducer emits the same immutable result shape:
 - cash by currency;
 - signed quantity, signed cost, and average cost by symbol;
 - realized PnL, fees, dividends, interest, external flows, and other supported adjustments;
+- signed cash rounding, separate from realized trading PnL and broker-reported fees;
 - optional marks, market value, unrealized PnL, and equity;
 - unsupported, corrected, duplicate, and contradiction counts;
 - deterministic transaction/result digests.
@@ -308,6 +320,7 @@ the audit path into an uncontrolled evidence writer.
 
 - balanced entries for every commodity and every supported activity;
 - partial fills, long and short reductions, side flips, and full round trips;
+- broker-cent cash rounding with exact sub-cent position cost, half-cent boundaries, and fractional randomized fills;
 - USD fees, regulatory fees, crypto asset fees, deposits, withdrawals, journals, dividends, and interest;
 - splits, symbol changes, corrections, correction chains, missing predecessors, and cycles;
 - duplicate-identical and duplicate-contradictory source identities;

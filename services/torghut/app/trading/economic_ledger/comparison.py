@@ -127,6 +127,7 @@ def compare_projections(
 
     for field_name in (
         "realized_pnl",
+        "cash_rounding",
         "fees",
         "dividends",
         "interest",
