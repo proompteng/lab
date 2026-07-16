@@ -207,7 +207,6 @@ def normalize_order_feed_record(
         "feed_seq": feed_seq,
         "qty": str(qty) if qty is not None else None,
         "filled_qty": str(filled_qty) if filled_qty is not None else None,
-        "position_qty": str(position_qty) if position_qty is not None else None,
         "avg_fill_price": str(avg_fill_price) if avg_fill_price is not None else None,
     }
     fingerprint = hashlib.sha256(

@@ -97,6 +97,20 @@ class TestOrderFeedCore(OrderFeedTestCase):
             )
             assert normalized.event is not None
             self.assertEqual(normalized.event.position_qty, Decimal("0.00003"))
+            replay_without_position = normalize_order_feed_record(
+                FakeRecord(
+                    value=payload.replace(b'"position_qty":"0.00003",', b""),
+                    offset=56,
+                ),
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert replay_without_position.event is not None
+            self.assertIsNone(replay_without_position.event.position_qty)
+            self.assertEqual(
+                normalized.event.event_fingerprint,
+                replay_without_position.event.event_fingerprint,
+            )
 
             persisted, is_duplicate = persist_order_event(session, normalized.event)
             session.commit()
