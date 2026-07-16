@@ -36,7 +36,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: reconcile
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:e2e4a369f003fdbbb9229614db3f94f96bdb19f9bfc65832f29f74e01e20fff8
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:3c79cbdc62c232dde8c7340255967fb369ccdcb843afae128c5008ad278f1ada
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
@@ -82,11 +82,11 @@ spec:
                 - name: TRADING_ACCOUNT_LABEL
                   value: PA3SX7FYNUTF
                 - name: TORGHUT_VERSION
-                  value: v0.596.0-2140-g63b1d0f31
+                  value: v0.596.0-2142-gf03c35d4f
                 - name: TORGHUT_COMMIT
-                  value: 63b1d0f31b0c19614a810d73078d96afb8ff8a3e
+                  value: f03c35d4fba507bc9d1f30eafc6da714c305bf6b
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:e2e4a369f003fdbbb9229614db3f94f96bdb19f9bfc65832f29f74e01e20fff8
+                  value: sha256:3c79cbdc62c232dde8c7340255967fb369ccdcb843afae128c5008ad278f1ada
                 - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
                   value: linux/amd64,linux/arm64
                 - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
