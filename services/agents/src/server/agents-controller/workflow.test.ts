@@ -55,7 +55,24 @@ describe('agents controller workflow module', () => {
         timeoutSeconds: 11,
         loop: null,
       },
+      {
+        name: '',
+        implementationSpecRefName: 'missing-name',
+        implementationInline: null,
+        parameters: {},
+        workload: null,
+        retries: 0,
+        retryBackoffSeconds: 0,
+        timeoutSeconds: 0,
+        loop: null,
+      },
     ])
+
+    expect(validateWorkflowSteps(parsed)).toEqual({
+      ok: false,
+      reason: 'WorkflowStepMissingName',
+      message: 'workflow steps must include a name',
+    })
   })
 
   it('validates run parameters bounds and types', () => {
