@@ -410,6 +410,82 @@ const resolveComponent = () => {
   return 'control plane'
 }
 
+export const streamAgentRunLogs = async (call: ServerWritableStream<LogsRequest, unknown>, kube: KubernetesClient) => {
+  const authError = requireAuth(call)
+  if (authError) {
+    call.destroy(Object.assign(new Error(authError.message), { code: authError.code }))
+    return
+  }
+
+  try {
+    const namespace = normalizeNamespace(call.request?.namespace)
+    const name = call.request?.name ?? ''
+    const resource = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
+    if (!resource) {
+      call.destroy(Object.assign(new Error('AgentRun not found'), { code: GrpcStatus.NOT_FOUND }))
+      return
+    }
+    const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
+    const pod = await selectAgentRunPod(kube, name, namespace, runtimeType, runtimeName)
+    if (!pod) {
+      call.end()
+      return
+    }
+    if (!call.request?.follow) {
+      const logs = await kube.logs({
+        pod: pod.podName,
+        namespace,
+        container: pod.containerName,
+      })
+      if (logs.length > 0) {
+        call.write({ stream: 'stdout', message: logs })
+      }
+      call.end()
+      return
+    }
+
+    const stream = new PassThrough()
+    stream.on('data', (chunk) => {
+      call.write({
+        stream: 'stdout',
+        message: Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk),
+      })
+    })
+    stream.on('end', () => {
+      call.end()
+    })
+    stream.on('error', (error) => {
+      call.destroy(Object.assign(new Error(error.message), { code: GrpcStatus.INTERNAL }))
+    })
+    void getGrpcLogHelper()
+      .log(namespace, pod.podName, pod.containerName ?? '', stream, {
+        follow: true,
+        pretty: false,
+        timestamps: false,
+      })
+      .catch((error) => {
+        call.destroy(
+          Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+            code: GrpcStatus.INTERNAL,
+          }),
+        )
+      })
+
+    call.on('cancelled', () => {
+      stream.destroy()
+    })
+    call.on('close', () => {
+      stream.destroy()
+    })
+  } catch (error) {
+    call.destroy(
+      Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+        code: GrpcStatus.INTERNAL,
+      }),
+    )
+  }
+}
+
 export const startAgentctlGrpcServer = (): AgentctlServer | null => {
   const component = resolveComponent()
   const config = resolveAgentctlGrpcConfig()
@@ -986,72 +1062,7 @@ export const startAgentctlGrpcServer = (): AgentctlServer | null => {
       }
     },
 
-    StreamAgentRunLogs: async (call: ServerWritableStream<LogsRequest, unknown>) => {
-      const authError = requireAuth(call)
-      if (authError) {
-        call.destroy(Object.assign(new Error(authError.message), { code: authError.code }))
-        return
-      }
-      const namespace = normalizeNamespace(call.request?.namespace)
-      const name = call.request?.name ?? ''
-      const resource = await kube.get(RESOURCE_MAP.AgentRun, name, namespace)
-      if (!resource) {
-        call.destroy(Object.assign(new Error('AgentRun not found'), { code: GrpcStatus.NOT_FOUND }))
-        return
-      }
-      const { runtimeType, runtimeName } = resolveAgentRunRuntime(resource)
-      const pod = await selectAgentRunPod(kube, name, namespace, runtimeType, runtimeName)
-      if (!pod) {
-        call.end()
-        return
-      }
-      if (!call.request?.follow) {
-        const logs = await kube.logs({
-          pod: pod.podName,
-          namespace,
-          container: pod.containerName,
-        })
-        if (logs.length > 0) {
-          call.write({ stream: 'stdout', message: logs })
-        }
-        call.end()
-        return
-      }
-
-      const stream = new PassThrough()
-      stream.on('data', (chunk) => {
-        call.write({
-          stream: 'stdout',
-          message: Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk),
-        })
-      })
-      stream.on('end', () => {
-        call.end()
-      })
-      stream.on('error', (error) => {
-        call.destroy(Object.assign(new Error(error.message), { code: GrpcStatus.INTERNAL }))
-      })
-      void getGrpcLogHelper()
-        .log(namespace, pod.podName, pod.containerName ?? '', stream, {
-          follow: true,
-          pretty: false,
-          timestamps: false,
-        })
-        .catch((error) => {
-          call.destroy(
-            Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
-              code: GrpcStatus.INTERNAL,
-            }),
-          )
-        })
-
-      call.on('cancelled', () => {
-        stream.destroy()
-      })
-      call.on('close', () => {
-        stream.destroy()
-      })
-    },
+    StreamAgentRunLogs: (call: ServerWritableStream<LogsRequest, unknown>) => streamAgentRunLogs(call, kube),
 
     StreamAgentRunStatus: async (call: ServerWritableStream<StatusStreamRequest, unknown>) => {
       const authError = requireAuth(call)
