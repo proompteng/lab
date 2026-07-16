@@ -12,6 +12,9 @@ type GoldQuery = {
   query: string
   expectedPaths: string[]
   expectedFirst?: boolean
+  pathPrefix?: string
+  language?: string
+  minimumResults?: number
 }
 
 type GoldSet = {
@@ -68,7 +71,11 @@ type CodeSearchResponse = {
   error?: string
   message?: string
   items?: CodeSearchItem[]
-  indexHealth?: { status?: string; indexedCommit?: string }
+  indexHealth?: {
+    status?: string
+    indexedCommit?: string
+    filters?: { pathPrefix?: string | null; language?: string | null }
+  }
 }
 
 const DEFAULT_GOLD_SET = resolve(defaultRepoRoot, 'docs/atlas/query-gold-set.json')
@@ -269,12 +276,17 @@ const percentile = (values: number[], quantile: number) => {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)] ?? 0
 }
 
-const search = async (baseUrl: string, repository: string, ref: string, query: string) => {
+type SearchInput = string | Pick<GoldQuery, 'query' | 'pathPrefix' | 'language'>
+
+const search = async (baseUrl: string, repository: string, ref: string, input: SearchInput) => {
+  const query = typeof input === 'string' ? input : input.query
+  const pathPrefix = typeof input === 'string' ? undefined : input.pathPrefix
+  const language = typeof input === 'string' ? undefined : input.language
   const startedAt = performance.now()
   const response = await fetch(`${baseUrl}/api/code-search`, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ query, repository, ref, limit: 10 }),
+    body: JSON.stringify({ query, repository, ref, limit: 10, pathPrefix, language }),
   })
   const payload = (await response.json()) as CodeSearchResponse
   if (!response.ok || payload.ok === false) {
@@ -293,7 +305,10 @@ const runWithConcurrency = async <T, R>(items: T[], concurrency: number, task: (
 
 const buildColdPerformanceQueries = (queries: GoldQuery[], runs: number, nonce: string = randomUUID()) =>
   Array.from({ length: runs }, (_, run) =>
-    queries.map((fixture, index) => `${fixture.query}\nAtlas latency probe ${nonce}-${run}-${index}`),
+    queries.map((fixture, index) => ({
+      ...fixture,
+      query: `${fixture.query}\nAtlas latency probe ${nonce}-${run}-${index}`,
+    })),
   ).flat()
 
 const absentPathSearchError = (path: string, paths: string[]) =>
@@ -618,7 +633,11 @@ const main = async () => {
 
     const returnedPaths = new Set<string>()
     const retrievalModes = new Set(['exact', 'lexical', 'semantic', 'hybrid'])
-    const validateSearchPayload = (query: string, payload: CodeSearchResponse) => {
+    const validateSearchPayload = (
+      query: string,
+      payload: CodeSearchResponse,
+      expectedFilters: Pick<GoldQuery, 'pathPrefix' | 'language'> = {},
+    ) => {
       if (payload.ok !== true) errors.push(`search response omitted ok=true for ${query}`)
       const items = payload.items ?? []
       const paths: string[] = []
@@ -654,17 +673,28 @@ const main = async () => {
       if (payload.indexHealth?.status !== 'ok' || payload.indexHealth.indexedCommit !== gitHead) {
         errors.push(`search health disagreed with Git for ${query}`)
       }
+      if (
+        payload.indexHealth?.filters?.pathPrefix !== (expectedFilters.pathPrefix ?? null) ||
+        payload.indexHealth?.filters?.language !== (expectedFilters.language ?? null)
+      ) {
+        errors.push(`search health filters disagreed with request for ${query}`)
+      }
       return paths
     }
 
     const goldResults: Array<{ query: string; paths: string[]; durationMs: number }> = []
     for (const fixture of gold.queries) {
-      const result = await search(options.baseUrl, options.repository, options.ref, fixture.query)
-      const paths = validateSearchPayload(fixture.query, result.payload)
+      const result = await search(options.baseUrl, options.repository, options.ref, fixture)
+      const paths = validateSearchPayload(fixture.query, result.payload, fixture)
       const matchingPath = fixture.expectedPaths.find((path) => paths.includes(path))
       if (!matchingPath) errors.push(`gold query missed top ten: ${fixture.query}`)
       if (fixture.expectedFirst && !fixture.expectedPaths.includes(paths[0] ?? '')) {
         errors.push(`exact gold query did not rank expected path first: ${fixture.query}`)
+      }
+      if (fixture.minimumResults !== undefined && paths.length < fixture.minimumResults) {
+        errors.push(
+          `gold query returned ${paths.length} results, expected at least ${fixture.minimumResults}: ${fixture.query}`,
+        )
       }
       goldResults.push({ query: fixture.query, paths, durationMs: result.durationMs })
     }
