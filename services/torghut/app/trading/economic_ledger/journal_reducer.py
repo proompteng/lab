@@ -103,26 +103,11 @@ class _JournalWriter:
     def _apply(self, activity: EconomicActivity) -> LedgerTransaction | None:
         activity_type = activity.activity_type
         if activity_type == "FILL":
-            if activity.net_amount not in {None, ZERO}:
-                self.unsupported.add(activity.external_activity_id)
-                transaction = None
-            else:
-                transaction = self._fill(activity)
+            transaction = self._apply_fill(activity)
         elif activity_type == "CFEE":
-            if activity.net_amount in {None, ZERO} and activity.quantity in {
-                None,
-                ZERO,
-            }:
-                self.unsupported.add(activity.external_activity_id)
-                transaction = None
-            else:
-                transaction = self._crypto_fee(activity)
+            transaction = self._apply_crypto_fee(activity)
         elif activity_type == "SSP":
-            if activity.net_amount not in {None, ZERO}:
-                self.unsupported.add(activity.external_activity_id)
-                transaction = None
-            else:
-                transaction = self._split(activity)
+            transaction = self._apply_split(activity)
         elif activity_type in _CASH_TYPES or (
             activity_type == "JNL"
             and activity.symbol is None
@@ -147,6 +132,27 @@ class _JournalWriter:
             self.unsupported.add(activity.external_activity_id)
             transaction = None
         return transaction
+
+    def _apply_fill(self, activity: EconomicActivity) -> LedgerTransaction | None:
+        if activity.net_amount not in {None, ZERO}:
+            self.unsupported.add(activity.external_activity_id)
+            return None
+        return self._fill(activity)
+
+    def _apply_crypto_fee(
+        self,
+        activity: EconomicActivity,
+    ) -> LedgerTransaction | None:
+        if activity.net_amount in {None, ZERO} and activity.quantity in {None, ZERO}:
+            self.unsupported.add(activity.external_activity_id)
+            return None
+        return self._crypto_fee(activity)
+
+    def _apply_split(self, activity: EconomicActivity) -> LedgerTransaction | None:
+        if activity.net_amount not in {None, ZERO}:
+            self.unsupported.add(activity.external_activity_id)
+            return None
+        return self._split(activity)
 
     def _fill(self, activity: EconomicActivity) -> LedgerTransaction:
         symbol = _required_symbol(activity)
