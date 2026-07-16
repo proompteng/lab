@@ -238,24 +238,29 @@ def test_cash_fees_dividends_interest_and_withdrawal_remain_separate() -> None:
     assert result.journal.projection.external_flows == Decimal("900")
 
 
-def test_occ_and_dividend_withholding_use_distinct_expense_accounts() -> None:
+def test_regulatory_dividend_and_withholding_fees_use_distinct_accounts() -> None:
     result = reduce_and_compare(
         [
             activity("deposit", "JNLC", net_amount="10"),
             activity("occ-fee", "FEE", subtype="OCC", net_amount="-0.03"),
-            activity("withholding", "DIVFEE", net_amount="-0.50"),
+            activity("dividend-fee", "DIVFEE", net_amount="-0.50"),
+            activity("withholding", "DIVFT", net_amount="-0.25"),
         ]
     )
 
-    expense_accounts = {
-        line.account
+    expense_accounts_by_activity = {
+        transaction.source_activity_id: line.account
         for transaction in result.journal.transactions
         for line in transaction.lines
         if line.account.startswith("expense:")
     }
-    assert expense_accounts == {"expense:regulatory_fee", "expense:withholding"}
+    assert expense_accounts_by_activity == {
+        "dividend-fee": "expense:broker_fee",
+        "occ-fee": "expense:regulatory_fee",
+        "withholding": "expense:withholding",
+    }
     assert result.comparison.equivalent
-    assert result.journal.projection.fees == Decimal("0.53")
+    assert result.journal.projection.fees == Decimal("0.78")
 
 
 @pytest.mark.parametrize(

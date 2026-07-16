@@ -247,9 +247,7 @@ class _JournalWriter:
         if amount == ZERO:
             return None
         subtype = activity.activity_subtype or ""
-        if activity.activity_type == "DIVFEE" or (
-            activity.activity_type in _WITHHOLDING_TYPES
-        ):
+        if activity.activity_type in _WITHHOLDING_TYPES:
             account = "expense:withholding"
         elif subtype.upper() in _REGULATORY_FEE_SUBTYPES:
             account = "expense:regulatory_fee"
