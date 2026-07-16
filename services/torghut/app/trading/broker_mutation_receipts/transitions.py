@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import cast
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -48,7 +51,9 @@ from .validation import (
     BrokerMutationReceiptConflictError,
     BrokerMutationReceiptFenceError,
     BrokerMutationReceiptValidationError,
+    as_uuid,
     bounded_seconds,
+    positive_integer,
     required_text,
 )
 
@@ -297,6 +302,154 @@ def settle_broker_mutation_primary(
     )
 
 
+def settle_broker_mutation_operator_confirmation(
+    session: Session,
+    *,
+    receipt_id: uuid.UUID | str,
+    writer_generation: int,
+    settlement: BrokerMutationSettlement,
+) -> BrokerMutationReceiptSnapshot:
+    """Append one explicit operator terminal for an eligible validation receipt."""
+
+    try:
+        normalized_receipt_id = as_uuid(receipt_id, field="receipt_id")
+        normalized_writer_generation = positive_integer(
+            writer_generation,
+            field="writer_generation",
+        )
+        normalized_terminal = normalized_settlement(
+            settlement,
+            expected_source="operator_confirmation",
+        )
+        if normalized_terminal.outcome != "validation_quarantine_closed":
+            raise BrokerMutationReceiptValidationError(
+                "operator_confirmation_outcome_invalid"
+            )
+        current = lock_current_receipt(session, normalized_receipt_id)
+        if current is None:
+            raise BrokerMutationReceiptFenceError(
+                f"broker_mutation_receipt_not_found:{normalized_receipt_id}"
+            )
+        require_unlinked_terminal(current.snapshot)
+        if current.snapshot.state == "settled":
+            compatible = require_compatible_terminal(
+                current.snapshot,
+                normalized_terminal,
+            )
+            return read_and_close(session, compatible)
+        _require_validation_quarantine_eligible(current, normalized_terminal)
+        values = full_state_values_from_event(current.event)
+        values.update(
+            sequence_no=current.event.sequence_no + 1,
+            event_type="settled",
+            state="settled",
+            event_writer_generation=normalized_writer_generation,
+            settlement_source=normalized_terminal.source,
+            settlement_outcome=normalized_terminal.outcome,
+            broker_reference=None,
+            execution_id=None,
+            settlement_evidence_json=normalized_terminal.evidence_json,
+            settlement_evidence_sha256=normalized_terminal.evidence_sha256,
+            settled_at=current.now,
+        )
+        return append_and_commit(
+            session,
+            receipt_id=normalized_receipt_id,
+            values=values,
+        )
+    except (BrokerMutationReceiptError, SQLAlchemyError):
+        session.rollback()
+        raise
+
+
+def _require_validation_quarantine_eligible(
+    current: LockedReceipt,
+    settlement: BrokerMutationSettlement,
+) -> None:
+    receipt = current.snapshot
+    intent = receipt.intent
+    if (
+        receipt.state != "broker_io"
+        or intent.broker_route != "alpaca"
+        or intent.operation != "submit_order"
+        or intent.risk_class != "risk_neutral"
+        or intent.purpose != "control_plane_validation"
+        or intent.submission_claim_id is not None
+        or receipt.recovery.outcome != "not_found"
+        or receipt.recovery.evidence_json is None
+        or receipt.recovery.evidence_sha256 is None
+        or receipt.lifecycle.broker_io_started_at is None
+        or (current.now - receipt.lifecycle.broker_io_started_at).total_seconds() < 60
+        or settlement.broker_reference is not None
+        or settlement.execution_id is not None
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_receipt_ineligible"
+        )
+    try:
+        document = json.loads(receipt.recovery.evidence_json)
+    except (TypeError, ValueError) as exc:
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_recovery_evidence_invalid"
+        ) from exc
+    if not isinstance(document, dict):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_recovery_evidence_invalid"
+        )
+    raw_observation = cast(dict[str, object], document).get("observation")
+    if not isinstance(raw_observation, dict):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_recovery_evidence_ineligible"
+        )
+    observation = cast(dict[str, object], raw_observation)
+    if (
+        observation.get("resolution_state") != "expired"
+        or observation.get("absence_proof_complete") is not True
+        or observation.get("operator_confirmation_required") is not True
+        or observation.get("automatic_resubmission_attempted") is not False
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_recovery_evidence_ineligible"
+        )
+    try:
+        terminal = json.loads(settlement.evidence_json)
+    except (TypeError, ValueError) as exc:
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_settlement_evidence_invalid"
+        ) from exc
+    if not isinstance(terminal, dict):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_settlement_evidence_invalid"
+        )
+    raw_evidence = cast(dict[str, object], terminal).get("evidence")
+    if not isinstance(raw_evidence, dict):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_settlement_evidence_ineligible"
+        )
+    evidence = cast(dict[str, object], raw_evidence)
+    if (
+        evidence.get("schema_version")
+        != "torghut.infrastructure-validation-quarantine-closure.v1"
+        or evidence.get("receipt_id") != str(receipt.receipt_id)
+        or evidence.get("client_order_id") != intent.client_request_id
+        or evidence.get("intent_sha256") != intent.canonical_intent_sha256
+        or evidence.get("prior_recovery_evidence_sha256")
+        != receipt.recovery.evidence_sha256
+        or evidence.get("order_existence_resolution") != "unresolved"
+        or evidence.get("time_in_force") != "ioc"
+        or evidence.get("history_complete") is not True
+        or evidence.get("history_match_count") != 0
+        or evidence.get("open_order_count") != 0
+        or evidence.get("position_count") != 0
+        or evidence.get("promotable") is not False
+        or evidence.get("automatic_resubmission_attempted") is not False
+        or evidence.get("broker_mutation_attempted") is not False
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_settlement_evidence_ineligible"
+        )
+
+
 def _settle_primary_path(
     session: Session,
     path: _PrimarySettlementPath,
@@ -369,4 +522,5 @@ __all__ = [
     "renew_broker_mutation_receipt",
     "settle_broker_mutation_preflight",
     "settle_broker_mutation_primary",
+    "settle_broker_mutation_operator_confirmation",
 ]

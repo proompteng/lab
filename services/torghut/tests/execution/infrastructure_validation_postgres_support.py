@@ -73,6 +73,8 @@ def upgrade_reduction_schema(
             "0073_live_paper_bounds",
             "0074_crypto_qty_precision",
             "0075_validation_observed_at",
+            "0076_broker_account_activities",
+            "0077_validation_quarantine",
         }:
             connection.execute(
                 text(
