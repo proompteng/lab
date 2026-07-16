@@ -123,7 +123,10 @@ class InfrastructureValidationLifecycleContext:
     configured_account_label: str
     evaluated_at: datetime | None = None
     order_timeout_seconds: float = 30.0
-    evidence_timeout_seconds: float = 30.0
+    # The single order-feed consumer may be finishing one bounded reconciliation
+    # cycle when a later lifecycle fill arrives. Keep the broker exposure finite
+    # while allowing that already-running cycle plus Kafka poll jitter to finish.
+    evidence_timeout_seconds: float = 60.0
     cleanup_timeout_seconds: float = 30.0
     poll_interval_seconds: float = 0.5
 
