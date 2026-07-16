@@ -143,7 +143,9 @@ class _JournalWriter:
         self,
         activity: EconomicActivity,
     ) -> LedgerTransaction | None:
-        if activity.net_amount in {None, ZERO} and activity.quantity in {None, ZERO}:
+        if activity.net_amount in {None, ZERO} and (
+            activity.quantity is None or activity.quantity >= ZERO
+        ):
             self.unsupported.add(activity.external_activity_id)
             return None
         return self._crypto_fee(activity)
@@ -267,8 +269,8 @@ class _JournalWriter:
         if activity.net_amount not in {None, ZERO}:
             return self._cash_fee(activity)
         quantity = activity.quantity
-        if quantity is None or quantity == ZERO:
-            return None
+        if quantity is None or quantity >= ZERO:
+            raise EconomicLedgerError("economic_crypto_fee_quantity_must_be_negative")
         price = activity.price
         if price is None or price <= ZERO:
             raise EconomicLedgerError("economic_crypto_fee_price_must_be_positive")
@@ -279,21 +281,17 @@ class _JournalWriter:
             abs(quantity) * price,
             field_name="crypto_fee_fair_value",
         )
-        if quantity < ZERO:
-            if position.quantity <= ZERO or abs(quantity) > position.quantity:
-                raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
-            if abs(quantity) == position.quantity:
-                position_cost_delta = -position.signed_cost
-            else:
-                average_cost = position.signed_cost / position.quantity
-                position_cost_delta = quantize_ledger_decimal(
-                    quantity * average_cost,
-                    field_name="crypto_fee_position_cost_delta",
-                )
-            fee_amount = fair_value
+        if position.quantity <= ZERO or abs(quantity) > position.quantity:
+            raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
+        if abs(quantity) == position.quantity:
+            position_cost_delta = -position.signed_cost
         else:
-            position_cost_delta = fair_value
-            fee_amount = -fair_value
+            average_cost = position.signed_cost / position.quantity
+            position_cost_delta = quantize_ledger_decimal(
+                quantity * average_cost,
+                field_name="crypto_fee_position_cost_delta",
+            )
+        fee_amount = fair_value
         realized = quantize_ledger_decimal(
             position_cost_delta + fee_amount,
             field_name="crypto_fee_realized_pnl",
@@ -415,9 +413,11 @@ def _opposite_fill_position_cost_delta(
     if closing_quantity == abs(position.quantity):
         released_cost_delta = -position.signed_cost
     else:
-        average_cost = position.signed_cost / position.quantity
         released_cost_delta = quantize_ledger_decimal(
-            -current_direction * closing_quantity * average_cost,
+            -current_direction
+            * closing_quantity
+            * abs(position.signed_cost)
+            / abs(position.quantity),
             field_name="fill_released_cost_delta",
         )
     opening_delta = delta_quantity - closing_delta

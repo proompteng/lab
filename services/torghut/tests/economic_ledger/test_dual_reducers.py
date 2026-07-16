@@ -330,14 +330,64 @@ def test_crypto_asset_fee_reduces_units_and_records_after_cost_economics() -> No
     assert result.independent.fees == Decimal("1.35")
 
 
-def test_crypto_fee_without_cash_or_asset_quantity_fails_closed() -> None:
-    result = reduce_and_compare([activity("empty-crypto-fee", "CFEE", net_amount="0")])
+@pytest.mark.parametrize("quantity", [None, "0", "0.01"])
+def test_zero_cash_crypto_fee_without_negative_asset_charge_fails_closed(
+    quantity: str | None,
+) -> None:
+    result = reduce_and_compare(
+        [
+            activity(
+                "invalid-crypto-fee",
+                "CFEE",
+                quantity=quantity,
+                net_amount="0",
+            )
+        ]
+    )
 
     assert result.comparison.equivalent
     assert not result.admissible
-    assert result.journal.projection.unsupported_activity_ids == ("empty-crypto-fee",)
-    assert result.independent.unsupported_activity_ids == ("empty-crypto-fee",)
+    assert result.journal.projection.unsupported_activity_ids == ("invalid-crypto-fee",)
+    assert result.independent.unsupported_activity_ids == ("invalid-crypto-fee",)
     assert result.journal.transactions == ()
+
+
+def test_repeating_cost_side_flips_use_one_released_cost_rounding_order() -> None:
+    fills = (
+        ("buy", "1", "1"),
+        ("buy", "6", "1"),
+        ("sell", "25", "19"),
+        ("sell", "3", "8"),
+        ("sell", "16", "1"),
+        ("buy", "21", "1"),
+        ("sell", "1", "1"),
+        ("sell", "2", "1"),
+        ("sell", "25", "1"),
+        ("buy", "22", "2"),
+    )
+    rows = [activity("capital", "JNLC", net_amount="1000000")]
+    rows.extend(
+        activity(
+            f"rounding-fill-{index}",
+            "FILL",
+            event_offset_seconds=index + 1,
+            symbol="AAPL",
+            side=side,
+            quantity=quantity,
+            price=price,
+            net_amount=None,
+        )
+        for index, (side, quantity, price) in enumerate(fills)
+    )
+
+    result = reduce_and_compare(rows)
+
+    assert result.admissible
+    assert result.comparison.equivalent
+    aapl = position(result.independent, "AAPL")
+    assert aapl is not None
+    assert aapl.signed_cost == Decimal("-96.594594594594594594")
+    assert result.independent.realized_pnl == Decimal("374.405405405405405406")
 
 
 @pytest.mark.parametrize("activity_type", ["FILL", "CFEE"])

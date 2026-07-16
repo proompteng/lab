@@ -95,7 +95,7 @@ class _StateReducer:
                 activity_type == "CFEE"
                 and (
                     activity.net_amount not in {None, ZERO}
-                    or activity.quantity not in {None, ZERO}
+                    or (activity.quantity is not None and activity.quantity < ZERO)
                 )
             )
             or (activity_type == "FILL" and activity.net_amount in {None, ZERO})
@@ -194,8 +194,8 @@ class _StateReducer:
             )
             return
         units = activity.quantity
-        if units is None or units == ZERO:
-            return
+        if units is None or units >= ZERO:
+            raise EconomicLedgerError("economic_crypto_fee_quantity_must_be_negative")
         price = activity.price
         if price is None or price <= ZERO:
             raise EconomicLedgerError("economic_crypto_fee_price_must_be_positive")
@@ -206,45 +206,31 @@ class _StateReducer:
             abs(units) * price,
             field_name="crypto_fee_fair_value",
         )
-        if units < ZERO:
-            if holding.units <= ZERO or abs(units) > holding.units:
-                raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
-            if abs(units) == holding.units:
-                released_cost = holding.carrying_value
-            else:
-                released_cost = quantize_ledger_decimal(
-                    abs(units) * holding.carrying_value / holding.units,
-                    field_name="crypto_fee_released_cost",
-                )
-            holding.units = quantize_ledger_decimal(
-                holding.units + units,
-                field_name="crypto_fee_position_quantity",
-            )
-            holding.carrying_value = quantize_ledger_decimal(
-                holding.carrying_value - released_cost,
-                field_name="crypto_fee_position_cost",
-            )
-            self.realized_pnl = quantize_ledger_decimal(
-                self.realized_pnl + fair_value - released_cost,
-                field_name="realized_pnl",
-            )
-            self.fees = quantize_ledger_decimal(
-                self.fees + fair_value,
-                field_name="fees",
-            )
+        if holding.units <= ZERO or abs(units) > holding.units:
+            raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
+        if abs(units) == holding.units:
+            released_cost = holding.carrying_value
         else:
-            holding.units = quantize_ledger_decimal(
-                holding.units + units,
-                field_name="crypto_fee_position_quantity",
+            released_cost = quantize_ledger_decimal(
+                abs(units) * holding.carrying_value / holding.units,
+                field_name="crypto_fee_released_cost",
             )
-            holding.carrying_value = quantize_ledger_decimal(
-                holding.carrying_value + fair_value,
-                field_name="crypto_fee_position_cost",
-            )
-            self.fees = quantize_ledger_decimal(
-                self.fees - fair_value,
-                field_name="fees",
-            )
+        holding.units = quantize_ledger_decimal(
+            holding.units + units,
+            field_name="crypto_fee_position_quantity",
+        )
+        holding.carrying_value = quantize_ledger_decimal(
+            holding.carrying_value - released_cost,
+            field_name="crypto_fee_position_cost",
+        )
+        self.realized_pnl = quantize_ledger_decimal(
+            self.realized_pnl + fair_value - released_cost,
+            field_name="realized_pnl",
+        )
+        self.fees = quantize_ledger_decimal(
+            self.fees + fair_value,
+            field_name="fees",
+        )
         if holding.units == ZERO:
             holding.carrying_value = ZERO
 
