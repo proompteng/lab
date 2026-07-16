@@ -29,7 +29,6 @@ from ..market_context_domains import (
     active_market_context_mapping,
     active_market_context_reasons,
 )
-from ..simulation_progress import active_simulation_runtime_context
 from ..simulation import resolve_market_context_as_of
 from ..time_source import trading_time_status
 from .governance.governance_mixin_decision_methods import (
@@ -56,6 +55,7 @@ from .broker_mutation_recovery_runtime import (
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
 from .runtime_pipeline_factory import build_trading_pipeline_for_account
+from .simulation_state import sync_simulation_run_state
 from .state import TradingState
 from .startup_policy import resolve_trading_shorts_startup_policy
 
@@ -691,6 +691,8 @@ class TradingScheduler(
         last_reconcile = datetime.now(timezone.utc)
         last_autonomy = datetime.now(timezone.utc)
         last_evidence_check = datetime.now(timezone.utc)
+        last_broker_activity = datetime.fromtimestamp(0, tz=timezone.utc)
+        broker_activity_task: asyncio.Task[None] | None = None
         logger.info(
             "Trading scheduler loop running poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_interval_seconds=%s evidence_interval_seconds=%s",
             poll_interval,
@@ -703,6 +705,20 @@ class TradingScheduler(
                 self._sync_simulation_run_context()
                 await self._run_trading_iteration()
                 now = datetime.now(timezone.utc)
+                if broker_activity_task is not None and broker_activity_task.done():
+                    await broker_activity_task
+                    broker_activity_task = None
+                if broker_activity_task is None and self._interval_elapsed(
+                    last_broker_activity,
+                    reconcile_interval,
+                    now=now,
+                ):
+                    # REST accounting must never delay signal decisions, broker
+                    # mutation recovery, or emergency reductions.
+                    broker_activity_task = asyncio.create_task(
+                        self._run_broker_account_activity_iteration()
+                    )
+                    last_broker_activity = now
                 if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
                     await self._run_reconcile_iteration()
                     last_reconcile = now
@@ -730,73 +746,18 @@ class TradingScheduler(
                 except TimeoutError:
                     pass
         finally:
+            if broker_activity_task is not None:
+                # asyncio cancellation does not stop a thread already running
+                # through to_thread. Drain it before leadership can be released;
+                # stop() retains the writer fence and exits fatally on timeout.
+                await broker_activity_task
             self.state.running = False
             logger.info("Trading scheduler loop exited")
 
     def _sync_simulation_run_context(self) -> None:
-        runtime_context = active_simulation_runtime_context()
-        active_run_id = str((runtime_context or {}).get("run_id") or "").strip() or None
-        if active_run_id == self._active_simulation_run_id:
-            return
-
-        previous_run_id = self._active_simulation_run_id
-        self._active_simulation_run_id = active_run_id
-        if active_run_id is None:
-            return
-
-        self._reset_simulation_run_state(
-            previous_run_id=previous_run_id,
-            active_run_id=active_run_id,
-        )
-
-    def _reset_simulation_run_state(
-        self,
-        *,
-        previous_run_id: str | None,
-        active_run_id: str,
-    ) -> None:
-        self.state.last_error = None
-        self.state.last_trading_error = None
-        self.state.last_reconcile_error = None
-        self.state.last_autonomy_error = None
-        self.state.last_evidence_error = None
-        self.state.last_ingest_signals_total = 0
-        self.state.last_ingest_window_start = None
-        self.state.last_ingest_window_end = None
-        self.state.last_ingest_reason = None
-        self.state.last_signal_continuity_state = None
-        self.state.last_signal_continuity_reason = None
-        self.state.last_signal_continuity_actionable = None
-        self.state.signal_continuity_alert_active = False
-        self.state.signal_continuity_alert_reason = None
-        self.state.signal_continuity_alert_started_at = None
-        self.state.signal_continuity_alert_last_seen_at = None
-        self.state.signal_continuity_recovery_streak = 0
-        self.state.signal_bootstrap_started_at = datetime.now(timezone.utc)
-        self.state.signal_bootstrap_completed_at = None
-        self.state.autonomy_no_signal_streak = 0
-        self.state.last_evidence_continuity_report = None
-        self.state.autonomy_failure_streak = 0
-        self.state.universe_fail_safe_blocked = False
-        self.state.universe_fail_safe_block_reason = None
-        self.state.emergency_stop_active = False
-        self.state.emergency_stop_reason = None
-        self.state.emergency_stop_triggered_at = None
-        self.state.emergency_stop_resolved_at = None
-        self.state.emergency_stop_recovery_streak = 0
-        self.state.rollback_incident_evidence_path = None
-        self.state.metrics.no_signal_streak = 0
-        self.state.metrics.no_signal_reason_streak = {}
-        self.state.metrics.signal_lag_seconds = None
-        self.state.metrics.signal_continuity_actionable = 0
-        self.state.metrics.record_signal_continuity_alert_state(
-            active=False,
-            recovery_streak=0,
-        )
-        logger.info(
-            "Trading scheduler reset simulation run state previous_run_id=%s active_run_id=%s",
-            previous_run_id or "none",
-            active_run_id,
+        self._active_simulation_run_id = sync_simulation_run_state(
+            self.state,
+            self._active_simulation_run_id,
         )
 
     @staticmethod
@@ -849,6 +810,33 @@ class TradingScheduler(
             self.state.last_run_at = datetime.now(timezone.utc)
             self._set_trading_iteration_error(None)
         self._evaluate_safety_controls()
+
+    async def _run_broker_account_activity_iteration(self) -> None:
+        active_pipelines = self._pipelines or (
+            [self._pipeline] if self._pipeline else []
+        )
+        calls: list[tuple[str, Callable[[], object]]] = []
+        for pipeline in active_pipelines:
+            ingest = getattr(pipeline, "ingest_broker_account_activities", None)
+            if callable(ingest):
+                calls.append((pipeline.account_label, ingest))
+        if not calls:
+            return
+        outcomes = await asyncio.gather(
+            *(asyncio.to_thread(ingest) for _, ingest in calls),
+            return_exceptions=True,
+        )
+        for (account_label, _), outcome in zip(calls, outcomes, strict=True):
+            if isinstance(outcome, Exception):
+                self.state.metrics.broker_account_activity_errors_total += 1
+                logger.error(
+                    "Broker account activity lane failed account=%s error=%s",
+                    account_label,
+                    outcome,
+                    exc_info=(type(outcome), outcome, outcome.__traceback__),
+                )
+            elif isinstance(outcome, BaseException):
+                raise outcome
 
     async def _run_reconcile_iteration(self) -> None:
         if self._pipeline is None:

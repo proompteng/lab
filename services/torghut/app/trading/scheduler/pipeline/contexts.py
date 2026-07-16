@@ -48,6 +48,7 @@ class TradingPipelineRuntimeDependencies:
     strategy_catalog: Any | None = None
     execution_policy: Any | None = None
     order_feed_ingestor: Any | None = None
+    broker_account_activity_ingestor: Any | None = None
 
 
 @dataclass(frozen=True)

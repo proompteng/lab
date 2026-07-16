@@ -151,13 +151,16 @@ class _PipelineIterationStub:
         run_once_fail: bool = False,
         reconcile_return: int = 0,
         reconcile_fail: bool = False,
+        account_activity_fail: bool = False,
     ) -> None:
         self.account_label = account_label
         self.run_once_fail = run_once_fail
         self.reconcile_fail = reconcile_fail
         self.reconcile_return = reconcile_return
+        self.account_activity_fail = account_activity_fail
         self.run_once_calls = 0
         self.reconcile_calls = 0
+        self.account_activity_calls = 0
         self.run_once_last_error: str | None = None
         self.reconcile_last_error: str | None = None
 
@@ -173,6 +176,11 @@ class _PipelineIterationStub:
             self.reconcile_last_error = "reconcile_failed"
             raise RuntimeError("reconcile_failed")
         return self.reconcile_return
+
+    def ingest_broker_account_activities(self) -> None:
+        self.account_activity_calls += 1
+        if self.account_activity_fail:
+            raise RuntimeError("account_activity_failed")
 
 
 class _SchedulerDependencies:

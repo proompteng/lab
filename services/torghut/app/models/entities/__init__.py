@@ -1,5 +1,9 @@
 """Domain modules for Torghut ORM entity definitions."""
 
+from .broker_economic_records import (
+    BrokerAccountActivity,
+    BrokerAccountActivityCursor,
+)
 from .broker_mutation_records import (
     BrokerMutationReceipt,
     BrokerMutationReceiptEvent,
@@ -97,6 +101,8 @@ __all__ = [
     "AutoresearchEpoch",
     "AutoresearchPortfolioCandidate",
     "AutoresearchProposalScore",
+    "BrokerAccountActivity",
+    "BrokerAccountActivityCursor",
     "BrokerMutationReceipt",
     "BrokerMutationReceiptEvent",
     "CreatedAtMixin",

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from ...alpaca_client import TorghutAlpacaClient
-from ...config import TradingAccountLane
+from ...config import TradingAccountLane, settings
 from ...db import SessionLocal
 from ...strategies import StrategyCatalog
+from ..broker_account_activity_backfill import (
+    AlpacaAccountActivitiesClient,
+    BrokerAccountActivityIngestor,
+)
 from ..decisions import DecisionEngine
 from ..execution import OrderExecutor
 from ..execution_adapters import build_execution_adapter
@@ -41,6 +45,15 @@ def build_trading_pipeline_for_account(
         account_label=lane.label,
         endpoint_url=order_firewall.broker_endpoint_url,
     )
+    broker_account_activity_ingestor = BrokerAccountActivityIngestor(
+        client=AlpacaAccountActivitiesClient(
+            api_key=lane.api_key or settings.apca_api_key_id or "",
+            secret_key=lane.secret_key or settings.apca_api_secret_key or "",
+            endpoint_url=alpaca_client.endpoint_url,
+        ),
+        session_factory=SessionLocal,
+        account_label=lane.label,
+    )
     executor = OrderExecutor()
     executor.prime_shorting_metadata_cache(alpaca_client)
     dependencies = TradingPipelineRuntimeDependencies(
@@ -58,6 +71,13 @@ def build_trading_pipeline_for_account(
         session_factory=SessionLocal,
         price_fetcher=price_fetcher,
         strategy_catalog=strategy_catalog,
-        order_feed_ingestor=OrderFeedIngestor(default_account_label=lane.label),
+        order_feed_ingestor=OrderFeedIngestor(
+            default_account_label=lane.label,
+            broker_environment=broker_account_activity_ingestor.environment,
+            broker_endpoint_fingerprint=(
+                broker_account_activity_ingestor.endpoint_fingerprint
+            ),
+        ),
+        broker_account_activity_ingestor=broker_account_activity_ingestor,
     )
     return TradingPipeline(dependencies=dependencies)

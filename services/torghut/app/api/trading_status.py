@@ -12,10 +12,12 @@ from fastapi.responses import Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.alpaca_client import classify_alpaca_trading_endpoint
 from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST, BUILD_VERSION
 from app.config import settings
 from app.db import SessionLocal
 from app.trading.action_authority import reduce_runtime_action_authority
+from app.trading.broker_account_activities import load_broker_account_activity_status
 from app.trading.broker_mutation_receipts.runtime_status import (
     load_broker_mutation_runtime_status,
     unavailable_broker_mutation_runtime_status,
@@ -61,6 +63,18 @@ def _read_with_session(
             return reader(session)
     except SQLAlchemyError:
         return unavailable
+
+
+def _configured_broker_environment() -> str:
+    endpoint = str(settings.apca_api_base_url or "").strip().rstrip("/")
+    if endpoint.endswith("/v2"):
+        endpoint = endpoint[:-3]
+    if endpoint:
+        try:
+            return classify_alpaca_trading_endpoint(endpoint)
+        except ValueError:
+            return "unknown"
+    return "live" if settings.trading_mode == "live" else "paper"
 
 
 def _capital_controls(state: object) -> dict[str, object]:
@@ -172,6 +186,20 @@ def trading_status() -> dict[str, object] | Response:
             "reason_codes": ["strategy_capital_authority_status_unavailable"],
         },
     )
+    broker_economic_activities = _read_with_session(
+        lambda session: load_broker_account_activity_status(
+            session,
+            account_label=settings.trading_account_label,
+            environment=_configured_broker_environment(),
+            observed_at=datetime.now(timezone.utc),
+        ),
+        unavailable={
+            "schema_version": "torghut.broker-account-activity-status.v1",
+            "state": "unavailable",
+            "current": False,
+            "reason_codes": ["broker_account_activity_status_unavailable"],
+        },
+    )
     tca = _read_with_session(
         lambda session: load_tca_summary(session, scheduler=scheduler),
         unavailable={"status": "unavailable", "reason_codes": ["tca_unavailable"]},
@@ -202,6 +230,7 @@ def trading_status() -> dict[str, object] | Response:
         "live_submission_gate": live_gate,
         "action_authority": action_authority.to_payload(),
         "broker_mutation_safety": broker_mutation,
+        "broker_economic_activities": broker_economic_activities,
         "capital_controls": _capital_controls(state),
         "execution": build_execution_status_payload(
             state=state,

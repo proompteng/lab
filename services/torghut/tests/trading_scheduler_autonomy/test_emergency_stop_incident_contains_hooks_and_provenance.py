@@ -305,6 +305,27 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
         self.assertEqual(healthy_lane.reconcile_last_error, None)
 
+    def test_broker_activity_backfill_isolated_per_lane(self) -> None:
+        scheduler = TradingScheduler()
+        failing_lane = _PipelineIterationStub(
+            account_label="paper-a",
+            account_activity_fail=True,
+        )
+        healthy_lane = _PipelineIterationStub(account_label="paper-b")
+        scheduler._pipelines = [failing_lane, healthy_lane]
+        scheduler._pipeline = failing_lane
+
+        asyncio.run(scheduler._run_broker_account_activity_iteration())
+
+        self.assertEqual(failing_lane.account_activity_calls, 1)
+        self.assertEqual(healthy_lane.account_activity_calls, 1)
+        self.assertEqual(
+            scheduler.state.metrics.broker_account_activity_errors_total,
+            1,
+        )
+        self.assertIsNone(scheduler.state.last_trading_error)
+        self.assertIsNone(scheduler.state.last_reconcile_error)
+
     def test_recovery_worker_failure_is_counted_and_fails_reconciliation(self) -> None:
         class _FailingRecoveryWorker:
             def run_once(self) -> None:
@@ -424,7 +445,7 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
                 original_critical_reasons
             )
 
-    def test_build_pipeline_for_account_scopes_order_feed_ingestor(self) -> None:
+    def test_build_pipeline_for_account_scopes_broker_ingestors(self) -> None:
         scheduler = TradingScheduler()
         lane = TradingAccountLane(
             label="paper-x",
@@ -437,6 +458,17 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
 
         self.assertEqual(
             pipeline.order_feed_ingestor.default_account_label,
+            "paper-x",
+        )
+        self.assertTrue(
+            pipeline.order_feed_ingestor.immutable_broker_source_enabled,
+        )
+        self.assertEqual(
+            pipeline.order_feed_ingestor.broker_environment,
+            "paper",
+        )
+        self.assertEqual(
+            pipeline.broker_account_activity_ingestor.account_label,
             "paper-x",
         )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from importlib import import_module
 from typing import Any, Callable, cast
 
@@ -12,6 +13,11 @@ from ...models import (
     Execution,
     ExecutionOrderEvent,
     OrderFeedSourceWindow,
+)
+from ..broker_account_activities import (
+    BrokerActivityObservation,
+    BrokerStreamPosition,
+    persist_broker_trade_update,
 )
 from . import shared_context as _shared_context
 from .shared_context import (
@@ -57,12 +63,18 @@ class OrderFeedIngestor:
         *,
         consumer_factory: Callable[[], Any] | None = None,
         default_account_label: str | None = None,
+        broker_environment: str | None = None,
+        broker_endpoint_fingerprint: str | None = None,
     ) -> None:
         self._consumer_factory = consumer_factory or self._build_consumer
         provided_label = (
             default_account_label.strip() if default_account_label is not None else ""
         )
         self._default_account_label = provided_label or settings.trading_account_label
+        if (broker_environment is None) != (broker_endpoint_fingerprint is None):
+            raise ValueError("order_feed_broker_source_identity_incomplete")
+        self._broker_environment = broker_environment
+        self._broker_endpoint_fingerprint = broker_endpoint_fingerprint
         self._consumer: Any | None = None
         self._disabled_logged = False
         self._manual_assignment_ready = False
@@ -70,6 +82,17 @@ class OrderFeedIngestor:
     @property
     def default_account_label(self) -> str:
         return self._default_account_label
+
+    @property
+    def immutable_broker_source_enabled(self) -> bool:
+        return (
+            self._broker_environment is not None
+            and self._broker_endpoint_fingerprint is not None
+        )
+
+    @property
+    def broker_environment(self) -> str | None:
+        return self._broker_environment
 
     def ingest_once(self, session: Session) -> dict[str, int]:
         counters = self._new_counters()
@@ -155,6 +178,8 @@ class OrderFeedIngestor:
             "consumer_commits_total": 0,
             "consumer_commit_skipped_total": 0,
             "cursor_updates_total": 0,
+            "immutable_source_events_total": 0,
+            "immutable_source_duplicates_total": 0,
         }
 
     def _preconditions_met(self) -> bool:
@@ -378,6 +403,11 @@ class OrderFeedIngestor:
         counters: dict[str, int],
     ) -> _IngestRecordOutcome:
         event = cast(NormalizedOrderEvent, context.event)
+        self._persist_immutable_source_event(
+            session=session,
+            event=event,
+            counters=counters,
+        )
         persisted, duplicate = _shared_context.persist_order_event(
             session,
             event,
@@ -407,6 +437,43 @@ class OrderFeedIngestor:
             source_window=context.source_window,
             counters=counters,
         )
+
+    def _persist_immutable_source_event(
+        self,
+        *,
+        session: Session,
+        event: NormalizedOrderEvent,
+        counters: dict[str, int],
+    ) -> None:
+        if (
+            self._broker_environment is None
+            or self._broker_endpoint_fingerprint is None
+            or event.source_partition is None
+            or event.source_offset is None
+        ):
+            return
+        _, duplicate = persist_broker_trade_update(
+            session,
+            event.raw_event,
+            event_fingerprint=event.event_fingerprint,
+            observation=BrokerActivityObservation(
+                environment=self._broker_environment,
+                account_label=event.alpaca_account_label,
+                endpoint_fingerprint=self._broker_endpoint_fingerprint,
+                observed_at=datetime.now(timezone.utc),
+            ),
+            position=BrokerStreamPosition(
+                topic=event.source_topic,
+                partition=event.source_partition,
+                offset=event.source_offset,
+            ),
+        )
+        counter = (
+            "immutable_source_duplicates_total"
+            if duplicate
+            else "immutable_source_events_total"
+        )
+        counters[counter] += 1
 
     def _handle_duplicate_order_event(
         self,
