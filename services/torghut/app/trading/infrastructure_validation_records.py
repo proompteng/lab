@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -54,6 +54,10 @@ _LINEAGE_KEYS = frozenset(
         "promotable",
     }
 )
+
+
+class InfrastructureValidationLineagePending(RuntimeError):
+    """An order event may belong to a validation descendant still in broker I/O."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +168,30 @@ def load_infrastructure_validation_evidence(
     # Prefer the receipt that created the observed broker order. Root client-ID
     # evidence remains the fallback for cancel/reject events on the setup order.
     return evidence[-1]
+
+
+def defer_pending_infrastructure_validation_descendant(
+    session: Session,
+    *,
+    account_label: str,
+    symbol: str | None,
+) -> None:
+    """Fail closed until an order-creating validation descendant is settled."""
+
+    normalized_symbol = str(symbol or "").strip().upper()
+    if not normalized_symbol:
+        return
+    for receipt in _pending_descendant_receipts(
+        session,
+        account_label=account_label,
+    ):
+        _intent, _lineage, root = _validated_descendant_ancestry(session, receipt)
+        if _root_symbol(root) != normalized_symbol:
+            continue
+        raise InfrastructureValidationLineagePending(
+            "infrastructure_validation_descendant_lineage_pending:"
+            f"{receipt.id}:{normalized_symbol}"
+        )
 
 
 def infrastructure_validation_lineage_payload(
@@ -358,6 +386,41 @@ def _descendant_receipts(
     ]
 
 
+def _pending_descendant_receipts(
+    session: Session,
+    *,
+    account_label: str,
+) -> list[BrokerMutationReceipt]:
+    latest = (
+        select(
+            BrokerMutationReceiptEvent.receipt_id.label("receipt_id"),
+            func.max(BrokerMutationReceiptEvent.sequence_no).label("sequence_no"),
+        )
+        .group_by(BrokerMutationReceiptEvent.receipt_id)
+        .subquery()
+    )
+    statement = (
+        select(BrokerMutationReceipt)
+        .join(latest, BrokerMutationReceipt.id == latest.c.receipt_id)
+        .join(
+            BrokerMutationReceiptEvent,
+            (BrokerMutationReceiptEvent.receipt_id == latest.c.receipt_id)
+            & (BrokerMutationReceiptEvent.sequence_no == latest.c.sequence_no),
+        )
+        .where(
+            BrokerMutationReceipt.account_label == account_label,
+            BrokerMutationReceipt.broker_route == "alpaca",
+            BrokerMutationReceipt.operation.in_(_ORDER_CREATING_LINEAGE_OPERATIONS),
+            BrokerMutationReceiptEvent.state == "broker_io",
+        )
+    )
+    return [
+        receipt
+        for receipt in session.execute(statement).scalars().all()
+        if _has_validation_lineage(receipt)
+    ]
+
+
 def _has_validation_lineage(receipt: BrokerMutationReceipt) -> bool:
     try:
         intent = _parse_json_object(receipt.canonical_intent_json)
@@ -408,6 +471,31 @@ def _descendant_evidence(
     session: Session,
     receipt: BrokerMutationReceipt,
 ) -> InfrastructureValidationEvidence:
+    _intent, lineage, root = _validated_descendant_ancestry(session, receipt)
+    terminal = _require_lineage_parent_terminal(
+        session,
+        receipt.id,
+        allowed_outcomes=frozenset({"acknowledged", "reconciled"}),
+    )
+    return InfrastructureValidationEvidence(
+        receipt_id=receipt.id,
+        broker_order_id=_required_broker_reference(terminal),
+        root_receipt_id=lineage.root_receipt_id,
+        root_client_order_id=lineage.root_client_order_id,
+        root_plan_schema=_root_plan_schema(root),
+        permit_id=lineage.permit_id,
+        permit_sha256=lineage.permit_sha256,
+        account_label=receipt.account_label,
+        endpoint_fingerprint=receipt.endpoint_fingerprint,
+        lineage_parent_terminal=True,
+        _seal=_EVIDENCE_SEAL,
+    )
+
+
+def _validated_descendant_ancestry(
+    session: Session,
+    receipt: BrokerMutationReceipt,
+) -> tuple[dict[str, object], _ValidationLineage, BrokerMutationReceipt]:
     intent, lineage = _parse_validation_lineage(receipt)
     root = session.get(BrokerMutationReceipt, lineage.root_receipt_id)
     if root is None:
@@ -449,24 +537,7 @@ def _descendant_evidence(
         root=root,
         parent_broker_order_id=lineage.parent_broker_order_id,
     )
-    terminal = _require_lineage_parent_terminal(
-        session,
-        receipt.id,
-        allowed_outcomes=frozenset({"acknowledged", "reconciled"}),
-    )
-    return InfrastructureValidationEvidence(
-        receipt_id=receipt.id,
-        broker_order_id=_required_broker_reference(terminal),
-        root_receipt_id=lineage.root_receipt_id,
-        root_client_order_id=lineage.root_client_order_id,
-        root_plan_schema=_root_plan_schema(root),
-        permit_id=lineage.permit_id,
-        permit_sha256=lineage.permit_sha256,
-        account_label=receipt.account_label,
-        endpoint_fingerprint=receipt.endpoint_fingerprint,
-        lineage_parent_terminal=True,
-        _seal=_EVIDENCE_SEAL,
-    )
+    return intent, lineage, root
 
 
 def _parse_validation_lineage(

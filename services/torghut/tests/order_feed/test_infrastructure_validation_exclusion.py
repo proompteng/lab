@@ -24,6 +24,8 @@ from app.trading.infrastructure_validation import (
     infrastructure_validation_terminal_state_sha256,
 )
 from app.trading.infrastructure_validation_records import (
+    InfrastructureValidationLineagePending,
+    defer_pending_infrastructure_validation_descendant,
     infrastructure_validation_lineage_payload,
     is_non_promotable_validation_event,
     load_infrastructure_validation_evidence,
@@ -324,28 +326,6 @@ class TestInfrastructureValidationExclusion(OrderFeedTestCase):
                     },
                 )
             )
-            BrokerMutationCoordinator(
-                "validation-descendant-test"
-            ).execute_unlinked_mutation(
-                session,
-                intent=replacement_intent,
-                callbacks=UnlinkedMutationCallbacks(
-                    broker_call=lambda _permit: {
-                        "id": "validation-replacement-1",
-                        "status": "accepted",
-                    },
-                    persist_terminal=lambda _result: None,
-                    build_settlement=lambda result: build_broker_mutation_settlement(
-                        BrokerMutationSettlementRequest(
-                            source="primary",
-                            outcome="acknowledged",
-                            broker_reference=str(result["id"]),
-                            execution_id=None,
-                            evidence_payload={"status": result["status"]},
-                        )
-                    ),
-                ),
-            )
             descendant_payload = (
                 '{"channel":"trade_updates","payload":{"event":"fill",'
                 '"timestamp":"2026-07-14T10:01:00Z","order":{'
@@ -360,6 +340,47 @@ class TestInfrastructureValidationExclusion(OrderFeedTestCase):
                 default_account_label="paper",
             )
             assert descendant.event is not None
+
+            def replace_broker_call(_permit: object) -> dict[str, str]:
+                defer_pending_infrastructure_validation_descendant(
+                    session,
+                    account_label="paper",
+                    symbol="ETH/USD",
+                )
+                with self.assertRaisesRegex(
+                    InfrastructureValidationLineagePending,
+                    "infrastructure_validation_descendant_lineage_pending",
+                ):
+                    persist_order_event(session, descendant.event)
+                self.assertIsNone(
+                    session.execute(
+                        select(ExecutionOrderEvent).where(
+                            ExecutionOrderEvent.event_fingerprint
+                            == descendant.event.event_fingerprint
+                        )
+                    ).scalar_one_or_none()
+                )
+                return {"id": "validation-replacement-1", "status": "accepted"}
+
+            BrokerMutationCoordinator(
+                "validation-descendant-test"
+            ).execute_unlinked_mutation(
+                session,
+                intent=replacement_intent,
+                callbacks=UnlinkedMutationCallbacks(
+                    broker_call=replace_broker_call,
+                    persist_terminal=lambda _result: None,
+                    build_settlement=lambda result: build_broker_mutation_settlement(
+                        BrokerMutationSettlementRequest(
+                            source="primary",
+                            outcome="acknowledged",
+                            broker_reference=str(result["id"]),
+                            execution_id=None,
+                            evidence_payload={"status": result["status"]},
+                        )
+                    ),
+                ),
+            )
             descendant_event, descendant_duplicate = persist_order_event(
                 session,
                 descendant.event,
