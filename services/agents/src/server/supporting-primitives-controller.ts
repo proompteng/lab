@@ -809,6 +809,32 @@ const reconcileWorkspace = async (
   const workspaceName = asString(readNested(workspace, ['metadata', 'name'])) ?? 'workspace'
   const ownerReferences = buildOwnerRefs(workspace)
   const labels = { 'workspaces.proompteng.ai/workspace': workspaceName }
+
+  if (ttlSeconds && ttlSeconds > 0) {
+    const createdAt = asString(readNested(workspace, ['metadata', 'creationTimestamp']))
+    if (createdAt) {
+      const expiresAt = new Date(createdAt).getTime() + ttlSeconds * 1000
+      if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
+        const pvcResource = await kube.get(RESOURCE_MAP.PersistentVolumeClaim, workspaceName, namespace)
+        const pvcVolumeName = asString(readNested(pvcResource ?? {}, ['spec', 'volumeName'])) ?? undefined
+        if (pvcResource) {
+          await kube.delete(RESOURCE_MAP.PersistentVolumeClaim, workspaceName, namespace)
+        }
+        const conditions = upsertCondition(
+          normalizeConditions(status.conditions),
+          buildReadyCondition(false, 'Expired', 'workspace TTL expired'),
+        )
+        await setStatus(kube, workspace, {
+          observedGeneration: asRecord(workspace.metadata)?.generation ?? 0,
+          phase: 'Expired',
+          volumeName: pvcVolumeName,
+          conditions,
+        })
+        return
+      }
+    }
+  }
+
   await applyResourceIfChanged(kube, {
     apiVersion: 'v1',
     kind: 'PersistentVolumeClaim',
@@ -828,27 +854,6 @@ const reconcileWorkspace = async (
   const pvcResource = await kube.get(RESOURCE_MAP.PersistentVolumeClaim, workspaceName, namespace)
   const pvcPhase = asString(readNested(pvcResource ?? {}, ['status', 'phase'])) ?? 'Pending'
   const pvcVolumeName = asString(readNested(pvcResource ?? {}, ['spec', 'volumeName'])) ?? undefined
-
-  if (ttlSeconds && ttlSeconds > 0) {
-    const createdAt = asString(readNested(workspace, ['metadata', 'creationTimestamp']))
-    if (createdAt) {
-      const expiresAt = new Date(createdAt).getTime() + ttlSeconds * 1000
-      if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
-        await kube.delete(RESOURCE_MAP.PersistentVolumeClaim, workspaceName, namespace)
-        const conditions = upsertCondition(
-          normalizeConditions(status.conditions),
-          buildReadyCondition(false, 'Expired', 'workspace TTL expired'),
-        )
-        await setStatus(kube, workspace, {
-          observedGeneration: asRecord(workspace.metadata)?.generation ?? 0,
-          phase: 'Expired',
-          volumeName: pvcVolumeName,
-          conditions,
-        })
-        return
-      }
-    }
-  }
 
   const phase = pvcPhase === 'Bound' ? 'Ready' : pvcPhase === 'Lost' ? 'Failed' : 'Pending'
   const conditions = upsertCondition(
