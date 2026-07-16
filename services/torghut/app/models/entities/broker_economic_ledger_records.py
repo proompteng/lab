@@ -143,8 +143,71 @@ class BrokerEconomicLedgerEntry(Base, CreatedAtMixin):
     )
 
 
+class BrokerEconomicLedgerReconciliation(Base, CreatedAtMixin):
+    """One immutable fresh-broker observation of a published reducer pair."""
+
+    __tablename__ = "broker_economic_ledger_reconciliations"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    input_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("broker_economic_ledger_inputs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    journal_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("broker_economic_ledger_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    state_run_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("broker_economic_ledger_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    source_age_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_source_age_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    broker_snapshot: Mapped[dict[str, object]] = mapped_column(JSONType, nullable=False)
+    broker_snapshot_canonical_json: Mapped[str] = mapped_column(Text, nullable=False)
+    broker_snapshot_sha256: Mapped[str] = mapped_column(
+        String(length=64), nullable=False
+    )
+    result: Mapped[dict[str, object]] = mapped_column(JSONType, nullable=False)
+    result_canonical_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    comparison_sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    journal_sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    reconciled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    residual_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    open_order_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_commit: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    image_digest: Mapped[str] = mapped_column(String(length=128), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uq_broker_econ_recon_observation",
+            "journal_run_id",
+            "state_run_id",
+            "observed_at",
+            "broker_snapshot_sha256",
+            unique=True,
+        ),
+        Index(
+            "ix_broker_econ_recon_latest",
+            "input_id",
+            "observed_at",
+        ),
+    )
+
+
 __all__ = (
     "BrokerEconomicLedgerEntry",
     "BrokerEconomicLedgerInput",
+    "BrokerEconomicLedgerReconciliation",
     "BrokerEconomicLedgerRun",
 )

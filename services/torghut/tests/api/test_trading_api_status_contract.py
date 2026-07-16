@@ -94,6 +94,15 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                         "current": True,
                         "reason_codes": [],
                     },
+                    {
+                        "schema_version": "torghut.broker-economic-ledger-status.v1",
+                        "state": "residual",
+                        "current": True,
+                        "reconciled": False,
+                        "diagnostic_only": True,
+                        "capital_authority": False,
+                        "reason_codes": ["ledger_position_missing_from_broker"],
+                    },
                     {"status": "current"},
                     None,
                 ),
@@ -129,6 +138,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "action_authority",
                 "broker_mutation_safety",
                 "broker_economic_activities",
+                "broker_economic_ledger",
                 "capital_controls",
                 "execution",
                 "signal_continuity",
@@ -160,6 +170,9 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
         self.assertTrue(payload["broker_mutation_safety"]["runtime_wired"])
         self.assertTrue(payload["broker_mutation_safety"]["entry_fencing_proven"])
         self.assertTrue(payload["broker_economic_activities"]["current"])
+        self.assertTrue(payload["broker_economic_ledger"]["diagnostic_only"])
+        self.assertFalse(payload["broker_economic_ledger"]["capital_authority"])
+        self.assertFalse(payload["broker_economic_ledger"]["reconciled"])
         self.assertFalse(payload["broker_mutation_safety"]["reduction_fencing_proven"])
         self.assertFalse(payload["broker_mutation_safety"]["recovery_worker_wired"])
         self.assertEqual(

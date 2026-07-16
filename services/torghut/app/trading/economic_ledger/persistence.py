@@ -57,6 +57,7 @@ class BrokerEconomicLedgerSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class PublishedBrokerEconomicLedgerRuns:
+    input_id: uuid.UUID
     journal_run_id: uuid.UUID
     state_run_id: uuid.UUID
     reused_existing: bool
@@ -112,6 +113,7 @@ class BrokerEconomicLedgerReplay:
                 "unsupported_count": len(journal.unsupported_activity_ids),
             },
             "publication": {
+                "input_id": str(published.input_id) if published is not None else None,
                 "journal_run_id": (
                     str(published.journal_run_id) if published is not None else None
                 ),
@@ -243,6 +245,7 @@ def publish_broker_economic_ledger(
         ],
     )
     return PublishedBrokerEconomicLedgerRuns(
+        input_id=input_id,
         journal_run_id=journal_run_id,
         state_run_id=state_run_id,
         reused_existing=False,
@@ -318,8 +321,24 @@ def _load_or_create_input(
     session: Session,
     snapshot: BrokerEconomicLedgerSnapshot,
 ) -> uuid.UUID:
+    existing = _load_input(session, snapshot)
+    if existing is not None:
+        _require_existing_input(existing, snapshot)
+        return existing.id
+    input_id = uuid.uuid4()
+    session.execute(
+        insert(BrokerEconomicLedgerInput),
+        [_input_values(snapshot, input_id=input_id)],
+    )
+    return input_id
+
+
+def _load_input(
+    session: Session,
+    snapshot: BrokerEconomicLedgerSnapshot,
+) -> BrokerEconomicLedgerInput | None:
     scope = snapshot.prepared.scope
-    existing = session.scalar(
+    return session.scalar(
         select(BrokerEconomicLedgerInput).where(
             BrokerEconomicLedgerInput.provider == scope.provider,
             BrokerEconomicLedgerInput.source == ACCOUNT_ACTIVITIES_REST_SOURCE,
@@ -332,15 +351,6 @@ def _load_or_create_input(
             == snapshot.prepared.manifest_digest,
         )
     )
-    if existing is not None:
-        _require_existing_input(existing, snapshot)
-        return existing.id
-    input_id = uuid.uuid4()
-    session.execute(
-        insert(BrokerEconomicLedgerInput),
-        [_input_values(snapshot, input_id=input_id)],
-    )
-    return input_id
 
 
 def _require_existing_input(
@@ -550,10 +560,30 @@ def _load_existing_runs(
         journal_sha256=None,
     )
     return PublishedBrokerEconomicLedgerRuns(
+        input_id=input_id,
         journal_run_id=journal.id,
         state_run_id=state.id,
         reused_existing=True,
     )
+
+
+def require_published_broker_economic_ledger_runs(
+    session: Session,
+    replay: BrokerEconomicLedgerReplay,
+) -> PublishedBrokerEconomicLedgerRuns:
+    """Resolve the exact immutable run pair without creating evidence."""
+
+    _require_replay_identity(replay)
+    _acquire_publication_lock(session, replay.snapshot.prepared.scope)
+    _require_current_source_snapshot(session, replay.snapshot)
+    input_row = _load_input(session, replay.snapshot)
+    if input_row is None:
+        raise EconomicLedgerError("economic_ledger_published_input_missing")
+    _require_existing_input(input_row, replay.snapshot)
+    runs = _load_existing_runs(session, replay, input_id=input_row.id)
+    if runs is None:
+        raise EconomicLedgerError("economic_ledger_published_run_pair_missing")
+    return runs
 
 
 def _require_existing_run(
@@ -706,5 +736,6 @@ __all__ = (
     "PublishedBrokerEconomicLedgerRuns",
     "load_broker_economic_ledger_snapshot",
     "publish_broker_economic_ledger",
+    "require_published_broker_economic_ledger_runs",
     "replay_broker_economic_ledger",
 )
