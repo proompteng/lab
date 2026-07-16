@@ -54,7 +54,7 @@ spec:
               alembic -c /app/alembic.ini upgrade heads
           env:
             - name: TORGHUT_COMMIT
-              value: e2b3dbd1d3dbf091fb2cd8e33201235915b8f115
+              value: ad2daaf242192aea34364e36caaf1cdb6da20da1
             - name: TORGHUT_IMAGE_DIGEST
               value: sha256:238f79c2fc0af35b7cd87b8765a426345905aa68ee77ab364ab7358b3ed0e2aa
             - name: PYTHONPATH
