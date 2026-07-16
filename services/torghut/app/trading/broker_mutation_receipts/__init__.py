@@ -39,6 +39,7 @@ from .transitions import (
     renew_broker_mutation_receipt,
     settle_broker_mutation_preflight,
     settle_broker_mutation_primary,
+    settle_broker_mutation_operator_confirmation,
 )
 from .types import (
     BrokerMutationIntent,
@@ -150,6 +151,7 @@ __all__ = [
     "renew_broker_mutation_recovery",
     "settle_broker_mutation_preflight",
     "settle_broker_mutation_primary",
+    "settle_broker_mutation_operator_confirmation",
     "settle_linked_submission_primary",
     "settle_linked_submission_recovery",
     "settle_broker_mutation_recovery",

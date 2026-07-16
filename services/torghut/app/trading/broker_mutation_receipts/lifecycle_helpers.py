@@ -239,6 +239,7 @@ def normalized_settlement(
         "reconciled",
         "rejected",
         "already_satisfied",
+        "validation_quarantine_closed",
     }:
         raise BrokerMutationReceiptValidationError("settlement_outcome_invalid")
     if expected_source == "preflight" and settlement.outcome != "already_satisfied":

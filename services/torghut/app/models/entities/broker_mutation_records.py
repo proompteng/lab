@@ -454,12 +454,14 @@ class BrokerMutationReceiptEvent(Base):
         ),
         CheckConstraint(
             "settlement_outcome IS NULL OR settlement_outcome IN "
-            "('acknowledged', 'reconciled', 'rejected', 'already_satisfied')",
+            "('acknowledged', 'reconciled', 'rejected', 'already_satisfied', "
+            "'validation_quarantine_closed')",
             name="settlement_outcome",
         ),
         CheckConstraint(
             "settlement_source IS NULL OR "
-            "settlement_source IN ('primary', 'recovery', 'preflight')",
+            "settlement_source IN "
+            "('primary', 'recovery', 'preflight', 'operator_confirmation')",
             name="settlement_source",
         ),
         CheckConstraint(
@@ -469,7 +471,9 @@ class BrokerMutationReceiptEvent(Base):
             "(settlement_outcome = 'acknowledged' "
             "AND settlement_source = 'primary') OR "
             "(settlement_outcome IN ('reconciled', 'rejected') "
-            "AND settlement_source IN ('primary', 'recovery'))",
+            "AND settlement_source IN ('primary', 'recovery')) OR "
+            "(settlement_outcome = 'validation_quarantine_closed' "
+            "AND settlement_source = 'operator_confirmation')",
             name="settlement_source_outcome",
         ),
         CheckConstraint(

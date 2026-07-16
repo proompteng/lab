@@ -174,6 +174,9 @@ receipt or unresolved state afterward.
 - Runtime proof: injected response loss recovers the original paper order without producing a second order.
 - Dependency: slice 4. Effort: `M`.
 - Rollback: stop recovery retries, retain unresolved claims, and require manual broker reconciliation.
+- Operator action: the only local terminal for absent evidence is the reviewed
+  [paper-IOC validation quarantine closure](validation-quarantine-closure.md). It cannot settle linked, ordinary,
+  promotable, non-IOC, or live-account submissions and does not claim broker rejection.
 
 ### Slice 6 - Fence Cancel, Replace, And Closeout Mutations
 

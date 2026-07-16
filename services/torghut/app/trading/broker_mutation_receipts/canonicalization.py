@@ -84,12 +84,14 @@ _SETTLEMENT_SOURCES: tuple[BrokerMutationSettlementSource, ...] = (
     "primary",
     "recovery",
     "preflight",
+    "operator_confirmation",
 )
 _SETTLEMENT_OUTCOMES: tuple[BrokerMutationSettlementOutcome, ...] = (
     "acknowledged",
     "reconciled",
     "rejected",
     "already_satisfied",
+    "validation_quarantine_closed",
 )
 
 
@@ -574,6 +576,14 @@ def _validate_settlement_contract(
     if source == "recovery" and outcome == "acknowledged":
         raise BrokerMutationReceiptValidationError(
             "recovery_cannot_acknowledge_new_broker_io"
+        )
+    if outcome == "validation_quarantine_closed" and source != "operator_confirmation":
+        raise BrokerMutationReceiptValidationError(
+            "validation_quarantine_closed_requires_operator_confirmation"
+        )
+    if source == "operator_confirmation" and outcome != "validation_quarantine_closed":
+        raise BrokerMutationReceiptValidationError(
+            "operator_confirmation_requires_validation_quarantine_closed"
         )
 
 

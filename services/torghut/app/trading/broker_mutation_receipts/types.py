@@ -67,8 +67,14 @@ BrokerMutationSettlementOutcome = Literal[
     "reconciled",
     "rejected",
     "already_satisfied",
+    "validation_quarantine_closed",
 ]
-BrokerMutationSettlementSource = Literal["primary", "recovery", "preflight"]
+BrokerMutationSettlementSource = Literal[
+    "primary",
+    "recovery",
+    "preflight",
+    "operator_confirmation",
+]
 BrokerMutationRecoveryObservationOutcome = Literal["not_found", "indeterminate"]
 BrokerMutationReceiptAcquireOutcome = Literal[
     "acquired",
@@ -595,6 +601,8 @@ def broker_mutation_runtime_result(
     if settlement_outcome == "reconciled":
         return "reconciled"
     if settlement_outcome == "already_satisfied":
+        return "already_processed"
+    if settlement_outcome == "validation_quarantine_closed":
         return "already_processed"
     if settlement_outcome == "rejected":
         return "rejected"

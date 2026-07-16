@@ -58,8 +58,10 @@ The public six-state projection is intentionally distinct from the four durable 
 automatic negative terminal.
 
 An `expired` or `manual_review` receipt remains due on a long retry interval so later broker truth can reconcile it. It
-continues to block entry. Slice 5 deliberately provides no operator endpoint that can manufacture a terminal outcome;
-until a separately reviewed confirmation workflow exists, the receipt remains unresolved.
+continues to block entry. The only reviewed operator terminal is the narrow
+[infrastructure-validation quarantine closure](validation-quarantine-closure.md): an unlinked, non-promotable
+Alpaca-paper IOC may close its future-exposure quarantine after fresh exact-order, history, open-order, position, and
+account proof. That outcome preserves order existence as unresolved and is unavailable to ordinary or live submits.
 
 ## Recovery Algorithm
 
@@ -176,7 +178,8 @@ and zero additional submit attempts. Broker readback and CNPG history are both r
 
 For a pre-existing unresolved receipt, production validation is observation-only: query the exact original ID and let
 the deployed worker append evidence. Do not create a new client ID or another broker mutation merely to make the proof
-terminal.
+terminal. If and only if the receipt satisfies the paper-IOC validation boundary, use the separately reviewed operator
+procedure; never relabel it broker-rejected.
 
 ## Rollback
 

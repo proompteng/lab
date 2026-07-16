@@ -127,6 +127,9 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
     manual_review_count = unresolved_resolution_counts.get("manual_review", 0)
     expired_count = unresolved_resolution_counts.get("expired", 0)
     rejected_count = settlement_counts.get("rejected", 0)
+    validation_quarantine_closed_count = settlement_counts.get(
+        "validation_quarantine_closed", 0
+    )
     acknowledged_count = sum(
         settlement_counts.get(outcome, 0)
         for outcome in ("acknowledged", "reconciled", "already_satisfied")
@@ -138,7 +141,8 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
         0,
         state_counts.get("settled", 0)
         - acknowledged_count
-        - settlement_counts.get("rejected", 0),
+        - rejected_count
+        - validation_quarantine_closed_count,
     )
     resolution_state_counts: Counter[str] = Counter(
         {
@@ -148,6 +152,7 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
             "rejected": rejected_count,
             "expired": expired_count,
             "manual_review": manual_review_count,
+            "validation_quarantine_closed": validation_quarantine_closed_count,
         }
     )
     recovery_due_count = int(
@@ -238,6 +243,7 @@ def load_broker_mutation_runtime_status(session: Session) -> dict[str, object]:
                 "rejected",
                 "expired",
                 "manual_review",
+                "validation_quarantine_closed",
             )
         },
         pre_io_receipt_count=(

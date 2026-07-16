@@ -685,6 +685,7 @@ jobs:
             tests/execution/test_broker_mutation_coordinator_postgres.py \
             tests/execution/test_broker_reduction_coordinator_postgres.py \
             tests/execution/test_broker_account_activities_postgres.py \
+            tests/execution/test_validation_quarantine_postgres.py \
             tests/execution/test_linked_submission_terminal_postgres.py \
             tests/execution/test_validation_observation_timestamp_postgres.py \
             tests/trading/test_strategy_capital_authority_postgres.py
