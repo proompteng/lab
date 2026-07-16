@@ -41,6 +41,8 @@ account data:
 - seven `CFEE` rows contained quantity, price, and symbol; four had negative cash impact and three had zero cash impact;
 - one `JNLC` row had positive cash impact;
 - the latest 100 fills contained both equities and crypto, buys and sells, and no broker-provided `net_amount`.
+- the full REST history contained 31 historical equity fills with `side=sell_short`, despite the current Alpaca
+  activity documentation describing only `buy` and `sell`.
 
 Therefore a credible projection must calculate fill notionals, account for order-independent regulatory fees, handle
 crypto fees charged in the received asset, and retain external cash journals. A fill-only realized-PnL counter is not
@@ -121,8 +123,9 @@ a derived mark, not historical cost and not a source mutation.
 
 ### Fills
 
-For each `FILL`, quantity and price must be positive, side must be `buy` or `sell`, and USD notional is
-`quantity * price` with no binary floating point.
+For each `FILL`, quantity and price must be positive, side must be `buy`, `sell`, or the empirically observed historical
+`sell_short` alias, and USD notional is `quantity * price` with no binary floating point. `sell_short` has sell direction
+but remains unchanged in the immutable manifest; no other undocumented side is inferred.
 
 A `FILL` with nonzero `net_amount` is not silently treated as quantity-times-price cash. It remains unsupported until
 a golden broker fixture establishes whether that field is gross, fee-inclusive, or net settlement and a sourced

@@ -164,12 +164,15 @@ class _JournalWriter:
             raise EconomicLedgerError("economic_fill_quantity_must_be_positive")
         if price is None or price <= ZERO:
             raise EconomicLedgerError("economic_fill_price_must_be_positive")
-        if activity.side not in {"buy", "sell"}:
+        if activity.side == "buy":
+            delta_quantity = quantity
+        elif activity.side in {"sell", "sell_short"}:
+            delta_quantity = -quantity
+        else:
             raise EconomicLedgerError("economic_fill_side_invalid")
         _require_quote_currency(activity)
 
         position = self.positions.setdefault(symbol, _Position())
-        delta_quantity = quantity if activity.side == "buy" else -quantity
         posting = _build_fill_posting(position, delta_quantity, price)
         transaction = _transaction(
             activity,

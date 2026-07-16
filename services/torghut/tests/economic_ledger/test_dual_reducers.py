@@ -64,6 +64,41 @@ def test_partial_fills_and_full_round_trip_balance_exactly() -> None:
     assert result.journal.projection.external_flows == Decimal("1000")
 
 
+def test_historical_sell_short_fill_is_a_sell_direction_without_relabeling() -> None:
+    short_fill = activity(
+        "short-open",
+        "FILL",
+        event_offset_seconds=1,
+        symbol="AAPL",
+        side="sell_short",
+        quantity="2",
+        price="10",
+        net_amount=None,
+    )
+    result = reduce_and_compare(
+        [
+            short_fill,
+            activity(
+                "short-close",
+                "FILL",
+                event_offset_seconds=2,
+                symbol="AAPL",
+                side="buy",
+                quantity="2",
+                price="8",
+                net_amount=None,
+            ),
+        ]
+    )
+
+    assert short_fill.manifest_payload()["side"] == "sell_short"
+    assert result.admissible
+    assert result.comparison.equivalent
+    assert cash(result.independent) == Decimal("4")
+    assert position(result.independent, "AAPL") is None
+    assert result.independent.realized_pnl == Decimal("4")
+
+
 def test_repeating_weighted_average_rounds_once_and_stays_exactly_balanced() -> None:
     result = reduce_and_compare(
         [

@@ -160,7 +160,7 @@ class _StateReducer:
             raise EconomicLedgerError("economic_fill_price_must_be_positive")
         if activity.side == "buy":
             order_units = quantity
-        elif activity.side == "sell":
+        elif activity.side in {"sell", "sell_short"}:
             order_units = -quantity
         else:
             raise EconomicLedgerError("economic_fill_side_invalid")
