@@ -77,7 +77,7 @@ def test_equivalent_fill_shapes_have_one_digest_across_decimal_encodings(
                 },
                 "price": f"{price_text}0",
                 "qty": f"{quantity_text}0",
-                "timestamp": "2026-07-16T07:39:00.123456789Z",
+                "timestamp": "2026-07-16T07:39:00.123456499Z",
             },
         },
         event_fingerprint="b" * 64,
