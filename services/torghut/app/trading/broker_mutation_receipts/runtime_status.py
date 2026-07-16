@@ -285,6 +285,7 @@ def unavailable_broker_mutation_runtime_status() -> dict[str, object]:
     )
     payload.update(
         entry_fencing_proven=False,
+        reduction_fencing_proven=False,
         recovery_degraded=True,
         database_status="unavailable",
         receipt_state_counts=None,

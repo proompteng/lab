@@ -242,7 +242,7 @@ def test_disabled_recovery_blocks_new_entry_without_disabling_reduction() -> Non
     assert authority.reason_codes["recovery"] == ("broker_mutation_recovery_disabled",)
 
 
-def test_entry_requires_current_durable_receipt_readback() -> None:
+def test_mutations_require_current_durable_receipt_readback() -> None:
     authority = reduce_runtime_action_authority(
         service_status=_service(),
         live_submission_gate=_gate(),
@@ -255,8 +255,11 @@ def test_entry_requires_current_durable_receipt_readback() -> None:
     )
 
     assert authority.entry_allowed is False
-    assert authority.reduce_only_allowed is True
+    assert authority.reduce_only_allowed is False
     assert authority.reason_codes["entry"] == (
+        "broker_mutation_database_status_not_current",
+    )
+    assert authority.reason_codes["reduce_only"] == (
         "broker_mutation_database_status_not_current",
     )
 
