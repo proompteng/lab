@@ -488,6 +488,9 @@ def test_ingestor_drains_bounded_pages_then_deduplicates_overlap() -> None:
         assert cursor.pages_processed == 3
         assert cursor.activities_seen == 102
         assert cursor.activities_inserted == 101
+        assert cursor.last_completed_scan_until is not None
+        assert cursor.last_completed_at is not None
+        assert cursor.last_completed_scan_until <= cursor.last_completed_at
 
 
 def test_changed_payload_for_same_activity_is_hard_contradiction() -> None:
