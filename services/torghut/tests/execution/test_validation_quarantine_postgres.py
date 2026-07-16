@@ -100,7 +100,9 @@ def _seed_expired_validation_receipt(
         BrokerMutationIntentRequest(
             broker_route="alpaca",
             account_label=permit.account_label,
-            endpoint_fingerprint=fingerprint_broker_endpoint(permit.broker_base_url),
+            endpoint_fingerprint=fingerprint_broker_endpoint(
+                str(permit.broker_base_url)
+            ),
             operation="submit_order",
             risk_class="risk_neutral",
             purpose="control_plane_validation",
