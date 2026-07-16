@@ -717,6 +717,16 @@ def candidate_meets_objective(
 ) -> bool:
     if list(candidate_payload.get("hard_vetoes") or []):
         return False
+    return candidate_metrics_meet_objective(candidate_payload, objective=objective)
+
+
+def candidate_metrics_meet_objective(
+    candidate_payload: Mapping[str, Any],
+    *,
+    objective: StrategyObjective,
+) -> bool:
+    """Evaluate objective metrics without applying terminal validation vetoes."""
+
     metrics = _candidate_objective_metrics(candidate_payload, objective)
     if not _objective_observed_days_ok(metrics, objective):
         return False
@@ -934,6 +944,7 @@ __all__: tuple[str, ...] = (
     "annotations",
     "apply_program_objective",
     "build_mutated_sweep_config",
+    "candidate_metrics_meet_objective",
     "candidate_meets_objective",
     "cast",
     "dataclass",

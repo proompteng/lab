@@ -13,7 +13,7 @@ from app.trading.discovery.autoresearch import (
     StrategyAutoresearchProgram,
     apply_program_objective,
     build_mutated_sweep_config,
-    candidate_meets_objective,
+    candidate_metrics_meet_objective,
 )
 from app.trading.discovery.mlx_features import (
     MlxCandidateDescriptor,
@@ -106,6 +106,8 @@ def _selection_entries(
     request: CandidateBatchRequest,
     descriptors: Sequence[MlxCandidateDescriptor],
     scores: Sequence[ProposalScore],
+    *,
+    duplicate_ids: frozenset[str],
 ) -> list[ProposalSelectionEntry]:
     descriptor_by_id = {item.candidate_id: item for item in descriptors}
     score_by_id = {item.candidate_id: item for item in scores}
@@ -113,6 +115,7 @@ def _selection_entries(
         _string(candidate.get("candidate_id"))
         for candidate in request.candidates
         if _string(candidate.get("candidate_id"))
+        and _string(candidate.get("candidate_id")) not in duplicate_ids
         and not bool(_mapping(candidate.get("ranking")).get("vetoed"))
     ]
     eligible_descriptors = [
@@ -146,7 +149,15 @@ def _selection_entries(
         or not request.candidates
     ):
         return selected
-    first_candidate_id = _string(request.candidates[0].get("candidate_id"))
+    first_candidate_id = next(
+        (
+            candidate_id
+            for candidate in request.candidates
+            if (candidate_id := _string(candidate.get("candidate_id")))
+            and candidate_id not in duplicate_ids
+        ),
+        "",
+    )
     descriptor = descriptor_by_id.get(first_candidate_id)
     score = score_by_id.get(first_candidate_id)
     if descriptor is None or score is None:
@@ -165,6 +176,17 @@ def _selection_entries(
 
 
 def _prepare_selection(request: CandidateBatchRequest) -> _CandidateBatchSelection:
+    candidate_ids = tuple(
+        _string(candidate.get("candidate_id")) for candidate in request.candidates
+    )
+    candidate_id_counts = Counter(
+        candidate_id for candidate_id in candidate_ids if candidate_id
+    )
+    duplicate_ids = frozenset(
+        candidate_id
+        for candidate_id, count in candidate_id_counts.items()
+        if count > 1 or candidate_id in request.existing_seen_candidate_ids
+    )
     descriptors = tuple(
         descriptor_from_candidate_payload(
             candidate_payload=candidate,
@@ -182,12 +204,11 @@ def _prepare_selection(request: CandidateBatchRequest) -> _CandidateBatchSelecti
             ),
         )
     )
-    selected = _selection_entries(request, descriptors, scores)
-    candidate_ids = tuple(
-        _string(candidate.get("candidate_id")) for candidate in request.candidates
-    )
-    candidate_id_counts = Counter(
-        candidate_id for candidate_id in candidate_ids if candidate_id
+    selected = _selection_entries(
+        request,
+        descriptors,
+        scores,
+        duplicate_ids=duplicate_ids,
     )
     return _CandidateBatchSelection(
         descriptors=descriptors,
@@ -197,11 +218,7 @@ def _prepare_selection(request: CandidateBatchRequest) -> _CandidateBatchSelecti
             item.candidate_id: item.selection_reason for item in selected
         },
         score_by_id={item.candidate_id: item for item in scores},
-        duplicate_ids=frozenset(
-            candidate_id
-            for candidate_id, count in candidate_id_counts.items()
-            if count > 1 or candidate_id in request.existing_seen_candidate_ids
-        ),
+        duplicate_ids=duplicate_ids,
         candidate_ids=candidate_ids,
     )
 
@@ -273,7 +290,7 @@ def _evaluate_candidate(
     completion = evaluate_candidate_completion(
         candidate_id=candidate_id,
         selection_status=selection_status,
-        raw_objective_met=candidate_meets_objective(
+        raw_objective_met=candidate_metrics_meet_objective(
             request.candidate,
             objective=batch.program.objective,
         ),
