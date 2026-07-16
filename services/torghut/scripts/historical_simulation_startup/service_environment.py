@@ -607,8 +607,14 @@ def _derived_simulation_cache_key(manifest: Mapping[str, Any]) -> str:
     return hashlib.sha256(_stable_json_for_hash(payload).encode("utf-8")).hexdigest()
 
 
-def _derived_simulation_cache_paths(cache_key: str, dump_format: str) -> dict[str, str]:
+def _derived_simulation_cache_paths(
+    cache_key: str,
+    dump_format: str,
+    *,
+    bucket: str = DEFAULT_SIMULATION_CACHE_BUCKET,
+) -> dict[str, str]:
     normalized_prefix = DEFAULT_SIMULATION_CACHE_PREFIX.strip("/")
+    normalized_bucket = bucket.strip() or DEFAULT_SIMULATION_CACHE_BUCKET
     object_key = "/".join(
         part
         for part in (
@@ -618,7 +624,7 @@ def _derived_simulation_cache_paths(cache_key: str, dump_format: str) -> dict[st
         )
         if part
     )
-    artifact_path = f"s3://{DEFAULT_SIMULATION_CACHE_BUCKET}/{object_key}"
+    artifact_path = f"s3://{normalized_bucket}/{object_key}"
     return {
         "cache_artifact_path": artifact_path,
         "cache_manifest_path": f"{artifact_path}.manifest.json",
