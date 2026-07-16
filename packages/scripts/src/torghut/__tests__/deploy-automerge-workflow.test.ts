@@ -6,6 +6,10 @@ const releaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-release.yml', import.meta.url),
   'utf8',
 )
+const torghutCiWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url),
+  'utf8',
+)
 const taReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-ta-release.yml', import.meta.url),
   'utf8',
@@ -68,6 +72,17 @@ describe('torghut-deploy-automerge workflow', () => {
 
     expect(countOccurrences(releaseWorkflow, schedulerManifest)).toBe(3)
     expect(countOccurrences(deployAutomergeWorkflow, `'${schedulerManifest}'`)).toBe(2)
+  })
+
+  test('validates reconciliation-only releases against the shared image contract', () => {
+    const reconciliationManifest = 'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml'
+
+    expect(torghutCiWorkflow).toContain(
+      'generated-resource-retention-cronjob|broker-economic-ledger-reconciliation-cronjob|whitepaper-semantic-backfill-job',
+    )
+    expect(torghutCiWorkflow).toContain(reconciliationManifest)
+    expect(countOccurrences(releaseWorkflow, reconciliationManifest)).toBe(3)
+    expect(countOccurrences(deployAutomergeWorkflow, `'${reconciliationManifest}'`)).toBe(2)
   })
 
   test('carries the options archive image through release and automatic deploy merge allowlists', () => {
