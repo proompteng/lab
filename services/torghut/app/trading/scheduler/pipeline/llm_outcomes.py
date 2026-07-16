@@ -449,26 +449,25 @@ class TradingPipelineReviewOutcomeMixin(TradingPipelineRuntime):
         }
         if request.response_payload_extra:
             response_payload.update(request.response_payload_extra)
-        decision_metadata_update: dict[str, Any] = {}
+        decision_state_update = dict(decision.model_dump(mode="json"))
         if request.response_payload_extra:
             llm_runtime_payload = request.response_payload_extra.get("llm_runtime")
             if isinstance(llm_runtime_payload, Mapping):
-                decision_metadata_update["llm_runtime"] = dict(
+                decision_state_update["llm_runtime"] = dict(
                     cast(Mapping[str, Any], llm_runtime_payload)
                 )
             market_context_payload = request.response_payload_extra.get(
                 "market_context"
             )
             if isinstance(market_context_payload, Mapping):
-                decision_metadata_update["market_context"] = dict(
+                decision_state_update["market_context"] = dict(
                     cast(Mapping[str, Any], market_context_payload)
                 )
-        if decision_metadata_update:
-            self.executor.update_decision_json(
-                context.session,
-                context.decision_row,
-                decision_metadata_update,
-            )
+        self.executor.update_decision_json(
+            context.session,
+            context.decision_row,
+            decision_state_update,
+        )
         response_payload["request_hash"] = hash_payload(request_payload)
         response_payload["response_hash"] = hash_payload(response_payload)
         self._persist_llm_review(

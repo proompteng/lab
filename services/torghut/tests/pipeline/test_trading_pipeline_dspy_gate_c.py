@@ -173,6 +173,25 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 self.assertEqual(len(executions), 1)
                 self.assertLess(executions[0].submitted_qty, Decimal("10"))
                 self.assertGreaterEqual(executions[0].submitted_qty, Decimal("1"))
+                decision_payload = decisions[0].decision_json
+                assert isinstance(decision_payload, dict)
+                params = decision_payload.get("params")
+                assert isinstance(params, dict)
+                degrade = params.get("llm_runtime_block_degrade")
+                assert isinstance(degrade, dict)
+                self.assertEqual(
+                    Decimal(str(decision_payload.get("qty"))),
+                    executions[0].submitted_qty,
+                )
+                self.assertEqual(
+                    Decimal(str(degrade.get("degraded_qty"))),
+                    executions[0].submitted_qty,
+                )
+                self.assertGreater(
+                    Decimal(str(degrade.get("original_qty"))),
+                    executions[0].submitted_qty,
+                )
+                self.assertEqual(degrade.get("qty_multiplier"), "0.5")
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -552,6 +571,25 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 self.assertEqual(decisions[0].status, "submitted")
                 self.assertEqual(len(executions), 1)
                 self.assertLess(executions[0].submitted_qty, Decimal("1"))
+                decision_payload = decisions[0].decision_json
+                assert isinstance(decision_payload, dict)
+                params = decision_payload.get("params")
+                assert isinstance(params, dict)
+                degrade = params.get("llm_runtime_block_degrade")
+                assert isinstance(degrade, dict)
+                self.assertEqual(
+                    Decimal(str(decision_payload.get("qty"))),
+                    executions[0].submitted_qty,
+                )
+                self.assertEqual(
+                    Decimal(str(degrade.get("degraded_qty"))),
+                    executions[0].submitted_qty,
+                )
+                self.assertGreater(
+                    Decimal(str(degrade.get("original_qty"))),
+                    executions[0].submitted_qty,
+                )
+                self.assertEqual(degrade.get("qty_multiplier"), "0.5")
                 remaining_qty = Decimal(
                     str(execution_adapter.list_positions()[0]["qty"])
                 )
