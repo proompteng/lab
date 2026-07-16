@@ -232,12 +232,12 @@ const healthySnapshot = (): StorageStabilitySnapshot => ({
   workloads: [
     {
       name: 'torghut-options-archive',
-      desiredReplicas: 0,
-      actualReplicas: 0,
-      readyReplicas: 0,
-      availableReplicas: 0,
+      desiredReplicas: 1,
+      actualReplicas: 1,
+      readyReplicas: 1,
+      availableReplicas: 1,
       terminatingReplicas: 0,
-      podNames: [],
+      podNames: ['torghut-options-archive-7d9f8f6f65-abcde'],
     },
   ],
   argoApplications: [
@@ -507,7 +507,7 @@ describe('Torghut storage stability gate', () => {
     snapshot.jangarPostgres.settings.synchronousCommit = 'off'
     snapshot.jangarPostgres.walBytesPerSecond = 400_000
     snapshot.jangarPostgres.walSampleSeconds = 29
-    snapshot.workloads[0].desiredReplicas = 1
+    snapshot.workloads[0].readyReplicas = 0
     snapshot.argoApplications.find(({ name }) => name === 'rook-ceph')!.health = 'Degraded'
 
     const result = evaluateStorageStabilityGate(snapshot)
@@ -518,20 +518,20 @@ describe('Torghut storage stability gate', () => {
     expect(result.failures.join('\n')).toContain('Jangar PostgreSQL synchronous_commit is off')
     expect(result.failures.join('\n')).toContain('limit is 0.3015 MiB/s (50% of the 0.603 MiB/s pre-change baseline)')
     expect(result.failures.join('\n')).toContain('at least 30 seconds is required')
-    expect(result.failures.join('\n')).toContain('torghut-options-archive must remain contained')
+    expect(result.failures.join('\n')).toContain('torghut-options-archive must match the active replica contract')
     expect(result.failures.join('\n')).toContain('rook-ceph is sync=Synced health=Degraded')
   })
 
-  it('fails containment while any unready or terminating workload pod still exists', () => {
+  it('fails while the active archive worker is unready or terminating', () => {
     const snapshot = healthySnapshot()
-    snapshot.workloads[0].actualReplicas = 1
+    snapshot.workloads[0].readyReplicas = 0
+    snapshot.workloads[0].availableReplicas = 0
     snapshot.workloads[0].terminatingReplicas = 1
-    snapshot.workloads[0].podNames = ['torghut-options-archive-7d9f8f6f65-abcde']
 
     const result = evaluateStorageStabilityGate(snapshot)
 
     expect(result.ok).toBe(false)
-    expect(result.failures.join('\n')).toContain('observed desired=0 actual=1 ready=0 available=0 terminating=1')
+    expect(result.failures.join('\n')).toContain('observed desired=1 actual=1 ready=0 available=0 terminating=1')
     expect(result.failures.join('\n')).toContain('pods=[torghut-options-archive-7d9f8f6f65-abcde]')
   })
 
@@ -557,14 +557,14 @@ describe('Torghut storage stability gate', () => {
     expect(result.failures.join('\n')).toContain('pods=[torghut-hyperliquid-clickhouse-writer-75dd7d9ddc-abcde]')
   })
 
-  it('collects the contained workload from list-shaped deployment output', () => {
+  it('collects the active archive workload from list-shaped deployment output', () => {
     const workloads = __private.collectWorkloadEvidenceFromValues(
       {
         items: [
           {
             metadata: { name: 'torghut-options-archive' },
-            spec: { replicas: 0, selector: { matchLabels: { app: 'torghut-options-archive' } } },
-            status: {},
+            spec: { replicas: 1, selector: { matchLabels: { app: 'torghut-options-archive' } } },
+            status: { replicas: 1, readyReplicas: 1, availableReplicas: 1 },
           },
           {
             metadata: { name: 'torghut-scheduler' },
@@ -577,7 +577,6 @@ describe('Torghut storage stability gate', () => {
             metadata: {
               name: 'torghut-options-archive-7d9f8f6f65-abcde',
               labels: { app: 'torghut-options-archive' },
-              deletionTimestamp: '2026-07-15T17:00:00Z',
             },
           },
         ],
@@ -587,11 +586,11 @@ describe('Torghut storage stability gate', () => {
     expect(workloads).toEqual([
       {
         name: 'torghut-options-archive',
-        desiredReplicas: 0,
-        actualReplicas: 0,
-        readyReplicas: 0,
-        availableReplicas: 0,
-        terminatingReplicas: 1,
+        desiredReplicas: 1,
+        actualReplicas: 1,
+        readyReplicas: 1,
+        availableReplicas: 1,
+        terminatingReplicas: 0,
         podNames: ['torghut-options-archive-7d9f8f6f65-abcde'],
       },
     ])
@@ -603,8 +602,8 @@ describe('Torghut storage stability gate', () => {
         items: [
           {
             metadata: { name: 'torghut-options-archive' },
-            spec: { replicas: 0, selector: { matchLabels: { app: 'torghut-options-archive' } } },
-            status: {},
+            spec: { replicas: 1, selector: { matchLabels: { app: 'torghut-options-archive' } } },
+            status: { replicas: 1, readyReplicas: 1, availableReplicas: 1 },
           },
         ],
       },
@@ -624,10 +623,10 @@ describe('Torghut storage stability gate', () => {
     expect(workloads).toEqual([
       {
         name: 'torghut-options-archive',
-        desiredReplicas: 0,
-        actualReplicas: 0,
-        readyReplicas: 0,
-        availableReplicas: 0,
+        desiredReplicas: 1,
+        actualReplicas: 1,
+        readyReplicas: 1,
+        availableReplicas: 1,
         terminatingReplicas: 0,
         podNames: [],
       },
