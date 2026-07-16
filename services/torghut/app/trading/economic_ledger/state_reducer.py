@@ -36,6 +36,7 @@ _INTEREST_ACTIVITY_TYPES = frozenset({"INT"})
 _WITHHOLDING_ACTIVITY_TYPES = frozenset({"DIVFT", "DIVNRA", "DIVTW", "INTNRA", "INTTW"})
 _CASH_FEE_ACTIVITY_TYPES = frozenset({"DIVFEE", "FEE", "PTC"})
 _CASH_EXPENSE_ACTIVITY_TYPES = _CASH_FEE_ACTIVITY_TYPES | _WITHHOLDING_ACTIVITY_TYPES
+_PAIRED_SPLIT_SUBTYPES = frozenset({"add", "remove"})
 
 
 @dataclass(slots=True)
@@ -99,7 +100,11 @@ class _StateReducer:
                 )
             )
             or (activity_type == "FILL" and activity.net_amount in {None, ZERO})
-            or (activity_type == "SSP" and activity.net_amount in {None, ZERO})
+            or (
+                activity_type == "SSP"
+                and activity.net_amount in {None, ZERO}
+                and activity.activity_subtype not in _PAIRED_SPLIT_SUBTYPES
+            )
             or activity_type in _EXTERNAL_FLOW_TYPES
             or activity_type in _DIVIDEND_ACTIVITY_TYPES
             or activity_type in _INTEREST_ACTIVITY_TYPES
@@ -118,7 +123,10 @@ class _StateReducer:
         elif activity_type == "CFEE":
             self._crypto_fee(activity)
         elif activity_type == "SSP":
-            self._split(activity)
+            if self._split_removes_or_flips_holding(activity):
+                self.unsupported.add(activity.external_activity_id)
+            else:
+                self._split(activity)
         elif activity_type in _EXTERNAL_FLOW_TYPES or activity_type == "JNL":
             amount = _required_amount(activity, "cash_flow")
             self._add_cash(activity, amount)
@@ -251,6 +259,18 @@ class _StateReducer:
         ):
             raise EconomicLedgerError("economic_split_position_direction_invalid")
         holding.units = new_units
+
+    def _split_removes_or_flips_holding(self, activity: EconomicActivity) -> bool:
+        symbol = activity.canonical_symbol
+        units = activity.quantity
+        holding = self.holdings.get(symbol) if symbol is not None else None
+        if units is None or units == ZERO or holding is None:
+            return False
+        new_units = quantize_ledger_decimal(
+            holding.units + units,
+            field_name="split_position_quantity",
+        )
+        return new_units == ZERO or holding.units * new_units < ZERO
 
     def _add_cash(self, activity: EconomicActivity, amount: Decimal) -> None:
         currency = activity.currency or self.prepared.scope.quote_currency

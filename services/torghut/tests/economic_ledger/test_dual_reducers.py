@@ -520,6 +520,56 @@ def test_split_changes_quantity_without_changing_total_cost() -> None:
     assert mu.average_cost == Decimal("5")
 
 
+def test_paired_reverse_split_remove_and_add_rows_fail_closed() -> None:
+    result = reduce_and_compare(
+        [
+            activity(
+                "mu-buy",
+                "FILL",
+                symbol="MU",
+                side="buy",
+                quantity="10",
+                price="10",
+                net_amount=None,
+            ),
+            activity(
+                "reverse-split-remove",
+                "SSP",
+                subtype="remove",
+                event_offset_seconds=1,
+                symbol="MU",
+                quantity="-10",
+                net_amount="0",
+            ),
+            activity(
+                "reverse-split-add",
+                "SSP",
+                subtype="add",
+                event_offset_seconds=2,
+                symbol="MU",
+                quantity="1",
+                net_amount="0",
+            ),
+        ]
+    )
+
+    assert result.comparison.equivalent
+    assert result.admissible is False
+    assert result.journal.projection.unsupported_activity_ids == (
+        "reverse-split-add",
+        "reverse-split-remove",
+    )
+    assert result.independent.unsupported_activity_ids == (
+        "reverse-split-add",
+        "reverse-split-remove",
+    )
+    mu = position(result.independent, "MU")
+    assert mu is not None
+    assert mu.quantity == Decimal("10")
+    assert mu.signed_cost == Decimal("100")
+    assert mu.average_cost == Decimal("10")
+
+
 def test_retroactive_correction_reverses_original_then_applies_replacement() -> None:
     original = activity(
         "original-fill",

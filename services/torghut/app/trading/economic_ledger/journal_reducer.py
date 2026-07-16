@@ -43,6 +43,7 @@ _INTEREST_TYPES = frozenset({"INT"})
 _WITHHOLDING_TYPES = frozenset({"DIVFT", "DIVNRA", "DIVTW", "INTNRA", "INTTW"})
 _FEE_TYPES = frozenset({"DIVFEE", "FEE", "PTC"})
 _CASH_EXPENSE_TYPES = _FEE_TYPES | _WITHHOLDING_TYPES
+_PAIRED_SPLIT_SUBTYPES = frozenset({"add", "remove"})
 _REGULATORY_FEE_SUBTYPES = frozenset({"CAT", "OCC", "ORF", "REG", "TAF"})
 
 
@@ -151,10 +152,26 @@ class _JournalWriter:
         return self._crypto_fee(activity)
 
     def _apply_split(self, activity: EconomicActivity) -> LedgerTransaction | None:
-        if activity.net_amount not in {None, ZERO}:
+        if (
+            activity.net_amount not in {None, ZERO}
+            or activity.activity_subtype in _PAIRED_SPLIT_SUBTYPES
+            or self._split_removes_or_flips_position(activity)
+        ):
             self.unsupported.add(activity.external_activity_id)
             return None
         return self._split(activity)
+
+    def _split_removes_or_flips_position(self, activity: EconomicActivity) -> bool:
+        symbol = activity.canonical_symbol
+        quantity = activity.quantity
+        position = self.positions.get(symbol) if symbol is not None else None
+        if quantity is None or quantity == ZERO or position is None:
+            return False
+        new_quantity = quantize_ledger_decimal(
+            position.quantity + quantity,
+            field_name="split_position_quantity",
+        )
+        return new_quantity == ZERO or position.quantity * new_quantity < ZERO
 
     def _fill(self, activity: EconomicActivity) -> LedgerTransaction:
         symbol = _required_symbol(activity)
