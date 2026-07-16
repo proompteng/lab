@@ -126,6 +126,7 @@ const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
 const MAX_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 900
 const DEFAULT_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = 60_000
 const RRF_K = 60
+const LITERAL_EXACT_MIN_RANK = 0.75
 const EXACT_SCORE_BOOST_MIN_RANK = 0.9
 const ATLAS_QUERY_INSTRUCTION = 'Given a query, retrieve relevant source-code chunks from the repository'
 const LEXICAL_STOP_WORDS = new Set([
@@ -534,7 +535,7 @@ export const createAtlasCodeSearchHandlers = ({
     const pathCandidateClause = isPathQuery
       ? sql`file_keys.path = ${resolvedQuery}`
       : sql`(file_keys.path ILIKE ${containsPattern} ESCAPE '\' OR file_keys.path % ${resolvedQuery}::text)`
-    const indexedContentCandidateClause = /[A-Za-z0-9_$]+/.test(resolvedQuery)
+    const indexedContentCandidateClause = /[A-Za-z0-9]+/.test(resolvedQuery)
       ? sql`file_chunks.text_tsvector @@ plainto_tsquery('simple', ${resolvedQuery}::text)`
       : sql`file_chunks.content ILIKE ${containsPattern} ESCAPE '\'`
     const contentCandidateUnion = isPathQuery
@@ -782,6 +783,8 @@ export const createAtlasCodeSearchHandlers = ({
       .sort(
         (left, right) =>
           right.score - left.score ||
+          Number((right.signals.exactRank ?? 0) >= LITERAL_EXACT_MIN_RANK) -
+            Number((left.signals.exactRank ?? 0) >= LITERAL_EXACT_MIN_RANK) ||
           Number(right.signals.semanticDistance !== null) - Number(left.signals.semanticDistance !== null) ||
           left.fileKey.path.localeCompare(right.fileKey.path),
       )

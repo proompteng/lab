@@ -624,21 +624,24 @@ describe('atlas store', () => {
     expect(normalized).toContain('file_chunks.content ilike')
   })
 
-  it('falls back to exact content scanning only when a literal has no searchable text terms', async () => {
-    const { db, calls } = makeFakeDb({ selectRows: [] })
-    const store = createPostgresAtlasStore({
-      url: 'postgresql://user:pass@localhost:5432/db',
-      createDb: () => db,
-    })
+  it.each(['=>', '$', '${', '_'])(
+    'falls back to exact content scanning when %s has no searchable text terms',
+    async (query) => {
+      const { db, calls } = makeFakeDb({ selectRows: [] })
+      const store = createPostgresAtlasStore({
+        url: 'postgresql://user:pass@localhost:5432/db',
+        createDb: () => db,
+      })
 
-    await store.codeSearch({ query: '=>', repository: 'proompteng/lab', ref: 'main' })
+      await store.codeSearch({ query, repository: 'proompteng/lab', ref: 'main' })
 
-    const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
-    const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
-    const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
-    expect(candidates).toContain('file_chunks.content ilike')
-    expect(candidates).not.toContain('file_chunks.text_tsvector')
-  })
+      const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
+      const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+      const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
+      expect(candidates).toContain('file_chunks.content ilike')
+      expect(candidates).not.toContain('file_chunks.text_tsvector')
+    },
+  )
 
   it('pushes corpus and caller filters into every materialized exact-candidate scan', async () => {
     const { db, calls } = makeFakeDb({ selectRows: [] })
@@ -883,22 +886,29 @@ describe('atlas store', () => {
     expect(matches[0]?.retrievalMode).toBe('semantic')
   })
 
-  it('keeps generic content substring matches on the RRF score scale', async () => {
+  it('keeps literal content matches on the RRF scale and above semantic ties', async () => {
     const generic = makeCodeSearchRow({
       chunk_id: 'generic-content-chunk',
-      chunk_content: 'source',
+      chunk_content: 'FROM docker:25.0-dind',
       exact_rank: 0.75,
-      file_key_path: 'generic.ts',
+      file_key_path: 'z-generic.ts',
     })
-    const { db } = makeFakeDb({ exactRows: [generic], lexicalRows: [], semanticRows: [] })
+    const semantic = makeCodeSearchRow({
+      chunk_id: 'semantic-only',
+      semantic_distance: 0.01,
+      file_key_path: 'a-semantic.ts',
+    })
+    const { db } = makeFakeDb({ exactRows: [generic], lexicalRows: [], semanticRows: [semantic] })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
       createDb: () => db,
     })
 
-    const matches = await store.codeSearch({ query: 'source', repository: 'proompteng/lab', limit: 1 })
+    const matches = await store.codeSearch({ query: 'docker:25.0-dind', repository: 'proompteng/lab', limit: 1 })
 
     expect(matches).toHaveLength(1)
+    expect(matches[0]?.chunk.id).toBe('generic-content-chunk')
+    expect(matches[0]?.retrievalMode).toBe('exact')
     expect(matches[0]?.signals.exactRank).toBe(0.75)
     expect(matches[0]?.score).toBeCloseTo(1 / 61)
     expect(matches[0]?.score).toBeLessThan(0.1)
