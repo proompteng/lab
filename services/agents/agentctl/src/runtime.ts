@@ -1716,7 +1716,7 @@ const outputStatus = (status: ControlPlaneStatus, output: string, namespace: str
       component: 'grpc',
       namespace,
       status: status.grpc.status ?? '',
-      message: status.grpc.message ?? status.grpc.address ?? '',
+      message: status.grpc.message || status.grpc.address || '',
     })
   }
 
