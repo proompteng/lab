@@ -23,6 +23,15 @@ class _ReductionTradingClient:
         self.replaced: list[tuple[str, ReplaceOrderRequest]] = []
         self.closed: list[tuple[str, ClosePositionRequest]] = []
         self.close_all_cancel_orders: list[bool] = []
+        self.asset_lookups: list[str] = []
+        self.asset_id = "276e2673-764b-4ab6-a611-caf665ca6340"
+
+    def get_asset(self, symbol_or_asset_id: str) -> _Model:
+        self.asset_lookups.append(symbol_or_asset_id)
+        return _Model(
+            id=self.asset_id,
+            symbol=symbol_or_asset_id,
+        )
 
     def replace_order_by_id(
         self,
@@ -89,7 +98,7 @@ class TestAlpacaReductionClient(TestCase):
         self.assertEqual(close_all[0]["body"]["id"], "close-1")
         self.assertEqual(trading_client.close_all_cancel_orders, [False])
 
-    def test_close_position_encodes_crypto_symbol_as_one_path_segment(self) -> None:
+    def test_close_position_resolves_crypto_symbol_to_asset_id(self) -> None:
         trading_client = _ReductionTradingClient()
         client = TorghutAlpacaClient(
             api_key="k",
@@ -105,5 +114,33 @@ class TestAlpacaReductionClient(TestCase):
             firewall_token=issue_order_firewall_token(),
         )
 
-        self.assertEqual(trading_client.closed[0][0], "BTC%2FUSD")
+        self.assertEqual(trading_client.asset_lookups, ["BTC/USD"])
+        self.assertEqual(
+            trading_client.closed[0][0],
+            "276e2673-764b-4ab6-a611-caf665ca6340",
+        )
         self.assertEqual(trading_client.closed[0][1].qty, "0.0002")
+
+    def test_close_position_rejects_crypto_asset_without_uuid(self) -> None:
+        trading_client = _ReductionTradingClient()
+        trading_client.asset_id = ""
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=trading_client,
+            data_client=Mock(),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "alpaca_crypto_close_asset_id_invalid",
+        ):
+            client.close_position(
+                "BTC/USD",
+                qty=Decimal("0.0002"),
+                firewall_token=issue_order_firewall_token(),
+            )
+
+        self.assertEqual(trading_client.asset_lookups, ["BTC/USD"])
+        self.assertEqual(trading_client.closed, [])
