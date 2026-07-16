@@ -15,11 +15,13 @@ from ...models import BrokerMutationReceipt, BrokerMutationReceiptEvent
 from ...config import settings
 from ..action_authority import BROKER_MUTATION_RUNTIME_STATUS_SCHEMA_VERSION
 
-# Entry submissions and observation-only submit recovery are wired through the
-# durable coordinator. Reduction mutations remain fail-closed until Slice 6.
+# Entry submissions, observation-only recovery, and every reachable reduction
+# mutation are wired through the durable coordinator. Slice 6 graduated only
+# after the promoted Alpaca-paper lifecycle exercised submit, replace, cancel,
+# targeted close, and final flatten as one excluded, fully settled causal chain.
 BROKER_MUTATION_RUNTIME_WIRED = True
 BROKER_MUTATION_ENTRY_FENCING_PROVEN = True
-BROKER_MUTATION_REDUCTION_FENCING_PROVEN = False
+BROKER_MUTATION_REDUCTION_FENCING_PROVEN = True
 BROKER_MUTATION_RECOVERY_WORKER_WIRED = True
 
 
@@ -27,7 +29,11 @@ def build_broker_mutation_runtime_status() -> dict[str, object]:
     """Return current code wiring truth without adding status-path database load."""
 
     recovery_enabled = settings.trading_broker_mutation_recovery_enabled
-    reason_codes = ["broker_mutation_reduction_fencing_unproven"]
+    reason_codes = (
+        []
+        if BROKER_MUTATION_REDUCTION_FENCING_PROVEN
+        else ["broker_mutation_reduction_fencing_unproven"]
+    )
     if not recovery_enabled:
         reason_codes.append("broker_mutation_recovery_disabled")
     return {
