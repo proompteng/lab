@@ -7,6 +7,7 @@ import { __test__ as scheduleRunnerTest } from './supporting-schedule-runner'
 const originalSwarmPrimitiveEnabled = process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
 
 afterEach(() => {
+  vi.useRealTimers()
   if (originalSwarmPrimitiveEnabled === undefined) {
     delete process.env.AGENTS_SWARM_PRIMITIVE_ENABLED
   } else {
@@ -178,6 +179,74 @@ describe('supporting primitives controller', () => {
     expect(statuses.at(-1)).toMatchObject({
       kind: 'Workspace',
       status: { phase: 'Pending' },
+    })
+  })
+
+  it('expires Workspace resources before applying a PVC', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-16T08:00:00.000Z'))
+    const { kube, applied, deleted, statuses } = createKubeMock({
+      [`${RESOURCE_MAP.PersistentVolumeClaim}:agents:work-expired`]: {
+        spec: { volumeName: 'pvc-volume-a' },
+      },
+    })
+
+    await __test__.reconcileWorkspace(
+      kube,
+      {
+        apiVersion: 'workspaces.proompteng.ai/v1alpha1',
+        kind: 'Workspace',
+        metadata: {
+          name: 'work-expired',
+          namespace: 'agents',
+          generation: 2,
+          creationTimestamp: '2026-07-16T07:00:00.000Z',
+        },
+        spec: { size: '20Gi', ttlSeconds: 60 },
+      },
+      'agents',
+    )
+
+    expect(applied).toHaveLength(0)
+    expect(deleted).toEqual([
+      { resource: RESOURCE_MAP.PersistentVolumeClaim, name: 'work-expired', namespace: 'agents' },
+    ])
+    expect(statuses.at(-1)).toMatchObject({
+      kind: 'Workspace',
+      status: {
+        phase: 'Expired',
+        volumeName: 'pvc-volume-a',
+        conditions: [expect.objectContaining({ reason: 'Expired', status: 'False' })],
+      },
+    })
+  })
+
+  it('marks an expired Workspace without a PVC as expired without deleting', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-16T08:00:00.000Z'))
+    const { kube, applied, deleted, statuses } = createKubeMock()
+
+    await __test__.reconcileWorkspace(
+      kube,
+      {
+        apiVersion: 'workspaces.proompteng.ai/v1alpha1',
+        kind: 'Workspace',
+        metadata: {
+          name: 'work-never-provisioned',
+          namespace: 'agents',
+          generation: 1,
+          creationTimestamp: '2026-07-16T07:00:00.000Z',
+        },
+        spec: { size: '20Gi', ttlSeconds: 60 },
+      },
+      'agents',
+    )
+
+    expect(applied).toHaveLength(0)
+    expect(deleted).toHaveLength(0)
+    expect(statuses.at(-1)).toMatchObject({
+      kind: 'Workspace',
+      status: { phase: 'Expired', volumeName: undefined },
     })
   })
 
