@@ -24,6 +24,7 @@ type CliOptions = {
   buildId?: string
   migrateStaleRunning?: boolean
   migrateUnversionedRunning?: boolean
+  allowNoVersionedPollers?: boolean
   reason?: string
   dryRun?: boolean
 }
@@ -36,6 +37,7 @@ type ResolvedOptions = {
   buildId?: string
   migrateStaleRunning: boolean
   migrateUnversionedRunning: boolean
+  allowNoVersionedPollers: boolean
   reason: string
   dryRun: boolean
 }
@@ -49,8 +51,9 @@ type CommandResult = {
 type SyncResult = {
   changed: boolean
   previousBuildId?: string
-  targetBuildId: string
+  targetBuildId?: string
   deploymentBuildIds: string[]
+  skippedReason?: 'no_versioned_workflow_pollers'
 }
 
 const defaultAddress = 'temporal-frontend.temporal.svc.cluster.local:7233'
@@ -108,6 +111,7 @@ Options:
   --build-id <id>                       Explicit build to select; otherwise verify the worker-selected current build
   --migrate-stale-running               Move stale pinned running workflows to auto_upgrade after routing update
   --migrate-unversioned-running         Move unversioned running workflows to auto_upgrade
+  --allow-no-versioned-pollers          Skip routing sync when the deployment has no registered worker build
   --reason <text>                       Reason recorded in workflow update-options
   --dry-run                             Print intended actions without mutating Temporal`)
       process.exit(0)
@@ -119,6 +123,10 @@ Options:
     }
     if (arg === '--migrate-unversioned-running') {
       options.migrateUnversionedRunning = true
+      continue
+    }
+    if (arg === '--allow-no-versioned-pollers') {
+      options.allowNoVersionedPollers = true
       continue
     }
     if (arg === '--dry-run') {
@@ -179,6 +187,7 @@ const resolveOptions = (options: CliOptions): ResolvedOptions => {
     buildId: options.buildId?.trim() || process.env.TEMPORAL_WORKER_BUILD_ID?.trim() || undefined,
     migrateStaleRunning: options.migrateStaleRunning ?? false,
     migrateUnversionedRunning: options.migrateUnversionedRunning ?? false,
+    allowNoVersionedPollers: options.allowNoVersionedPollers ?? false,
     reason: options.reason?.trim() || defaultReason,
     dryRun: options.dryRun ?? false,
   }
@@ -361,6 +370,17 @@ const syncCurrentVersion = async (options: ResolvedOptions, client: TemporalClie
   const targetBuildId = options.buildId ?? currentBuildId
   const deploymentBuildIds = extractDeploymentBuildIds(deployment, options.deploymentName)
   if (!targetBuildId) {
+    if (options.allowNoVersionedPollers && deploymentBuildIds.length === 0) {
+      console.log(
+        `Temporal worker deployment '${options.deploymentName}' has no registered build; skipping routing sync.`,
+      )
+      return {
+        changed: false,
+        previousBuildId: currentBuildId,
+        deploymentBuildIds,
+        skippedReason: 'no_versioned_workflow_pollers',
+      }
+    }
     throw new Error(
       `Temporal worker deployment '${options.deploymentName}' has no current build; wait for a healthy worker or pass --build-id explicitly.`,
     )
@@ -429,7 +449,7 @@ export const main = async (cliOptions?: CliOptions) => {
     let migratedStale = 0
     let migratedUnversioned = 0
 
-    if (options.migrateStaleRunning) {
+    if (options.migrateStaleRunning && sync.targetBuildId) {
       const staleBuildIds = [...new Set(sync.deploymentBuildIds)].filter((buildId) => buildId !== sync.targetBuildId)
       for (const buildId of staleBuildIds) {
         const query = `TaskQueue="${options.taskQueue}" and ExecutionStatus="Running" and TemporalWorkerDeploymentVersion="${options.deploymentName}:${buildId}"`
@@ -460,6 +480,7 @@ export const main = async (cliOptions?: CliOptions) => {
           previousBuildId: sync.previousBuildId,
           targetBuildId: sync.targetBuildId,
           changed: sync.changed,
+          skippedReason: sync.skippedReason,
           migratedStale,
           migratedUnversioned,
           dryRun: options.dryRun,
