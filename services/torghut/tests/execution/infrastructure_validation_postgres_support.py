@@ -72,6 +72,7 @@ def upgrade_reduction_schema(
             "0072_validation_lifecycle",
             "0073_live_paper_bounds",
             "0074_crypto_qty_precision",
+            "0075_validation_observed_at",
         }:
             connection.execute(
                 text(
