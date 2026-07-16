@@ -23,6 +23,7 @@ from ...models import (
 from ..tca import upsert_execution_tca_metric
 from ..tigerbeetle_journal import TigerBeetleLedgerJournal
 from ..infrastructure_validation_records import (
+    defer_pending_infrastructure_validation_descendant,
     load_infrastructure_validation_evidence,
     strip_unproven_infrastructure_validation_evidence,
     tag_infrastructure_validation_event,
@@ -376,6 +377,12 @@ def persist_order_event(
         client_order_id=event.client_order_id,
         alpaca_order_id=event.alpaca_order_id,
     )
+    if validation_evidence is None:
+        defer_pending_infrastructure_validation_descendant(
+            session,
+            account_label=event.alpaca_account_label,
+            symbol=event.symbol,
+        )
     existing = session.execute(
         select(ExecutionOrderEvent).where(
             ExecutionOrderEvent.event_fingerprint == event.event_fingerprint
