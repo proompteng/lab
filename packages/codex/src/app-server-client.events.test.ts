@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -233,6 +236,189 @@ describe('CodexAppServerClient v2 notifications', () => {
       id: 41,
       result: { currentTimeAt: 1_784_277_045 },
     })
+    client.stop()
+  })
+
+  it('returns protocol-valid defaults for unattended tool requests', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, {
+      id: 42,
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'input-1',
+        questions: [],
+        autoResolutionMs: null,
+      },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({ id: 42, result: { answers: {} } })
+
+    writeLine(child, {
+      id: 43,
+      method: 'item/tool/call',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        namespace: null,
+        tool: 'browser.click',
+        arguments: { ref: 'button-1' },
+      },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 43,
+      result: {
+        contentItems: [
+          {
+            type: 'inputText',
+            text: 'Dynamic tool handler is not configured for browser.click',
+          },
+        ],
+        success: false,
+      },
+    })
+
+    client.stop()
+  })
+
+  it('delegates user-input and dynamic tool requests to configured handlers', async () => {
+    const onRequestUserInput = vi.fn(async () => ({
+      answers: { choice: { answers: ['continue'] } },
+    }))
+    const onDynamicToolCall = vi.fn(async () => ({
+      contentItems: [{ type: 'inputText' as const, text: 'clicked' }],
+      success: true,
+    }))
+    const { child, client } = setupClient({ onRequestUserInput, onDynamicToolCall })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const inputParams = {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'input-1',
+      questions: [
+        {
+          id: 'choice',
+          header: 'Action',
+          question: 'Continue?',
+          isOther: false,
+          isSecret: false,
+          options: null,
+        },
+      ],
+      autoResolutionMs: null,
+    }
+    writeLine(child, { id: 44, method: 'item/tool/requestUserInput', params: inputParams })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 44,
+      result: { answers: { choice: { answers: ['continue'] } } },
+    })
+    expect(onRequestUserInput).toHaveBeenCalledWith(inputParams)
+
+    const params = {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      namespace: 'browser',
+      tool: 'click',
+      arguments: { ref: 'button-1' },
+    }
+    writeLine(child, { id: 45, method: 'item/tool/call', params })
+
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 45,
+      result: {
+        contentItems: [{ type: 'inputText', text: 'clicked' }],
+        success: true,
+      },
+    })
+    expect(onDynamicToolCall).toHaveBeenCalledWith(params)
+
+    client.stop()
+  })
+
+  it('declines permission escalation and refreshes ChatGPT tokens from the Codex auth file', async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'codex-app-server-auth-'))
+    const authPath = path.join(tempDir, 'auth.json')
+    await writeFile(
+      authPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          access_token: 'access-token-1',
+          account_id: 'account-1',
+        },
+      }),
+      'utf8',
+    )
+
+    const { child, client } = setupClient({ chatgptAuthPath: authPath })
+    try {
+      await respondToInitialize(child)
+      await client.ensureReady()
+
+      writeLine(child, {
+        id: 46,
+        method: 'item/permissions/requestApproval',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          itemId: 'item-1',
+          environmentId: null,
+          startedAtMs: 1_784_277_045_000,
+          cwd: '/workspace/lab',
+          reason: 'needs network access',
+          permissions: { network: { enabled: true }, fileSystem: null },
+        },
+      })
+      await expect(nextMessage(child)).resolves.toEqual({
+        id: 46,
+        result: {
+          permissions: {},
+          scope: 'turn',
+          strictAutoReview: true,
+        },
+      })
+
+      writeLine(child, {
+        id: 47,
+        method: 'account/chatgptAuthTokens/refresh',
+        params: { reason: 'unauthorized', previousAccountId: 'account-old' },
+      })
+      await expect(nextMessage(child)).resolves.toEqual({
+        id: 47,
+        result: {
+          accessToken: 'access-token-1',
+          chatgptAccountId: 'account-1',
+          chatgptPlanType: null,
+        },
+      })
+    } finally {
+      client.stop()
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns a JSON-RPC error for unsupported server request methods', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, { id: 48, method: 'future/request', params: {} })
+
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 48,
+      error: {
+        code: -32_000,
+        message: 'Unsupported codex app-server request method: future/request',
+      },
+    })
+
     client.stop()
   })
 

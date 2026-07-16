@@ -1,4 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 import type { ClientInfo, InitializeCapabilities, RequestId } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
@@ -7,14 +10,20 @@ import type {
   AccountRateLimitsUpdatedNotification,
   AgentMessageDeltaNotification,
   AskForApproval,
+  ChatgptAuthTokensRefreshParams,
+  ChatgptAuthTokensRefreshResponse,
   CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
   CurrentTimeReadResponse,
+  DynamicToolCallParams,
+  DynamicToolCallResponse,
   ErrorNotification,
   FileChangeOutputDeltaNotification,
   ItemCompletedNotification,
   ItemStartedNotification,
   McpToolCallProgressNotification,
+  PermissionsRequestApprovalParams,
+  PermissionsRequestApprovalResponse,
   RateLimitSnapshot,
   SandboxMode,
   SandboxPolicy,
@@ -36,6 +45,8 @@ import type {
   ThreadStatus,
   ThreadStatusChangedNotification,
   ThreadTokenUsageUpdatedNotification,
+  ToolRequestUserInputParams,
+  ToolRequestUserInputResponse,
   Turn,
   TurnCompletedNotification,
   TurnDiffUpdatedNotification,
@@ -142,6 +153,21 @@ export type CodexAppServerOptions = {
   persistExtendedHistory?: boolean
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  onRequestUserInput?: (
+    params: ToolRequestUserInputParams,
+  ) => ToolRequestUserInputResponse | Promise<ToolRequestUserInputResponse>
+  onDynamicToolCall?: (params: DynamicToolCallParams) => DynamicToolCallResponse | Promise<DynamicToolCallResponse>
+  onPermissionsRequestApproval?: (
+    params: PermissionsRequestApprovalParams,
+  ) => PermissionsRequestApprovalResponse | Promise<PermissionsRequestApprovalResponse>
+  onChatgptAuthTokensRefresh?: (
+    params: ChatgptAuthTokensRefreshParams,
+  ) => ChatgptAuthTokensRefreshResponse | Promise<ChatgptAuthTokensRefreshResponse>
+  /**
+   * Auth file used for the default ChatGPT token refresh handler.
+   * Defaults to CODEX_AUTH, CODEX_HOME/auth.json, or ~/.codex/auth.json.
+   */
+  chatgptAuthPath?: string
   bootstrapTimeoutMs?: number
 }
 
@@ -214,6 +240,44 @@ const defaultInitializeCapabilities: InitializeCapabilities = {
 }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
+
+const defaultChatgptAuthPath = (): string => {
+  const explicitPath = process.env.CODEX_AUTH?.trim()
+  if (explicitPath) return explicitPath
+  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
+  return join(codexHome, 'auth.json')
+}
+
+const requiredAuthString = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`Codex auth file is missing ${field}`)
+  }
+  return value.trim()
+}
+
+const loadChatgptAuthTokens = async (
+  authPath: string,
+  params: ChatgptAuthTokensRefreshParams,
+): Promise<ChatgptAuthTokensRefreshResponse> => {
+  const auth = JSON.parse(await readFile(authPath, 'utf8')) as {
+    tokens?: { access_token?: unknown; account_id?: unknown }
+  }
+  const tokens = auth.tokens
+  if (!tokens || typeof tokens !== 'object') {
+    throw new Error(`Codex auth file ${authPath} does not contain ChatGPT tokens`)
+  }
+  const accessToken = requiredAuthString(tokens.access_token, 'tokens.access_token')
+  const accountIdCandidate =
+    typeof tokens.account_id === 'string' && tokens.account_id.trim() ? tokens.account_id : params.previousAccountId
+  const chatgptAccountId = requiredAuthString(accountIdCandidate, 'tokens.account_id')
+  return { accessToken, chatgptAccountId, chatgptPlanType: null }
+}
+
+const declineAdditionalPermissions = (): PermissionsRequestApprovalResponse => ({
+  permissions: {},
+  scope: 'turn',
+  strictAutoReview: true,
+})
 
 const newId = (() => {
   let id = 1
@@ -461,6 +525,11 @@ export class CodexAppServerClient {
   private threadConfig: { [key in string]?: JsonValue } | null
   private experimentalRawEvents: boolean
   private historyMode: ThreadHistoryMode | null
+  private onRequestUserInput: NonNullable<CodexAppServerOptions['onRequestUserInput']> | null
+  private onDynamicToolCall: NonNullable<CodexAppServerOptions['onDynamicToolCall']> | null
+  private onPermissionsRequestApproval: NonNullable<CodexAppServerOptions['onPermissionsRequestApproval']> | null
+  private onChatgptAuthTokensRefresh: NonNullable<CodexAppServerOptions['onChatgptAuthTokensRefresh']> | null
+  private chatgptAuthPath: string
 
   constructor({
     binaryPath = 'codex',
@@ -476,6 +545,11 @@ export class CodexAppServerClient {
     persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
+    onRequestUserInput,
+    onDynamicToolCall,
+    onPermissionsRequestApproval,
+    onChatgptAuthTokensRefresh,
+    chatgptAuthPath = defaultChatgptAuthPath(),
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
@@ -487,6 +561,11 @@ export class CodexAppServerClient {
     this.threadConfig = threadConfig === undefined ? { mcp_servers: {}, web_search: 'live' } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
     this.historyMode = historyMode ?? (persistExtendedHistory ? 'paginated' : null)
+    this.onRequestUserInput = onRequestUserInput ?? null
+    this.onDynamicToolCall = onDynamicToolCall ?? null
+    this.onPermissionsRequestApproval = onPermissionsRequestApproval ?? null
+    this.onChatgptAuthTokensRefresh = onChatgptAuthTokensRefresh ?? null
+    this.chatgptAuthPath = chatgptAuthPath
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox]
@@ -879,7 +958,7 @@ export class CodexAppServerClient {
     }
 
     if (hasId && hasMethod) {
-      this.handleServerRequest(msg as { id: RequestId; method: string; params?: unknown })
+      void this.handleServerRequest(msg as { id: RequestId; method: string; params?: unknown })
       return
     }
 
@@ -888,39 +967,75 @@ export class CodexAppServerClient {
     }
   }
 
-  private handleServerRequest(message: { id: RequestId; method: string; params?: unknown }): void {
+  private async handleServerRequest(message: { id: RequestId; method: string; params?: unknown }): Promise<void> {
     const { id, method, params } = message
     this.log('info', 'codex app-server request (server → client)', { id, method })
 
-    // Auto-decline risky requests to avoid hangs; extend if approvals are needed later.
-    let result: unknown = { acknowledged: true }
+    try {
+      // Auto-decline risky requests to avoid hangs; extend if approvals are needed later.
+      let result: unknown = null
 
-    switch (method) {
-      case 'item/commandExecution/requestApproval':
-        result = { decision: 'decline', acceptSettings: null }
-        break
-      case 'item/fileChange/requestApproval':
-        result = { decision: 'decline' }
-        break
-      case 'mcpServer/elicitation/request':
-        result = { action: 'decline', content: null }
-        break
-      case 'currentTime/read':
-        result = {
-          currentTimeAt: Math.floor(Date.now() / 1000),
-        } satisfies CurrentTimeReadResponse
-        break
-      case 'applyPatchApproval':
-        result = { decision: 'denied' }
-        break
-      case 'execCommandApproval':
-        result = { decision: 'denied' }
-        break
-      default:
-        this.log('warn', 'unrecognized server request method, sending empty ack', { method, params })
+      switch (method) {
+        case 'item/commandExecution/requestApproval':
+          result = { decision: 'decline', acceptSettings: null }
+          break
+        case 'item/fileChange/requestApproval':
+          result = { decision: 'decline' }
+          break
+        case 'item/tool/requestUserInput':
+          result = this.onRequestUserInput
+            ? await this.onRequestUserInput(params as ToolRequestUserInputParams)
+            : ({ answers: {} } satisfies ToolRequestUserInputResponse)
+          break
+        case 'item/permissions/requestApproval':
+          result = this.onPermissionsRequestApproval
+            ? await this.onPermissionsRequestApproval(params as PermissionsRequestApprovalParams)
+            : declineAdditionalPermissions()
+          break
+        case 'item/tool/call': {
+          const toolCall = params as DynamicToolCallParams
+          result = this.onDynamicToolCall
+            ? await this.onDynamicToolCall(toolCall)
+            : ({
+                contentItems: [
+                  {
+                    type: 'inputText',
+                    text: `Dynamic tool handler is not configured for ${toolCall.tool ?? 'unknown tool'}`,
+                  },
+                ],
+                success: false,
+              } satisfies DynamicToolCallResponse)
+          break
+        }
+        case 'account/chatgptAuthTokens/refresh':
+          result = this.onChatgptAuthTokensRefresh
+            ? await this.onChatgptAuthTokensRefresh(params as ChatgptAuthTokensRefreshParams)
+            : await loadChatgptAuthTokens(this.chatgptAuthPath, params as ChatgptAuthTokensRefreshParams)
+          break
+        case 'mcpServer/elicitation/request':
+          result = { action: 'decline', content: null }
+          break
+        case 'currentTime/read':
+          result = {
+            currentTimeAt: Math.floor(Date.now() / 1000),
+          } satisfies CurrentTimeReadResponse
+          break
+        case 'applyPatchApproval':
+          result = { decision: 'denied' }
+          break
+        case 'execCommandApproval':
+          result = { decision: 'denied' }
+          break
+        default:
+          throw new Error(`Unsupported codex app-server request method: ${method}`)
+      }
+
+      this.send({ id, result })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.log('error', 'codex app-server request handler failed', { id, method, error: message })
+      this.send({ id, error: { code: -32_000, message } })
     }
-
-    this.send({ id, result })
   }
 
   private handleResponse(message: { id: RequestId; result?: unknown; error?: unknown }): void {
