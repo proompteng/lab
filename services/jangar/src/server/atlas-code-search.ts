@@ -586,8 +586,10 @@ export const createAtlasCodeSearchHandlers = ({
           })
         })
       }
+      const throwIfSearchAborted = () => signal?.throwIfAborted()
 
       try {
+        throwIfSearchAborted()
         if (signal) {
           const backendResult = await sql<{
             backend_pid: number | string
@@ -601,7 +603,9 @@ export const createAtlasCodeSearchHandlers = ({
           signal.throwIfAborted()
         }
 
+        throwIfSearchAborted()
         await sql`SELECT set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true);`.execute(trx)
+        throwIfSearchAborted()
 
         const exactResult = await sql<AtlasCodeSearchRow>`
         WITH exact_candidates AS MATERIALIZED (
@@ -637,6 +641,7 @@ export const createAtlasCodeSearchHandlers = ({
 
         let lexicalRows: AtlasCodeSearchRow[] = []
         if (!isPathQuery && hasAlphanumericQuery) {
+          throwIfSearchAborted()
           const lexicalResult = await sql<AtlasCodeSearchRow>`
           SELECT
             ${sql.raw(codeSearchRawSelectColumns)},
@@ -655,9 +660,11 @@ export const createAtlasCodeSearchHandlers = ({
 
         let semanticRows: AtlasCodeSearchRow[] = []
         if (vectorString !== null) {
+          throwIfSearchAborted()
           await sql`SELECT set_config('statement_timeout', ${`${semanticTimeoutMs}ms`}, true);`.execute(trx)
           let requiresExactScopedSemanticScan = false
           if (filters.pathPrefix || filters.language) {
+            throwIfSearchAborted()
             const scopedCount = await sql<{ candidate_count: number | string }>`
             SELECT count(*)::int AS candidate_count
             FROM (
@@ -678,6 +685,7 @@ export const createAtlasCodeSearchHandlers = ({
               Number.isFinite(candidateCount) && candidateCount <= MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES
           }
           if (requiresExactScopedSemanticScan) {
+            throwIfSearchAborted()
             const semanticResult = await sql<AtlasCodeSearchRow>`
             WITH scoped_semantic_candidates AS MATERIALIZED (
               SELECT
@@ -702,12 +710,15 @@ export const createAtlasCodeSearchHandlers = ({
             semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
           } else {
             if (filters.pathPrefix || filters.language) {
+              throwIfSearchAborted()
               await sql`SELECT set_config('hnsw.iterative_scan', 'strict_order', true);`.execute(trx)
             }
+            throwIfSearchAborted()
             await sql`SELECT set_config('hnsw.ef_search', ${String(
               Math.max(MIN_HNSW_EF_SEARCH, semanticCandidateLimit),
             )}, true);`.execute(trx)
 
+            throwIfSearchAborted()
             const semanticResult = await sql<AtlasCodeSearchRow>`
             SELECT
               ${sql.raw(codeSearchRawSelectColumns)},
@@ -727,6 +738,7 @@ export const createAtlasCodeSearchHandlers = ({
           }
         }
 
+        throwIfSearchAborted()
         return {
           exactRows: exactResult.rows as AtlasCodeSearchRow[],
           lexicalRows,

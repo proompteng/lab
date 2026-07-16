@@ -24,6 +24,7 @@ type FakeDbOptions = {
   semanticRows?: unknown[]
   scopedSemanticCandidateCount?: number
   repositoryRows?: unknown[]
+  onQuery?: (call: SqlCall) => void
 }
 
 const readyRepositoryRow = {
@@ -92,7 +93,9 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
   class TestConnection implements DatabaseConnection {
     async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
       const params = (compiledQuery.parameters ?? []) as readonly unknown[]
-      calls.push({ sql: compiledQuery.sql, params })
+      const call = { sql: compiledQuery.sql, params }
+      calls.push(call)
+      options.onQuery?.(call)
 
       const normalized = compiledQuery.sql.toLowerCase()
       const now = new Date('2020-01-01T00:00:00.000Z')
@@ -764,6 +767,32 @@ describe('atlas store', () => {
 
     expect(calls).toEqual([])
     expect(cancelBackend).not.toHaveBeenCalled()
+  })
+
+  it('rechecks cancellation after transaction SQL before starting the next statement', async () => {
+    const controller = new AbortController()
+    const cancelBackend = vi.fn(async () => undefined)
+    let aborted = false
+    const { db, calls } = makeFakeDb({
+      selectRows: [],
+      onQuery: ({ sql: query }) => {
+        if (aborted || !query.toLowerCase().includes("set_config('statement_timeout'")) return
+        aborted = true
+        controller.abort(new Error('client disconnected between statements'))
+      },
+    })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+      cancelBackend,
+    })
+
+    await expect(
+      store.codeSearch({ query: 'where is source search implemented', limit: 5 }, controller.signal),
+    ).rejects.toThrow('client disconnected between statements')
+
+    expect(cancelBackend).toHaveBeenCalledWith(4242)
+    expect(calls.some((call) => call.sql.toLowerCase().includes(' as exact_rank'))).toBe(false)
   })
 
   it('keeps indexed content and semantic retrieval for natural-language queries containing a path', async () => {
