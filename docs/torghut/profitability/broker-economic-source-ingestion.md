@@ -87,6 +87,11 @@ currency, and correction reference. It deliberately excludes source-specific IDs
 For fills, the stream normalizer uses event-level `qty` and `price`, not cumulative order quantity or average order
 price. This makes the normalized multiset comparable to REST `FILL` activities across partial fills.
 
+Alpaca stream timestamps can carry nanoseconds while the REST activity for the same execution is rounded to six
+fractional digits. Torghut applies the broker-compatible half-up microsecond conversion before persisting `event_at` or
+computing the normalized digest; Python's default nanosecond truncation is not an equivalence rule. Raw payload bytes
+and their source hashes remain unchanged.
+
 `scripts/verify_broker_economic_source_equivalence.py` compares the two fill multisets over an explicit UTC window. A
 proof is complete only when both sources contain the same nonempty multiset. The report retains both sources' raw
 payload hashes and reports every missing normalized hash.
