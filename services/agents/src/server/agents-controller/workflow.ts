@@ -189,33 +189,29 @@ const parseWorkflowStepLoop = (step: Record<string, unknown>): WorkflowLoopSpec 
 export const parseWorkflowSteps = (agentRun: Record<string, unknown>): WorkflowStepSpec[] => {
   const workflow = asRecord(readNested(agentRun, ['spec', 'workflow'])) ?? {}
   const steps = Array.isArray(workflow.steps) ? (workflow.steps as Record<string, unknown>[]) : []
-  return steps
-    .map((step) => {
-      const name = asString(step.name) ?? ''
-      const parameters = asRecord(step.parameters) ?? {}
-      const parsedParameters: Record<string, string> = {}
-      for (const [key, value] of Object.entries(parameters)) {
-        if (typeof value !== 'string') continue
-        parsedParameters[key] = value
-      }
-      const retries = parseOptionalNumber(step.retries)
-      const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
-      const timeoutSeconds = parseOptionalNumber(step.timeoutSeconds)
-      return {
-        name,
-        implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
-        implementationInline: asRecord(readNested(step, ['implementation', 'inline'])) ?? null,
-        parameters: parsedParameters,
-        workload: asRecord(step.workload) ?? null,
-        retries: Number.isFinite(retries) ? Math.max(0, Math.trunc(retries ?? 0)) : 0,
-        retryBackoffSeconds: Number.isFinite(retryBackoffSeconds)
-          ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0))
-          : 0,
-        timeoutSeconds: Number.isFinite(timeoutSeconds) ? Math.max(0, Math.trunc(timeoutSeconds ?? 0)) : 0,
-        loop: parseWorkflowStepLoop(step),
-      }
-    })
-    .filter((step) => step.name.length > 0)
+  return steps.map((step) => {
+    const name = asString(step.name) ?? ''
+    const parameters = asRecord(step.parameters) ?? {}
+    const parsedParameters: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parameters)) {
+      if (typeof value !== 'string') continue
+      parsedParameters[key] = value
+    }
+    const retries = parseOptionalNumber(step.retries)
+    const retryBackoffSeconds = parseOptionalNumber(step.retryBackoffSeconds)
+    const timeoutSeconds = parseOptionalNumber(step.timeoutSeconds)
+    return {
+      name,
+      implementationSpecRefName: asString(readNested(step, ['implementationSpecRef', 'name'])) ?? null,
+      implementationInline: asRecord(readNested(step, ['implementation', 'inline'])) ?? null,
+      parameters: parsedParameters,
+      workload: asRecord(step.workload) ?? null,
+      retries: Number.isFinite(retries) ? Math.max(0, Math.trunc(retries ?? 0)) : 0,
+      retryBackoffSeconds: Number.isFinite(retryBackoffSeconds) ? Math.max(0, Math.trunc(retryBackoffSeconds ?? 0)) : 0,
+      timeoutSeconds: Number.isFinite(timeoutSeconds) ? Math.max(0, Math.trunc(timeoutSeconds ?? 0)) : 0,
+      loop: parseWorkflowStepLoop(step),
+    }
+  })
 }
 
 const resolveEffectiveWorkflowVolumes = (step: WorkflowStepSpec, baseWorkload: Record<string, unknown> | null) => {
