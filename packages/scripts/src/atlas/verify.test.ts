@@ -30,6 +30,36 @@ describe('atlas verify', () => {
     expect(performanceQueries.every((query) => query.includes('Atlas latency probe proof-'))).toBe(true)
   })
 
+  it('requires canceled queries to drain before the statement-timeout fallback', async () => {
+    let now = 0
+    const lingering = await __private.waitForAtlasQueryDrain({
+      activeQueryCount: async () => 2,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds
+      },
+    })
+
+    expect(lingering).toBe(2)
+    expect(now).toBe(__private.cancellationDrainDeadlineMs)
+    expect(now).toBeLessThan(750)
+  })
+
+  it('accepts client cancellation that drains blocked queries promptly', async () => {
+    let now = 0
+    const activeCounts = [2, 1, 0]
+    const lingering = await __private.waitForAtlasQueryDrain({
+      activeQueryCount: async () => activeCounts.shift() ?? 0,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds
+      },
+    })
+
+    expect(lingering).toBe(0)
+    expect(now).toBeLessThan(__private.cancellationDrainDeadlineMs)
+  })
+
   it('requires every absent-path search to return zero results', () => {
     expect(__private.absentPathSearchError('src/deleted.ts', [])).toBeUndefined()
     expect(__private.absentPathSearchError('src/deleted.ts', ['src/live.ts'])).toBe(

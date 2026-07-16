@@ -72,6 +72,8 @@ type CodeSearchResponse = {
 }
 
 const DEFAULT_GOLD_SET = resolve(defaultRepoRoot, 'docs/atlas/query-gold-set.json')
+const CANCELLATION_DRAIN_DEADLINE_MS = 500
+const CANCELLATION_DRAIN_POLL_MS = 25
 
 const usage = () =>
   `
@@ -312,6 +314,26 @@ const activeAtlasQueryCount = async (db: SQL) => {
   return count(rows[0]?.active)
 }
 
+const waitForAtlasQueryDrain = async (input: {
+  activeQueryCount: () => Promise<number>
+  now?: () => number
+  sleep?: (milliseconds: number) => Promise<void>
+  deadlineMs?: number
+  pollMs?: number
+}) => {
+  const now = input.now ?? Date.now
+  const sleep = input.sleep ?? Bun.sleep
+  const deadlineMs = input.deadlineMs ?? CANCELLATION_DRAIN_DEADLINE_MS
+  const pollMs = input.pollMs ?? CANCELLATION_DRAIN_POLL_MS
+  const deadline = now() + deadlineMs
+  let activeQueries = await input.activeQueryCount()
+  while (activeQueries > 0 && now() < deadline) {
+    await sleep(pollMs)
+    activeQueries = await input.activeQueryCount()
+  }
+  return activeQueries
+}
+
 const runCancellationProbe = async (input: {
   db: SQL
   baseUrl: string
@@ -376,8 +398,9 @@ const runCancellationProbe = async (input: {
 
     for (const controller of controllers) controller.abort(new Error('Atlas live cancellation probe'))
     await Promise.all(requests)
-    await Bun.sleep(1_000)
-    lingeringQueries = await activeAtlasQueryCount(input.db)
+    lingeringQueries = await waitForAtlasQueryDrain({
+      activeQueryCount: () => activeAtlasQueryCount(input.db),
+    })
   } finally {
     releaseLock()
     await lockTask
@@ -386,7 +409,13 @@ const runCancellationProbe = async (input: {
   return { reachedDatabase, observedBlockedQueries, lingeringQueries }
 }
 
-export const __private = { absentPathSearchError, activeAtlasQueryCount, buildColdPerformanceQueries }
+export const __private = {
+  absentPathSearchError,
+  activeAtlasQueryCount,
+  buildColdPerformanceQueries,
+  cancellationDrainDeadlineMs: CANCELLATION_DRAIN_DEADLINE_MS,
+  waitForAtlasQueryDrain,
+}
 
 const main = async () => {
   const options = parseArgs(Bun.argv.slice(2))
