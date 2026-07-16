@@ -26,6 +26,7 @@ import type {
   ThreadGoalSetParams,
   ThreadGoalSetResponse,
   ThreadGoalStatus,
+  ThreadHistoryMode,
   ThreadItem,
   ThreadResumeParams,
   ThreadResumeResponse,
@@ -129,7 +130,12 @@ export type CodexAppServerOptions = {
    */
   experimentalRawEvents?: boolean
   /**
-   * Persist additional rollout events required for richer thread history.
+   * Persisted history contract for newly created threads.
+   * Defaults to the app-server legacy mode.
+   */
+  historyMode?: ThreadHistoryMode
+  /**
+   * Legacy alias for `historyMode: 'paginated'`.
    * Defaults to false.
    */
   persistExtendedHistory?: boolean
@@ -189,7 +195,7 @@ const normalizeSandboxMode = (mode: SandboxModeInput): SandboxMode => {
 }
 
 const normalizeApprovalPolicy = (approval: ApprovalModeInput): AskForApproval => {
-  if (approval === 'onFailure') return 'on-failure'
+  if (approval === 'onFailure') return 'on-request'
   if (approval === 'onRequest') return 'on-request'
   if (approval === 'unlessTrusted') return 'untrusted'
   return approval
@@ -199,7 +205,10 @@ const resolveCliApprovalPolicy = (approval: AskForApproval): string | null =>
   typeof approval === 'string' ? approval : null
 
 const defaultClientInfo: ClientInfo = { name: 'lab', title: 'lab app-server client', version: '0.0.0' }
-const defaultInitializeCapabilities: InitializeCapabilities = { experimentalApi: true }
+const defaultInitializeCapabilities: InitializeCapabilities = {
+  experimentalApi: true,
+  requestAttestation: false,
+}
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
 
@@ -448,7 +457,7 @@ export class CodexAppServerClient {
   private cwd: string | undefined
   private threadConfig: { [key in string]?: JsonValue } | null
   private experimentalRawEvents: boolean
-  private persistExtendedHistory: boolean
+  private historyMode: ThreadHistoryMode | null
 
   constructor({
     binaryPath = 'codex',
@@ -460,6 +469,7 @@ export class CodexAppServerClient {
     defaultEffort = DEFAULT_EFFORT,
     threadConfig,
     experimentalRawEvents = false,
+    historyMode,
     persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
@@ -473,7 +483,7 @@ export class CodexAppServerClient {
     this.cwd = cwd
     this.threadConfig = threadConfig === undefined ? { mcp_servers: {}, web_search: 'live' } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
-    this.persistExtendedHistory = persistExtendedHistory
+    this.historyMode = historyMode ?? (persistExtendedHistory ? 'paginated' : null)
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox]
@@ -642,8 +652,8 @@ export class CodexAppServerClient {
         developerInstructions: turnOptions.developerInstructions ?? null,
         personality: turnOptions.personality ?? null,
         ephemeral: null,
+        historyMode: this.historyMode,
         experimentalRawEvents: this.experimentalRawEvents,
-        persistExtendedHistory: this.persistExtendedHistory,
       }
 
       const threadResp = (await this.request<ThreadStartResponse>('thread/start', threadParams)) as ThreadStartResponse
@@ -664,7 +674,6 @@ export class CodexAppServerClient {
         developerInstructions: turnOptions.developerInstructions ?? null,
         personality: turnOptions.personality ?? null,
         excludeTurns: true,
-        persistExtendedHistory: this.persistExtendedHistory,
       }
 
       const threadResp = (await this.request<ThreadResumeResponse>(
