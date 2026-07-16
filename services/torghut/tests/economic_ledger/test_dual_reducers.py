@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from decimal import Decimal, localcontext
 
 import pytest
@@ -428,6 +429,47 @@ def test_retroactive_correction_reverses_original_then_applies_replacement() -> 
     assert tuple(line.amount for line in reversal.lines) == tuple(
         -line.amount for line in original_transaction.lines
     )
+
+
+def test_correction_reversal_id_is_bounded_for_maximum_valid_broker_ids() -> None:
+    original_id = "o" * 256
+    correction_id = "c" * 256
+    result = reduce_and_compare(
+        [
+            activity(
+                original_id,
+                "FILL",
+                symbol="AVGO",
+                side="buy",
+                quantity="1",
+                price="100",
+                net_amount=None,
+            ),
+            activity(
+                correction_id,
+                "FILL",
+                correction_of=original_id,
+                event_offset_seconds=1,
+                symbol="AVGO",
+                side="buy",
+                quantity="1",
+                price="90",
+                net_amount=None,
+            ),
+        ]
+    )
+
+    reversal = next(
+        transaction
+        for transaction in result.journal.transactions
+        if transaction.posting_rule == "correction_reversal"
+    )
+    readable = f"{correction_id}:reversal:{original_id}"
+    expected_digest = hashlib.sha256(readable.encode("utf-8")).hexdigest()
+    assert reversal.transaction_id == f"correction-reversal:sha256:{expected_digest}"
+    assert len(reversal.transaction_id) <= 512
+    assert reversal.reverses_transaction_id == original_id
+    assert result.comparison.equivalent
 
 
 def test_correction_replaces_the_root_at_its_original_economic_order_slot() -> None:

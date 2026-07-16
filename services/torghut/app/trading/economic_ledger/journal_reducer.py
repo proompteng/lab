@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
 
@@ -24,6 +25,9 @@ from .types import (
 
 JOURNAL_REDUCER_NAME = "balanced_journal"
 JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v1"
+
+_MAX_TRANSACTION_ID_LENGTH = 512
+_REVERSAL_TRANSACTION_ID_PREFIX = "correction-reversal:sha256:"
 
 _CASH_TYPES = frozenset({"ACATC", "CSD", "CSW", "JNLC", "TRANS"})
 _DIVIDEND_TYPES = frozenset(
@@ -492,8 +496,9 @@ def _reversal_transaction(
     correction_activity_id: str,
 ) -> LedgerTransaction:
     return LedgerTransaction(
-        transaction_id=(
-            f"{correction_activity_id}:reversal:{transaction.transaction_id}"
+        transaction_id=_reversal_transaction_id(
+            correction_activity_id=correction_activity_id,
+            reversed_transaction_id=transaction.transaction_id,
         ),
         source_activity_id=correction_activity_id,
         posting_rule="correction_reversal",
@@ -507,6 +512,18 @@ def _reversal_transaction(
             for line in transaction.lines
         ),
     )
+
+
+def _reversal_transaction_id(
+    *,
+    correction_activity_id: str,
+    reversed_transaction_id: str,
+) -> str:
+    readable = f"{correction_activity_id}:reversal:{reversed_transaction_id}"
+    if len(readable) <= _MAX_TRANSACTION_ID_LENGTH:
+        return readable
+    digest = hashlib.sha256(readable.encode("utf-8")).hexdigest()
+    return f"{_REVERSAL_TRANSACTION_ID_PREFIX}{digest}"
 
 
 def _transaction(
