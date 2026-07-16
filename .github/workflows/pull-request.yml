@@ -6,7 +6,6 @@ on:
 permissions:
   actions: read
   contents: read
-  pull-requests: read
 
 concurrency:
   group: ci-pr-${{ github.event.pull_request.number }}
@@ -24,42 +23,25 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
 
-      - name: Fetch changed files once
+      - name: Derive changed files from Git
         id: files
         shell: bash
-        env:
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           changed_files="${RUNNER_TEMP}/changed-files.txt"
           changed_manifests="${RUNNER_TEMP}/changed-manifests.txt"
-          : > "${changed_files}"
-          : > "${changed_manifests}"
-          page=1
-          while true; do
-            response="$({
-              curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
-                -H 'Accept: application/vnd.github+json' \
-                -H "Authorization: Bearer ${GH_TOKEN}" \
-                -H 'X-GitHub-Api-Version: 2022-11-28' \
-                "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
-            })"
-            count="$(jq 'length' <<< "${response}")"
-            if [ "${count}" -eq 0 ]; then
-              break
-            fi
-            jq -r '.[].filename' <<< "${response}" >> "${changed_files}"
-            jq -r '.[] | select(.status != "removed") | .filename' <<< "${response}" >> "${changed_manifests}"
-            page=$((page + 1))
-          done
+          git rev-parse --verify 'HEAD^1' >/dev/null
+          git rev-parse --verify 'HEAD^2' >/dev/null
+          git diff --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_files}"
+          git diff --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_manifests}"
           printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
           printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
 
