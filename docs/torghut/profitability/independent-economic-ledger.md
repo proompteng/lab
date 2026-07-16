@@ -150,7 +150,9 @@ Fees remain separate from gross trade PnL so both gross and after-cost results a
 
 ### Corporate Actions And Corrections
 
-- split and reverse-split rows change units while preserving total signed cost;
+- split and reverse-split rows with no cash component change units while preserving total signed cost. An `SSP` row
+  with nonzero `net_amount` is an unsupported cash-in-lieu shape until a sourced posting rule and golden broker fixture
+  exist; both reducers fail it closed instead of dropping cash;
 - symbol/name changes move both quantity and cost from old to new identity in one balanced transaction;
 - dividends, return of capital, assignments, exercises, expirations, mergers, spin-offs, and reorganizations require an
   explicit typed rule and a golden broker fixture before they become admissible;

@@ -537,6 +537,41 @@ def test_unknown_activity_is_visible_and_non_admissible() -> None:
     assert result.independent.unsupported_activity_ids == ("assignment",)
 
 
+def test_split_with_cash_component_fails_closed_in_both_reducers() -> None:
+    result = reduce_and_compare(
+        [
+            activity("deposit", "CSD", net_amount="100"),
+            activity(
+                "buy",
+                "FILL",
+                event_offset_seconds=1,
+                symbol="AAPL",
+                side="buy",
+                quantity="1",
+                price="100",
+                net_amount=None,
+            ),
+            activity(
+                "cash-in-lieu",
+                "SSP",
+                event_offset_seconds=2,
+                symbol="AAPL",
+                quantity="1",
+                net_amount="-0.25",
+            ),
+        ]
+    )
+
+    assert result.comparison.equivalent
+    assert not result.admissible
+    assert result.journal.projection.unsupported_activity_ids == ("cash-in-lieu",)
+    assert result.independent.unsupported_activity_ids == ("cash-in-lieu",)
+    assert cash(result.journal.projection) == Decimal("0")
+    aapl = position(result.journal.projection, "AAPL")
+    assert aapl is not None
+    assert aapl.quantity == Decimal("1")
+
+
 def test_input_order_does_not_change_manifest_or_results() -> None:
     rows = [
         activity("deposit", "CSD", event_offset_seconds=0, net_amount="100"),

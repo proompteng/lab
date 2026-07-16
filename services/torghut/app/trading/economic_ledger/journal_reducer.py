@@ -103,7 +103,11 @@ class _JournalWriter:
         elif activity_type == "CFEE":
             transaction = self._crypto_fee(activity)
         elif activity_type == "SSP":
-            transaction = self._split(activity)
+            if activity.net_amount not in {None, ZERO}:
+                self.unsupported.add(activity.external_activity_id)
+                transaction = None
+            else:
+                transaction = self._split(activity)
         elif activity_type in _CASH_TYPES or (
             activity_type == "JNL"
             and activity.symbol is None
