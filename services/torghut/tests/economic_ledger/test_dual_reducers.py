@@ -14,6 +14,8 @@ from app.trading.economic_ledger import (
     LedgerTransaction,
     prepare_activities,
     reduce_and_compare,
+    reduce_balanced_journal,
+    reduce_independent_state,
 )
 from app.trading.economic_ledger.types import decimal_text
 from tests.economic_ledger.support import activity, cash, position
@@ -97,6 +99,25 @@ def test_historical_sell_short_fill_is_a_sell_direction_without_relabeling() -> 
     assert cash(result.independent) == Decimal("4")
     assert position(result.independent, "AAPL") is None
     assert result.independent.realized_pnl == Decimal("4")
+
+
+def test_fill_notional_below_ledger_quantum_is_rejected_by_both_reducers() -> None:
+    tiny_fill = activity(
+        "tiny-fill",
+        "FILL",
+        symbol="BTCUSD",
+        side="buy",
+        quantity="0.000000000000000001",
+        price="0.000000000000000001",
+        net_amount=None,
+    )
+
+    for reducer in (reduce_balanced_journal, reduce_independent_state):
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_fill_notional_below_ledger_quantum",
+        ):
+            reducer([tiny_fill])
 
 
 def test_repeating_weighted_average_rounds_once_and_stays_exactly_balanced() -> None:
@@ -404,6 +425,36 @@ def test_date_only_crypto_fee_orders_after_same_day_timestamped_fill() -> None:
     assert btc.quantity == Decimal("0.99")
     assert btc.signed_cost == Decimal("99")
     assert result.independent.fees == Decimal("1.1")
+
+
+def test_crypto_fee_underflow_is_rejected_by_both_reducers() -> None:
+    activities = [
+        activity(
+            "btc-buy",
+            "FILL",
+            symbol="BTCUSD",
+            side="buy",
+            quantity="1",
+            price="1",
+            net_amount=None,
+        ),
+        activity(
+            "tiny-asset-fee",
+            "CFEE",
+            event_offset_seconds=1,
+            symbol="BTCUSD",
+            quantity="-0.000000000000000001",
+            price="0.000000000000000001",
+            net_amount="0",
+        ),
+    ]
+
+    for reducer in (reduce_balanced_journal, reduce_independent_state):
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_crypto_fee_fair_value_below_ledger_quantum",
+        ):
+            reducer(activities)
 
 
 @pytest.mark.parametrize("quantity", [None, "0", "0.01"])

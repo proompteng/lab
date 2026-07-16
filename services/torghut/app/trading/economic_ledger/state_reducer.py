@@ -169,6 +169,8 @@ class _StateReducer:
             -order_units * price,
             field_name="fill_cash_delta",
         )
+        if cash_change == ZERO:
+            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         self._add_cash(activity, cash_change)
         holding.units, holding.carrying_value = _next_holding(
             holding,
@@ -203,6 +205,10 @@ class _StateReducer:
             abs(units) * price,
             field_name="crypto_fee_fair_value",
         )
+        if fair_value == ZERO:
+            raise EconomicLedgerError(
+                "economic_crypto_fee_fair_value_below_ledger_quantum"
+            )
         if holding.units <= ZERO or abs(units) > holding.units:
             raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
         if abs(units) == holding.units:

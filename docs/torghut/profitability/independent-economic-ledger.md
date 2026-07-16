@@ -96,6 +96,9 @@ cost; a full close releases the complete remaining carrying cost without divisio
 residual of fixed-point cash and carrying-cost deltas. This keeps every commodity transaction exactly balanced and makes
 the two reducers comparable without an epsilon while avoiding context-dependent repeating-decimal dust.
 
+A nonzero fill notional or asset-fee fair value that rounds below the 18-decimal ledger quantum is rejected before any
+position mutation. Nonzero units can never enter the projection with zero cash, zero cost, or zero fee economics.
+
 ## Chart Of Accounts And Commodities
 
 Amounts use debit-positive signs. Each transaction balances separately by commodity.

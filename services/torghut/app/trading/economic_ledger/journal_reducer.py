@@ -166,6 +166,8 @@ class _JournalWriter:
 
         position = self.positions.setdefault(symbol, _Position())
         posting = _build_fill_posting(position, delta_quantity, price)
+        if posting.cash_delta == ZERO:
+            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         transaction = _transaction(
             activity,
             posting_rule="fill_weighted_average",
@@ -274,6 +276,10 @@ class _JournalWriter:
             abs(quantity) * price,
             field_name="crypto_fee_fair_value",
         )
+        if fair_value == ZERO:
+            raise EconomicLedgerError(
+                "economic_crypto_fee_fair_value_below_ledger_quantum"
+            )
         if position.quantity <= ZERO or abs(quantity) > position.quantity:
             raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
         if abs(quantity) == position.quantity:
