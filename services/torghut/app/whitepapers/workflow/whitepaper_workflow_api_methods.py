@@ -20,6 +20,7 @@ from ...models import (
     WhitepaperArtifact,
     WhitepaperClaim,
     WhitepaperClaimRelation,
+    WhitepaperCodexAgentRun,
     WhitepaperContradictionEvent,
     WhitepaperDesignPullRequest,
     WhitepaperExperimentSpec,
@@ -32,6 +33,7 @@ from ...trading.discovery.whitepaper_candidate_compiler import (
 
 
 from .shared_context import (
+    RETRYABLE_AGENTRUN_STATUSES,
     http_request_bytes as _http_request_bytes,
     int_env as _int_env,
     normalize_identifier as _normalize_identifier,
@@ -54,6 +56,10 @@ else:
 
 
 class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
+    _TERMINAL_AGENTRUN_STATUSES = frozenset(
+        {*RETRYABLE_AGENTRUN_STATUSES, "completed", "terminated", "succeeded"}
+    )
+
     @staticmethod
     def _has_structured_research_outputs(payload: Mapping[str, Any]) -> bool:
         keys = (
@@ -620,18 +626,36 @@ class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
         payload: Mapping[str, Any],
     ) -> None:
         target_status = _optional_text(payload.get("status")) or "completed"
-        run.status = target_status
-        run.result_payload_json = coerce_json_payload(cast(dict[str, Any], payload))
-        run.completed_at = datetime.now(timezone.utc)
-        run.failure_reason = (
+        completed_at = datetime.now(timezone.utc)
+        failure_reason = (
             None
             if target_status == "completed"
             else _optional_text(payload.get("failure_reason"))
         )
+        run.status = target_status
+        run.result_payload_json = coerce_json_payload(cast(dict[str, Any], payload))
+        run.completed_at = completed_at
+        run.failure_reason = failure_reason
         session.add(run)
 
+        agentruns = session.execute(
+            select(WhitepaperCodexAgentRun).where(
+                WhitepaperCodexAgentRun.analysis_run_id == run.id,
+                WhitepaperCodexAgentRun.execution_mode == "workflow",
+            )
+        ).scalars()
+        output_context = coerce_json_payload(cast(dict[str, Any], payload))
+        for agentrun in agentruns:
+            if agentrun.status.strip().lower() in self._TERMINAL_AGENTRUN_STATUSES:
+                continue
+            agentrun.status = target_status
+            agentrun.completed_at = completed_at
+            agentrun.failure_reason = failure_reason
+            agentrun.output_context_json = output_context
+            session.add(agentrun)
+
         run.document.status = "analyzed" if target_status == "completed" else "failed"
-        run.document.last_processed_at = datetime.now(timezone.utc)
+        run.document.last_processed_at = completed_at
         session.add(run.document)
 
     @staticmethod
