@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
 from typing import Protocol, cast
@@ -337,6 +337,13 @@ def persist_broker_economic_ledger_reconciliation(
     """Append one observation only after resolving the exact published run pair."""
 
     runs = require_published_broker_economic_ledger_runs(session, replay)
+    replay = replace(
+        replay,
+        snapshot=replace(
+            replay.snapshot,
+            source_watermark=runs.source_watermark,
+        ),
+    )
     result = reconcile_broker_economic_ledger(
         replay,
         snapshot,

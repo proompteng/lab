@@ -137,6 +137,44 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
         assert reconciliation.journal_run_id == journal.id
         assert reconciliation.result_sha256 == observation.result.result_sha256
 
+        with sessions.begin() as session:
+            cursor = session.scalar(select(BrokerAccountActivityCursor))
+            assert cursor is not None
+            assert cursor.last_completed_at is not None
+            assert cursor.last_completed_scan_until is not None
+            cursor.last_completed_at = datetime(2026, 7, 16, 13, 3, tzinfo=timezone.utc)
+            cursor.last_completed_scan_until = datetime(
+                2026, 7, 16, 13, 2, tzinfo=timezone.utc
+            )
+        later_snapshot = normalize_broker_economic_snapshot(
+            account={"status": "ACTIVE", "cash": "1010", "equity": "1010"},
+            positions=[],
+            open_orders=[],
+            observed_at=datetime(2026, 7, 16, 13, 3, tzinfo=timezone.utc),
+        )
+        with sessions.begin() as session:
+            advanced_replay = replay_broker_economic_ledger(session, scope=scope)
+            later_observation = persist_broker_economic_ledger_reconciliation(
+                session,
+                advanced_replay,
+                later_snapshot,
+                build=BrokerEconomicReconciliationBuild(
+                    source_commit="a" * 40,
+                    image_digest=f"sha256:{'b' * 64}",
+                ),
+            )
+        assert later_observation.runs.source_watermark == input_row.source_watermark
+        assert later_observation.result.payload["source_watermark"] == (
+            input_row.source_watermark.isoformat()
+        )
+        with sessions() as session:
+            assert (
+                session.scalar(
+                    select(func.count()).select_from(BrokerEconomicLedgerReconciliation)
+                )
+                == 2
+            )
+
         _assert_manifest_hash_rejected(schema_engine, input_row)
         assert_rejected(
             schema_engine,

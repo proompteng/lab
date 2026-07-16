@@ -60,6 +60,7 @@ class PublishedBrokerEconomicLedgerRuns:
     input_id: uuid.UUID
     journal_run_id: uuid.UUID
     state_run_id: uuid.UUID
+    source_watermark: datetime
     reused_existing: bool
 
 
@@ -114,6 +115,11 @@ class BrokerEconomicLedgerReplay:
             },
             "publication": {
                 "input_id": str(published.input_id) if published is not None else None,
+                "input_source_watermark": (
+                    published.source_watermark.isoformat()
+                    if published is not None
+                    else None
+                ),
                 "journal_run_id": (
                     str(published.journal_run_id) if published is not None else None
                 ),
@@ -141,6 +147,14 @@ def replay_broker_economic_ledger(
     """Load one closed REST source set and run both pure reducers exactly once."""
 
     snapshot = load_broker_economic_ledger_snapshot(session, scope=scope)
+    return replay_broker_economic_ledger_snapshot(snapshot)
+
+
+def replay_broker_economic_ledger_snapshot(
+    snapshot: BrokerEconomicLedgerSnapshot,
+) -> BrokerEconomicLedgerReplay:
+    """Run both pure reducers from an already closed immutable source snapshot."""
+
     reduction = reduce_and_compare(snapshot.prepared)
     token = _publication_token(snapshot, reduction)
     return BrokerEconomicLedgerReplay(
@@ -213,8 +227,9 @@ def publish_broker_economic_ledger(
     _require_replay_identity(replay)
     _acquire_publication_lock(session, replay.snapshot.prepared.scope)
     _require_current_source_snapshot(session, replay.snapshot)
-    input_id = _load_or_create_input(session, replay.snapshot)
-    existing = _load_existing_runs(session, replay, input_id=input_id)
+    input_row = _load_or_create_input(session, replay.snapshot)
+    input_id = input_row.id
+    existing = _load_existing_runs(session, replay, input_row=input_row)
     if existing is not None:
         return existing
 
@@ -248,6 +263,7 @@ def publish_broker_economic_ledger(
         input_id=input_id,
         journal_run_id=journal_run_id,
         state_run_id=state_run_id,
+        source_watermark=as_utc(input_row.source_watermark),
         reused_existing=False,
     )
 
@@ -297,7 +313,7 @@ def _require_current_source_snapshot(
     assert cursor.last_completed_scan_until is not None
     if (
         cursor.id != snapshot.cursor_id
-        or as_utc(cursor.last_completed_scan_until) != snapshot.source_watermark
+        or as_utc(cursor.last_completed_scan_until) < snapshot.source_watermark
         or cursor.activities_inserted != len(snapshot.activities)
     ):
         raise EconomicLedgerError("economic_ledger_source_watermark_changed")
@@ -320,17 +336,20 @@ def _require_current_source_snapshot(
 def _load_or_create_input(
     session: Session,
     snapshot: BrokerEconomicLedgerSnapshot,
-) -> uuid.UUID:
+) -> BrokerEconomicLedgerInput:
     existing = _load_input(session, snapshot)
     if existing is not None:
         _require_existing_input(existing, snapshot)
-        return existing.id
+        return existing
     input_id = uuid.uuid4()
     session.execute(
         insert(BrokerEconomicLedgerInput),
         [_input_values(snapshot, input_id=input_id)],
     )
-    return input_id
+    created = _load_input(session, snapshot)
+    if created is None:
+        raise EconomicLedgerError("economic_ledger_input_insert_missing")
+    return created
 
 
 def _load_input(
@@ -519,8 +538,9 @@ def _load_existing_runs(
     session: Session,
     replay: BrokerEconomicLedgerReplay,
     *,
-    input_id: uuid.UUID,
+    input_row: BrokerEconomicLedgerInput,
 ) -> PublishedBrokerEconomicLedgerRuns | None:
+    input_id = input_row.id
     rows = tuple(
         session.scalars(
             select(BrokerEconomicLedgerRun).where(
@@ -563,6 +583,7 @@ def _load_existing_runs(
         input_id=input_id,
         journal_run_id=journal.id,
         state_run_id=state.id,
+        source_watermark=as_utc(input_row.source_watermark),
         reused_existing=True,
     )
 
@@ -580,7 +601,7 @@ def require_published_broker_economic_ledger_runs(
     if input_row is None:
         raise EconomicLedgerError("economic_ledger_published_input_missing")
     _require_existing_input(input_row, replay.snapshot)
-    runs = _load_existing_runs(session, replay, input_id=input_row.id)
+    runs = _load_existing_runs(session, replay, input_row=input_row)
     if runs is None:
         raise EconomicLedgerError("economic_ledger_published_run_pair_missing")
     return runs

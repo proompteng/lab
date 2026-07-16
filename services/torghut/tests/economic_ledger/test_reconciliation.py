@@ -39,6 +39,7 @@ _RUNS = PublishedBrokerEconomicLedgerRuns(
     input_id=uuid.uuid4(),
     journal_run_id=uuid.uuid4(),
     state_run_id=uuid.uuid4(),
+    source_watermark=_AT,
     reused_existing=True,
 )
 

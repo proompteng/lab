@@ -20,6 +20,7 @@ from .persistence import (
     publish_broker_economic_ledger,
     require_published_broker_economic_ledger_runs,
     replay_broker_economic_ledger,
+    replay_broker_economic_ledger_snapshot,
 )
 from .reconciliation import (
     DEFAULT_OBSERVATION_MAX_AGE_SECONDS,
@@ -102,4 +103,5 @@ __all__ = (
     "reconcile_broker_economic_ledger",
     "require_published_broker_economic_ledger_runs",
     "replay_broker_economic_ledger",
+    "replay_broker_economic_ledger_snapshot",
 )
