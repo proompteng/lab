@@ -437,7 +437,7 @@ class BrokerAccountActivityIngestor:
                     cursor.status = "error"
                     cursor.last_error = f"{type(exc).__name__}:{exc}"[:500]
                     cursor.updated_at = as_utc(self._now())
-        except Exception:
+        except (SQLAlchemyError, ValueError):
             logger.exception("Failed to record broker account activity ingest error")
 
 

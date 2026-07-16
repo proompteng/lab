@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import BigInteger, Date, DateTime, Index, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -55,7 +54,7 @@ class BrokerAccountActivity(Base, CreatedAtMixin):
     )
     net_amount: Mapped[Decimal | None] = mapped_column(Numeric(38, 18), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(length=16), nullable=True)
-    raw_payload: Mapped[Any] = mapped_column(JSONType, nullable=False)
+    raw_payload: Mapped[dict[str, object]] = mapped_column(JSONType, nullable=False)
     raw_payload_canonical_json: Mapped[str] = mapped_column(Text, nullable=False)
     raw_payload_sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
     normalized_economic_sha256: Mapped[str] = mapped_column(

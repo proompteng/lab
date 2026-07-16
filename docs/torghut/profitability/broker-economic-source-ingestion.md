@@ -15,6 +15,14 @@ authentication, reconnect, readiness, Kafka publication, and transport deduplica
 source preservation at the point where Torghut consumes that stream and adds a read-only paginated account-activity
 backfill as the independent recovery path.
 
+This is a provider-constrained implementation, not a claim that order updates are a complete financial activity
+stream. Alpaca's unified Activity SSE is the preferred complete source, but `/v2beta1/events/activities` requires
+Broker API credentials. Torghut currently has Trading API credentials; a production paper-account probe against that
+endpoint returned HTTP 404. Therefore `trade_updates` supplies a low-latency second observation only for fills and
+corrections, while paginated Trading API account activities remain the complete source for fees, cash movements, and
+corporate actions. Capital evidence must fail closed whenever that REST cursor is not current. If Broker API access is
+provisioned, replace this constrained stream lane with Activity SSE and retain `trade_updates` only for order lifecycle.
+
 The broker is the executed-economic authority. Strategy decisions, execution rows, and the existing runtime ledger are
 linkage or projection surfaces; none of them may invent fills, fees, cash movements, corrections, or corporate actions.
 
@@ -32,12 +40,14 @@ Production paper-account readback established these details before implementatio
 - fill order ID, symbol, side, event quantity, event price, and timestamp agree across the two sources;
 - the REST request can consume most of its 10-second timeout, so it cannot run on the signal-decision or mutation-
   recovery critical path.
+- the unified Activity SSE requires Broker API credentials and is not exposed by the configured Trading API endpoint.
 
 ## Immutable source record
 
 `broker_account_activities` stores both source families:
 
-- `trade_updates_ws`: the exact broker payload extracted from the Dorvud envelope;
+- `trade_updates_ws`: the exact observed trade-update payload extracted from the Dorvud envelope after transport-only
+  metadata is removed; Dorvud's `account_label` remains as source provenance;
 - `account_activities_rest`: the exact REST activity document.
 
 Each row contains:
