@@ -88,3 +88,22 @@ class TestAlpacaReductionClient(TestCase):
         self.assertEqual(close_all[0]["status"], 200)
         self.assertEqual(close_all[0]["body"]["id"], "close-1")
         self.assertEqual(trading_client.close_all_cancel_orders, [False])
+
+    def test_close_position_encodes_crypto_symbol_as_one_path_segment(self) -> None:
+        trading_client = _ReductionTradingClient()
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=trading_client,
+            data_client=Mock(),
+        )
+
+        client.close_position(
+            "BTC/USD",
+            qty=Decimal("0.0002"),
+            firewall_token=issue_order_firewall_token(),
+        )
+
+        self.assertEqual(trading_client.closed[0][0], "BTC%2FUSD")
+        self.assertEqual(trading_client.closed[0][1].qty, "0.0002")

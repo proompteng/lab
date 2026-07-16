@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from alpaca.common.exceptions import APIError
@@ -570,8 +570,9 @@ class TorghutAlpacaClient:
         firewall_token: OrderFirewallToken,
     ) -> Dict[str, Any]:
         self._require_firewall_token(firewall_token)
+        position_path_segment = quote(symbol_or_asset_id, safe="")
         order = self._trading.close_position(
-            symbol_or_asset_id,
+            position_path_segment,
             ClosePositionRequest(qty=str(qty)),
         )
         return self._model_to_dict(order)
