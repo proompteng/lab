@@ -468,7 +468,7 @@ def test_repricing_uses_complete_observation_and_exact_broker_request(
         endpoint_url=broker.endpoint_url,
     )
 
-    result = adapter.replace_order("order-1", limit_price=Decimal("190.25"))
+    result = adapter.replace_order("order-1", limit_price=Decimal("190.2500"))
 
     assert result == {"id": "replacement-1", "status": "accepted"}
     assert broker.replace_calls == [("order-1", 190.25)]
@@ -482,6 +482,9 @@ def test_repricing_uses_complete_observation_and_exact_broker_request(
     assert receipt.operation == "replace_order"
     assert receipt.risk_class == "risk_neutral"
     assert receipt.purpose == "repricing"
+    assert (
+        json.loads(receipt.canonical_intent_json)["request"]["limit_price"] == "190.25"
+    )
     assert latest.state == "settled"
     assert latest.settlement_outcome == "acknowledged"
     with sessions() as session:
