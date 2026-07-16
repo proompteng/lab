@@ -377,7 +377,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         await scheduler.stop()
         self.assertEqual(leadership.release_calls, 1)
 
-    async def test_read_only_activity_backfill_does_not_block_trading_or_shutdown(
+    async def test_activity_backfill_does_not_block_trading_or_outlive_leadership(
         self,
     ) -> None:
         leadership = _FakeLeadership()
@@ -390,6 +390,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         allow_activity_to_finish = threading.Event()
         second_trading_iteration = threading.Event()
         trading_calls = 0
+        scheduler_task: asyncio.Task[None] | None = None
 
         def run_once() -> None:
             nonlocal trading_calls
@@ -414,21 +415,21 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             _NoopRecoveryWorker(),
         )
 
-        try:
-            with (
-                patch.object(settings, "trading_poll_ms", 1),
-                patch.object(settings, "trading_reconcile_ms", 60_000),
-                patch.object(
-                    settings,
-                    "trading_scheduler_shutdown_drain_seconds",
-                    0.1,
-                ),
-                patch.object(
-                    settings,
-                    "trading_scheduler_leadership_check_seconds",
-                    0.01,
-                ),
-            ):
+        with (
+            patch.object(settings, "trading_poll_ms", 1),
+            patch.object(settings, "trading_reconcile_ms", 60_000),
+            patch.object(
+                settings,
+                "trading_scheduler_shutdown_drain_seconds",
+                0.01,
+            ),
+            patch.object(
+                settings,
+                "trading_scheduler_leadership_check_seconds",
+                0.01,
+            ),
+        ):
+            try:
                 await scheduler.start()
                 self.assertTrue(
                     await asyncio.to_thread(activity_started.wait, 1.0),
@@ -438,11 +439,19 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
                     await asyncio.to_thread(second_trading_iteration.wait, 1.0),
                     "trading stalled behind account-activity backfill",
                 )
+                scheduler_task = scheduler._task
                 await scheduler.stop()
-        finally:
-            allow_activity_to_finish.set()
+                fatal_exit.assert_called_once_with(70)
+                self.assertEqual(leadership.release_calls, 0)
+                self.assertTrue(leadership.status.acquired)
+                self.assertIs(scheduler._task, scheduler_task)
+            finally:
+                allow_activity_to_finish.set()
 
-        fatal_exit.assert_not_called()
+            if scheduler_task is not None:
+                await asyncio.wait_for(scheduler_task, timeout=1.0)
+            await scheduler.stop()
+
         self.assertEqual(leadership.release_calls, 1)
         self.assertFalse(scheduler.state.running)
 
