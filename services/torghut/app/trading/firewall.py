@@ -464,9 +464,13 @@ class OrderFirewall:
         authority: RiskReductionMutationAuthority,
     ) -> dict[str, object]:
         request_payload = authority.request_payload
-        if str(request_payload.get("order_id") or "").strip() != alpaca_order_id or str(
-            request_payload.get("limit_price") or ""
-        ) != str(limit_price):
+        payload_limit_price = _finite_decimal(request_payload.get("limit_price"))
+        normalized_limit_price = _finite_decimal(limit_price)
+        if str(request_payload.get("order_id") or "").strip() != alpaca_order_id or (
+            payload_limit_price is None
+            or normalized_limit_price is None
+            or payload_limit_price != normalized_limit_price
+        ):
             raise ValueError("alpaca_replace_order_request_mismatch")
         consume_risk_reduction_mutation_authority(
             authority,
