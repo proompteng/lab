@@ -19,12 +19,13 @@ from .types import (
     balances_tuple,
     positions_tuple,
     prepare_activities,
+    quantize_broker_cash,
     quantize_ledger_decimal,
 )
 
 
 JOURNAL_REDUCER_NAME = "balanced_journal"
-JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v2"
+JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v3"
 
 _MAX_TRANSACTION_ID_LENGTH = 512
 _REVERSAL_TRANSACTION_ID_PREFIX = "correction-reversal:sha256:"
@@ -56,6 +57,7 @@ class _Position:
 class _FillPosting:
     delta_quantity: Decimal
     cash_delta: Decimal
+    cash_rounding: Decimal
     position_cost_delta: Decimal
     realized: Decimal
     new_quantity: Decimal
@@ -169,9 +171,8 @@ class _JournalWriter:
             position,
             delta_quantity,
             price * activity.notional_multiplier,
+            quote_currency=self.prepared.scope.quote_currency,
         )
-        if posting.cash_delta == ZERO:
-            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         if posting.new_quantity != ZERO and posting.new_cost == ZERO:
             raise EconomicLedgerError(
                 "economic_fill_position_cost_below_ledger_quantum"
@@ -194,6 +195,11 @@ class _JournalWriter:
                     "income:realized_pnl",
                     self.prepared.scope.quote_currency,
                     -posting.realized,
+                ),
+                _line(
+                    "expense:cash_rounding",
+                    self.prepared.scope.quote_currency,
+                    posting.cash_rounding,
                 ),
                 _line(
                     f"asset:position_units:{symbol}",
@@ -343,13 +349,26 @@ def _build_fill_posting(
     position: _Position,
     delta_quantity: Decimal,
     price: Decimal,
+    *,
+    quote_currency: str,
 ) -> _FillPosting:
-    cash_delta = quantize_ledger_decimal(
+    economic_cash_delta = quantize_ledger_decimal(
         -delta_quantity * price,
+        field_name="fill_economic_cash_delta",
+    )
+    if economic_cash_delta == ZERO:
+        raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
+    cash_delta = quantize_broker_cash(
+        economic_cash_delta,
+        currency=quote_currency,
         field_name="fill_cash_delta",
     )
+    cash_rounding = quantize_ledger_decimal(
+        economic_cash_delta - cash_delta,
+        field_name="fill_cash_rounding",
+    )
     if position.quantity == ZERO or position.quantity * delta_quantity > ZERO:
-        position_cost_delta = -cash_delta
+        position_cost_delta = -economic_cash_delta
     else:
         position_cost_delta = _opposite_fill_position_cost_delta(
             position,
@@ -357,7 +376,7 @@ def _build_fill_posting(
             price,
         )
     realized = quantize_ledger_decimal(
-        cash_delta + position_cost_delta,
+        economic_cash_delta + position_cost_delta,
         field_name="fill_realized_pnl",
     )
     new_quantity = quantize_ledger_decimal(
@@ -375,6 +394,7 @@ def _build_fill_posting(
     return _FillPosting(
         delta_quantity=delta_quantity,
         cash_delta=cash_delta,
+        cash_rounding=cash_rounding,
         position_cost_delta=position_cost_delta,
         realized=realized,
         new_quantity=new_quantity,
@@ -436,6 +456,7 @@ def _projection_from_journal(
     quantities: dict[str, Decimal] = {}
     costs: dict[str, Decimal] = {}
     realized_pnl = ZERO
+    cash_rounding = ZERO
     fees = ZERO
     dividends = ZERO
     interest = ZERO
@@ -452,6 +473,8 @@ def _projection_from_journal(
                 quantities[symbol] = quantities.get(symbol, ZERO) + line.amount
             elif line.account == "income:realized_pnl":
                 realized_pnl -= line.amount
+            elif line.account == "expense:cash_rounding":
+                cash_rounding += line.amount
             elif line.account in {
                 "expense:broker_fee",
                 "expense:regulatory_fee",
@@ -475,6 +498,7 @@ def _projection_from_journal(
         cash=balances_tuple(cash),
         positions=positions_tuple(quantities, costs),
         realized_pnl=realized_pnl,
+        cash_rounding=cash_rounding,
         fees=fees,
         dividends=dividends,
         interest=interest,

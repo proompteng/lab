@@ -15,6 +15,7 @@ ZERO = Decimal("0")
 LEDGER_DECIMAL_PRECISION = 80
 LEDGER_DECIMAL_SCALE = 18
 LEDGER_QUANTUM = Decimal("0.000000000000000001")
+_USD_CASH_QUANTUM = Decimal("0.01")
 _LEDGER_ABSOLUTE_LIMIT = Decimal("100000000000000000000")
 _UNIT_NOTIONAL_MULTIPLIER = Decimal("1")
 _OCC_OPTION_SYMBOL = re.compile(r"^[A-Z0-9]{1,6}[0-9]{6}[CP][0-9]{8}$")
@@ -384,6 +385,7 @@ class EconomicProjection:
     cash: tuple[CommodityBalance, ...]
     positions: tuple[PositionBalance, ...]
     realized_pnl: Decimal
+    cash_rounding: Decimal
     fees: Decimal
     dividends: Decimal
     interest: Decimal
@@ -394,6 +396,7 @@ class EconomicProjection:
     def __post_init__(self) -> None:
         for field_name in (
             "realized_pnl",
+            "cash_rounding",
             "fees",
             "dividends",
             "interest",
@@ -420,6 +423,7 @@ class EconomicProjection:
             "cash": {
                 balance.commodity: decimal_text(balance.amount) for balance in self.cash
             },
+            "cash_rounding": decimal_text(self.cash_rounding),
             "corrected_count": self.corrected_count,
             "dividends": decimal_text(self.dividends),
             "duplicate_count": self.duplicate_count,
@@ -599,12 +603,34 @@ def quantize_ledger_decimal(
 ) -> Decimal:
     """Round one derived value to the durable NUMERIC(38, 18) contract."""
 
+    return _quantize_decimal(value, quantum=LEDGER_QUANTUM, field_name=field_name)
+
+
+def quantize_broker_cash(
+    value: Decimal,
+    *,
+    currency: str,
+    field_name: str = "broker_cash",
+) -> Decimal:
+    """Round a derived broker cash movement to the observed currency precision."""
+
+    if currency != "USD":
+        raise EconomicLedgerError("economic_broker_cash_currency_unsupported")
+    return _quantize_decimal(value, quantum=_USD_CASH_QUANTUM, field_name=field_name)
+
+
+def _quantize_decimal(
+    value: Decimal,
+    *,
+    quantum: Decimal,
+    field_name: str,
+) -> Decimal:
     if not value.is_finite():
         raise EconomicLedgerError(f"economic_ledger_{field_name}_invalid")
     with localcontext() as context:
         context.prec = LEDGER_DECIMAL_PRECISION
         try:
-            quantized = value.quantize(LEDGER_QUANTUM, rounding=ROUND_HALF_UP)
+            quantized = value.quantize(quantum, rounding=ROUND_HALF_UP)
         except InvalidOperation as exc:
             raise EconomicLedgerError(
                 f"economic_ledger_{field_name}_out_of_range"

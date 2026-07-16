@@ -151,7 +151,7 @@ def test_side_flip_cannot_open_nonzero_units_with_zero_cost() -> None:
             symbol="AAPL",
             side="buy",
             quantity="1.000000000000000001",
-            price="0.000000000000000001",
+            price="0.4",
             net_amount=None,
         ),
     ]

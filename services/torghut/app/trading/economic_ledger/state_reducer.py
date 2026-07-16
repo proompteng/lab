@@ -15,12 +15,13 @@ from .types import (
     balances_tuple,
     positions_tuple,
     prepare_activities,
+    quantize_broker_cash,
     quantize_ledger_decimal,
 )
 
 
 STATE_REDUCER_NAME = "independent_position_state"
-STATE_REDUCER_VERSION = "torghut.broker-economic-state.v2"
+STATE_REDUCER_VERSION = "torghut.broker-economic-state.v3"
 
 _EXTERNAL_FLOW_TYPES = frozenset({"ACATC", "CSD", "CSW", "JNLC", "TRANS"})
 _DIVIDEND_ACTIVITY_TYPES = frozenset(
@@ -50,6 +51,7 @@ class _StateReducer:
         self.cash: dict[str, Decimal] = {}
         self.holdings: dict[str, _Holding] = {}
         self.realized_pnl = ZERO
+        self.cash_rounding = ZERO
         self.fees = ZERO
         self.dividends = ZERO
         self.interest = ZERO
@@ -81,6 +83,7 @@ class _StateReducer:
                 },
             ),
             realized_pnl=self.realized_pnl,
+            cash_rounding=self.cash_rounding,
             fees=self.fees,
             dividends=self.dividends,
             interest=self.interest,
@@ -165,28 +168,40 @@ class _StateReducer:
 
         holding = self.holdings.setdefault(symbol, _Holding())
         previous_value = holding.carrying_value
-        cash_change = quantize_ledger_decimal(
+        economic_cash_change = quantize_ledger_decimal(
             -order_units * price * activity.notional_multiplier,
+            field_name="fill_economic_cash_delta",
+        )
+        if economic_cash_change == ZERO:
+            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
+        cash_change = quantize_broker_cash(
+            economic_cash_change,
+            currency=self.prepared.scope.quote_currency,
             field_name="fill_cash_delta",
         )
-        if cash_change == ZERO:
-            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         next_units, next_value = _next_holding(
             holding,
             order_units,
             price * activity.notional_multiplier,
-            cash_change,
+            economic_cash_change,
         )
         if next_units != ZERO and next_value == ZERO:
             raise EconomicLedgerError(
                 "economic_fill_position_cost_below_ledger_quantum"
             )
-        self._add_cash(activity, cash_change)
+        if cash_change != ZERO:
+            self._add_cash(activity, cash_change)
         holding.units = next_units
         holding.carrying_value = next_value
         self.realized_pnl = quantize_ledger_decimal(
-            self.realized_pnl + cash_change + (holding.carrying_value - previous_value),
+            self.realized_pnl
+            + economic_cash_change
+            + (holding.carrying_value - previous_value),
             field_name="realized_pnl",
+        )
+        self.cash_rounding = quantize_ledger_decimal(
+            self.cash_rounding + economic_cash_change - cash_change,
+            field_name="cash_rounding",
         )
 
     def _crypto_fee(self, activity: EconomicActivity) -> None:
