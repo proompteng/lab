@@ -357,8 +357,9 @@ spec:
               value: qwen3-embedding-saigak:8b
             - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
               value: "1024"
+            # Exact and lexical SQL retain cold-cache headroom while staying below the 1s p95 acceptance gate.
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
-              value: "750"
+              value: "900"
             - name: JANGAR_SOURCE_CI_RUN_ID
               value: "29465487509"
             - name: JANGAR_SOURCE_CI_CONCLUSION
