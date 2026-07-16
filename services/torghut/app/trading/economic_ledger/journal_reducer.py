@@ -168,6 +168,10 @@ class _JournalWriter:
         posting = _build_fill_posting(position, delta_quantity, price)
         if posting.cash_delta == ZERO:
             raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
+        if posting.new_quantity != ZERO and posting.new_cost == ZERO:
+            raise EconomicLedgerError(
+                "economic_fill_position_cost_below_ledger_quantum"
+            )
         transaction = _transaction(
             activity,
             posting_rule="fill_weighted_average",

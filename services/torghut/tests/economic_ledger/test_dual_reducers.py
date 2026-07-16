@@ -120,6 +120,37 @@ def test_fill_notional_below_ledger_quantum_is_rejected_by_both_reducers() -> No
             reducer([tiny_fill])
 
 
+def test_side_flip_cannot_open_nonzero_units_with_zero_cost() -> None:
+    activities = [
+        activity(
+            "short-open",
+            "FILL",
+            symbol="AAPL",
+            side="sell",
+            quantity="1",
+            price="1",
+            net_amount=None,
+        ),
+        activity(
+            "sub-quantum-flip",
+            "FILL",
+            event_offset_seconds=1,
+            symbol="AAPL",
+            side="buy",
+            quantity="1.000000000000000001",
+            price="0.000000000000000001",
+            net_amount=None,
+        ),
+    ]
+
+    for reducer in (reduce_balanced_journal, reduce_independent_state):
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_fill_position_cost_below_ledger_quantum",
+        ):
+            reducer(activities)
+
+
 def test_repeating_weighted_average_rounds_once_and_stays_exactly_balanced() -> None:
     result = reduce_and_compare(
         [
