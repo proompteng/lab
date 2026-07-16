@@ -27,6 +27,7 @@ from .requirements import (
     load_json_if_exists as _load_json_if_exists,
     normalize_artifact_path as _normalize_artifact_path,
     regime_slice_count as _regime_slice_count,
+    requires_expert_router_registry as _requires_expert_router_registry,
     sha256_json as _sha256_json,
     sha256_path as _sha256_path,
 )
@@ -170,6 +171,7 @@ def _validate_stages(
     manifest_path: Path,
     policy_payload: dict[str, Any],
     artifact_root: Path,
+    promotion_target: str,
 ) -> dict[str, Any] | None:
     """Validate stages presence, order, status, checks, and artifacts. Returns stages dict."""
     stages_raw = manifest_payload.get("stages")
@@ -182,7 +184,13 @@ def _validate_stages(
 
     _validate_stage_names(ctx, stages, manifest_path)
     _validate_stage_payloads(ctx, stages, manifest_path)
-    _validate_stage_checks(ctx, stages, manifest_path, policy_payload)
+    _validate_stage_checks(
+        ctx,
+        stages,
+        manifest_path,
+        policy_payload,
+        promotion_target=promotion_target,
+    )
     _validate_stage_artifacts(ctx, stages, manifest_path, policy_payload, artifact_root)
     return stages
 
@@ -248,6 +256,8 @@ def _validate_stage_checks(
     stages: dict[str, Any],
     manifest_path: Path,
     policy_payload: dict[str, Any],
+    *,
+    promotion_target: str,
 ) -> None:
     for stage_name in _PROFITABILITY_STAGE_ORDER:
         stage_payload = _as_dict(stages.get(stage_name))
@@ -255,8 +265,9 @@ def _validate_stage_checks(
             continue
 
         required_checks = list(_PROFITABILITY_STAGE_REQUIRED_CHECKS.get(stage_name, ()))
-        if stage_name == "execution" and not bool(
-            policy_payload.get("promotion_require_expert_router_registry", False)
+        if stage_name == "execution" and not _requires_expert_router_registry(
+            policy_payload=policy_payload,
+            promotion_target=promotion_target,
         ):
             required_checks = [
                 check
@@ -649,6 +660,7 @@ def append_profitability_stage_manifest_reasons(
     reason_details: list[dict[str, object]],
     policy_payload: dict[str, Any],
     artifact_root: Path,
+    promotion_target: str = "paper",
 ) -> None:
     manifest_relpath = str(
         policy_payload.get(
@@ -672,7 +684,12 @@ def append_profitability_stage_manifest_reasons(
     ctx = _ValidationContext(reasons=reasons, reason_details=reason_details)
     _validate_manifest_top_level(ctx, manifest_payload, manifest_path)
     stages = _validate_stages(
-        ctx, manifest_payload, manifest_path, policy_payload, artifact_root
+        ctx,
+        manifest_payload,
+        manifest_path,
+        policy_payload,
+        artifact_root,
+        promotion_target,
     )
 
     if bool(

@@ -246,6 +246,7 @@ def evaluate_promotion_prerequisites(
             reason_details=reason_details,
             policy_payload=policy_payload,
             artifact_root=artifact_root,
+            promotion_target=promotion_target,
         )
     if bool(
         policy_payload.get("promotion_require_portfolio_optimizer_evidence", False)
