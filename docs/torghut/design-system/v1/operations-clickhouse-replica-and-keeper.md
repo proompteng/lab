@@ -18,7 +18,6 @@
   - `docs/torghut/production-readiness-proof-runbook.md`
 - Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-
 ## Purpose
 
 Provide ClickHouse recovery procedures tailored to Torghut’s replicated tables and known operational incidents (keeper
@@ -70,9 +69,9 @@ CH_PASS="$(kubectl -n torghut get secret torghut-clickhouse-auth -o jsonpath='{.
 Example query:
 
 ```bash
-curl -fsS 'http://localhost:8123/?query=SELECT%201%20FORMAT%20JSONEachRow' \\
-  -H \"X-ClickHouse-User: ${CH_USER}\" \\
-  -H \"X-ClickHouse-Key: ${CH_PASS}\"
+curl -fsS 'http://localhost:8123/?query=SELECT%201%20FORMAT%20JSONEachRow' \
+  -H "X-ClickHouse-User: ${CH_USER}" \
+  -H "X-ClickHouse-Key: ${CH_PASS}"
 ```
 
 ## Procedure A: Replica is read-only
