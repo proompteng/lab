@@ -449,13 +449,14 @@ describe('torghut build-push workflow', () => {
       ],
     ])
     const parityCall = runtimeGroupLines.indexOf('assert_image_contract_parity \\')
-    expect(runtimeGroupLines.slice(parityCall, parityCall + 6)).toEqual([
+    expect(runtimeGroupLines.slice(parityCall, parityCall + 7)).toEqual([
       'assert_image_contract_parity \\',
       'TORGHUT_COMMIT \\',
       'registry.ide-newton.ts.net/lab/torghut \\',
       'argocd/applications/torghut/knative-service.yaml \\',
       'argocd/applications/torghut/knative-service-sim.yaml \\',
-      'argocd/applications/torghut/scheduler-deployment.yaml',
+      'argocd/applications/torghut/scheduler-deployment.yaml \\',
+      'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
     ])
     expect(releaseManifestJobBody).toContain('if [ "${source_sha}" != "${reference_source_sha}" ]; then')
     expect(releaseManifestJobBody).toContain('if [ "${image_ref}" != "${reference_image_ref}" ]; then')
