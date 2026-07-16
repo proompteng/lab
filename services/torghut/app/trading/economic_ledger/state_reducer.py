@@ -172,13 +172,13 @@ class _StateReducer:
             -order_units * price * activity.notional_multiplier,
             field_name="fill_economic_cash_delta",
         )
+        if economic_cash_change == ZERO:
+            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         cash_change = quantize_broker_cash(
             economic_cash_change,
             currency=self.prepared.scope.quote_currency,
             field_name="fill_cash_delta",
         )
-        if cash_change == ZERO:
-            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         next_units, next_value = _next_holding(
             holding,
             order_units,
@@ -189,7 +189,8 @@ class _StateReducer:
             raise EconomicLedgerError(
                 "economic_fill_position_cost_below_ledger_quantum"
             )
-        self._add_cash(activity, cash_change)
+        if cash_change != ZERO:
+            self._add_cash(activity, cash_change)
         holding.units = next_units
         holding.carrying_value = next_value
         self.realized_pnl = quantize_ledger_decimal(

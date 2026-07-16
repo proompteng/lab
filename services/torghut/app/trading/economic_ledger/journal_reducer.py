@@ -173,8 +173,6 @@ class _JournalWriter:
             price * activity.notional_multiplier,
             quote_currency=self.prepared.scope.quote_currency,
         )
-        if posting.cash_delta == ZERO:
-            raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         if posting.new_quantity != ZERO and posting.new_cost == ZERO:
             raise EconomicLedgerError(
                 "economic_fill_position_cost_below_ledger_quantum"
@@ -358,6 +356,8 @@ def _build_fill_posting(
         -delta_quantity * price,
         field_name="fill_economic_cash_delta",
     )
+    if economic_cash_delta == ZERO:
+        raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
     cash_delta = quantize_broker_cash(
         economic_cash_delta,
         currency=quote_currency,

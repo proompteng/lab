@@ -95,6 +95,40 @@ def test_fill_cash_half_cent_rounds_away_from_zero(
     assert abs(aapl.signed_cost) == Decimal("1.005")
 
 
+def test_subcent_fill_with_zero_booked_cash_remains_balanced() -> None:
+    result = reduce_and_compare(
+        [
+            activity(
+                "subcent-fill",
+                "FILL",
+                symbol="AAPL",
+                side="buy",
+                quantity="1",
+                price="0.004",
+                net_amount=None,
+            )
+        ]
+    )
+
+    assert result.admissible
+    assert result.comparison.equivalent
+    assert cash(result.journal.projection) == Decimal("0")
+    assert result.journal.projection.cash_rounding == Decimal("-0.004")
+    aapl = position(result.journal.projection, "AAPL")
+    assert aapl is not None
+    assert aapl.signed_cost == Decimal("0.004")
+    transaction = result.journal.transactions[0]
+    assert all(line.account != "asset:cash" for line in transaction.lines)
+    assert all(
+        sum(
+            (line.amount for line in transaction.lines if line.commodity == commodity),
+            start=Decimal("0"),
+        )
+        == Decimal("0")
+        for commodity in {line.commodity for line in transaction.lines}
+    )
+
+
 def test_fill_cash_rejects_unproved_quote_currency_precision() -> None:
     unsupported_scope = LedgerScope(
         provider=SCOPE.provider,

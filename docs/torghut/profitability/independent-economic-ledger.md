@@ -100,13 +100,17 @@ with decimal `ROUND_HALF_UP` to `$0.01` after quantity, price, and any option mu
 `cash_rounding` expense rather than hidden in cost basis or labeled as trading PnL. Unsupported quote currencies fail
 closed until their broker precision is established from authoritative evidence.
 
+A nonzero exact fill whose broker cash rounds to zero remains admissible: it omits the zero cash line and balances exact
+position cost against signed cash rounding. Only an exact notional below the 18-decimal ledger quantum fails closed.
+
 Weighted-average partial closes round the released cost once. The retained position receives the exact residual carrying
 cost; a full close releases the complete remaining carrying cost without division. Realized PnL is the exact balancing
 residual of fixed-point cash and carrying-cost deltas. This keeps every commodity transaction exactly balanced and makes
 the two reducers comparable without an epsilon while avoiding context-dependent repeating-decimal dust.
 
 A nonzero fill notional or asset-fee fair value that rounds below the 18-decimal ledger quantum is rejected before any
-position mutation. Nonzero units can never enter the projection with zero cash, zero cost, or zero fee economics.
+position mutation. Nonzero units can never enter the projection without exact cost and explicit rounding or fee
+economics.
 
 ## Chart Of Accounts And Commodities
 
