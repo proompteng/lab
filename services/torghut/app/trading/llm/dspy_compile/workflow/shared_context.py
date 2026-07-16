@@ -37,6 +37,7 @@ DSPyWorkflowLane = Literal[
 DSPyWorkflowExecutionMode = Literal["agentrun", "local"]
 
 DEFAULT_DSPY_AGENT_NAME = "codex-spark-agent"
+SIGNATURE_VERSIONS_METADATA_KEY = "signature_versions"
 
 IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "dataset-build": "torghut-dspy-dataset-build-v1",
@@ -380,15 +381,17 @@ def upsert_workflow_artifact_record(
     metadata_payload = dict(metadata) if metadata is not None else {}
     if compile_result is not None and "executor" not in metadata_payload:
         metadata_payload["executor"] = "dspy_live"
-    row.metadata_json = (
-        coerce_json_payload(metadata_payload) if metadata_payload else None
-    )
 
     if compile_result is not None:
+        signature_versions = {
+            str(key).strip(): str(value).strip()
+            for key, value in compile_result.signature_versions.items()
+            if str(key).strip() and str(value).strip()
+        }
+        metadata_payload[SIGNATURE_VERSIONS_METADATA_KEY] = signature_versions
         row.program_name = compile_result.program_name
-        row.signature_version = ",".join(
-            f"{key}:{value}"
-            for key, value in sorted(compile_result.signature_versions.items())
+        row.signature_version = hash_payload(
+            {SIGNATURE_VERSIONS_METADATA_KEY: signature_versions}
         )
         row.optimizer = compile_result.optimizer
         row.artifact_uri = compile_result.compiled_artifact_uri
@@ -397,6 +400,10 @@ def upsert_workflow_artifact_record(
         row.compiled_prompt_hash = compile_result.compiled_prompt_hash
         row.reproducibility_hash = compile_result.reproducibility_hash
         row.metric_bundle = coerce_json_payload(compile_result.metric_bundle)
+
+    row.metadata_json = (
+        coerce_json_payload(metadata_payload) if metadata_payload else None
+    )
 
     if eval_report is not None:
         row.gate_compatibility = eval_report.gate_compatibility
@@ -414,13 +421,13 @@ def upsert_workflow_artifact_record(
         row.metric_bundle = coerce_json_payload(metric_bundle)
 
     resource = cast(dict[str, Any], (response_payload or {}).get("resource") or {})
-    metadata_payload = cast(dict[str, Any], resource.get("metadata") or {})
-    if metadata_payload:
-        row.agentrun_name = str(metadata_payload.get("name") or "").strip() or None
+    resource_metadata = cast(dict[str, Any], resource.get("metadata") or {})
+    if resource_metadata:
+        row.agentrun_name = str(resource_metadata.get("name") or "").strip() or None
         row.agentrun_namespace = (
-            str(metadata_payload.get("namespace") or "").strip() or None
+            str(resource_metadata.get("namespace") or "").strip() or None
         )
-        row.agentrun_uid = str(metadata_payload.get("uid") or "").strip() or None
+        row.agentrun_uid = str(resource_metadata.get("uid") or "").strip() or None
 
     session.add(row)
     session.flush()

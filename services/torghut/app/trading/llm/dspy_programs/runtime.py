@@ -19,6 +19,7 @@ from .committee_programs import (
 )
 
 _HASH_LENGTH = 64
+_SIGNATURE_VERSIONS_METADATA_KEY = "signature_versions"
 _BOOTSTRAP_PROGRAM_NAME = "trade-review-committee-v1"
 _BOOTSTRAP_SIGNATURE_VERSION = "v1"
 _DSPY_OPENAI_BASE_PATH = "/openai/v1"
@@ -308,9 +309,16 @@ class DSPyReviewRuntime:
                 "dspy_artifact_gate_compatibility_failed"
             )
 
-        signature_versions = _parse_signature_versions(row.signature_version)
-        if not signature_versions:
-            signature_versions = {"trade_review": self.signature_version}
+        metadata = _artifact_metadata(row.metadata_json)
+        signature_versions = _resolve_signature_versions(
+            metadata=metadata,
+            legacy_signature_version=row.signature_version,
+            fallback_signature_version=self.signature_version,
+        )
+        _validate_signature_versions_identity(
+            persisted_identity=row.signature_version,
+            signature_versions=signature_versions,
+        )
 
         program_name = (row.program_name or "").strip()
         if not program_name:
@@ -351,12 +359,6 @@ class DSPyReviewRuntime:
         }
         if artifact_hash not in accepted_hashes:
             raise DSPyRuntimeUnsupportedStateError("dspy_artifact_hash_mismatch")
-
-        metadata: dict[str, Any] = {}
-        metadata_raw = row.metadata_json
-        if isinstance(metadata_raw, dict):
-            metadata_items = cast(dict[Any, Any], metadata_raw)
-            metadata = {str(key): value for key, value in metadata_items.items()}
 
         executor_value = metadata.get("executor")
         if not isinstance(executor_value, str):
@@ -457,6 +459,61 @@ def _parse_signature_versions(raw: str | None) -> dict[str, str]:
         elif item:
             parsed["trade_review"] = item
     return parsed
+
+
+def _artifact_metadata(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, Mapping):
+        return {}
+    return {str(key): value for key, value in cast(Mapping[Any, Any], raw).items()}
+
+
+def _metadata_signature_versions(metadata: Mapping[str, Any]) -> dict[str, str]:
+    raw = metadata.get(_SIGNATURE_VERSIONS_METADATA_KEY)
+    if not isinstance(raw, Mapping):
+        return {}
+    normalized: dict[str, str] = {}
+    for key, value in cast(Mapping[Any, Any], raw).items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        normalized_key = key.strip()
+        normalized_value = value.strip()
+        if normalized_key and normalized_value:
+            normalized[normalized_key] = normalized_value
+    return normalized
+
+
+def _resolve_signature_versions(
+    *,
+    metadata: Mapping[str, Any],
+    legacy_signature_version: str | None,
+    fallback_signature_version: str,
+) -> dict[str, str]:
+    signature_versions = _metadata_signature_versions(metadata)
+    if signature_versions:
+        return signature_versions
+    signature_versions = _parse_signature_versions(legacy_signature_version)
+    if signature_versions:
+        return signature_versions
+    return {"trade_review": fallback_signature_version}
+
+
+def _validate_signature_versions_identity(
+    *,
+    persisted_identity: str | None,
+    signature_versions: Mapping[str, str],
+) -> None:
+    normalized_identity = (persisted_identity or "").strip().lower()
+    if len(normalized_identity) != _HASH_LENGTH or any(
+        character not in string.hexdigits for character in normalized_identity
+    ):
+        return
+    expected_identity = hash_payload(
+        {_SIGNATURE_VERSIONS_METADATA_KEY: dict(signature_versions)}
+    )
+    if normalized_identity != expected_identity:
+        raise DSPyRuntimeUnsupportedStateError(
+            "dspy_signature_versions_identity_mismatch"
+        )
 
 
 def _pick_signature_version(
