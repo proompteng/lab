@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from tests.trading_scheduler_autonomy.support import (
     Path,
     SimpleNamespace,
@@ -17,6 +19,51 @@ from tests.trading_scheduler_autonomy.support import (
 class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
     _TestTradingSchedulerAutonomyBase
 ):
+    def test_run_autonomy_iteration_preserves_handled_cycle_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            scheduler._set_trading_iteration_error("trading_lane_failures:acct-a")
+            scheduler._set_autonomy_iteration_error("stale_error")
+
+            def handled_failure() -> None:
+                scheduler._set_autonomy_iteration_error("lane_failed")
+
+            with patch.object(
+                scheduler,
+                "_run_autonomous_cycle",
+                side_effect=handled_failure,
+            ):
+                asyncio.run(scheduler._run_autonomy_iteration())
+
+            self.assertEqual(scheduler.state.last_autonomy_error, "lane_failed")
+            self.assertEqual(
+                scheduler.state.last_error,
+                "trading_lane_failures:acct-a;lane_failed",
+            )
+
+    def test_run_autonomy_iteration_clears_stale_error_after_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler, _deps = self._build_scheduler_with_fixtures(
+                tmpdir,
+                allow_live=False,
+                approval_token=None,
+            )
+            scheduler._set_trading_iteration_error("trading_lane_failures:acct-a")
+            scheduler._set_autonomy_iteration_error("stale_error")
+
+            with patch.object(scheduler, "_run_autonomous_cycle"):
+                asyncio.run(scheduler._run_autonomy_iteration())
+
+            self.assertIsNone(scheduler.state.last_autonomy_error)
+            self.assertEqual(
+                scheduler.state.last_error,
+                "trading_lane_failures:acct-a",
+            )
+
     def test_run_autonomous_cycle_uses_live_promotion_when_token_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             scheduler, deps = self._build_scheduler_with_fixtures(
@@ -628,6 +675,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
             scheduler.state.last_autonomy_recommendation_trace_id = "stale-rec-trace"
             scheduler.state.last_autonomy_promotion_action = "promote"
             scheduler.state.last_autonomy_promotion_eligible = True
+            scheduler._set_trading_iteration_error("trading_lane_failures:acct-a")
             with patch(
                 "app.trading.scheduler.governance.governance_mixin_decision_methods.run_autonomous_lane",
                 side_effect=RuntimeError("lane_failed"),
@@ -638,6 +686,10 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 scheduler.state.last_autonomy_reason, "lane_execution_failed"
             )
             self.assertEqual(scheduler.state.last_autonomy_error, "lane_failed")
+            self.assertEqual(
+                scheduler.state.last_error,
+                "trading_lane_failures:acct-a;lane_failed",
+            )
             self.assertIsNone(scheduler.state.last_autonomy_run_id)
             self.assertIsNone(scheduler.state.last_autonomy_candidate_id)
             self.assertIsNone(scheduler.state.last_autonomy_gates)
