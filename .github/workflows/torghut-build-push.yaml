@@ -18,7 +18,9 @@ on:
 
 concurrency:
   group: torghut-build-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish the active registry publish; GitHub's single pending slot still
+  # coalesces later pushes to the newest source revision.
+  cancel-in-progress: false
 
 jobs:
   nix-image:
