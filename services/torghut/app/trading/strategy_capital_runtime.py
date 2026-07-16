@@ -134,7 +134,13 @@ def _verdict_context(
         strategy_ref=strategy.name,
         observed_at=observed_at.astimezone(timezone.utc),
         stage=authority.stage if authority is not None else CapitalStage.QUARANTINED,
-        authority_id=authority.authority_id if authority is not None else None,
+        authority_id=(
+            authority.authority_id
+            if authority is not None
+            else record.authority_id
+            if record is not None
+            else None
+        ),
         authority_digest=record.authority_digest if record is not None else None,
         contract_valid=contract_valid,
     )

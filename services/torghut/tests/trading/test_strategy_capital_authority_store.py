@@ -340,6 +340,72 @@ def test_usage_counts_allowed_broker_attempts_including_rejections() -> None:
     assert usage == (2, 2)
 
 
+def test_invalid_active_authority_denial_persists_paired_record_identity() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    observed_at = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        strategy = _strategy("invalid-record-v1")
+        session.add(strategy)
+        session.flush()
+        record = activate_strategy_capital_authority(
+            session,
+            strategy=strategy,
+            authority=_safe_authority(
+                "invalid-record-v1",
+                CapitalStage.SHADOW_ALLOWED,
+            ),
+        )
+        session.commit()
+
+        record.payload_json = {"schema_version": "invalid"}
+        session.commit()
+        verdict = evaluate_runtime_strategy_capital_authority(
+            session,
+            strategy=strategy,
+            request=RuntimeStrategyCapitalRequest(
+                decision_id=uuid.uuid4(),
+                account_label="paper",
+                account_mode="paper",
+                adapter_name="alpaca",
+                symbol="NVDA",
+                side="buy",
+                order_notional=Decimal("100"),
+                positions=[],
+                capital_loss=Decimal("0"),
+                observed_at=observed_at,
+            ),
+        )
+
+        assert verdict.allowed is False
+        assert verdict.contract_valid is False
+        assert verdict.authority_id == record.authority_id
+        assert verdict.authority_digest == record.authority_digest
+        assert verdict.reason_codes
+
+        decision = TradeDecision(
+            strategy_id=strategy.id,
+            alpaca_account_label="paper",
+            symbol="NVDA",
+            timeframe="1Min",
+            decision_json={
+                "params": {"strategy_capital_authority": verdict.to_payload()}
+            },
+            decision_hash="f" * 64,
+            status="blocked",
+            strategy_capital_authority_id=verdict.authority_id,
+            strategy_capital_authority_digest=verdict.authority_digest,
+            strategy_capital_authority_evaluated_at=verdict.evaluated_at,
+            strategy_capital_authority_allowed=verdict.allowed,
+        )
+        session.add(decision)
+        session.commit()
+
+        session.refresh(decision)
+        assert decision.strategy_capital_authority_id == record.authority_id
+        assert decision.strategy_capital_authority_digest == record.authority_digest
+
+
 def test_locked_load_uses_fresh_pointer_and_detects_rotation() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
