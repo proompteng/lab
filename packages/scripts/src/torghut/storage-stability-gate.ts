@@ -34,9 +34,11 @@ const EXPECTED_ARGO_APPLICATIONS = [
   'torghut-hyperliquid-runtime',
   'torghut-options',
 ] as const
-const CONTAINED_WORKLOAD_NAMES = ['torghut-options-archive'] as const
+const ACTIVE_WORKLOAD_REPLICA_CONTRACTS = {
+  'torghut-options-archive': 1,
+} as const
 const REMOVED_WORKLOAD_NAMES = ['torghut-hyperliquid-clickhouse-writer'] as const
-const OBSERVED_WORKLOAD_NAMES = new Set([...CONTAINED_WORKLOAD_NAMES, ...REMOVED_WORKLOAD_NAMES])
+const OBSERVED_WORKLOAD_NAMES = new Set([...Object.keys(ACTIVE_WORKLOAD_REPLICA_CONTRACTS), ...REMOVED_WORKLOAD_NAMES])
 
 type OutputFormat = 'json' | 'text'
 
@@ -801,22 +803,22 @@ export const evaluateStorageStabilityGate = (snapshot: StorageStabilitySnapshot)
     )
   }
 
-  for (const expectedWorkload of CONTAINED_WORKLOAD_NAMES) {
+  for (const [expectedWorkload, expectedReplicas] of Object.entries(ACTIVE_WORKLOAD_REPLICA_CONTRACTS)) {
     const workload = snapshot.workloads.find(({ name }) => name === expectedWorkload)
     if (!workload) {
-      failures.push(`containment workload evidence is missing for ${expectedWorkload}`)
+      failures.push(`active workload evidence is missing for ${expectedWorkload}`)
       continue
     }
-    const isContained =
-      workload.desiredReplicas === 0 &&
-      workload.actualReplicas === 0 &&
-      workload.readyReplicas === 0 &&
-      workload.availableReplicas === 0 &&
+    const matchesReplicaContract =
+      workload.desiredReplicas === expectedReplicas &&
+      workload.actualReplicas === expectedReplicas &&
+      workload.readyReplicas === expectedReplicas &&
+      workload.availableReplicas === expectedReplicas &&
       workload.terminatingReplicas === 0 &&
-      workload.podNames.length === 0
-    if (!isContained) {
+      workload.podNames.length === expectedReplicas
+    if (!matchesReplicaContract) {
       failures.push(
-        `${expectedWorkload} must remain contained at desired=0 actual=0 ready=0 available=0 terminating=0 pods=[]; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} pods=[${workload.podNames.join(', ')}]`,
+        `${expectedWorkload} must match the active replica contract desired=${expectedReplicas} actual=${expectedReplicas} ready=${expectedReplicas} available=${expectedReplicas} terminating=0 podCount=${expectedReplicas}; observed desired=${workload.desiredReplicas} actual=${workload.actualReplicas} ready=${workload.readyReplicas} available=${workload.availableReplicas} terminating=${workload.terminatingReplicas} podCount=${workload.podNames.length} pods=[${workload.podNames.join(', ')}]`,
       )
     }
   }
