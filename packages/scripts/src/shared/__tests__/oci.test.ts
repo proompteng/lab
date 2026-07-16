@@ -779,13 +779,17 @@ describe('native OCI build workflows', () => {
   })
 
   it('serializes layer uploads against the shaped registry writer', () => {
-    expect(ociPushScript).toContain('copy --image-parallel-copies 1 --format oci')
+    expect(ociPushScript).toContain('--image-parallel-copies 1 --format oci')
+  })
+
+  it('precomputes destination digests to avoid redundant registry writes', () => {
+    expect(ociPushScript).toContain('copy --dest-precompute-digests')
   })
 
   it('tags platform latest refs without re-copying image layers', () => {
     expect(ociPushScript).toContain('crane tag "${reference}" "${latest_tag}"')
     expect(ociPushScript).not.toContain(
-      'skopeo --policy "${policy_json}" copy --image-parallel-copies 1 --format oci "docker://${reference}"',
+      'skopeo --policy "${policy_json}" copy --dest-precompute-digests --image-parallel-copies 1 --format oci "docker://${reference}"',
     )
   })
 

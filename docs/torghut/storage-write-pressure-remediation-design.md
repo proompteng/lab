@@ -376,6 +376,17 @@ safe because an image manifest or index is only a few KiB and Distribution rejec
 already present. This restores publication liveness without reopening the large-blob fan-out that caused the Ceph write
 burst.
 
+The next Torghut rollout exposed avoidable work ahead of that boundary. Runs `29482560820` and `29485437093` each fed
+roughly 200 MiB per architecture through the shaped writer even though most Nix store layers were unchanged. A
+`dockerTools` Docker archive identifies uncompressed layers, while Skopeo compresses them for the OCI destination; the
+publisher therefore cannot perform the destination-digest existence check before streaming unless explicitly asked to
+precompute it. Live registry logs showed repeated blob misses followed by the same compressed layer commits, eight
+queued writers, and upload-initiation waits above two minutes. The safe correction is Skopeo's
+`--dest-precompute-digests`: compute the compressed digest locally, issue the registry existence check, and upload only
+missing blobs. This does not raise registry bandwidth or concurrency, weaken durability, or change image content. The
+next production build must retain the one-layer publisher limit and prove fewer uploaded bytes plus the same published
+platform/index digests before the optimization is considered effective.
+
 After request-body shaping rolls out, dispatch the current Analysis `main` workflow through build and push, then start
 a new 30-minute observation from a fresh SMART baseline. The gate must show no controller event above two seconds. If
 the shaped workload still fails that gate, stop the rollout and investigate the remaining measured writer instead of
