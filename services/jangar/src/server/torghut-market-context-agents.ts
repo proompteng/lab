@@ -19,6 +19,7 @@ import {
   type MarketContextDispatchResult,
 } from '~/server/torghut-market-context-dispatch'
 import { resolveFailureCategoryFromMetadata, resolveFailureSignal } from '~/server/torghut-market-context-failures'
+import * as runIdentity from '~/server/torghut-market-context-run-identity'
 import {
   resolveMarketContextIngestAuthConfig,
   resolveMarketContextRuntimeConfig,
@@ -776,12 +777,6 @@ export const resolveProviderRunProgressFailureSignal = (params: {
   return resolveFailureSignal({ metadata: params.metadata, message: params.message })
 }
 
-const parseRunIdentifier = (value: unknown) => {
-  const requestId = parseNonEmptyString(value)
-  if (!requestId) throw new Error('requestId is required')
-  return requestId
-}
-
 const loadRunContext = async (params: { requestId: string }) => {
   const db = await resolveDbWithMigrations()
   if (!db) throw new Error('DATABASE_URL is not configured')
@@ -1009,7 +1004,7 @@ export const startMarketContextProviderRun = async (input: RunStartPayload) => {
 }
 
 export const recordMarketContextProviderRunProgress = async (input: RunProgressPayload) => {
-  const requestId = parseRunIdentifier(input.requestId)
+  const requestId = runIdentity.parseMarketContextRunIdentifier(input.requestId)
   const seq = parseSeq(input.seq)
   if (seq === null) throw new Error('seq must be a non-negative integer')
   const status = coerceLifecycleStatus(input.status, 'running')
@@ -1057,7 +1052,7 @@ export const recordMarketContextProviderRunProgress = async (input: RunProgressP
 }
 
 export const recordMarketContextProviderEvidence = async (input: RunEvidencePayload) => {
-  const requestId = parseRunIdentifier(input.requestId)
+  const requestId = runIdentity.parseMarketContextRunIdentifier(input.requestId)
   const seq = parseSeq(input.seq)
   if (seq === null) throw new Error('seq must be a non-negative integer')
   const metadata = coercePayload(input.metadata)
@@ -1065,11 +1060,13 @@ export const recordMarketContextProviderEvidence = async (input: RunEvidencePayl
   if (evidence.length === 0) throw new Error('evidence items are required')
 
   const context = await loadRunContext({ requestId })
-  const symbol = normalizeTorghutSymbol(parseNonEmptyString(input.symbol) ?? context.symbol)
-  if (!symbol) throw new Error('symbol is required')
-  const payloadDomain = asDomain(input.domain)
-  const domain = payloadDomain ?? context.domain
-  if (!domain) throw new Error('domain must be news; fundamentals market-context runs are retired')
+  const { symbol, domain } = runIdentity.resolveMarketContextRunIdentity({
+    requestId,
+    storedSymbol: context.symbol,
+    storedDomain: context.domain,
+    symbol: input.symbol,
+    domain: input.domain,
+  })
   const now = new Date()
 
   await sql`
@@ -1159,7 +1156,7 @@ export const recordMarketContextProviderEvidence = async (input: RunEvidencePayl
 export const getMarketContextProviderRunStatus = async (
   requestIdInput: string,
 ): Promise<MarketContextRunStatusPayload> => {
-  const requestId = parseRunIdentifier(requestIdInput)
+  const requestId = runIdentity.parseMarketContextRunIdentifier(requestIdInput)
   const db = await resolveDbWithMigrations()
   if (!db) throw new Error('DATABASE_URL is not configured')
 
@@ -1323,8 +1320,6 @@ const upsertRunLifecycleFromIngest = async (params: {
     })
     .onConflict((conflict) =>
       conflict.columns(['request_id']).doUpdateSet({
-        symbol: params.symbol,
-        domain: params.domain,
         run_name: params.runName,
         provider: params.provider,
         status: params.lifecycleStatus,
@@ -1518,7 +1513,8 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   const runName = typeof input.runName === 'string' && input.runName.trim().length > 0 ? input.runName.trim() : null
   const runStatus = coerceRunStatus(input.runStatus)
   const lifecycleStatus = coerceLifecycleStatus(input.runStatus, runStatus)
-  const requestId = parseNonEmptyString(input.requestId) ?? randomUUID()
+  const suppliedRequestId = parseNonEmptyString(input.requestId)
+  const requestId = suppliedRequestId ?? randomUUID()
   const metadata = coercePayload(input.metadata)
   const failureSignal =
     lifecycleStatus === 'failed' || lifecycleStatus === 'cancelled'
@@ -1529,6 +1525,13 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   const batchStartMs = Date.now()
 
   const batchItems = coerceBatchIngestItems(input)
+  const symbol = await runIdentity.validateMarketContextIngestRunIdentity({
+    db,
+    requestId: suppliedRequestId,
+    symbol: input.symbol,
+    domain,
+    batch: batchItems !== null,
+  })
   if (batchItems) {
     if (settings.batchRequireOpenSession) {
       const marketOpen = await resolveTradingSessionOpen(settings)
@@ -1690,10 +1693,6 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
     }
   }
 
-  const symbolRaw = typeof input.symbol === 'string' ? input.symbol.trim() : ''
-  if (!symbolRaw) throw new Error('symbol is required')
-
-  const symbol = normalizeTorghutSymbol(symbolRaw)
   const asOf = parseTimestamp(input.asOfUtc ?? input.asOf ?? input.publishedAt) ?? new Date()
   const sourceCount = coerceSourceCount(input.sourceCount ?? input.itemCount)
   const qualityScore = coerceQualityScore(input.qualityScore)

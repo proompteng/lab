@@ -10,8 +10,10 @@ type InsertTracker = {
     table: string
     args: unknown[]
   }>
+  conflictUpdateCalls: Array<{ table: string; values: unknown }>
   db: {
     insertInto: (table: string) => unknown
+    selectFrom: (table: string) => unknown
   }
 }
 
@@ -25,7 +27,16 @@ const buildInsertTracker = (): InsertTracker => {
     table: string
     args: unknown[]
   }> = []
+  const conflictUpdateCalls: Array<{ table: string; values: unknown }> = []
   const db = {
+    selectFrom: () => {
+      const chain = {
+        select: () => chain,
+        where: () => chain,
+        executeTakeFirst: async () => undefined,
+      }
+      return chain
+    },
     insertInto: (table: string) => {
       tableCalls.push(table)
       const chain = {
@@ -47,7 +58,10 @@ const buildInsertTracker = (): InsertTracker => {
               doUpdateSet: (values: unknown) => unknown
             } = {
               columns: () => conflictBuilder,
-              doUpdateSet: () => updateBuilder,
+              doUpdateSet: (values: unknown) => {
+                conflictUpdateCalls.push({ table, values })
+                return updateBuilder
+              },
             }
             ;(callback as (builder: unknown) => unknown)(conflictBuilder)
             if (whereArgs) conflictWhereCalls.push({ table, args: whereArgs })
@@ -59,7 +73,7 @@ const buildInsertTracker = (): InsertTracker => {
       return chain
     },
   }
-  return { tableCalls, valueCalls, conflictWhereCalls, db }
+  return { tableCalls, valueCalls, conflictWhereCalls, conflictUpdateCalls, db }
 }
 
 describe('ingestMarketContextProviderResult', () => {
@@ -68,6 +82,7 @@ describe('ingestMarketContextProviderResult', () => {
   })
 
   afterEach(() => {
+    vi.doUnmock('~/server/torghut-market-context-run-identity')
     vi.unstubAllGlobals()
   })
 
@@ -204,6 +219,55 @@ describe('ingestMarketContextProviderResult', () => {
     expect(snapshotValues).toBeTruthy()
     expect(Array.isArray((snapshotValues as { citations?: unknown })?.citations)).toBe(false)
     expect(clearMarketContextCache).toHaveBeenCalledOnce()
+  })
+
+  it('preserves existing run identity during finalize conflicts', async () => {
+    const tracker = buildInsertTracker()
+
+    vi.doMock('~/server/db', () => ({ getDb: () => tracker.db }))
+    vi.doMock('~/server/kysely-migrations', () => ({ ensureMigrations: async () => undefined }))
+    vi.doMock('~/server/torghut-market-context', () => ({ clearMarketContextCache: vi.fn() }))
+
+    const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
+    await ingestMarketContextProviderResult({
+      requestId: 'existing-run-1',
+      symbol: 'AAPL',
+      domain: 'news',
+      runStatus: 'failed',
+    })
+
+    const runUpdate = tracker.conflictUpdateCalls.find((call) => call.table === 'torghut_market_context_runs')
+    expect(runUpdate?.values).not.toHaveProperty('symbol')
+    expect(runUpdate?.values).not.toHaveProperty('domain')
+  })
+
+  it('rejects an existing requestId identity mismatch before any write', async () => {
+    const tracker = buildInsertTracker()
+    const validateMarketContextIngestRunIdentity = vi.fn().mockRejectedValue(new Error('run identity mismatch'))
+
+    vi.doMock('~/server/db', () => ({ getDb: () => tracker.db }))
+    vi.doMock('~/server/kysely-migrations', () => ({ ensureMigrations: async () => undefined }))
+    vi.doMock('~/server/torghut-market-context', () => ({ clearMarketContextCache: vi.fn() }))
+    vi.doMock('~/server/torghut-market-context-run-identity', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('../torghut-market-context-run-identity')>()),
+      validateMarketContextIngestRunIdentity,
+    }))
+
+    const { ingestMarketContextProviderResult } = await import('../torghut-market-context-agents')
+    await expect(
+      ingestMarketContextProviderResult({
+        requestId: 'existing-run-1',
+        symbol: 'AAPL',
+        domain: 'news',
+        runStatus: 'succeeded',
+        payload: { summary: 'must not persist' },
+      }),
+    ).rejects.toThrow('run identity mismatch')
+
+    expect(validateMarketContextIngestRunIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'existing-run-1', symbol: 'AAPL', domain: 'news', batch: false }),
+    )
+    expect(tracker.tableCalls).toEqual([])
   })
 
   it('guards snapshot upsert against older as_of values', async () => {

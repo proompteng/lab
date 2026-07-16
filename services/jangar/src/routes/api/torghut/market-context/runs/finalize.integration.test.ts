@@ -4,6 +4,7 @@ type InsertTracker = {
   tableCalls: string[]
   db: {
     insertInto: (table: string) => unknown
+    selectFrom: (table: string) => unknown
     transaction: () => { execute: (fn: (trx: unknown) => Promise<unknown>) => Promise<unknown> }
   }
 }
@@ -11,6 +12,14 @@ type InsertTracker = {
 const buildInsertTracker = (): InsertTracker => {
   const tableCalls: string[] = []
   const db = {
+    selectFrom: () => {
+      const chain = {
+        select: () => chain,
+        where: () => chain,
+        executeTakeFirst: async () => undefined,
+      }
+      return chain
+    },
     insertInto: (table: string) => {
       tableCalls.push(table)
       const chain = {
