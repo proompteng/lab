@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 type TemporalSdkPackageJson = {
@@ -41,7 +42,7 @@ const loadPackageJson = async (): Promise<TemporalSdkPackageJson> => {
 }
 
 const nativeArtifactPattern = /\.(?:node|dylib|so|a)$/
-const ignoredScanDirectories = new Set(['.artifacts', 'coverage', 'dist', 'node_modules'])
+const ignoredScanDirectories = new Set(['.artifacts', 'coverage', 'node_modules'])
 
 async function listPackageFiles(directory = packageRoot): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -143,6 +144,23 @@ describe('temporal-bun-sdk packaging manifest', () => {
     const nativeArtifacts = packageFiles.filter((filePath) => nativeArtifactPattern.test(filePath))
 
     expect(nativeArtifacts).toEqual([])
+  })
+
+  test('includes published dist files in the native artifact scan', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'temporal-bun-sdk-package-scan-'))
+    const distRoot = join(fixtureRoot, 'dist')
+    const nativeArtifact = join(distRoot, 'native-addon.node')
+    try {
+      await mkdir(distRoot, { recursive: true })
+      await writeFile(nativeArtifact, 'fixture', 'utf8')
+
+      const packageFiles = await listPackageFiles(fixtureRoot)
+
+      expect(packageFiles).toContain(nativeArtifact)
+      expect(packageFiles.filter((filePath) => nativeArtifactPattern.test(filePath))).toEqual([nativeArtifact])
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
   })
 
   test('keeps the package Dockerfile aligned with the Bun TypeScript runtime', async () => {

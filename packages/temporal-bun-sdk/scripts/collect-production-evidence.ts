@@ -294,7 +294,7 @@ const forbiddenDependencies = [
 
 const forbiddenPaths = ['bruke', 'native', 'dist/native']
 const nativeArtifactPattern = /\.(?:node|dylib|so|a)$/
-const ignoredScanDirectories = new Set(['.artifacts', 'coverage', 'dist', 'node_modules'])
+const ignoredScanDirectories = new Set(['.artifacts', 'coverage', 'node_modules'])
 
 const readJson = async <T>(path: string): Promise<T> => JSON.parse(await readFile(path, 'utf8')) as T
 
