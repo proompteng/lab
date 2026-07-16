@@ -63,10 +63,13 @@ class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
             "experiment_specs",
             "contradiction_events",
         )
-        if any(key in payload for key in keys):
+        if any(isinstance(payload.get(key), list) for key in keys):
             return True
         synthesis = payload.get("synthesis")
-        return isinstance(synthesis, Mapping) and any(key in synthesis for key in keys)
+        if not isinstance(synthesis, Mapping):
+            return False
+        structured_synthesis = cast(Mapping[str, Any], synthesis)
+        return any(isinstance(structured_synthesis.get(key), list) for key in keys)
 
     def _compiled_experiment_specs_from_templates(
         self,
