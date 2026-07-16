@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from decimal import Decimal, localcontext
 
 import pytest
@@ -333,6 +334,41 @@ def test_crypto_asset_fee_reduces_units_and_records_after_cost_economics() -> No
     assert btc.signed_cost == Decimal("99")
     assert result.independent.realized_pnl == Decimal("0.1")
     assert result.independent.fees == Decimal("1.35")
+
+
+def test_date_only_crypto_fee_orders_after_same_day_timestamped_fill() -> None:
+    fee = replace(
+        activity(
+            "date-only-fee",
+            "CFEE",
+            symbol="BTCUSD",
+            quantity="-0.01",
+            price="110",
+            net_amount="0",
+        ),
+        event_at=None,
+    )
+    fill = activity(
+        "timestamped-fill",
+        "FILL",
+        event_offset_seconds=1,
+        symbol="BTCUSD",
+        side="buy",
+        quantity="1",
+        price="100",
+        net_amount=None,
+    )
+
+    result = reduce_and_compare([fee, fill])
+
+    assert fee.economic_at > fill.economic_at
+    assert result.admissible
+    assert result.comparison.equivalent
+    btc = position(result.independent, "BTCUSD")
+    assert btc is not None
+    assert btc.quantity == Decimal("0.99")
+    assert btc.signed_cost == Decimal("99")
+    assert result.independent.fees == Decimal("1.1")
 
 
 @pytest.mark.parametrize("quantity", [None, "0", "0.01"])

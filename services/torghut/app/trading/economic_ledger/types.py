@@ -149,7 +149,14 @@ class EconomicActivity:
         if self.event_at is not None:
             return self.event_at
         if self.settle_date is not None:
-            return datetime.combine(self.settle_date, time.min, tzinfo=timezone.utc)
+            # Alpaca can emit asset CFEE rows with only a date. The fee charges
+            # that day's fills, so it must not sort ahead of timestamped fills.
+            fallback_time = time.max if self.activity_type == "CFEE" else time.min
+            return datetime.combine(
+                self.settle_date,
+                fallback_time,
+                tzinfo=timezone.utc,
+            )
         return self.first_observed_at
 
     @property

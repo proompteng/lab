@@ -66,6 +66,10 @@ The input manifest orders activities by economic timestamp, settlement date, ext
 `event_at` and `first_observed_at` are retained separately. Late and corrected facts therefore preserve both when the
 broker says they occurred and when Torghut learned them.
 
+An Alpaca asset `CFEE` row that has a settlement date but no event timestamp sorts at the end of that UTC date. This
+keeps a date-only fee behind the same-day timestamped fills whose received asset it charges. Other date-only activity
+retains the start-of-day convention until a documented broker shape requires a more specific rule.
+
 ## Shared Input Contract
 
 The pure reducer accepts bounded decimal and identifier values only:
