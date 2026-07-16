@@ -112,6 +112,12 @@ describe('torghut build-push workflow', () => {
     expect(workflow).not.toContain('uses: actions/cache@v4')
   })
 
+  it('finishes the active publish while coalescing later pushes', () => {
+    expect(workflow).toContain('group: torghut-build-${{ github.ref }}')
+    expect(workflow).toContain('cancel-in-progress: false')
+    expect(workflow).not.toContain('cancel-in-progress: true')
+  })
+
   it('routes the core Torghut image through the shared Nix OCI workflow', () => {
     expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(workflow).toContain('image_name: torghut')
