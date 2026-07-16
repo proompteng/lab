@@ -268,6 +268,42 @@ def test_position_cost_and_unrealized_differences_are_not_tolerated() -> None:
     }
 
 
+def test_option_position_reconciliation_uses_contract_notional() -> None:
+    symbol = "AMZN260529P00270000"
+    replay = _replay(
+        _activity("cash", "CSD", offset=0, net_amount="1000"),
+        _activity(
+            "buy",
+            "FILL",
+            offset=1,
+            symbol=symbol,
+            side="buy",
+            quantity="2",
+            price="1.05",
+        ),
+    )
+    snapshot = _snapshot(
+        cash="790",
+        equity="1030",
+        positions=[
+            {
+                "symbol": symbol,
+                "side": "long",
+                "qty": "2",
+                "avg_entry_price": "1.05",
+                "current_price": "1.20",
+                "market_value": "240",
+                "unrealized_pl": "30",
+            }
+        ],
+    )
+
+    result = _result(replay, snapshot)
+
+    assert result.reconciled is True
+    assert result.residual_count == 0
+
+
 def test_broker_snapshot_rejects_duplicate_positions_and_incomplete_orders() -> None:
     position = {
         "symbol": "AAPL",

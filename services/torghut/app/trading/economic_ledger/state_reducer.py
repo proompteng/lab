@@ -20,7 +20,7 @@ from .types import (
 
 
 STATE_REDUCER_NAME = "independent_position_state"
-STATE_REDUCER_VERSION = "torghut.broker-economic-state.v1"
+STATE_REDUCER_VERSION = "torghut.broker-economic-state.v2"
 
 _EXTERNAL_FLOW_TYPES = frozenset({"ACATC", "CSD", "CSW", "JNLC", "TRANS"})
 _DIVIDEND_ACTIVITY_TYPES = frozenset(
@@ -166,7 +166,7 @@ class _StateReducer:
         holding = self.holdings.setdefault(symbol, _Holding())
         previous_value = holding.carrying_value
         cash_change = quantize_ledger_decimal(
-            -order_units * price,
+            -order_units * price * activity.notional_multiplier,
             field_name="fill_cash_delta",
         )
         if cash_change == ZERO:
@@ -174,7 +174,7 @@ class _StateReducer:
         next_units, next_value = _next_holding(
             holding,
             order_units,
-            price,
+            price * activity.notional_multiplier,
             cash_change,
         )
         if next_units != ZERO and next_value == ZERO:

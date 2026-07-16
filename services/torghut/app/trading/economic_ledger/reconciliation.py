@@ -33,6 +33,7 @@ from .types import (
     LedgerScope,
     canonical_sha256,
     decimal_text,
+    notional_multiplier_for_symbol,
     quantize_ledger_decimal,
 )
 
@@ -603,7 +604,13 @@ def _append_position_residuals(
         ):
             continue
         broker_signed_cost = _multiply(
-            broker_quantity, broker_position.average_entry_price, "broker_signed_cost"
+            _multiply(
+                broker_quantity,
+                broker_position.average_entry_price,
+                "broker_signed_cost",
+            ),
+            notional_multiplier_for_symbol(symbol),
+            "broker_signed_cost",
         )
         _append_decimal_residual(
             residuals,
@@ -665,7 +672,15 @@ def _marked_ledger_values(
     if any(position.symbol not in marks for position in projection.positions):
         return _MarkedLedgerValues(cash=cash, equity=None, unrealized_pnl=None)
     market_value = _sum_decimal(
-        _multiply(position.quantity, marks[position.symbol], "ledger_market_value")
+        _multiply(
+            _multiply(
+                position.quantity,
+                marks[position.symbol],
+                "ledger_market_value",
+            ),
+            notional_multiplier_for_symbol(position.symbol),
+            "ledger_market_value",
+        )
         for position in projection.positions
     )
     carrying_value = _sum_decimal(

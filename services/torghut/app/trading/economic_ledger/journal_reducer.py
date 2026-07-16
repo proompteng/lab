@@ -24,7 +24,7 @@ from .types import (
 
 
 JOURNAL_REDUCER_NAME = "balanced_journal"
-JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v1"
+JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v2"
 
 _MAX_TRANSACTION_ID_LENGTH = 512
 _REVERSAL_TRANSACTION_ID_PREFIX = "correction-reversal:sha256:"
@@ -165,7 +165,11 @@ class _JournalWriter:
         _require_quote_currency(activity)
 
         position = self.positions.setdefault(symbol, _Position())
-        posting = _build_fill_posting(position, delta_quantity, price)
+        posting = _build_fill_posting(
+            position,
+            delta_quantity,
+            price * activity.notional_multiplier,
+        )
         if posting.cash_delta == ZERO:
             raise EconomicLedgerError("economic_fill_notional_below_ledger_quantum")
         if posting.new_quantity != ZERO and posting.new_cost == ZERO:

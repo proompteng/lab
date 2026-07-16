@@ -78,7 +78,7 @@ The pure reducer accepts bounded decimal and identifier values only:
 
 - external activity ID, raw payload hash, type, subtype, correction reference;
 - event timestamp, settlement date, first-observed timestamp;
-- symbol, side, quantity, price, net cash amount, and currency;
+- symbol, side, quantity, price, derived notional multiplier, net cash amount, and currency;
 - provider/account/environment/endpoint scope.
 
 The SQLAlchemy model is adapted into this value object at the boundary. The reducer never reads mutable strategy,
@@ -126,9 +126,16 @@ a derived mark, not historical cost and not a source mutation.
 
 ### Fills
 
-For each `FILL`, quantity and price must be positive, side must be `buy`, `sell`, or the empirically observed historical
-`sell_short` alias, and USD notional is `quantity * price` with no binary floating point. `sell_short` has sell direction
-but remains unchanged in the immutable manifest; no other undocumented side is inferred.
+For each `FILL`, quantity and price must be positive, and side must be `buy`, `sell`, or the empirically observed
+historical `sell_short` alias. USD notional is `quantity * price * multiplier` with no binary floating point. The
+multiplier is `100` only when the canonical symbol matches Alpaca's OCC option-symbol shape; it is `1` otherwise.
+Position quantity remains contracts rather than underlying shares. Alpaca's option examples explicitly price one
+contract as premium times 100 shares: [Options Orders](https://docs.alpaca.markets/us/v1.1/docs/options-orders).
+`sell_short` has sell direction but remains unchanged in the immutable manifest; no other undocumented side is
+inferred.
+
+The same derived multiplier applies when reconciling broker average entry price and current-price marks. Broker option
+quantities remain contracts while signed cost, market value, equity, and unrealized P&L remain USD amounts.
 
 A `FILL` with nonzero `net_amount` is not silently treated as quantity-times-price cash. It remains unsupported until
 a golden broker fixture establishes whether that field is gross, fee-inclusive, or net settlement and a sourced

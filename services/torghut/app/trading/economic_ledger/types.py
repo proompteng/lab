@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
@@ -15,6 +16,9 @@ LEDGER_DECIMAL_PRECISION = 80
 LEDGER_DECIMAL_SCALE = 18
 LEDGER_QUANTUM = Decimal("0.000000000000000001")
 _LEDGER_ABSOLUTE_LIMIT = Decimal("100000000000000000000")
+_OPTION_CONTRACT_MULTIPLIER = Decimal("100")
+_UNIT_NOTIONAL_MULTIPLIER = Decimal("1")
+_OCC_OPTION_SYMBOL = re.compile(r"^[A-Z0-9]{1,6}[0-9]{6}[CP][0-9]{8}$")
 
 
 class EconomicLedgerError(RuntimeError):
@@ -166,6 +170,10 @@ class EconomicActivity:
         return self.symbol.replace("/", "")
 
     @property
+    def notional_multiplier(self) -> Decimal:
+        return notional_multiplier_for_symbol(self.canonical_symbol)
+
+    @property
     def sort_key(self) -> tuple[datetime, date, str, str]:
         return (
             self.economic_at,
@@ -184,6 +192,7 @@ class EconomicActivity:
             "external_activity_id": self.external_activity_id,
             "first_observed_at": _datetime_text(self.first_observed_at),
             "net_amount": decimal_text(self.net_amount),
+            "notional_multiplier": decimal_text(self.notional_multiplier),
             "price": decimal_text(self.price),
             "quantity": decimal_text(self.quantity),
             "raw_payload_sha256": self.raw_payload_sha256,
@@ -619,6 +628,13 @@ def positions_tuple(
     )
 
 
+def notional_multiplier_for_symbol(symbol: str | None) -> Decimal:
+    """Return the broker notional multiplier encoded by a canonical symbol."""
+    if symbol is not None and _OCC_OPTION_SYMBOL.fullmatch(symbol) is not None:
+        return _OPTION_CONTRACT_MULTIPLIER
+    return _UNIT_NOTIONAL_MULTIPLIER
+
+
 def _required_text(value: object, field_name: str, maximum: int) -> str:
     if not isinstance(value, str):
         raise EconomicLedgerError(f"economic_ledger_{field_name}_must_be_string")
@@ -713,6 +729,7 @@ __all__ = (
     "balances_tuple",
     "canonical_sha256",
     "decimal_text",
+    "notional_multiplier_for_symbol",
     "positions_tuple",
     "prepare_activities",
     "quantize_ledger_decimal",
