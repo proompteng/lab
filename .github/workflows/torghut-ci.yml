@@ -287,7 +287,7 @@ jobs:
           }
 
           verified_any=false
-          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
+          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|generated-resource-retention-cronjob|broker-economic-ledger-reconciliation-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
             verify_image_contract \
               "Torghut" \
               argocd/applications/torghut/knative-service.yaml \
@@ -308,7 +308,8 @@ jobs:
               registry.ide-newton.ts.net/lab/torghut \
               argocd/applications/torghut/knative-service.yaml \
               argocd/applications/torghut/knative-service-sim.yaml \
-              argocd/applications/torghut/scheduler-deployment.yaml
+              argocd/applications/torghut/scheduler-deployment.yaml \
+              argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml
             verified_any=true
           fi
           if matches_changed '^argocd/applications/(torghut/(ta|ta-sim)/flinkdeployment\.yaml|torghut-options/ta/flinkdeployment\.yaml)$'; then

@@ -22,6 +22,8 @@ const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultGeneratedResourceRetentionManifestPath =
   'argocd/applications/torghut/generated-resource-retention-cronjob.yaml'
+const defaultBrokerEconomicLedgerReconciliationManifestPath =
+  'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
 const defaultHyperliquidRuntimeManifestPath = 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
 const defaultHyperliquidRuntimeMigrationManifestPath =
@@ -49,6 +51,7 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   generatedResourceRetentionManifestPath?: string
+  brokerEconomicLedgerReconciliationManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
@@ -76,6 +79,7 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   generatedResourceRetentionManifestPath?: string
+  brokerEconomicLedgerReconciliationManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
@@ -336,6 +340,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.generatedResourceRetentionManifestPath ?? defaultGeneratedResourceRetentionManifestPath,
     'torghut-generated-resource-retention image reference',
   )
+  const brokerEconomicLedgerReconciliation = updateImageOnlyManifest(
+    options,
+    options.brokerEconomicLedgerReconciliationManifestPath ?? defaultBrokerEconomicLedgerReconciliationManifestPath,
+    'torghut-broker-economic-ledger-reconciliation image reference',
+  )
   const tigerBeetleSmoke = updateImageOnlyManifest(
     options,
     options.tigerBeetleSmokeManifestPath ?? defaultTigerBeetleSmokeManifestPath,
@@ -391,6 +400,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     generatedResourceRetention,
+    brokerEconomicLedgerReconciliation,
     tigerBeetleSmoke,
     hyperliquidRuntime,
     hyperliquidRuntimeMigration,
@@ -431,6 +441,7 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --generated-resource-retention-manifest-path <path>
+  --broker-economic-ledger-reconciliation-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
   --hyperliquid-runtime-migration-manifest-path <path>
@@ -511,6 +522,9 @@ Options:
       case '--generated-resource-retention-manifest-path':
         options.generatedResourceRetentionManifestPath = value
         break
+      case '--broker-economic-ledger-reconciliation-manifest-path':
+        options.brokerEconomicLedgerReconciliationManifestPath = value
+        break
       case '--tigerbeetle-smoke-manifest-path':
         options.tigerBeetleSmokeManifestPath = value
         break
@@ -585,6 +599,9 @@ const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     generatedResourceRetentionManifestPath:
       parsed.generatedResourceRetentionManifestPath ?? process.env.TORGHUT_GENERATED_RESOURCE_RETENTION_MANIFEST_PATH,
+    brokerEconomicLedgerReconciliationManifestPath:
+      parsed.brokerEconomicLedgerReconciliationManifestPath ??
+      process.env.TORGHUT_BROKER_ECONOMIC_LEDGER_RECONCILIATION_MANIFEST_PATH,
     tigerBeetleSmokeManifestPath:
       parsed.tigerBeetleSmokeManifestPath ?? process.env.TORGHUT_TIGERBEETLE_SMOKE_MANIFEST_PATH,
     hyperliquidRuntimeManifestPath:
