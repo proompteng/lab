@@ -81,22 +81,13 @@ class BrokerAccountActivity(Base, CreatedAtMixin):
             unique=True,
         ),
         Index(
-            "ix_broker_account_activities_account_event",
+            "ix_broker_account_activities_scope_event",
+            "provider",
+            "environment",
             "account_label",
-            "event_at",
-            "external_activity_id",
-        ),
-        Index(
-            "ix_broker_account_activities_type_event",
+            "source",
             "activity_type",
             "event_at",
-        ),
-        Index("ix_broker_account_activities_order", "order_id"),
-        Index("ix_broker_account_activities_correction", "correction_of_external_id"),
-        Index("ix_broker_account_activities_raw_sha256", "raw_payload_sha256"),
-        Index(
-            "ix_broker_account_activities_normalized_economic_sha256",
-            "normalized_economic_sha256",
         ),
         Index(
             "uq_broker_account_activities_source_offset",
@@ -165,8 +156,6 @@ class BrokerAccountActivityCursor(Base, TimestampMixin):
             "endpoint_fingerprint",
             unique=True,
         ),
-        Index("ix_broker_account_activity_cursors_status", "status"),
-        Index("ix_broker_account_activity_cursors_updated_at", "updated_at"),
     )
 
 

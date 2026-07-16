@@ -114,7 +114,15 @@ class BrokerAccountActivitiesMigrationTests(TestCase):
             if isinstance(item, CheckConstraint)
         )
         self.assertIn("activities_inserted <= activities_seen", checks)
-        self.assertEqual(create_index.call_count, 11)
+        self.assertEqual(
+            {call.args[0] for call in create_index.call_args_list},
+            {
+                "ix_broker_account_activities_scope_event",
+                "uq_broker_account_activities_external_identity",
+                "uq_broker_account_activities_source_offset",
+                "uq_broker_account_activity_cursors_scope",
+            },
+        )
         self.assertEqual(
             sum(
                 bool(call.kwargs.get("unique")) for call in create_index.call_args_list

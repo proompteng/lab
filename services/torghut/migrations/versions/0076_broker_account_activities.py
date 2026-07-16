@@ -115,30 +115,16 @@ def _create_activity_table() -> None:
         unique=True,
     )
     op.create_index(
-        "ix_broker_account_activities_account_event",
+        "ix_broker_account_activities_scope_event",
         _ACTIVITY_TABLE,
-        ["account_label", "event_at", "external_activity_id"],
-    )
-    op.create_index(
-        "ix_broker_account_activities_type_event",
-        _ACTIVITY_TABLE,
-        ["activity_type", "event_at"],
-    )
-    op.create_index("ix_broker_account_activities_order", _ACTIVITY_TABLE, ["order_id"])
-    op.create_index(
-        "ix_broker_account_activities_correction",
-        _ACTIVITY_TABLE,
-        ["correction_of_external_id"],
-    )
-    op.create_index(
-        "ix_broker_account_activities_raw_sha256",
-        _ACTIVITY_TABLE,
-        ["raw_payload_sha256"],
-    )
-    op.create_index(
-        "ix_broker_account_activities_normalized_economic_sha256",
-        _ACTIVITY_TABLE,
-        ["normalized_economic_sha256"],
+        [
+            "provider",
+            "environment",
+            "account_label",
+            "source",
+            "activity_type",
+            "event_at",
+        ],
     )
     op.create_index(
         "uq_broker_account_activities_source_offset",
@@ -239,16 +225,6 @@ def _create_cursor_table() -> None:
         ],
         unique=True,
     )
-    op.create_index(
-        "ix_broker_account_activity_cursors_status", _CURSOR_TABLE, ["status"]
-    )
-    op.create_index(
-        "ix_broker_account_activity_cursors_updated_at",
-        _CURSOR_TABLE,
-        ["updated_at"],
-    )
-
-
 def _create_activity_guard() -> None:
     op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
     op.execute(
