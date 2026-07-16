@@ -14,7 +14,11 @@ from ...models import (
     ExecutionOrderEvent,
     OrderFeedSourceWindow,
 )
-from ..broker_account_activities import persist_broker_trade_update
+from ..broker_account_activities import (
+    BrokerActivityObservation,
+    BrokerStreamPosition,
+    persist_broker_trade_update,
+)
 from . import shared_context as _shared_context
 from .shared_context import (
     AccountAliasResolution as _AccountAliasResolution,
@@ -452,13 +456,17 @@ class OrderFeedIngestor:
             session,
             event.raw_event,
             event_fingerprint=event.event_fingerprint,
-            environment=self._broker_environment,
-            account_label=event.alpaca_account_label,
-            endpoint_fingerprint=self._broker_endpoint_fingerprint,
-            source_topic=event.source_topic,
-            source_partition=event.source_partition,
-            source_offset=event.source_offset,
-            observed_at=datetime.now(timezone.utc),
+            observation=BrokerActivityObservation(
+                environment=self._broker_environment,
+                account_label=event.alpaca_account_label,
+                endpoint_fingerprint=self._broker_endpoint_fingerprint,
+                observed_at=datetime.now(timezone.utc),
+            ),
+            position=BrokerStreamPosition(
+                topic=event.source_topic,
+                partition=event.source_partition,
+                offset=event.source_offset,
+            ),
         )
         counter = (
             "immutable_source_duplicates_total"

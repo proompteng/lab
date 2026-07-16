@@ -176,7 +176,7 @@ class TestTradingSchedulerSafety(TestCase):
         )
 
         with patch(
-            "app.trading.scheduler.runtime.active_simulation_runtime_context",
+            "app.trading.scheduler.simulation_state.active_simulation_runtime_context",
             return_value={"run_id": "sim-run-2"},
         ):
             scheduler._sync_simulation_run_context()

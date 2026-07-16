@@ -22,6 +22,7 @@ from .broker_account_activities import (
     BrokerAccountActivityContradiction,
     BrokerAccountActivityError,
     BrokerAccountActivityPayloadError,
+    BrokerActivityObservation,
     ALPACA_PROVIDER,
     ACCOUNT_ACTIVITIES_REST_SOURCE,
     as_utc,
@@ -326,14 +327,17 @@ class BrokerAccountActivityIngestor:
             raise BrokerAccountActivityContradiction(
                 "broker_account_activity_page_token_mismatch"
             )
+        observation = BrokerActivityObservation(
+            environment=self._environment,
+            account_label=self._account_label,
+            endpoint_fingerprint=self._endpoint_fingerprint,
+            observed_at=observed_at,
+        )
         normalized = tuple(
             normalize_broker_account_activity(
                 payload,
-                environment=self._environment,
-                account_label=self._account_label,
-                endpoint_fingerprint=self._endpoint_fingerprint,
+                observation=observation,
                 source_page_token=scan.page_token,
-                observed_at=observed_at,
             )
             for payload in page.activities
         )

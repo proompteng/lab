@@ -18,6 +18,8 @@ from app.trading.broker_account_activities import (
     BrokerAccountActivityContradiction,
     BrokerAccountActivityError,
     BrokerAccountActivityPayloadError,
+    BrokerActivityObservation,
+    BrokerStreamPosition,
     compare_broker_fill_sources,
     load_broker_account_activity_status,
     normalize_broker_account_activity,
@@ -40,6 +42,23 @@ def _fill(activity_id: str, *, price: str = "100.25") -> dict[str, object]:
         "transaction_time": "2026-07-15T18:07:02.759Z",
         "type": "fill",
     }
+
+
+def _observation(observed_at: datetime) -> BrokerActivityObservation:
+    return BrokerActivityObservation(
+        environment="paper",
+        account_label="paper-account",
+        endpoint_fingerprint="a" * 64,
+        observed_at=observed_at,
+    )
+
+
+def _stream_position(offset: int) -> BrokerStreamPosition:
+    return BrokerStreamPosition(
+        topic="torghut.trade-updates.v2",
+        partition=0,
+        offset=offset,
+    )
 
 
 class _Clock:
@@ -138,11 +157,8 @@ def test_normalization_preserves_nontrade_economic_fields_and_hash() -> None:
     }
     row = normalize_broker_account_activity(
         payload,
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
+        observation=_observation(datetime(2026, 7, 16, tzinfo=timezone.utc)),
         source_page_token=None,
-        observed_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
     )
 
     assert row.activity_type == "DIV"
@@ -158,11 +174,8 @@ def test_stream_and_backfill_fill_share_one_normalized_economic_hash() -> None:
     observed_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
     rest = normalize_broker_account_activity(
         _fill("activity-fill"),
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
+        observation=_observation(observed_at),
         source_page_token=None,
-        observed_at=observed_at,
     )
     stream = normalize_broker_trade_update(
         {
@@ -185,13 +198,12 @@ def test_stream_and_backfill_fill_share_one_normalized_economic_hash() -> None:
             },
         },
         event_fingerprint="b" * 64,
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
-        source_topic="torghut.trade-updates.v2",
-        source_partition=1,
-        source_offset=42,
-        observed_at=observed_at,
+        observation=_observation(observed_at),
+        position=BrokerStreamPosition(
+            topic="torghut.trade-updates.v2",
+            partition=1,
+            offset=42,
+        ),
     )
 
     assert rest.normalized_economic_sha256 == stream.normalized_economic_sha256
@@ -224,28 +236,21 @@ def test_stream_fact_replay_deduplicates_and_changed_payload_is_contradiction() 
             "timestamp": "2026-07-15T18:07:02.759Z",
         },
     }
-    common = {
-        "environment": "paper",
-        "account_label": "paper-account",
-        "endpoint_fingerprint": "a" * 64,
-        "source_topic": "torghut.trade-updates.v2",
-        "source_partition": 0,
-        "observed_at": datetime(2026, 7, 16, tzinfo=timezone.utc),
-    }
+    observation = _observation(datetime(2026, 7, 16, tzinfo=timezone.utc))
     with sessions.begin() as session:
         _, first_duplicate = persist_broker_trade_update(
             session,
             raw_event,
             event_fingerprint="c" * 64,
-            source_offset=10,
-            **common,
+            observation=observation,
+            position=_stream_position(10),
         )
         _, replay_duplicate = persist_broker_trade_update(
             session,
             {**raw_event, "seq": 2},
             event_fingerprint="d" * 64,
-            source_offset=11,
-            **common,
+            observation=observation,
+            position=_stream_position(11),
         )
     assert first_duplicate is False
     assert replay_duplicate is True
@@ -261,8 +266,8 @@ def test_stream_fact_replay_deduplicates_and_changed_payload_is_contradiction() 
                 session,
                 {"stream": "trade_updates", "data": changed},
                 event_fingerprint="e" * 64,
-                source_offset=12,
-                **common,
+                observation=observation,
+                position=_stream_position(12),
             )
 
     with sessions() as session:
@@ -274,11 +279,8 @@ def test_source_comparison_requires_nonempty_equal_fill_multisets() -> None:
     observed_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
     rest = normalize_broker_account_activity(
         _fill("activity-fill"),
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
+        observation=_observation(observed_at),
         source_page_token=None,
-        observed_at=observed_at,
     )
     stream = normalize_broker_trade_update(
         {
@@ -298,13 +300,8 @@ def test_source_comparison_requires_nonempty_equal_fill_multisets() -> None:
             },
         },
         event_fingerprint="d" * 64,
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
-        source_topic="torghut.trade-updates.v2",
-        source_partition=0,
-        source_offset=100,
-        observed_at=observed_at,
+        observation=_observation(observed_at),
+        position=_stream_position(100),
     )
     with sessions.begin() as session:
         session.add_all((rest, stream))
@@ -414,11 +411,8 @@ def test_backfill_preserves_corrections_splits_and_dividends(
 ) -> None:
     row = normalize_broker_account_activity(
         payload,
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
+        observation=_observation(datetime(2026, 7, 16, tzinfo=timezone.utc)),
         source_page_token=None,
-        observed_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
     )
 
     assert row.activity_type == expected_type

@@ -7,6 +7,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from app.trading.broker_account_activities import (
+    BrokerActivityObservation,
+    BrokerStreamPosition,
     normalize_broker_account_activity,
     normalize_broker_trade_update,
 )
@@ -37,6 +39,12 @@ def test_equivalent_fill_shapes_have_one_digest_across_decimal_encodings(
     quantity_text = format(quantity, "f")
     price_text = format(price, "f")
     observed_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    observation = BrokerActivityObservation(
+        environment="paper",
+        account_label="paper-account",
+        endpoint_fingerprint="a" * 64,
+        observed_at=observed_at,
+    )
     rest = normalize_broker_account_activity(
         {
             "activity_type": "FILL",
@@ -51,11 +59,8 @@ def test_equivalent_fill_shapes_have_one_digest_across_decimal_encodings(
             "transaction_time": "2026-07-16T07:39:00.123456Z",
             "type": "fill",
         },
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
+        observation=observation,
         source_page_token=None,
-        observed_at=observed_at,
     )
     stream = normalize_broker_trade_update(
         {
@@ -76,13 +81,12 @@ def test_equivalent_fill_shapes_have_one_digest_across_decimal_encodings(
             },
         },
         event_fingerprint="b" * 64,
-        environment="paper",
-        account_label="paper-account",
-        endpoint_fingerprint="a" * 64,
-        source_topic="torghut.trade-updates.v2",
-        source_partition=0,
-        source_offset=1,
-        observed_at=observed_at,
+        observation=observation,
+        position=BrokerStreamPosition(
+            topic="torghut.trade-updates.v2",
+            partition=0,
+            offset=1,
+        ),
     )
 
     assert rest.normalized_economic_sha256 == stream.normalized_economic_sha256

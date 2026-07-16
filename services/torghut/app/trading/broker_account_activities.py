@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import cast
@@ -31,6 +32,45 @@ class BrokerAccountActivityPayloadError(BrokerAccountActivityError):
 
 class BrokerAccountActivityContradiction(BrokerAccountActivityError):
     """Raised when one broker activity ID is observed with different content."""
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerActivityObservation:
+    """Account and endpoint scope attached to one broker observation."""
+
+    environment: str
+    account_label: str
+    endpoint_fingerprint: str
+    observed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerStreamPosition:
+    """Transport position retained as provenance, never economic identity."""
+
+    topic: str
+    partition: int
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivityFields:
+    external_activity_id: str
+    activity_type: str
+    activity_subtype: str | None = None
+    correction_of_external_id: str | None = None
+    event_at: datetime | None = None
+    settle_date: date | None = None
+    order_id: str | None = None
+    client_order_id: str | None = None
+    symbol: str | None = None
+    side: str | None = None
+    quantity: Decimal | None = None
+    price: Decimal | None = None
+    cumulative_quantity: Decimal | None = None
+    leaves_quantity: Decimal | None = None
+    net_amount: Decimal | None = None
+    currency: str | None = None
 
 
 def as_utc(value: datetime) -> datetime:
@@ -130,131 +170,114 @@ def _canonical_symbol(value: str | None) -> str | None:
 
 
 def _normalized_economic_digest(
-    *,
-    environment: str,
-    account_label: str,
-    activity_type: str,
-    activity_subtype: str | None,
-    correction_of_external_id: str | None,
-    event_at: datetime | None,
-    settle_date: date | None,
-    order_id: str | None,
-    symbol: str | None,
-    side: str | None,
-    quantity: Decimal | None,
-    price: Decimal | None,
-    net_amount: Decimal | None,
-    currency: str | None,
+    observation: BrokerActivityObservation,
+    fields: _ActivityFields,
 ) -> str:
     """Hash fields that mean the same thing across stream and REST shapes."""
 
     payload = {
-        "account_label": account_label.strip(),
+        "account_label": observation.account_label.strip(),
         "activity_subtype": (
-            activity_subtype.strip().lower() if activity_subtype else None
+            fields.activity_subtype.strip().lower() if fields.activity_subtype else None
         ),
-        "activity_type": activity_type.strip().upper(),
-        "correction_of_external_id": correction_of_external_id,
-        "currency": currency.strip().upper() if currency else None,
-        "environment": environment.strip().lower(),
+        "activity_type": fields.activity_type.strip().upper(),
+        "correction_of_external_id": fields.correction_of_external_id,
+        "currency": fields.currency.strip().upper() if fields.currency else None,
+        "environment": observation.environment.strip().lower(),
         "event_at": (
-            as_utc(event_at).isoformat(timespec="microseconds")
-            if event_at is not None
+            as_utc(fields.event_at).isoformat(timespec="microseconds")
+            if fields.event_at is not None
             else None
         ),
-        "net_amount": _canonical_decimal(net_amount),
-        "order_id": order_id,
-        "price": _canonical_decimal(price),
-        "quantity": _canonical_decimal(quantity),
-        "settle_date": settle_date.isoformat() if settle_date is not None else None,
-        "side": side.strip().lower() if side else None,
-        "symbol": _canonical_symbol(symbol),
+        "net_amount": _canonical_decimal(fields.net_amount),
+        "order_id": fields.order_id,
+        "price": _canonical_decimal(fields.price),
+        "quantity": _canonical_decimal(fields.quantity),
+        "settle_date": (
+            fields.settle_date.isoformat() if fields.settle_date is not None else None
+        ),
+        "side": fields.side.strip().lower() if fields.side else None,
+        "symbol": _canonical_symbol(fields.symbol),
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _settle_date(payload: Mapping[str, object]) -> date | None:
+    activity_date = _optional_text(payload, "date", maximum=32)
+    if activity_date is None:
+        return None
+    try:
+        return datetime.fromisoformat(activity_date.replace("Z", "+00:00")).date()
+    except ValueError as exc:
+        raise BrokerAccountActivityPayloadError(
+            "broker_account_activity_date_invalid"
+        ) from exc
+
+
+def _rest_activity_fields(payload: Mapping[str, object]) -> _ActivityFields:
+    return _ActivityFields(
+        external_activity_id=required_text(payload, "id", maximum=256),
+        activity_type=required_text(payload, "activity_type", maximum=32).upper(),
+        activity_subtype=_optional_text(payload, "type", maximum=32),
+        correction_of_external_id=_optional_text(payload, "previous_id", maximum=256),
+        event_at=_optional_datetime(payload, "transaction_time"),
+        settle_date=_settle_date(payload),
+        order_id=_optional_text(payload, "order_id", maximum=128),
+        client_order_id=_optional_text(payload, "client_order_id", maximum=128),
+        symbol=_optional_text(payload, "symbol", maximum=64),
+        side=_optional_text(payload, "side", maximum=16),
+        quantity=_optional_decimal(payload, "qty"),
+        price=_optional_decimal(payload, "price"),
+        cumulative_quantity=_optional_decimal(payload, "cum_qty"),
+        leaves_quantity=_optional_decimal(payload, "leaves_qty"),
+        net_amount=_optional_decimal(payload, "net_amount"),
+        currency=_optional_text(payload, "currency", maximum=16),
+    )
+
+
 def normalize_broker_account_activity(
     payload: Mapping[str, object],
     *,
-    environment: str,
-    account_label: str,
-    endpoint_fingerprint: str,
+    observation: BrokerActivityObservation,
     source_page_token: str | None,
-    observed_at: datetime,
 ) -> BrokerAccountActivity:
     """Normalize common REST fields while preserving the exact broker document."""
 
     raw_payload = dict(payload)
     canonical, payload_sha256 = _canonical_payload(raw_payload)
-    event_at = _optional_datetime(raw_payload, "transaction_time")
-    activity_date = _optional_text(raw_payload, "date", maximum=32)
-    settle_date = None
-    if activity_date is not None:
-        try:
-            settle_date = datetime.fromisoformat(
-                activity_date.replace("Z", "+00:00")
-            ).date()
-        except ValueError as exc:
-            raise BrokerAccountActivityPayloadError(
-                "broker_account_activity_date_invalid"
-            ) from exc
-    activity_type = required_text(raw_payload, "activity_type", maximum=32).upper()
-    activity_subtype = _optional_text(raw_payload, "type", maximum=32)
-    correction_of_external_id = _optional_text(raw_payload, "previous_id", maximum=256)
-    order_id = _optional_text(raw_payload, "order_id", maximum=128)
-    symbol = _optional_text(raw_payload, "symbol", maximum=64)
-    side = _optional_text(raw_payload, "side", maximum=16)
-    quantity = _optional_decimal(raw_payload, "qty")
-    price = _optional_decimal(raw_payload, "price")
-    net_amount = _optional_decimal(raw_payload, "net_amount")
-    currency = _optional_text(raw_payload, "currency", maximum=16)
+    fields = _rest_activity_fields(raw_payload)
     return BrokerAccountActivity(
         provider=ALPACA_PROVIDER,
         source=ACCOUNT_ACTIVITIES_REST_SOURCE,
-        environment=environment,
-        account_label=account_label,
-        endpoint_fingerprint=endpoint_fingerprint,
-        external_activity_id=required_text(raw_payload, "id", maximum=256),
-        activity_type=activity_type,
-        activity_subtype=activity_subtype,
-        correction_of_external_id=correction_of_external_id,
-        event_at=event_at,
-        settle_date=settle_date,
-        order_id=order_id,
-        client_order_id=_optional_text(raw_payload, "client_order_id", maximum=128),
-        symbol=symbol,
-        side=side,
-        quantity=quantity,
-        price=price,
-        cumulative_quantity=_optional_decimal(raw_payload, "cum_qty"),
-        leaves_quantity=_optional_decimal(raw_payload, "leaves_qty"),
-        net_amount=net_amount,
-        currency=currency,
+        environment=observation.environment,
+        account_label=observation.account_label,
+        endpoint_fingerprint=observation.endpoint_fingerprint,
+        external_activity_id=fields.external_activity_id,
+        activity_type=fields.activity_type,
+        activity_subtype=fields.activity_subtype,
+        correction_of_external_id=fields.correction_of_external_id,
+        event_at=fields.event_at,
+        settle_date=fields.settle_date,
+        order_id=fields.order_id,
+        client_order_id=fields.client_order_id,
+        symbol=fields.symbol,
+        side=fields.side,
+        quantity=fields.quantity,
+        price=fields.price,
+        cumulative_quantity=fields.cumulative_quantity,
+        leaves_quantity=fields.leaves_quantity,
+        net_amount=fields.net_amount,
+        currency=fields.currency,
         raw_payload=raw_payload,
         raw_payload_canonical_json=canonical,
         raw_payload_sha256=payload_sha256,
-        normalized_economic_sha256=_normalized_economic_digest(
-            environment=environment,
-            account_label=account_label,
-            activity_type=activity_type,
-            activity_subtype=activity_subtype,
-            correction_of_external_id=correction_of_external_id,
-            event_at=event_at,
-            settle_date=settle_date,
-            order_id=order_id,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            price=price,
-            net_amount=net_amount,
-            currency=currency,
-        ),
+        normalized_economic_sha256=_normalized_economic_digest(observation, fields),
         source_page_token=source_page_token,
         source_topic=None,
         source_partition=None,
         source_offset=None,
-        first_observed_at=as_utc(observed_at),
+        first_observed_at=as_utc(observation.observed_at),
     )
 
 
@@ -281,21 +304,97 @@ def _trade_update_payload(raw_event: Mapping[str, object]) -> Mapping[str, objec
     raise BrokerAccountActivityPayloadError("broker_trade_update_payload_missing")
 
 
+def _stream_event_at(
+    payload: Mapping[str, object],
+    order: Mapping[str, object],
+) -> datetime | None:
+    for key in ("timestamp", "at", "t"):
+        if payload.get(key) is not None:
+            return _optional_datetime(payload, key)
+    for key in ("updated_at", "submitted_at"):
+        if order.get(key) is not None:
+            return _optional_datetime(order, key)
+    return None
+
+
+def _stream_order_id(order: Mapping[str, object]) -> str | None:
+    return _optional_text(order, "id", maximum=128) or _optional_text(
+        order, "order_id", maximum=128
+    )
+
+
+def _stream_quantities(
+    payload: Mapping[str, object],
+    order: Mapping[str, object],
+    *,
+    activity_type: str,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
+    quantity = _optional_decimal(payload if activity_type == "FILL" else order, "qty")
+    price = _optional_decimal(payload, "price") if activity_type == "FILL" else None
+    cumulative = _optional_decimal(order, "filled_qty")
+    order_quantity = _optional_decimal(order, "qty")
+    leaves = None
+    if order_quantity is not None and cumulative is not None:
+        leaves = max(Decimal("0"), order_quantity - cumulative)
+    return quantity, price, cumulative, leaves
+
+
+def _stream_activity_fields(
+    payload: Mapping[str, object],
+    *,
+    event_fingerprint: str,
+) -> _ActivityFields:
+    order = _mapping(payload.get("order")) or {}
+    activity_subtype = _optional_text(payload, "event", maximum=32) or _optional_text(
+        payload, "event_type", maximum=32
+    )
+    if activity_subtype is None:
+        raise BrokerAccountActivityPayloadError("broker_trade_update_event_invalid")
+    normalized_subtype = activity_subtype.lower()
+    activity_type = (
+        "FILL"
+        if normalized_subtype in {"fill", "partial_fill", "trade_bust", "trade_correct"}
+        else "ORDER"
+    )
+    quantity, price, cumulative, leaves = _stream_quantities(
+        payload,
+        order,
+        activity_type=activity_type,
+    )
+    return _ActivityFields(
+        external_activity_id=(
+            _optional_text(payload, "event_id", maximum=256)
+            or _optional_text(payload, "execution_id", maximum=256)
+            or event_fingerprint
+        ),
+        activity_type=activity_type,
+        activity_subtype=normalized_subtype,
+        correction_of_external_id=(
+            _optional_text(payload, "previous_id", maximum=256)
+            or _optional_text(payload, "original_execution_id", maximum=256)
+        ),
+        event_at=_stream_event_at(payload, order),
+        order_id=_stream_order_id(order),
+        client_order_id=_optional_text(order, "client_order_id", maximum=128),
+        symbol=_optional_text(order, "symbol", maximum=64),
+        side=_optional_text(order, "side", maximum=16),
+        quantity=quantity,
+        price=price,
+        cumulative_quantity=cumulative,
+        leaves_quantity=leaves,
+    )
+
+
 def normalize_broker_trade_update(
     raw_event: Mapping[str, object],
     *,
     event_fingerprint: str,
-    environment: str,
-    account_label: str,
-    endpoint_fingerprint: str,
-    source_topic: str,
-    source_partition: int,
-    source_offset: int,
-    observed_at: datetime,
+    observation: BrokerActivityObservation,
+    position: BrokerStreamPosition,
 ) -> BrokerAccountActivity:
     """Preserve one broker WebSocket order update as an immutable source fact."""
 
-    if source_partition < 0 or source_offset < 0 or not source_topic.strip():
+    if position.partition < 0 or position.offset < 0 or not position.topic.strip():
         raise BrokerAccountActivityPayloadError(
             "broker_trade_update_source_position_invalid"
         )
@@ -309,101 +408,42 @@ def normalize_broker_trade_update(
     for key in tuple(broker_payload):
         if key.startswith("_torghut_"):
             broker_payload.pop(key)
-    order = _mapping(broker_payload.get("order")) or {}
     canonical, payload_sha256 = _canonical_payload(broker_payload)
-    activity_subtype = _optional_text(
-        broker_payload, "event", maximum=32
-    ) or _optional_text(broker_payload, "event_type", maximum=32)
-    if activity_subtype is None:
-        raise BrokerAccountActivityPayloadError("broker_trade_update_event_invalid")
-    normalized_subtype = activity_subtype.lower()
-    external_activity_id = (
-        _optional_text(broker_payload, "event_id", maximum=256)
-        or _optional_text(broker_payload, "execution_id", maximum=256)
-        or event_fingerprint
+    fields = _stream_activity_fields(
+        broker_payload,
+        event_fingerprint=event_fingerprint,
     )
-    activity_type = (
-        "FILL"
-        if normalized_subtype in {"fill", "partial_fill", "trade_bust", "trade_correct"}
-        else "ORDER"
-    )
-    event_at = None
-    for key in ("timestamp", "at", "t"):
-        if broker_payload.get(key) is not None:
-            event_at = _optional_datetime(broker_payload, key)
-            break
-    if event_at is None:
-        for key in ("updated_at", "submitted_at"):
-            if order.get(key) is not None:
-                event_at = _optional_datetime(order, key)
-                break
-    order_id = _optional_text(order, "id", maximum=128)
-    if order_id is None:
-        order_id = _optional_text(order, "order_id", maximum=128)
-    client_order_id = _optional_text(order, "client_order_id", maximum=128)
-    symbol = _optional_text(order, "symbol", maximum=64)
-    side = _optional_text(order, "side", maximum=16)
-    quantity = _optional_decimal(
-        broker_payload if activity_type == "FILL" else order,
-        "qty",
-    )
-    price = (
-        _optional_decimal(broker_payload, "price") if activity_type == "FILL" else None
-    )
-    cumulative_quantity = _optional_decimal(order, "filled_qty")
-    order_quantity = _optional_decimal(order, "qty")
-    leaves_quantity = None
-    if order_quantity is not None and cumulative_quantity is not None:
-        leaves_quantity = max(Decimal("0"), order_quantity - cumulative_quantity)
-    correction_of_external_id = _optional_text(
-        broker_payload, "previous_id", maximum=256
-    ) or _optional_text(broker_payload, "original_execution_id", maximum=256)
     return BrokerAccountActivity(
         provider=ALPACA_PROVIDER,
         source=_TRADE_UPDATE_SOURCE,
-        environment=environment,
-        account_label=account_label,
-        endpoint_fingerprint=endpoint_fingerprint,
-        external_activity_id=external_activity_id,
-        activity_type=activity_type,
-        activity_subtype=normalized_subtype,
-        correction_of_external_id=correction_of_external_id,
-        event_at=event_at,
-        settle_date=None,
-        order_id=order_id,
-        client_order_id=client_order_id,
-        symbol=symbol,
-        side=side,
-        quantity=quantity,
-        price=price,
-        cumulative_quantity=cumulative_quantity,
-        leaves_quantity=leaves_quantity,
-        net_amount=None,
-        currency=None,
+        environment=observation.environment,
+        account_label=observation.account_label,
+        endpoint_fingerprint=observation.endpoint_fingerprint,
+        external_activity_id=fields.external_activity_id,
+        activity_type=fields.activity_type,
+        activity_subtype=fields.activity_subtype,
+        correction_of_external_id=fields.correction_of_external_id,
+        event_at=fields.event_at,
+        settle_date=fields.settle_date,
+        order_id=fields.order_id,
+        client_order_id=fields.client_order_id,
+        symbol=fields.symbol,
+        side=fields.side,
+        quantity=fields.quantity,
+        price=fields.price,
+        cumulative_quantity=fields.cumulative_quantity,
+        leaves_quantity=fields.leaves_quantity,
+        net_amount=fields.net_amount,
+        currency=fields.currency,
         raw_payload=broker_payload,
         raw_payload_canonical_json=canonical,
         raw_payload_sha256=payload_sha256,
-        normalized_economic_sha256=_normalized_economic_digest(
-            environment=environment,
-            account_label=account_label,
-            activity_type=activity_type,
-            activity_subtype=normalized_subtype,
-            correction_of_external_id=correction_of_external_id,
-            event_at=event_at,
-            settle_date=None,
-            order_id=order_id,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            price=price,
-            net_amount=None,
-            currency=None,
-        ),
+        normalized_economic_sha256=_normalized_economic_digest(observation, fields),
         source_page_token=None,
-        source_topic=source_topic,
-        source_partition=source_partition,
-        source_offset=source_offset,
-        first_observed_at=as_utc(observed_at),
+        source_topic=position.topic,
+        source_partition=position.partition,
+        source_offset=position.offset,
+        first_observed_at=as_utc(observation.observed_at),
     )
 
 
@@ -412,33 +452,23 @@ def persist_broker_trade_update(
     raw_event: Mapping[str, object],
     *,
     event_fingerprint: str,
-    environment: str,
-    account_label: str,
-    endpoint_fingerprint: str,
-    source_topic: str,
-    source_partition: int,
-    source_offset: int,
-    observed_at: datetime,
+    observation: BrokerActivityObservation,
+    position: BrokerStreamPosition,
 ) -> tuple[BrokerAccountActivity, bool]:
     """Append one stream fact, deduplicating only byte-equivalent broker events."""
 
     row = normalize_broker_trade_update(
         raw_event,
         event_fingerprint=event_fingerprint,
-        environment=environment,
-        account_label=account_label,
-        endpoint_fingerprint=endpoint_fingerprint,
-        source_topic=source_topic,
-        source_partition=source_partition,
-        source_offset=source_offset,
-        observed_at=observed_at,
+        observation=observation,
+        position=position,
     )
     existing = session.scalar(
         select(BrokerAccountActivity).where(
             BrokerAccountActivity.provider == ALPACA_PROVIDER,
             BrokerAccountActivity.source == _TRADE_UPDATE_SOURCE,
-            BrokerAccountActivity.environment == environment,
-            BrokerAccountActivity.account_label == account_label,
+            BrokerAccountActivity.environment == observation.environment,
+            BrokerAccountActivity.account_label == observation.account_label,
             BrokerAccountActivity.external_activity_id == row.external_activity_id,
         )
     )
@@ -539,26 +569,10 @@ def compare_broker_fill_sources(
             ),
         )
     ).all()
-    normalized_by_source = {
-        source: Counter(
-            row.normalized_economic_sha256 for row in rows if row.source == source
-        )
-        for source in (ACCOUNT_ACTIVITIES_REST_SOURCE, _TRADE_UPDATE_SOURCE)
-    }
-    rest = normalized_by_source[ACCOUNT_ACTIVITIES_REST_SOURCE]
-    stream = normalized_by_source[_TRADE_UPDATE_SOURCE]
+    rest = _source_counter(rows, ACCOUNT_ACTIVITIES_REST_SOURCE)
+    stream = _source_counter(rows, _TRADE_UPDATE_SOURCE)
     missing_from_rest = stream - rest
     missing_from_stream = rest - stream
-
-    def _multiset_digest(values: Counter[str]) -> str:
-        expanded = sorted(values.elements())
-        canonical = json.dumps(expanded, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    source_hashes = {
-        source: sorted(row.raw_payload_sha256 for row in rows if row.source == source)
-        for source in (ACCOUNT_ACTIVITIES_REST_SOURCE, _TRADE_UPDATE_SOURCE)
-    }
     equivalent = not missing_from_rest and not missing_from_stream
     evidence_count = sum(rest.values())
     return {
@@ -576,8 +590,32 @@ def compare_broker_fill_sources(
         "stream_normalized_multiset_sha256": _multiset_digest(stream),
         "missing_from_rest": dict(sorted(missing_from_rest.items())),
         "missing_from_stream": dict(sorted(missing_from_stream.items())),
-        "source_hashes": source_hashes,
+        "source_hashes": {
+            source: _source_payload_hashes(rows, source)
+            for source in (ACCOUNT_ACTIVITIES_REST_SOURCE, _TRADE_UPDATE_SOURCE)
+        },
     }
+
+
+def _source_counter(
+    rows: Iterable[BrokerAccountActivity],
+    source: str,
+) -> Counter[str]:
+    return Counter(
+        row.normalized_economic_sha256 for row in rows if row.source == source
+    )
+
+
+def _source_payload_hashes(
+    rows: Iterable[BrokerAccountActivity],
+    source: str,
+) -> list[str]:
+    return sorted(row.raw_payload_sha256 for row in rows if row.source == source)
+
+
+def _multiset_digest(values: Counter[str]) -> str:
+    canonical = json.dumps(sorted(values.elements()), separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 __all__ = (
@@ -586,6 +624,8 @@ __all__ = (
     "BrokerAccountActivityContradiction",
     "BrokerAccountActivityError",
     "BrokerAccountActivityPayloadError",
+    "BrokerActivityObservation",
+    "BrokerStreamPosition",
     "as_utc",
     "compare_broker_fill_sources",
     "load_broker_account_activity_status",
