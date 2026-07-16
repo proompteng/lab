@@ -81,7 +81,10 @@ reference="${image}:${tag}"
 echo "Pushing Nix-built OCI image tar to ${reference}."
 # The lab registry deliberately admits one shaped bulk writer. Keep each publisher
 # to one layer so concurrent releases queue images fairly instead of six layers each.
-skopeo --policy "${policy_json}" copy --image-parallel-copies 1 --format oci \
+# dockerTools archives contain uncompressed layers; precompute their destination
+# digests so Skopeo can skip blobs already present instead of uploading them again.
+skopeo --policy "${policy_json}" copy --dest-precompute-digests \
+  --image-parallel-copies 1 --format oci \
   "docker-archive:${resolved_tar_path}" "docker://${reference}"
 
 if [[ -n "${latest_tag}" ]]; then
