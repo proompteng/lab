@@ -109,7 +109,14 @@ class _JournalWriter:
             else:
                 transaction = self._fill(activity)
         elif activity_type == "CFEE":
-            transaction = self._crypto_fee(activity)
+            if activity.net_amount in {None, ZERO} and activity.quantity in {
+                None,
+                ZERO,
+            }:
+                self.unsupported.add(activity.external_activity_id)
+                transaction = None
+            else:
+                transaction = self._crypto_fee(activity)
         elif activity_type == "SSP":
             if activity.net_amount not in {None, ZERO}:
                 self.unsupported.add(activity.external_activity_id)

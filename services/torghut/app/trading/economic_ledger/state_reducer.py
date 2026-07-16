@@ -91,7 +91,13 @@ class _StateReducer:
     def _recognized(self, activity: EconomicActivity) -> bool:
         activity_type = activity.activity_type
         return (
-            activity_type == "CFEE"
+            (
+                activity_type == "CFEE"
+                and (
+                    activity.net_amount not in {None, ZERO}
+                    or activity.quantity not in {None, ZERO}
+                )
+            )
             or (activity_type == "FILL" and activity.net_amount in {None, ZERO})
             or (activity_type == "SSP" and activity.net_amount in {None, ZERO})
             or activity_type in _EXTERNAL_FLOW_TYPES

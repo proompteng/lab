@@ -330,6 +330,16 @@ def test_crypto_asset_fee_reduces_units_and_records_after_cost_economics() -> No
     assert result.independent.fees == Decimal("1.35")
 
 
+def test_crypto_fee_without_cash_or_asset_quantity_fails_closed() -> None:
+    result = reduce_and_compare([activity("empty-crypto-fee", "CFEE", net_amount="0")])
+
+    assert result.comparison.equivalent
+    assert not result.admissible
+    assert result.journal.projection.unsupported_activity_ids == ("empty-crypto-fee",)
+    assert result.independent.unsupported_activity_ids == ("empty-crypto-fee",)
+    assert result.journal.transactions == ()
+
+
 @pytest.mark.parametrize("activity_type", ["FILL", "CFEE"])
 def test_trade_and_crypto_fee_reject_non_quote_currency(
     activity_type: str,
