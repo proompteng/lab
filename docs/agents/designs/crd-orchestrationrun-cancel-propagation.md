@@ -62,8 +62,8 @@ Rollback:
 ## Validation
 
 ```bash
-kubectl -n agents patch orchestrationrun <name> --type=merge -p '{\"spec\":{\"cancel\":true}}'
-kubectl -n agents get orchestrationrun <name> -o yaml | rg -n \"Cancelled|phase\"
+kubectl -n agents patch orchestrationrun <name> --type=merge -p '{"spec":{"cancel":true}}'
+kubectl -n agents get orchestrationrun <name> -o yaml | rg -n "Cancelled|phase"
 ```
 
 ## Failure Modes and Mitigations

@@ -69,8 +69,8 @@ Rollback:
 
 ```bash
 kubectl -n agents apply -f charts/agents/examples/agentrun-sample.yaml
-kubectl -n agents patch agentrun <name> --type=merge -p '{\"spec\":{\"parameters\":{\"x\":\"y\"}}}'
-kubectl -n agents get agentrun <name> -o yaml | rg -n \"SpecImmutableViolation|specHash|conditions\"
+kubectl -n agents patch agentrun <name> --type=merge -p '{"spec":{"parameters":{"x":"y"}}}'
+kubectl -n agents get agentrun <name> -o yaml | rg -n "SpecImmutableViolation|specHash|conditions"
 ```
 
 ## Failure Modes and Mitigations

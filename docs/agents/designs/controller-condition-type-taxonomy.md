@@ -68,7 +68,7 @@ Rollback:
 
 ```bash
 kubectl -n agents get agentrun <name> -o jsonpath='{.status.conditions[*].type}'; echo
-kubectl -n agents get agentrun <name> -o jsonpath='{.status.conditions[?(@.type==\"Succeeded\")].status}'; echo
+kubectl -n agents get agentrun <name> -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}'; echo
 ```
 
 ## Failure Modes and Mitigations
