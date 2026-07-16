@@ -559,7 +559,10 @@ def decimal_text(value: Decimal | None) -> str | None:
         return None
     if value == ZERO:
         return "0"
-    return format(value.normalize(), "f")
+    exact = format(value, "f")
+    if "." not in exact:
+        return exact
+    return exact.rstrip("0").rstrip(".")
 
 
 def quantize_ledger_decimal(

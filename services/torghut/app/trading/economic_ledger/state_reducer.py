@@ -192,6 +192,7 @@ class _StateReducer:
         price = activity.price
         if price is None or price <= ZERO:
             raise EconomicLedgerError("economic_crypto_fee_price_must_be_positive")
+        _validate_quote(activity)
         symbol = _symbol(activity)
         holding = self.holdings.setdefault(symbol, _Holding())
         fair_value = quantize_ledger_decimal(
@@ -360,6 +361,8 @@ def _symbol(activity: EconomicActivity) -> str:
 
 
 def _validate_quote(activity: EconomicActivity) -> None:
+    if activity.currency not in {None, activity.scope.quote_currency}:
+        raise EconomicLedgerError("economic_activity_currency_unsupported")
     raw_symbol = activity.symbol or ""
     if (
         "/" in raw_symbol

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 import pytest
 
@@ -13,6 +13,7 @@ from app.trading.economic_ledger import (
     prepare_activities,
     reduce_and_compare,
 )
+from app.trading.economic_ledger.types import decimal_text
 from tests.economic_ledger.support import activity, cash, position
 
 
@@ -157,6 +158,20 @@ def test_source_decimal_precision_beyond_database_contract_fails_closed() -> Non
         )
 
 
+def test_decimal_serialization_preserves_all_38_digits_in_any_active_context() -> None:
+    maximum = Decimal("99999999999999999999.999999999999999999")
+    predecessor = Decimal("99999999999999999999.999999999999999998")
+
+    with localcontext() as context:
+        context.prec = 6
+        maximum_text = decimal_text(maximum)
+        predecessor_text = decimal_text(predecessor)
+
+    assert maximum_text == "99999999999999999999.999999999999999999"
+    assert predecessor_text == "99999999999999999999.999999999999999998"
+    assert maximum_text != predecessor_text
+
+
 def test_short_cover_and_side_flip_use_signed_cost() -> None:
     result = reduce_and_compare(
         [
@@ -285,6 +300,35 @@ def test_crypto_asset_fee_reduces_units_and_records_after_cost_economics() -> No
     assert btc.signed_cost == Decimal("99")
     assert result.independent.realized_pnl == Decimal("0.1")
     assert result.independent.fees == Decimal("1.35")
+
+
+@pytest.mark.parametrize("activity_type", ["FILL", "CFEE"])
+def test_trade_and_crypto_fee_reject_non_quote_currency(
+    activity_type: str,
+) -> None:
+    opening = activity(
+        "btc-buy",
+        "FILL",
+        symbol="BTCUSD",
+        side="buy",
+        quantity="1",
+        price="100",
+        net_amount=None,
+    )
+    contradictory = activity(
+        "contradictory-currency",
+        activity_type,
+        event_offset_seconds=1,
+        symbol="BTCUSD",
+        side="buy" if activity_type == "FILL" else None,
+        quantity="0.01" if activity_type == "FILL" else "-0.01",
+        price="100",
+        net_amount=None if activity_type == "FILL" else "0",
+        currency="EUR",
+    )
+
+    with pytest.raises(EconomicLedgerError, match="currency_unsupported"):
+        reduce_and_compare([opening, contradictory])
 
 
 def test_split_changes_quantity_without_changing_total_cost() -> None:

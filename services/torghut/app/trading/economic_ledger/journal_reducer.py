@@ -246,6 +246,7 @@ class _JournalWriter:
         price = activity.price
         if price is None or price <= ZERO:
             raise EconomicLedgerError("economic_crypto_fee_price_must_be_positive")
+        _require_quote_currency(activity)
         symbol = _required_symbol(activity)
         position = self.positions.setdefault(symbol, _Position())
         fair_value = quantize_ledger_decimal(
@@ -535,6 +536,8 @@ def _currency(activity: EconomicActivity, default: str) -> str:
 
 
 def _require_quote_currency(activity: EconomicActivity) -> None:
+    if activity.currency not in {None, activity.scope.quote_currency}:
+        raise EconomicLedgerError("economic_activity_currency_unsupported")
     symbol = activity.symbol or ""
     if "/" not in symbol:
         return
