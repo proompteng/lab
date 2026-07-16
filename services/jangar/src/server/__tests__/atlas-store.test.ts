@@ -475,6 +475,7 @@ describe('atlas store', () => {
     expect(statementTimeouts).toEqual(['250ms', '1000ms'])
     const hnswBudgetSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))
     expect(hnswBudgetSql?.params).toContain('50')
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.iterative_scan'"))).toBe(false)
   })
 
   it('keeps the cold semantic statement budget below the request deadline', async () => {
@@ -525,6 +526,7 @@ describe('atlas store', () => {
     expect(normalized).toContain('order by scoped_semantic_candidates.candidate_embedding <=> $')
     expect(normalized).not.toContain('order by chunk_embeddings.embedding <=> $')
     expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(false)
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.iterative_scan'"))).toBe(false)
   })
 
   it('keeps broad path-prefix semantic searches on HNSW', async () => {
@@ -552,6 +554,8 @@ describe('atlas store', () => {
     expect(normalized).not.toContain('with scoped_semantic_candidates as materialized')
     expect(normalized).toContain('order by chunk_embeddings.embedding <=> $')
     expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(true)
+    const iterativeScanSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.iterative_scan'"))
+    expect(iterativeScanSql?.sql.toLowerCase()).toContain("'strict_order'")
   })
 
   it('keeps broad language-only semantic searches on HNSW', async () => {
@@ -583,6 +587,8 @@ describe('atlas store', () => {
     expect(normalized).toContain('file_versions.language =')
     expect(normalized).toContain('order by chunk_embeddings.embedding <=> $')
     expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(true)
+    const iterativeScanSql = calls.find((call) => call.sql.toLowerCase().includes("set_config('hnsw.iterative_scan'"))
+    expect(iterativeScanSql?.sql.toLowerCase()).toContain("'strict_order'")
   })
 
   it('isolates exact-match candidates without whole-content similarity scans', async () => {

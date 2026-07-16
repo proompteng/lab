@@ -694,6 +694,9 @@ export const createAtlasCodeSearchHandlers = ({
           `.execute(trx)
             semanticRows = semanticResult.rows as AtlasCodeSearchRow[]
           } else {
+            if (filters.pathPrefix || filters.language) {
+              await sql`SELECT set_config('hnsw.iterative_scan', 'strict_order', true);`.execute(trx)
+            }
             await sql`SELECT set_config('hnsw.ef_search', ${String(
               Math.max(MIN_HNSW_EF_SEARCH, semanticCandidateLimit),
             )}, true);`.execute(trx)
