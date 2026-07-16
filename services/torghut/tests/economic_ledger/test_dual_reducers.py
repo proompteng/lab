@@ -856,7 +856,14 @@ def test_correction_graph_rejects_missing_fork_and_cycle() -> None:
 
 def test_unknown_activity_is_visible_and_non_admissible() -> None:
     result = reduce_and_compare(
-        [activity("assignment", "OPASN", symbol="AAPL260117C00100000")]
+        [
+            activity(
+                "assignment",
+                "OPASN",
+                symbol="AAPL260117C00100000",
+                contract_size="100",
+            )
+        ]
     )
     assert result.comparison.equivalent
     assert not result.admissible

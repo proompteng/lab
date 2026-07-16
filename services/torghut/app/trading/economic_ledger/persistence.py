@@ -9,9 +9,20 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Iterable, TypeAlias
+from typing import Iterable, TypeAlias, cast
 
-from sqlalchemy import and_, func, insert, or_, select, text
+from sqlalchemy import (
+    Integer,
+    Text,
+    and_,
+    column,
+    func,
+    insert,
+    or_,
+    select,
+    table,
+    text,
+)
 from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
@@ -36,6 +47,7 @@ from .types import (
     LedgerScope,
     PreparedActivities,
     canonical_sha256,
+    is_occ_option_symbol,
     prepare_activities,
 )
 
@@ -44,6 +56,11 @@ _RESULT_SCHEMA_VERSION = "torghut.broker-economic-ledger-result.v1"
 _REPLAY_SCHEMA_VERSION = "torghut.broker-economic-ledger-replay.v1"
 _PUBLICATION_TOKEN_SCHEMA_VERSION = "torghut.broker-economic-ledger-publication.v1"
 _ENTRY_INSERT_BATCH_SIZE = 2_000
+_OPTION_CONTRACT_CATALOG = table(
+    "torghut_options_contract_catalog",
+    column("contract_symbol", Text),
+    column("contract_size", Integer),
+)
 
 
 BrokerEconomicLedgerSourceRecord: TypeAlias = tuple[
@@ -76,6 +93,7 @@ class BrokerEconomicLedgerSourceRows:
     scope: LedgerScope
     activities_inserted: int
     rows: tuple[Row[BrokerEconomicLedgerSourceRecord], ...]
+    option_contract_sizes: tuple[tuple[str, int], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +105,7 @@ class BrokerEconomicLedgerSnapshot:
     prepared: PreparedActivities
     activities: tuple[EconomicActivity, ...]
     input_manifest_canonical_json: str
+    option_contract_sizes: tuple[tuple[str, int], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,13 +249,49 @@ def load_broker_economic_ledger_source_rows(
             .order_by(BrokerAccountActivity.external_activity_id)
         ).tuples()
     )
+    option_contract_sizes = _load_locked_option_contract_sizes(
+        session,
+        symbols=_option_symbols(rows),
+    )
     return BrokerEconomicLedgerSourceRows(
         cursor_id=cursor.id,
         source_watermark=as_utc(cursor.last_completed_scan_until),
         scope=scope,
         activities_inserted=cursor.activities_inserted,
         rows=rows,
+        option_contract_sizes=option_contract_sizes,
     )
+
+
+def _option_symbols(
+    rows: Iterable[Row[BrokerEconomicLedgerSourceRecord]],
+) -> tuple[str, ...]:
+    symbols = {
+        symbol.replace("/", "").upper()
+        for row in rows
+        if (symbol := cast(str | None, row.symbol)) is not None
+        and is_occ_option_symbol(symbol.replace("/", "").upper())
+    }
+    return tuple(sorted(symbols))
+
+
+def _load_locked_option_contract_sizes(
+    session: Session,
+    *,
+    symbols: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    if not symbols:
+        return ()
+    rows = session.execute(
+        select(
+            _OPTION_CONTRACT_CATALOG.c.contract_symbol,
+            _OPTION_CONTRACT_CATALOG.c.contract_size,
+        )
+        .where(_OPTION_CONTRACT_CATALOG.c.contract_symbol.in_(symbols))
+        .order_by(_OPTION_CONTRACT_CATALOG.c.contract_symbol)
+        .with_for_update(read=True)
+    ).tuples()
+    return tuple((str(symbol), int(contract_size)) for symbol, contract_size in rows)
 
 
 def prepare_broker_economic_ledger_snapshot(
@@ -246,8 +301,14 @@ def prepare_broker_economic_ledger_snapshot(
 
     if len(source_rows.rows) != source_rows.activities_inserted:
         raise EconomicLedgerError("economic_ledger_source_count_mismatch")
+    option_contract_sizes = dict(source_rows.option_contract_sizes)
     activities = tuple(
-        _adapt_source_activity(row, scope=source_rows.scope) for row in source_rows.rows
+        _adapt_source_activity(
+            row,
+            scope=source_rows.scope,
+            option_contract_sizes=option_contract_sizes,
+        )
+        for row in source_rows.rows
     )
     prepared = prepare_activities(activities)
     manifest = tuple(
@@ -263,6 +324,7 @@ def prepare_broker_economic_ledger_snapshot(
         prepared=prepared,
         activities=activities,
         input_manifest_canonical_json=manifest_canonical_json,
+        option_contract_sizes=source_rows.option_contract_sizes,
     )
 
 
@@ -388,6 +450,12 @@ def _require_current_source_snapshot(
     )
     if current_count != len(snapshot.activities):
         raise EconomicLedgerError("economic_ledger_source_rows_changed")
+    current_contract_sizes = _load_locked_option_contract_sizes(
+        session,
+        symbols=tuple(symbol for symbol, _ in snapshot.option_contract_sizes),
+    )
+    if current_contract_sizes != snapshot.option_contract_sizes:
+        raise EconomicLedgerError("economic_ledger_option_contract_sizes_changed")
 
 
 def _load_or_create_input(
@@ -475,6 +543,7 @@ def _adapt_source_activity(
     row: Row[BrokerEconomicLedgerSourceRecord],
     *,
     scope: LedgerScope,
+    option_contract_sizes: dict[str, int],
 ) -> EconomicActivity:
     (
         source,
@@ -507,6 +576,8 @@ def _adapt_source_activity(
         or _sha256(raw_payload_canonical_json) != raw_payload_sha256
     ):
         raise EconomicLedgerError("economic_ledger_source_hash_mismatch")
+    canonical_symbol = symbol.replace("/", "").upper() if symbol is not None else None
+    contract_size = option_contract_sizes.get(canonical_symbol or "")
     return EconomicActivity(
         scope=scope,
         external_activity_id=external_activity_id,
@@ -521,6 +592,7 @@ def _adapt_source_activity(
         side=side,
         quantity=quantity,
         price=price,
+        contract_size=(Decimal(contract_size) if contract_size is not None else None),
         net_amount=net_amount,
         currency=currency,
     )

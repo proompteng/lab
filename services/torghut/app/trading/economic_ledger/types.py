@@ -16,7 +16,6 @@ LEDGER_DECIMAL_PRECISION = 80
 LEDGER_DECIMAL_SCALE = 18
 LEDGER_QUANTUM = Decimal("0.000000000000000001")
 _LEDGER_ABSOLUTE_LIMIT = Decimal("100000000000000000000")
-_OPTION_CONTRACT_MULTIPLIER = Decimal("100")
 _UNIT_NOTIONAL_MULTIPLIER = Decimal("1")
 _OCC_OPTION_SYMBOL = re.compile(r"^[A-Z0-9]{1,6}[0-9]{6}[CP][0-9]{8}$")
 
@@ -84,6 +83,7 @@ class EconomicActivity:
     side: str | None = None
     quantity: Decimal | None = None
     price: Decimal | None = None
+    contract_size: Decimal | None = None
     net_amount: Decimal | None = None
     currency: str | None = None
 
@@ -139,10 +139,17 @@ class EconomicActivity:
         )
         if self.event_at is not None:
             object.__setattr__(self, "event_at", _aware_utc(self.event_at, "event_at"))
-        for field_name in ("quantity", "price", "net_amount"):
+        for field_name in ("quantity", "price", "contract_size", "net_amount"):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, _finite_decimal(value, field_name))
+        if self.contract_size is not None and self.contract_size <= ZERO:
+            raise EconomicLedgerError("economic_option_contract_size_invalid")
+        option_symbol = is_occ_option_symbol(self.canonical_symbol)
+        if option_symbol and self.contract_size is None:
+            raise EconomicLedgerError("economic_option_contract_size_missing")
+        if not option_symbol and self.contract_size is not None:
+            raise EconomicLedgerError("economic_non_option_contract_size_present")
         if self.correction_of_external_id == self.external_activity_id:
             raise EconomicLedgerCorrectionError(
                 "economic_activity_cannot_correct_itself"
@@ -171,7 +178,9 @@ class EconomicActivity:
 
     @property
     def notional_multiplier(self) -> Decimal:
-        return notional_multiplier_for_symbol(self.canonical_symbol)
+        if self.contract_size is not None:
+            return self.contract_size
+        return _UNIT_NOTIONAL_MULTIPLIER
 
     @property
     def sort_key(self) -> tuple[datetime, date, str, str]:
@@ -628,11 +637,9 @@ def positions_tuple(
     )
 
 
-def notional_multiplier_for_symbol(symbol: str | None) -> Decimal:
-    """Return the broker notional multiplier encoded by a canonical symbol."""
-    if symbol is not None and _OCC_OPTION_SYMBOL.fullmatch(symbol) is not None:
-        return _OPTION_CONTRACT_MULTIPLIER
-    return _UNIT_NOTIONAL_MULTIPLIER
+def is_occ_option_symbol(symbol: str | None) -> bool:
+    """Return whether a canonical symbol has Alpaca's OCC option shape."""
+    return symbol is not None and _OCC_OPTION_SYMBOL.fullmatch(symbol) is not None
 
 
 def _required_text(value: object, field_name: str, maximum: int) -> str:
@@ -729,7 +736,7 @@ __all__ = (
     "balances_tuple",
     "canonical_sha256",
     "decimal_text",
-    "notional_multiplier_for_symbol",
+    "is_occ_option_symbol",
     "positions_tuple",
     "prepare_activities",
     "quantize_ledger_decimal",

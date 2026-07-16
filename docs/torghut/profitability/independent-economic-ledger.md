@@ -128,14 +128,16 @@ a derived mark, not historical cost and not a source mutation.
 
 For each `FILL`, quantity and price must be positive, and side must be `buy`, `sell`, or the empirically observed
 historical `sell_short` alias. USD notional is `quantity * price * multiplier` with no binary floating point. The
-multiplier is `100` only when the canonical symbol matches Alpaca's OCC option-symbol shape; it is `1` otherwise.
-Position quantity remains contracts rather than underlying shares. Alpaca's option examples explicitly price one
-contract as premium times 100 shares: [Options Orders](https://docs.alpaca.markets/us/v1.1/docs/options-orders).
+OCC symbol shape identifies option activities, but it does not determine their multiplier. The exact contract size is
+copied under a share lock from Torghut's persisted Alpaca contract catalog and bound into every affected immutable input
+manifest; missing catalog metadata or a size change between dry run and publication fails closed. Alpaca exposes this
+per-contract `size` field in the [Options Trading](https://docs.alpaca.markets/us/docs/options-trading) contract response.
+Non-option fills use multiplier `1`.
 `sell_short` has sell direction but remains unchanged in the immutable manifest; no other undocumented side is
 inferred.
 
-The same derived multiplier applies when reconciling broker average entry price and current-price marks. Broker option
-quantities remain contracts while signed cost, market value, equity, and unrealized P&L remain USD amounts.
+The same manifest-bound multiplier applies when reconciling broker average entry price and current-price marks. Broker
+option quantities remain contracts while signed cost, market value, equity, and unrealized P&L remain USD amounts.
 
 A `FILL` with nonzero `net_amount` is not silently treated as quantity-times-price cash. It remains unsupported until
 a golden broker fixture establishes whether that field is gross, fee-inclusive, or net settlement and a sourced
@@ -244,8 +246,9 @@ The deterministic replay CLI is read-only until publication:
 
 1. share-lock the one mutable REST cursor while leaving immutable source rows unlocked; because backfill appends facts and
    advances that cursor in one transaction, the lock freezes one closed source set without locking its history;
-2. require the completed REST cursor and fetch only the source columns needed by the reducers; do not adapt rows, parse
-   canonical JSON, sort activities, build the manifest, hash payloads, or reduce while the transaction is open;
+2. require the completed REST cursor, fetch only the source columns needed by the reducers, and share-lock contract-size
+   rows for OCC option symbols; do not adapt rows, parse canonical JSON, sort activities, build the manifest, hash
+   payloads, or reduce while the transaction is open;
 3. close the read transaction immediately after the detached database values and cursor metadata have been copied;
 4. validate source hashes, adapt and sort activities, and build the ordered manifest in memory;
 5. run both pure reducers and validate accounting identities and exact differential equality in memory;

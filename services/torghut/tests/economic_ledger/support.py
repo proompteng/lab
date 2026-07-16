@@ -28,6 +28,7 @@ def activity(
     side: str | None = None,
     quantity: str | None = None,
     price: str | None = None,
+    contract_size: str | None = None,
     net_amount: str | None = None,
     currency: str | None = "USD",
     raw_payload_sha256: str | None = None,
@@ -49,6 +50,7 @@ def activity(
         side=side,
         quantity=Decimal(quantity) if quantity is not None else None,
         price=Decimal(price) if price is not None else None,
+        contract_size=(Decimal(contract_size) if contract_size is not None else None),
         net_amount=Decimal(net_amount) if net_amount is not None else None,
         currency=currency,
     )

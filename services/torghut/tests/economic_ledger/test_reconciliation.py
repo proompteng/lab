@@ -53,6 +53,7 @@ def _activity(
     side: str | None = None,
     quantity: str | None = None,
     price: str | None = None,
+    contract_size: str | None = None,
     net_amount: str | None = None,
 ) -> EconomicActivity:
     return EconomicActivity(
@@ -66,6 +67,7 @@ def _activity(
         side=side,
         quantity=Decimal(quantity) if quantity is not None else None,
         price=Decimal(price) if price is not None else None,
+        contract_size=(Decimal(contract_size) if contract_size is not None else None),
         net_amount=Decimal(net_amount) if net_amount is not None else None,
         currency="USD",
     )
@@ -84,6 +86,16 @@ def _replay(*activities: EconomicActivity) -> BrokerEconomicLedgerReplay:
         activities=activities,
         input_manifest_canonical_json=json.dumps(
             ordered_manifest, sort_keys=True, separators=(",", ":")
+        ),
+        option_contract_sizes=tuple(
+            sorted(
+                {
+                    (item.canonical_symbol, int(item.notional_multiplier))
+                    for item in activities
+                    if item.contract_size is not None
+                    and item.canonical_symbol is not None
+                }
+            )
         ),
     )
     return BrokerEconomicLedgerReplay(
@@ -280,11 +292,12 @@ def test_option_position_reconciliation_uses_contract_notional() -> None:
             side="buy",
             quantity="2",
             price="1.05",
+            contract_size="50",
         ),
     )
     snapshot = _snapshot(
-        cash="790",
-        equity="1030",
+        cash="895",
+        equity="1015",
         positions=[
             {
                 "symbol": symbol,
@@ -292,8 +305,8 @@ def test_option_position_reconciliation_uses_contract_notional() -> None:
                 "qty": "2",
                 "avg_entry_price": "1.05",
                 "current_price": "1.20",
-                "market_value": "240",
-                "unrealized_pl": "30",
+                "market_value": "120",
+                "unrealized_pl": "15",
             }
         ],
     )
