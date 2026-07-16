@@ -20,6 +20,7 @@ from app.trading.broker_account_activities import (
     BrokerAccountActivityPayloadError,
     BrokerActivityObservation,
     BrokerStreamPosition,
+    as_utc,
     compare_broker_fill_sources,
     load_broker_account_activity_status,
     normalize_broker_account_activity,
@@ -488,6 +489,26 @@ def test_ingestor_drains_bounded_pages_then_deduplicates_overlap() -> None:
         assert cursor.pages_processed == 3
         assert cursor.activities_seen == 102
         assert cursor.activities_inserted == 101
+        assert cursor.last_completed_scan_until is not None
+        assert cursor.last_completed_at is not None
+        assert as_utc(cursor.last_completed_scan_until) == datetime(
+            2026,
+            7,
+            16,
+            1,
+            0,
+            4,
+            tzinfo=timezone.utc,
+        )
+        assert as_utc(cursor.last_completed_at) == datetime(
+            2026,
+            7,
+            16,
+            1,
+            0,
+            5,
+            tzinfo=timezone.utc,
+        )
 
 
 def test_changed_payload_for_same_activity_is_hard_contradiction() -> None:

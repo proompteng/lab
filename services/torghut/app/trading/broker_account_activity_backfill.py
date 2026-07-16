@@ -384,6 +384,7 @@ class BrokerAccountActivityIngestor:
             cursor.next_page_token = page.next_page_token
             if page.complete:
                 cursor.status = "complete"
+                cursor.last_completed_scan_until = scan.until
                 cursor.scan_after = max(
                     _INITIAL_SCAN_AFTER,
                     scan.until - _SCAN_OVERLAP,

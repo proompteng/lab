@@ -1,0 +1,353 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from typing import cast
+
+import pytest
+from sqlalchemy import Table, create_engine, event, func, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models import (
+    Base,
+    BrokerAccountActivity,
+    BrokerAccountActivityCursor,
+    BrokerEconomicLedgerEntry,
+    BrokerEconomicLedgerInput,
+    BrokerEconomicLedgerRun,
+)
+from app.trading.economic_ledger import (
+    EconomicLedgerError,
+    LedgerScope,
+    publish_broker_economic_ledger,
+    replay_broker_economic_ledger,
+)
+
+
+_OBSERVED_AT = datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc)
+_SCOPE = LedgerScope(
+    provider="alpaca",
+    environment="paper",
+    account_label="paper-account",
+    endpoint_fingerprint="a" * 64,
+)
+
+
+def _session_factory() -> sessionmaker[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(connection, _record) -> None:
+        connection.execute("PRAGMA foreign_keys=ON")
+
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            cast(Table, BrokerAccountActivity.__table__),
+            cast(Table, BrokerAccountActivityCursor.__table__),
+            cast(Table, BrokerEconomicLedgerInput.__table__),
+            cast(Table, BrokerEconomicLedgerRun.__table__),
+            cast(Table, BrokerEconomicLedgerEntry.__table__),
+        ],
+    )
+    return sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+
+def _activity(
+    external_id: str,
+    activity_type: str,
+    *,
+    offset: int,
+    symbol: str | None = None,
+    side: str | None = None,
+    quantity: str | None = None,
+    price: str | None = None,
+    net_amount: str | None = None,
+    currency: str | None = "USD",
+    payload_sha256: str | None = None,
+) -> BrokerAccountActivity:
+    payload = {"activity_type": activity_type, "id": external_id}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return BrokerAccountActivity(
+        provider="alpaca",
+        source="account_activities_rest",
+        environment="paper",
+        account_label="paper-account",
+        endpoint_fingerprint="a" * 64,
+        external_activity_id=external_id,
+        activity_type=activity_type,
+        event_at=_OBSERVED_AT + timedelta(seconds=offset),
+        symbol=symbol,
+        side=side,
+        quantity=Decimal(quantity) if quantity is not None else None,
+        price=Decimal(price) if price is not None else None,
+        net_amount=Decimal(net_amount) if net_amount is not None else None,
+        currency=currency,
+        raw_payload=payload,
+        raw_payload_canonical_json=canonical,
+        raw_payload_sha256=(
+            payload_sha256 or hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        ),
+        normalized_economic_sha256=hashlib.sha256(
+            f"economic:{external_id}".encode("utf-8")
+        ).hexdigest(),
+        first_observed_at=_OBSERVED_AT + timedelta(minutes=1),
+    )
+
+
+def _seed_source(
+    sessions: sessionmaker[Session],
+    activities: list[BrokerAccountActivity],
+    *,
+    complete: bool = True,
+) -> None:
+    with sessions.begin() as session:
+        session.add_all(activities)
+        session.add(
+            BrokerAccountActivityCursor(
+                provider="alpaca",
+                source="account_activities_rest",
+                environment="paper",
+                account_label="paper-account",
+                endpoint_fingerprint="a" * 64,
+                status="complete" if complete else "scanning",
+                scan_after=datetime(2016, 1, 1, tzinfo=timezone.utc),
+                scan_until=None if complete else _OBSERVED_AT,
+                last_completed_at=(
+                    _OBSERVED_AT + timedelta(minutes=2) if complete else None
+                ),
+                last_completed_scan_until=_OBSERVED_AT if complete else None,
+                activities_seen=len(activities),
+                activities_inserted=len(activities),
+                pages_processed=1,
+            )
+        )
+
+
+def _supported_history() -> list[BrokerAccountActivity]:
+    return [
+        _activity("cash", "CSD", offset=0, net_amount="1000"),
+        _activity(
+            "buy",
+            "FILL",
+            offset=1,
+            symbol="AAPL",
+            side="buy",
+            quantity="1",
+            price="100",
+            net_amount=None,
+        ),
+        _activity(
+            "sell",
+            "FILL",
+            offset=2,
+            symbol="AAPL",
+            side="sell",
+            quantity="1",
+            price="110",
+            net_amount=None,
+        ),
+        _activity("fee", "FEE", offset=3, net_amount="-1"),
+    ]
+
+
+def test_replay_publishes_one_atomic_idempotent_run_pair() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        assert replay.reduction.admissible
+        assert replay.reduction.comparison.equivalent
+        assert replay.publication_token.startswith("publish:")
+        payload = replay.to_payload()
+        input_payload = cast(dict[str, object], payload["input"])
+        journal_payload = cast(dict[str, object], payload["journal"])
+        projection_payload = cast(dict[str, object], journal_payload["projection"])
+        assert input_payload["cursor_id"] == str(replay.snapshot.cursor_id)
+        assert projection_payload["realized_pnl"] == "10"
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_publication_token_mismatch",
+        ):
+            publish_broker_economic_ledger(
+                session,
+                replay,
+                confirmation_token="publish:wrong",
+            )
+        published = publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+        assert published.reused_existing is False
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        repeated = publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+        assert repeated.reused_existing is True
+        assert repeated.journal_run_id == published.journal_run_id
+        assert repeated.state_run_id == published.state_run_id
+
+    with sessions.begin() as session:
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None
+        assert cursor.last_completed_at is not None
+        assert cursor.last_completed_scan_until is not None
+        cursor.last_completed_at += timedelta(minutes=1)
+        cursor.last_completed_scan_until += timedelta(minutes=1)
+    with sessions.begin() as session:
+        advanced = replay_broker_economic_ledger(session, scope=_SCOPE)
+        assert advanced.publication_token == replay.publication_token
+        advanced_publication = publish_broker_economic_ledger(
+            session,
+            advanced,
+            confirmation_token=advanced.publication_token,
+        )
+        assert advanced_publication.reused_existing is True
+        assert advanced_publication.journal_run_id == published.journal_run_id
+        assert advanced_publication.state_run_id == published.state_run_id
+
+    with sessions() as session:
+        inputs = tuple(session.scalars(select(BrokerEconomicLedgerInput)))
+        runs = tuple(session.scalars(select(BrokerEconomicLedgerRun)))
+        entry_count = session.scalar(
+            select(func.count()).select_from(BrokerEconomicLedgerEntry)
+        )
+    assert len(inputs) == 1
+    assert len(runs) == 2
+    assert entry_count is not None and entry_count > 0
+    assert {run.reducer_name for run in runs} == {
+        "balanced_journal",
+        "independent_position_state",
+    }
+    assert {run.input_id for run in runs} == {inputs[0].id}
+    assert inputs[0].manifest_sha256 == replay.snapshot.prepared.manifest_digest
+    assert len({run.comparison_sha256 for run in runs}) == 1
+
+
+def test_publication_rejects_forged_replay_token() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        forged = replace(replay, publication_token=f"publish:{'0' * 64}")
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_replay_token_invalid",
+        ):
+            publish_broker_economic_ledger(
+                session,
+                forged,
+                confirmation_token=forged.publication_token,
+            )
+
+
+def test_publication_rejects_stale_source_watermark() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+    with sessions.begin() as session:
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None and cursor.last_completed_scan_until is not None
+        cursor.last_completed_scan_until += timedelta(seconds=1)
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_source_watermark_changed",
+        ):
+            publish_broker_economic_ledger(
+                session,
+                replay,
+                confirmation_token=replay.publication_token,
+            )
+
+
+def test_publication_rejects_source_append_without_cursor_advance() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+    with sessions.begin() as session:
+        session.add(_activity("untracked", "FEE", offset=4, net_amount="-0.1"))
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_source_rows_changed",
+        ):
+            publish_broker_economic_ledger(
+                session,
+                replay,
+                confirmation_token=replay.publication_token,
+            )
+
+
+def test_replay_rejects_incomplete_cursor_before_reading_source() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history(), complete=False)
+
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_source_cursor_incomplete",
+        ):
+            replay_broker_economic_ledger(session, scope=_SCOPE)
+
+
+def test_replay_rejects_source_hash_mismatch() -> None:
+    sessions = _session_factory()
+    activities = _supported_history()
+    activities[0].raw_payload_sha256 = "0" * 64
+    _seed_source(sessions, activities)
+
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_source_hash_mismatch",
+        ):
+            replay_broker_economic_ledger(session, scope=_SCOPE)
+
+
+def test_unsupported_dry_run_cannot_publish_partial_projection() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, [_activity("merger", "MA", offset=0)])
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        assert replay.reduction.admissible is False
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_projection_not_admissible",
+        ):
+            publish_broker_economic_ledger(
+                session,
+                replay,
+                confirmation_token=replay.publication_token,
+            )
+
+    with sessions() as session:
+        assert (
+            session.scalar(select(func.count()).select_from(BrokerEconomicLedgerInput))
+            == 0
+        )
+        assert (
+            session.scalar(select(func.count()).select_from(BrokerEconomicLedgerRun))
+            == 0
+        )

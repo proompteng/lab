@@ -42,7 +42,7 @@ def test_postgres_account_activities_are_hashed_append_only_facts(
             schema_engine,
             target="0074_crypto_qty_precision",
         )
-        command.upgrade(alembic, "0076_broker_account_activities")
+        command.upgrade(alembic, "0078_broker_economic_ledger")
 
         activity_id = uuid.uuid4()
         observed_at = datetime.now(timezone.utc)

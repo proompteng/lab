@@ -135,6 +135,9 @@ class BrokerAccountActivityCursor(Base, TimestampMixin):
     last_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    last_completed_scan_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     pages_processed: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=text("0")
     )

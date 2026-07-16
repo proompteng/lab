@@ -156,9 +156,11 @@ equity. A flat round trip must converge exactly regardless of lot-display method
 - positive dividend or interest net amount debits cash and credits income; negative adjustments reverse the original
   economic category;
 - `CFEE` with nonzero `net_amount` posts as a cash fee;
-- `CFEE` with zero cash and nonzero asset quantity reduces the named asset units, releases their signed average cost,
+- `CFEE` with zero cash and negative asset quantity reduces the named asset units, releases their signed average cost,
   posts fair-value fee expense from broker quantity times price, and records any cost/fair-value difference as realized
-  PnL. Crypto may not become short through a fee.
+  PnL. Crypto may not become short through a fee;
+- `CFEE` with zero cash and missing, zero, or positive asset quantity is unsupported evidence, never an admissible
+  zero-value fee or an inferred rebate.
 
 Fees remain separate from gross trade PnL so both gross and after-cost results are reproducible.
 
@@ -201,24 +203,33 @@ for venue-displayed marks and timing differences.
 
 ## Minimal Persistence
 
-Persistence will use the existing CNPG database and only three append-only projections:
+Persistence uses the existing CNPG database and one normalized input envelope shared by two projections, with four
+append-only evidence tables:
 
-1. `broker_economic_ledger_runs` stores scope, reducer version, input manifest/watermark, result JSON, and result digest;
-2. `broker_economic_ledger_entries` stores balanced lines keyed by run, source activity, transaction, commodity, and line
+1. `broker_economic_ledger_inputs` stores scope, the first proving cursor/watermark, counts, one canonical manifest text,
+   and its digest;
+2. `broker_economic_ledger_runs` stores reducer identity, the shared input ID, result JSON, and result digests;
+3. `broker_economic_ledger_entries` stores balanced lines keyed by run, source activity, transaction, commodity, and line
    number;
-3. `broker_economic_reconciliations` stores the two run IDs, fresh broker snapshot digest, exact deltas, residuals, and
+4. `broker_economic_reconciliations` stores the two run IDs, fresh broker snapshot digest, exact deltas, residuals, and
    admissibility.
 
-There is no mutable ledger cursor, approval row, order path, queue, or second account-activity table. A run and all of
-its entries commit atomically after pure reduction succeeds. Failed runs write no partial projection. PostgreSQL rejects
-update/delete/truncate, verifies canonical JSON hashes, and independently checks contiguous entry lines and per-
-transaction commodity balance. Rebuild creates a new versioned run; it never rewrites an old proof.
+The current 40,161-row source history measured about 21.4 MB as logical normalized JSON and about 5.7 MB as TOAST-
+compressed canonical text on production CNPG. Storing JSONB plus text in both reducer rows would consume about 23.7 MB
+per snapshot before journal entries. The normalized input envelope stores the auditable manifest once and removes that
+fourfold duplication without adding a framework, queue, or mutable projection.
+
+There is no mutable ledger cursor, approval row, order path, queue, or second account-activity table. The shared input,
+both runs, and all entries commit atomically after pure reduction succeeds. Failed runs write no partial projection.
+PostgreSQL rejects update/delete/truncate, verifies canonical JSON hashes, and independently checks contiguous entry
+lines and per-transaction commodity balance. Rebuild creates a new versioned run; it never rewrites an old proof.
 
 ## Replay And Publication
 
 The deterministic replay CLI is read-only until publication:
 
-1. lock no source rows and read one repeatable-read snapshot;
+1. share-lock the one mutable REST cursor while leaving immutable source rows unlocked; because backfill appends facts and
+   advances that cursor in one transaction, the lock freezes one closed source set without locking its history;
 2. require the completed REST cursor and build the ordered manifest;
 3. run both reducers in memory;
 4. validate accounting identities and exact differential equality;
@@ -226,8 +237,17 @@ The deterministic replay CLI is read-only until publication:
 6. print the complete report in dry-run mode;
 7. publish only with an explicit confirmation token, in one database transaction, if the source watermark is unchanged.
 
-Re-running the same reducer version and input digest returns the existing immutable run. A different result for the same
-identity is a hard contradiction.
+Re-running the same reducer version and exact economic input (scope, cursor, and manifest digest) returns the existing
+immutable run. A later completed scan with the same manifest leaves the confirmation token stable and does not clone the
+manifest or 180,067 current journal entries; publication still verifies the current closed watermark, and Delivery 3
+reconciliation observations retain that newer watermark. A different result for the same economic identity is a hard
+contradiction.
+
+The publication token commits the cursor identity, input manifest, admissibility, exact comparison, both projection
+digests, and the journal digest. Publication recomputes that token, serializes writers per account scope, re-locks the
+current cursor, and rejects a changed cursor, watermark, or source count before inserting either run. The input envelope
+is inserted once, balanced entries follow under a deferred foreign key, and both sealed run envelopes are then inserted
+atomically. Any trigger failure rolls back the input, entries, and both runs together.
 
 ## Status And Capital Boundary
 
