@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
@@ -15,6 +16,8 @@ LEDGER_DECIMAL_PRECISION = 80
 LEDGER_DECIMAL_SCALE = 18
 LEDGER_QUANTUM = Decimal("0.000000000000000001")
 _LEDGER_ABSOLUTE_LIMIT = Decimal("100000000000000000000")
+_UNIT_NOTIONAL_MULTIPLIER = Decimal("1")
+_OCC_OPTION_SYMBOL = re.compile(r"^[A-Z0-9]{1,6}[0-9]{6}[CP][0-9]{8}$")
 
 
 class EconomicLedgerError(RuntimeError):
@@ -80,6 +83,7 @@ class EconomicActivity:
     side: str | None = None
     quantity: Decimal | None = None
     price: Decimal | None = None
+    contract_size: Decimal | None = None
     net_amount: Decimal | None = None
     currency: str | None = None
 
@@ -135,10 +139,17 @@ class EconomicActivity:
         )
         if self.event_at is not None:
             object.__setattr__(self, "event_at", _aware_utc(self.event_at, "event_at"))
-        for field_name in ("quantity", "price", "net_amount"):
+        for field_name in ("quantity", "price", "contract_size", "net_amount"):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, _finite_decimal(value, field_name))
+        if self.contract_size is not None and self.contract_size <= ZERO:
+            raise EconomicLedgerError("economic_option_contract_size_invalid")
+        option_symbol = is_occ_option_symbol(self.canonical_symbol)
+        if option_symbol and self.contract_size is None:
+            raise EconomicLedgerError("economic_option_contract_size_missing")
+        if not option_symbol and self.contract_size is not None:
+            raise EconomicLedgerError("economic_non_option_contract_size_present")
         if self.correction_of_external_id == self.external_activity_id:
             raise EconomicLedgerCorrectionError(
                 "economic_activity_cannot_correct_itself"
@@ -166,6 +177,12 @@ class EconomicActivity:
         return self.symbol.replace("/", "")
 
     @property
+    def notional_multiplier(self) -> Decimal:
+        if self.contract_size is not None:
+            return self.contract_size
+        return _UNIT_NOTIONAL_MULTIPLIER
+
+    @property
     def sort_key(self) -> tuple[datetime, date, str, str]:
         return (
             self.economic_at,
@@ -184,6 +201,7 @@ class EconomicActivity:
             "external_activity_id": self.external_activity_id,
             "first_observed_at": _datetime_text(self.first_observed_at),
             "net_amount": decimal_text(self.net_amount),
+            "notional_multiplier": decimal_text(self.notional_multiplier),
             "price": decimal_text(self.price),
             "quantity": decimal_text(self.quantity),
             "raw_payload_sha256": self.raw_payload_sha256,
@@ -619,6 +637,11 @@ def positions_tuple(
     )
 
 
+def is_occ_option_symbol(symbol: str | None) -> bool:
+    """Return whether a canonical symbol has Alpaca's OCC option shape."""
+    return symbol is not None and _OCC_OPTION_SYMBOL.fullmatch(symbol) is not None
+
+
 def _required_text(value: object, field_name: str, maximum: int) -> str:
     if not isinstance(value, str):
         raise EconomicLedgerError(f"economic_ledger_{field_name}_must_be_string")
@@ -713,6 +736,7 @@ __all__ = (
     "balances_tuple",
     "canonical_sha256",
     "decimal_text",
+    "is_occ_option_symbol",
     "positions_tuple",
     "prepare_activities",
     "quantize_ledger_decimal",

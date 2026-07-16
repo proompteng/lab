@@ -8,7 +8,19 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
-from sqlalchemy import Table, create_engine, event, func, select
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+    event,
+    func,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -47,6 +59,12 @@ _SCOPE = LedgerScope(
     account_label="paper-account",
     endpoint_fingerprint="a" * 64,
 )
+_OPTION_CATALOG = Table(
+    "torghut_options_contract_catalog",
+    MetaData(),
+    Column("contract_symbol", String, primary_key=True),
+    Column("contract_size", Integer, nullable=False),
+)
 
 
 def _session_factory() -> sessionmaker[Session]:
@@ -72,6 +90,7 @@ def _session_factory() -> sessionmaker[Session]:
             cast(Table, BrokerEconomicLedgerReconciliation.__table__),
         ],
     )
+    _OPTION_CATALOG.create(engine)
     return sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
@@ -362,6 +381,103 @@ def test_replay_rejects_source_hash_mismatch() -> None:
             match="economic_ledger_source_hash_mismatch",
         ):
             _replay(session)
+
+
+def test_replay_requires_option_contract_size_from_catalog() -> None:
+    sessions = _session_factory()
+    _seed_source(
+        sessions,
+        [
+            _activity("cash", "CSD", offset=0, net_amount="1000"),
+            _activity(
+                "option-buy",
+                "FILL",
+                offset=1,
+                symbol="AMZN260529P00270000",
+                side="buy",
+                quantity="1",
+                price="1.05",
+                net_amount=None,
+            ),
+        ],
+    )
+
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_option_contract_size_missing",
+        ):
+            _replay(session)
+
+
+def test_adjusted_option_contract_size_is_manifest_bound_and_publish_fenced() -> None:
+    sessions = _session_factory()
+    symbol = "AMZN260529P00270000"
+    _seed_source(
+        sessions,
+        [
+            _activity("cash", "CSD", offset=0, net_amount="1000"),
+            _activity(
+                "option-buy",
+                "FILL",
+                offset=1,
+                symbol=symbol,
+                side="buy",
+                quantity="2",
+                price="1",
+                net_amount=None,
+            ),
+            _activity(
+                "option-sell",
+                "FILL",
+                offset=2,
+                symbol=symbol,
+                side="sell",
+                quantity="2",
+                price="2",
+                net_amount=None,
+            ),
+        ],
+    )
+    with sessions.begin() as session:
+        session.execute(
+            insert(_OPTION_CATALOG).values(
+                contract_symbol=symbol,
+                contract_size=10,
+            )
+        )
+
+    with sessions.begin() as session:
+        replay = _replay(session)
+    option_activities = [
+        item for item in replay.snapshot.activities if item.canonical_symbol == symbol
+    ]
+    projection_cash = {
+        item.commodity: item.amount for item in replay.reduction.journal.projection.cash
+    }
+    assert replay.snapshot.option_contract_sizes == ((symbol, 10),)
+    assert {item.notional_multiplier for item in option_activities} == {Decimal("10")}
+    assert {
+        item.manifest_payload()["notional_multiplier"] for item in option_activities
+    } == {"10"}
+    assert projection_cash["USD"] == Decimal("1020")
+
+    with sessions.begin() as session:
+        session.execute(
+            update(_OPTION_CATALOG)
+            .where(_OPTION_CATALOG.c.contract_symbol == symbol)
+            .values(contract_size=20)
+        )
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_option_contract_sizes_changed",
+        ):
+            publish_broker_economic_ledger(
+                session,
+                replay,
+                confirmation_token=replay.publication_token,
+            )
 
 
 def test_unsupported_dry_run_cannot_publish_partial_projection() -> None:

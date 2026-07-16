@@ -33,6 +33,7 @@ from .types import (
     LedgerScope,
     canonical_sha256,
     decimal_text,
+    is_occ_option_symbol,
     quantize_ledger_decimal,
 )
 
@@ -254,9 +255,14 @@ def reconcile_broker_economic_ledger(
         raise EconomicLedgerError("economic_reconciliation_snapshot_before_watermark")
     source_age_seconds = int((snapshot.observed_at - watermark).total_seconds())
     projection = replay.reduction.journal.projection
+    option_contract_sizes = {
+        symbol: Decimal(contract_size)
+        for symbol, contract_size in replay.snapshot.option_contract_sizes
+    }
     residuals = _economic_residuals(
         projection,
         snapshot=snapshot,
+        option_contract_sizes=option_contract_sizes,
         source_age_seconds=source_age_seconds,
         max_source_age_seconds=max_source_age_seconds,
     )
@@ -266,7 +272,11 @@ def reconcile_broker_economic_ledger(
     if not replay.reduction.admissible:
         reason_codes.add("economic_projection_not_admissible")
     reconciled = not reason_codes
-    ledger_values = _marked_ledger_values(projection, snapshot=snapshot)
+    ledger_values = _marked_ledger_values(
+        projection,
+        snapshot=snapshot,
+        option_contract_sizes=option_contract_sizes,
+    )
     broker_unrealized = _sum_decimal(
         position.unrealized_pnl for position in snapshot.positions
     )
@@ -486,6 +496,7 @@ def _economic_residuals(
     projection: EconomicProjection,
     *,
     snapshot: BrokerEconomicSnapshot,
+    option_contract_sizes: Mapping[str, Decimal],
     source_age_seconds: int,
     max_source_age_seconds: int,
 ) -> tuple[BrokerEconomicResidual, ...]:
@@ -497,11 +508,17 @@ def _economic_residuals(
         max_source_age_seconds=max_source_age_seconds,
     )
     _append_cash_residuals(residuals, projection=projection, snapshot=snapshot)
-    _append_position_residuals(residuals, projection=projection, snapshot=snapshot)
+    _append_position_residuals(
+        residuals,
+        projection=projection,
+        snapshot=snapshot,
+        option_contract_sizes=option_contract_sizes,
+    )
     _append_mark_to_market_residuals(
         residuals,
         projection=projection,
         snapshot=snapshot,
+        option_contract_sizes=option_contract_sizes,
     )
     return tuple(residuals)
 
@@ -569,6 +586,7 @@ def _append_position_residuals(
     *,
     projection: EconomicProjection,
     snapshot: BrokerEconomicSnapshot,
+    option_contract_sizes: Mapping[str, Decimal],
 ) -> None:
     ledger_positions = {position.symbol: position for position in projection.positions}
     broker_positions = {position.symbol: position for position in snapshot.positions}
@@ -603,7 +621,13 @@ def _append_position_residuals(
         ):
             continue
         broker_signed_cost = _multiply(
-            broker_quantity, broker_position.average_entry_price, "broker_signed_cost"
+            _multiply(
+                broker_quantity,
+                broker_position.average_entry_price,
+                "broker_signed_cost",
+            ),
+            _contract_multiplier(symbol, option_contract_sizes),
+            "broker_signed_cost",
         )
         _append_decimal_residual(
             residuals,
@@ -619,9 +643,14 @@ def _append_mark_to_market_residuals(
     *,
     projection: EconomicProjection,
     snapshot: BrokerEconomicSnapshot,
+    option_contract_sizes: Mapping[str, Decimal],
 ) -> None:
     ledger_positions = {position.symbol: position for position in projection.positions}
-    marked = _marked_ledger_values(projection, snapshot=snapshot)
+    marked = _marked_ledger_values(
+        projection,
+        snapshot=snapshot,
+        option_contract_sizes=option_contract_sizes,
+    )
     if marked.equity is None or marked.unrealized_pnl is None:
         marks = {position.symbol for position in snapshot.positions}
         for symbol in sorted(set(ledger_positions) - marks):
@@ -658,6 +687,7 @@ def _marked_ledger_values(
     projection: EconomicProjection,
     *,
     snapshot: BrokerEconomicSnapshot,
+    option_contract_sizes: Mapping[str, Decimal],
 ) -> _MarkedLedgerValues:
     cash_by_commodity = {item.commodity: item.amount for item in projection.cash}
     cash = cash_by_commodity.get(projection.scope.quote_currency, ZERO)
@@ -665,7 +695,15 @@ def _marked_ledger_values(
     if any(position.symbol not in marks for position in projection.positions):
         return _MarkedLedgerValues(cash=cash, equity=None, unrealized_pnl=None)
     market_value = _sum_decimal(
-        _multiply(position.quantity, marks[position.symbol], "ledger_market_value")
+        _multiply(
+            _multiply(
+                position.quantity,
+                marks[position.symbol],
+                "ledger_market_value",
+            ),
+            _contract_multiplier(position.symbol, option_contract_sizes),
+            "ledger_market_value",
+        )
         for position in projection.positions
     )
     carrying_value = _sum_decimal(
@@ -676,6 +714,18 @@ def _marked_ledger_values(
         equity=_add(cash, market_value, "ledger_equity"),
         unrealized_pnl=_add(market_value, -carrying_value, "ledger_unrealized_pnl"),
     )
+
+
+def _contract_multiplier(
+    symbol: str,
+    option_contract_sizes: Mapping[str, Decimal],
+) -> Decimal:
+    contract_size = option_contract_sizes.get(symbol)
+    if contract_size is not None:
+        return contract_size
+    if is_occ_option_symbol(symbol):
+        raise EconomicLedgerError("economic_option_contract_size_missing")
+    return Decimal("1")
 
 
 def _normalize_position(value: object) -> BrokerEconomicPosition:
