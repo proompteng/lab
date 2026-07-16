@@ -18,17 +18,26 @@ from app.models import (
     BrokerAccountActivityCursor,
     BrokerEconomicLedgerEntry,
     BrokerEconomicLedgerInput,
+    BrokerEconomicLedgerReconciliation,
     BrokerEconomicLedgerRun,
 )
 from app.trading.economic_ledger import (
+    BrokerEconomicReconciliationBuild,
     EconomicLedgerError,
     LedgerScope,
+    load_broker_economic_ledger_status,
+    normalize_broker_economic_snapshot,
+    persist_broker_economic_ledger_reconciliation,
     publish_broker_economic_ledger,
     replay_broker_economic_ledger,
 )
 
 
 _OBSERVED_AT = datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc)
+_BUILD = BrokerEconomicReconciliationBuild(
+    source_commit="a" * 40,
+    image_digest=f"sha256:{'b' * 64}",
+)
 _SCOPE = LedgerScope(
     provider="alpaca",
     environment="paper",
@@ -57,6 +66,7 @@ def _session_factory() -> sessionmaker[Session]:
             cast(Table, BrokerEconomicLedgerInput.__table__),
             cast(Table, BrokerEconomicLedgerRun.__table__),
             cast(Table, BrokerEconomicLedgerEntry.__table__),
+            cast(Table, BrokerEconomicLedgerReconciliation.__table__),
         ],
     )
     return sessionmaker(bind=engine, expire_on_commit=False, future=True)
@@ -351,3 +361,154 @@ def test_unsupported_dry_run_cannot_publish_partial_projection() -> None:
             session.scalar(select(func.count()).select_from(BrokerEconomicLedgerRun))
             == 0
         )
+
+
+def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks() -> (
+    None
+):
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        published = publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+    snapshot = normalize_broker_economic_snapshot(
+        account={"status": "ACTIVE", "cash": "1009", "equity": "1009"},
+        positions=[],
+        open_orders=[],
+        observed_at=_OBSERVED_AT + timedelta(minutes=3),
+    )
+    with sessions.begin() as session:
+        first = persist_broker_economic_ledger_reconciliation(
+            session,
+            replay,
+            snapshot,
+            build=_BUILD,
+        )
+        assert first.result.reconciled is True
+        assert first.runs.journal_run_id == published.journal_run_id
+
+    with sessions.begin() as session:
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None
+        assert cursor.last_completed_scan_until is not None
+        assert cursor.last_completed_at is not None
+        cursor.last_completed_scan_until += timedelta(minutes=1)
+        cursor.last_completed_at += timedelta(minutes=1)
+    later_snapshot = normalize_broker_economic_snapshot(
+        account={"status": "ACTIVE", "cash": "1009", "equity": "1009"},
+        positions=[],
+        open_orders=[],
+        observed_at=_OBSERVED_AT + timedelta(minutes=4),
+    )
+    with sessions.begin() as session:
+        advanced = replay_broker_economic_ledger(session, scope=_SCOPE)
+        second = persist_broker_economic_ledger_reconciliation(
+            session,
+            advanced,
+            later_snapshot,
+            build=_BUILD,
+        )
+        assert second.runs.journal_run_id == published.journal_run_id
+        assert second.runs.state_run_id == published.state_run_id
+
+    with sessions() as session:
+        assert (
+            session.scalar(select(func.count()).select_from(BrokerEconomicLedgerInput))
+            == 1
+        )
+        assert (
+            session.scalar(select(func.count()).select_from(BrokerEconomicLedgerRun))
+            == 2
+        )
+        assert (
+            session.scalar(
+                select(func.count()).select_from(BrokerEconomicLedgerReconciliation)
+            )
+            == 2
+        )
+        status = load_broker_economic_ledger_status(
+            session,
+            scope=_SCOPE,
+            observed_at=_OBSERVED_AT + timedelta(minutes=5),
+        )
+        stale_status = load_broker_economic_ledger_status(
+            session,
+            scope=_SCOPE,
+            observed_at=_OBSERVED_AT + timedelta(minutes=6),
+            max_observation_age_seconds=60,
+        )
+    assert status["state"] == "reconciled"
+    assert status["reconciled"] is True
+    assert status["diagnostic_only"] is True
+    assert status["capital_authority"] is False
+    assert status["admissible"] is True
+    assert status["input_manifest_sha256"] == replay.snapshot.prepared.manifest_digest
+    assert status["reducers"] == {
+        "journal": replay.reduction.journal.projection.reducer_version,
+        "state": replay.reduction.independent.reducer_version,
+        "differential_equivalent": True,
+        "admissible": True,
+    }
+    assert status["journal_run_id"] == str(published.journal_run_id)
+    assert stale_status["state"] == "stale"
+    assert stale_status["reconciled"] is False
+    assert "economic_reconciliation_observation_stale" in stale_status["reason_codes"]
+
+
+def test_reconciliation_refuses_unpublished_changed_manifest() -> None:
+    sessions = _session_factory()
+    activities = _supported_history()
+    _seed_source(sessions, activities)
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+    with sessions.begin() as session:
+        session.add(_activity("new-fee", "FEE", offset=4, net_amount="-1"))
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None
+        assert cursor.last_completed_at is not None
+        assert cursor.last_completed_scan_until is not None
+        cursor.activities_seen += 1
+        cursor.activities_inserted += 1
+        cursor.last_completed_at += timedelta(minutes=1)
+        cursor.last_completed_scan_until += timedelta(minutes=1)
+    snapshot = normalize_broker_economic_snapshot(
+        account={"status": "ACTIVE", "cash": "1008", "equity": "1008"},
+        positions=[],
+        open_orders=[],
+        observed_at=_OBSERVED_AT + timedelta(minutes=4),
+    )
+    with sessions.begin() as session:
+        changed = replay_broker_economic_ledger(session, scope=_SCOPE)
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_published_input_missing",
+        ):
+            persist_broker_economic_ledger_reconciliation(
+                session,
+                changed,
+                snapshot,
+                build=_BUILD,
+            )
+
+
+def test_reconciliation_status_is_explicitly_missing_before_first_observation() -> None:
+    sessions = _session_factory()
+    status = None
+    with sessions() as session:
+        status = load_broker_economic_ledger_status(
+            session,
+            scope=_SCOPE,
+            observed_at=_OBSERVED_AT,
+            max_observation_age_seconds=60,
+        )
+    assert status["state"] == "missing"
+    assert status["reason_codes"] == ["economic_reconciliation_missing"]

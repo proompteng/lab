@@ -19,6 +19,7 @@ from app.models import (
     BrokerAccountActivityCursor,
     BrokerEconomicLedgerEntry,
     BrokerEconomicLedgerInput,
+    BrokerEconomicLedgerReconciliation,
     BrokerEconomicLedgerRun,
 )
 from app.trading.broker_account_activities import (
@@ -26,7 +27,10 @@ from app.trading.broker_account_activities import (
     normalize_broker_account_activity,
 )
 from app.trading.economic_ledger import (
+    BrokerEconomicReconciliationBuild,
     LedgerScope,
+    normalize_broker_economic_snapshot,
+    persist_broker_economic_ledger_reconciliation,
     publish_broker_economic_ledger,
     replay_broker_economic_ledger,
 )
@@ -61,12 +65,12 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
             schema_engine,
             target="0074_crypto_qty_precision",
         )
-        command.upgrade(alembic, "0078_broker_economic_ledger")
+        command.upgrade(alembic, "0079_broker_econ_reconciliation")
         assert _public_alembic_revision(admin_engine) == public_revision_before
         with schema_engine.connect() as connection:
             assert connection.scalar(
                 text("SELECT version_num FROM alembic_version")
-            ) == ("0078_broker_economic_ledger")
+            ) == ("0079_broker_econ_reconciliation")
         sessions = sessionmaker(bind=schema_engine, expire_on_commit=False, future=True)
         scope = _seed_source(sessions)
 
@@ -109,6 +113,30 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
         assert {run.input_id for run in runs} == {input_row.id}
         assert len({run.comparison_sha256 for run in runs}) == 1
 
+        snapshot = normalize_broker_economic_snapshot(
+            account={"status": "ACTIVE", "cash": "1010", "equity": "1010"},
+            positions=[],
+            open_orders=[],
+            observed_at=datetime(2026, 7, 16, 13, 2, tzinfo=timezone.utc),
+        )
+        with sessions.begin() as session:
+            replay = replay_broker_economic_ledger(session, scope=scope)
+            observation = persist_broker_economic_ledger_reconciliation(
+                session,
+                replay,
+                snapshot,
+                build=BrokerEconomicReconciliationBuild(
+                    source_commit="a" * 40,
+                    image_digest=f"sha256:{'b' * 64}",
+                ),
+            )
+        assert observation.result.reconciled is True
+        with sessions() as session:
+            reconciliation = session.scalar(select(BrokerEconomicLedgerReconciliation))
+        assert reconciliation is not None
+        assert reconciliation.journal_run_id == journal.id
+        assert reconciliation.result_sha256 == observation.result.result_sha256
+
         _assert_manifest_hash_rejected(schema_engine, input_row)
         assert_rejected(
             schema_engine,
@@ -128,6 +156,18 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
         )
         assert_rejected(schema_engine, "DELETE FROM broker_economic_ledger_entries")
         assert_rejected(schema_engine, "TRUNCATE broker_economic_ledger_entries")
+        assert_rejected(
+            schema_engine,
+            "UPDATE broker_economic_ledger_reconciliations SET reconciled = false",
+        )
+        assert_rejected(
+            schema_engine, "DELETE FROM broker_economic_ledger_reconciliations"
+        )
+        assert_rejected(
+            schema_engine, "TRUNCATE broker_economic_ledger_reconciliations"
+        )
+        _assert_reconciliation_source_invariants_rejected(schema_engine, reconciliation)
+        _assert_reconciliation_run_swap_rejected(schema_engine, reconciliation)
         _assert_unbalanced_run_rejected(schema_engine, journal)
 
         with pytest.raises(DBAPIError):
@@ -283,6 +323,105 @@ def _assert_unbalanced_run_rejected(
                     "journal_sha256": "b" * 64,
                 },
             )
+
+
+def _assert_reconciliation_run_swap_rejected(
+    schema_engine,
+    valid: BrokerEconomicLedgerReconciliation,
+) -> None:
+    with pytest.raises(DBAPIError):
+        with schema_engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO broker_economic_ledger_reconciliations (
+                        id, input_id, journal_run_id, state_run_id,
+                        source_watermark, observed_at, source_age_seconds,
+                        max_source_age_seconds, broker_snapshot,
+                        broker_snapshot_canonical_json, broker_snapshot_sha256,
+                        result, result_canonical_json, result_sha256,
+                        comparison_sha256, journal_sha256, reconciled,
+                        residual_count, open_order_count, source_commit, image_digest
+                    ) VALUES (
+                        :id, :input_id, :state_run_id, :journal_run_id,
+                        :source_watermark, :observed_at, :source_age_seconds,
+                        :max_source_age_seconds, CAST(:broker_snapshot AS jsonb),
+                        :broker_snapshot, :broker_snapshot_sha256,
+                        CAST(:result AS jsonb), :result, :result_sha256,
+                        :comparison_sha256, :journal_sha256, :reconciled,
+                        :residual_count, :open_order_count, :source_commit, :image_digest
+                    )
+                    """
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "input_id": valid.input_id,
+                    "journal_run_id": valid.journal_run_id,
+                    "state_run_id": valid.state_run_id,
+                    "source_watermark": valid.source_watermark,
+                    "observed_at": valid.observed_at,
+                    "source_age_seconds": valid.source_age_seconds,
+                    "max_source_age_seconds": valid.max_source_age_seconds,
+                    "broker_snapshot": valid.broker_snapshot_canonical_json,
+                    "broker_snapshot_sha256": valid.broker_snapshot_sha256,
+                    "result": valid.result_canonical_json,
+                    "result_sha256": valid.result_sha256,
+                    "comparison_sha256": valid.comparison_sha256,
+                    "journal_sha256": valid.journal_sha256,
+                    "reconciled": valid.reconciled,
+                    "residual_count": valid.residual_count,
+                    "open_order_count": valid.open_order_count,
+                    "source_commit": valid.source_commit,
+                    "image_digest": valid.image_digest,
+                },
+            )
+
+
+def _assert_reconciliation_source_invariants_rejected(
+    schema_engine,
+    valid: BrokerEconomicLedgerReconciliation,
+) -> None:
+    invalid_cases = (
+        (
+            "source_watermark + INTERVAL '1 second'",
+            "source_age_seconds",
+            "broker economic reconciliation source identity mismatch",
+        ),
+        (
+            "source_watermark",
+            "source_age_seconds + 1",
+            "broker economic reconciliation source age mismatch",
+        ),
+    )
+    for source_watermark_sql, source_age_sql, expected_error in invalid_cases:
+        with pytest.raises(DBAPIError, match=expected_error):
+            with schema_engine.begin() as connection:
+                connection.execute(
+                    text(
+                        f"""
+                        INSERT INTO broker_economic_ledger_reconciliations (
+                            id, input_id, journal_run_id, state_run_id,
+                            source_watermark, observed_at, source_age_seconds,
+                            max_source_age_seconds, broker_snapshot,
+                            broker_snapshot_canonical_json, broker_snapshot_sha256,
+                            result, result_canonical_json, result_sha256,
+                            comparison_sha256, journal_sha256, reconciled,
+                            residual_count, open_order_count, source_commit, image_digest
+                        )
+                        SELECT
+                            :id, input_id, journal_run_id, state_run_id,
+                            {source_watermark_sql}, observed_at, {source_age_sql},
+                            max_source_age_seconds, broker_snapshot,
+                            broker_snapshot_canonical_json, broker_snapshot_sha256,
+                            result, result_canonical_json, result_sha256,
+                            comparison_sha256, journal_sha256, reconciled,
+                            residual_count, open_order_count, source_commit, image_digest
+                        FROM broker_economic_ledger_reconciliations
+                        WHERE id = :valid_id
+                        """
+                    ),
+                    {"id": uuid.uuid4(), "valid_id": valid.id},
+                )
 
 
 def _assert_manifest_hash_rejected(

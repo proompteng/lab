@@ -1,0 +1,100 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-broker-economic-ledger-reconciliation
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: broker-economic-ledger-reconciliation
+    app.kubernetes.io/part-of: lab
+spec:
+  schedule: "47 * * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: 1200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: torghut
+            app.kubernetes.io/component: broker-economic-ledger-reconciliation
+            app.kubernetes.io/part-of: lab
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconcile
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:ad3fc679b7698e6a737d441f188a702010bebf58918462f1ea07b74e1f24844d
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 64Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+                  ephemeral-storage: 256Mi
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: APP_ENV
+                  value: prod
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: APCA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_KEY_ID
+                - name: APCA_API_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_SECRET_KEY
+                - name: APCA_API_BASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_BASE_URL
+                - name: TRADING_MODE
+                  value: live
+                - name: TRADING_ACCOUNT_LABEL
+                  value: PA3SX7FYNUTF
+                - name: TORGHUT_VERSION
+                  value: v0.596.0-2133-gf4d685dc7
+                - name: TORGHUT_COMMIT
+                  value: f4d685dc7bdce482a0de4852917de47f9340a41f
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:ad3fc679b7698e6a737d441f188a702010bebf58918462f1ea07b74e1f24844d
+                - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
+                  value: linux/amd64,linux/arm64
+                - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
+                  value: linux/amd64,linux/arm64
+              command:
+                - python
+                - scripts/replay_broker_economic_ledger.py
+              args:
+                - --observe
+                - --max-source-age-seconds
+                - "300"

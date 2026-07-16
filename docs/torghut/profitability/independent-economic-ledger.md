@@ -1,6 +1,6 @@
 # Independent Broker-Economic Ledger
 
-Status: Slice 8 implementation design
+Status: Slice 8 Delivery 3 implemented; exact-image production proof pending
 
 Last updated: 2026-07-16
 
@@ -224,6 +224,13 @@ both runs, and all entries commit atomically after pure reduction succeeds. Fail
 PostgreSQL rejects update/delete/truncate, verifies canonical JSON hashes, and independently checks contiguous entry
 lines and per-transaction commodity balance. Rebuild creates a new versioned run; it never rewrites an old proof.
 
+Reconciliation evidence adds one more database-enforced boundary. A row must reference the exact canonical and
+independent run pair for one input, use that input's exact source watermark, and report the source age derived from its
+broker-observation and watermark timestamps. PostgreSQL also binds the canonical snapshot and result JSON to their
+SHA-256 digests, verifies the persisted build identity and residual counts, and rejects any later mutation. These
+checks prevent an application or ad hoc writer from making a stale or unrelated observation look attached to a valid
+projection.
+
 ## Replay And Publication
 
 The deterministic replay CLI is read-only until publication:
@@ -236,6 +243,12 @@ The deterministic replay CLI is read-only until publication:
 5. optionally fetch a read-only broker snapshot and calculate broker deltas;
 6. print the complete report in dry-run mode;
 7. publish only with an explicit confirmation token, in one database transaction, if the source watermark is unchanged.
+
+`--observe` is deliberately separate from publication. It requires an already published exact run pair, requires a
+real source commit and image digest from the deployed build, rejects any non-paper broker endpoint, and
+appends one read-only broker reconciliation. It never creates a ledger input or run implicitly. The GitOps CronJob runs
+only this observation mode at minute 47 of every hour with a five-minute source-age bound, `Forbid` concurrency,
+no retry, a 20-minute deadline, and no publication token or broker-mutation command.
 
 Re-running the same reducer version and exact economic input (scope, cursor, and manifest digest) returns the existing
 immutable run. A later completed scan with the same manifest leaves the confirmation token stable and does not clone the
@@ -251,9 +264,11 @@ atomically. Any trigger failure rolls back the input, entries, and both runs tog
 
 ## Status And Capital Boundary
 
-Slice 8 exposes freshness, input watermark, reducer versions, admissibility, and all residual counts in the trading
-status response. It does not by itself enable entry or promotion. Slice 10 will make fresh zero-unexplained-delta parity
-blocking for risk increase while leaving service health and reduce-only recovery available.
+Slice 8 exposes freshness, input watermark, immutable run IDs, reducer versions, build identity, admissibility, broker
+snapshot digest, and classified residuals in the trading status response. The surface is diagnostic-only: no value from
+it is consulted by order submission or capital authority. It does not by itself enable entry or promotion. Slice 10
+will make fresh zero-unexplained-delta parity blocking for risk increase while leaving service health and reduce-only
+recovery available.
 
 The existing runtime ledger remains visible as a legacy decision-lineage projection until Slice 9 completes repair. It
 is never silently relabeled as the broker-economic ledger.
@@ -268,6 +283,11 @@ To keep review and rollback small, Slice 8 is delivered as three production chan
 3. fresh broker snapshot reconciliation, status surface, GitOps schedule, and production replay proof.
 
 Each change is independently useful and removable. No framework or generic accounting DSL is introduced.
+
+Delivery 3 consists of one focused reconciliation module, one append-only migration, one CLI mode, one status adapter,
+and one bounded CronJob. It does not add a queue, worker framework, mutable cursor, approval table, tolerance DSL, or
+second authority. Publication remains a manual proof action because scheduling a bearer confirmation token would turn
+the audit path into an uncontrolled evidence writer.
 
 ## Required Tests
 

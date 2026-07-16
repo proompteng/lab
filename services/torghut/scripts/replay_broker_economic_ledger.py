@@ -7,11 +7,16 @@ import argparse
 import json
 
 from app.alpaca_client import TorghutAlpacaClient
+from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST
 from app.config import settings
 from app.db import SessionLocal
 from app.trading.broker_mutation_receipts import fingerprint_broker_endpoint
 from app.trading.economic_ledger import (
+    DEFAULT_SOURCE_MAX_AGE_SECONDS,
+    BrokerEconomicReconciliationBuild,
     LedgerScope,
+    capture_broker_economic_snapshot,
+    persist_broker_economic_ledger_reconciliation,
     publish_broker_economic_ledger,
     replay_broker_economic_ledger,
 )
@@ -29,9 +34,24 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=settings.trading_account_label,
         help="Exact configured broker account label.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--publish-token",
         help="Exact publish:<sha256> token from a prior dry run.",
+    )
+    mode.add_argument(
+        "--observe",
+        action="store_true",
+        help=(
+            "Append one fresh read-only broker reconciliation for an already "
+            "published exact run pair; never publishes a new pair implicitly."
+        ),
+    )
+    parser.add_argument(
+        "--max-source-age-seconds",
+        type=int,
+        default=DEFAULT_SOURCE_MAX_AGE_SECONDS,
+        help="Maximum closed-source age accepted by the reconciliation result.",
     )
     return parser.parse_args(argv)
 
@@ -41,12 +61,15 @@ def main(argv: list[str] | None = None) -> int:
     client = TorghutAlpacaClient()
     if client.endpoint_class != "paper":
         raise RuntimeError("economic_ledger_replay_requires_paper_endpoint")
+    if args.observe and (BUILD_COMMIT == "unknown" or BUILD_IMAGE_DIGEST is None):
+        raise RuntimeError("economic_ledger_observation_build_identity_missing")
     scope = LedgerScope(
         provider="alpaca",
         environment=client.endpoint_class,
         account_label=str(args.account_label),
         endpoint_fingerprint=fingerprint_broker_endpoint(client.endpoint_url),
     )
+    snapshot = capture_broker_economic_snapshot(client) if args.observe else None
     with SessionLocal() as session, session.begin():
         replay = replay_broker_economic_ledger(session, scope=scope)
         published = (
@@ -58,7 +81,32 @@ def main(argv: list[str] | None = None) -> int:
             if args.publish_token is not None
             else None
         )
-        payload = replay.to_payload(published=published)
+        observation = (
+            persist_broker_economic_ledger_reconciliation(
+                session,
+                replay,
+                snapshot,
+                build=BrokerEconomicReconciliationBuild(
+                    source_commit=BUILD_COMMIT,
+                    image_digest=BUILD_IMAGE_DIGEST or "",
+                ),
+                max_source_age_seconds=args.max_source_age_seconds,
+            )
+            if snapshot is not None
+            else None
+        )
+        payload = replay.to_payload(
+            published=published
+            or (observation.runs if observation is not None else None)
+        )
+        payload["reconciliation"] = (
+            {
+                "observation_id": str(observation.observation_id),
+                **observation.result.payload,
+            }
+            if observation is not None
+            else None
+        )
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
     return 0
 

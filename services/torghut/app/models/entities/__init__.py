@@ -7,6 +7,7 @@ from .broker_economic_records import (
 from .broker_economic_ledger_records import (
     BrokerEconomicLedgerEntry,
     BrokerEconomicLedgerInput,
+    BrokerEconomicLedgerReconciliation,
     BrokerEconomicLedgerRun,
 )
 from .broker_mutation_records import (
@@ -110,6 +111,7 @@ __all__ = [
     "BrokerAccountActivityCursor",
     "BrokerEconomicLedgerEntry",
     "BrokerEconomicLedgerInput",
+    "BrokerEconomicLedgerReconciliation",
     "BrokerEconomicLedgerRun",
     "BrokerMutationReceipt",
     "BrokerMutationReceiptEvent",

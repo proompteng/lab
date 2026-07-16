@@ -18,10 +18,12 @@ from app.config import settings
 from app.db import SessionLocal
 from app.trading.action_authority import reduce_runtime_action_authority
 from app.trading.broker_account_activities import load_broker_account_activity_status
+from app.trading.broker_mutation_receipts import fingerprint_broker_endpoint
 from app.trading.broker_mutation_receipts.runtime_status import (
     load_broker_mutation_runtime_status,
     unavailable_broker_mutation_runtime_status,
 )
+from app.trading.economic_ledger import LedgerScope, load_broker_economic_ledger_status
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.scheduler import TradingScheduler
 from app.trading.scheduler.runtime_health import scheduler_readiness_payload
@@ -65,16 +67,24 @@ def _read_with_session(
         return unavailable
 
 
-def _configured_broker_environment() -> str:
+def _configured_broker_endpoint() -> str:
     endpoint = str(settings.apca_api_base_url or "").strip().rstrip("/")
     if endpoint.endswith("/v2"):
         endpoint = endpoint[:-3]
     if endpoint:
-        try:
-            return classify_alpaca_trading_endpoint(endpoint)
-        except ValueError:
-            return "unknown"
-    return "live" if settings.trading_mode == "live" else "paper"
+        return endpoint
+    return (
+        "https://api.alpaca.markets"
+        if settings.trading_mode == "live"
+        else "https://paper-api.alpaca.markets"
+    )
+
+
+def _configured_broker_environment() -> str:
+    try:
+        return classify_alpaca_trading_endpoint(_configured_broker_endpoint())
+    except ValueError:
+        return "unknown"
 
 
 def _capital_controls(state: object) -> dict[str, object]:
@@ -200,6 +210,29 @@ def trading_status() -> dict[str, object] | Response:
             "reason_codes": ["broker_account_activity_status_unavailable"],
         },
     )
+    broker_economic_ledger = _read_with_session(
+        lambda session: load_broker_economic_ledger_status(
+            session,
+            scope=LedgerScope(
+                provider="alpaca",
+                environment=_configured_broker_environment(),
+                account_label=settings.trading_account_label,
+                endpoint_fingerprint=fingerprint_broker_endpoint(
+                    _configured_broker_endpoint()
+                ),
+            ),
+            observed_at=datetime.now(timezone.utc),
+        ),
+        unavailable={
+            "schema_version": "torghut.broker-economic-ledger-status.v1",
+            "state": "unavailable",
+            "current": False,
+            "reconciled": False,
+            "diagnostic_only": True,
+            "capital_authority": False,
+            "reason_codes": ["economic_reconciliation_status_unavailable"],
+        },
+    )
     tca = _read_with_session(
         lambda session: load_tca_summary(session, scheduler=scheduler),
         unavailable={"status": "unavailable", "reason_codes": ["tca_unavailable"]},
@@ -231,6 +264,7 @@ def trading_status() -> dict[str, object] | Response:
         "action_authority": action_authority.to_payload(),
         "broker_mutation_safety": broker_mutation,
         "broker_economic_activities": broker_economic_activities,
+        "broker_economic_ledger": broker_economic_ledger,
         "capital_controls": _capital_controls(state),
         "execution": build_execution_status_payload(
             state=state,
