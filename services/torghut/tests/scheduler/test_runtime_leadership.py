@@ -377,5 +377,74 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         await scheduler.stop()
         self.assertEqual(leadership.release_calls, 1)
 
+    async def test_read_only_activity_backfill_does_not_block_trading_or_shutdown(
+        self,
+    ) -> None:
+        leadership = _FakeLeadership()
+        fatal_exit = Mock()
+        scheduler = _BlockingBrokerScheduler(
+            leadership=leadership,
+            fatal_exit=fatal_exit,
+        )
+        activity_started = threading.Event()
+        allow_activity_to_finish = threading.Event()
+        second_trading_iteration = threading.Event()
+        trading_calls = 0
+
+        def run_once() -> None:
+            nonlocal trading_calls
+            trading_calls += 1
+            if trading_calls >= 2:
+                second_trading_iteration.set()
+
+        def ingest_broker_account_activities() -> None:
+            activity_started.set()
+            allow_activity_to_finish.wait(timeout=2.0)
+
+        pipeline = SimpleNamespace(
+            account_label="paper",
+            order_feed_ingestor=SimpleNamespace(close=Mock()),
+            run_once=run_once,
+            ingest_broker_account_activities=ingest_broker_account_activities,
+        )
+        scheduler._pipelines = [pipeline]
+        scheduler._pipeline = pipeline
+        scheduler._broker_mutation_recovery_worker = cast(
+            BrokerMutationRecoveryWorker,
+            _NoopRecoveryWorker(),
+        )
+
+        try:
+            with (
+                patch.object(settings, "trading_poll_ms", 1),
+                patch.object(settings, "trading_reconcile_ms", 60_000),
+                patch.object(
+                    settings,
+                    "trading_scheduler_shutdown_drain_seconds",
+                    0.1,
+                ),
+                patch.object(
+                    settings,
+                    "trading_scheduler_leadership_check_seconds",
+                    0.01,
+                ),
+            ):
+                await scheduler.start()
+                self.assertTrue(
+                    await asyncio.to_thread(activity_started.wait, 1.0),
+                    "account-activity backfill did not start",
+                )
+                self.assertTrue(
+                    await asyncio.to_thread(second_trading_iteration.wait, 1.0),
+                    "trading stalled behind account-activity backfill",
+                )
+                await scheduler.stop()
+        finally:
+            allow_activity_to_finish.set()
+
+        fatal_exit.assert_not_called()
+        self.assertEqual(leadership.release_calls, 1)
+        self.assertFalse(scheduler.state.running)
+
 
 __all__ = ["TradingSchedulerLeadershipTests"]

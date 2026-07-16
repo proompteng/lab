@@ -747,7 +747,13 @@ class TradingScheduler(
                     pass
         finally:
             if broker_activity_task is not None:
-                await broker_activity_task
+                # Account-activity recovery is read-only broker I/O with its own
+                # cursor CAS. It must not hold the writer fence during shutdown.
+                broker_activity_task.cancel()
+                try:
+                    await broker_activity_task
+                except asyncio.CancelledError:
+                    pass
             self.state.running = False
             logger.info("Trading scheduler loop exited")
 
