@@ -349,6 +349,48 @@ class TestOrderFeedCore(OrderFeedTestCase):
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].status, "ok")
 
+    def test_order_feed_event_survives_optional_reconciliation_rollback(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.25"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+        client = FakeTigerBeetleClient()
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: FakeConsumer([record]),
+                default_account_label="paper",
+            )
+
+            def fail_reconciliation(reconciliation_session: Session) -> None:
+                # Model a failed PostgreSQL transaction from the optional audit.
+                # The already-committed broker event must not be rolled back with it.
+                reconciliation_session.rollback()
+                raise RuntimeError("reconcile failed")
+
+            with (
+                patch(
+                    "app.trading.tigerbeetle_journal.ledger_journal.create_tigerbeetle_client",
+                    return_value=client,
+                ),
+                patch(
+                    "app.trading.order_feed.shared_context.reconcile_tigerbeetle_transfers",
+                    side_effect=fail_reconciliation,
+                ),
+                self.assertLogs(logger, level="WARNING"),
+            ):
+                counters = ingestor.ingest_once(session)
+
+            self.assertEqual(counters["events_persisted_total"], 1)
+            event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+            self.assertEqual(event.alpaca_order_id, "order-1")
+            self.assertTrue(session.is_active)
+
     def test_order_feed_reconciliation_failure_respects_required_flag(self) -> None:
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_journal_enabled = True
@@ -358,19 +400,24 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 consumer_factory=lambda: FakeConsumer([]),
                 default_account_label="paper",
             )
-            with patch(
-                (
-                    "app.trading.order_feed.shared_context"
-                    ".reconcile_tigerbeetle_transfers"
+            with (
+                patch(
+                    (
+                        "app.trading.order_feed.shared_context"
+                        ".reconcile_tigerbeetle_transfers"
+                    ),
+                    side_effect=RuntimeError("reconcile failed"),
                 ),
-                side_effect=RuntimeError("reconcile failed"),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
             ):
                 with self.assertLogs(logger, level="WARNING"):
                     ingestor._reconcile_tigerbeetle_if_enabled(session)
+                self.assertEqual(rollback.call_count, 1)
 
                 settings.tigerbeetle_reconcile_required = True
                 with self.assertRaisesRegex(RuntimeError, "reconcile failed"):
                     ingestor._reconcile_tigerbeetle_if_enabled(session)
+                self.assertEqual(rollback.call_count, 2)
 
     def test_optional_tigerbeetle_journal_failure_does_not_drop_order_event(
         self,

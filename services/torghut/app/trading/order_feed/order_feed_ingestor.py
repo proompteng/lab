@@ -99,8 +99,11 @@ class OrderFeedIngestor:
                 break
 
         if durable_any:
-            self._reconcile_tigerbeetle_if_enabled(session)
+            # The broker event is the primary fact. Make it visible before the
+            # optional cross-store audit performs network I/O; otherwise a slow
+            # TigerBeetle lookup can hide a fill from risk and lifecycle readers.
             session.commit()
+            self._reconcile_tigerbeetle_if_enabled(session)
         if durable_any and commit_allowed:
             if _consumer_commit_enabled():
                 if _commit_consumer(consumer):
@@ -118,7 +121,12 @@ class OrderFeedIngestor:
             return
         try:
             _shared_context.reconcile_tigerbeetle_transfers(session)
+            session.commit()
         except Exception as exc:
+            # SQLAlchemy requires an explicit rollback after a database error.
+            # Leaving the scheduler session failed poisons the rest of the
+            # current cycle even when reconciliation is configured as optional.
+            session.rollback()
             if settings.tigerbeetle_reconcile_required:
                 raise
             logger.warning(
