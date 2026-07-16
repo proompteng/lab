@@ -172,8 +172,10 @@ def test_normalization_preserves_nontrade_economic_fields_and_hash() -> None:
 
 def test_stream_and_backfill_fill_share_one_normalized_economic_hash() -> None:
     observed_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    rest_payload = _fill("activity-fill")
+    rest_payload["transaction_time"] = "2026-07-16T11:50:40.401907Z"
     rest = normalize_broker_account_activity(
-        _fill("activity-fill"),
+        rest_payload,
         observation=_observation(observed_at),
         source_page_token=None,
     )
@@ -194,7 +196,7 @@ def test_stream_and_backfill_fill_share_one_normalized_economic_hash() -> None:
                 },
                 "price": "100.25",
                 "qty": "1",
-                "timestamp": "2026-07-15T18:07:02.759000027Z",
+                "timestamp": "2026-07-16T11:50:40.401906528Z",
             },
         },
         event_fingerprint="b" * 64,
@@ -206,6 +208,20 @@ def test_stream_and_backfill_fill_share_one_normalized_economic_hash() -> None:
         ),
     )
 
+    assert (
+        rest.event_at
+        == stream.event_at
+        == datetime(
+            2026,
+            7,
+            16,
+            11,
+            50,
+            40,
+            401907,
+            tzinfo=timezone.utc,
+        )
+    )
     assert rest.normalized_economic_sha256 == stream.normalized_economic_sha256
     assert rest.raw_payload_sha256 != stream.raw_payload_sha256
     assert stream.raw_payload.get("ingestTs") is None

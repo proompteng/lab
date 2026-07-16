@@ -7,7 +7,7 @@ import json
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
@@ -136,7 +136,24 @@ def _optional_datetime(payload: Mapping[str, object], key: str) -> datetime | No
         raise BrokerAccountActivityPayloadError(
             f"broker_account_activity_{key}_timezone_required"
         )
-    return parsed.astimezone(timezone.utc)
+    return _round_to_broker_microseconds(value, parsed).astimezone(timezone.utc)
+
+
+def _round_to_broker_microseconds(value: str, parsed: datetime) -> datetime:
+    """Match Alpaca REST's half-up conversion of stream nanoseconds."""
+
+    fraction_start = value.find(".", 10)
+    if fraction_start < 0:
+        return parsed
+    fraction_end = len(value)
+    for separator in ("Z", "+", "-"):
+        separator_at = value.find(separator, fraction_start + 1)
+        if separator_at >= 0:
+            fraction_end = min(fraction_end, separator_at)
+    fraction = value[fraction_start + 1 : fraction_end]
+    if len(fraction) > 6 and fraction[6] >= "5":
+        return parsed + timedelta(microseconds=1)
+    return parsed
 
 
 def _canonical_payload(payload: Mapping[str, object]) -> tuple[str, str]:
