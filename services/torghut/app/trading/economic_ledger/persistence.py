@@ -7,10 +7,12 @@ import hmac
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Iterable
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Iterable, TypeAlias
 
 from sqlalchemy import and_, func, insert, or_, select, text
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from ...models import (
@@ -44,9 +46,41 @@ _PUBLICATION_TOKEN_SCHEMA_VERSION = "torghut.broker-economic-ledger-publication.
 _ENTRY_INSERT_BATCH_SIZE = 2_000
 
 
+BrokerEconomicLedgerSourceRecord: TypeAlias = tuple[
+    str,
+    str,
+    dict[str, object],
+    str,
+    str,
+    str,
+    str | None,
+    str | None,
+    datetime | None,
+    date | None,
+    datetime,
+    str | None,
+    str | None,
+    Decimal | None,
+    Decimal | None,
+    Decimal | None,
+    str | None,
+]
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerEconomicLedgerSourceRows:
+    """Database values copied while the closed-source cursor is share-locked."""
+
+    cursor_id: uuid.UUID
+    source_watermark: datetime
+    scope: LedgerScope
+    activities_inserted: int
+    rows: tuple[Row[BrokerEconomicLedgerSourceRecord], ...]
+
+
 @dataclass(frozen=True, slots=True)
 class BrokerEconomicLedgerSnapshot:
-    """One complete immutable REST source set held behind its cursor lock."""
+    """One complete immutable REST source set prepared after lock release."""
 
     cursor_id: uuid.UUID
     source_watermark: datetime
@@ -139,17 +173,6 @@ class BrokerEconomicLedgerReplay:
         }
 
 
-def replay_broker_economic_ledger(
-    session: Session,
-    *,
-    scope: LedgerScope,
-) -> BrokerEconomicLedgerReplay:
-    """Load one closed REST source set and run both pure reducers exactly once."""
-
-    snapshot = load_broker_economic_ledger_snapshot(session, scope=scope)
-    return replay_broker_economic_ledger_snapshot(snapshot)
-
-
 def replay_broker_economic_ledger_snapshot(
     snapshot: BrokerEconomicLedgerSnapshot,
 ) -> BrokerEconomicLedgerReplay:
@@ -164,20 +187,38 @@ def replay_broker_economic_ledger_snapshot(
     )
 
 
-def load_broker_economic_ledger_snapshot(
+def load_broker_economic_ledger_source_rows(
     session: Session,
     *,
     scope: LedgerScope,
-) -> BrokerEconomicLedgerSnapshot:
-    """Share-lock the mutable cursor; immutable source rows remain unlocked."""
+) -> BrokerEconomicLedgerSourceRows:
+    """Read only database values while share-locking the mutable source cursor."""
 
     cursor = _load_locked_source_cursor(session, scope)
     _require_complete_cursor(cursor)
     assert cursor is not None
     assert cursor.last_completed_scan_until is not None
     rows = tuple(
-        session.scalars(
-            select(BrokerAccountActivity)
+        session.execute(
+            select(
+                BrokerAccountActivity.source,
+                BrokerAccountActivity.external_activity_id,
+                BrokerAccountActivity.raw_payload,
+                BrokerAccountActivity.raw_payload_canonical_json,
+                BrokerAccountActivity.raw_payload_sha256,
+                BrokerAccountActivity.activity_type,
+                BrokerAccountActivity.activity_subtype,
+                BrokerAccountActivity.correction_of_external_id,
+                BrokerAccountActivity.event_at,
+                BrokerAccountActivity.settle_date,
+                BrokerAccountActivity.first_observed_at,
+                BrokerAccountActivity.symbol,
+                BrokerAccountActivity.side,
+                BrokerAccountActivity.quantity,
+                BrokerAccountActivity.price,
+                BrokerAccountActivity.net_amount,
+                BrokerAccountActivity.currency,
+            )
             .where(
                 BrokerAccountActivity.provider == scope.provider,
                 BrokerAccountActivity.source == ACCOUNT_ACTIVITIES_REST_SOURCE,
@@ -187,11 +228,27 @@ def load_broker_economic_ledger_snapshot(
                 == scope.endpoint_fingerprint,
             )
             .order_by(BrokerAccountActivity.external_activity_id)
-        )
+        ).tuples()
     )
-    if len(rows) != cursor.activities_inserted:
+    return BrokerEconomicLedgerSourceRows(
+        cursor_id=cursor.id,
+        source_watermark=as_utc(cursor.last_completed_scan_until),
+        scope=scope,
+        activities_inserted=cursor.activities_inserted,
+        rows=rows,
+    )
+
+
+def prepare_broker_economic_ledger_snapshot(
+    source_rows: BrokerEconomicLedgerSourceRows,
+) -> BrokerEconomicLedgerSnapshot:
+    """Validate and canonicalize detached source values without a transaction."""
+
+    if len(source_rows.rows) != source_rows.activities_inserted:
         raise EconomicLedgerError("economic_ledger_source_count_mismatch")
-    activities = tuple(_adapt_source_activity(row, scope=scope) for row in rows)
+    activities = tuple(
+        _adapt_source_activity(row, scope=source_rows.scope) for row in source_rows.rows
+    )
     prepared = prepare_activities(activities)
     manifest = tuple(
         activity.manifest_payload()
@@ -201,8 +258,8 @@ def load_broker_economic_ledger_snapshot(
     if _sha256(manifest_canonical_json) != prepared.manifest_digest:
         raise EconomicLedgerError("economic_ledger_manifest_digest_mismatch")
     return BrokerEconomicLedgerSnapshot(
-        cursor_id=cursor.id,
-        source_watermark=as_utc(cursor.last_completed_scan_until),
+        cursor_id=source_rows.cursor_id,
+        source_watermark=source_rows.source_watermark,
         prepared=prepared,
         activities=activities,
         input_manifest_canonical_json=manifest_canonical_json,
@@ -415,38 +472,57 @@ def _input_values(
 
 
 def _adapt_source_activity(
-    row: BrokerAccountActivity,
+    row: Row[BrokerEconomicLedgerSourceRecord],
     *,
     scope: LedgerScope,
 ) -> EconomicActivity:
-    if row.source != ACCOUNT_ACTIVITIES_REST_SOURCE:
+    (
+        source,
+        external_activity_id,
+        raw_payload,
+        raw_payload_canonical_json,
+        raw_payload_sha256,
+        activity_type,
+        activity_subtype,
+        correction_of_external_id,
+        event_at,
+        settle_date,
+        first_observed_at,
+        symbol,
+        side,
+        quantity,
+        price,
+        net_amount,
+        currency,
+    ) = row
+    if source != ACCOUNT_ACTIVITIES_REST_SOURCE:
         raise EconomicLedgerError("economic_ledger_source_not_rest")
     try:
-        canonical_payload = json.loads(row.raw_payload_canonical_json)
+        canonical_payload = json.loads(raw_payload_canonical_json)
     except json.JSONDecodeError as exc:
         raise EconomicLedgerError("economic_ledger_source_json_invalid") from exc
     if (
         not isinstance(canonical_payload, dict)
-        or canonical_payload != row.raw_payload
-        or _sha256(row.raw_payload_canonical_json) != row.raw_payload_sha256
+        or canonical_payload != raw_payload
+        or _sha256(raw_payload_canonical_json) != raw_payload_sha256
     ):
         raise EconomicLedgerError("economic_ledger_source_hash_mismatch")
     return EconomicActivity(
         scope=scope,
-        external_activity_id=row.external_activity_id,
-        raw_payload_sha256=row.raw_payload_sha256,
-        activity_type=row.activity_type,
-        activity_subtype=row.activity_subtype,
-        correction_of_external_id=row.correction_of_external_id,
-        event_at=as_utc(row.event_at) if row.event_at is not None else None,
-        settle_date=row.settle_date,
-        first_observed_at=as_utc(row.first_observed_at),
-        symbol=row.symbol,
-        side=row.side,
-        quantity=row.quantity,
-        price=row.price,
-        net_amount=row.net_amount,
-        currency=row.currency,
+        external_activity_id=external_activity_id,
+        raw_payload_sha256=raw_payload_sha256,
+        activity_type=activity_type,
+        activity_subtype=activity_subtype,
+        correction_of_external_id=correction_of_external_id,
+        event_at=as_utc(event_at) if event_at is not None else None,
+        settle_date=settle_date,
+        first_observed_at=as_utc(first_observed_at),
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        price=price,
+        net_amount=net_amount,
+        currency=currency,
     )
 
 
@@ -754,9 +830,11 @@ def _sha256(value: str) -> str:
 __all__ = (
     "BrokerEconomicLedgerReplay",
     "BrokerEconomicLedgerSnapshot",
+    "BrokerEconomicLedgerSourceRows",
     "PublishedBrokerEconomicLedgerRuns",
-    "load_broker_economic_ledger_snapshot",
+    "load_broker_economic_ledger_source_rows",
+    "prepare_broker_economic_ledger_snapshot",
     "publish_broker_economic_ledger",
     "require_published_broker_economic_ledger_runs",
-    "replay_broker_economic_ledger",
+    "replay_broker_economic_ledger_snapshot",
 )

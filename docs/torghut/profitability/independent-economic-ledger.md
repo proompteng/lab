@@ -237,13 +237,14 @@ The deterministic replay CLI is read-only until publication:
 
 1. share-lock the one mutable REST cursor while leaving immutable source rows unlocked; because backfill appends facts and
    advances that cursor in one transaction, the lock freezes one closed source set without locking its history;
-2. require the completed REST cursor and build the ordered manifest;
-3. close the read transaction, then run both pure reducers in memory so production-size replay cannot hold an idle
-   database transaction or block cursor progress;
-4. validate accounting identities and exact differential equality;
-5. optionally fetch a read-only broker snapshot and calculate broker deltas;
-6. print the complete report in dry-run mode;
-7. publish only with an explicit confirmation token, in one database transaction, after the cursor is re-locked and the
+2. require the completed REST cursor and fetch only the source columns needed by the reducers; do not adapt rows, parse
+   canonical JSON, sort activities, build the manifest, hash payloads, or reduce while the transaction is open;
+3. close the read transaction immediately after the detached database values and cursor metadata have been copied;
+4. validate source hashes, adapt and sort activities, and build the ordered manifest in memory;
+5. run both pure reducers and validate accounting identities and exact differential equality in memory;
+6. optionally fetch a read-only broker snapshot and calculate broker deltas;
+7. print the complete report in dry-run mode;
+8. publish only with an explicit confirmation token, in one database transaction, after the cursor is re-locked and the
    immutable source set is still exact. A later closed scan watermark is valid only when the cursor identity and source
    row count are unchanged; regression or any appended row rejects publication.
 

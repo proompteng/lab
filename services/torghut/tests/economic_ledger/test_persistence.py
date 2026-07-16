@@ -22,14 +22,17 @@ from app.models import (
     BrokerEconomicLedgerRun,
 )
 from app.trading.economic_ledger import (
+    BrokerEconomicLedgerReplay,
     BrokerEconomicReconciliationBuild,
     EconomicLedgerError,
     LedgerScope,
+    load_broker_economic_ledger_source_rows,
     load_broker_economic_ledger_status,
     normalize_broker_economic_snapshot,
     persist_broker_economic_ledger_reconciliation,
+    prepare_broker_economic_ledger_snapshot,
     publish_broker_economic_ledger,
-    replay_broker_economic_ledger,
+    replay_broker_economic_ledger_snapshot,
 )
 
 
@@ -170,12 +173,18 @@ def _supported_history() -> list[BrokerAccountActivity]:
     ]
 
 
+def _replay(session: Session) -> BrokerEconomicLedgerReplay:
+    source_rows = load_broker_economic_ledger_source_rows(session, scope=_SCOPE)
+    snapshot = prepare_broker_economic_ledger_snapshot(source_rows)
+    return replay_broker_economic_ledger_snapshot(snapshot)
+
+
 def test_replay_publishes_one_atomic_idempotent_run_pair() -> None:
     sessions = _session_factory()
     _seed_source(sessions, _supported_history())
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
         assert replay.reduction.admissible
         assert replay.reduction.comparison.equivalent
         assert replay.publication_token.startswith("publish:")
@@ -202,7 +211,7 @@ def test_replay_publishes_one_atomic_idempotent_run_pair() -> None:
         assert published.reused_existing is False
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
         repeated = publish_broker_economic_ledger(
             session,
             replay,
@@ -220,7 +229,7 @@ def test_replay_publishes_one_atomic_idempotent_run_pair() -> None:
         cursor.last_completed_at += timedelta(minutes=1)
         cursor.last_completed_scan_until += timedelta(minutes=1)
     with sessions.begin() as session:
-        advanced = replay_broker_economic_ledger(session, scope=_SCOPE)
+        advanced = _replay(session)
         assert advanced.publication_token == replay.publication_token
         advanced_publication = publish_broker_economic_ledger(
             session,
@@ -254,7 +263,7 @@ def test_publication_rejects_forged_replay_token() -> None:
     _seed_source(sessions, _supported_history())
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
         forged = replace(replay, publication_token=f"publish:{'0' * 64}")
         with pytest.raises(
             EconomicLedgerError,
@@ -272,7 +281,7 @@ def test_publication_accepts_later_cursor_watermark_for_unchanged_source() -> No
     _seed_source(sessions, _supported_history())
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
     with sessions.begin() as session:
         cursor = session.scalar(select(BrokerAccountActivityCursor))
         assert cursor is not None and cursor.last_completed_scan_until is not None
@@ -292,7 +301,7 @@ def test_publication_rejects_cursor_watermark_regression() -> None:
     _seed_source(sessions, _supported_history())
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
     with sessions.begin() as session:
         cursor = session.scalar(select(BrokerAccountActivityCursor))
         assert cursor is not None and cursor.last_completed_scan_until is not None
@@ -314,7 +323,7 @@ def test_publication_rejects_source_append_without_cursor_advance() -> None:
     _seed_source(sessions, _supported_history())
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
     with sessions.begin() as session:
         session.add(_activity("untracked", "FEE", offset=4, net_amount="-0.1"))
     with sessions.begin() as session:
@@ -338,7 +347,7 @@ def test_replay_rejects_incomplete_cursor_before_reading_source() -> None:
             EconomicLedgerError,
             match="economic_ledger_source_cursor_incomplete",
         ):
-            replay_broker_economic_ledger(session, scope=_SCOPE)
+            _replay(session)
 
 
 def test_replay_rejects_source_hash_mismatch() -> None:
@@ -352,7 +361,7 @@ def test_replay_rejects_source_hash_mismatch() -> None:
             EconomicLedgerError,
             match="economic_ledger_source_hash_mismatch",
         ):
-            replay_broker_economic_ledger(session, scope=_SCOPE)
+            _replay(session)
 
 
 def test_unsupported_dry_run_cannot_publish_partial_projection() -> None:
@@ -360,7 +369,7 @@ def test_unsupported_dry_run_cannot_publish_partial_projection() -> None:
     _seed_source(sessions, [_activity("merger", "MA", offset=0)])
 
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
         assert replay.reduction.admissible is False
         with pytest.raises(
             EconomicLedgerError,
@@ -389,7 +398,7 @@ def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks()
     sessions = _session_factory()
     _seed_source(sessions, _supported_history())
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
         published = publish_broker_economic_ledger(
             session,
             replay,
@@ -425,7 +434,7 @@ def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks()
         observed_at=_OBSERVED_AT + timedelta(minutes=11),
     )
     with sessions.begin() as session:
-        advanced = replay_broker_economic_ledger(session, scope=_SCOPE)
+        advanced = _replay(session)
         second = persist_broker_economic_ledger_reconciliation(
             session,
             advanced,
@@ -497,7 +506,7 @@ def test_reconciliation_refuses_unpublished_changed_manifest() -> None:
     activities = _supported_history()
     _seed_source(sessions, activities)
     with sessions.begin() as session:
-        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+        replay = _replay(session)
         publish_broker_economic_ledger(
             session,
             replay,
@@ -520,7 +529,7 @@ def test_reconciliation_refuses_unpublished_changed_manifest() -> None:
         observed_at=_OBSERVED_AT + timedelta(minutes=4),
     )
     with sessions.begin() as session:
-        changed = replay_broker_economic_ledger(session, scope=_SCOPE)
+        changed = _replay(session)
         with pytest.raises(
             EconomicLedgerError,
             match="economic_ledger_published_input_missing",

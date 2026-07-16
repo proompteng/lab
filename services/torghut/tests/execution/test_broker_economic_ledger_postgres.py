@@ -27,12 +27,15 @@ from app.trading.broker_account_activities import (
     normalize_broker_account_activity,
 )
 from app.trading.economic_ledger import (
+    BrokerEconomicLedgerReplay,
     BrokerEconomicReconciliationBuild,
     LedgerScope,
+    load_broker_economic_ledger_source_rows,
     normalize_broker_economic_snapshot,
     persist_broker_economic_ledger_reconciliation,
+    prepare_broker_economic_ledger_snapshot,
     publish_broker_economic_ledger,
-    replay_broker_economic_ledger,
+    replay_broker_economic_ledger_snapshot,
 )
 from tests.execution.decision_submission_claims_postgres_support import (
     POSTGRES_DSN,
@@ -44,6 +47,17 @@ from tests.execution.decision_submission_claims_postgres_support import (
 from tests.execution.infrastructure_validation_postgres_support import (
     upgrade_reduction_schema,
 )
+
+
+def _load_replay(
+    sessions: sessionmaker[Session],
+    *,
+    scope: LedgerScope,
+) -> BrokerEconomicLedgerReplay:
+    with sessions.begin() as session:
+        source_rows = load_broker_economic_ledger_source_rows(session, scope=scope)
+    snapshot = prepare_broker_economic_ledger_snapshot(source_rows)
+    return replay_broker_economic_ledger_snapshot(snapshot)
 
 
 @pytest.mark.skipif(
@@ -77,9 +91,9 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
         barrier = threading.Barrier(2)
 
         def publish_once():
+            replay = _load_replay(sessions, scope=scope)
+            barrier.wait(timeout=10)
             with sessions() as session, session.begin():
-                replay = replay_broker_economic_ledger(session, scope=scope)
-                barrier.wait(timeout=10)
                 return publish_broker_economic_ledger(
                     session,
                     replay,
@@ -119,8 +133,8 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
             open_orders=[],
             observed_at=datetime(2026, 7, 16, 13, 2, tzinfo=timezone.utc),
         )
+        replay = _load_replay(sessions, scope=scope)
         with sessions.begin() as session:
-            replay = replay_broker_economic_ledger(session, scope=scope)
             observation = persist_broker_economic_ledger_reconciliation(
                 session,
                 replay,
@@ -152,8 +166,8 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
             open_orders=[],
             observed_at=datetime(2026, 7, 16, 13, 3, tzinfo=timezone.utc),
         )
+        advanced_replay = _load_replay(sessions, scope=scope)
         with sessions.begin() as session:
-            advanced_replay = replay_broker_economic_ledger(session, scope=scope)
             later_observation = persist_broker_economic_ledger_reconciliation(
                 session,
                 advanced_replay,

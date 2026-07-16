@@ -16,8 +16,9 @@ from app.trading.economic_ledger import (
     BrokerEconomicReconciliationBuild,
     LedgerScope,
     capture_broker_economic_snapshot,
-    load_broker_economic_ledger_snapshot,
+    load_broker_economic_ledger_source_rows,
     persist_broker_economic_ledger_reconciliation,
+    prepare_broker_economic_ledger_snapshot,
     publish_broker_economic_ledger,
     replay_broker_economic_ledger_snapshot,
 )
@@ -72,7 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     snapshot = capture_broker_economic_snapshot(client) if args.observe else None
     with SessionLocal() as session, session.begin():
-        ledger_snapshot = load_broker_economic_ledger_snapshot(session, scope=scope)
+        source_rows = load_broker_economic_ledger_source_rows(session, scope=scope)
+    ledger_snapshot = prepare_broker_economic_ledger_snapshot(source_rows)
     replay = replay_broker_economic_ledger_snapshot(ledger_snapshot)
     published = None
     observation = None

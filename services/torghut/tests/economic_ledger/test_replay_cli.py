@@ -25,7 +25,7 @@ def test_default_mode_is_read_only_replay() -> None:
     assert args.publish_token is None
 
 
-def test_dry_run_closes_database_transaction_before_pure_reduction(
+def test_dry_run_closes_database_transaction_before_preparation_and_reduction(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -57,12 +57,19 @@ def test_dry_run_closes_database_transaction_before_pure_reduction(
             return Transaction(self)
 
     session = Session()
+    source_rows = object()
     ledger_snapshot = object()
 
-    def load_snapshot(loaded_session: Session, **_kwargs: object) -> object:
+    def load_source_rows(loaded_session: Session, **_kwargs: object) -> object:
         assert loaded_session is session
         assert loaded_session.transaction_active is True
-        events.append("load_snapshot")
+        events.append("load_source_rows")
+        return source_rows
+
+    def prepare_snapshot(loaded_source_rows: object) -> object:
+        assert loaded_source_rows is source_rows
+        assert session.transaction_active is False
+        events.append("prepare_snapshot")
         return ledger_snapshot
 
     def reduce_snapshot(loaded_snapshot: object) -> SimpleNamespace:
@@ -83,7 +90,10 @@ def test_dry_run_closes_database_transaction_before_pure_reduction(
     )
     monkeypatch.setattr(replay_cli, "SessionLocal", lambda: session)
     monkeypatch.setattr(
-        replay_cli, "load_broker_economic_ledger_snapshot", load_snapshot
+        replay_cli, "load_broker_economic_ledger_source_rows", load_source_rows
+    )
+    monkeypatch.setattr(
+        replay_cli, "prepare_broker_economic_ledger_snapshot", prepare_snapshot
     )
     monkeypatch.setattr(
         replay_cli, "replay_broker_economic_ledger_snapshot", reduce_snapshot
@@ -93,9 +103,10 @@ def test_dry_run_closes_database_transaction_before_pure_reduction(
     assert events == [
         "session_enter",
         "transaction_enter",
-        "load_snapshot",
+        "load_source_rows",
         "transaction_exit",
         "session_exit",
+        "prepare_snapshot",
         "reduce_snapshot",
     ]
     assert '"schema_version":"test-replay"' in capsys.readouterr().out
