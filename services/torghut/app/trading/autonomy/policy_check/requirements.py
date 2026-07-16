@@ -189,8 +189,9 @@ def _benchmark_parity_required_artifact_refs(
     if benchmark_artifacts:
         return benchmark_artifacts
 
-    legacy_artifact = str(
-        policy_payload.get("promotion_benchmark_parity_artifact", "").strip()
+    legacy_artifact_raw = policy_payload.get("promotion_benchmark_parity_artifact", "")
+    legacy_artifact = (
+        legacy_artifact_raw.strip() if isinstance(legacy_artifact_raw, str) else ""
     )
     if legacy_artifact:
         return [legacy_artifact]

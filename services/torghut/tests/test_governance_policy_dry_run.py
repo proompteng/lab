@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
 
+from app.trading.autonomy.policy_check.requirements import (
+    _benchmark_parity_required_artifact_refs,
+)
 from scripts import run_governance_policy_dry_run as script
 
 
@@ -120,6 +123,156 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
 
 
 class TestGovernancePolicyDryRun(TestCase):
+    def test_benchmark_artifact_ref_prefers_configured_list(self) -> None:
+        self.assertEqual(
+            script._benchmark_artifact_ref(
+                {
+                    "promotion_benchmark_required_artifacts": [
+                        None,
+                        "  benchmarks/custom.json  ",
+                    ],
+                    "promotion_benchmark_parity_artifact": "legacy.json",
+                }
+            ),
+            "benchmarks/custom.json",
+        )
+
+    def test_benchmark_artifact_refs_preserve_all_configured_paths(self) -> None:
+        self.assertEqual(
+            script._benchmark_artifact_refs(
+                {
+                    "promotion_benchmark_required_artifacts": [
+                        " benchmarks/first.json ",
+                        None,
+                        "benchmarks/second.json",
+                        "benchmarks/first.json",
+                    ]
+                }
+            ),
+            ["benchmarks/first.json", "benchmarks/second.json"],
+        )
+
+    def test_benchmark_artifact_ref_uses_legacy_string(self) -> None:
+        self.assertEqual(
+            script._benchmark_artifact_ref(
+                {
+                    "promotion_benchmark_required_artifacts": [],
+                    "promotion_benchmark_parity_artifact": " legacy.json ",
+                }
+            ),
+            "legacy.json",
+        )
+
+    def test_benchmark_artifact_ref_falls_back_for_non_string_legacy(self) -> None:
+        self.assertEqual(
+            script._benchmark_artifact_ref(
+                {
+                    "promotion_benchmark_required_artifacts": [],
+                    "promotion_benchmark_parity_artifact": None,
+                }
+            ),
+            "gates/benchmark-parity-report-v1.json",
+        )
+
+    def test_benchmark_artifact_writer_builds_hash_valid_evidence(self) -> None:
+        now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+        gate_report = _default_gate_report(now)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script._write_benchmark_parity_artifact(
+                root=root,
+                policy={
+                    "promotion_benchmark_required_artifacts": [
+                        "benchmarks/benchmark-parity-report-v1.json"
+                    ]
+                },
+                gate_report=gate_report,
+                now=now,
+            )
+
+            artifact_path = root / "benchmarks" / "benchmark-parity-report-v1.json"
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["overall_parity_status"], "pass")
+            self.assertEqual(
+                payload["artifact_hash"],
+                script._stable_hash(
+                    {
+                        key: value
+                        for key, value in payload.items()
+                        if key != "artifact_hash"
+                    }
+                ),
+            )
+            promotion_evidence = gate_report["promotion_evidence"]
+            self.assertIsInstance(promotion_evidence, dict)
+            assert isinstance(promotion_evidence, dict)
+            self.assertEqual(
+                promotion_evidence["benchmark_parity"]["artifact_ref"],
+                "benchmarks/benchmark-parity-report-v1.json",
+            )
+
+    def test_benchmark_artifact_writer_uses_policy_rates_and_all_paths(self) -> None:
+        now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+        gate_report = _default_gate_report(now)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script._write_benchmark_parity_artifact(
+                root=root,
+                policy={
+                    "promotion_benchmark_required_artifacts": [
+                        "benchmarks/first.json",
+                        "benchmarks/second.json",
+                    ],
+                    "promotion_benchmark_parity_min_advisory_output_rate": "0.999",
+                    "promotion_benchmark_parity_max_fallback_rate": "0.0004",
+                    "promotion_benchmark_parity_max_timeout_rate": "0.0002",
+                },
+                gate_report=gate_report,
+                now=now,
+            )
+
+            first = json.loads(
+                (root / "benchmarks" / "first.json").read_text(encoding="utf-8")
+            )
+            second = json.loads(
+                (root / "benchmarks" / "second.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(first, second)
+            run = first["benchmark_runs"][0]
+            self.assertEqual(run["metrics"]["advisory_output_rate"], 0.999)
+            self.assertLessEqual(run["policy_violations"]["fallback_rate"], 0.0004)
+            self.assertLessEqual(run["policy_violations"]["timeout_rate"], 0.0002)
+            promotion_evidence = gate_report["promotion_evidence"]
+            assert isinstance(promotion_evidence, dict)
+            self.assertEqual(
+                promotion_evidence["benchmark_parity"]["artifact_refs"],
+                ["benchmarks/first.json", "benchmarks/second.json"],
+            )
+
+    def test_benchmark_artifact_writer_rejects_unsafe_paths(self) -> None:
+        gate_report: dict[str, object] = {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script._write_benchmark_parity_artifact(
+                root=root,
+                policy={"promotion_benchmark_required_artifacts": ["../escape.json"]},
+                gate_report=gate_report,
+                now=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            )
+            self.assertFalse((root.parent / "escape.json").exists())
+            self.assertEqual(gate_report, {})
+
+    def test_non_string_legacy_benchmark_artifact_fails_closed(self) -> None:
+        self.assertEqual(
+            _benchmark_parity_required_artifact_refs(
+                {
+                    "promotion_benchmark_required_artifacts": [],
+                    "promotion_benchmark_parity_artifact": None,
+                }
+            ),
+            ["gates/benchmark-parity-report-v1.json"],
+        )
+
     def test_int_field_or_default_preserves_explicit_zero(self) -> None:
         self.assertEqual(script._int_field_or_default({}, "route_count", 10), 10)
         self.assertEqual(
@@ -236,13 +389,12 @@ class TestGovernancePolicyDryRun(TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             policy_payload = json.loads(source_policy.read_text(encoding="utf-8"))
             if isinstance(policy_payload, dict):
-                policy_payload["promotion_require_benchmark_parity"] = False
                 policy_payload["promotion_require_profitability_stage_manifest"] = False
             else:
                 policy_payload = {
                     "policy_version": "v3-gates-1",
                     "required_feature_schema_version": "3.0.0",
-                    "promotion_require_benchmark_parity": False,
+                    "promotion_require_benchmark_parity": True,
                     "promotion_require_profitability_stage_manifest": False,
                 }
             tmp_policy_path = Path(tmpdir) / "autonomy-gates-v3.json"
