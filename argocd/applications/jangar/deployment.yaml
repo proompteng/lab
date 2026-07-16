@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/part-of: lab
   annotations:
     argocd.argoproj.io/sync-wave: "0"
-    deploy.knative.dev/rollout: 2026-07-16T03:22:28Z
+    deploy.knative.dev/rollout: 2026-07-16T05:13:45Z
 spec:
   replicas: 1
   strategy:
@@ -58,9 +58,9 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: a104c73958b4fc1c7f8eae16651c78704d98b212
+              value: f7a53a9eb39cc334cf95fb48bdfe8e60d62d23ca
             - name: JANGAR_GITOPS_REVISION
-              value: a104c73958b4fc1c7f8eae16651c78704d98b212
+              value: f7a53a9eb39cc334cf95fb48bdfe8e60d62d23ca
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -357,19 +357,18 @@ spec:
               value: qwen3-embedding-saigak:8b
             - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
               value: "1024"
-            # Exact and lexical SQL retain cold-cache headroom while staying below the 1s p95 acceptance gate.
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: "900"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "29465487509"
+              value: "29470119287"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:c9e3725a1d853e4083bd97a2698a50458cc979744d6cdc3ce8ade8880d8555e1
+              value: sha256:f80d8abeeda59f1096789d3a058e1ad7b470079ed479ef313fb609a6075d8d0f
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: a104c73958b4fc1c7f8eae16651c78704d98b212
+              value: f7a53a9eb39cc334cf95fb48bdfe8e60d62d23ca
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:c9e3725a1d853e4083bd97a2698a50458cc979744d6cdc3ce8ade8880d8555e1
+              value: sha256:f80d8abeeda59f1096789d3a058e1ad7b470079ed479ef313fb609a6075d8d0f
           ports:
             - name: http
               containerPort: 8080
