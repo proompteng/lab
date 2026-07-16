@@ -26,6 +26,7 @@ describe('sync-temporal-routing', () => {
       'jangar@new',
       '--migrate-stale-running',
       '--migrate-unversioned-running',
+      '--allow-no-versioned-pollers',
       '--dry-run',
       '--reason',
       'test',
@@ -38,6 +39,7 @@ describe('sync-temporal-routing', () => {
     expect(parsed.buildId).toBe('jangar@new')
     expect(parsed.migrateStaleRunning).toBe(true)
     expect(parsed.migrateUnversionedRunning).toBe(true)
+    expect(parsed.allowNoVersionedPollers).toBe(true)
     expect(parsed.dryRun).toBe(true)
     expect(parsed.reason).toBe('test')
   })
@@ -204,6 +206,78 @@ describe('sync-temporal-routing', () => {
       previousBuildId: 'jangar@current',
       targetBuildId: 'jangar@current',
     })
+  })
+
+  it('skips routing when no worker build is registered and the deployment is explicitly optional', async () => {
+    const setRequests: unknown[] = []
+    const client = {
+      deployments: {
+        describeWorkerDeployment: async () =>
+          ({
+            workerDeploymentInfo: {
+              routingConfig: {},
+              routingConfigUpdateState: RoutingConfigUpdateState.UNSPECIFIED,
+              versionSummaries: [],
+            },
+          }) as never,
+        setWorkerDeploymentCurrentVersion: async (request: unknown) => {
+          setRequests.push(request)
+          return {} as never
+        },
+      },
+    }
+
+    const result = await __private.syncCurrentVersion(
+      __private.resolveOptions({
+        address: 'temporal.example:7233',
+        namespace: 'default',
+        taskQueue: 'jangar',
+        deploymentName: 'jangar-deployment',
+        allowNoVersionedPollers: true,
+      }),
+      client as never,
+    )
+
+    expect(result).toEqual({
+      changed: false,
+      previousBuildId: undefined,
+      deploymentBuildIds: [],
+      skippedReason: 'no_versioned_workflow_pollers',
+    })
+    expect(setRequests).toEqual([])
+  })
+
+  it('fails closed when no worker build is registered without the explicit optional guard', async () => {
+    const client = {
+      deployments: {
+        describeWorkerDeployment: async () =>
+          ({
+            workerDeploymentInfo: {
+              routingConfig: {},
+              routingConfigUpdateState: RoutingConfigUpdateState.UNSPECIFIED,
+              versionSummaries: [],
+            },
+          }) as never,
+      },
+    }
+
+    let failure: unknown
+    try {
+      await __private.syncCurrentVersion(
+        __private.resolveOptions({
+          address: 'temporal.example:7233',
+          namespace: 'default',
+          taskQueue: 'jangar',
+          deploymentName: 'jangar-deployment',
+        }),
+        client as never,
+      )
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain("Temporal worker deployment 'jangar-deployment' has no current build")
   })
 
   it('normalizes legacy deployment versions before selecting stale builds', async () => {

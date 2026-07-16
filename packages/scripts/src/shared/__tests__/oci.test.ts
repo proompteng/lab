@@ -1074,6 +1074,7 @@ describe('native OCI build workflows', () => {
     expect(jangarPostDeployVerifyWorkflow).toContain('contents: read')
     expect(jangarPostDeployVerifyWorkflow).toContain('Verify deployment health and digest')
     expect(jangarPostDeployVerifyWorkflow).toContain('Sync Temporal routing after rollout')
+    expect(jangarPostDeployVerifyWorkflow).toContain('--allow-no-versioned-pollers')
     expect(jangarPostDeployVerifyWorkflow).toContain('bun install --frozen-lockfile --ignore-scripts')
     expect(jangarPostDeployVerifyWorkflow).toContain('--filter @proompteng/scripts')
     expect(jangarPostDeployVerifyWorkflow).toContain('--filter @proompteng/temporal-bun-sdk')

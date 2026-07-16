@@ -147,4 +147,5 @@ jobs:
           bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
             --task-queue jangar \
             --deployment-name jangar-deployment \
-            --migrate-stale-running
+            --migrate-stale-running \
+            --allow-no-versioned-pollers
