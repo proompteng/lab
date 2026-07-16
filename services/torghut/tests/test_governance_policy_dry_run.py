@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase
 
+from scripts import run_governance_policy_dry_run as script
+
 
 def _default_gate_report(now: datetime) -> dict[str, object]:
     return {
@@ -118,6 +120,13 @@ def _default_gate_report(now: datetime) -> dict[str, object]:
 
 
 class TestGovernancePolicyDryRun(TestCase):
+    def test_int_field_or_default_preserves_explicit_zero(self) -> None:
+        self.assertEqual(script._int_field_or_default({}, "route_count", 10), 10)
+        self.assertEqual(
+            script._int_field_or_default({"route_count": 0}, "route_count", 10),
+            0,
+        )
+
     def test_dry_run_blocks_progression_when_artifact_missing(self) -> None:
         output = self._run_harness("--simulate-missing-artifact")
         self.assertFalse(output["promotion_progression_allowed"])
@@ -167,7 +176,18 @@ class TestGovernancePolicyDryRun(TestCase):
         output = self._run_harness()
         self.assertTrue(output["promotion_progression_allowed"])
 
-    def _run_harness(self, *extra_args: str) -> dict[str, object]:
+    def test_dry_run_preserves_zero_expert_router_route_count(self) -> None:
+        output = self._run_harness(expert_router_route_count=0)
+
+        self.assertFalse(output["promotion_progression_allowed"])
+        reasons = output["promotion_prerequisites"]["reasons"]
+        self.assertIn("expert_router_registry_route_count_below_minimum", reasons)
+
+    def _run_harness(
+        self,
+        *extra_args: str,
+        expert_router_route_count: int | None = None,
+    ) -> dict[str, object]:
         now = datetime.now(timezone.utc)
         repo_root = Path(__file__).resolve().parents[3]
         service_root = repo_root / "services" / "torghut"
@@ -175,6 +195,12 @@ class TestGovernancePolicyDryRun(TestCase):
         source_policy = service_root / "config" / "autonomy-gates-v3.json"
 
         gate_report = _default_gate_report(now)
+        if expert_router_route_count is not None:
+            promotion_evidence = gate_report.get("promotion_evidence")
+            if isinstance(promotion_evidence, dict):
+                expert_router = promotion_evidence.get("expert_router_registry")
+                if isinstance(expert_router, dict):
+                    expert_router["route_count"] = expert_router_route_count
         if "--simulate-stress-metrics-stale" in extra_args:
             stress_metrics = gate_report["promotion_evidence"]["stress_metrics"]
             if isinstance(stress_metrics, dict):

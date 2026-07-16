@@ -89,6 +89,15 @@ def _stable_hash(payload: object) -> str:
     return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
 
+def _int_field_or_default(
+    payload: dict[str, Any],
+    key: str,
+    default: int,
+) -> int:
+    value = payload.get(key)
+    return default if value is None else int(value)
+
+
 def main() -> int:
     from app.trading.autonomy.policy_checks import (
         evaluate_promotion_prerequisites,
@@ -390,7 +399,11 @@ def main() -> int:
             "router_version": str(
                 expert_router_payload.get("router_version") or "router-v1"
             ),
-            "route_count": int(expert_router_payload.get("route_count") or 10),
+            "route_count": _int_field_or_default(
+                expert_router_payload,
+                "route_count",
+                10,
+            ),
             "fallback_count": int(expert_router_payload.get("fallback_count") or 0),
             "fallback_rate": str(expert_router_payload.get("fallback_rate") or "0"),
             "max_expert_weight": str(
