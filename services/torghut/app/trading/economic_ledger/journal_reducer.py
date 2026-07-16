@@ -99,7 +99,11 @@ class _JournalWriter:
     def _apply(self, activity: EconomicActivity) -> LedgerTransaction | None:
         activity_type = activity.activity_type
         if activity_type == "FILL":
-            transaction = self._fill(activity)
+            if activity.net_amount not in {None, ZERO}:
+                self.unsupported.add(activity.external_activity_id)
+                transaction = None
+            else:
+                transaction = self._fill(activity)
         elif activity_type == "CFEE":
             transaction = self._crypto_fee(activity)
         elif activity_type == "SSP":

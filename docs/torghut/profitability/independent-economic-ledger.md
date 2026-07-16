@@ -120,6 +120,10 @@ a derived mark, not historical cost and not a source mutation.
 For each `FILL`, quantity and price must be positive, side must be `buy` or `sell`, and USD notional is
 `quantity * price` with no binary floating point.
 
+A `FILL` with nonzero `net_amount` is not silently treated as quantity-times-price cash. It remains unsupported until
+a golden broker fixture establishes whether that field is gross, fee-inclusive, or net settlement and a sourced
+posting rule is implemented in both reducers.
+
 - a buy credits cash and debits position cost for newly opened long quantity;
 - a sell debits cash and credits position cost for newly opened short quantity;
 - the portion that closes an existing position releases weighted-average signed cost and posts the difference between

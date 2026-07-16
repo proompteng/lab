@@ -572,6 +572,31 @@ def test_split_with_cash_component_fails_closed_in_both_reducers() -> None:
     assert aapl.quantity == Decimal("1")
 
 
+def test_fill_with_broker_cash_component_fails_closed_in_both_reducers() -> None:
+    result = reduce_and_compare(
+        [
+            activity("deposit", "CSD", net_amount="100"),
+            activity(
+                "net-fill",
+                "FILL",
+                event_offset_seconds=1,
+                symbol="AAPL",
+                side="buy",
+                quantity="1",
+                price="10",
+                net_amount="-11",
+            ),
+        ]
+    )
+
+    assert result.comparison.equivalent
+    assert not result.admissible
+    assert result.journal.projection.unsupported_activity_ids == ("net-fill",)
+    assert result.independent.unsupported_activity_ids == ("net-fill",)
+    assert cash(result.journal.projection) == Decimal("100")
+    assert position(result.journal.projection, "AAPL") is None
+
+
 def test_input_order_does_not_change_manifest_or_results() -> None:
     rows = [
         activity("deposit", "CSD", event_offset_seconds=0, net_amount="100"),
