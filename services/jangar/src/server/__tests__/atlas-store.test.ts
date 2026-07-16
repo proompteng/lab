@@ -530,7 +530,7 @@ describe('atlas store', () => {
   })
 
   it('keeps broad path-prefix semantic searches on HNSW', async () => {
-    const { db, calls } = makeFakeDb({ selectRows: [], scopedSemanticCandidateCount: 501 })
+    const { db, calls } = makeFakeDb({ selectRows: [], scopedSemanticCandidateCount: 10_001 })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
       createDb: () => db,
@@ -544,7 +544,7 @@ describe('atlas store', () => {
     })
 
     const countSql = calls.find((call) => call.sql.toLowerCase().includes('scoped_semantic_probe'))
-    expect(countSql?.params.at(-1)).toBe(501)
+    expect(countSql?.params.at(-1)).toBe(10_001)
     const semanticSql = calls.find(
       (call) =>
         call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings') &&
@@ -558,6 +558,30 @@ describe('atlas store', () => {
     expect(iterativeScanSql?.sql.toLowerCase()).toContain("'strict_order'")
   })
 
+  it('uses an exact semantic scan for selective language filters', async () => {
+    const { db, calls } = makeFakeDb({ selectRows: [], scopedSemanticCandidateCount: 5_162 })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({
+      query: 'how Atlas verifies deleted files',
+      repository: 'proompteng/lab',
+      language: 'markdown',
+      limit: 5,
+    })
+
+    const semanticSql = calls.find((call) =>
+      call.sql.toLowerCase().includes('with scoped_semantic_candidates as materialized'),
+    )
+    const normalized = String(semanticSql?.sql).toLowerCase().replace(/\s+/g, ' ')
+    expect(normalized).toContain('file_versions.language =')
+    expect(normalized).toContain('order by scoped_semantic_candidates.candidate_embedding <=> $')
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.ef_search'"))).toBe(false)
+    expect(calls.some((call) => call.sql.toLowerCase().includes("set_config('hnsw.iterative_scan'"))).toBe(false)
+  })
+
   it('keeps broad language-only semantic searches on HNSW', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({
@@ -566,7 +590,7 @@ describe('atlas store', () => {
     )
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const { db, calls } = makeFakeDb({ selectRows: [], scopedSemanticCandidateCount: 35_967 })
     const store = createPostgresAtlasStore({
       url: 'postgresql://user:pass@localhost:5432/db',
       createDb: () => db,
@@ -579,8 +603,10 @@ describe('atlas store', () => {
       limit: 5,
     })
 
-    const semanticSql = calls.find((call) =>
-      call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings'),
+    const semanticSql = calls.find(
+      (call) =>
+        call.sql.toLowerCase().includes('from atlas.chunk_embeddings as chunk_embeddings') &&
+        call.sql.toLowerCase().includes(' as semantic_distance'),
     )
     const normalized = String(semanticSql?.sql).toLowerCase().replace(/\s+/g, ' ')
     expect(normalized).not.toContain('with scoped_semantic_candidates as materialized')
@@ -623,7 +649,7 @@ describe('atlas store', () => {
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
     const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
-    expect(candidates).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    expect(candidates).toContain('union ( select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
     expect(candidates).toContain("file_chunks.text_tsvector @@ plainto_tsquery('simple', $")
     expect(candidates).not.toContain('websearch_to_tsquery')
     expect(candidates).not.toContain('file_chunks.content ilike')
@@ -645,7 +671,11 @@ describe('atlas store', () => {
       const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
       const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
       expect(candidates).toContain('file_chunks.content ilike')
+      expect(candidates).toContain('limit $')
       expect(candidates).not.toContain('file_chunks.text_tsvector')
+      expect(calls.some((call) => call.sql.toLowerCase().includes(' as lexical_rank'))).toBe(false)
+      expect(calls.some((call) => call.sql.toLowerCase().includes(' as semantic_distance'))).toBe(false)
+      expect(globalThis.fetch).not.toHaveBeenCalled()
     },
   )
 
@@ -752,7 +782,7 @@ describe('atlas store', () => {
     const exactSql = calls.find((call) => call.sql.toLowerCase().includes(' as exact_rank'))
     const normalized = String(exactSql?.sql).toLowerCase().replace(/\s+/g, ' ')
     const candidates = normalized.slice(normalized.indexOf('with exact_candidates'), normalized.indexOf(') select'))
-    expect(candidates).toContain('union select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
+    expect(candidates).toContain('union ( select file_chunks.id as chunk_id from atlas.file_chunks as file_chunks')
     expect(candidates).toContain("file_chunks.text_tsvector @@ plainto_tsquery('simple', $")
     expect(candidates).not.toContain('file_chunks.content ilike')
     expect(calls.some((call) => call.sql.toLowerCase().includes('from atlas.chunk_embeddings'))).toBe(true)

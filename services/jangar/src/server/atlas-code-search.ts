@@ -119,7 +119,8 @@ const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 200
 const MIN_SEMANTIC_CANDIDATES = 50
 const SEMANTIC_CANDIDATE_MULTIPLIER = 2
-const MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES = 500
+// Exact scans stay predictable for selective filters and avoid long filtered HNSW walks on cold storage.
+const MAX_EXACT_SCOPED_SEMANTIC_CANDIDATES = 10_000
 const MIN_HNSW_EF_SEARCH = 40
 const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 20_000
 const DEFAULT_CODE_SEARCH_STATEMENT_TIMEOUT_MS = 750
@@ -526,31 +527,37 @@ export const createAtlasCodeSearchHandlers = ({
       Math.max(MIN_SEMANTIC_CANDIDATES, resolvedLimit * SEMANTIC_CANDIDATE_MULTIPLIER),
     )
     const embeddingConfig = loadEmbeddingConfig()
-    const vectorString = isPathQuery
-      ? null
-      : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
+    const hasAlphanumericQuery = /[A-Za-z0-9]+/.test(resolvedQuery)
+    const vectorString =
+      isPathQuery || !hasAlphanumericQuery
+        ? null
+        : vectorToPgArray(await embedCodeSearchQuery(resolvedQuery, embeddingConfig))
     signal?.throwIfAborted()
     const containsPattern = `%${escapeLikePattern(resolvedQuery)}%`
     const whereClause = searchWhereClause(filters)
     const pathCandidateClause = isPathQuery
       ? sql`file_keys.path = ${resolvedQuery}`
       : sql`(file_keys.path ILIKE ${containsPattern} ESCAPE '\' OR file_keys.path % ${resolvedQuery}::text)`
-    const indexedContentCandidateClause = /[A-Za-z0-9]+/.test(resolvedQuery)
+    const indexedContentCandidateClause = hasAlphanumericQuery
       ? sql`file_chunks.text_tsvector @@ plainto_tsquery('simple', ${resolvedQuery}::text)`
       : sql`file_chunks.content ILIKE ${containsPattern} ESCAPE '\'`
+    const literalContentCandidateLimit = hasAlphanumericQuery ? sql`` : sql`LIMIT ${candidateLimit}`
     const contentCandidateUnion = isPathQuery
       ? sql``
       : sql`
           UNION
 
-          SELECT file_chunks.id AS chunk_id
-          FROM atlas.file_chunks AS file_chunks
-          INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
-          INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
-          INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
-          ${whereClause}
-            AND file_chunks.content IS NOT NULL
-            AND ${indexedContentCandidateClause}
+          (
+            SELECT file_chunks.id AS chunk_id
+            FROM atlas.file_chunks AS file_chunks
+            INNER JOIN atlas.file_versions AS file_versions ON file_versions.id = file_chunks.file_version_id
+            INNER JOIN atlas.file_keys AS file_keys ON file_keys.id = file_versions.file_key_id
+            INNER JOIN atlas.repositories AS repositories ON repositories.id = file_keys.repository_id
+            ${whereClause}
+              AND file_chunks.content IS NOT NULL
+              AND ${indexedContentCandidateClause}
+            ${literalContentCandidateLimit}
+          )
         `
     const definitionPattern = buildDefinitionPattern(resolvedQuery)
     const definitionRankClause = definitionPattern
@@ -629,7 +636,7 @@ export const createAtlasCodeSearchHandlers = ({
       `.execute(trx)
 
         let lexicalRows: AtlasCodeSearchRow[] = []
-        if (!isPathQuery) {
+        if (!isPathQuery && hasAlphanumericQuery) {
           const lexicalResult = await sql<AtlasCodeSearchRow>`
           SELECT
             ${sql.raw(codeSearchRawSelectColumns)},
@@ -650,7 +657,7 @@ export const createAtlasCodeSearchHandlers = ({
         if (vectorString !== null) {
           await sql`SELECT set_config('statement_timeout', ${`${semanticTimeoutMs}ms`}, true);`.execute(trx)
           let requiresExactScopedSemanticScan = false
-          if (filters.pathPrefix) {
+          if (filters.pathPrefix || filters.language) {
             const scopedCount = await sql<{ candidate_count: number | string }>`
             SELECT count(*)::int AS candidate_count
             FROM (

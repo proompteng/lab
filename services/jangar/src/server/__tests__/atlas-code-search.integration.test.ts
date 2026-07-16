@@ -421,6 +421,36 @@ integration('Atlas code search PostgreSQL integration', () => {
     )
   })
 
+  it('executes selective language-filtered semantic search on PostgreSQL', async () => {
+    const matches = await handlers().codeSearch({
+      query: 'versioned Git file eligibility',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      language: 'typescript',
+      limit: 2,
+    })
+
+    expect(matches[0]).toMatchObject({
+      fileKey: { path: 'services/bumba/src/atlas/file-eligibility.ts' },
+      fileVersion: { language: 'typescript' },
+      degradation: null,
+    })
+  })
+
+  it('bounds punctuation-only literal search without requesting an embedding', async () => {
+    const embeddedCount = embeddedInputs.length
+    const matches = await handlers().codeSearch({
+      query: '=>',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      limit: 2,
+    })
+
+    expect(matches).toHaveLength(2)
+    expect(matches.every((match) => match.retrievalMode === 'exact' && match.degradation === null)).toBe(true)
+    expect(embeddedInputs).toHaveLength(embeddedCount)
+  })
+
   it('returns no deleted or unknown path', async () => {
     const matches = await handlers().codeSearch({
       query: 'services/deleted/old-atlas.ts',

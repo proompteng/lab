@@ -1,5 +1,5 @@
 {
-  "version": "atlas-code-search-gold-v1",
+  "version": "atlas-code-search-gold-v2",
   "repository": "proompteng/lab",
   "ref": "main",
   "queries": [
@@ -28,6 +28,12 @@
     {
       "query": "HNSW index for 1024 dimensional Atlas chunk embeddings",
       "expectedPaths": ["services/jangar/src/server/migrations/20260714_atlas_current_corpus.ts"]
+    },
+    {
+      "query": "how Atlas verifies deleted files corpus completeness and cancellation",
+      "expectedPaths": ["docs/atlas/production-code-search-design.md"],
+      "language": "markdown",
+      "minimumResults": 10
     },
     {
       "query": "ignore non-default branch GitHub pushes and start repository reconciliation",

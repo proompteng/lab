@@ -19,15 +19,25 @@ describe('atlas verify', () => {
   it('uses a unique cold query for every performance request', () => {
     const queries = [
       { query: 'exact identifier', expectedPaths: ['src/exact.ts'] },
-      { query: 'conceptual search', expectedPaths: ['src/concept.ts'] },
+      {
+        query: 'conceptual search',
+        expectedPaths: ['src/concept.ts'],
+        language: 'typescript',
+        minimumResults: 10,
+      },
     ]
 
     const performanceQueries = __private.buildColdPerformanceQueries(queries, 3, 'proof')
 
     expect(performanceQueries).toHaveLength(6)
-    expect(new Set(performanceQueries).size).toBe(6)
-    expect(performanceQueries.filter((query) => query.startsWith('exact identifier\n'))).toHaveLength(3)
-    expect(performanceQueries.every((query) => query.includes('Atlas latency probe proof-'))).toBe(true)
+    expect(new Set(performanceQueries.map((query) => query.query)).size).toBe(6)
+    expect(performanceQueries.filter((query) => query.query.startsWith('exact identifier\n'))).toHaveLength(3)
+    expect(performanceQueries.every((query) => query.query.includes('Atlas latency probe proof-'))).toBe(true)
+    expect(
+      performanceQueries
+        .filter((query) => query.query.startsWith('conceptual search\n'))
+        .every((query) => query.language === 'typescript' && query.minimumResults === 10),
+    ).toBe(true)
   })
 
   it('requires canceled queries to drain before the statement-timeout fallback', async () => {
