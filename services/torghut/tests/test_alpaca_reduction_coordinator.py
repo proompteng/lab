@@ -49,6 +49,7 @@ class _CloseoutBroker:
 
     def __init__(self) -> None:
         self.close_calls = 0
+        self.close_targets: list[str] = []
         self.positions: list[dict[str, object]] = [
             {
                 "symbol": "AAPL",
@@ -61,8 +62,13 @@ class _CloseoutBroker:
     def list_positions(self) -> list[dict[str, object]]:
         return list(self.positions)
 
-    def close_position(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+    def close_position(
+        self,
+        symbol_or_asset_id: str,
+        **_kwargs: object,
+    ) -> dict[str, object]:
         self.close_calls += 1
+        self.close_targets.append(symbol_or_asset_id)
         self.positions = []
         return {"id": "closeout-order-1", "status": "accepted"}
 
@@ -376,6 +382,15 @@ def test_broker_enforced_close_is_receipted_and_preflight_deduplicated(
     sessions: sessionmaker[Session],
 ) -> None:
     broker = _CloseoutBroker()
+    broker.positions = [
+        {
+            "asset_class": "crypto",
+            "market_value": "28",
+            "qty": "0.00044",
+            "side": "long",
+            "symbol": "BTCUSD",
+        }
+    ]
     firewall = OrderFirewall(broker, account_label="paper")
     adapter = AlpacaExecutionAdapter(
         firewall=firewall,
@@ -384,31 +399,18 @@ def test_broker_enforced_close_is_receipted_and_preflight_deduplicated(
         account_label="paper",
         endpoint_url=broker.endpoint_url,
     )
-    submission = OrderSubmission(
-        symbol="AAPL",
-        side="sell",
-        qty=1.0,
-        order_type="limit",
-        time_in_force="day",
-        limit_price=100.0,
-        stop_price=None,
-        extra_params=None,
-    )
-
     with patch.object(settings, "trading_kill_switch_enabled", False):
-        with pytest.raises(
-            RuntimeError,
-            match="alpaca_entry_submit_requires_durable_order_firewall",
-        ):
-            adapter.submit_order(submission)
-        result = adapter.close_position("AAPL", Decimal("1"))
-        duplicate = adapter.close_position("AAPL", Decimal("1"))
-        duplicate_again = adapter.close_position("AAPL", Decimal("1"))
+        with pytest.raises(RuntimeError, match="requires_durable_order_firewall"):
+            adapter.submit_order(
+                OrderSubmission("AAPL", "sell", 1.0, "limit", "day", 100.0, None, None)
+            )
+        result = adapter.close_position("BTC/USD", Decimal("0.00022"))
+        duplicate = adapter.close_position("BTC/USD", Decimal("0.00022"))
 
     assert result["id"] == "closeout-order-1"
     assert duplicate["status"] == "already_satisfied"
-    assert duplicate_again["status"] == "already_satisfied"
     assert broker.close_calls == 1
+    assert broker.close_targets == ["BTCUSD"]
     with sessions() as session:
         receipts = (
             session.execute(
@@ -430,6 +432,10 @@ def test_broker_enforced_close_is_receipted_and_preflight_deduplicated(
         assert receipt.risk_class == "risk_reducing"
         assert receipt.purpose == "closeout"
         assert receipt.submission_claim_id is None
+        assert receipt.target_key == "BTC/USD"
+        request = json.loads(receipt.canonical_intent_json)["request"]
+        assert request["symbol"] == "BTC/USD"
+        assert request["broker_symbol"] == "BTCUSD"
         assert latest.state == "settled"
         assert latest.settlement_outcome == "acknowledged"
 

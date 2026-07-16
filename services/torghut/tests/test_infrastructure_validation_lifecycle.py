@@ -42,7 +42,7 @@ class _LifecycleBroker:
         self,
         session_factory: Callable[[], Session],
         *,
-        broker_position_symbol: str = "BTC/USD",
+        broker_position_symbol: str = "BTCUSD",
         entry_fee_quantity: Decimal = Decimal("0"),
         fail_mutation: str | None = None,
         nested_close_all_response: bool = False,
@@ -225,11 +225,12 @@ class _LifecycleBroker:
 
     def close_position(
         self,
-        _symbol: str,
+        symbol: str,
         *,
         qty: Decimal,
         **_kwargs: object,
     ) -> dict[str, object]:
+        assert symbol == self._broker_position_symbol
         self._begin_mutation("close_position")
         self._position_quantity -= qty
         return self._add_order(

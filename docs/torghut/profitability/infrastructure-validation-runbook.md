@@ -283,6 +283,13 @@ Alpaca's position endpoint also reports the same pair as slashless `BTCUSD` whil
 `BTC/USD`. Normalize that broker representation only when `asset_class=crypto`, and retain the original broker symbol
 in the risk-reduction observation. A string mismatch must never be interpreted as an absent position.
 
+A 2026-07-16 paper lifecycle then disproved asset-ID substitution for partial crypto closes: Alpaca resolved the UUID
+to `BTC/USD` but returned `404 position not found`, while the independently fenced account-wide close immediately found
+and flattened the same position. A targeted close must therefore keep canonical `BTC/USD` as its receipt and lineage
+identity but send the exact freshly observed position symbol, currently `BTCUSD`, as the broker path segment. The
+canonical and broker symbols are both sealed in the request evidence. A slash-delimited target reaching the SDK, a
+missing observed broker symbol, or any canonical/broker mismatch fails before broker I/O.
+
 The runner must therefore prove both quantities independently. The root order must still be terminal `filled` with
 `filled_qty` exactly equal to the signed plan quantity. The resulting sole long position may equal the gross fill or be
 smaller only within Alpaca's published maximum taker-fee bound plus one broker quantity increment for rounding. Every

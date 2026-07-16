@@ -446,6 +446,7 @@ class TestOrderFirewall(TestCase):
             now=now,
         )
         request_payload = {
+            "broker_symbol": "AAPL",
             "quantity": "1",
             "risk_reduction": authorization.evidence_payload,
             "symbol": "AAPL",
@@ -464,9 +465,21 @@ class TestOrderFirewall(TestCase):
             reduction_permit=authorization.permit,
         )
 
+        with self.assertRaisesRegex(
+            ValueError,
+            "alpaca_close_position_request_mismatch",
+        ):
+            firewall.close_position(
+                "AAPL",
+                Decimal("1.0"),
+                broker_symbol="MSFT",
+                authority=authority,
+            )
+
         response = firewall.close_position(
             "AAPL",
             Decimal("1.0"),
+            broker_symbol="AAPL",
             authority=authority,
         )
 

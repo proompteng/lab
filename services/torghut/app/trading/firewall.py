@@ -498,18 +498,25 @@ class OrderFirewall:
         symbol: str,
         quantity: Decimal,
         *,
+        broker_symbol: str | None = None,
         authority: RiskReductionMutationAuthority,
     ) -> dict[str, object]:
         request_payload = authority.request_payload
         normalized_symbol = symbol.strip().upper()
+        normalized_broker_symbol = str(broker_symbol or normalized_symbol).strip()
         payload_quantity = _positive_decimal(request_payload.get("quantity"))
         normalized_quantity = _positive_decimal(quantity)
-        if str(
-            request_payload.get("symbol") or ""
-        ).strip().upper() != normalized_symbol or (
-            payload_quantity is None
-            or normalized_quantity is None
-            or payload_quantity != normalized_quantity
+        if (
+            str(request_payload.get("symbol") or "").strip().upper()
+            != normalized_symbol
+            or str(request_payload.get("broker_symbol") or normalized_symbol).strip()
+            != normalized_broker_symbol
+            or not normalized_broker_symbol
+            or (
+                payload_quantity is None
+                or normalized_quantity is None
+                or payload_quantity != normalized_quantity
+            )
         ):
             raise ValueError("alpaca_close_position_request_mismatch")
         consume_risk_reduction_mutation_authority(
@@ -527,7 +534,7 @@ class OrderFirewall:
         )
         return self._broker_call(
             lambda: self._client.close_position(
-                normalized_symbol,
+                normalized_broker_symbol,
                 qty=quantity,
                 firewall_token=self._token,
             )

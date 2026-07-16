@@ -570,14 +570,9 @@ class TorghutAlpacaClient:
         firewall_token: OrderFirewallToken,
     ) -> Dict[str, Any]:
         self._require_firewall_token(firewall_token)
-        position_target = symbol_or_asset_id
-        if "/" in position_target:
-            asset = self.get_asset(position_target)
-            asset_id = str((asset or {}).get("id") or "").strip()
-            try:
-                position_target = str(UUID(asset_id))
-            except ValueError as exc:
-                raise ValueError("alpaca_crypto_close_asset_id_invalid") from exc
+        position_target = symbol_or_asset_id.strip()
+        if not position_target or "/" in position_target:
+            raise ValueError("alpaca_close_position_broker_symbol_required")
         order = self._trading.close_position(
             position_target,
             ClosePositionRequest(qty=str(qty)),
