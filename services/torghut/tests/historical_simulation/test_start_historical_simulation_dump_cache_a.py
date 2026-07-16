@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 
 from tests.historical_simulation.start_historical_simulation_base import (
     Any,
@@ -371,6 +372,29 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             self.assertEqual(report["records"], 1)
             self.assertEqual(report["cache_artifact_path"], cache_artifact_path)
             self.assertTrue(dump_path.exists())
+
+    def test_cache_metadata_derives_paths_from_configured_ceph_bucket(self) -> None:
+        manifest = {
+            "dataset_id": "dataset-a",
+            "performance": {"dumpFormat": "ndjson"},
+            "metadata": {"cacheKey": "cache-key"},
+        }
+
+        with patch.dict(
+            os.environ,
+            {"TORGHUT_SIM_CACHE_CEPH_BUCKET": "custom-simulation-cache"},
+        ):
+            cache_metadata = historical_simulation_startup._cache_metadata(manifest)
+
+        expected_artifact_path = (
+            "s3://custom-simulation-cache/torghut-simulation-cache/"
+            "cache-key/source-dump.ndjson"
+        )
+        self.assertEqual(cache_metadata["cache_artifact_path"], expected_artifact_path)
+        self.assertEqual(
+            cache_metadata["cache_manifest_path"],
+            f"{expected_artifact_path}.manifest.json",
+        )
 
     def test_restore_cached_dump_rejects_lineage_mismatch(self) -> None:
         manifest = {

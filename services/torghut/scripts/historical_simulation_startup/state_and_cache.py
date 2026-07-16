@@ -251,6 +251,13 @@ def _write_dump_marker_from_manifest(
     )
 
 
+def _simulation_cache_bucket_from_env() -> str:
+    return (
+        os.getenv("TORGHUT_SIM_CACHE_CEPH_BUCKET", "").strip()
+        or DEFAULT_SIMULATION_CACHE_BUCKET
+    )
+
+
 def _simulation_cache_client_from_env(
     timeout_seconds: int | None = None,
 ) -> tuple[CephS3Client | None, str]:
@@ -262,10 +269,7 @@ def _simulation_cache_client_from_env(
         os.getenv("TORGHUT_SIM_CACHE_CEPH_SECRET_KEY", "").strip()
         or os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
     )
-    bucket = (
-        os.getenv("TORGHUT_SIM_CACHE_CEPH_BUCKET", "").strip()
-        or DEFAULT_SIMULATION_CACHE_BUCKET
-    )
+    bucket = _simulation_cache_bucket_from_env()
     endpoint = (
         os.getenv("TORGHUT_SIM_CACHE_CEPH_ENDPOINT", "").strip()
         or DEFAULT_SIMULATION_CACHE_ENDPOINT
@@ -388,6 +392,7 @@ def _cache_metadata(manifest: Mapping[str, Any]) -> dict[str, str]:
             cache_key,
             _as_text(performance_cfg.get("dump_format"))
             or DEFAULT_SIMULATION_DUMP_FORMAT,
+            bucket=_simulation_cache_bucket_from_env(),
         )
         if not cache_artifact_path:
             cache_artifact_path = derived_paths["cache_artifact_path"]
