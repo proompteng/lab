@@ -409,15 +409,11 @@ spec:
             - name: TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY
               value: "0.05"
             - name: TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET
-              # Mirror the scheduler's P0 capital-freeze policy so status and
-              # scheduler configuration cannot report different authority.
-              value: "00:00:00"
+              value: "15:30:00"
             - name: TRADING_FLATTEN_START_TIME_ET
-              # Temporary Slice 6 proof window; mirror the singleton scheduler
-              # and restore immediately after the bounded lifecycle completes.
-              value: "23:50:00"
+              value: "15:45:00"
             - name: TRADING_FLAT_CONFIRMATION_TIME_ET
-              value: "23:55:00"
+              value: "15:50:00"
             - name: TRADING_PAIR_DELTA_TOLERANCE_BPS
               value: "8"
             - name: TRADING_CLOSEOUT_REPRICE_SECONDS
