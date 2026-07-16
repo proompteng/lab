@@ -16,9 +16,10 @@ from app.trading.economic_ledger import (
     BrokerEconomicReconciliationBuild,
     LedgerScope,
     capture_broker_economic_snapshot,
+    load_broker_economic_ledger_snapshot,
     persist_broker_economic_ledger_reconciliation,
     publish_broker_economic_ledger,
-    replay_broker_economic_ledger,
+    replay_broker_economic_ledger_snapshot,
 )
 
 
@@ -71,42 +72,46 @@ def main(argv: list[str] | None = None) -> int:
     )
     snapshot = capture_broker_economic_snapshot(client) if args.observe else None
     with SessionLocal() as session, session.begin():
-        replay = replay_broker_economic_ledger(session, scope=scope)
-        published = (
-            publish_broker_economic_ledger(
-                session,
-                replay,
-                confirmation_token=str(args.publish_token),
+        ledger_snapshot = load_broker_economic_ledger_snapshot(session, scope=scope)
+    replay = replay_broker_economic_ledger_snapshot(ledger_snapshot)
+    published = None
+    observation = None
+    if args.publish_token is not None or snapshot is not None:
+        with SessionLocal() as session, session.begin():
+            published = (
+                publish_broker_economic_ledger(
+                    session,
+                    replay,
+                    confirmation_token=str(args.publish_token),
+                )
+                if args.publish_token is not None
+                else None
             )
-            if args.publish_token is not None
-            else None
-        )
-        observation = (
-            persist_broker_economic_ledger_reconciliation(
-                session,
-                replay,
-                snapshot,
-                build=BrokerEconomicReconciliationBuild(
-                    source_commit=BUILD_COMMIT,
-                    image_digest=BUILD_IMAGE_DIGEST or "",
-                ),
-                max_source_age_seconds=args.max_source_age_seconds,
+            observation = (
+                persist_broker_economic_ledger_reconciliation(
+                    session,
+                    replay,
+                    snapshot,
+                    build=BrokerEconomicReconciliationBuild(
+                        source_commit=BUILD_COMMIT,
+                        image_digest=BUILD_IMAGE_DIGEST or "",
+                    ),
+                    max_source_age_seconds=args.max_source_age_seconds,
+                )
+                if snapshot is not None
+                else None
             )
-            if snapshot is not None
-            else None
-        )
-        payload = replay.to_payload(
-            published=published
-            or (observation.runs if observation is not None else None)
-        )
-        payload["reconciliation"] = (
-            {
-                "observation_id": str(observation.observation_id),
-                **observation.result.payload,
-            }
-            if observation is not None
-            else None
-        )
+    payload = replay.to_payload(
+        published=published or (observation.runs if observation is not None else None)
+    )
+    payload["reconciliation"] = (
+        {
+            "observation_id": str(observation.observation_id),
+            **observation.result.payload,
+        }
+        if observation is not None
+        else None
+    )
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
     return 0
 

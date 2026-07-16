@@ -9,6 +9,12 @@ SERVICE_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = (
     SERVICE_ROOT / "migrations" / "versions" / "0079_broker_economic_reconciliation.py"
 )
+FRESHNESS_MIGRATION = (
+    SERVICE_ROOT
+    / "migrations"
+    / "versions"
+    / "0080_broker_economic_reconciliation_freshness.py"
+)
 
 
 def test_reconciliation_migration_has_one_linear_parent() -> None:
@@ -34,3 +40,23 @@ def test_reconciliation_migration_enforces_append_only_run_bound_evidence() -> N
     assert "result_document#>>'{{reducers,journal}}'" in text
     assert "refusing to discard broker economic reconciliation evidence" in text
     assert "ON DELETE CASCADE" not in text
+
+
+def test_reconciliation_freshness_migration_has_one_linear_parent() -> None:
+    module = load_migration_module(FRESHNESS_MIGRATION.name)
+
+    assert module.revision == "0080_broker_econ_recon_freshness"
+    assert module.down_revision == "0079_broker_econ_reconciliation"
+    assert module.branch_labels is None
+    assert module.depends_on is None
+
+
+def test_reconciliation_freshness_migration_separates_identity_from_age() -> None:
+    text = FRESHNESS_MIGRATION.read_text(encoding="utf-8")
+
+    assert 'sa.Column("input_source_watermark"' in text
+    assert "source_watermark >= input_source_watermark" in text
+    assert '"NEW.input_source_watermark"' in text
+    assert "result_document->>'input_source_watermark'" in text
+    assert "NEW.observed_at - NEW.source_watermark" in text
+    assert "refusing to discard reconciliation watermark evidence" in text

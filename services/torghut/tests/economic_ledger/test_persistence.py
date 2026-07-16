@@ -267,7 +267,7 @@ def test_publication_rejects_forged_replay_token() -> None:
             )
 
 
-def test_publication_rejects_stale_source_watermark() -> None:
+def test_publication_accepts_later_cursor_watermark_for_unchanged_source() -> None:
     sessions = _session_factory()
     _seed_source(sessions, _supported_history())
 
@@ -277,6 +277,26 @@ def test_publication_rejects_stale_source_watermark() -> None:
         cursor = session.scalar(select(BrokerAccountActivityCursor))
         assert cursor is not None and cursor.last_completed_scan_until is not None
         cursor.last_completed_scan_until += timedelta(seconds=1)
+    with sessions.begin() as session:
+        published = publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+
+    assert published.source_watermark == replay.snapshot.source_watermark
+
+
+def test_publication_rejects_cursor_watermark_regression() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+
+    with sessions.begin() as session:
+        replay = replay_broker_economic_ledger(session, scope=_SCOPE)
+    with sessions.begin() as session:
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None and cursor.last_completed_scan_until is not None
+        cursor.last_completed_scan_until -= timedelta(seconds=1)
     with sessions.begin() as session:
         with pytest.raises(
             EconomicLedgerError,
@@ -396,13 +416,13 @@ def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks()
         assert cursor is not None
         assert cursor.last_completed_scan_until is not None
         assert cursor.last_completed_at is not None
-        cursor.last_completed_scan_until += timedelta(minutes=1)
-        cursor.last_completed_at += timedelta(minutes=1)
+        cursor.last_completed_scan_until += timedelta(minutes=10)
+        cursor.last_completed_at += timedelta(minutes=10)
     later_snapshot = normalize_broker_economic_snapshot(
         account={"status": "ACTIVE", "cash": "1009", "equity": "1009"},
         positions=[],
         open_orders=[],
-        observed_at=_OBSERVED_AT + timedelta(minutes=4),
+        observed_at=_OBSERVED_AT + timedelta(minutes=11),
     )
     with sessions.begin() as session:
         advanced = replay_broker_economic_ledger(session, scope=_SCOPE)
@@ -414,6 +434,15 @@ def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks()
         )
         assert second.runs.journal_run_id == published.journal_run_id
         assert second.runs.state_run_id == published.state_run_id
+        assert second.runs.source_watermark == replay.snapshot.source_watermark
+        assert second.result.payload["input_source_watermark"] == (
+            replay.snapshot.source_watermark.isoformat()
+        )
+        assert second.result.payload["source_watermark"] == (
+            advanced.snapshot.source_watermark.isoformat()
+        )
+        assert second.result.source_age_seconds == 60
+        assert second.result.reconciled is True
 
     with sessions() as session:
         assert (
@@ -433,16 +462,20 @@ def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks()
         status = load_broker_economic_ledger_status(
             session,
             scope=_SCOPE,
-            observed_at=_OBSERVED_AT + timedelta(minutes=5),
+            observed_at=_OBSERVED_AT + timedelta(minutes=12),
         )
         stale_status = load_broker_economic_ledger_status(
             session,
             scope=_SCOPE,
-            observed_at=_OBSERVED_AT + timedelta(minutes=6),
+            observed_at=_OBSERVED_AT + timedelta(minutes=13),
             max_observation_age_seconds=60,
         )
     assert status["state"] == "reconciled"
     assert status["reconciled"] is True
+    assert status["input_source_watermark"] == (
+        replay.snapshot.source_watermark.isoformat()
+    )
+    assert status["source_watermark"] == advanced.snapshot.source_watermark.isoformat()
     assert status["diagnostic_only"] is True
     assert status["capital_authority"] is False
     assert status["admissible"] is True

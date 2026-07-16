@@ -164,6 +164,9 @@ class BrokerEconomicLedgerReconciliation(Base, CreatedAtMixin):
         ForeignKey("broker_economic_ledger_runs.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    input_source_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     source_watermark: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
