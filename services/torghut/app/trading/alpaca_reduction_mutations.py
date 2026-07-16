@@ -503,9 +503,13 @@ class AlpacaReductionMutationExecutor:
             ClosePositionPlan(leg),
             now=observed_at,
         )
+        broker_symbol = str(position.broker_symbol or "").strip()
+        if not broker_symbol or "/" in broker_symbol:
+            raise RuntimeError("alpaca_close_position_broker_symbol_invalid")
         request_payload = _request_payload(
             authorization,
             broker_request={
+                "broker_symbol": broker_symbol,
                 "quantity": _decimal_text(quantity),
                 "symbol": normalized_symbol,
             },
@@ -523,6 +527,7 @@ class AlpacaReductionMutationExecutor:
             broker_call=lambda mutation_permit: self._firewall.close_position(
                 normalized_symbol,
                 quantity,
+                broker_symbol=broker_symbol,
                 authority=RiskReductionMutationAuthority(
                     request_payload=request_payload,
                     mutation_permit=mutation_permit,
