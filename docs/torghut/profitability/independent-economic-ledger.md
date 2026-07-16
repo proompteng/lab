@@ -161,10 +161,9 @@ Fees remain separate from gross trade PnL so both gross and after-cost results a
 
 ### Corporate Actions And Corrections
 
-- a single-delta split row with no cash component changes units while preserving total signed cost. Paired reverse-split
-  `REMOVE`/`ADD` rows, a row that removes the current position, and any `SSP` row with nonzero `net_amount` remain
-  unsupported until a sourced golden fixture establishes the complete broker semantics; both reducers fail these
-  shapes closed instead of applying only part of the corporate action;
+- every `SSP` row remains unsupported until a sourced golden fixture establishes whether Alpaca reports a single delta,
+  paired `REMOVE`/`ADD` rows, cash in lieu, and basis changes. Both reducers fail the entire shape closed instead of
+  applying a speculative or partial corporate action;
 - symbol/name changes move both quantity and cost from old to new identity in one balanced transaction;
 - dividends, return of capital, assignments, exercises, expirations, mergers, spin-offs, and reorganizations require an
   explicit typed rule and a golden broker fixture before they become admissible;

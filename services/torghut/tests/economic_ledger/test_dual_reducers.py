@@ -495,7 +495,7 @@ def test_trade_and_crypto_fee_reject_non_quote_currency(
         reduce_and_compare([opening, contradictory])
 
 
-def test_split_changes_quantity_without_changing_total_cost() -> None:
+def test_split_without_golden_broker_fixture_fails_closed() -> None:
     result = reduce_and_compare(
         [
             activity("deposit", "JNLC", net_amount="1000"),
@@ -513,11 +513,14 @@ def test_split_changes_quantity_without_changing_total_cost() -> None:
     )
 
     assert result.comparison.equivalent
+    assert result.admissible is False
+    assert result.journal.projection.unsupported_activity_ids == ("split",)
+    assert result.independent.unsupported_activity_ids == ("split",)
     mu = position(result.independent, "MU")
     assert mu is not None
-    assert mu.quantity == Decimal("20")
+    assert mu.quantity == Decimal("10")
     assert mu.signed_cost == Decimal("100")
-    assert mu.average_cost == Decimal("5")
+    assert mu.average_cost == Decimal("10")
 
 
 def test_paired_reverse_split_remove_and_add_rows_fail_closed() -> None:
