@@ -8,10 +8,13 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence, cast
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from ....config import settings
 from ....db import SessionLocal
 from ....models import Strategy
+from ...broker_account_activities import BrokerAccountActivityError
+from ...broker_account_activity_backfill import BrokerAccountActivityIngestor
 from ...execution_policy import ExecutionPolicy
 from ...feature_quality import (
     REASON_STALENESS,
@@ -77,6 +80,7 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
         strategy_catalog: Any | None = None,
         execution_policy: Any | None = None,
         order_feed_ingestor: Any | None = None,
+        broker_account_activity_ingestor: Any | None = None,
     ) -> None:
         if dependencies is None:
             required = {
@@ -116,6 +120,7 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
                 strategy_catalog=strategy_catalog,
                 execution_policy=execution_policy,
                 order_feed_ingestor=order_feed_ingestor,
+                broker_account_activity_ingestor=broker_account_activity_ingestor,
             )
         self.alpaca_client = dependencies.alpaca_client
         self.order_firewall = dependencies.order_firewall
@@ -143,6 +148,9 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
         self.execution_policy = dependencies.execution_policy or ExecutionPolicy()
         self.order_feed_ingestor = (
             dependencies.order_feed_ingestor or OrderFeedIngestor()
+        )
+        self.broker_account_activity_ingestor: BrokerAccountActivityIngestor | None = (
+            dependencies.broker_account_activity_ingestor
         )
         self.market_context_client = MarketContextClient()
         self.lean_lane_manager = LeanLaneManager()
@@ -218,6 +226,26 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
             self.execution_adapter.cancel_all_orders(purpose="kill_switch")
         if self.strategy_catalog is not None:
             self.strategy_catalog.refresh(session)
+
+    def ingest_broker_account_activities(self) -> None:
+        """Backfill broker economics outside the latency-sensitive trading cycle."""
+
+        if self.broker_account_activity_ingestor is None:
+            return
+        try:
+            result = self.broker_account_activity_ingestor.ingest_batch()
+        except (
+            BrokerAccountActivityError,
+            OSError,
+            SQLAlchemyError,
+            ValueError,
+        ) as exc:
+            self.state.metrics.broker_account_activity_errors_total += 1
+            logger.warning("Broker account activity ingest failed: %s", exc)
+            return
+        self.state.metrics.broker_account_activity_seen_total += result.seen
+        self.state.metrics.broker_account_activity_inserted_total += result.inserted
+        self.state.metrics.broker_account_activity_duplicates_total += result.duplicates
 
     def _warm_session_context_from_open(
         self,

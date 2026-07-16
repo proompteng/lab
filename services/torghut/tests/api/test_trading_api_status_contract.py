@@ -4,6 +4,7 @@ from urllib.error import URLError
 
 from fastapi.responses import JSONResponse
 
+from app.api.trading_status import _configured_broker_environment
 from app.config import settings
 from tests.api.trading_api_support import (
     TradingApiTestCaseBase,
@@ -13,6 +14,17 @@ from tests.api.trading_api_support import (
 
 
 class TestTradingApiStatusContract(TradingApiTestCaseBase):
+    def test_broker_environment_comes_from_endpoint_not_execution_mode(self) -> None:
+        with (
+            patch.object(settings, "trading_mode", "live"),
+            patch.object(
+                settings,
+                "apca_api_base_url",
+                "https://paper-api.alpaca.markets/v2",
+            ),
+        ):
+            self.assertEqual(_configured_broker_environment(), "paper")
+
     def test_simulation_status_uses_process_local_scheduler_state(self) -> None:
         scheduler = TradingScheduler()
         scheduler.state.last_error = "scheduler_startup_failed:SchedulerLeadershipError"
@@ -76,6 +88,12 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                         },
                         "strategies": [],
                     },
+                    {
+                        "schema_version": "torghut.broker-account-activity-status.v1",
+                        "state": "current",
+                        "current": True,
+                        "reason_codes": [],
+                    },
                     {"status": "current"},
                     None,
                 ),
@@ -110,6 +128,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "live_submission_gate",
                 "action_authority",
                 "broker_mutation_safety",
+                "broker_economic_activities",
                 "capital_controls",
                 "execution",
                 "signal_continuity",
@@ -140,6 +159,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
         self.assertFalse(payload["action_authority"]["reduce_only_allowed"])
         self.assertTrue(payload["broker_mutation_safety"]["runtime_wired"])
         self.assertTrue(payload["broker_mutation_safety"]["entry_fencing_proven"])
+        self.assertTrue(payload["broker_economic_activities"]["current"])
         self.assertFalse(payload["broker_mutation_safety"]["reduction_fencing_proven"])
         self.assertFalse(payload["broker_mutation_safety"]["recovery_worker_wired"])
         self.assertEqual(

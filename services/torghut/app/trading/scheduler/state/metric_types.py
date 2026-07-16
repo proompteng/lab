@@ -270,6 +270,18 @@ class TradingMetricsFields:
 
     order_feed_consumer_errors_total: int = 0
 
+    broker_account_activity_seen_total: int = 0
+
+    broker_account_activity_inserted_total: int = 0
+
+    broker_account_activity_duplicates_total: int = 0
+
+    broker_account_activity_errors_total: int = 0
+
+    broker_stream_source_events_total: int = 0
+
+    broker_stream_source_duplicates_total: int = 0
+
     strategy_events_total: dict[str, int] = field(
         default_factory=lambda: cast(dict[str, int], {})
     )

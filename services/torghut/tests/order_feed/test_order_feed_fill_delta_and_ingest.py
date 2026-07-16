@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.models import BrokerAccountActivity
+
 from tests.order_feed.support import (
     Decimal,
     Execution,
@@ -27,6 +29,42 @@ from tests.order_feed.support import (
 
 
 class TestOrderFeedFillDeltaAndIngest(OrderFeedTestCase):
+    def test_ingest_appends_one_immutable_broker_source_fact_across_replay(
+        self,
+    ) -> None:
+        payload = (
+            b'{"channel":"trade_updates","ingestTs":"2026-07-16T01:00:01Z",'
+            b'"payload":{"event":"fill","price":"190.20","qty":"1",'
+            b'"timestamp":"2026-07-16T01:00:00Z","order":{"id":"order-1",'
+            b'"client_order_id":"client-1","symbol":"AAPL","side":"buy",'
+            b'"status":"filled","qty":"1","filled_qty":"1"}},"seq":10}'
+        )
+        consumer = FakeConsumer(
+            [
+                FakeRecord(value=payload, offset=10),
+                FakeRecord(value=payload, offset=11),
+            ]
+        )
+        ingestor = OrderFeedIngestor(
+            consumer_factory=lambda: consumer,
+            default_account_label="paper",
+            broker_environment="paper",
+            broker_endpoint_fingerprint="a" * 64,
+        )
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+
+        self.assertEqual(counters["immutable_source_events_total"], 1)
+        self.assertEqual(counters["immutable_source_duplicates_total"], 1)
+        with Session(self.engine) as session:
+            rows = session.scalars(select(BrokerAccountActivity)).all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].source, "trade_updates_ws")
+        self.assertEqual(rows[0].source_offset, 10)
+        self.assertNotIn("ingestTs", rows[0].raw_payload)
+
     def test_duplicate_event_source_window_attach_refreshes_linkage_counts(
         self,
     ) -> None:

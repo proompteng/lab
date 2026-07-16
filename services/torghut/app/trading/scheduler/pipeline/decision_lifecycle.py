@@ -224,6 +224,12 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineRuntime):
         self.state.metrics.order_feed_consumer_errors_total += counters.get(
             "consumer_errors_total", 0
         )
+        self.state.metrics.broker_stream_source_events_total += counters.get(
+            "immutable_source_events_total", 0
+        )
+        self.state.metrics.broker_stream_source_duplicates_total += counters.get(
+            "immutable_source_duplicates_total", 0
+        )
 
     def record_no_signal_batch(self, batch: SignalBatch) -> None:
         self.state.last_ingest_signals_total = len(batch.signals)

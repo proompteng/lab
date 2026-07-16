@@ -205,6 +205,8 @@ recoverable.
 
 **Invariant:** the broker, not an internal strategy loop, is the source of truth for executed economics.
 
+Detailed design: [Broker Economic Source Ingestion](broker-economic-source-ingestion.md).
+
 - Deliverable: ingest account activities and order updates through streaming plus paginated backfill, append raw payloads
   with hashes, and normalize orders, fills, fees, cash movements, corrections, and corporate actions.
 - Primary surfaces: Alpaca broker client/worker code, CNPG migrations, event schemas, Kafka topics if retained, and

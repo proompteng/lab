@@ -310,7 +310,7 @@ class TorghutAlpacaClient:
             if (paper if paper is not None else settings.trading_mode != "live")
             else "https://api.alpaca.markets"
         )
-        endpoint_class = _classify_alpaca_trading_endpoint(self.endpoint_url)
+        endpoint_class = classify_alpaca_trading_endpoint(self.endpoint_url)
         if paper is not None and endpoint_class != ("paper" if paper else "live"):
             raise ValueError("alpaca_endpoint_paper_mode_mismatch")
         self.endpoint_class = endpoint_class
@@ -722,7 +722,7 @@ def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
     return trimmed
 
 
-def _classify_alpaca_trading_endpoint(endpoint_url: str) -> str:
+def classify_alpaca_trading_endpoint(endpoint_url: str) -> str:
     parsed = urlsplit(endpoint_url)
     host = (parsed.hostname or "").lower()
     if (
@@ -745,6 +745,7 @@ def _classify_alpaca_trading_endpoint(endpoint_url: str) -> str:
 __all__ = [
     "AlpacaRecoveryOrderHistoryPage",
     "AlpacaStrictOrderLookupMalformedError",
+    "classify_alpaca_trading_endpoint",
     "OrderFirewallToken",
     "OrderFirewallViolation",
     "TorghutAlpacaClient",

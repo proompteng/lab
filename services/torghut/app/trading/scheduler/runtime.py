@@ -691,6 +691,8 @@ class TradingScheduler(
         last_reconcile = datetime.now(timezone.utc)
         last_autonomy = datetime.now(timezone.utc)
         last_evidence_check = datetime.now(timezone.utc)
+        last_broker_activity = datetime.fromtimestamp(0, tz=timezone.utc)
+        broker_activity_task: asyncio.Task[None] | None = None
         logger.info(
             "Trading scheduler loop running poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_interval_seconds=%s evidence_interval_seconds=%s",
             poll_interval,
@@ -703,6 +705,20 @@ class TradingScheduler(
                 self._sync_simulation_run_context()
                 await self._run_trading_iteration()
                 now = datetime.now(timezone.utc)
+                if broker_activity_task is not None and broker_activity_task.done():
+                    await broker_activity_task
+                    broker_activity_task = None
+                if broker_activity_task is None and self._interval_elapsed(
+                    last_broker_activity,
+                    reconcile_interval,
+                    now=now,
+                ):
+                    # REST accounting must never delay signal decisions, broker
+                    # mutation recovery, or emergency reductions.
+                    broker_activity_task = asyncio.create_task(
+                        self._run_broker_account_activity_iteration()
+                    )
+                    last_broker_activity = now
                 if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
                     await self._run_reconcile_iteration()
                     last_reconcile = now
@@ -730,6 +746,8 @@ class TradingScheduler(
                 except TimeoutError:
                     pass
         finally:
+            if broker_activity_task is not None:
+                await broker_activity_task
             self.state.running = False
             logger.info("Trading scheduler loop exited")
 
@@ -849,6 +867,33 @@ class TradingScheduler(
             self.state.last_run_at = datetime.now(timezone.utc)
             self._set_trading_iteration_error(None)
         self._evaluate_safety_controls()
+
+    async def _run_broker_account_activity_iteration(self) -> None:
+        active_pipelines = self._pipelines or (
+            [self._pipeline] if self._pipeline else []
+        )
+        calls: list[tuple[str, Callable[[], object]]] = []
+        for pipeline in active_pipelines:
+            ingest = getattr(pipeline, "ingest_broker_account_activities", None)
+            if callable(ingest):
+                calls.append((pipeline.account_label, ingest))
+        if not calls:
+            return
+        outcomes = await asyncio.gather(
+            *(asyncio.to_thread(ingest) for _, ingest in calls),
+            return_exceptions=True,
+        )
+        for (account_label, _), outcome in zip(calls, outcomes, strict=True):
+            if isinstance(outcome, Exception):
+                self.state.metrics.broker_account_activity_errors_total += 1
+                logger.error(
+                    "Broker account activity lane failed account=%s error=%s",
+                    account_label,
+                    outcome,
+                    exc_info=(type(outcome), outcome, outcome.__traceback__),
+                )
+            elif isinstance(outcome, BaseException):
+                raise outcome
 
     async def _run_reconcile_iteration(self) -> None:
         if self._pipeline is None:
