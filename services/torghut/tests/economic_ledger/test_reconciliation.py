@@ -151,6 +151,10 @@ def test_flat_projection_reconciles_exactly_to_fresh_broker_snapshot() -> None:
     assert result.residual_count == 0
     assert result.open_order_count == 0
     assert result.payload["reason_codes"] == []
+    assert result.payload["input_source_watermark"] == _AT.isoformat()
+    assert (
+        result.payload["source_watermark"] == (_AT + timedelta(minutes=1)).isoformat()
+    )
     assert len(result.result_sha256) == 64
 
 

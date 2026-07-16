@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
 from typing import Protocol, cast
@@ -278,6 +278,7 @@ def reconcile_broker_economic_ledger(
         "open_order_count": len(snapshot.open_orders),
         "source_age_seconds": source_age_seconds,
         "max_source_age_seconds": max_source_age_seconds,
+        "input_source_watermark": runs.source_watermark.isoformat(),
         "source_watermark": watermark.isoformat(),
         "observed_at": snapshot.observed_at.isoformat(),
         "source_commit": build.source_commit,
@@ -337,13 +338,6 @@ def persist_broker_economic_ledger_reconciliation(
     """Append one observation only after resolving the exact published run pair."""
 
     runs = require_published_broker_economic_ledger_runs(session, replay)
-    replay = replace(
-        replay,
-        snapshot=replace(
-            replay.snapshot,
-            source_watermark=runs.source_watermark,
-        ),
-    )
     result = reconcile_broker_economic_ledger(
         replay,
         snapshot,
@@ -362,6 +356,7 @@ def persist_broker_economic_ledger_reconciliation(
                 "input_id": runs.input_id,
                 "journal_run_id": runs.journal_run_id,
                 "state_run_id": runs.state_run_id,
+                "input_source_watermark": runs.source_watermark,
                 "source_watermark": replay.snapshot.source_watermark,
                 "observed_at": snapshot.observed_at,
                 "source_age_seconds": result.source_age_seconds,
@@ -457,6 +452,7 @@ def load_broker_economic_ledger_status(
         "observed_at": as_utc(row.observed_at).isoformat(),
         "age_seconds": age_seconds,
         "max_age_seconds": max_observation_age_seconds,
+        "input_source_watermark": as_utc(row.input_source_watermark).isoformat(),
         "source_watermark": as_utc(row.source_watermark).isoformat(),
         "source_age_seconds": row.source_age_seconds,
         "max_source_age_seconds": row.max_source_age_seconds,

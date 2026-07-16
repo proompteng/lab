@@ -65,12 +65,12 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
             schema_engine,
             target="0074_crypto_qty_precision",
         )
-        command.upgrade(alembic, "0079_broker_econ_reconciliation")
+        command.upgrade(alembic, "0080_broker_econ_recon_freshness")
         assert _public_alembic_revision(admin_engine) == public_revision_before
         with schema_engine.connect() as connection:
             assert connection.scalar(
                 text("SELECT version_num FROM alembic_version")
-            ) == ("0079_broker_econ_reconciliation")
+            ) == ("0080_broker_econ_recon_freshness")
         sessions = sessionmaker(bind=schema_engine, expire_on_commit=False, future=True)
         scope = _seed_source(sessions)
 
@@ -164,8 +164,11 @@ def test_postgres_ledger_publication_is_atomic_balanced_and_immutable(
                 ),
             )
         assert later_observation.runs.source_watermark == input_row.source_watermark
-        assert later_observation.result.payload["source_watermark"] == (
+        assert later_observation.result.payload["input_source_watermark"] == (
             input_row.source_watermark.isoformat()
+        )
+        assert later_observation.result.payload["source_watermark"] == (
+            advanced_replay.snapshot.source_watermark.isoformat()
         )
         with sessions() as session:
             assert (
@@ -374,7 +377,8 @@ def _assert_reconciliation_run_swap_rejected(
                     """
                     INSERT INTO broker_economic_ledger_reconciliations (
                         id, input_id, journal_run_id, state_run_id,
-                        source_watermark, observed_at, source_age_seconds,
+                        input_source_watermark, source_watermark,
+                        observed_at, source_age_seconds,
                         max_source_age_seconds, broker_snapshot,
                         broker_snapshot_canonical_json, broker_snapshot_sha256,
                         result, result_canonical_json, result_sha256,
@@ -382,7 +386,8 @@ def _assert_reconciliation_run_swap_rejected(
                         residual_count, open_order_count, source_commit, image_digest
                     ) VALUES (
                         :id, :input_id, :state_run_id, :journal_run_id,
-                        :source_watermark, :observed_at, :source_age_seconds,
+                        :input_source_watermark, :source_watermark,
+                        :observed_at, :source_age_seconds,
                         :max_source_age_seconds, CAST(:broker_snapshot AS jsonb),
                         :broker_snapshot, :broker_snapshot_sha256,
                         CAST(:result AS jsonb), :result, :result_sha256,
@@ -396,6 +401,7 @@ def _assert_reconciliation_run_swap_rejected(
                     "input_id": valid.input_id,
                     "journal_run_id": valid.journal_run_id,
                     "state_run_id": valid.state_run_id,
+                    "input_source_watermark": valid.input_source_watermark,
                     "source_watermark": valid.source_watermark,
                     "observed_at": valid.observed_at,
                     "source_age_seconds": valid.source_age_seconds,
@@ -421,17 +427,30 @@ def _assert_reconciliation_source_invariants_rejected(
 ) -> None:
     invalid_cases = (
         (
-            "source_watermark + INTERVAL '1 second'",
+            "input_source_watermark + INTERVAL '1 second'",
+            "source_watermark",
             "source_age_seconds",
             "broker economic reconciliation source identity mismatch",
         ),
         (
+            "input_source_watermark",
+            "source_watermark + INTERVAL '1 second'",
+            "source_age_seconds",
+            "broker economic reconciliation source age mismatch",
+        ),
+        (
+            "input_source_watermark",
             "source_watermark",
             "source_age_seconds + 1",
             "broker economic reconciliation source age mismatch",
         ),
     )
-    for source_watermark_sql, source_age_sql, expected_error in invalid_cases:
+    for (
+        input_watermark_sql,
+        source_watermark_sql,
+        source_age_sql,
+        expected_error,
+    ) in invalid_cases:
         with pytest.raises(DBAPIError, match=expected_error):
             with schema_engine.begin() as connection:
                 connection.execute(
@@ -439,7 +458,8 @@ def _assert_reconciliation_source_invariants_rejected(
                         f"""
                         INSERT INTO broker_economic_ledger_reconciliations (
                             id, input_id, journal_run_id, state_run_id,
-                            source_watermark, observed_at, source_age_seconds,
+                            input_source_watermark, source_watermark,
+                            observed_at, source_age_seconds,
                             max_source_age_seconds, broker_snapshot,
                             broker_snapshot_canonical_json, broker_snapshot_sha256,
                             result, result_canonical_json, result_sha256,
@@ -448,7 +468,8 @@ def _assert_reconciliation_source_invariants_rejected(
                         )
                         SELECT
                             :id, input_id, journal_run_id, state_run_id,
-                            {source_watermark_sql}, observed_at, {source_age_sql},
+                            {input_watermark_sql}, {source_watermark_sql},
+                            observed_at, {source_age_sql},
                             max_source_age_seconds, broker_snapshot,
                             broker_snapshot_canonical_json, broker_snapshot_sha256,
                             result, result_canonical_json, result_sha256,

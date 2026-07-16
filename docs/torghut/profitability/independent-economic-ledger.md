@@ -211,8 +211,8 @@ append-only evidence tables:
 2. `broker_economic_ledger_runs` stores reducer identity, the shared input ID, result JSON, and result digests;
 3. `broker_economic_ledger_entries` stores balanced lines keyed by run, source activity, transaction, commodity, and line
    number;
-4. `broker_economic_reconciliations` stores the two run IDs, fresh broker snapshot digest, exact deltas, residuals, and
-   admissibility.
+4. `broker_economic_reconciliations` stores the two run IDs, immutable input watermark, current observation watermark,
+   fresh broker snapshot digest, exact deltas, residuals, and admissibility.
 
 The current 40,161-row source history measured about 21.4 MB as logical normalized JSON and about 5.7 MB as TOAST-
 compressed canonical text on production CNPG. Storing JSONB plus text in both reducer rows would consume about 23.7 MB
@@ -225,11 +225,11 @@ PostgreSQL rejects update/delete/truncate, verifies canonical JSON hashes, and i
 lines and per-transaction commodity balance. Rebuild creates a new versioned run; it never rewrites an old proof.
 
 Reconciliation evidence adds one more database-enforced boundary. A row must reference the exact canonical and
-independent run pair for one input, use that input's exact source watermark, and report the source age derived from its
-broker-observation and watermark timestamps. PostgreSQL also binds the canonical snapshot and result JSON to their
-SHA-256 digests, verifies the persisted build identity and residual counts, and rejects any later mutation. These
-checks prevent an application or ad hoc writer from making a stale or unrelated observation look attached to a valid
-projection.
+independent run pair for one input, name that input's exact immutable watermark, and report source age from the current
+completed scan watermark and broker-observation timestamp. PostgreSQL also binds both watermarks, the canonical snapshot,
+and result JSON to their SHA-256 digests, verifies the persisted build identity and residual counts, and rejects any later
+mutation. These checks prevent an application or ad hoc writer from making a stale or unrelated observation look attached
+to a valid projection.
 
 ## Replay And Publication
 
@@ -256,8 +256,8 @@ no retry, a 20-minute deadline, and no publication token or broker-mutation comm
 Re-running the same reducer version and exact economic input (scope, cursor, and manifest digest) returns the existing
 immutable run. A later completed scan with the same manifest leaves the confirmation token stable and does not clone the
 manifest or 180,067 current journal entries; publication verifies the current cursor has not regressed and that the
-source row set is unchanged. Delivery 3 observations remain attached to the input's first proving watermark, while the
-current cursor remains separately visible as source-freshness evidence. A different result for the same economic
+source row set is unchanged. Delivery 3 observations bind immutable identity to the input's first proving watermark and
+carry the later completed cursor watermark separately for truthful freshness. A different result for the same economic
 identity is a hard contradiction.
 
 The publication token commits the cursor identity, input manifest, admissibility, exact comparison, both projection
