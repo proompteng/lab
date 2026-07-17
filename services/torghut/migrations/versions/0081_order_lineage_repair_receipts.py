@@ -104,9 +104,11 @@ def _create_table() -> None:
             "AND confidence = 'exact' AND execution_source <> 'none') OR "
             "(classification = 'ambiguous' AND confidence = 'ambiguous' "
             "AND execution_source = 'none') OR "
-            "(classification IN ('external_or_unproved', 'broker_activity_only', "
-            "'order_feed_only') AND confidence = 'unproved' "
-            "AND execution_source = 'none')",
+            "(classification = 'external_or_unproved' "
+            "AND confidence = 'unproved' AND execution_source = 'none') OR "
+            "(classification IN ('broker_activity_only', 'order_feed_only') "
+            "AND ((confidence = 'exact' AND execution_source <> 'none') OR "
+            "(confidence = 'unproved' AND execution_source = 'none')))",
             name=conv("ck_order_lineage_receipt_classification_confidence"),
         ),
         sa.PrimaryKeyConstraint("id", name=conv("pk_order_lineage_repair_receipts")),
@@ -328,8 +330,12 @@ def _create_guard() -> None:
                         USING ERRCODE = '23514';
                 END IF;
 
-                IF NEW.classification IN ('linked_incomplete', 'ambiguous')
-                   AND jsonb_array_length(match_basis) = 0 THEN
+                IF (NEW.classification IN ('linked_incomplete', 'ambiguous')
+                    OR (
+                        NEW.classification IN (
+                            'broker_activity_only', 'order_feed_only'
+                        ) AND NEW.confidence = 'exact'
+                    )) AND jsonb_array_length(match_basis) = 0 THEN
                     RAISE EXCEPTION 'order lineage match basis missing'
                         USING ERRCODE = '23514';
                 END IF;

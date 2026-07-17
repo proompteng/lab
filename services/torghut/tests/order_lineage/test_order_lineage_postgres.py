@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.trading.order_lineage_receipts import (
     CLASSIFICATION_LINKED_INCOMPLETE,
+    CLASSIFICATION_ORDER_FEED_ONLY,
     CONFIDENCE_EXACT,
     EXECUTION_SOURCE_CROSS_DSN,
     MATCH_BASIS_ALPACA_ORDER_ID,
@@ -86,6 +87,22 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
                 observed_at=now,
             )
             assert not persisted.reused_existing
+            source_gap = persist_order_lineage_receipt(
+                session,
+                build_order_lineage_receipt(
+                    replace(
+                        evidence,
+                        alpaca_order_id="feed-only-broker-order",
+                        client_order_id="feed-only-decision-hash",
+                        classification=CLASSIFICATION_ORDER_FEED_ONLY,
+                        broker_activity_ids=(),
+                        broker_fill_activity_ids=(),
+                        blockers=("broker_activity_missing",),
+                    )
+                ),
+                observed_at=now,
+            )
+            assert not source_gap.reused_existing
 
         concurrent_draft = build_order_lineage_receipt(
             replace(

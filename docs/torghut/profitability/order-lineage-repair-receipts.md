@@ -91,6 +91,9 @@ that identity in the stream event.
 | `broker_activity_only` | REST economic activity exists without retained order-feed evidence                              |
 | `order_feed_only`      | Order-feed evidence exists without retained broker economic activity                            |
 
+`broker_activity_only` and `order_feed_only` describe source coverage, so they retain an exact execution link when one is
+proven. They use `unproved` only when no execution is proven. A missing source never authorizes deleting a causal link.
+
 Confidence is limited to `exact`, `unproved`, or `ambiguous`. There is no floating-point confidence score. Exact means
 a unique stable identity match, not a timestamp heuristic. Unproved rows remain excluded from promotion.
 

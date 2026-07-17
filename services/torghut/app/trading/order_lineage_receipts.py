@@ -37,6 +37,9 @@ CLASSIFICATIONS: Final = frozenset(
         CLASSIFICATION_ORDER_FEED_ONLY,
     }
 )
+_SOURCE_GAP_CLASSIFICATIONS: Final = frozenset(
+    {CLASSIFICATION_BROKER_ACTIVITY_ONLY, CLASSIFICATION_ORDER_FEED_ONLY}
+)
 
 CONFIDENCE_EXACT: Final = "exact"
 CONFIDENCE_UNPROVED: Final = "unproved"
@@ -414,6 +417,10 @@ def _validate_classification_links(
     }:
         if not linked or evidence.confidence != CONFIDENCE_EXACT:
             raise ValueError("order_lineage_linked_classification_without_execution")
+    elif evidence.classification in _SOURCE_GAP_CLASSIFICATIONS:
+        expected_confidence = CONFIDENCE_EXACT if linked else CONFIDENCE_UNPROVED
+        if evidence.confidence != expected_confidence:
+            raise ValueError("order_lineage_source_gap_confidence_invalid")
     elif linked:
         raise ValueError("order_lineage_unlinked_classification_with_execution")
     if (
@@ -429,12 +436,7 @@ def _validate_classification_links(
     elif evidence.confidence == CONFIDENCE_AMBIGUOUS:
         raise ValueError("order_lineage_ambiguous_confidence_misclassified")
     if (
-        evidence.classification
-        in {
-            CLASSIFICATION_EXTERNAL_OR_UNPROVED,
-            CLASSIFICATION_BROKER_ACTIVITY_ONLY,
-            CLASSIFICATION_ORDER_FEED_ONLY,
-        }
+        evidence.classification == CLASSIFICATION_EXTERNAL_OR_UNPROVED
         and evidence.confidence != CONFIDENCE_UNPROVED
     ):
         raise ValueError("order_lineage_unproved_classification_confidence_invalid")

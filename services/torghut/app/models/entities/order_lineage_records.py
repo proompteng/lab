@@ -102,9 +102,11 @@ class OrderLineageRepairReceipt(Base, CreatedAtMixin):
             "AND confidence = 'exact' AND execution_source <> 'none') OR "
             "(classification = 'ambiguous' AND confidence = 'ambiguous' "
             "AND execution_source = 'none') OR "
-            "(classification IN ('external_or_unproved', 'broker_activity_only', "
-            "'order_feed_only') AND confidence = 'unproved' "
-            "AND execution_source = 'none')",
+            "(classification = 'external_or_unproved' "
+            "AND confidence = 'unproved' AND execution_source = 'none') OR "
+            "(classification IN ('broker_activity_only', 'order_feed_only') "
+            "AND ((confidence = 'exact' AND execution_source <> 'none') OR "
+            "(confidence = 'unproved' AND execution_source = 'none')))",
             name=conv("ck_order_lineage_receipt_classification_confidence"),
         ),
         Index(

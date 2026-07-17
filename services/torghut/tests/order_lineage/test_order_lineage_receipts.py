@@ -226,6 +226,51 @@ def test_unproved_classifications_require_their_declared_sources(
         )
 
 
+@pytest.mark.parametrize(
+    ("classification", "order_event_ids", "broker_activity_ids"),
+    [
+        (CLASSIFICATION_BROKER_ACTIVITY_ONLY, (), (BROKER_FILL_A,)),
+        (CLASSIFICATION_ORDER_FEED_ONLY, (ORDER_EVENT_A,), ()),
+    ],
+)
+def test_source_gaps_preserve_exact_execution_links(
+    classification: str,
+    order_event_ids: tuple[uuid.UUID, ...],
+    broker_activity_ids: tuple[uuid.UUID, ...],
+) -> None:
+    draft = build_order_lineage_receipt(
+        OrderLineageEvidence(
+            provider="alpaca",
+            environment="paper",
+            account_label="paper-account",
+            alpaca_order_id="broker-order",
+            client_order_id="decision-hash",
+            classification=classification,
+            confidence=CONFIDENCE_EXACT,
+            execution_source=EXECUTION_SOURCE_CROSS_DSN,
+            canonical_execution_id=EXECUTION_ID,
+            canonical_trade_decision_id=DECISION_ID,
+            canonical_strategy_id=STRATEGY_ID,
+            canonical_tca_metric_id=TCA_ID,
+            order_event_ids=order_event_ids,
+            broker_activity_ids=broker_activity_ids,
+            broker_fill_activity_ids=broker_activity_ids,
+            source_first_at=BASE_TIME,
+            source_last_at=BASE_TIME,
+            match_basis=(MATCH_BASIS_ALPACA_ORDER_ID,),
+            blockers=("source_gap",),
+        )
+    )
+
+    assert draft.evidence["links"] == {
+        "execution_id": str(EXECUTION_ID),
+        "strategy_id": str(STRATEGY_ID),
+        "submission_claim_id": None,
+        "tca_metric_id": str(TCA_ID),
+        "trade_decision_id": str(DECISION_ID),
+    }
+
+
 def test_persistence_reuses_exact_receipt_and_appends_changed_evidence() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     OrderLineageRepairReceipt.__table__.create(engine)
