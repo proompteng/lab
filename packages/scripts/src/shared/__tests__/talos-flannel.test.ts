@@ -4,6 +4,10 @@ import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
 
 const manifestPath = 'devices/galactic/manifests/flannel-v0.28.5-mtu1400.yaml'
+const cniPatchPath = 'devices/galactic/manifests/custom-flannel-cni.patch.yaml'
+const cniPatch = YAML.parse(readFileSync(cniPatchPath, 'utf8')) as {
+  cluster?: { network?: { cni?: { name?: string; urls?: string[] } } }
+}
 const resources = YAML.parseAllDocuments(readFileSync(manifestPath, 'utf8')).map((document) =>
   document.toJSON(),
 ) as Array<{
@@ -28,6 +32,16 @@ const resource = (kind: string, name: string) => {
 }
 
 describe('Talos-owned custom Flannel manifest', () => {
+  it('pins Talos custom CNI ownership to the immutable manifest commit', () => {
+    const cni = cniPatch.cluster?.network?.cni
+
+    expect(cni?.name).toBe('custom')
+    expect(cni?.urls).toEqual([
+      'https://raw.githubusercontent.com/proompteng/lab/15f59fd037dd45ecd79cf69031215d1e79b6b479/devices/galactic/manifests/flannel-v0.28.5-mtu1400.yaml',
+    ])
+    expect(cni?.urls?.[0]).toMatch(/\/proompteng\/lab\/[0-9a-f]{40}\//)
+  })
+
   it('contains the complete Talos Flannel resource set without a Namespace', () => {
     expect(resources.map(({ kind, metadata }) => `${kind}/${metadata?.name}`)).toEqual([
       'ClusterRole/flannel',

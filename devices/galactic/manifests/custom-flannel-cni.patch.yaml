@@ -1,0 +1,6 @@
+cluster:
+  network:
+    cni:
+      name: custom
+      urls:
+        - https://raw.githubusercontent.com/proompteng/lab/15f59fd037dd45ecd79cf69031215d1e79b6b479/devices/galactic/manifests/flannel-v0.28.5-mtu1400.yaml
