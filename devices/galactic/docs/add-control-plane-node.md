@@ -10,6 +10,8 @@ Assumptions:
   - `ampone` (`192.168.1.203`)
 - NUC HAProxy endpoint is up: `https://nuc:6443` and `https://192.168.1.130:6443`
 - The new node is booted into Talos maintenance mode and you know its LAN IP.
+- `<device_dir>/manifests/network-mtu.patch.yaml` targets the new node's physical
+  underlay interface and keeps it at MTU 1450 so Flannel derives pod MTU 1400.
 
 ## 0) Update NUC HAProxy backends
 
@@ -88,11 +90,15 @@ talosctl apply-config --insecure -n <new_ip> -e <new_ip> \
   --config-patch @<device_dir>/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @<device_dir>/manifests/controlplane-endpoint-nuc.patch.yaml \
   --config-patch @<device_dir>/manifests/hostname.patch.yaml \
+  --config-patch @<device_dir>/manifests/network-mtu.patch.yaml \
   --mode=reboot
 ```
 
 Important:
 
+- The node-specific MTU patch is required on first install. Omitting it recreates
+  the Flannel/ARC timeout documented in
+  `devices/galactic/docs/troubleshooting-networking.md`.
 - The node IP may change after install/reboot (DHCP). Use console/KVM to confirm
   the post-install IP before troubleshooting.
 
