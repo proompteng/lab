@@ -23,8 +23,24 @@ type GlobalTracerProvider = {
   getTracer: (name: string, version?: string) => TracerLike
 }
 
+type SharedOtelApiState = {
+  tracerProvider?: unknown
+}
+
+const OTEL_TRACE_API_STATE_KEY = Symbol.for('proompteng.otel.trace-api.state.v1')
 let globalMeterProvider: GlobalMeterProvider = new NoopMeterProvider()
-let globalTracerProvider: GlobalTracerProvider = new NoopTracerProvider()
+const localTracerProvider = new NoopTracerProvider()
+
+const sharedState = (() => {
+  const registry = globalThis as typeof globalThis & { [key: symbol]: unknown }
+  const existing = registry[OTEL_TRACE_API_STATE_KEY]
+  if (typeof existing === 'object' && existing !== null) {
+    return existing as SharedOtelApiState
+  }
+  const created: SharedOtelApiState = {}
+  registry[OTEL_TRACE_API_STATE_KEY] = created
+  return created
+})()
 
 export const metrics = {
   setGlobalMeterProvider(provider: GlobalMeterProvider) {
@@ -37,10 +53,11 @@ export const metrics = {
 
 export const trace = {
   setGlobalTracerProvider(provider: GlobalTracerProvider) {
-    globalTracerProvider = provider
+    sharedState.tracerProvider = provider
   },
   getTracer(name: string, version?: string) {
-    return globalTracerProvider.getTracer(name, version)
+    const provider = (sharedState.tracerProvider as GlobalTracerProvider | undefined) ?? localTracerProvider
+    return provider.getTracer(name, version)
   },
 }
 

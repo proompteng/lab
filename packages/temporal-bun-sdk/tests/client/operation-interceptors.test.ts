@@ -1,6 +1,24 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
+import { metrics as sharedMetrics, trace as sharedTrace } from '../../../otel/src/api'
+import { ExportResultCode } from '../../../otel/src/core'
+import {
+  MeterProvider as SharedMeterProvider,
+  NoopMeterProvider as SharedNoopMeterProvider,
+} from '../../../otel/src/sdk-metrics'
+import {
+  createSimpleSpanProcessor,
+  NoopTracerProvider,
+  type SpanData,
+  type SpanExporter,
+  TracerProvider,
+} from '../../../otel/src/sdk-trace'
+import { metrics as temporalMetrics } from '../../src/otel/api'
+import {
+  MeterProvider as TemporalMeterProvider,
+  NoopMeterProvider as TemporalNoopMeterProvider,
+} from '../../src/otel/sdk-metrics'
 import { makeDefaultClientInterceptors, runClientInterceptors } from '../../src/interceptors/client'
 import type { TemporalInterceptor } from '../../src/interceptors/types'
 import type { Logger } from '../../src/observability/logger'
@@ -60,6 +78,12 @@ const createMetrics = () => {
 }
 
 describe('client operation interceptors', () => {
+  afterEach(() => {
+    sharedTrace.setGlobalTracerProvider(new NoopTracerProvider())
+    sharedMetrics.setGlobalMeterProvider(new SharedNoopMeterProvider())
+    temporalMetrics.setGlobalMeterProvider(new TemporalNoopMeterProvider())
+  })
+
   test('retries transient rpc and records attempt metadata', async () => {
     const { logger } = createLogger()
     const metrics = createMetrics()
@@ -138,5 +162,59 @@ describe('client operation interceptors', () => {
     expect(headers['temporal-namespace']).toBe('integration')
     expect(headers['temporal-client-identity']).toBe('client-2')
     expect(metrics.counters.get('temporal_client_interceptor_operation_total')).toBe(1)
+  })
+
+  test('uses the tracer provider registered by the shared OTEL API', async () => {
+    const exportedSpans: SpanData[] = []
+    const exporter: SpanExporter = {
+      export(spans, resultCallback) {
+        exportedSpans.push(...spans)
+        resultCallback({ code: ExportResultCode.SUCCESS })
+      },
+      async shutdown() {},
+    }
+    const provider = new TracerProvider()
+    provider.addSpanProcessor(createSimpleSpanProcessor(exporter))
+    sharedTrace.setGlobalTracerProvider(provider)
+
+    const { logger } = createLogger()
+    const metrics = createMetrics()
+    const interceptors = await run(
+      makeDefaultClientInterceptors({
+        namespace: 'integration',
+        taskQueue: 'demo',
+        identity: 'client-shared-otel',
+        logger,
+        metricsRegistry: metrics.registry,
+        metricsExporter: metrics.exporter,
+        tracingEnabled: true,
+      }),
+    )
+
+    await run(
+      runClientInterceptors(
+        interceptors as readonly TemporalInterceptor[],
+        {
+          kind: 'workflow.signal',
+          namespace: 'integration',
+          taskQueue: 'demo',
+          identity: 'client-shared-otel',
+          headers: {},
+        },
+        () => Effect.succeed('signalled'),
+      ),
+    )
+
+    expect(exportedSpans.map((span) => span.name)).toContain('temporal.client.workflow.signal')
+    await provider.shutdown()
+  })
+
+  test('keeps incompatible OTEL meter providers isolated', () => {
+    sharedMetrics.setGlobalMeterProvider(new SharedMeterProvider())
+    temporalMetrics.setGlobalMeterProvider(new TemporalMeterProvider())
+
+    const gauge = sharedMetrics.getMeter('shared-meter').createGauge('shared_gauge')
+
+    expect(() => gauge.set(1)).not.toThrow()
   })
 })
