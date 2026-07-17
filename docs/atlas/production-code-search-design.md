@@ -186,6 +186,8 @@ ready. Do not silently fall back while reporting success.
 ### 5. Timeouts cancel work
 
 - Set PostgreSQL `statement_timeout` below the API deadline.
+- Give cold exact and lexical SQL a five-second failure-isolation ceiling while independently enforcing the one-second
+  p95 and two-second p99 acceptance gates. A latency SLO is not a statement timeout.
 - Propagate request cancellation to the SQL client.
 - Cancel on disconnect.
 - Test that the backend query disappears from `pg_stat_activity` within one second.

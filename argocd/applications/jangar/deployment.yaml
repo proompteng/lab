@@ -357,8 +357,9 @@ spec:
               value: qwen3-embedding-saigak:8b
             - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
               value: "1024"
+            # Failure-isolation ceiling for cold exact/lexical SQL; atlas:verify enforces the 1s/2s latency SLO.
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
-              value: "900"
+              value: "5000"
             - name: JANGAR_SOURCE_CI_RUN_ID
               value: "29470119287"
             - name: JANGAR_SOURCE_CI_CONCLUSION
