@@ -54,4 +54,18 @@ describe('Talos bootstrap MTU contracts', () => {
       expect(patch, path).toContain('mtu: 1450')
     }
   })
+
+  test('runs the docs contract when an affected bootstrap runbook changes', () => {
+    const workflow = readRepoFile('.github/workflows/scripts-ci.yml')
+    const protectedRunbooks = [
+      'devices/altra/docs/cluster-bootstrap.md',
+      'devices/ryzen/docs/cluster-bootstrap.md',
+      'devices/turin/docs/nvidia-gpu-on-talos.md',
+      'devices/turin/docs/cluster-join-plan.md',
+    ]
+
+    for (const path of protectedRunbooks) {
+      expect(workflow.split(`'${path}'`), path).toHaveLength(3)
+    }
+  })
 })
