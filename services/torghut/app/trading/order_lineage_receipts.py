@@ -9,9 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Final, cast
 
-from psycopg.errors import UniqueViolation
 from sqlalchemy import or_, select, text as sql_text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -372,25 +370,8 @@ def persist_order_lineage_receipt(
         promotion_authority_eligible=draft.promotion_authority_eligible,
         observed_at=_required_utc(observed_at),
     )
-    try:
-        with session.begin_nested():
-            session.add(row)
-            session.flush()
-    except IntegrityError as error:
-        if not _is_evidence_unique_violation(error):
-            raise
-        existing = session.scalar(
-            select(OrderLineageRepairReceipt).where(
-                OrderLineageRepairReceipt.order_identity_sha256
-                == draft.order_identity_sha256,
-                OrderLineageRepairReceipt.repair_version == draft.repair_version,
-                OrderLineageRepairReceipt.evidence_sha256 == draft.evidence_sha256,
-            )
-        )
-        if existing is None:
-            raise
-        _validate_reused_receipt(existing, draft)
-        return PersistedOrderLineageReceipt(receipt=existing, reused_existing=True)
+    session.add(row)
+    session.flush()
     return PersistedOrderLineageReceipt(receipt=row, reused_existing=False)
 
 
@@ -579,13 +560,6 @@ def _single_order_alias(*values: str | None) -> str | None:
     if len(aliases) > 1:
         raise ValueError("order_lineage_identity_alias_conflict")
     return next(iter(aliases), None)
-
-
-def _is_evidence_unique_violation(error: IntegrityError) -> bool:
-    return (
-        isinstance(error.orig, UniqueViolation)
-        and error.orig.diag.constraint_name == "uq_order_lineage_receipt_evidence"
-    )
 
 
 def _validate_reused_receipt(
