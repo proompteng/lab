@@ -497,6 +497,22 @@ describe('atlas store', () => {
     expect(statementTimeouts).toEqual(['250ms', '20000ms'])
   })
 
+  it('caps the exact and lexical cold-storage ceiling below the API deadline', async () => {
+    process.env.ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS = '60000'
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
+
+    const statementTimeouts = calls
+      .filter((call) => call.sql.toLowerCase().includes("set_config('statement_timeout'"))
+      .flatMap((call) => call.params)
+    expect(statementTimeouts).toEqual(['5000ms', '1000ms'])
+  })
+
   it('uses an exact materialized semantic scan for narrow caller scopes', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json({
