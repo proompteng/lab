@@ -154,6 +154,7 @@ def _create_guard() -> None:
                 fill_order_event_count bigint;
                 broker_activity_count bigint;
                 broker_fill_count bigint;
+                source_ids_invalid boolean;
                 execution_id text;
                 trade_decision_id text;
                 strategy_id text;
@@ -255,6 +256,44 @@ def _create_guard() -> None:
                    OR jsonb_typeof(broker_fill_activity_ids) IS DISTINCT FROM 'array'
                 THEN
                     RAISE EXCEPTION 'order lineage repair evidence arrays missing'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                WITH source_ids AS (
+                    SELECT 'order_event_ids' AS source_array, value, ordinality
+                      FROM jsonb_array_elements_text(order_event_ids)
+                           WITH ORDINALITY
+                    UNION ALL
+                    SELECT 'fill_order_event_ids', value, ordinality
+                      FROM jsonb_array_elements_text(fill_order_event_ids)
+                           WITH ORDINALITY
+                    UNION ALL
+                    SELECT 'broker_activity_ids', value, ordinality
+                      FROM jsonb_array_elements_text(broker_activity_ids)
+                           WITH ORDINALITY
+                    UNION ALL
+                    SELECT 'broker_fill_activity_ids', value, ordinality
+                      FROM jsonb_array_elements_text(broker_fill_activity_ids)
+                           WITH ORDINALITY
+                ), ordered_source_ids AS (
+                    SELECT
+                        source_array,
+                        value,
+                        lag(value) OVER (
+                            PARTITION BY source_array ORDER BY ordinality
+                        ) AS prior_value
+                      FROM source_ids
+                )
+                SELECT EXISTS (
+                    SELECT 1
+                     FROM ordered_source_ids
+                     WHERE value IS NULL
+                        OR value !~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-'
+                            '[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                        OR prior_value >= value
+                ) INTO source_ids_invalid;
+                IF source_ids_invalid THEN
+                    RAISE EXCEPTION 'order lineage source IDs are not canonical'
                         USING ERRCODE = '23514';
                 END IF;
 

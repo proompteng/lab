@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -9,8 +10,9 @@ from threading import Barrier
 import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -87,6 +89,7 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
                 observed_at=now,
             )
             assert not persisted.reused_existing
+            receipt_id = persisted.receipt.id
             source_gap = persist_order_lineage_receipt(
                 session,
                 build_order_lineage_receipt(
@@ -163,8 +166,77 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
             """,
             id=uuid.uuid4(),
         )
+        _assert_source_ids_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            source_ids=["not-a-uuid"],
+        )
+        _assert_source_ids_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            source_ids=[str(source_event_id), str(source_event_id)],
+        )
     finally:
         schema_engine.dispose()
         with admin_engine.begin() as connection:
             connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         admin_engine.dispose()
+
+
+def _assert_source_ids_rejected(
+    engine: Engine,
+    *,
+    receipt_id: uuid.UUID,
+    source_ids: list[str],
+) -> None:
+    statement = text(
+        """
+        WITH source AS (
+            SELECT *
+              FROM order_lineage_repair_receipts
+             WHERE id = :receipt_id
+        ), changed AS (
+            SELECT
+                source.*,
+                jsonb_set(
+                    source.evidence,
+                    '{sources,order_event_ids}',
+                    CAST(:source_ids AS jsonb),
+                    false
+                ) AS changed_evidence
+              FROM source
+        ), sealed AS (
+            SELECT
+                changed.*,
+                changed_evidence::text AS changed_canonical_json
+              FROM changed
+        )
+        INSERT INTO order_lineage_repair_receipts (
+            id, repair_version, provider, environment, account_label,
+            order_identity_sha256, alpaca_order_id, client_order_id,
+            classification, confidence, execution_source,
+            source_first_at, source_last_at, evidence,
+            evidence_canonical_json, evidence_sha256,
+            promotion_authority_eligible, observed_at
+        )
+        SELECT
+            :new_id, repair_version, provider, environment, account_label,
+            order_identity_sha256, alpaca_order_id, client_order_id,
+            classification, confidence, execution_source,
+            source_first_at, source_last_at, changed_evidence,
+            changed_canonical_json,
+            encode(sha256(convert_to(changed_canonical_json, 'UTF8')), 'hex'),
+            promotion_authority_eligible, observed_at
+          FROM sealed
+        """
+    )
+    with pytest.raises(DBAPIError, match="source IDs are not canonical"):
+        with engine.begin() as connection:
+            connection.execute(
+                statement,
+                {
+                    "new_id": uuid.uuid4(),
+                    "receipt_id": receipt_id,
+                    "source_ids": json.dumps(source_ids),
+                },
+            )
