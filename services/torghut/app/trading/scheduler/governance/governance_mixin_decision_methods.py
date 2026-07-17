@@ -601,7 +601,6 @@ class TradingSchedulerGovernanceDecisionMethods(
                 gate_policy_path=gate_policy_path,
                 output_dir=run_output_dir,
                 promotion_target=promotion_target,
-                strategy_configmap_path=Path("/etc/torghut/strategies.yaml"),
                 code_version="live",
                 approval_token=approval_token,
                 drift_promotion_evidence=dict(drift_gate_evidence),

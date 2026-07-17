@@ -165,6 +165,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 deps.call_kwargs["gate_policy_path"],
                 Path(settings.trading_autonomy_gate_policy_path),
             )
+            self.assertNotIn("strategy_configmap_path", deps.call_kwargs)
 
     def test_run_autonomous_cycle_passes_persistence_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
