@@ -23,6 +23,7 @@ describe('Talos bootstrap MTU contracts', () => {
     const ryzen = readRepoFile('devices/ryzen/docs/cluster-bootstrap.md')
     const turinJoin = readRepoFile('devices/turin/docs/cluster-join-plan.md')
     const turinGpu = readRepoFile('devices/turin/docs/nvidia-gpu-on-talos.md')
+    const canonicalJoin = readRepoFile('devices/galactic/docs/add-control-plane-node.md')
 
     expect(bashBlockAfter(altra, '## 2) Apply config to `altra` (first install)')).toContain(
       '--config-patch @devices/altra/manifests/network-mtu.patch.yaml',
@@ -38,6 +39,9 @@ describe('Talos bootstrap MTU contracts', () => {
     )
     expect(bashBlockAfter(turinGpu, '## Apply with first install')).toContain(
       '--config-patch @devices/turin/manifests/network-mtu.patch.yaml',
+    )
+    expect(bashBlockAfter(canonicalJoin, '## 3) Apply config (install + join)')).toContain(
+      '--config-patch @<device_dir>/manifests/network-mtu.patch.yaml',
     )
   })
 
@@ -55,16 +59,20 @@ describe('Talos bootstrap MTU contracts', () => {
     }
   })
 
-  test('runs the docs contract when an affected bootstrap runbook changes', () => {
+  test('runs the docs contract when an affected bootstrap input changes', () => {
     const workflow = readRepoFile('.github/workflows/scripts-ci.yml')
-    const protectedRunbooks = [
+    const protectedPaths = [
       'devices/altra/docs/cluster-bootstrap.md',
       'devices/ryzen/docs/cluster-bootstrap.md',
       'devices/turin/docs/nvidia-gpu-on-talos.md',
       'devices/turin/docs/cluster-join-plan.md',
+      'devices/galactic/docs/add-control-plane-node.md',
+      'devices/altra/manifests/network-mtu.patch.yaml',
+      'devices/ryzen/manifests/network-mtu.patch.yaml',
+      'devices/turin/manifests/network-mtu.patch.yaml',
     ]
 
-    for (const path of protectedRunbooks) {
+    for (const path of protectedPaths) {
       expect(workflow.split(`'${path}'`), path).toHaveLength(3)
     }
   })
