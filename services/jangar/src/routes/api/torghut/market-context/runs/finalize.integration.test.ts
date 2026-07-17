@@ -22,8 +22,12 @@ const buildInsertTracker = (): InsertTracker => {
     },
     insertInto: (table: string) => {
       tableCalls.push(table)
+      let insertedValues: { symbol?: string; domain?: string } = {}
       const chain = {
-        values: () => chain,
+        values: (values: { symbol?: string; domain?: string }) => {
+          insertedValues = values
+          return chain
+        },
         onConflict: (callback: unknown) => {
           if (typeof callback === 'function') {
             const updateBuilder = {
@@ -37,7 +41,12 @@ const buildInsertTracker = (): InsertTracker => {
           }
           return chain
         },
+        returning: () => chain,
         execute: async () => undefined,
+        executeTakeFirstOrThrow: async () => ({
+          symbol: insertedValues.symbol,
+          domain: insertedValues.domain,
+        }),
       }
       return chain
     },
