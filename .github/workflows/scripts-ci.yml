@@ -18,6 +18,10 @@ on:
       - 'devices/ryzen/docs/cluster-bootstrap.md'
       - 'devices/turin/docs/nvidia-gpu-on-talos.md'
       - 'devices/turin/docs/cluster-join-plan.md'
+      - 'devices/galactic/docs/add-control-plane-node.md'
+      - 'devices/altra/manifests/network-mtu.patch.yaml'
+      - 'devices/ryzen/manifests/network-mtu.patch.yaml'
+      - 'devices/turin/manifests/network-mtu.patch.yaml'
       - '.github/workflows/scripts-ci.yml'
   pull_request:
     paths:
@@ -34,6 +38,10 @@ on:
       - 'devices/ryzen/docs/cluster-bootstrap.md'
       - 'devices/turin/docs/nvidia-gpu-on-talos.md'
       - 'devices/turin/docs/cluster-join-plan.md'
+      - 'devices/galactic/docs/add-control-plane-node.md'
+      - 'devices/altra/manifests/network-mtu.patch.yaml'
+      - 'devices/ryzen/manifests/network-mtu.patch.yaml'
+      - 'devices/turin/manifests/network-mtu.patch.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
