@@ -8,9 +8,9 @@ metadata:
     app.kubernetes.io/component: order-lineage-reconciliation
     app.kubernetes.io/part-of: lab
 spec:
-  # Staged inert until the closed-census image is promoted and a follow-up
-  # GitOps change explicitly enables the schedule.
-  suspend: true
+  # Enabled only after the closed-census image and migration 0082 reached
+  # Synced/Healthy production state at the exact promoted source and digest.
+  suspend: false
   schedule: "12 * * * *"
   timeZone: America/New_York
   concurrencyPolicy: Forbid
