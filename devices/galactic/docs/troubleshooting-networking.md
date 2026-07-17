@@ -54,6 +54,7 @@ If a `Service` is `type: LoadBalancer`, shows an `EXTERNAL-IP`, but nothing on y
 ### Cause (Talos default node label)
 
 Talos commonly sets the node label `node.kubernetes.io/exclude-from-external-load-balancers` on control-plane nodes.
+
 MetalLB treats nodes with that label as ineligible for external load balancers, so speakers will not advertise VIPs from those nodes.
 
 ### Fix
