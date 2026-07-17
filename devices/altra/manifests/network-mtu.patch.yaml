@@ -1,5 +1,0 @@
-machine:
-  network:
-    interfaces:
-      - interface: enP5p1s0
-        mtu: 1450

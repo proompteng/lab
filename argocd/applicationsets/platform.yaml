@@ -76,6 +76,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: flannel-cni
+                path: argocd/applications/flannel-cni
+                namespace: kube-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
               - name: volume-snapshot-controller
                 path: argocd/applications/volume-snapshot-controller
                 namespace: kube-system
