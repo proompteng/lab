@@ -24,7 +24,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -40,8 +40,8 @@ jobs:
           changed_manifests="${RUNNER_TEMP}/changed-manifests.txt"
           git rev-parse --verify 'HEAD^1' >/dev/null
           git rev-parse --verify 'HEAD^2' >/dev/null
-          git diff --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_files}"
-          git diff --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_manifests}"
+          git diff --merge-base --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_files}"
+          git diff --merge-base --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2' > "${changed_manifests}"
           printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
           printf 'changed_manifests=%s\n' "${changed_manifests}" >> "${GITHUB_OUTPUT}"
 
