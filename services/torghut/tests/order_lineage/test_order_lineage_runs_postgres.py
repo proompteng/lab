@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -30,6 +29,7 @@ from app.trading.order_lineage_receipts import (
     MATCH_BASIS_ALPACA_ORDER_ID,
     OrderLineageEvidence,
     build_order_lineage_receipt,
+    canonical_jsonb_text,
 )
 from app.trading.order_lineage_runs import (
     OrderLineageCensusSources,
@@ -100,6 +100,7 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
         assert_rejected(schema_engine, "TRUNCATE order_lineage_repair_runs")
 
         draft = build_order_lineage_repair_run(sources, [receipt])
+        _assert_noncanonical_run_rejected(schema_engine, draft)
         _assert_invalid_run_rejected(
             schema_engine,
             draft,
@@ -312,8 +313,8 @@ def _assert_invalid_run_rejected(
     result = copy.deepcopy(draft.result)
     if mutate_result is not None:
         result = mutate_result(result)
-    input_json = _canonical_json(input_manifest)
-    result_json = _canonical_json(result)
+    input_json = canonical_jsonb_text(input_manifest)
+    result_json = canonical_jsonb_text(result)
     row = OrderLineageRepairRun(
         repair_version=draft.repair_version,
         provider=draft.provider,
@@ -336,6 +337,33 @@ def _assert_invalid_run_rejected(
             session.flush()
 
 
+def _assert_noncanonical_run_rejected(
+    engine: Engine,
+    draft: OrderLineageRepairRunDraft,
+) -> None:
+    input_json = f"{draft.input_manifest_canonical_json}\n"
+    row = OrderLineageRepairRun(
+        repair_version=draft.repair_version,
+        provider=draft.provider,
+        environment=draft.environment,
+        account_label=draft.account_label,
+        broker_economic_input_id=draft.broker_economic_input_id,
+        input_manifest=draft.input_manifest,
+        input_manifest_canonical_json=input_json,
+        input_manifest_sha256=_sha256(input_json),
+        receipt_count=draft.receipt_count,
+        result=draft.result,
+        result_canonical_json=draft.result_canonical_json,
+        result_sha256=draft.result_sha256,
+        promotion_authority_eligible=False,
+        observed_at=NOW,
+    )
+    with pytest.raises(DBAPIError, match="run JSON is not canonical"):
+        with Session(engine) as session, session.begin():
+            session.add(row)
+            session.flush()
+
+
 def _set_nested(value: dict[str, object], key: str, replacement: object):
     value[key] = replacement
     return value
@@ -351,16 +379,6 @@ def _set_count(
     assert isinstance(counts, dict)
     counts[key] = count
     return value
-
-
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 def _sha256(value: str) -> str:

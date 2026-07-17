@@ -314,7 +314,7 @@ def build_order_lineage_receipt(
             "order_event_ids": [str(value) for value in normalized.order_event_ids],
         },
     }
-    canonical_json = _jsonb_canonical_json(payload)
+    canonical_json = canonical_jsonb_text(payload)
     return OrderLineageReceiptDraft(
         repair_version=ORDER_LINEAGE_REPAIR_VERSION,
         provider=normalized.provider,
@@ -724,7 +724,7 @@ def _validate_classification_sources(
         raise ValueError("order_lineage_external_sources_invalid")
 
 
-def _jsonb_canonical_json(value: object) -> str:
+def canonical_jsonb_text(value: object) -> str:
     """Serialize the receipt subset exactly like PostgreSQL JSONB text output."""
 
     if isinstance(value, dict):
@@ -735,11 +735,11 @@ def _jsonb_canonical_json(value: object) -> str:
             key=lambda item: (len(item.encode("utf-8")), item.encode("utf-8")),
         ):
             rendered_key = json.dumps(key, ensure_ascii=False)
-            items.append(f"{rendered_key}: {_jsonb_canonical_json(mapping[key])}")
+            items.append(f"{rendered_key}: {canonical_jsonb_text(mapping[key])}")
         return "{" + ", ".join(items) + "}"
     if isinstance(value, (list, tuple)):
         sequence = cast(list[object] | tuple[object, ...], value)
-        return "[" + ", ".join(_jsonb_canonical_json(item) for item in sequence) + "]"
+        return "[" + ", ".join(canonical_jsonb_text(item) for item in sequence) + "]"
     if value is None or isinstance(value, (str, bool, int)):
         return json.dumps(value, allow_nan=False, ensure_ascii=False)
     raise TypeError(f"unsupported order-lineage JSON value: {type(value).__name__}")
@@ -830,5 +830,6 @@ __all__ = (
     "OrderLineageReceiptDraft",
     "PersistedOrderLineageReceipt",
     "build_order_lineage_receipt",
+    "canonical_jsonb_text",
     "persist_order_lineage_receipt",
 )

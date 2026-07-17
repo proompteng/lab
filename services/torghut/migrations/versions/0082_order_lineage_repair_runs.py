@@ -134,6 +134,8 @@ def _create_guard() -> None:
             DECLARE
                 input_document jsonb;
                 result_document jsonb;
+                expected_input_canonical_json text;
+                expected_result_canonical_json text;
                 classification_counts jsonb;
                 classified_receipt_count bigint;
                 confidence_counts jsonb;
@@ -154,6 +156,15 @@ def _create_guard() -> None:
                     RAISE EXCEPTION 'order lineage repair run JSON is invalid'
                         USING ERRCODE = '23514';
                 END;
+                expected_input_canonical_json := NEW.input_manifest::text;
+                expected_result_canonical_json := NEW.result::text;
+                IF NEW.input_manifest_canonical_json
+                       IS DISTINCT FROM expected_input_canonical_json
+                   OR NEW.result_canonical_json
+                       IS DISTINCT FROM expected_result_canonical_json THEN
+                    RAISE EXCEPTION 'order lineage run JSON is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
                 IF input_document IS DISTINCT FROM NEW.input_manifest
                    OR result_document IS DISTINCT FROM NEW.result THEN
                     RAISE EXCEPTION 'order lineage repair run document mismatch'

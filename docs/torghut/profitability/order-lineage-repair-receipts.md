@@ -126,8 +126,10 @@ Migration `0082_order_lineage_runs` adds the closed-census boundary. One append-
 - classification, confidence, execution-source, and source-coverage counts that each sum to the receipt count.
 
 PostgreSQL verifies the referenced broker input and every count, rejects update/delete/truncate, and takes one
-transaction-scoped advisory lock per repair scope. Receipt states and the run are committed in the same transaction.
-Repeating identical inputs reuses the run; the same input producing a different result fails as nondeterministic.
+transaction-scoped advisory lock per repair scope. Both run documents must use exact PostgreSQL JSONB canonical bytes,
+so alternate whitespace or key ordering cannot manufacture a second input hash. Receipt states and the run are
+committed in the same transaction. Repeating identical inputs reuses the run; the same input producing a different
+result fails as nondeterministic.
 
 ## Runtime Census
 

@@ -21,6 +21,7 @@ from .order_lineage_receipts import (
     EXECUTION_SOURCES,
     ORDER_LINEAGE_REPAIR_VERSION,
     OrderLineageReceiptDraft,
+    canonical_jsonb_text,
     persist_order_lineage_receipt,
 )
 
@@ -129,7 +130,7 @@ def build_order_lineage_repair_run(
             "provider": normalized_sources.provider,
         },
     }
-    input_json = _canonical_json(input_manifest)
+    input_json = canonical_jsonb_text(input_manifest)
     result: dict[str, object] = {
         "classification_counts": {
             classification: classification_counts.get(classification, 0)
@@ -153,7 +154,7 @@ def build_order_lineage_repair_run(
             for classification in _SOURCE_COVERAGE_CLASSES
         },
     }
-    result_json = _canonical_json(result)
+    result_json = canonical_jsonb_text(result)
     return OrderLineageRepairRunDraft(
         repair_version=ORDER_LINEAGE_REPAIR_VERSION,
         provider=normalized_sources.provider,

@@ -22,6 +22,7 @@ def test_order_lineage_run_migration_is_closed_and_append_only() -> None:
     assert "order lineage repair run is append-only" in text
     assert "BEFORE INSERT OR UPDATE OR DELETE" in text
     assert "BEFORE TRUNCATE" in text
+    assert "order lineage run JSON is not canonical" in text
     assert "torghut.order-lineage-census-input.v1" in text
     assert "torghut.order-lineage-census-result.v1" in text
     assert "broker_economic_input_id" in text
