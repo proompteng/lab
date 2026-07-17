@@ -84,6 +84,12 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
             )
             assert not persisted.reused_existing
             receipt_id = persisted.receipt.id
+            with pytest.raises(ValueError, match="replay_projection_mismatch"):
+                persist_order_lineage_receipt(
+                    session,
+                    replace(draft, classification=CLASSIFICATION_ORDER_FEED_ONLY),
+                    observed_at=now,
+                )
             source_gap = persist_order_lineage_receipt(
                 session,
                 build_order_lineage_receipt(

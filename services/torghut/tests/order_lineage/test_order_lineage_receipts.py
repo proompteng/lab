@@ -379,3 +379,18 @@ def test_persistence_reuses_exact_receipt_and_appends_changed_evidence() -> None
         assert not changed.reused_existing
         assert changed.receipt.id != first.receipt.id
         assert session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == 2
+
+
+def test_persistence_never_reuses_a_malformed_projected_receipt() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    OrderLineageRepairReceipt.__table__.create(engine)
+    draft = build_order_lineage_receipt(linked_incomplete_evidence())
+
+    with Session(engine) as session, session.begin():
+        persist_order_lineage_receipt(session, draft, observed_at=BASE_TIME)
+        with pytest.raises(ValueError, match="replay_projection_mismatch"):
+            persist_order_lineage_receipt(
+                session,
+                replace(draft, classification=CLASSIFICATION_ORDER_FEED_ONLY),
+                observed_at=BASE_TIME + timedelta(seconds=1),
+            )

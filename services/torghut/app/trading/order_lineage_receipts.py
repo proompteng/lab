@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Final, cast
 
+from psycopg.errors import UniqueViolation
 from sqlalchemy import or_, select, text as sql_text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -346,6 +347,7 @@ def persist_order_lineage_receipt(
     _acquire_identity_scope_lock(session, draft)
     draft, existing = _resolve_durable_order_identity(session, draft)
     if existing is not None:
+        _validate_reused_receipt(existing, draft)
         return PersistedOrderLineageReceipt(
             receipt=existing,
             reused_existing=True,
@@ -374,7 +376,9 @@ def persist_order_lineage_receipt(
         with session.begin_nested():
             session.add(row)
             session.flush()
-    except IntegrityError:
+    except IntegrityError as error:
+        if not _is_evidence_unique_violation(error):
+            raise
         existing = session.scalar(
             select(OrderLineageRepairReceipt).where(
                 OrderLineageRepairReceipt.order_identity_sha256
@@ -385,6 +389,7 @@ def persist_order_lineage_receipt(
         )
         if existing is None:
             raise
+        _validate_reused_receipt(existing, draft)
         return PersistedOrderLineageReceipt(receipt=existing, reused_existing=True)
     return PersistedOrderLineageReceipt(receipt=row, reused_existing=False)
 
@@ -574,6 +579,55 @@ def _single_order_alias(*values: str | None) -> str | None:
     if len(aliases) > 1:
         raise ValueError("order_lineage_identity_alias_conflict")
     return next(iter(aliases), None)
+
+
+def _is_evidence_unique_violation(error: IntegrityError) -> bool:
+    return (
+        isinstance(error.orig, UniqueViolation)
+        and error.orig.diag.constraint_name == "uq_order_lineage_receipt_evidence"
+    )
+
+
+def _validate_reused_receipt(
+    receipt: OrderLineageRepairReceipt,
+    draft: OrderLineageReceiptDraft,
+) -> None:
+    persisted_projection = (
+        receipt.repair_version,
+        receipt.provider,
+        receipt.environment,
+        receipt.account_label,
+        receipt.order_identity_sha256,
+        receipt.alpaca_order_id,
+        receipt.client_order_id,
+        receipt.classification,
+        receipt.confidence,
+        receipt.execution_source,
+        receipt.source_first_at,
+        receipt.source_last_at,
+        receipt.evidence_canonical_json,
+        receipt.evidence_sha256,
+        receipt.promotion_authority_eligible,
+    )
+    draft_projection = (
+        draft.repair_version,
+        draft.provider,
+        draft.environment,
+        draft.account_label,
+        draft.order_identity_sha256,
+        draft.alpaca_order_id,
+        draft.client_order_id,
+        draft.classification,
+        draft.confidence,
+        draft.execution_source,
+        draft.source_first_at,
+        draft.source_last_at,
+        draft.evidence_canonical_json,
+        draft.evidence_sha256,
+        draft.promotion_authority_eligible,
+    )
+    if persisted_projection != draft_projection:
+        raise ValueError("order_lineage_replay_projection_mismatch")
 
 
 def _validate_linkage_contract(evidence: _NormalizedOrderLineageEvidence) -> None:
