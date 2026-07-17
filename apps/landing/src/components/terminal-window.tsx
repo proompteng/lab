@@ -3,6 +3,7 @@
 import { motion } from 'motion/react'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import LiveOnlineCounter from '@/components/live-online-counter'
+import { resolveTerminalWindowCenter } from '@/components/terminal-window-motion'
 import { cn } from '@/lib/utils'
 
 const AGENTRUN_FILE = 'charts/agents/examples/agentrun-workflow-smoke.yaml'
@@ -337,11 +338,15 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       const menuBarRect = menuBarButtonRef.current.getBoundingClientRect()
       const topInsetPx = desktopBoundsRef?.current ? viewport.top : TOP_MENU_BAR_HEIGHT_PX
       const isFullscreenLike = fullscreenMode === 'fullscreen'
-      const windowCenterX = viewport.left + viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
-      const windowCenterY = viewport.top + viewport.height / 2 + (isFullscreenLike ? topInsetPx / 2 : offset.y)
+      const windowCenter = resolveTerminalWindowCenter({
+        fixedViewport: { width: window.innerWidth, height: window.innerHeight },
+        offset,
+        fullscreen: isFullscreenLike,
+        fullscreenOffsetY: topInsetPx / 2 - DOCK_SAFE_AREA_PX / 2,
+      })
       return {
-        x: menuBarRect.left + menuBarRect.width / 2 - windowCenterX,
-        y: menuBarRect.top + menuBarRect.height / 2 - windowCenterY,
+        x: menuBarRect.left + menuBarRect.width / 2 - windowCenter.x,
+        y: menuBarRect.top + menuBarRect.height / 2 - windowCenter.y,
       }
     }, [
       desktopBoundsRef,
@@ -360,14 +365,18 @@ const TerminalWindow = forwardRef<TerminalWindowHandle, TerminalWindowProps>(
       // This avoids "minimize does nothing" when refs aren't available yet (SSR/fast interactions).
       const topInsetPx = desktopBoundsRef?.current ? viewport.top : TOP_MENU_BAR_HEIGHT_PX
       const isFullscreenLike = fullscreenMode === 'fullscreen'
-      const windowCenterX = viewport.left + viewport.width / 2 + (isFullscreenLike ? 0 : offset.x)
-      const windowCenterY = viewport.top + viewport.height / 2 + (isFullscreenLike ? topInsetPx / 2 : offset.y)
+      const windowCenter = resolveTerminalWindowCenter({
+        fixedViewport: { width: window.innerWidth, height: window.innerHeight },
+        offset,
+        fullscreen: isFullscreenLike,
+        fullscreenOffsetY: topInsetPx / 2 - DOCK_SAFE_AREA_PX / 2,
+      })
 
       const dockCenterX = viewport.left + viewport.width / 2
       const dockCenterY = viewport.top + viewport.height - 38
       return {
-        x: dockCenterX - windowCenterX,
-        y: dockCenterY - windowCenterY,
+        x: dockCenterX - windowCenter.x,
+        y: dockCenterY - windowCenter.y,
       }
     }, [
       desktopBoundsRef,
