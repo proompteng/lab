@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/part-of: lab
   annotations:
     argocd.argoproj.io/sync-wave: "0"
-    deploy.knative.dev/rollout: 2026-07-16T05:13:45Z
+    deploy.knative.dev/rollout: 2026-07-17T07:22:56Z
 spec:
   replicas: 1
   strategy:
@@ -58,9 +58,9 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: f7a53a9eb39cc334cf95fb48bdfe8e60d62d23ca
+              value: 9df5724f5b5d1422e49b96405253acadab5db811
             - name: JANGAR_GITOPS_REVISION
-              value: f7a53a9eb39cc334cf95fb48bdfe8e60d62d23ca
+              value: 9df5724f5b5d1422e49b96405253acadab5db811
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -357,19 +357,18 @@ spec:
               value: qwen3-embedding-saigak:8b
             - name: ATLAS_CODE_SEARCH_EMBEDDING_DIMENSION
               value: "1024"
-            # Failure-isolation ceiling for cold exact/lexical SQL; atlas:verify enforces the 1s/2s latency SLO.
             - name: ATLAS_CODE_SEARCH_STATEMENT_TIMEOUT_MS
               value: "5000"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "29470119287"
+              value: "29562013863"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:f80d8abeeda59f1096789d3a058e1ad7b470079ed479ef313fb609a6075d8d0f
+              value: sha256:25eb7b6ad1ca7516a1b04ce31a96c757571397293e8e71a1b74838ce671d4ee4
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: f7a53a9eb39cc334cf95fb48bdfe8e60d62d23ca
+              value: 9df5724f5b5d1422e49b96405253acadab5db811
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:f80d8abeeda59f1096789d3a058e1ad7b470079ed479ef313fb609a6075d8d0f
+              value: sha256:25eb7b6ad1ca7516a1b04ce31a96c757571397293e8e71a1b74838ce671d4ee4
           ports:
             - name: http
               containerPort: 8080
