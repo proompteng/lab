@@ -42,6 +42,7 @@ Manifests:
 - `devices/turin/manifests/etcd-lan-subnet.patch.yaml` (pin etcd peer/client addressing to the Turin LAN subnet)
 - `devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml` (pin kubelet node IP selection to the Turin LAN subnet)
 - `devices/turin/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 500)
+- `devices/turin/manifests/network-mtu.patch.yaml` (set the Flannel underlay to 1450 so VXLAN pod MTU is 1400)
 - `devices/turin/manifests/nvidia-kernel-modules.patch.yaml` (load the NVIDIA kernel modules from the Talos system extension)
 - `devices/turin/manifests/time-servers.patch.yaml` (match the working control-plane nodes' explicit NTP servers)
 - `devices/turin/manifests/tailscale-dns.patch.yaml` (Talos DNS settings for node-level Tailscale)
