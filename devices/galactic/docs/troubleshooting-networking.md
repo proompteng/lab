@@ -27,8 +27,20 @@ talosctl -e 100.100.244.141 -n 100.100.244.190 patch machineconfig \
   --patch @devices/turin/manifests/network-mtu.patch.yaml --mode=no-reboot
 ```
 
-After restarting each Flannel pod, `/run/flannel/subnet.env` must report `FLANNEL_MTU=1400`. The Talos-managed
-`kube-flannel-cfg` ConfigMap should not contain an explicit CNI `mtu` field or Argo tracking annotations.
+On an already-running node, `flannel.1` survives a Flannel pod restart and retains its previous MTU. Complete the
+live handoff on each node before removing any temporary ConfigMap override:
+
+```bash
+FLANNEL_POD=$(kubectl -n kube-system get pods -l k8s-app=flannel \
+  --field-selector spec.nodeName=<node-name> -o jsonpath='{.items[0].metadata.name}')
+kubectl -n kube-system exec "$FLANNEL_POD" -c kube-flannel -- ip link set dev flannel.1 mtu 1400
+kubectl -n kube-system delete pod "$FLANNEL_POD" --wait=true
+kubectl -n kube-system rollout status daemonset/kube-flannel --timeout=180s
+talosctl -e 100.100.244.141 -n <node-ip> read /run/flannel/subnet.env
+```
+
+`/run/flannel/subnet.env` must report `FLANNEL_MTU=1400`. The Talos-managed `kube-flannel-cfg` ConfigMap should not
+contain an explicit CNI `mtu` field or Argo tracking annotations after all three nodes have completed the handoff.
 
 Before every Kubernetes upgrade, inspect the Talos manifest plan:
 
