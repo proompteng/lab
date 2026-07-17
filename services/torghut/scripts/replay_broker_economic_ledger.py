@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 
 from app.alpaca_client import TorghutAlpacaClient
 from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST
@@ -15,6 +17,7 @@ from app.trading.economic_ledger import (
     DEFAULT_SOURCE_MAX_AGE_SECONDS,
     BrokerEconomicLedgerReplay,
     BrokerEconomicReconciliationBuild,
+    EconomicLedgerError,
     LedgerScope,
     PersistedBrokerEconomicReconciliation,
     TigerBeetleEconomicParityObservation,
@@ -28,6 +31,17 @@ from app.trading.economic_ledger import (
     replay_broker_economic_ledger_snapshot,
 )
 from app.trading.tigerbeetle_client import create_tigerbeetle_client
+
+
+_SOURCE_CONSISTENCY_RETRY_REASONS = frozenset(
+    {
+        "economic_ledger_option_contract_sizes_changed",
+        "economic_ledger_source_cursor_incomplete",
+        "economic_ledger_source_rows_changed",
+        "economic_ledger_source_watermark_changed",
+    }
+)
+_SOURCE_CONSISTENCY_RETRY_DELAY_SECONDS = 5.0
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -69,9 +83,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "require exact full TigerBeetle parity."
         ),
     )
+    parser.add_argument(
+        "--source-consistency-timeout-seconds",
+        type=int,
+        default=0,
+        help=(
+            "With --observe, retry the complete observation when a concurrent "
+            "source scan changes or temporarily opens the source snapshot."
+        ),
+    )
     args = parser.parse_args(argv)
     if args.tigerbeetle_parity and not args.observe:
         parser.error("--tigerbeetle-parity requires --observe")
+    if args.source_consistency_timeout_seconds < 0:
+        parser.error("--source-consistency-timeout-seconds must be non-negative")
+    if args.source_consistency_timeout_seconds > 0 and not args.observe:
+        parser.error("--source-consistency-timeout-seconds requires --observe")
     return args
 
 
@@ -116,19 +143,12 @@ def _observation_output(
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    broker_client = TorghutAlpacaClient()
-    if broker_client.endpoint_class != "paper":
-        raise RuntimeError("economic_ledger_replay_requires_paper_endpoint")
-    if args.observe and (BUILD_COMMIT == "unknown" or BUILD_IMAGE_DIGEST is None):
-        raise RuntimeError("economic_ledger_observation_build_identity_missing")
-    scope = LedgerScope(
-        provider="alpaca",
-        environment=broker_client.endpoint_class,
-        account_label=str(args.account_label),
-        endpoint_fingerprint=fingerprint_broker_endpoint(broker_client.endpoint_url),
-    )
+def _execute_attempt(
+    args: argparse.Namespace,
+    *,
+    broker_client: TorghutAlpacaClient,
+    scope: LedgerScope,
+) -> tuple[dict[str, object], int]:
     with SessionLocal() as session, session.begin():
         source_rows = load_broker_economic_ledger_source_rows(session, scope=scope)
     ledger_snapshot = prepare_broker_economic_ledger_snapshot(source_rows)
@@ -188,8 +208,75 @@ def main(argv: list[str] | None = None) -> int:
     else:
         payload = replay.to_payload(published=published)
         payload["reconciliation"] = None
+    exit_code = (
+        1 if tigerbeetle_parity is not None and not tigerbeetle_parity.parity else 0
+    )
+    return payload, exit_code
+
+
+def _execute_with_source_consistency_retry(
+    args: argparse.Namespace,
+    *,
+    broker_client: TorghutAlpacaClient,
+    scope: LedgerScope,
+) -> tuple[dict[str, object], int]:
+    deadline = time.monotonic() + args.source_consistency_timeout_seconds
+    attempt = 1
+    while True:
+        try:
+            return _execute_attempt(args, broker_client=broker_client, scope=scope)
+        except EconomicLedgerError as exc:
+            reason = str(exc)
+            remaining_seconds = deadline - time.monotonic()
+            if (
+                reason not in _SOURCE_CONSISTENCY_RETRY_REASONS
+                or remaining_seconds <= 0
+            ):
+                raise
+            delay_seconds = min(
+                _SOURCE_CONSISTENCY_RETRY_DELAY_SECONDS,
+                remaining_seconds,
+            )
+            print(
+                json.dumps(
+                    {
+                        "attempt": attempt,
+                        "delay_seconds": delay_seconds,
+                        "reason": reason,
+                        "schema_version": (
+                            "torghut.broker-economic-source-retry-log.v1"
+                        ),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(delay_seconds)
+            attempt += 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    broker_client = TorghutAlpacaClient()
+    if broker_client.endpoint_class != "paper":
+        raise RuntimeError("economic_ledger_replay_requires_paper_endpoint")
+    if args.observe and (BUILD_COMMIT == "unknown" or BUILD_IMAGE_DIGEST is None):
+        raise RuntimeError("economic_ledger_observation_build_identity_missing")
+    scope = LedgerScope(
+        provider="alpaca",
+        environment=broker_client.endpoint_class,
+        account_label=str(args.account_label),
+        endpoint_fingerprint=fingerprint_broker_endpoint(broker_client.endpoint_url),
+    )
+    payload, exit_code = _execute_with_source_consistency_retry(
+        args,
+        broker_client=broker_client,
+        scope=scope,
+    )
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
-    return 1 if tigerbeetle_parity is not None and not tigerbeetle_parity.parity else 0
+    return exit_code
 
 
 if __name__ == "__main__":
