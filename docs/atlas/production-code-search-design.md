@@ -1,8 +1,8 @@
 # Atlas Code Search Repair Plan
 
-Status: The initial in-place repair merged in PR #12459. Production hardening is implemented in the codebase, but Atlas
-is not production-proven until the hardened images run, a fresh current-main rebuild completes, and the live Definition
-of Done passes.
+Status: Initial production acceptance passed on 2026-07-17 after the hardened images ran, fresh current-main
+reconciliation completed, and the live Definition of Done passed. The dated execution record below is the accepted
+baseline; any later contradictory live evidence reopens the gate.
 
 Evidence baseline: 2026-07-13, repository commit `9f6487ada0cf9222b65cbb1ee9b10d50a09b216e`.
 

@@ -46,7 +46,9 @@ of truth.
 5. If `origin/main` and the indexed commit differ, wait for the single reconcile workflow or run the operator verifier;
    do not start a duplicate reconcile.
 6. Do not infer corpus completeness from `atlas_stats`, sampled health, pod readiness, Argo health, or a few successful
-   queries. Only `atlas:verify` checks the complete contract.
+   queries. `atlas:verify` checks the complete Git, PostgreSQL, and Jangar corpus/search contract.
+7. For a complete rollout claim, also inspect the Definition of Done's Argo state, live image digest, single consumer,
+   and ten-minute convergence evidence; `atlas:verify` does not check those runtime gates.
 
 The dated execution record in the production design closed the initial rollout gate. Any later contradictory live
 evidence takes precedence and reopens it.
