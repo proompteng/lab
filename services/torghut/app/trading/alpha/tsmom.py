@@ -117,7 +117,8 @@ def _compute_portfolio_returns(
     cfg: TSMOMConfig,
 ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
     port_ret_gross: pd.Series = (weights * rets).sum(axis=1).fillna(0.0)
-    turnover: pd.Series = weights.diff().abs().sum(axis=1).fillna(0.0)
+    weight_changes = weights.diff().fillna(weights)
+    turnover: pd.Series = weight_changes.abs().sum(axis=1)
     cost_ret: pd.Series = turnover * (cfg.cost_bps_per_turnover / 10000.0)
     port_ret_net: pd.Series = port_ret_gross - cost_ret
     return port_ret_gross, turnover, cost_ret, port_ret_net
