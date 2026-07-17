@@ -342,6 +342,7 @@ def persist_order_lineage_receipt(
 ) -> PersistedOrderLineageReceipt:
     """Append a new evidence state or reuse the exact existing receipt."""
 
+    _validate_draft_document(draft)
     _acquire_identity_scope_lock(session, draft)
     draft, existing = _resolve_durable_order_identity(session, draft)
     if existing is not None:
@@ -579,6 +580,7 @@ def _validate_reused_receipt(
         receipt.execution_source,
         receipt.source_first_at,
         receipt.source_last_at,
+        receipt.evidence,
         receipt.evidence_canonical_json,
         receipt.evidence_sha256,
         receipt.promotion_authority_eligible,
@@ -596,12 +598,23 @@ def _validate_reused_receipt(
         draft.execution_source,
         draft.source_first_at,
         draft.source_last_at,
+        draft.evidence,
         draft.evidence_canonical_json,
         draft.evidence_sha256,
         draft.promotion_authority_eligible,
     )
     if persisted_projection != draft_projection:
         raise ValueError("order_lineage_replay_projection_mismatch")
+
+
+def _validate_draft_document(draft: OrderLineageReceiptDraft) -> None:
+    canonical_json = _jsonb_canonical_json(draft.evidence)
+    evidence_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    if (
+        canonical_json != draft.evidence_canonical_json
+        or evidence_sha256 != draft.evidence_sha256
+    ):
+        raise ValueError("order_lineage_draft_document_mismatch")
 
 
 def _validate_linkage_contract(evidence: _NormalizedOrderLineageEvidence) -> None:

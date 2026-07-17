@@ -394,3 +394,9 @@ def test_persistence_never_reuses_a_malformed_projected_receipt() -> None:
                 replace(draft, classification=CLASSIFICATION_ORDER_FEED_ONLY),
                 observed_at=BASE_TIME + timedelta(seconds=1),
             )
+        with pytest.raises(ValueError, match="draft_document_mismatch"):
+            persist_order_lineage_receipt(
+                session,
+                replace(draft, evidence={**draft.evidence, "unexpected": True}),
+                observed_at=BASE_TIME + timedelta(seconds=2),
+            )
