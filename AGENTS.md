@@ -21,7 +21,10 @@
 - For new GPT-5.6 integrations, start at `medium` reasoning, use `low` for measured latency-sensitive work, move to `high` or `xhigh` only for measured quality gains, and reserve `max` for the hardest quality-first workloads. Preserve an existing evaluated setting when migrating, then compare one level lower.
 - Use the Responses API for tool-using or multi-turn integrations and preserve response output items and applicable reasoning context across turns. Use programmatic tool calling only for bounded tool-heavy work that does not need fresh judgment between calls.
 
-Sources: [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model) and the [OpenAI GPT-5 prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_prompting_guide).
+Sources: [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model), the current
+[GPT-5.6 Sol prompting guidance](https://developers.openai.com/api/docs/guides/prompt-guidance-gpt-5p6), and the
+[OpenAI GPT-5 Cookbook prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_prompting_guide).
+Prefer the Sol-specific guidance when the sources differ.
 
 ## Repository Map
 

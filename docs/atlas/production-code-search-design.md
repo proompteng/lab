@@ -258,8 +258,37 @@ There is nothing to restore.
   event callers share one repository-scoped workflow ID. Local PostgreSQL/pgvector tests prove forced post-batch failure,
   unavailable state, heartbeat resume, complete convergence, HNSW migration, hybrid search, and query cancellation. This
   is pre-merge evidence, not production proof.
-- The Definition of Done remains open until this hardening is merged, promoted, and used for a fresh rebuild of the then
-  current `origin/main`.
+- At this checkpoint the Definition of Done remained open pending merge, promotion, and a fresh rebuild. The accepted
+  2026-07-17 execution record below closes that initial rollout gate.
+
+### Execution record: 2026-07-17 — accepted
+
+- PR #12665 merged the bounded filtered-semantic and literal-search fix with PostgreSQL/pgvector regression coverage.
+  PR #12723 raised the exact/lexical PostgreSQL failure-isolation ceiling to five seconds while retaining verifier SLOs
+  of p95 below one second and p99 below two seconds. PR #12726 promoted the resulting Jangar image through GitOps.
+- The repair kept one existing Atlas schema and corpus, `vector(1024)`, and the configured
+  `qwen3-embedding-saigak:8b` model. It introduced no backup, shadow index, dual write, or fallback corpus.
+- On the accepted `b12191e4cff53a5266d4e289e43ecd9ea73620aa` snapshot, `atlas:verify` matched all 8,421 eligible
+  Git files and all 74,827 chunks/embeddings. Missing, stale, hash, object, commit, line-coverage, embedding, and chunk
+  metadata mismatches were all zero.
+- Exact identifier search ranked the definition first. The filtered cold semantic fixture ranked
+  `docs/atlas/production-code-search-design.md` first, returned ten results, and reported no degradation. Deleted paths
+  returned no results, and every sampled source preview matched the indexed commit and content hash.
+- The 24-request cold-unique-query performance probe passed below its one-second p95 and two-second p99 limits. The
+  cancellation probe reached PostgreSQL and left zero queries running after client cancellation.
+- Argo reported Jangar and Bumba `Synced` and `Healthy`; the running Jangar image matched the promoted digest. Exactly
+  one Bumba Deployment replica ran with `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=true`, and the accepted snapshot had no
+  running reconcile workflow, unprocessed event, or unfinished ingestion.
+- During the final audit, `origin/main` advanced to `d2ffb65c8b773e54189f6a6ff5fc924b0b2d7db3`. The existing
+  consumer started the single reconcile without operator duplication and completed in 1 minute 58 seconds. A fresh
+  verifier run then matched 8,426/8,426 files and 74,946/74,946 chunks/embeddings with zero integrity errors, p95
+  626 ms, p99 640 ms, and zero lingering canceled queries.
+- A separately issued cold semantic paraphrase that had no verbatim repository match returned
+  `services/bumba/src/atlas/file-eligibility.ts` first in 1.72 seconds with `retrievalMode=semantic` and
+  `degradation=null`. This proves the live non-fixture path without adding that query text to the indexed gold set.
+- This record closes initial production acceptance, not permanent trust. A later Git/index mismatch, timeout, stale
+  path, semantic degradation, or relevance contradiction reopens the gate until the single reconcile and full verifier
+  pass on the new active snapshot.
 
 ## Definition of Done
 
@@ -285,8 +314,10 @@ No percentage-based partial coverage is accepted. No fallback mode is called hea
 
 ## Agent Rule
 
-Until every Definition of Done item passes live, agents treat Atlas results only as navigation leads and verify material
-findings against Git. A miss, stale path, wrong commit, or fallback must be reported, not hidden with a narrower query.
+Agents may use Atlas as the production navigation surface only while the live indexed commit matches the requested Git
+ref and the response reports no degradation. Verify high-impact findings against the returned exact commit. A miss,
+stale path, wrong commit, timeout, or irrelevant lexical fallback is contradictory live evidence: report it and reopen
+the verification gate instead of hiding it with a narrower query.
 
 ## Code Map
 
