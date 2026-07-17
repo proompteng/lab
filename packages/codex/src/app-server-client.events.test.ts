@@ -216,6 +216,26 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('responds to current time requests with whole Unix seconds', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:30:45.999Z'))
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, {
+      id: 41,
+      method: 'currentTime/read',
+      params: { threadId: 'thread-1' },
+    })
+
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 41,
+      result: { currentTimeAt: 1_784_277_045 },
+    })
+    client.stop()
+  })
+
   it('rejects JSON-RPC error objects with their message instead of Object stringification', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)

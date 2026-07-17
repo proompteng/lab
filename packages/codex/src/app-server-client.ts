@@ -9,6 +9,7 @@ import type {
   AskForApproval,
   CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
+  CurrentTimeReadResponse,
   ErrorNotification,
   FileChangeOutputDeltaNotification,
   ItemCompletedNotification,
@@ -107,7 +108,7 @@ type EmbeddedReasoningState = {
 
 type LegacySandboxMode = 'dangerFullAccess' | 'workspaceWrite' | 'readOnly'
 type SandboxModeInput = SandboxMode | LegacySandboxMode
-type LegacyApprovalMode = 'unlessTrusted' | 'onFailure' | 'onRequest'
+type LegacyApprovalMode = 'unlessTrusted' | 'onFailure' | 'onRequest' | 'on-failure'
 type ApprovalModeInput = AskForApproval | LegacyApprovalMode
 
 export type CodexAppServerOptions = {
@@ -195,7 +196,7 @@ const normalizeSandboxMode = (mode: SandboxModeInput): SandboxMode => {
 }
 
 const normalizeApprovalPolicy = (approval: ApprovalModeInput): AskForApproval => {
-  if (approval === 'onFailure') return 'on-request'
+  if (approval === 'onFailure' || approval === 'on-failure') return 'on-request'
   if (approval === 'onRequest') return 'on-request'
   if (approval === 'unlessTrusted') return 'untrusted'
   return approval
@@ -901,6 +902,11 @@ export class CodexAppServerClient {
         break
       case 'mcpServer/elicitation/request':
         result = { action: 'decline', content: null }
+        break
+      case 'currentTime/read':
+        result = {
+          currentTimeAt: Math.floor(Date.now() / 1000),
+        } satisfies CurrentTimeReadResponse
         break
       case 'applyPatchApproval':
         result = { decision: 'denied' }

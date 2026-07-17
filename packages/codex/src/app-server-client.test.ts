@@ -17,6 +17,7 @@ describe('normalizeSandboxMode', () => {
 describe('normalizeApprovalPolicy', () => {
   it('maps legacy approval strings to the new enum', () => {
     expect(normalizeApprovalPolicy('onFailure')).toBe('on-request')
+    expect(normalizeApprovalPolicy('on-failure')).toBe('on-request')
     expect(normalizeApprovalPolicy('onRequest')).toBe('on-request')
     expect(normalizeApprovalPolicy('unlessTrusted')).toBe('untrusted')
   })
