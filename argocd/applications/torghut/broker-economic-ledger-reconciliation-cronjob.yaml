@@ -39,6 +39,8 @@ spec:
               image: registry.ide-newton.ts.net/lab/torghut@sha256:5dd97b82ac388ea9d3815119881fc5802d627d8558b0408f03923b4197b9783b
               imagePullPolicy: IfNotPresent
               securityContext:
+                seccompProfile:
+                  type: Unconfined
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop:

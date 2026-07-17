@@ -195,6 +195,14 @@ The existing hourly broker-economic reconciliation CronJob owns parity. It runs 
 `--tigerbeetle-parity`, `Forbid` concurrency, no retry, a bounded deadline, the exact deployed build identity, and no
 publication token.
 
+The official TigerBeetle Linux client requires `io_uring`; the upstream project documents `PermissionDenied` under
+container seccomp defaults and recommends an unconfined seccomp profile. The reconciliation container therefore uses
+the same container-scoped `Unconfined` override as the existing TigerBeetle smoke job while remaining non-root, denying
+privilege escalation, dropping every Linux capability, and mounting no service-account token. The pod default remains
+`RuntimeDefault`, so the exception is limited to the one container that initializes the trusted TigerBeetle client.
+See TigerBeetle's [container troubleshooting](https://docs.tigerbeetle.com/operating/deploying/docker/) and the official
+[client io_uring report](https://github.com/tigerbeetle/tigerbeetle/issues/3295).
+
 Observation output is deliberately compact. It omits the publication token, raw scope, broker cash/equity, positions,
 residual values, and journal economic values. Durable detailed evidence remains in sealed CNPG rows and the bounded
 status surface.
