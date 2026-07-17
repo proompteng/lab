@@ -86,6 +86,8 @@ Preinstall the required Talos pieces in the machine config:
   `devices/turin/manifests/tailscale-dns.patch.yaml`
 - NVIDIA kernel module load patch:
   `devices/turin/manifests/nvidia-kernel-modules.patch.yaml`
+- Physical underlay MTU patch required for Flannel VXLAN traffic:
+  `devices/turin/manifests/network-mtu.patch.yaml`
 
 The installer-image patch is generated from
 `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml`, which includes
@@ -104,6 +106,7 @@ Then include these patches with the first `talosctl apply-config`:
 ```bash
 --config-patch @devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml \
 --config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
+--config-patch @devices/turin/manifests/network-mtu.patch.yaml \
 --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \
 --config-patch @devices/turin/manifests/tailscale-dns.patch.yaml
 ```
@@ -270,6 +273,7 @@ talosctl apply-config --insecure -n 100.100.244.171 -e 100.100.244.171 \
   --config-patch @devices/turin/manifests/etcd-lan-subnet.patch.yaml \
   --config-patch @devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml \
   --config-patch @devices/turin/manifests/kubelet-maxpods.patch.yaml \
+  --config-patch @devices/turin/manifests/network-mtu.patch.yaml \
   --config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
   --config-patch @devices/turin/manifests/time-servers.patch.yaml \
   --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \

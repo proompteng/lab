@@ -75,6 +75,7 @@ talosctl apply-config --insecure -n 100.100.244.171 -e 100.100.244.171 \
   --config-patch @devices/turin/manifests/etcd-lan-subnet.patch.yaml \
   --config-patch @devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml \
   --config-patch @devices/turin/manifests/kubelet-maxpods.patch.yaml \
+  --config-patch @devices/turin/manifests/network-mtu.patch.yaml \
   --config-patch @devices/turin/manifests/nvidia-kernel-modules.patch.yaml \
   --config-patch @devices/turin/manifests/time-servers.patch.yaml \
   --config-patch @devices/turin/manifests/tailscale-extension-service.yaml \

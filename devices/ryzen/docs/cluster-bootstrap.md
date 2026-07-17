@@ -87,13 +87,23 @@ If you need to re-layout these volumes on an already-installed node, follow:
 
 - `devices/ryzen/docs/relayout-volumes.md`
 
+### 2.3 Required network MTU patch
+
+Keep the physical `eno1` underlay at MTU 1450 so Talos-managed Flannel derives
+the required VXLAN pod MTU of 1400:
+
+- `devices/ryzen/manifests/network-mtu.patch.yaml`
+
+This patch is required on the first install. Omitting it recreates the ARC
+runner connection timeouts documented in
+`devices/galactic/docs/troubleshooting-networking.md`.
+
 ### 2.4 Optional patches
 
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (single-node)
 - `devices/ryzen/manifests/hostname.patch.yaml`
 - `devices/ryzen/manifests/node-labels.patch.yaml`
 - `devices/ryzen/manifests/kubelet-maxpods.patch.yaml`
-- `devices/ryzen/manifests/network-mtu.patch.yaml`
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
 
@@ -128,7 +138,8 @@ export TALOSCONFIG=$PWD/devices/ryzen/talosconfig
 talosctl apply-config --insecure -n 192.168.1.194 -e 192.168.1.194 \
   -f devices/ryzen/controlplane.yaml \
   --config-patch @devices/ryzen/manifests/ephemeral-volume.patch.yaml \
-  --config-patch @devices/ryzen/manifests/local-path.patch.yaml
+  --config-patch @devices/ryzen/manifests/local-path.patch.yaml \
+  --config-patch @devices/ryzen/manifests/network-mtu.patch.yaml
 
 # Optional patches you can add at install time:
 #   --config-patch @devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml
