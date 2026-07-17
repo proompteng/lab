@@ -1,5 +1,0 @@
-machine:
-  network:
-    interfaces:
-      - interface: eno1
-        mtu: 1450

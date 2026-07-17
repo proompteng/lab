@@ -1,46 +1,18 @@
-# Troubleshooting: pod networking (Talos-managed Flannel VXLAN)
+# Troubleshooting: pod networking (Talos Flannel VXLAN with MTU guard)
 
-This cluster uses Talos-managed Flannel in VXLAN mode. Talos owns the Flannel ConfigMap, DaemonSet, service account,
-and RBAC resources. Do not manage only a subset of those resources through Argo CD; split ownership causes Talos
-Kubernetes upgrades and Argo reconciliation to overwrite each other.
+Talos owns the Flannel DaemonSet, service account, and RBAC resources. The `flannel-cni` Argo application deliberately
+guards only `kube-flannel-cfg` so the CNI delegate keeps MTU 1400 while the backend remains Talos' default VXLAN on
+UDP 4789.
 
-The physical underlay interfaces use MTU 1450 so Flannel derives MTU 1400 after VXLAN overhead. Keep the node-specific
-Talos patches in sync with the active interface names:
+This is a temporary compatibility exception for stable Talos 1.13, which does not expose a Flannel MTU setting. Fresh
+ARC runners at pod MTU 1450 repeatedly timed out fetching GitHub pipeline connection data; changing the same pod to
+MTU 1400 made it register and claim work immediately. Do not reduce the physical underlay MTU to force Flannel's
+derived value: adding an otherwise-incomplete interface entry can displace platform-provided addressing and remove a
+control-plane node from the network.
 
-- Ryzen (`eno1`): `devices/ryzen/manifests/network-mtu.patch.yaml`
-- Altra (`enP5p1s0`): `devices/altra/manifests/network-mtu.patch.yaml`
-- Turin (`eno2np1`): `devices/turin/manifests/network-mtu.patch.yaml`
-
-This is required for GitHub Actions runner traffic. A fresh ARC runner at MTU 1450 repeatedly timed out while fetching
-GitHub pipeline connection data; lowering the same pod to MTU 1400 made it connect and claim a queued job immediately.
-Keeping the constraint in Talos machine configuration lets Talos remain the sole owner of the complete Flannel
-installation instead of maintaining a competing Argo-managed ConfigMap.
-
-Apply the patches without rebooting, one healthy node at a time:
-
-```bash
-talosctl -e 100.100.244.141 -n 100.100.244.141 patch machineconfig \
-  --patch @devices/ryzen/manifests/network-mtu.patch.yaml --mode=no-reboot
-talosctl -e 100.100.244.141 -n 100.100.244.142 patch machineconfig \
-  --patch @devices/altra/manifests/network-mtu.patch.yaml --mode=no-reboot
-talosctl -e 100.100.244.141 -n 100.100.244.190 patch machineconfig \
-  --patch @devices/turin/manifests/network-mtu.patch.yaml --mode=no-reboot
-```
-
-On an already-running node, `flannel.1` survives a Flannel pod restart and retains its previous MTU. Complete the
-live handoff on each node before removing any temporary ConfigMap override:
-
-```bash
-FLANNEL_POD=$(kubectl -n kube-system get pods -l k8s-app=flannel \
-  --field-selector spec.nodeName=<node-name> -o jsonpath='{.items[0].metadata.name}')
-kubectl -n kube-system exec "$FLANNEL_POD" -c kube-flannel -- ip link set dev flannel.1 mtu 1400
-kubectl -n kube-system delete pod "$FLANNEL_POD" --wait=true
-kubectl -n kube-system rollout status daemonset/kube-flannel --timeout=180s
-talosctl -e 100.100.244.141 -n <node-ip> read /run/flannel/subnet.env
-```
-
-`/run/flannel/subnet.env` must report `FLANNEL_MTU=1400`. The Talos-managed `kube-flannel-cfg` ConfigMap should not
-contain an explicit CNI `mtu` field or Argo tracking annotations after all three nodes have completed the handoff.
+The long-term fix is either a stable Talos release with native Flannel MTU configuration or a complete custom CNI
+manifest with one owner. Until then, preserve this narrowly-scoped guard and treat its reconciliation as part of every
+Kubernetes upgrade.
 
 Before every Kubernetes upgrade, inspect the Talos manifest plan:
 
@@ -48,12 +20,20 @@ Before every Kubernetes upgrade, inspect the Talos manifest plan:
 talosctl -e <control-plane-ip> -n <control-plane-ip> upgrade-k8s --to <target-version> --dry-run
 ```
 
-The plan must show Talos as the single manager of all Flannel resources and must not conflict with an Argo tracking
-annotation on `kube-system/kube-flannel-cfg`. Also verify the derived MTU before and after the upgrade:
+The dry run must keep the VXLAN backend on UDP 4789. Immediately after the upgrade, sync `flannel-cni`, verify the
+guarded ConfigMap, restart the Flannel DaemonSet one node at a time, and confirm the derived MTU:
 
 ```bash
+argocd app sync flannel-cni
+kubectl -n kube-system get configmap kube-flannel-cfg \
+  -o jsonpath='{.data.cni-conf\.json}' | jq -e '.plugins[0].delegate.mtu == 1400'
+kubectl -n kube-system rollout restart daemonset/kube-flannel
+kubectl -n kube-system rollout status daemonset/kube-flannel --timeout=180s
 talosctl -e <control-plane-ip> -n <node-ip> read /run/flannel/subnet.env
 ```
+
+Do not continue workload validation unless every node reports `FLANNEL_MTU=1400` and fresh pods have interface MTU
+1400.
 
 If VXLAN forwarding breaks, pods on one node cannot reach pods on another node, even though nodes may still appear
 `Ready`.

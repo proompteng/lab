@@ -21,6 +21,10 @@ const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/pr
     templatePatch?: string
   }
 }
+const flannelConfigMap = YAML.parse(readFileSync('argocd/applications/flannel-cni/kube-flannel-cfg.yaml', 'utf8')) as {
+  metadata?: { annotations?: Record<string, string> }
+  data?: Record<string, string>
+}
 
 const entry = (name: string) => {
   const found = inventory.entries.find((candidate) => candidate.name === name)
@@ -30,21 +34,37 @@ const entry = (name: string) => {
 
 describe('enabled app inventory', () => {
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
-    expect(inventory.applicationSetEntryCount).toBe(67)
+    expect(inventory.applicationSetEntryCount).toBe(68)
     expect(inventory.directApplicationCount).toBe(1)
-    expect(inventory.entries).toHaveLength(68)
+    expect(inventory.entries).toHaveLength(69)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'olden')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'posthog')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'sag')).toBe(false)
-    expect(inventory.entries.some((candidate) => candidate.name === 'flannel-cni')).toBe(false)
+    expect(entry('flannel-cni')).toMatchObject({
+      class: 'vendor-manifest',
+      path: 'argocd/applications/flannel-cni',
+    })
   })
 
   it('records preservation intent when a product app is disabled', () => {
     expect(productApplicationSet.spec?.syncPolicy?.preserveResourcesOnDeletion).toBe(true)
     const productElements = productApplicationSet.spec?.generators?.[0]?.matrix?.generators?.[1]?.list?.elements ?? []
     expect(productElements.find((candidate) => candidate.name === 'sag')?.cascadeResourcesOnDeletion).not.toBe(true)
+  })
+
+  it('guards the required pod MTU without changing the Talos VXLAN backend', () => {
+    const cni = JSON.parse(flannelConfigMap.data?.['cni-conf.json'] ?? '{}') as {
+      plugins?: Array<{ delegate?: { mtu?: number } }>
+    }
+    const network = JSON.parse(flannelConfigMap.data?.['net-conf.json'] ?? '{}') as {
+      Backend?: { Type?: string; Port?: number }
+    }
+
+    expect(flannelConfigMap.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Delete=false')
+    expect(cni.plugins?.[0]?.delegate?.mtu).toBe(1400)
+    expect(network.Backend).toEqual({ Type: 'vxlan', Port: 4789 })
   })
 
   it('cascades resources for generated Applications that are disabled destructively', () => {
