@@ -3,15 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models import BrokerEconomicLedgerInput, ExecutionOrderEvent
+from app.models import (
+    BrokerAccountActivity,
+    BrokerEconomicLedgerInput,
+    ExecutionOrderEvent,
+)
 from app.trading.order_lineage_census import (
     BrokerActivityFact,
     OrderEventFact,
@@ -210,6 +214,77 @@ def test_source_scope_is_inferred_only_when_unique() -> None:
             )
 
 
+def test_verified_broker_input_accepts_later_closed_scan_of_same_manifest() -> None:
+    broker_input = _broker_input(account_label="source-account", identity=1)
+    activity = _broker_activity(broker_input)
+    session = MagicMock(spec=Session)
+    session.scalar.return_value = broker_input
+    session.scalars.return_value = (activity,)
+    snapshot = SimpleNamespace(
+        cursor_id=broker_input.source_cursor_id,
+        source_watermark=BASE_TIME + timedelta(minutes=5),
+        activities=(object(),),
+        prepared=SimpleNamespace(manifest_digest=broker_input.manifest_sha256),
+        input_manifest_canonical_json=broker_input.manifest_canonical_json,
+    )
+
+    with (
+        patch.object(
+            script,
+            "load_broker_economic_ledger_source_rows",
+            return_value=object(),
+        ),
+        patch.object(
+            script,
+            "prepare_broker_economic_ledger_snapshot",
+            return_value=snapshot,
+        ),
+    ):
+        loaded_input, facts = script._load_verified_broker_input(
+            session,
+            provider="alpaca",
+            environment="paper",
+            account_label="source-account",
+        )
+
+    assert loaded_input is broker_input
+    assert len(facts) == 1
+    assert facts[0].external_activity_id == activity.external_activity_id
+
+
+def test_verified_broker_input_rejects_regressed_source_watermark() -> None:
+    broker_input = _broker_input(account_label="source-account", identity=1)
+    session = MagicMock(spec=Session)
+    session.scalar.return_value = broker_input
+    snapshot = SimpleNamespace(
+        cursor_id=broker_input.source_cursor_id,
+        source_watermark=BASE_TIME - timedelta(microseconds=1),
+        activities=(object(),),
+        prepared=SimpleNamespace(manifest_digest=broker_input.manifest_sha256),
+        input_manifest_canonical_json=broker_input.manifest_canonical_json,
+    )
+
+    with (
+        patch.object(
+            script,
+            "load_broker_economic_ledger_source_rows",
+            return_value=object(),
+        ),
+        patch.object(
+            script,
+            "prepare_broker_economic_ledger_snapshot",
+            return_value=snapshot,
+        ),
+        pytest.raises(ValueError, match="order_lineage_broker_input_not_current"),
+    ):
+        script._load_verified_broker_input(
+            session,
+            provider="alpaca",
+            environment="paper",
+            account_label="source-account",
+        )
+
+
 def test_dry_run_report_is_closed_and_does_not_expose_account_labels() -> None:
     runtime = runtime_census()
     with patch.object(script, "load_runtime_census", return_value=runtime):
@@ -327,4 +402,26 @@ def _broker_input(*, account_label: str, identity: int) -> BrokerEconomicLedgerI
         corrected_count=0,
         manifest_canonical_json="[]",
         manifest_sha256=f"{identity:064x}",
+    )
+
+
+def _broker_activity(
+    broker_input: BrokerEconomicLedgerInput,
+) -> BrokerAccountActivity:
+    return BrokerAccountActivity(
+        id=uuid.UUID(int=200),
+        provider=broker_input.provider,
+        source=broker_input.source,
+        environment=broker_input.environment,
+        account_label=broker_input.account_label,
+        endpoint_fingerprint=broker_input.endpoint_fingerprint,
+        external_activity_id="activity-1",
+        activity_type="FILL",
+        event_at=BASE_TIME,
+        order_id="broker-order",
+        raw_payload={},
+        raw_payload_canonical_json="{}",
+        raw_payload_sha256="a" * 64,
+        normalized_economic_sha256="b" * 64,
+        first_observed_at=BASE_TIME,
     )

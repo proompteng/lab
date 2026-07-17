@@ -144,8 +144,10 @@ PostgreSQL also verifies the referenced broker input and every count and takes o
 per repair scope. Both run documents must use exact PostgreSQL JSONB canonical bytes, so alternate whitespace or key
 ordering cannot manufacture a second input hash. Timestamp text follows PostgreSQL's UTC JSONB rendering, including
 trimmed fractional-second zeros, and the guards execute with a function-local UTC setting. The import, receipt states,
-and run are committed in the same transaction. Repeating identical inputs reuses the run; the same input producing a
-different result fails as nondeterministic.
+and run are committed in the same transaction. A later completed source scan may advance the cursor watermark only
+when the cursor identity, activity count, manifest hash, and canonical input remain exact; a regressed watermark or
+changed source set fails closed. Repeating identical inputs reuses the run; the same input producing a different result
+fails as nondeterministic.
 
 ## Runtime Census
 

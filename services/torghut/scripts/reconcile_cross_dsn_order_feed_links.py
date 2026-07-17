@@ -237,7 +237,7 @@ def _load_verified_broker_input(
     )
     if (
         snapshot.cursor_id != broker_input.source_cursor_id
-        or snapshot.source_watermark != _as_utc(broker_input.source_watermark)
+        or snapshot.source_watermark < _as_utc(broker_input.source_watermark)
         or len(snapshot.activities) != broker_input.input_count
         or snapshot.prepared.manifest_digest != broker_input.manifest_sha256
         or snapshot.input_manifest_canonical_json
