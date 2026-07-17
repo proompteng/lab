@@ -12,6 +12,7 @@ from app.trading.tigerbeetle_client import (
     FakeTigerBeetleClient,
     HEALTH_PROBE_ACCOUNT_ID,
     RealTigerBeetleClient,
+    TigerBeetleClientError,
     TigerBeetleClientTimeoutError,
     _run_with_timeout,
     check_tigerbeetle_health,
@@ -167,13 +168,17 @@ class TestTigerBeetleClient(TestCase):
             rpc_timeout_seconds=settings.tigerbeetle_rpc_timeout_seconds,
         )
 
-    def test_timeout_helper_propagates_operation_errors(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "rpc failed"):
+    def test_timeout_helper_normalizes_operation_errors(self) -> None:
+        with self.assertRaisesRegex(
+            TigerBeetleClientError,
+            "tigerbeetle_lookup_accounts_failed:RuntimeError",
+        ) as raised:
             _run_with_timeout(
                 operation_name="lookup_accounts",
                 timeout_seconds=1.0,
                 operation=lambda: (_ for _ in ()).throw(RuntimeError("rpc failed")),
             )
+        self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
     def test_real_client_times_out_blocked_account_rpc(self) -> None:
         class _BlockingSync:

@@ -21,6 +21,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS=7.5,
             TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
             TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=True,
+            TORGHUT_TIGERBEETLE_ECONOMIC_PARITY_REQUIRED=True,
         )
 
         self.assertTrue(settings.tigerbeetle_enabled)
@@ -31,6 +32,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         self.assertEqual(settings.tigerbeetle_rpc_timeout_seconds, 7.5)
         self.assertTrue(settings.tigerbeetle_journal_enabled)
         self.assertTrue(settings.tigerbeetle_reconcile_required)
+        self.assertTrue(settings.tigerbeetle_economic_parity_required)
 
     def test_tigerbeetle_settings_reject_enabled_empty_addresses(self) -> None:
         with self.assertRaises(ValidationError):
@@ -44,6 +46,13 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             ValidationError, "TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0"
         ):
             Settings(TORGHUT_TIGERBEETLE_CLUSTER_ID=0)
+
+    def test_economic_parity_requirement_requires_tigerbeetle_enabled(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "TORGHUT_TIGERBEETLE_ENABLED is required when economic parity is required",
+        ):
+            Settings(TORGHUT_TIGERBEETLE_ECONOMIC_PARITY_REQUIRED=True)
 
     def test_tigerbeetle_settings_reject_invalid_health_timeout(self) -> None:
         with self.assertRaisesRegex(

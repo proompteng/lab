@@ -304,6 +304,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             "tigerbeetle_required",
             "tigerbeetle_journal_enabled",
             "tigerbeetle_reconcile_required",
+            "tigerbeetle_economic_parity_required",
         }
         self.assertEqual(
             set(FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD),

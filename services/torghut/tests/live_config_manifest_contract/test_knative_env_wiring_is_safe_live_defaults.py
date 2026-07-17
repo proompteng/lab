@@ -652,10 +652,22 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
         }
         requirements = {
-            "argocd/applications/torghut/knative-service.yaml": ("true", "false"),
-            "argocd/applications/torghut/knative-service-sim.yaml": ("false", "false"),
+            "argocd/applications/torghut/knative-service.yaml": (
+                "true",
+                "false",
+                "true",
+            ),
+            "argocd/applications/torghut/knative-service-sim.yaml": (
+                "false",
+                "false",
+                "false",
+            ),
         }
-        for relative_path, (required, reconcile_required) in requirements.items():
+        for relative_path, (
+            required,
+            reconcile_required,
+            economic_parity_required,
+        ) in requirements.items():
             env = _load_knative_env(relative_path)
             for key, value in common_expected.items():
                 self.assertEqual(env.get(key), value, f"{relative_path} {key}")
@@ -663,6 +675,10 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             self.assertEqual(
                 env.get("TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"),
                 reconcile_required,
+            )
+            self.assertEqual(
+                env.get("TORGHUT_TIGERBEETLE_ECONOMIC_PARITY_REQUIRED"),
+                economic_parity_required,
             )
 
     def test_torghut_tigerbeetle_client_pods_allow_io_uring(self) -> None:

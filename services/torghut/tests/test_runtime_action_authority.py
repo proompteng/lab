@@ -54,6 +54,70 @@ def _mutation_status(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def _economic_ledger_status(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "torghut.broker-economic-ledger-status.v1",
+        "entry_dependency_satisfied": True,
+        "reason_codes": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_required_accounting_parity_blocks_entry_only() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(),
+        broker_economic_ledger_status=_economic_ledger_status(
+            entry_dependency_satisfied=False,
+            reason_codes=["tigerbeetle_economic_transfer_missing"],
+        ),
+        accounting_parity_required=True,
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.service_healthy is True
+    assert authority.entry_allowed is False
+    assert authority.reduce_only_allowed is True
+    assert authority.recovery_degraded is False
+    assert authority.reason_codes["entry"] == ("tigerbeetle_economic_transfer_missing",)
+    assert authority.reason_codes["reduce_only"] == ()
+
+
+def test_current_accounting_parity_satisfies_required_entry_dependency() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(),
+        broker_economic_ledger_status=_economic_ledger_status(),
+        accounting_parity_required=True,
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is True
+
+
+def test_required_accounting_parity_fails_closed_on_malformed_status() -> None:
+    authority = reduce_runtime_action_authority(
+        service_status=_service(),
+        live_submission_gate=_gate(),
+        broker_mutation_status=_mutation_status(),
+        broker_economic_ledger_status={"entry_dependency_satisfied": True},
+        accounting_parity_required=True,
+        state=_state(),
+        evaluated_at=_NOW,
+    )
+
+    assert authority.entry_allowed is False
+    assert authority.reduce_only_allowed is True
+    assert authority.reason_codes["entry"] == (
+        "broker_economic_accounting_parity_status_invalid",
+    )
+
+
 def test_capital_freeze_separates_service_entry_and_reduction_authority() -> None:
     authority = reduce_runtime_action_authority(
         service_status=_service(),

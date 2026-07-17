@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
 from typing import Protocol, cast
@@ -24,6 +24,11 @@ from .persistence import (
     BrokerEconomicLedgerReplay,
     PublishedBrokerEconomicLedgerRuns,
     require_published_broker_economic_ledger_runs,
+)
+from .tigerbeetle_parity import (
+    BrokerEconomicTigerBeetleParityResult,
+    load_persisted_tigerbeetle_economic_parity,
+    validated_tigerbeetle_parity_attachment,
 )
 from .types import (
     LEDGER_DECIMAL_PRECISION,
@@ -246,8 +251,6 @@ def reconcile_broker_economic_ledger(
     build: BrokerEconomicReconciliationBuild,
     max_source_age_seconds: int = DEFAULT_SOURCE_MAX_AGE_SECONDS,
 ) -> BrokerEconomicReconciliationResult:
-    """Compare a published reducer pair with one fresh read-only broker snapshot."""
-
     if max_source_age_seconds <= 0:
         raise ValueError("economic_reconciliation_max_source_age_invalid")
     watermark = as_utc(replay.snapshot.source_watermark)
@@ -344,6 +347,7 @@ def persist_broker_economic_ledger_reconciliation(
     *,
     build: BrokerEconomicReconciliationBuild,
     max_source_age_seconds: int = DEFAULT_SOURCE_MAX_AGE_SECONDS,
+    tigerbeetle_parity: BrokerEconomicTigerBeetleParityResult | None = None,
 ) -> PersistedBrokerEconomicReconciliation:
     """Append one observation only after resolving the exact published run pair."""
 
@@ -355,6 +359,20 @@ def persist_broker_economic_ledger_reconciliation(
         build=build,
         max_source_age_seconds=max_source_age_seconds,
     )
+    if tigerbeetle_parity is not None:
+        result = replace(
+            result,
+            payload={
+                **result.payload,
+                "tigerbeetle_economic_parity": validated_tigerbeetle_parity_attachment(
+                    tigerbeetle_parity,
+                    replay,
+                    runs,
+                    snapshot.observed_at,
+                    max_source_age_seconds,
+                ),
+            },
+        )
     observation_id = uuid.uuid4()
     snapshot_canonical_json = _canonical_json(snapshot.payload)
     result_canonical_json = _canonical_json(result.payload)
@@ -400,8 +418,9 @@ def load_broker_economic_ledger_status(
     scope: LedgerScope,
     observed_at: datetime,
     max_observation_age_seconds: int = DEFAULT_OBSERVATION_MAX_AGE_SECONDS,
+    expected_tigerbeetle_cluster_id: int | None = None,
 ) -> dict[str, object]:
-    """Load the latest bounded Slice 8 observation; it has no capital authority."""
+    """Load the latest sealed broker and TigerBeetle accounting dependencies."""
 
     if max_observation_age_seconds <= 0:
         raise ValueError("economic_status_max_observation_age_invalid")
@@ -422,7 +441,7 @@ def load_broker_economic_ledger_status(
         .limit(1)
     )
     if row is None:
-        return _missing_status(scope, max_observation_age_seconds)
+        return _missing_status(max_observation_age_seconds)
     if (
         _sha256(row.broker_snapshot_canonical_json) != row.broker_snapshot_sha256
         or _sha256(row.result_canonical_json) != row.result_sha256
@@ -444,19 +463,33 @@ def load_broker_economic_ledger_status(
         raise EconomicLedgerError(
             "economic_reconciliation_persisted_manifest_digest_invalid"
         )
+    (
+        tigerbeetle_parity,
+        tigerbeetle_parity_satisfied,
+        tigerbeetle_reason_codes,
+    ) = load_persisted_tigerbeetle_economic_parity(
+        row,
+        scope=scope,
+        expected_cluster_id=expected_tigerbeetle_cluster_id,
+    )
     now = as_utc(observed_at)
     age_seconds = max(0, int((now - as_utc(row.observed_at)).total_seconds()))
     stale = age_seconds > max_observation_age_seconds
     reason_codes = list(_string_sequence(row.result.get("reason_codes")))
+    reason_codes.extend(tigerbeetle_reason_codes)
     if stale:
         reason_codes.append("economic_reconciliation_observation_stale")
+    dependency_satisfied = row.reconciled and not stale and tigerbeetle_parity_satisfied
     return {
         "schema_version": _STATUS_SCHEMA_VERSION,
         "state": "stale" if stale else ("reconciled" if row.reconciled else "residual"),
         "current": not stale,
         "reconciled": row.reconciled and not stale,
-        "diagnostic_only": True,
+        "diagnostic_only": False,
         "capital_authority": False,
+        "accounting_parity_satisfied": dependency_satisfied,
+        "entry_dependency_satisfied": dependency_satisfied,
+        "promotion_dependency_satisfied": dependency_satisfied,
         "reason_codes": sorted(set(reason_codes)),
         "observation_id": str(row.id),
         "observed_at": as_utc(row.observed_at).isoformat(),
@@ -482,6 +515,9 @@ def load_broker_economic_ledger_status(
         "open_order_count": row.open_order_count,
         "residuals": row.result.get("residuals", []),
         "economics": row.result.get("economics", {}),
+        "tigerbeetle_economic_parity": (
+            dict(tigerbeetle_parity) if tigerbeetle_parity is not None else None
+        ),
     }
 
 
@@ -899,20 +935,25 @@ def _require_build_identity(*, source_commit: str, image_digest: str) -> None:
         raise EconomicLedgerError("economic_reconciliation_image_digest_invalid")
 
 
-def _missing_status(scope: LedgerScope, max_age_seconds: int) -> dict[str, object]:
+def _missing_status(max_age_seconds: int) -> dict[str, object]:
     return {
         "schema_version": _STATUS_SCHEMA_VERSION,
         "state": "missing",
         "current": False,
         "reconciled": False,
-        "diagnostic_only": True,
+        "diagnostic_only": False,
         "capital_authority": False,
-        "reason_codes": ["economic_reconciliation_missing"],
-        "account_label": scope.account_label,
-        "environment": scope.environment,
+        "accounting_parity_satisfied": False,
+        "entry_dependency_satisfied": False,
+        "promotion_dependency_satisfied": False,
+        "reason_codes": [
+            "economic_reconciliation_missing",
+            "tigerbeetle_economic_parity_missing",
+        ],
         "max_age_seconds": max_age_seconds,
         "residual_count": None,
         "open_order_count": None,
+        "tigerbeetle_economic_parity": None,
     }
 
 

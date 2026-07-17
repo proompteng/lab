@@ -38,6 +38,8 @@ from app.trading.economic_ledger import (
     BrokerEconomicReconciliationBuild,
     EconomicLedgerError,
     LedgerScope,
+    TigerBeetleEconomicParityObservation,
+    audit_broker_economic_tigerbeetle_parity,
     load_broker_economic_ledger_source_rows,
     load_broker_economic_ledger_status,
     normalize_broker_economic_snapshot,
@@ -46,6 +48,7 @@ from app.trading.economic_ledger import (
     publish_broker_economic_ledger,
     replay_broker_economic_ledger_snapshot,
 )
+from tests.economic_ledger.test_tigerbeetle_parity import ExactTigerBeetleClient
 
 
 _OBSERVED_AT = datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc)
@@ -601,8 +604,10 @@ def test_reconciliation_observations_reuse_runs_across_newer_closed_watermarks()
         replay.snapshot.source_watermark.isoformat()
     )
     assert status["source_watermark"] == advanced.snapshot.source_watermark.isoformat()
-    assert status["diagnostic_only"] is True
+    assert status["diagnostic_only"] is False
     assert status["capital_authority"] is False
+    assert status["entry_dependency_satisfied"] is False
+    assert "tigerbeetle_economic_parity_missing" in status["reason_codes"]
     assert status["admissible"] is True
     assert status["input_manifest_sha256"] == replay.snapshot.prepared.manifest_digest
     assert status["reducers"] == {
@@ -669,4 +674,81 @@ def test_reconciliation_status_is_explicitly_missing_before_first_observation() 
             max_observation_age_seconds=60,
         )
     assert status["state"] == "missing"
-    assert status["reason_codes"] == ["economic_reconciliation_missing"]
+    assert status["reason_codes"] == [
+        "economic_reconciliation_missing",
+        "tigerbeetle_economic_parity_missing",
+    ]
+
+
+def test_sealed_full_parity_satisfies_entry_and_promotion_dependencies() -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+    with sessions.begin() as session:
+        replay = _replay(session)
+        published = publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+    snapshot = normalize_broker_economic_snapshot(
+        account={"status": "ACTIVE", "cash": "1009", "equity": "1009"},
+        positions=[],
+        open_orders=[],
+        observed_at=_OBSERVED_AT + timedelta(minutes=3),
+    )
+    parity = audit_broker_economic_tigerbeetle_parity(
+        ExactTigerBeetleClient(),
+        replay,
+        runs=published,
+        observation=TigerBeetleEconomicParityObservation(
+            cluster_id=2001,
+            observed_at=snapshot.observed_at,
+            max_source_age_seconds=300,
+        ),
+    )
+    mismatched = replace(
+        parity,
+        observation=replace(
+            parity.observation,
+            observed_at=snapshot.observed_at + timedelta(seconds=1),
+        ),
+    )
+
+    with (
+        pytest.raises(
+            EconomicLedgerError,
+            match="economic_reconciliation_tigerbeetle_observation_binding_invalid",
+        ),
+        sessions.begin() as session,
+    ):
+        persist_broker_economic_ledger_reconciliation(
+            session,
+            replay,
+            snapshot,
+            build=_BUILD,
+            tigerbeetle_parity=mismatched,
+        )
+
+    with sessions.begin() as session:
+        observation = persist_broker_economic_ledger_reconciliation(
+            session,
+            replay,
+            snapshot,
+            build=_BUILD,
+            tigerbeetle_parity=parity,
+        )
+    with sessions() as session:
+        status = load_broker_economic_ledger_status(
+            session,
+            scope=_SCOPE,
+            observed_at=_OBSERVED_AT + timedelta(minutes=4),
+            expected_tigerbeetle_cluster_id=2001,
+        )
+
+    assert observation.result.reconciled is True
+    assert observation.result.payload["tigerbeetle_economic_parity"] == parity.payload
+    assert status["accounting_parity_satisfied"] is True
+    assert status["entry_dependency_satisfied"] is True
+    assert status["promotion_dependency_satisfied"] is True
+    assert status["capital_authority"] is False
+    assert status["reason_codes"] == []

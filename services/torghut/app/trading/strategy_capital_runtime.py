@@ -6,12 +6,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST
+from ..config import settings
 from ..models import Strategy, StrategyCapitalAuthorityRecord
 from ..strategies.catalog import extract_catalog_metadata
 from .strategy_capital_authority import (
@@ -34,6 +36,11 @@ from .strategy_capital_authority_store import (
     load_active_strategy_capital_authority,
     load_strategy_capital_evidence_binding,
     validate_strategy_capital_authority_record,
+)
+from .economic_ledger import (
+    EconomicLedgerError,
+    configured_broker_economic_scope,
+    load_broker_economic_ledger_status,
 )
 
 
@@ -320,6 +327,41 @@ def _load_runtime_usage(
     return usage, None
 
 
+def _economic_parity_reasons(
+    session: Session,
+    *,
+    account_label: str,
+    observed_at: datetime,
+) -> tuple[str, ...]:
+    if not settings.tigerbeetle_economic_parity_required:
+        return ()
+    try:
+        status = load_broker_economic_ledger_status(
+            session,
+            scope=configured_broker_economic_scope(account_label=account_label),
+            observed_at=observed_at,
+            expected_tigerbeetle_cluster_id=settings.tigerbeetle_cluster_id,
+        )
+    except (EconomicLedgerError, SQLAlchemyError, TypeError, ValueError):
+        _rollback_read_failure(session)
+        return ("broker_economic_accounting_parity_read_failed",)
+    if status.get("entry_dependency_satisfied") is True:
+        return ()
+    reason_codes = status.get("reason_codes")
+    if not isinstance(reason_codes, Sequence) or isinstance(
+        reason_codes, (str, bytes, bytearray)
+    ):
+        return ("broker_economic_accounting_parity_status_invalid",)
+    reason_items = cast(Sequence[object], reason_codes)
+    if any(not isinstance(reason, str) for reason in reason_items):
+        return ("broker_economic_accounting_parity_status_invalid",)
+    typed_reasons = cast(Sequence[str], reason_items)
+    reasons = tuple(
+        dict.fromkeys(reason.strip() for reason in typed_reasons if reason.strip())
+    )
+    return reasons or ("broker_economic_accounting_parity_unproven",)
+
+
 def evaluate_runtime_strategy_capital_authority(
     session: Session,
     *,
@@ -334,6 +376,14 @@ def evaluate_runtime_strategy_capital_authority(
         return denied
     if context.authority.stage not in BROKER_RISK_STAGES:
         return _evaluate_context(context, _capital_request(context, request))
+    if context.venue is CapitalVenue.ALPACA:
+        parity_reasons = _economic_parity_reasons(
+            session,
+            account_label=request.account_label,
+            observed_at=request.observed_at,
+        )
+        if parity_reasons:
+            return context.verdict.denied(parity_reasons)
     evidence_binding, denied = _load_runtime_evidence(session, context, request)
     if evidence_binding is None:
         assert denied is not None
@@ -375,6 +425,17 @@ def _active_submission_authority_reasons(
     if authority.reduce_only:
         reasons.append("authority_reduce_only")
     reasons.extend(f"authority_blocker:{blocker}" for blocker in authority.blockers)
+    if authority.venue is CapitalVenue.ALPACA:
+        if authority.account_label is None:
+            reasons.append("authority_account_label_missing")
+        else:
+            reasons.extend(
+                _economic_parity_reasons(
+                    session,
+                    account_label=authority.account_label,
+                    observed_at=observed_at,
+                )
+            )
     reasons.extend(
         runtime_artifact_binding_reasons(
             authority=authority,
