@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
@@ -264,6 +265,31 @@ def test_full_projection_is_exact_idempotent_and_bound_to_immutable_runs() -> No
     )
     assert first.payload["expected"] == second.payload["expected"]
     assert first.payload["actual"] == second.payload["actual"]
+
+
+def test_inadmissible_projection_never_materializes_tigerbeetle_entries() -> None:
+    replay = _flat_replay()
+    inadmissible_independent = replace(
+        replay.reduction.independent,
+        unsupported_activity_ids=("unsupported-activity",),
+    )
+    inadmissible_replay = replace(
+        replay,
+        reduction=replace(
+            replay.reduction,
+            independent=inadmissible_independent,
+        ),
+    )
+    client = ExactTigerBeetleClient()
+
+    result = _audit(client, inadmissible_replay, runs=_runs(inadmissible_replay))
+
+    assert result.parity is False
+    assert "tigerbeetle_economic_projection_inadmissible" in result.payload["blockers"]
+    assert client.account_create_calls == 0
+    assert client.transfer_create_calls == 0
+    assert client.accounts == {}
+    assert client.transfers == {}
 
 
 def test_linked_transaction_projection_is_deterministic_and_atomic() -> None:
