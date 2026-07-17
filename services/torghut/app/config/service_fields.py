@@ -176,6 +176,15 @@ class CoreSettingsFields(BaseSettings):
         description="Fail readiness when TigerBeetle reconciliation has blockers.",
     )
 
+    tigerbeetle_economic_parity_required: bool = Field(
+        default=False,
+        alias="TORGHUT_TIGERBEETLE_ECONOMIC_PARITY_REQUIRED",
+        description=(
+            "Require a fresh sealed broker-economic TigerBeetle parity result "
+            "before new broker exposure; never changes readiness or reduction access."
+        ),
+    )
+
     tigerbeetle_reconcile_max_age_seconds: int = Field(
         default=3600,
         alias="TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS",

@@ -77,7 +77,12 @@ class BrokerEconomicLedgerReconciliationCronJobTests(TestCase):
         )
         self.assertEqual(
             container["args"],
-            ["--observe", "--max-source-age-seconds", "300"],
+            [
+                "--observe",
+                "--tigerbeetle-parity",
+                "--max-source-age-seconds",
+                "300",
+            ],
         )
         invocation = " ".join(
             str(item)
@@ -119,6 +124,16 @@ class BrokerEconomicLedgerReconciliationCronJobTests(TestCase):
         self.assertGreaterEqual(len(described_commit), 7)
         self.assertTrue(commit.startswith(described_commit))
         self.assertEqual(env["TRADING_MODE"]["value"], "live")
+        self.assertEqual(env["TORGHUT_TIGERBEETLE_ENABLED"]["value"], "true")
+        self.assertEqual(env["TORGHUT_TIGERBEETLE_CLUSTER_ID"]["value"], "2001")
+        self.assertEqual(
+            env["TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"]["value"],
+            "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+        )
+        self.assertEqual(
+            env["TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS"]["value"],
+            "30",
+        )
         self.assertNotIn("BROKER_ECONOMIC_LEDGER_PUBLISH_TOKEN", env)
 
     def test_cronjob_is_rendered_by_torghut_kustomization(self) -> None:

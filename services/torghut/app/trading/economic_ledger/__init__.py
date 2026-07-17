@@ -7,6 +7,11 @@ from .comparison import (
     compare_projections,
     reduce_and_compare,
 )
+from .configured_scope import (
+    configured_broker_economic_scope,
+    configured_broker_endpoint,
+    configured_broker_environment,
+)
 from .journal_reducer import (
     JOURNAL_REDUCER_NAME,
     JOURNAL_REDUCER_VERSION,
@@ -40,6 +45,10 @@ from .state_reducer import (
     STATE_REDUCER_NAME,
     STATE_REDUCER_VERSION,
     reduce_independent_state,
+)
+from .tigerbeetle_parity import (
+    TigerBeetleEconomicParityObservation,
+    audit_broker_economic_tigerbeetle_parity,
 )
 from .types import (
     ZERO,
@@ -91,7 +100,12 @@ __all__ = (
     "ProjectionDelta",
     "STATE_REDUCER_NAME",
     "STATE_REDUCER_VERSION",
+    "TigerBeetleEconomicParityObservation",
+    "audit_broker_economic_tigerbeetle_parity",
     "compare_projections",
+    "configured_broker_economic_scope",
+    "configured_broker_endpoint",
+    "configured_broker_environment",
     "capture_broker_economic_snapshot",
     "load_broker_economic_ledger_source_rows",
     "load_broker_economic_ledger_status",

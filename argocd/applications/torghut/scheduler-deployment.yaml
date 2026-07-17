@@ -119,6 +119,8 @@ spec:
               value: "true"
             - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
               value: "false"
+            - name: TORGHUT_TIGERBEETLE_ECONOMIC_PARITY_REQUIRED
+              value: "true"
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:

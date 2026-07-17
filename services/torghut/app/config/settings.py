@@ -43,6 +43,10 @@ class SettingsAccessorsMixin(SettingsNormalizationMixin):
             raise ValueError(
                 "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES is required when TigerBeetle is enabled"
             )
+        if self.tigerbeetle_economic_parity_required and not self.tigerbeetle_enabled:
+            raise ValueError(
+                "TORGHUT_TIGERBEETLE_ENABLED is required when economic parity is required"
+            )
 
     def model_post_init(self, __context: Any) -> None:
         del __context

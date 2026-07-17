@@ -32,7 +32,11 @@ class TigerBeetleClientProtocol(Protocol):
     def lookup_transfers(self, ids: Sequence[int]) -> Sequence[object]: ...
 
 
-class TigerBeetleClientTimeoutError(TimeoutError):
+class TigerBeetleClientError(RuntimeError):
+    """Normalized ordinary failure from the official TigerBeetle client."""
+
+
+class TigerBeetleClientTimeoutError(TigerBeetleClientError, TimeoutError):
     """Raised when the synchronous TigerBeetle client exceeds its RPC deadline."""
 
 
@@ -64,6 +68,12 @@ def _run_with_timeout(
         ) from exc
     if ok:
         return cast(_T, value)
+    if isinstance(value, TigerBeetleClientError):
+        raise value
+    if isinstance(value, Exception):
+        raise TigerBeetleClientError(
+            f"tigerbeetle_{operation_name}_failed:{type(value).__name__}"
+        ) from value
     if isinstance(value, BaseException):
         raise value
     raise RuntimeError(f"tigerbeetle_{operation_name}_failed")  # pragma: no cover

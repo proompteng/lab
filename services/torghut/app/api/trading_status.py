@@ -12,18 +12,21 @@ from fastapi.responses import Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.alpaca_client import classify_alpaca_trading_endpoint
 from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST, BUILD_VERSION
 from app.config import settings
 from app.db import SessionLocal
 from app.trading.action_authority import reduce_runtime_action_authority
 from app.trading.broker_account_activities import load_broker_account_activity_status
-from app.trading.broker_mutation_receipts import fingerprint_broker_endpoint
 from app.trading.broker_mutation_receipts.runtime_status import (
     load_broker_mutation_runtime_status,
     unavailable_broker_mutation_runtime_status,
 )
-from app.trading.economic_ledger import LedgerScope, load_broker_economic_ledger_status
+from app.trading.economic_ledger import (
+    EconomicLedgerError,
+    configured_broker_economic_scope,
+    configured_broker_environment,
+    load_broker_economic_ledger_status,
+)
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.order_lineage_runs import load_order_lineage_repair_status
 from app.trading.scheduler import TradingScheduler
@@ -64,28 +67,8 @@ def _read_with_session(
     try:
         with SessionLocal() as session:
             return reader(session)
-    except SQLAlchemyError:
+    except (EconomicLedgerError, SQLAlchemyError):
         return unavailable
-
-
-def _configured_broker_endpoint() -> str:
-    endpoint = str(settings.apca_api_base_url or "").strip().rstrip("/")
-    if endpoint.endswith("/v2"):
-        endpoint = endpoint[:-3]
-    if endpoint:
-        return endpoint
-    return (
-        "https://api.alpaca.markets"
-        if settings.trading_mode == "live"
-        else "https://paper-api.alpaca.markets"
-    )
-
-
-def configured_broker_environment() -> str:
-    try:
-        return classify_alpaca_trading_endpoint(_configured_broker_endpoint())
-    except ValueError:
-        return "unknown"
 
 
 def _capital_controls(state: object) -> dict[str, object]:
@@ -167,12 +150,6 @@ def trading_status() -> dict[str, object] | Response:
         load_broker_mutation_runtime_status,
         unavailable=unavailable_broker_mutation_runtime_status(),
     )
-    action_authority = reduce_runtime_action_authority(
-        service_status=scheduler_readiness_payload(scheduler),
-        live_submission_gate=live_gate,
-        broker_mutation_status=broker_mutation,
-        state=state,
-    )
     tigerbeetle = _read_with_session(
         build_tigerbeetle_ledger_status,
         unavailable={"ok": False, "reason_codes": ["tigerbeetle_status_unavailable"]},
@@ -214,25 +191,31 @@ def trading_status() -> dict[str, object] | Response:
     broker_economic_ledger = _read_with_session(
         lambda session: load_broker_economic_ledger_status(
             session,
-            scope=LedgerScope(
-                provider="alpaca",
-                environment=configured_broker_environment(),
-                account_label=settings.trading_account_label,
-                endpoint_fingerprint=fingerprint_broker_endpoint(
-                    _configured_broker_endpoint()
-                ),
-            ),
+            scope=configured_broker_economic_scope(),
             observed_at=datetime.now(timezone.utc),
+            expected_tigerbeetle_cluster_id=settings.tigerbeetle_cluster_id,
         ),
         unavailable={
             "schema_version": "torghut.broker-economic-ledger-status.v1",
             "state": "unavailable",
             "current": False,
             "reconciled": False,
-            "diagnostic_only": True,
+            "diagnostic_only": False,
             "capital_authority": False,
+            "accounting_parity_satisfied": False,
+            "entry_dependency_satisfied": False,
+            "promotion_dependency_satisfied": False,
             "reason_codes": ["economic_reconciliation_status_unavailable"],
+            "tigerbeetle_economic_parity": None,
         },
+    )
+    action_authority = reduce_runtime_action_authority(
+        service_status=scheduler_readiness_payload(scheduler),
+        live_submission_gate=live_gate,
+        broker_mutation_status=broker_mutation,
+        state=state,
+        broker_economic_ledger_status=broker_economic_ledger,
+        accounting_parity_required=settings.tigerbeetle_economic_parity_required,
     )
     order_lineage = _read_with_session(
         lambda session: load_order_lineage_repair_status(

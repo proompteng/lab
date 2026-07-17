@@ -57,6 +57,14 @@ spec:
                   value: "1"
                 - name: APP_ENV
                   value: prod
+                - name: TORGHUT_TIGERBEETLE_ENABLED
+                  value: "true"
+                - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+                  value: "2001"
+                - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+                  value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+                - name: TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS
+                  value: "30"
                 - name: DB_DSN
                   valueFrom:
                     secretKeyRef:
@@ -96,5 +104,6 @@ spec:
                 - scripts/replay_broker_economic_ledger.py
               args:
                 - --observe
+                - --tigerbeetle-parity
                 - --max-source-age-seconds
                 - "300"

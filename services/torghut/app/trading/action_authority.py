@@ -12,7 +12,7 @@ BROKER_MUTATION_RUNTIME_STATUS_SCHEMA_VERSION = (
     "torghut.broker-mutation-runtime-status.v1"
 )
 RUNTIME_ACTION_AUTHORITY_SCHEMA_VERSION = "torghut.runtime-action-authority.v1"
-RUNTIME_ACTION_AUTHORITY_POLICY_REVISION = "p0-capital-freeze.v1"
+RUNTIME_ACTION_AUTHORITY_POLICY_REVISION = "p0-capital-freeze-economic-parity.v2"
 
 _REDUCTION_BLOCKERS = frozenset(
     {
@@ -131,6 +131,8 @@ def reduce_runtime_action_authority(
     live_submission_gate: Mapping[str, object],
     broker_mutation_status: Mapping[str, object],
     state: object,
+    broker_economic_ledger_status: Mapping[str, object] | None = None,
+    accounting_parity_required: bool = False,
     evaluated_at: datetime | None = None,
 ) -> RuntimeActionAuthority:
     """Combine process health with action-specific submission authority."""
@@ -156,12 +158,17 @@ def reduce_runtime_action_authority(
         fallback_reason="broker_mutation_reduction_fencing_unproven",
     )
     mutation_recovery_reasons = _mutation_recovery_reasons(broker_mutation_status)
+    accounting_entry_reasons = _accounting_parity_reasons(
+        broker_economic_ledger_status,
+        required=accounting_parity_required,
+    )
     entry_reasons = _unique(
         (
             *service_reasons,
             *submission.reason_codes["entry"],
             *mutation_entry_reasons,
             *mutation_recovery_reasons,
+            *accounting_entry_reasons,
         )
     )
     reduction_reasons = _unique(
@@ -191,6 +198,38 @@ def reduce_runtime_action_authority(
         },
         evaluated_at=observed_at,
     )
+
+
+def _accounting_parity_reasons(
+    status: Mapping[str, object] | None,
+    *,
+    required: bool,
+) -> tuple[str, ...]:
+    if not required:
+        return ()
+    invalid = ("broker_economic_accounting_parity_status_invalid",)
+    if status is None or status.get("schema_version") != (
+        "torghut.broker-economic-ledger-status.v1"
+    ):
+        return invalid
+    satisfied = status.get("entry_dependency_satisfied")
+    reason_codes = status.get("reason_codes")
+    if (
+        not isinstance(satisfied, bool)
+        or not isinstance(reason_codes, Sequence)
+        or isinstance(
+            reason_codes,
+            (str, bytes, bytearray),
+        )
+    ):
+        return invalid
+    reason_items = cast(Sequence[object], reason_codes)
+    if any(not isinstance(item, str) for item in reason_items):
+        return invalid
+    if satisfied:
+        return ()
+    reasons = _strings(reason_items)
+    return reasons or ("broker_economic_accounting_parity_unproven",)
 
 
 def _valid_gate_contract(gate: Mapping[str, object]) -> bool:

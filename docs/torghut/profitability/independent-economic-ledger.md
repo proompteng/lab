@@ -296,10 +296,10 @@ are then inserted atomically. Any trigger failure rolls back the input, entries,
 ## Status And Capital Boundary
 
 Slice 8 exposes freshness, input watermark, immutable run IDs, reducer versions, build identity, admissibility, broker
-snapshot digest, and classified residuals in the trading status response. The surface is diagnostic-only: no value from
-it is consulted by order submission or capital authority. It does not by itself enable entry or promotion. Slice 10
-will make fresh zero-unexplained-delta parity blocking for risk increase while leaving service health and reduce-only
-recovery available.
+snapshot digest, and classified residuals in the trading status response. Slice 10 composes that broker result with a
+sealed full TigerBeetle projection and consumes the combined status as a blocking dependency for risk increase and
+promotion. The combined result is not a capital grant. Service health and reduce-only recovery remain separate and
+available under their existing contracts.
 
 The existing runtime ledger remains visible as a legacy decision-lineage projection until Slice 9 completes repair. It
 is never silently relabeled as the broker-economic ledger.

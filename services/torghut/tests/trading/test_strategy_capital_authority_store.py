@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import Base, EvidenceEpochRecord, Strategy, TradeDecision
 from app.trading.strategy_capital_authority import (
     AuthorityProofBindings,
@@ -547,6 +548,45 @@ def test_final_submission_hold_rejects_authority_that_expired_after_evaluation()
                 verdict=verdict,
                 observed_at=evaluated_at + timedelta(milliseconds=500),
             )
+            with (
+                patch.object(
+                    settings,
+                    "tigerbeetle_economic_parity_required",
+                    True,
+                ),
+                patch(
+                    "app.trading.strategy_capital_runtime.load_broker_economic_ledger_status",
+                    return_value={
+                        "schema_version": ("torghut.broker-economic-ledger-status.v1"),
+                        "entry_dependency_satisfied": False,
+                        "reason_codes": ["tigerbeetle_economic_transfer_missing"],
+                    },
+                ),
+            ):
+                parity_blocked_verdict = evaluate_runtime_strategy_capital_authority(
+                    session,
+                    strategy=strategy,
+                    request=RuntimeStrategyCapitalRequest(
+                        decision_id=uuid.uuid4(),
+                        account_label="paper",
+                        account_mode="paper",
+                        adapter_name="alpaca",
+                        symbol="NVDA",
+                        side="buy",
+                        order_notional=Decimal("100"),
+                        positions=[],
+                        capital_loss=Decimal("0"),
+                        observed_at=evaluated_at,
+                    ),
+                )
+                parity_blocked_hold = (
+                    hold_runtime_strategy_capital_authority_for_submission(
+                        session,
+                        strategy=strategy,
+                        verdict=verdict,
+                        observed_at=evaluated_at + timedelta(milliseconds=750),
+                    )
+                )
             final_verdict = hold_runtime_strategy_capital_authority_for_submission(
                 session,
                 strategy=strategy,
@@ -557,5 +597,13 @@ def test_final_submission_hold_rejects_authority_that_expired_after_evaluation()
     assert verdict.allowed is True
     assert held_verdict.allowed is True
     assert held_verdict.evaluated_at == evaluated_at + timedelta(milliseconds=500)
+    assert parity_blocked_verdict.allowed is False
+    assert parity_blocked_verdict.reason_codes == (
+        "tigerbeetle_economic_transfer_missing",
+    )
+    assert parity_blocked_hold.allowed is False
+    assert parity_blocked_hold.reason_codes == (
+        "tigerbeetle_economic_transfer_missing",
+    )
     assert final_verdict.allowed is False
     assert final_verdict.reason_codes == ("authority_expired",)
