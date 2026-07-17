@@ -46,11 +46,15 @@ Prefer the Sol-specific guidance when the sources differ.
 
 ## Discovery and Commands
 
-- Search code with `bun run atlas:code-search --query "<query>" --repository proompteng/lab --limit 10`. Narrow only as needed with `--path-prefix`, `--language`, then `--ref`.
-- Follow `docs/atlas/README.md` for Atlas trust and verification rules. Until its production gates pass, treat Atlas
-  results as navigation leads, verify material findings against the exact Git ref, and report misses, stale paths, or
-  silent fallbacks instead of hiding them with a narrower query. Atlas health or stats alone do not prove corpus
-  completeness.
+- Search code with `bun run atlas:code-search --query "<query>" --repository proompteng/lab --limit 10`. Atlas indexes
+  only production `main`; use Git or `rg` for branches, pull-request refs, and uncommitted work. Narrow only as needed
+  with `--path-prefix` and `--language`; pass `--ref main` only when an explicit ref is useful.
+- Atlas initial production acceptance has passed, but trust remains conditional. For conceptual queries, require
+  relevant `semantic` or `hybrid` results, no degradation, and a returned commit matching fresh `origin/main`. Treat
+  lexical-only, irrelevant, missing, or stale results as contradictory evidence. Exact-identifier queries may
+  legitimately report `semanticDistance=n/a`.
+- Follow `docs/atlas/README.md` for the full trust and reverification contract. Report contradictions instead of hiding
+  them with narrower queries; Atlas health, statistics, or a few successful results do not prove corpus completeness.
 - Install dependencies with `bun install`.
 - Frontends: `bun run dev:<app>`, `bun run build:<app>`, `bun run start:<app>`.
 - Convex: `bun run dev:convex`, `bun run --filter @proompteng/backend codegen`, `bun run seed:models`.
