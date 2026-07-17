@@ -89,6 +89,31 @@ class OrderLineageEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class _NormalizedOrderLineageEvidence:
+    provider: str
+    environment: str
+    account_label: str
+    alpaca_order_id: str | None
+    client_order_id: str | None
+    classification: str
+    confidence: str
+    execution_source: str
+    execution_id: uuid.UUID | None
+    decision_id: uuid.UUID | None
+    strategy_id: uuid.UUID | None
+    claim_id: uuid.UUID | None
+    tca_id: uuid.UUID | None
+    order_event_ids: tuple[uuid.UUID, ...]
+    fill_order_event_ids: tuple[uuid.UUID, ...]
+    broker_activity_ids: tuple[uuid.UUID, ...]
+    broker_fill_activity_ids: tuple[uuid.UUID, ...]
+    source_first_at: datetime
+    source_last_at: datetime
+    match_basis: tuple[str, ...]
+    blockers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class OrderLineageReceiptDraft:
     repair_version: str
     provider: str
@@ -114,154 +139,167 @@ class PersistedOrderLineageReceipt:
     reused_existing: bool
 
 
-def build_order_lineage_receipt(
+def _normalize_evidence(
     evidence: OrderLineageEvidence,
-) -> OrderLineageReceiptDraft:
-    """Validate and canonicalize one order-level evidence observation."""
-
-    provider = _required_text(evidence.provider, "order_lineage_provider_missing")
-    environment = _required_text(
-        evidence.environment, "order_lineage_environment_missing"
-    )
-    account_label = _required_text(
-        evidence.account_label, "order_lineage_account_label_missing"
-    )
+) -> _NormalizedOrderLineageEvidence:
     alpaca_order_id = _optional_text(evidence.alpaca_order_id)
     client_order_id = _optional_text(evidence.client_order_id)
     if alpaca_order_id is None and client_order_id is None:
         raise ValueError("order_lineage_order_identity_missing")
+    source_first_at, source_last_at = _source_window(evidence)
+    normalized = _NormalizedOrderLineageEvidence(
+        provider=_required_text(evidence.provider, "order_lineage_provider_missing"),
+        environment=_required_text(
+            evidence.environment,
+            "order_lineage_environment_missing",
+        ),
+        account_label=_required_text(
+            evidence.account_label,
+            "order_lineage_account_label_missing",
+        ),
+        alpaca_order_id=alpaca_order_id,
+        client_order_id=client_order_id,
+        classification=_enum_value(
+            evidence.classification,
+            CLASSIFICATIONS,
+            "order_lineage_classification_invalid",
+        ),
+        confidence=_enum_value(
+            evidence.confidence,
+            CONFIDENCES,
+            "order_lineage_confidence_invalid",
+        ),
+        execution_source=_enum_value(
+            evidence.execution_source,
+            EXECUTION_SOURCES,
+            "order_lineage_execution_source_invalid",
+        ),
+        execution_id=evidence.canonical_execution_id,
+        decision_id=evidence.canonical_trade_decision_id,
+        strategy_id=evidence.canonical_strategy_id,
+        claim_id=evidence.canonical_submission_claim_id,
+        tca_id=evidence.canonical_tca_metric_id,
+        order_event_ids=_sorted_uuid_set(evidence.order_event_ids),
+        fill_order_event_ids=_sorted_uuid_set(evidence.fill_order_event_ids),
+        broker_activity_ids=_sorted_uuid_set(evidence.broker_activity_ids),
+        broker_fill_activity_ids=_sorted_uuid_set(evidence.broker_fill_activity_ids),
+        source_first_at=source_first_at,
+        source_last_at=source_last_at,
+        match_basis=_sorted_text_set(
+            evidence.match_basis,
+            allowed=MATCH_BASES,
+            error="order_lineage_match_basis_invalid",
+        ),
+        blockers=_sorted_text_set(
+            evidence.blockers,
+            allowed=None,
+            error="order_lineage_blocker_invalid",
+        ),
+    )
+    _validate_source_contract(normalized)
+    _validate_linkage_contract(normalized)
+    return normalized
 
-    classification = _enum_value(
-        evidence.classification,
-        CLASSIFICATIONS,
-        "order_lineage_classification_invalid",
-    )
-    confidence = _enum_value(
-        evidence.confidence,
-        CONFIDENCES,
-        "order_lineage_confidence_invalid",
-    )
-    execution_source = _enum_value(
-        evidence.execution_source,
-        EXECUTION_SOURCES,
-        "order_lineage_execution_source_invalid",
-    )
-    match_basis = _sorted_text_set(
-        evidence.match_basis,
-        allowed=MATCH_BASES,
-        error="order_lineage_match_basis_invalid",
-    )
-    blockers = _sorted_text_set(
-        evidence.blockers,
-        allowed=None,
-        error="order_lineage_blocker_invalid",
-    )
-    order_event_ids = _sorted_uuid_set(evidence.order_event_ids)
-    fill_order_event_ids = _sorted_uuid_set(evidence.fill_order_event_ids)
-    broker_activity_ids = _sorted_uuid_set(evidence.broker_activity_ids)
-    broker_fill_activity_ids = _sorted_uuid_set(evidence.broker_fill_activity_ids)
-    if not set(fill_order_event_ids).issubset(order_event_ids):
-        raise ValueError("order_lineage_fill_event_not_in_order_events")
-    if not set(broker_fill_activity_ids).issubset(broker_activity_ids):
-        raise ValueError("order_lineage_broker_fill_not_in_activities")
-    if not order_event_ids and not broker_activity_ids:
-        raise ValueError("order_lineage_source_evidence_missing")
 
+def _source_window(evidence: OrderLineageEvidence) -> tuple[datetime, datetime]:
     if evidence.source_first_at is None or evidence.source_last_at is None:
         raise ValueError("order_lineage_source_window_incomplete")
     source_first_at = _required_utc(evidence.source_first_at)
     source_last_at = _required_utc(evidence.source_last_at)
     if source_first_at > source_last_at:
         raise ValueError("order_lineage_source_window_reversed")
+    return source_first_at, source_last_at
 
-    _validate_linkage_contract(
-        classification=classification,
-        confidence=confidence,
-        execution_source=execution_source,
-        execution_id=evidence.canonical_execution_id,
-        decision_id=evidence.canonical_trade_decision_id,
-        strategy_id=evidence.canonical_strategy_id,
-        claim_id=evidence.canonical_submission_claim_id,
-        tca_id=evidence.canonical_tca_metric_id,
-        order_event_count=len(order_event_ids),
-        fill_order_event_count=len(fill_order_event_ids),
-        broker_fill_count=len(broker_fill_activity_ids),
-        broker_activity_count=len(broker_activity_ids),
-        match_basis=match_basis,
-        blockers=blockers,
-        alpaca_order_id=alpaca_order_id,
-        client_order_id=client_order_id,
-    )
 
+def _validate_source_contract(evidence: _NormalizedOrderLineageEvidence) -> None:
+    if not set(evidence.fill_order_event_ids).issubset(evidence.order_event_ids):
+        raise ValueError("order_lineage_fill_event_not_in_order_events")
+    if not set(evidence.broker_fill_activity_ids).issubset(
+        evidence.broker_activity_ids
+    ):
+        raise ValueError("order_lineage_broker_fill_not_in_activities")
+    if not evidence.order_event_ids and not evidence.broker_activity_ids:
+        raise ValueError("order_lineage_source_evidence_missing")
+
+
+def build_order_lineage_receipt(
+    evidence: OrderLineageEvidence,
+) -> OrderLineageReceiptDraft:
+    """Validate and canonicalize one order-level evidence observation."""
+
+    normalized = _normalize_evidence(evidence)
     primary_order_id_kind = (
         MATCH_BASIS_ALPACA_ORDER_ID
-        if alpaca_order_id is not None
+        if normalized.alpaca_order_id is not None
         else MATCH_BASIS_CLIENT_ORDER_ID
     )
-    primary_order_id = alpaca_order_id or client_order_id
     order_identity_key: dict[str, object] = {
-        "account_label": account_label,
-        "environment": environment,
-        "primary_order_id": primary_order_id,
+        "account_label": normalized.account_label,
+        "environment": normalized.environment,
+        "primary_order_id": normalized.alpaca_order_id or normalized.client_order_id,
         "primary_order_id_kind": primary_order_id_kind,
-        "provider": provider,
+        "provider": normalized.provider,
     }
     order_identity_sha256 = _canonical_sha256(order_identity_key)
     order_identity: dict[str, object] = {
         **order_identity_key,
-        "alpaca_order_id": alpaca_order_id,
-        "client_order_id": client_order_id,
+        "alpaca_order_id": normalized.alpaca_order_id,
+        "client_order_id": normalized.client_order_id,
         "sha256": order_identity_sha256,
     }
     links: dict[str, object] = {
-        "execution_id": _uuid_text(evidence.canonical_execution_id),
-        "strategy_id": _uuid_text(evidence.canonical_strategy_id),
-        "submission_claim_id": _uuid_text(evidence.canonical_submission_claim_id),
-        "tca_metric_id": _uuid_text(evidence.canonical_tca_metric_id),
-        "trade_decision_id": _uuid_text(evidence.canonical_trade_decision_id),
+        "execution_id": _uuid_text(normalized.execution_id),
+        "strategy_id": _uuid_text(normalized.strategy_id),
+        "submission_claim_id": _uuid_text(normalized.claim_id),
+        "tca_metric_id": _uuid_text(normalized.tca_id),
+        "trade_decision_id": _uuid_text(normalized.decision_id),
     }
     payload: dict[str, object] = {
-        "blockers": list(blockers),
-        "classification": classification,
-        "confidence": confidence,
-        "execution_source": execution_source,
+        "blockers": list(normalized.blockers),
+        "classification": normalized.classification,
+        "confidence": normalized.confidence,
+        "execution_source": normalized.execution_source,
         "links": links,
-        "match_basis": list(match_basis),
+        "match_basis": list(normalized.match_basis),
         "order_identity": order_identity,
         "promotion_authority_eligible": False,
         "repair_version": ORDER_LINEAGE_REPAIR_VERSION,
         "schema_version": ORDER_LINEAGE_EVIDENCE_SCHEMA_VERSION,
         "sources": {
-            "broker_activity_ids": [str(value) for value in broker_activity_ids],
+            "broker_activity_ids": [
+                str(value) for value in normalized.broker_activity_ids
+            ],
             "broker_fill_activity_ids": [
-                str(value) for value in broker_fill_activity_ids
+                str(value) for value in normalized.broker_fill_activity_ids
             ],
             "counts": {
-                "broker_activities": len(broker_activity_ids),
-                "broker_fills": len(broker_fill_activity_ids),
-                "fill_order_events": len(fill_order_event_ids),
-                "order_events": len(order_event_ids),
+                "broker_activities": len(normalized.broker_activity_ids),
+                "broker_fills": len(normalized.broker_fill_activity_ids),
+                "fill_order_events": len(normalized.fill_order_event_ids),
+                "order_events": len(normalized.order_event_ids),
             },
-            "fill_order_event_ids": [str(value) for value in fill_order_event_ids],
-            "first_at": source_first_at.isoformat(),
-            "last_at": source_last_at.isoformat(),
-            "order_event_ids": [str(value) for value in order_event_ids],
+            "fill_order_event_ids": [
+                str(value) for value in normalized.fill_order_event_ids
+            ],
+            "first_at": normalized.source_first_at.isoformat(),
+            "last_at": normalized.source_last_at.isoformat(),
+            "order_event_ids": [str(value) for value in normalized.order_event_ids],
         },
     }
     canonical_json = _canonical_json(payload)
     return OrderLineageReceiptDraft(
         repair_version=ORDER_LINEAGE_REPAIR_VERSION,
-        provider=provider,
-        environment=environment,
-        account_label=account_label,
+        provider=normalized.provider,
+        environment=normalized.environment,
+        account_label=normalized.account_label,
         order_identity_sha256=order_identity_sha256,
-        alpaca_order_id=alpaca_order_id,
-        client_order_id=client_order_id,
-        classification=classification,
-        confidence=confidence,
-        execution_source=execution_source,
-        source_first_at=source_first_at,
-        source_last_at=source_last_at,
+        alpaca_order_id=normalized.alpaca_order_id,
+        client_order_id=normalized.client_order_id,
+        classification=normalized.classification,
+        confidence=normalized.confidence,
+        execution_source=normalized.execution_source,
+        source_first_at=normalized.source_first_at,
+        source_last_at=normalized.source_last_at,
         evidence=coerce_json_payload(payload),
         evidence_canonical_json=canonical_json,
         evidence_sha256=hashlib.sha256(canonical_json.encode("utf-8")).hexdigest(),
@@ -328,85 +366,108 @@ def persist_order_lineage_receipt(
     return PersistedOrderLineageReceipt(receipt=row, reused_existing=False)
 
 
-def _validate_linkage_contract(
-    *,
-    classification: str,
-    confidence: str,
-    execution_source: str,
-    execution_id: uuid.UUID | None,
-    decision_id: uuid.UUID | None,
-    strategy_id: uuid.UUID | None,
-    claim_id: uuid.UUID | None,
-    tca_id: uuid.UUID | None,
-    order_event_count: int,
-    fill_order_event_count: int,
-    broker_fill_count: int,
-    broker_activity_count: int,
-    match_basis: tuple[str, ...],
-    blockers: tuple[str, ...],
-    alpaca_order_id: str | None,
-    client_order_id: str | None,
-) -> None:
-    linked = execution_id is not None
-    downstream_links = (decision_id, strategy_id, claim_id, tca_id)
-    if linked != (execution_source != EXECUTION_SOURCE_NONE) or (
+def _validate_linkage_contract(evidence: _NormalizedOrderLineageEvidence) -> None:
+    _validate_link_identity(evidence)
+    _validate_classification_links(evidence)
+    _validate_classification_sources(evidence)
+
+
+def _validate_link_identity(evidence: _NormalizedOrderLineageEvidence) -> None:
+    linked = evidence.execution_id is not None
+    downstream_links = (
+        evidence.decision_id,
+        evidence.strategy_id,
+        evidence.claim_id,
+        evidence.tca_id,
+    )
+    if linked != (evidence.execution_source != EXECUTION_SOURCE_NONE) or (
         not linked and any(value is not None for value in downstream_links)
     ):
         raise ValueError("order_lineage_execution_identity_inconsistent")
-    if decision_id is None and (strategy_id is not None or claim_id is not None):
+    if evidence.decision_id is None and (
+        evidence.strategy_id is not None or evidence.claim_id is not None
+    ):
         raise ValueError("order_lineage_decision_identity_inconsistent")
-    if confidence == CONFIDENCE_EXACT and (not linked or not match_basis):
+    if evidence.confidence == CONFIDENCE_EXACT and (
+        not linked or not evidence.match_basis
+    ):
         raise ValueError("order_lineage_exact_confidence_unproved")
-    if classification == CLASSIFICATION_AMBIGUOUS and not match_basis:
+    if evidence.classification == CLASSIFICATION_AMBIGUOUS and not evidence.match_basis:
         raise ValueError("order_lineage_ambiguous_match_basis_missing")
-    if (MATCH_BASIS_ALPACA_ORDER_ID in match_basis and alpaca_order_id is None) or (
-        MATCH_BASIS_CLIENT_ORDER_ID in match_basis and client_order_id is None
+    if (
+        MATCH_BASIS_ALPACA_ORDER_ID in evidence.match_basis
+        and evidence.alpaca_order_id is None
+    ) or (
+        MATCH_BASIS_CLIENT_ORDER_ID in evidence.match_basis
+        and evidence.client_order_id is None
     ):
         raise ValueError("order_lineage_match_basis_identity_missing")
-    if classification in {CLASSIFICATION_COMPLETE, CLASSIFICATION_LINKED_INCOMPLETE}:
-        if not linked or confidence != CONFIDENCE_EXACT:
+
+
+def _validate_classification_links(
+    evidence: _NormalizedOrderLineageEvidence,
+) -> None:
+    linked = evidence.execution_id is not None
+    if evidence.classification in {
+        CLASSIFICATION_COMPLETE,
+        CLASSIFICATION_LINKED_INCOMPLETE,
+    }:
+        if not linked or evidence.confidence != CONFIDENCE_EXACT:
             raise ValueError("order_lineage_linked_classification_without_execution")
     elif linked:
         raise ValueError("order_lineage_unlinked_classification_with_execution")
-    if classification == CLASSIFICATION_COMPLETE:
-        if (
-            decision_id is None
-            or strategy_id is None
-            or claim_id is None
-            or tca_id is None
-            or order_event_count <= 0
-            or fill_order_event_count <= 0
-            or broker_fill_count <= 0
-            or blockers
-        ):
-            raise ValueError("order_lineage_complete_evidence_incomplete")
-    if classification != CLASSIFICATION_COMPLETE and not blockers:
+    if (
+        evidence.classification == CLASSIFICATION_COMPLETE
+        and _complete_evidence_is_incomplete(evidence)
+    ):
+        raise ValueError("order_lineage_complete_evidence_incomplete")
+    if evidence.classification != CLASSIFICATION_COMPLETE and not evidence.blockers:
         raise ValueError("order_lineage_incomplete_blockers_missing")
-    if classification == CLASSIFICATION_AMBIGUOUS:
-        if confidence != CONFIDENCE_AMBIGUOUS:
+    if evidence.classification == CLASSIFICATION_AMBIGUOUS:
+        if evidence.confidence != CONFIDENCE_AMBIGUOUS:
             raise ValueError("order_lineage_ambiguous_evidence_invalid")
-    elif confidence == CONFIDENCE_AMBIGUOUS:
+    elif evidence.confidence == CONFIDENCE_AMBIGUOUS:
         raise ValueError("order_lineage_ambiguous_confidence_misclassified")
     if (
-        classification
+        evidence.classification
         in {
             CLASSIFICATION_EXTERNAL_OR_UNPROVED,
             CLASSIFICATION_BROKER_ACTIVITY_ONLY,
             CLASSIFICATION_ORDER_FEED_ONLY,
         }
-        and confidence != CONFIDENCE_UNPROVED
+        and evidence.confidence != CONFIDENCE_UNPROVED
     ):
         raise ValueError("order_lineage_unproved_classification_confidence_invalid")
-    if classification == CLASSIFICATION_BROKER_ACTIVITY_ONLY and (
-        order_event_count != 0 or broker_activity_count <= 0
+
+
+def _complete_evidence_is_incomplete(
+    evidence: _NormalizedOrderLineageEvidence,
+) -> bool:
+    return (
+        evidence.decision_id is None
+        or evidence.strategy_id is None
+        or evidence.claim_id is None
+        or evidence.tca_id is None
+        or not evidence.order_event_ids
+        or not evidence.fill_order_event_ids
+        or not evidence.broker_fill_activity_ids
+        or bool(evidence.blockers)
+    )
+
+
+def _validate_classification_sources(
+    evidence: _NormalizedOrderLineageEvidence,
+) -> None:
+    if evidence.classification == CLASSIFICATION_BROKER_ACTIVITY_ONLY and (
+        evidence.order_event_ids or not evidence.broker_activity_ids
     ):
         raise ValueError("order_lineage_broker_activity_only_sources_invalid")
-    if classification == CLASSIFICATION_ORDER_FEED_ONLY and (
-        order_event_count <= 0 or broker_activity_count != 0
+    if evidence.classification == CLASSIFICATION_ORDER_FEED_ONLY and (
+        not evidence.order_event_ids or evidence.broker_activity_ids
     ):
         raise ValueError("order_lineage_order_feed_only_sources_invalid")
-    if classification == CLASSIFICATION_EXTERNAL_OR_UNPROVED and (
-        order_event_count <= 0 or broker_activity_count <= 0
+    if evidence.classification == CLASSIFICATION_EXTERNAL_OR_UNPROVED and (
+        not evidence.order_event_ids or not evidence.broker_activity_ids
     ):
         raise ValueError("order_lineage_external_sources_invalid")
 
