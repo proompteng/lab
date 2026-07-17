@@ -717,6 +717,10 @@ describe('native OCI build workflows', () => {
     expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/oci-digest.ts'")
   })
 
+  it('runs Symphony deployment convergence regressions in service CI', () => {
+    expect(symphonyCiWorkflow).toContain('packages/scripts/src/symphony/verify-deployment.test.ts')
+  })
+
   it('does not fan out migrated image builds on unrelated flake attr changes', () => {
     for (const workflow of [
       atticWorkflow,
@@ -1022,6 +1026,9 @@ describe('native OCI build workflows', () => {
       'Sag desired replicas is 0; runtime rollout smoke is intentionally skipped',
     )
     expect(sagPostDeployVerifyWorkflow).toContain('Sag deployment image does not contain expected digest')
+    expect(sagPostDeployVerifyWorkflow).toContain('get application sag -o json 2>')
+    expect(sagPostDeployVerifyWorkflow).toContain('Sag Argo application is not readable yet; retrying.')
+    expect(sagPostDeployVerifyWorkflow).toContain('jq -e . >/dev/null 2>&1')
   })
 
   it('routes the enabled Jangar image through a real Nix OCI attr', () => {
@@ -1244,7 +1251,6 @@ describe('native OCI build workflows', () => {
       ['app', 'app-image'],
       ['synthesis', 'synthesis-image'],
       ['docs', 'docs-image'],
-      ['olden', 'olden-image'],
     ] as const) {
       expect(flake).toContain(`"${packageAttr}"`)
       expect(repoFileExists(`nix/images/${service}.nix`)).toBe(true)
@@ -1255,7 +1261,13 @@ describe('native OCI build workflows', () => {
 
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
+    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(5)
+    expect(flake).toContain('"olden-image"')
+    expect(repoFileExists('nix/images/olden.nix')).toBe(true)
+    expect(productNixWorkflow).not.toContain('image_name: olden')
+    expect(productNixWorkflow).not.toContain('build_olden')
+    expect(productNixWorkflow).not.toContain("'apps/olden/**'")
+    expect(productNixWorkflow).not.toContain("'nix/images/olden.nix'")
     expect(productNixWorkflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
     expect(productNixWorkflow).not.toContain('mathieudutour/github-tag-action')
     expect(productNixWorkflow).not.toContain('ncipollo/release-action')
@@ -1455,9 +1467,11 @@ describe('native OCI build workflows', () => {
   it('opens digest-pinning release PRs for enabled product app Nix builds', () => {
     expect(enabledProductReleaseWorkflow).toContain('workflows:')
     expect(enabledProductReleaseWorkflow).toContain('- product-nix-images')
-    for (const service of ['proompteng', 'app', 'synthesis', 'docs', 'olden']) {
+    for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
       expect(enabledProductReleaseWorkflow).toContain(`argocd/applications/${service}/kustomization.yaml`)
     }
+    expect(enabledProductReleaseWorkflow).not.toContain('argocd/applications/olden/kustomization.yaml')
+    expect(enabledProductReleaseWorkflow).not.toContain('- olden')
     expect(enabledProductReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/${SERVICE}')
     expect(enabledProductReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/${service}')
     expect(enabledProductReleaseWorkflow).toContain('${service}-image')
@@ -1474,7 +1488,7 @@ describe('native OCI build workflows', () => {
       'flake.lock',
       'bun.lock',
     ]) {
-      expect(productNixWorkflow.match(new RegExp(`'${escapeRegex(sharedInput)}'`, 'g'))).toHaveLength(6)
+      expect(productNixWorkflow.match(new RegExp(`'${escapeRegex(sharedInput)}'`, 'g'))).toHaveLength(5)
       expect(enabledProductReleaseWorkflow).toContain(sharedInput)
     }
     expect(enabledProductReleaseWorkflow).not.toContain('.github/workflows/product-nix-images.yml')
@@ -1492,7 +1506,6 @@ describe('native OCI build workflows', () => {
       'argocd/applications/docs/kustomization.yaml',
       'argocd/applications/headlamp/values.yaml',
       'argocd/applications/oirat/kustomization.yaml',
-      'argocd/applications/olden/kustomization.yaml',
       'argocd/applications/proompteng/kustomization.yaml',
       'argocd/sag/kustomization.yaml',
       'argocd/applications/symphony/kustomization.yaml',
@@ -1503,6 +1516,9 @@ describe('native OCI build workflows', () => {
       expect(autoPrReleaseBranchesWorkflow).toContain(`"${path}"`)
     }
     expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
+    expect(autoPrReleaseBranchesWorkflow).toContain('disabled_image_paths=(')
+    expect(autoPrReleaseBranchesWorkflow).toContain('"argocd/applications/olden/kustomization.yaml"')
+    expect(autoPrReleaseBranchesWorkflow).toContain('reason="disabled-image-app:${path}"')
     expect(releasePrAutomergeWorkflow).toContain('nix_oci_release_paths=(')
     expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-nix-release-')")
     expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-release-')")
@@ -1517,12 +1533,12 @@ describe('native OCI build workflows', () => {
       'argocd/applications/froussard/knative-service.yaml',
       'argocd/applications/headlamp/values.yaml',
       'argocd/applications/oirat/kustomization.yaml',
-      'argocd/applications/olden/kustomization.yaml',
       'argocd/applications/proompteng/kustomization.yaml',
       'argocd/applications/synthesis/kustomization.yaml',
     ]) {
       expect(releasePrAutomergeWorkflow).toContain(`"${path}"`)
     }
+    expect(releasePrAutomergeWorkflow).not.toContain('argocd/applications/olden/kustomization.yaml')
     expect(releasePrAutomergeWorkflow).toContain(
       '[[ "$PR_HEAD_REF" =~ ^codex/(attic|arc-runner)-release-sha-[0-9a-f]{40}$ ]]',
     )
@@ -1538,7 +1554,7 @@ describe('native OCI build workflows', () => {
     expect(releasePrAutomergeWorkflow).not.toContain(
       'allowed_authors=("app/github-actions" "github-actions[bot]" "gregkonush")',
     )
-    expect(releasePrAutomergeWorkflow).toContain('echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"')
+    expect(releasePrAutomergeWorkflow).toContain('set_output "head_sha=${PR_HEAD_SHA}"')
     expect(releasePrAutomergeWorkflow).toContain('PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}')
     expect(releasePrAutomergeWorkflow).toContain('--match-head-commit "$PR_HEAD_SHA"')
     expect(releasePrAutomergeWorkflow).not.toContain('current_head_sha="$(gh pr view')

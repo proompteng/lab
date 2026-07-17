@@ -14,6 +14,7 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
+      - '.github/workflows/temporal-bun-sdk.yml'
   workflow_dispatch:
     inputs:
       npm_tag:
@@ -40,9 +41,53 @@ concurrency:
 
 jobs:
   test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '0'
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
+      - name: Build Temporal Bun SDK
+        run: bun run --filter @proompteng/temporal-bun-sdk build
+      - name: Run Oxfmt check (temporal-bun-sdk)
+        run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs
+      - name: Run Oxlint (temporal-bun-sdk)
+        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint
+      - name: Run Oxlint (temporal-bun-sdk, type-aware)
+        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint:type
+      - name: Run Oxlint (temporal-bun-sdk-example)
+        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint
+      - name: Run Oxlint (temporal-bun-sdk-example, type-aware)
+        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type
+      - name: Run Temporal Bun SDK non-integration tests
+        run: |
+          cd packages/temporal-bun-sdk
+          mapfile -d '' test_files < <(find tests -type f -name '*.test.ts' ! -path 'tests/integration/*' -print0)
+          if [ "${#test_files[@]}" -eq 0 ]; then
+            echo 'No Temporal Bun SDK non-integration tests were discovered.' >&2
+            exit 1
+          fi
+          bun test "${test_files[@]}" --timeout=30000
+      - name: Verify replay corpus
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
+
+  integration:
+    if: github.event_name != 'pull_request'
     runs-on: arc-arm64
     timeout-minutes: 60
-
     env:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '30000'
@@ -58,86 +103,48 @@ jobs:
       TEMPORAL_BUN_NPM_TAG: ${{ github.event.inputs.npm_tag || 'latest' }}
       TEMPORAL_BUN_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
         with:
           node-version: '24.11.1'
-
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
-
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
-
       - name: Build Temporal Bun SDK
         run: bun run --filter @proompteng/temporal-bun-sdk build
-
       - name: Install Temporal CLI
         run: |
           curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
           echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
-
-      - name: Verify Temporal CLI
-        run: temporal --version
-
-      - name: Enforce ArgoCD Temporal target
+      - name: Verify Temporal CLI and remote endpoint
         run: |
-          if [[ "${TEMPORAL_TEST_SERVER}" != "1" ]]; then
-            echo "TEMPORAL_TEST_SERVER must be 1 in CI (reuse ArgoCD Temporal endpoint)."
+          temporal --version
+          if ! getent hosts temporal-grpc >/dev/null; then
+            echo "temporal-grpc must resolve on ARC runners via Tailscale search domains."
             exit 1
           fi
-
           case "${TEMPORAL_ADDRESS}" in
             "127.0.0.1":*|"localhost":*|"[::1]":*)
               echo "TEMPORAL_ADDRESS must not point to localhost in CI."
               exit 1
               ;;
           esac
-
-      - name: Verify ARC Tailscale short host
-        run: |
-          if ! getent hosts temporal-grpc >/dev/null; then
-            echo "temporal-grpc must resolve on ARC runners via Tailscale search domains."
-            exit 1
-          fi
-
       - name: Clean stale Temporal Bun SDK integration workflows
         run: |
           bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --terminate \
             --reason "pre-test cleanup for GitHub Actions run ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-      - name: Run Oxfmt check (temporal-bun-sdk)
-        run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs
-
-      - name: Run Oxlint (temporal-bun-sdk)
-        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint
-
-      - name: Run Oxlint (temporal-bun-sdk, type-aware)
-        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint:type
-
-      - name: Run Oxlint (temporal-bun-sdk-example)
-        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint
-
-      - name: Run Oxlint (temporal-bun-sdk-example, type-aware)
-        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type
-
-      - name: Run Temporal Bun SDK tests
+      - name: Run Temporal Bun SDK integration tests
         run: |
           cd packages/temporal-bun-sdk
-          TEMPORAL_TEST_SERVER=1 bun test --timeout=30000 --max-concurrency=1
-
+          bun test tests/integration --timeout=30000 --max-concurrency=1
       - name: Verify Temporal Bun SDK integration cleanup
         run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
-
-      - name: Verify replay corpus
-        run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
 
       - name: Run worker load suite
         run: |
@@ -177,7 +184,9 @@ jobs:
   prepare-release:
     name: Prepare Temporal Bun SDK Release
     runs-on: arc-arm64
-    needs: test
+    needs:
+      - test
+      - integration
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'prepare'
     permissions:
       contents: write
@@ -232,7 +241,9 @@ jobs:
   publish-release:
     name: Publish Temporal Bun SDK
     runs-on: ubuntu-latest
-    needs: test
+    needs:
+      - test
+      - integration
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main'
     permissions:
       contents: read

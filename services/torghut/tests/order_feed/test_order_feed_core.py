@@ -433,6 +433,27 @@ class TestOrderFeedCore(OrderFeedTestCase):
                     ingestor._reconcile_tigerbeetle_if_enabled(session)
                 self.assertEqual(rollback.call_count, 2)
 
+    def test_order_feed_runs_reconciliation_while_feed_is_idle(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+
+        with Session(self.engine) as session:
+            ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: FakeConsumer([]),
+                default_account_label="paper",
+            )
+            with patch(
+                (
+                    "app.trading.order_feed.shared_context"
+                    ".reconcile_tigerbeetle_transfers"
+                ),
+                return_value={"ok": True},
+            ) as reconcile:
+                ingestor.ingest_once(session)
+                ingestor.ingest_once(session)
+
+        self.assertEqual(reconcile.call_count, 1)
+
     def test_optional_tigerbeetle_journal_failure_does_not_drop_order_event(
         self,
     ) -> None:

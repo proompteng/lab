@@ -43,6 +43,8 @@ FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA = "cumulative_to_delta"
 
 FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING = "cumulative_non_increasing"
 
+FILL_QUANTITY_BASIS_DELTA = "delta"
+
 _FILL_EVENT_TYPES = frozenset({"fill", "filled", "partial_fill", "partially_filled"})
 
 EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION = "execution_raw_order_snapshot_backfill_v1"
@@ -713,6 +715,7 @@ __all__: tuple[str, ...] = (
     "FILL_EVENT_TYPES",
     "FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING",
     "FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA",
+    "FILL_QUANTITY_BASIS_DELTA",
     "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
     "IngestRecordContext",
     "IngestRecordOutcome",

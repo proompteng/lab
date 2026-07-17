@@ -23,7 +23,6 @@ on:
       - 'argocd/applications/froussard/knative-service.yaml'
       - 'argocd/applications/headlamp/values.yaml'
       - 'argocd/applications/oirat/kustomization.yaml'
-      - 'argocd/applications/olden/kustomization.yaml'
       - 'argocd/applications/proompteng/kustomization.yaml'
       - 'argocd/applications/synthesis/kustomization.yaml'
       - '.github/workflows/release-pr-automerge.yml'
@@ -77,11 +76,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "eligible=false" >> "$GITHUB_OUTPUT"
-          echo "reason=not-evaluated" >> "$GITHUB_OUTPUT"
+          set_output() {
+            printf '%s\n' "$1" >> "$GITHUB_OUTPUT"
+          }
+
+          set_output "eligible=false"
+          set_output "reason=not-evaluated"
 
           if [[ -z "${PR_NUMBER}" ]] || ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
-            echo "reason=invalid-pr-number" >> "$GITHUB_OUTPUT"
+            set_output "reason=invalid-pr-number"
             exit 0
           fi
 
@@ -102,7 +105,6 @@ jobs:
             "argocd/applications/froussard/knative-service.yaml"
             "argocd/applications/headlamp/values.yaml"
             "argocd/applications/oirat/kustomization.yaml"
-            "argocd/applications/olden/kustomization.yaml"
             "argocd/applications/proompteng/kustomization.yaml"
             "argocd/applications/synthesis/kustomization.yaml"
           )
@@ -119,7 +121,7 @@ jobs:
           }
 
           if ! pr_json="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")"; then
-            echo "reason=pr-not-found" >> "$GITHUB_OUTPUT"
+            set_output "reason=pr-not-found"
             exit 0
           fi
 
@@ -132,12 +134,12 @@ jobs:
           PR_IS_DRAFT="$(jq -r '.draft // false' <<< "$pr_json")"
 
           if [[ "$PR_STATE" != "open" ]]; then
-            echo "reason=pr-not-open" >> "$GITHUB_OUTPUT"
+            set_output "reason=pr-not-open"
             exit 0
           fi
 
           if [[ "$PR_BASE_REF" != "main" ]]; then
-            echo "reason=base-not-main" >> "$GITHUB_OUTPUT"
+            set_output "reason=base-not-main"
             exit 0
           fi
 
@@ -149,28 +151,28 @@ jobs:
             [[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]; then
             release_kind="nix-oci-release"
           else
-            echo "reason=head-not-release-branch" >> "$GITHUB_OUTPUT"
+            set_output "reason=head-not-release-branch"
             exit 0
           fi
 
           if [[ "$PR_IS_DRAFT" == "true" ]]; then
-            echo "reason=pr-is-draft" >> "$GITHUB_OUTPUT"
+            set_output "reason=pr-is-draft"
             exit 0
           fi
 
           if [[ "$PR_HEAD_REPO" != "$GH_REPO" ]]; then
-            echo "reason=head-not-from-same-repo" >> "$GITHUB_OUTPUT"
+            set_output "reason=head-not-from-same-repo"
             exit 0
           fi
 
           if ! [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "reason=invalid-head-sha" >> "$GITHUB_OUTPUT"
+            set_output "reason=invalid-head-sha"
             exit 0
           fi
 
           if ! contains "$PR_AUTHOR" "${bot_authors[@]}"; then
             if [[ "$PR_AUTHOR" != "gregkonush" ]]; then
-              echo "reason=author-not-allowlisted" >> "$GITHUB_OUTPUT"
+              set_output "reason=author-not-allowlisted"
               exit 0
             fi
 
@@ -179,7 +181,7 @@ jobs:
             commit_committer_email="$(jq -r '.commit.committer.email // ""' <<< "$commit_json")"
             if [[ "$commit_committer_login" != "github-actions[bot]" ]] ||
               [[ "$commit_committer_email" != "41898282+github-actions[bot]@users.noreply.github.com" ]]; then
-              echo "reason=human-authored-release-pr" >> "$GITHUB_OUTPUT"
+              set_output "reason=human-authored-release-pr"
               exit 0
             fi
           fi
@@ -192,7 +194,7 @@ jobs:
           )
 
           if [[ "$has_opt_out_label" == "true" ]]; then
-            echo "reason=opt-out-label-present" >> "$GITHUB_OUTPUT"
+            set_output "reason=opt-out-label-present"
             exit 0
           fi
 
@@ -206,7 +208,7 @@ jobs:
               )
 
               if [[ "$has_required_label" != "true" ]]; then
-                echo "reason=missing-required-label:${required_label}" >> "$GITHUB_OUTPUT"
+                set_output "reason=missing-required-label:${required_label}"
                 exit 0
               fi
             done
@@ -228,27 +230,27 @@ jobs:
           done
 
           if [[ "${#changed_files[@]}" -eq 0 ]]; then
-            echo "reason=no-files-changed" >> "$GITHUB_OUTPUT"
+            set_output "reason=no-files-changed"
             exit 0
           fi
 
           for path in "${changed_files[@]}"; do
             if [[ "$release_kind" == "legacy-release" ]]; then
               if ! contains "$path" "${legacy_release_paths[@]}"; then
-                echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+                set_output "reason=changed-file-not-allowlisted:$path"
                 exit 0
               fi
             else
               if ! contains "$path" "${nix_oci_release_paths[@]}"; then
-                echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+                set_output "reason=changed-file-not-allowlisted:$path"
                 exit 0
               fi
             fi
           done
 
-          echo "eligible=true" >> "$GITHUB_OUTPUT"
-          echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"
-          echo "reason=eligible:${release_kind}" >> "$GITHUB_OUTPUT"
+          set_output "eligible=true"
+          set_output "head_sha=${PR_HEAD_SHA}"
+          set_output "reason=eligible:${release_kind}"
 
       - name: Eligibility summary
         shell: bash

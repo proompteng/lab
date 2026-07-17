@@ -169,6 +169,14 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(finalExit).toBeGreaterThan(finalFailure)
   })
 
+  it('retries across the TA heartbeat interval before failing market-data freshness', () => {
+    expect(workflow).toContain('TA_FRESHNESS_ATTEMPTS=4')
+    expect(workflow).toContain('TA_FRESHNESS_INTERVAL_SECONDS=30')
+    expect(workflow).toContain('for ta_attempt in $(seq 1 "${TA_FRESHNESS_ATTEMPTS}"); do')
+    expect(workflow).toContain('waiting for the next TA heartbeat')
+    expect(workflow).toContain('[ "${ta_attempt}" -eq "${TA_FRESHNESS_ATTEMPTS}" ]')
+  })
+
   it('refetches every evidence surface and invokes the strict validator inside each convergence attempt', () => {
     const loopStart = workflow.indexOf('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
     const loopEnd = workflow.indexOf('\n          done', loopStart)

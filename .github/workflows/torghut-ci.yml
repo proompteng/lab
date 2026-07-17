@@ -714,7 +714,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3]
     steps:
       - name: Checkout
         shell: bash
@@ -763,7 +763,7 @@ jobs:
         env:
           COVERAGE_FILE: .coverage.${{ matrix.shard }}
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: 8
+          SHARD_TOTAL: 4
         run: |
           set -euo pipefail
           collected_tests="$(mktemp)"
@@ -812,7 +812,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1]
     steps:
       - name: Checkout
         shell: bash
@@ -861,7 +861,7 @@ jobs:
         env:
           COVERAGE_FILE: .coverage.autoresearch-runner-${{ matrix.shard }}
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: 4
+          SHARD_TOTAL: 2
         run: |
           set -euo pipefail
           collected_tests="$(mktemp)"

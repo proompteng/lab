@@ -251,6 +251,29 @@ const resolveOptions = (options: CliOptions): ResolvedOptions => ({
 
 const sleep = (seconds: number) => new Promise((resolve) => setTimeout(resolve, seconds * 1000))
 
+type RetryOptions = {
+  attempts: number
+  intervalSeconds: number
+  sleepFn?: (seconds: number) => Promise<unknown>
+  onRetry?: (attempt: number, error: Error) => void
+}
+
+export const retryOperation = async <T>(operation: () => Promise<T>, options: RetryOptions): Promise<T> => {
+  const sleepFn = options.sleepFn ?? sleep
+  let lastError: Error | undefined
+  for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      if (attempt === options.attempts) break
+      options.onRetry?.(attempt, lastError)
+      await sleepFn(options.intervalSeconds)
+    }
+  }
+  throw lastError ?? new Error('Operation did not run because retry attempts were not positive')
+}
+
 const verifyArgoHealth = async (options: ResolvedOptions) => {
   for (let attempt = 1; attempt <= options.healthAttempts; attempt += 1) {
     const statusOutput = await runCommand('kubectl', [
@@ -374,8 +397,19 @@ export const verifyDeployment = async (options: CliOptions = {}) => {
   ])
 
   const argoStatus = await verifyArgoHealth(resolved)
-  const runningImages = await verifyRunningDigest(resolved, expectedDigest)
-  const stateBody = await verifyServiceHealth(resolved.serviceBaseUrl)
+  const { runningImages, stateBody } = await retryOperation(
+    async () => ({
+      runningImages: await verifyRunningDigest(resolved, expectedDigest),
+      stateBody: await verifyServiceHealth(resolved.serviceBaseUrl),
+    }),
+    {
+      attempts: resolved.healthAttempts,
+      intervalSeconds: resolved.healthIntervalSeconds,
+      onRetry: (attempt, error) => {
+        console.log(`Runtime convergence attempt ${attempt} failed for ${resolved.deployment}: ${error.message}`)
+      },
+    },
+  )
 
   console.log(
     JSON.stringify(

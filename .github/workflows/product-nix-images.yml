@@ -11,13 +11,11 @@ on:
       - 'apps/app/**'
       - 'apps/docs/**'
       - 'apps/landing/**'
-      - 'apps/olden/**'
       - 'apps/synthesis/**'
       - 'packages/backend/**'
       - 'packages/design/**'
       - 'nix/images/app.nix'
       - 'nix/images/docs.nix'
-      - 'nix/images/olden.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -51,12 +49,6 @@ on:
         required: false
         type: boolean
         default: true
-      build_olden:
-        description: Build and publish apps/olden image
-        required: false
-        type: boolean
-        default: true
-
 concurrency:
   group: product-nix-images-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -71,7 +63,6 @@ jobs:
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
       synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
       docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
-      olden: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.olden || steps.filter.outputs.olden }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -135,20 +126,6 @@ jobs:
               - 'nix/oci-push.sh'
               - 'flake.lock'
               - 'bun.lock'
-            olden:
-              - 'apps/olden/**'
-              - 'packages/design/**'
-              - 'nix/images/olden.nix'
-              - 'nix/images/bun-workspace-service.nix'
-              - 'nix/packages.nix'
-              - 'nix/cache-push.sh'
-              - 'nix/ci-nix-oci-summary.sh'
-              - 'nix/ci-run-timed.sh'
-              - 'nix/oci-inspect-archive.sh'
-              - 'nix/oci-push.sh'
-              - 'flake.lock'
-              - 'bun.lock'
-
       - name: Manual build selection
         id: manual
         if: github.event_name == 'workflow_dispatch'
@@ -158,7 +135,6 @@ jobs:
             echo "app=${{ github.event.inputs.build_app }}"
             echo "synthesis=${{ github.event.inputs.build_synthesis }}"
             echo "docs=${{ github.event.inputs.build_docs }}"
-            echo "olden=${{ github.event.inputs.build_olden }}"
           } >> "$GITHUB_OUTPUT"
 
   build-proompteng:
@@ -211,17 +187,4 @@ jobs:
       pr_number: ${{ github.event.pull_request.number || '' }}
       latest: true
       release_artifact_name: docs-release-contract
-    secrets: inherit
-
-  build-olden:
-    needs: changes
-    if: needs.changes.outputs.olden == 'true'
-    uses: ./.github/workflows/nix-oci-build-common.yml
-    with:
-      image_name: olden
-      package_attr: olden-image
-      tag: sha-${{ github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
-      latest: true
-      release_artifact_name: olden-release-contract
     secrets: inherit

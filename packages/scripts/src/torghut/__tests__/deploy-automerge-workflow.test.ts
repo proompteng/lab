@@ -163,10 +163,18 @@ describe('torghut-deploy-automerge workflow', () => {
 
   test('squash-merges generated release PRs after explicit gates instead of enabling brittle automerge', () => {
     expect(deployAutomergeWorkflow).toContain('name: Squash merge release PR')
-    expect(deployAutomergeWorkflow).toContain('--json state,mergeStateStatus,isDraft')
-    expect(deployAutomergeWorkflow).toContain('CLEAN | UNSTABLE)')
+    expect(deployAutomergeWorkflow).toContain('--json state,mergeStateStatus,isDraft,headRefOid')
+    expect(deployAutomergeWorkflow).toContain('CLEAN | UNSTABLE | BEHIND)')
     expect(deployAutomergeWorkflow).toContain('gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --squash')
     expect(deployAutomergeWorkflow).not.toContain('gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --auto --squash')
+  })
+
+  test('retries only the bounded base-branch race while preserving the expected head', () => {
+    expect(deployAutomergeWorkflow).toContain('MERGE_ATTEMPTS=4')
+    expect(deployAutomergeWorkflow).toContain('for merge_attempt in $(seq 1 "${MERGE_ATTEMPTS}"); do')
+    expect(deployAutomergeWorkflow).toContain("grep -Fq 'Base branch was modified'")
+    expect(deployAutomergeWorkflow).toContain('[ "${current_head_sha}" != "${PR_HEAD_SHA}" ]')
+    expect(deployAutomergeWorkflow).toContain('--match-head-commit "${PR_HEAD_SHA}"')
   })
 
   test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {

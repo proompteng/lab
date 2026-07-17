@@ -33,6 +33,7 @@ from ..infrastructure_validation_records import (
 from .shared_context import (
     FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING,
     FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA,
+    FILL_QUANTITY_BASIS_DELTA,
     NormalizationResult,
     NormalizedOrderEvent,
     FILL_EVENT_TYPES as _FILL_EVENT_TYPES,
@@ -583,6 +584,28 @@ def _fill_delta_fields(
 ) -> tuple[Decimal | None, Decimal | None, str | None]:
     if not _is_fill_event(event.event_type, event.status) or event.filled_qty is None:
         return None, None, None
+
+    raw_event = _as_mapping(event.raw_event) or {}
+    raw_fill = _extract_trade_update_payload(raw_event) or {}
+    raw_fill_qty = _coerce_decimal(
+        raw_fill.get("fill_qty")
+        or raw_fill.get("last_fill_qty")
+        or raw_fill.get("filled_qty_delta")
+        or raw_fill.get("qty")
+        or raw_fill.get("quantity")
+    )
+    raw_fill_price = _coerce_decimal(
+        raw_fill.get("fill_price")
+        or raw_fill.get("last_fill_price")
+        or raw_fill.get("execution_price")
+        or raw_fill.get("price")
+    )
+    if raw_fill_qty is not None and raw_fill_qty > 0:
+        return (
+            raw_fill_qty,
+            raw_fill_qty * raw_fill_price if raw_fill_price is not None else None,
+            FILL_QUANTITY_BASIS_DELTA,
+        )
 
     identity_clauses: list[ColumnElement[bool]] = []
     if event.alpaca_order_id:

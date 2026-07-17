@@ -32,5 +32,5 @@ jobs:
       lint-command: bunx oxfmt --check services/symphony packages/scripts/src/symphony argocd/applications/symphony argocd/applications/symphony-jangar argocd/applications/symphony-torghut argocd/applications/symphony-base argocd/applications/jangar/alloy-configmap.yaml argocd/applications/torghut/alloy-configmap.yaml argocd/applications/observability/graf-mimir-rules.yaml argocd/applications/observability/kustomization.yaml argocd/applications/observability/symphony-fleet-dashboard-configmap.yaml
       oxlint-command: bun run --cwd services/symphony lint:oxlint
       oxlint-type-command: bun run --cwd services/symphony lint:oxlint:type && bun run --cwd packages/scripts lint:oxlint:type
-      test-command: bun run --cwd services/symphony tsc && bun run --cwd services/symphony test && bun test packages/scripts/src/symphony/release-contract.test.ts packages/scripts/src/symphony/deploy-service.test.ts
+      test-command: bun run --cwd services/symphony tsc && bun run --cwd services/symphony test && bun test packages/scripts/src/symphony/release-contract.test.ts packages/scripts/src/symphony/deploy-service.test.ts packages/scripts/src/symphony/verify-deployment.test.ts
     secrets: inherit

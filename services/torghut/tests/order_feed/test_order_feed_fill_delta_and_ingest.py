@@ -65,6 +65,35 @@ class TestOrderFeedFillDeltaAndIngest(OrderFeedTestCase):
         self.assertEqual(rows[0].source_offset, 10)
         self.assertNotIn("ingestTs", rows[0].raw_payload)
 
+    def test_raw_execution_qty_and_price_are_persisted_as_fill_delta(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-07-15T22:18:00Z",'
+            b'"qty":"0.000229274","price":"64729.4","order":{"id":"order-1",'
+            b'"client_order_id":"client-1","symbol":"BTC/USD","status":"filled",'
+            b'"qty":"0.000449274","filled_qty":"0.000449274",'
+            b'"filled_avg_price":"64747.862313288"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=11)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v2",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+            persisted, duplicate = persist_order_event(session, normalized.event)
+            session.flush()
+
+            self.assertFalse(duplicate)
+            self.assertEqual(persisted.filled_qty_delta, Decimal("0.000229274"))
+            self.assertEqual(
+                persisted.filled_notional_delta,
+                Decimal("14.8407684556"),
+            )
+            self.assertEqual(persisted.fill_quantity_basis, "delta")
+
     def test_duplicate_event_source_window_attach_refreshes_linkage_counts(
         self,
     ) -> None:

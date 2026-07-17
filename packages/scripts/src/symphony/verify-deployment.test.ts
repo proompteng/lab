@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { imageReferenceMatchesDigest, selectReadyContainerImages } from './verify-deployment'
+import { imageReferenceMatchesDigest, retryOperation, selectReadyContainerImages } from './verify-deployment'
 
 describe('Symphony deployment image verification', () => {
   const digest = `sha256:${'a'.repeat(64)}`
@@ -42,5 +42,48 @@ describe('Symphony deployment image verification', () => {
       },
     ])
     expect(runningImages.every((status) => imageReferenceMatchesDigest(status.image, digest))).toBe(true)
+  })
+
+  it('retries runtime convergence until a lagging deployment reaches the expected digest', async () => {
+    let attempts = 0
+    const sleeps: number[] = []
+
+    const result = await retryOperation(
+      async () => {
+        attempts += 1
+        if (attempts < 3) throw new Error('old digest still running')
+        return 'converged'
+      },
+      {
+        attempts: 3,
+        intervalSeconds: 10,
+        sleepFn: async (seconds) => {
+          sleeps.push(seconds)
+        },
+      },
+    )
+
+    expect(result).toBe('converged')
+    expect(attempts).toBe(3)
+    expect(sleeps).toEqual([10, 10])
+  })
+
+  it('fails after the bounded runtime convergence attempts are exhausted', async () => {
+    let attempts = 0
+
+    const error = await retryOperation(
+      async () => {
+        attempts += 1
+        throw new Error('old digest still running')
+      },
+      { attempts: 2, intervalSeconds: 0, sleepFn: async () => undefined },
+    ).then(
+      () => undefined,
+      (failure: unknown) => failure,
+    )
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('old digest still running')
+    expect(attempts).toBe(2)
   })
 })
