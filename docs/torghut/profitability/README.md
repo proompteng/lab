@@ -47,6 +47,8 @@ readback. The audit snapshot records what was observed at its stated time.
   dependencies, and rollback posture.
 - [Slice 3 production evidence](evidence/slice-03-autoresearch-completion-2026-07-14.md): committed revision, CI and
   image chain, GitOps rollout, deployed candidate-processing exercise, safety readback, and unresolved deltas.
+- [Slice 9 production evidence](evidence/slice-09-order-lineage-census-2026-07-17.md): immutable historical census,
+  exact-input rerun, source-table non-mutation proof, diagnostic coverage, and remaining fresh-paper gate.
 
 ## Current Decision
 

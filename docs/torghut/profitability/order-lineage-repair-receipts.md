@@ -1,7 +1,7 @@
 # Order And Fill Lineage Repair Receipts
 
-Status: normative Slice 9 implementation contract; closed-census code, image, and migration deployed; production
-census and fresh-paper proof pending.
+Status: normative Slice 9 implementation contract; the immutable historical production census and deterministic rerun
+are proven; changed-source append and fresh-paper causal-chain proof remain pending.
 
 ## Decision
 
@@ -168,15 +168,19 @@ economic-ledger job without changing its suspension state.
 does not claim time freshness for a reused run, and always reports `promotion_authority_eligible=false`. Kubernetes job
 success plus the immutable source manifests provide execution-freshness proof; an old reused run row alone does not.
 
+The first production census and exact-input rerun are recorded in
+[Slice 9 production evidence](evidence/slice-09-order-lineage-census-2026-07-17.md). The historical corpus contains no
+complete causal chain and therefore cannot satisfy the fresh-paper acceptance gate or grant promotion authority.
+
 ## Delivery Sequence
 
 1. **Implemented:** land the receipt table, database guards, deterministic builder, and contract tests.
 2. **Implemented:** replace raw-JSON mutation with order-level receipt construction, a closed run manifest, and
    repeatable atomic backfill while retaining original rows unchanged.
 3. **Implemented:** add current-version coverage and explicit residual classifications to trading status.
-4. **In progress:** the closed-census image and migration are live and the CronJob is enabled through a separate GitOps
-   change; run the historical census, then prove a fresh bounded paper lifecycle with complete
-   claim/order/fill/event linkage.
+4. **In progress:** the closed-census image and migration are live, the CronJob is enabled through a separate GitOps
+   change, and the historical census plus exact-input rerun are proven without source mutation. Prove a changed-source
+   append and a fresh bounded paper lifecycle with complete claim/order/fill/event linkage.
 
 Delivery 1 grants no runtime writer and cannot change an existing event, order, decision, or execution.
 
