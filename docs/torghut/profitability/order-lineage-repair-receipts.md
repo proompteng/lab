@@ -1,7 +1,7 @@
 # Order And Fill Lineage Repair Receipts
 
-Status: normative Slice 9 implementation contract; Deliveries 1 and 2 implemented, production census and fresh-paper
-proof pending.
+Status: normative Slice 9 implementation contract; closed-census code, image, and migration deployed; production
+census and fresh-paper proof pending.
 
 ## Decision
 
@@ -154,13 +154,13 @@ windows, executions, decisions, or orders. It bulk-loads the source sets, indexe
 identity, preserves one-to-many fills, and rejects ambiguous stable-ID matches without timestamp heuristics. Client-only
 events join a broker order only when the alias is unique.
 
-The hourly `torghut-order-lineage-reconciliation` CronJob is staged with `suspend: true` until the closed-census image
-has been built and promoted. A separate GitOps change must enable it after that artifact is live, preventing the prior
-image's legacy mutation path from running during the source-to-promotion gap. Once enabled, it runs after the
-broker-economic ledger window with `concurrencyPolicy: Forbid`, no service-account token, no broker credentials, and no
-configured account label. Source and canonical account scopes are inferred only when each is unique; ambiguity fails
-the job. The release updater pins this CronJob to the same image digest and source commit as the API, scheduler,
-simulation service, and economic-ledger job without changing its suspension state.
+The hourly `torghut-order-lineage-reconciliation` CronJob was enabled through a separate GitOps change only after the
+closed-census image and migration 0082 were live at the exact promoted source and digest. This prevented the prior
+image's legacy mutation path from running during the source-to-promotion gap. It runs after the broker-economic ledger
+window with `concurrencyPolicy: Forbid`, no service-account token, no broker credentials, and no configured account
+label. Source and canonical account scopes are inferred only when each is unique; ambiguity fails the job. The release
+updater pins this CronJob to the same image digest and source commit as the API, scheduler, simulation service, and
+economic-ledger job without changing its suspension state.
 
 `/trading/status` exposes the latest supported closed-run counts under `order_lineage`. The payload is diagnostic only,
 does not claim time freshness for a reused run, and always reports `promotion_authority_eligible=false`. Kubernetes job
@@ -172,8 +172,9 @@ success plus the immutable source manifests provide execution-freshness proof; a
 2. **Implemented:** replace raw-JSON mutation with order-level receipt construction, a closed run manifest, and
    repeatable atomic backfill while retaining original rows unchanged.
 3. **Implemented:** add current-version coverage and explicit residual classifications to trading status.
-4. **Pending runtime promotion:** promote the closed-census image, enable the CronJob through a separate GitOps change,
-   run the historical census, then prove a fresh bounded paper lifecycle with complete claim/order/fill/event linkage.
+4. **In progress:** the closed-census image and migration are live and the CronJob is enabled through a separate GitOps
+   change; run the historical census, then prove a fresh bounded paper lifecycle with complete
+   claim/order/fill/event linkage.
 
 Delivery 1 grants no runtime writer and cannot change an existing event, order, decision, or execution.
 
