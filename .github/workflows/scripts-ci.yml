@@ -14,6 +14,10 @@ on:
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
+      - 'devices/altra/docs/cluster-bootstrap.md'
+      - 'devices/ryzen/docs/cluster-bootstrap.md'
+      - 'devices/turin/docs/nvidia-gpu-on-talos.md'
+      - 'devices/turin/docs/cluster-join-plan.md'
       - '.github/workflows/scripts-ci.yml'
   pull_request:
     paths:
@@ -26,6 +30,10 @@ on:
       - 'docs/agents/designs/handoff-common.md'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
+      - 'devices/altra/docs/cluster-bootstrap.md'
+      - 'devices/ryzen/docs/cluster-bootstrap.md'
+      - 'devices/turin/docs/nvidia-gpu-on-talos.md'
+      - 'devices/turin/docs/cluster-join-plan.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
