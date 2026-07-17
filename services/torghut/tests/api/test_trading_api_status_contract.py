@@ -4,7 +4,7 @@ from urllib.error import URLError
 
 from fastapi.responses import JSONResponse
 
-from app.api.trading_status import _configured_broker_environment
+from app.api.trading_status import configured_broker_environment
 from app.config import settings
 from tests.api.trading_api_support import (
     TradingApiTestCaseBase,
@@ -23,7 +23,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "https://paper-api.alpaca.markets/v2",
             ),
         ):
-            self.assertEqual(_configured_broker_environment(), "paper")
+            self.assertEqual(configured_broker_environment(), "paper")
 
     def test_simulation_status_uses_process_local_scheduler_state(self) -> None:
         scheduler = TradingScheduler()
@@ -103,6 +103,15 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                         "capital_authority": False,
                         "reason_codes": ["ledger_position_missing_from_broker"],
                     },
+                    {
+                        "schema_version": "torghut.order-lineage-repair-status.v1",
+                        "state": "closed",
+                        "closed_census": True,
+                        "current_version": True,
+                        "receipt_count": 2,
+                        "promotion_authority_eligible": False,
+                        "reason_codes": ["order_lineage_incomplete_or_unproved"],
+                    },
                     {"status": "current"},
                     None,
                 ),
@@ -139,6 +148,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "broker_mutation_safety",
                 "broker_economic_activities",
                 "broker_economic_ledger",
+                "order_lineage",
                 "capital_controls",
                 "execution",
                 "signal_continuity",
@@ -173,6 +183,8 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
         self.assertTrue(payload["broker_economic_ledger"]["diagnostic_only"])
         self.assertFalse(payload["broker_economic_ledger"]["capital_authority"])
         self.assertFalse(payload["broker_economic_ledger"]["reconciled"])
+        self.assertTrue(payload["order_lineage"]["closed_census"])
+        self.assertFalse(payload["order_lineage"]["promotion_authority_eligible"])
         self.assertFalse(payload["broker_mutation_safety"]["reduction_fencing_proven"])
         self.assertFalse(payload["broker_mutation_safety"]["recovery_worker_wired"])
         self.assertEqual(

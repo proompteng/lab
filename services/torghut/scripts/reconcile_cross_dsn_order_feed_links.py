@@ -49,7 +49,16 @@ from app.trading.order_lineage_runs import (
 class RuntimeCensus:
     broker_input: BrokerEconomicLedgerInput
     census: OrderLineageCensusBuild
+    source_account_label_sha256: str
     canonical_account_label_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCensusRequest:
+    provider: str
+    environment: str | None
+    source_account_label: str | None
+    canonical_account_label: str | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,7 +101,7 @@ def reconcile_cross_dsn_order_feed_links(
     *,
     event_dsn_env: str,
     canonical_dsn_env: str,
-    source_account_label: str,
+    source_account_label: str | None,
     canonical_account_label: str | None = None,
     provider: str = "alpaca",
     environment: str | None = None,
@@ -101,10 +110,6 @@ def reconcile_cross_dsn_order_feed_links(
 ) -> dict[str, object]:
     """Build and optionally persist one full, source-closed census."""
 
-    source_account = _required_text(
-        source_account_label,
-        "order_lineage_source_account_missing",
-    )
     normalized_provider = _required_text(
         provider,
         "order_lineage_provider_missing",
@@ -112,10 +117,12 @@ def reconcile_cross_dsn_order_feed_links(
     runtime = load_runtime_census(
         event_session,
         canonical_session,
-        provider=normalized_provider,
-        environment=_optional_text(environment),
-        source_account_label=source_account,
-        canonical_account_label=_optional_text(canonical_account_label),
+        RuntimeCensusRequest(
+            provider=normalized_provider,
+            environment=_optional_text(environment),
+            source_account_label=_optional_text(source_account_label),
+            canonical_account_label=_optional_text(canonical_account_label),
+        ),
     )
     sources = _census_sources(runtime)
     run_draft = build_order_lineage_repair_run(sources, runtime.census.receipts)
@@ -136,7 +143,6 @@ def reconcile_cross_dsn_order_feed_links(
         persisted=persisted,
         event_dsn_env=event_dsn_env,
         canonical_dsn_env=canonical_dsn_env,
-        source_account_label=source_account,
         apply=apply,
         observed_at=observed_at,
     )
@@ -145,36 +151,38 @@ def reconcile_cross_dsn_order_feed_links(
 def load_runtime_census(
     event_session: Session,
     canonical_session: Session,
-    *,
-    provider: str,
-    environment: str | None,
-    source_account_label: str,
-    canonical_account_label: str | None,
+    request: RuntimeCensusRequest,
 ) -> RuntimeCensus:
+    resolved_source_account = resolve_source_account_label(
+        event_session,
+        provider=request.provider,
+        environment=request.environment,
+        requested=request.source_account_label,
+    )
     broker_input, activities = _load_verified_broker_input(
         event_session,
-        provider=provider,
-        environment=environment,
-        account_label=source_account_label,
+        provider=request.provider,
+        environment=request.environment,
+        account_label=resolved_source_account,
     )
     resolved_canonical_account = resolve_canonical_account_label(
         canonical_session,
-        requested=canonical_account_label,
+        requested=request.canonical_account_label,
     )
     census = build_order_lineage_census(
         OrderLineageCensusEvidence(
             provider=broker_input.provider,
             environment=broker_input.environment,
-            account_label=source_account_label,
+            account_label=resolved_source_account,
             canonical_account_label_sha256=_sha256(resolved_canonical_account),
             order_events=load_order_events(
                 event_session,
-                account_label=source_account_label,
+                account_label=resolved_source_account,
             ),
             broker_activities=activities,
             local_executions=load_execution_lineage(
                 event_session,
-                account_label=source_account_label,
+                account_label=resolved_source_account,
                 source="local",
             ),
             canonical_executions=load_execution_lineage(
@@ -187,6 +195,7 @@ def load_runtime_census(
     return RuntimeCensus(
         broker_input=broker_input,
         census=census,
+        source_account_label_sha256=_sha256(resolved_source_account),
         canonical_account_label_sha256=_sha256(resolved_canonical_account),
     )
 
@@ -379,6 +388,33 @@ def resolve_canonical_account_label(
     return labels[0]
 
 
+def resolve_source_account_label(
+    session: Session,
+    *,
+    provider: str,
+    environment: str | None,
+    requested: str | None,
+) -> str:
+    if requested is not None:
+        return requested
+    query = select(BrokerEconomicLedgerInput.account_label).where(
+        BrokerEconomicLedgerInput.provider == provider,
+        BrokerEconomicLedgerInput.source == ACCOUNT_ACTIVITIES_REST_SOURCE,
+    )
+    if environment is not None:
+        query = query.where(BrokerEconomicLedgerInput.environment == environment)
+    labels = tuple(
+        session.scalars(
+            query.distinct().order_by(BrokerEconomicLedgerInput.account_label)
+        )
+    )
+    if not labels:
+        raise ValueError("order_lineage_source_account_missing")
+    if len(labels) != 1:
+        raise ValueError("order_lineage_source_account_ambiguous")
+    return labels[0]
+
+
 def _census_sources(runtime: RuntimeCensus) -> OrderLineageCensusSources:
     broker_input = runtime.broker_input
     return OrderLineageCensusSources(
@@ -403,7 +439,6 @@ def _report(
     persisted: PersistedOrderLineageCensus | None,
     event_dsn_env: str,
     canonical_dsn_env: str,
-    source_account_label: str,
     apply: bool,
     observed_at: datetime,
 ) -> dict[str, object]:
@@ -414,7 +449,7 @@ def _report(
         "closed_census": True,
         "event_dsn_env": event_dsn_env,
         "canonical_dsn_env": canonical_dsn_env,
-        "source_account_sha256": _sha256(source_account_label),
+        "source_account_sha256": runtime.source_account_label_sha256,
         "canonical_account_sha256": runtime.canonical_account_label_sha256,
         "broker_economic_input_id": str(runtime.broker_input.id),
         "broker_activity_count": runtime.broker_input.input_count,
@@ -449,10 +484,6 @@ def main() -> int:
         raise SystemExit(f"missing DSN env var: {args.event_dsn_env}")
     if not canonical_dsn:
         raise SystemExit(f"missing DSN env var: {args.canonical_dsn_env}")
-    source_account_label = _optional_text(args.source_account_label)
-    if source_account_label is None:
-        raise SystemExit("order_lineage_source_account_missing")
-
     event_engine = create_engine(
         sqlalchemy_dsn(event_dsn),
         pool_pre_ping=True,
@@ -471,7 +502,7 @@ def main() -> int:
             canonical_session,
             event_dsn_env=str(args.event_dsn_env),
             canonical_dsn_env=str(args.canonical_dsn_env),
-            source_account_label=source_account_label,
+            source_account_label=_optional_text(args.source_account_label),
             canonical_account_label=_optional_text(args.canonical_account_label),
             provider=str(args.provider),
             environment=_optional_text(args.environment),

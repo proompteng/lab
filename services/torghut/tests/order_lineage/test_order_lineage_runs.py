@@ -29,6 +29,7 @@ from app.trading.order_lineage_receipts import (
 from app.trading.order_lineage_runs import (
     OrderLineageCensusSources,
     build_order_lineage_repair_run,
+    load_order_lineage_repair_status,
     persist_order_lineage_census,
 )
 
@@ -138,6 +139,16 @@ def test_run_is_deterministic_and_counts_every_classification() -> None:
         "broker_activity_only": 1,
         "order_feed_only": 0,
     }
+    assert first.result["confidence_counts"] == {
+        "ambiguous": 0,
+        "exact": 1,
+        "unproved": 1,
+    }
+    assert first.result["execution_source_counts"] == {
+        "canonical_cross_dsn": 1,
+        "local": 0,
+        "none": 1,
+    }
     assert first.result["promotion_authority_eligible"] is False
 
 
@@ -196,6 +207,23 @@ def test_census_persistence_reuses_exact_run_and_rejects_nondeterminism() -> Non
         assert session.scalar(select(func.count(OrderLineageRepairRun.id))) == 1
         assert session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == 2
 
+        status = load_order_lineage_repair_status(
+            session,
+            provider="alpaca",
+            environment="paper",
+            account_label="paper-account",
+        )
+        assert status["state"] == "closed"
+        assert status["closed_census"] is True
+        assert status["receipt_count"] == 2
+        assert status["causal_complete_count"] == 0
+        assert status["confidence_counts"] == {
+            "ambiguous": 0,
+            "exact": 1,
+            "unproved": 1,
+        }
+        assert status["promotion_authority_eligible"] is False
+
         changed_receipt = replace(
             receipts[0],
             evidence_sha256="f" * 64,
@@ -210,3 +238,25 @@ def test_census_persistence_reuses_exact_run_and_rejects_nondeterminism() -> Non
                 )
         assert session.scalar(select(func.count(OrderLineageRepairRun.id))) == 1
         assert session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == 2
+
+
+def test_status_is_explicitly_missing_without_a_closed_run() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        status = load_order_lineage_repair_status(
+            session,
+            provider="alpaca",
+            environment="paper",
+            account_label="paper-account",
+        )
+
+    assert status == {
+        "schema_version": "torghut.order-lineage-repair-status.v1",
+        "state": "missing",
+        "closed_census": False,
+        "current_version": False,
+        "diagnostic_only": True,
+        "promotion_authority_eligible": False,
+        "reason_codes": ["order_lineage_closed_census_missing"],
+    }

@@ -135,6 +135,7 @@ describe('Torghut manifest scheduling', () => {
     const cronJobPaths = [
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
       'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
+      'argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml',
     ]
 
     let checkedCronJobs = 0
@@ -154,7 +155,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(2)
+    expect(checkedCronJobs).toBe(3)
 
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources

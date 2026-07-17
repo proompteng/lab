@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 from ..models import OrderLineageRepairRun, coerce_json_payload
 from .order_lineage_receipts import (
     CLASSIFICATIONS,
+    CONFIDENCES,
+    EXECUTION_SOURCES,
     ORDER_LINEAGE_REPAIR_VERSION,
     OrderLineageReceiptDraft,
     persist_order_lineage_receipt,
@@ -96,6 +98,10 @@ def build_order_lineage_repair_run(
     classification_counts = Counter(
         receipt.classification for receipt in ordered_receipts
     )
+    confidence_counts = Counter(receipt.confidence for receipt in ordered_receipts)
+    execution_source_counts = Counter(
+        receipt.execution_source for receipt in ordered_receipts
+    )
     source_coverage_counts = Counter(
         _source_coverage(receipt) for receipt in ordered_receipts
     )
@@ -128,6 +134,14 @@ def build_order_lineage_repair_run(
         "classification_counts": {
             classification: classification_counts.get(classification, 0)
             for classification in sorted(CLASSIFICATIONS)
+        },
+        "confidence_counts": {
+            confidence: confidence_counts.get(confidence, 0)
+            for confidence in sorted(CONFIDENCES)
+        },
+        "execution_source_counts": {
+            source: execution_source_counts.get(source, 0)
+            for source in sorted(EXECUTION_SOURCES)
         },
         "promotion_authority_eligible": False,
         "receipt_count": len(ordered_receipts),
@@ -230,6 +244,102 @@ def persist_order_lineage_repair_run(
     return PersistedOrderLineageRepairRun(run=row, reused_existing=False)
 
 
+def load_order_lineage_repair_status(
+    session: Session,
+    *,
+    provider: str,
+    environment: str,
+    account_label: str,
+) -> dict[str, object]:
+    """Return bounded current-version coverage without granting authority."""
+
+    row = session.scalar(
+        select(OrderLineageRepairRun)
+        .where(
+            OrderLineageRepairRun.repair_version == ORDER_LINEAGE_REPAIR_VERSION,
+            OrderLineageRepairRun.provider == provider,
+            OrderLineageRepairRun.environment == environment,
+            OrderLineageRepairRun.account_label == account_label,
+        )
+        .order_by(
+            OrderLineageRepairRun.created_at.desc(),
+            OrderLineageRepairRun.id.desc(),
+        )
+        .limit(1)
+    )
+    if row is None:
+        return _unavailable_status(
+            state="missing",
+            reason="order_lineage_closed_census_missing",
+        )
+    result = coerce_json_payload(row.result)
+    classification_counts = _status_counts(
+        result,
+        "classification_counts",
+        CLASSIFICATIONS,
+        row.receipt_count,
+    )
+    confidence_counts = _status_counts(
+        result,
+        "confidence_counts",
+        CONFIDENCES,
+        row.receipt_count,
+    )
+    execution_source_counts = _status_counts(
+        result,
+        "execution_source_counts",
+        EXECUTION_SOURCES,
+        row.receipt_count,
+    )
+    source_coverage_counts = _status_counts(
+        result,
+        "source_coverage_counts",
+        frozenset(_SOURCE_COVERAGE_CLASSES),
+        row.receipt_count,
+    )
+    if not all(
+        (
+            classification_counts,
+            confidence_counts,
+            execution_source_counts,
+            source_coverage_counts,
+        )
+    ):
+        return _unavailable_status(
+            state="invalid",
+            reason="order_lineage_closed_census_invalid",
+        )
+    complete_count = classification_counts.get("complete", 0)
+    reason_codes = (
+        []
+        if complete_count == row.receipt_count
+        else ["order_lineage_incomplete_or_unproved"]
+    )
+    return {
+        "schema_version": "torghut.order-lineage-repair-status.v1",
+        "state": "closed",
+        "closed_census": True,
+        "current_version": True,
+        "repair_version": row.repair_version,
+        "observed_at": row.observed_at,
+        "created_at": row.created_at,
+        "receipt_count": row.receipt_count,
+        "causal_complete_count": complete_count,
+        "causal_incomplete_count": row.receipt_count - complete_count,
+        "classification_counts": classification_counts,
+        "confidence_counts": confidence_counts,
+        "execution_source_counts": execution_source_counts,
+        "source_coverage_counts": source_coverage_counts,
+        "broker_economic_input_id": str(row.broker_economic_input_id),
+        "input_manifest_sha256": row.input_manifest_sha256,
+        "result_sha256": row.result_sha256,
+        "receipt_set_sha256": result.get("receipt_set_sha256"),
+        "diagnostic_only": True,
+        "promotion_authority_eligible": False,
+        "reason_codes": reason_codes,
+    }
+
+
 def _normalize_sources(
     sources: OrderLineageCensusSources,
 ) -> OrderLineageCensusSources:
@@ -318,6 +428,40 @@ def _count_value(counts: dict[object, object], key: str) -> int:
     return value
 
 
+def _status_counts(
+    result: Mapping[str, object],
+    key: str,
+    expected_keys: frozenset[str],
+    expected_total: int,
+) -> dict[str, int]:
+    raw_counts = result.get(key)
+    if not isinstance(raw_counts, dict):
+        return {}
+    typed_counts = cast(dict[object, object], raw_counts)
+    counts: dict[str, int] = {}
+    for raw_key, raw_value in typed_counts.items():
+        if not isinstance(raw_key, str) or not isinstance(raw_value, int):
+            return {}
+        if raw_value < 0:
+            return {}
+        counts[raw_key] = raw_value
+    if frozenset(counts) != expected_keys or sum(counts.values()) != expected_total:
+        return {}
+    return counts
+
+
+def _unavailable_status(*, state: str, reason: str) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.order-lineage-repair-status.v1",
+        "state": state,
+        "closed_census": False,
+        "current_version": False,
+        "diagnostic_only": True,
+        "promotion_authority_eligible": False,
+        "reason_codes": [reason],
+    }
+
+
 def _existing_run(
     session: Session,
     draft: OrderLineageRepairRunDraft,
@@ -401,6 +545,7 @@ __all__ = (
     "PersistedOrderLineageCensus",
     "PersistedOrderLineageRepairRun",
     "build_order_lineage_repair_run",
+    "load_order_lineage_repair_status",
     "persist_order_lineage_census",
     "persist_order_lineage_repair_run",
 )

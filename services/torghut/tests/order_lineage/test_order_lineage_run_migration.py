@@ -28,5 +28,7 @@ def test_order_lineage_run_migration_is_closed_and_append_only() -> None:
     assert "order lineage broker input mismatch" in text
     assert "expected_order_identity_count" in text
     assert "classification counts mismatch" in text
+    assert "confidence counts mismatch" in text
+    assert "execution source counts mismatch" in text
     assert "source coverage counts mismatch" in text
     assert "promotion_authority_eligible IS FALSE" in text

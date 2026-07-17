@@ -136,6 +136,10 @@ def _create_guard() -> None:
                 result_document jsonb;
                 classification_counts jsonb;
                 classified_receipt_count bigint;
+                confidence_counts jsonb;
+                confidence_receipt_count bigint;
+                execution_source_counts jsonb;
+                execution_source_receipt_count bigint;
                 source_coverage_counts jsonb;
                 source_covered_receipt_count bigint;
             BEGIN
@@ -246,6 +250,55 @@ def _create_guard() -> None:
                   FROM jsonb_each_text(classification_counts);
                 IF classified_receipt_count IS DISTINCT FROM NEW.receipt_count THEN
                     RAISE EXCEPTION 'order lineage classification counts mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                confidence_counts := result_document->'confidence_counts';
+                IF jsonb_typeof(confidence_counts) IS DISTINCT FROM 'object'
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(confidence_counts)
+                   ) <> 3
+                   OR NOT confidence_counts ?& ARRAY[
+                       'ambiguous', 'exact', 'unproved'
+                   ]
+                   OR EXISTS (
+                       SELECT 1
+                         FROM jsonb_each_text(confidence_counts)
+                        WHERE value !~ '^(0|[1-9][0-9]*)$'
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage confidence counts missing'
+                        USING ERRCODE = '23514';
+                END IF;
+                SELECT COALESCE(sum(value::bigint), 0)
+                  INTO confidence_receipt_count
+                  FROM jsonb_each_text(confidence_counts);
+                IF confidence_receipt_count IS DISTINCT FROM NEW.receipt_count THEN
+                    RAISE EXCEPTION 'order lineage confidence counts mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                execution_source_counts :=
+                    result_document->'execution_source_counts';
+                IF jsonb_typeof(execution_source_counts) IS DISTINCT FROM 'object'
+                   OR (
+                       SELECT count(*)
+                         FROM jsonb_object_keys(execution_source_counts)
+                   ) <> 3
+                   OR NOT execution_source_counts ?& ARRAY[
+                       'canonical_cross_dsn', 'local', 'none'
+                   ]
+                   OR EXISTS (
+                       SELECT 1
+                         FROM jsonb_each_text(execution_source_counts)
+                        WHERE value !~ '^(0|[1-9][0-9]*)$'
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage execution source counts missing'
+                        USING ERRCODE = '23514';
+                END IF;
+                SELECT COALESCE(sum(value::bigint), 0)
+                  INTO execution_source_receipt_count
+                  FROM jsonb_each_text(execution_source_counts);
+                IF execution_source_receipt_count
+                       IS DISTINCT FROM NEW.receipt_count THEN
+                    RAISE EXCEPTION 'order lineage execution source counts mismatch'
                         USING ERRCODE = '23514';
                 END IF;
                 source_coverage_counts :=

@@ -85,6 +85,7 @@ def runtime_census() -> script.RuntimeCensus:
     return script.RuntimeCensus(
         broker_input=broker_input,
         census=census,
+        source_account_label_sha256="d" * 64,
         canonical_account_label_sha256="c" * 64,
     )
 
@@ -184,6 +185,30 @@ def test_load_execution_lineage_and_canonical_scope_inference() -> None:
         )
 
 
+def test_source_scope_is_inferred_only_when_unique() -> None:
+    engine = sqlite_model_engine()
+    with Session(engine) as session, session.begin():
+        session.add(_broker_input(account_label="source-account", identity=1))
+        assert (
+            script.resolve_source_account_label(
+                session,
+                provider="alpaca",
+                environment="paper",
+                requested=None,
+            )
+            == "source-account"
+        )
+        session.add(_broker_input(account_label="second-account", identity=2))
+        session.flush()
+        with pytest.raises(ValueError, match="source_account_ambiguous"):
+            script.resolve_source_account_label(
+                session,
+                provider="alpaca",
+                environment="paper",
+                requested=None,
+            )
+
+
 def test_dry_run_report_is_closed_and_does_not_expose_account_labels() -> None:
     runtime = runtime_census()
     with patch.object(script, "load_runtime_census", return_value=runtime):
@@ -192,7 +217,7 @@ def test_dry_run_report_is_closed_and_does_not_expose_account_labels() -> None:
             Session(),
             event_dsn_env="DB_DSN",
             canonical_dsn_env="SIM_DB_DSN",
-            source_account_label="source-account",
+            source_account_label=None,
             canonical_account_label="canonical-account",
             apply=False,
             now=BASE_TIME,
@@ -283,3 +308,22 @@ def test_main_commits_only_apply_mode(
     assert event_session.rollbacks == 0
     assert canonical_session.rollbacks == 1
     assert json.loads(capsys.readouterr().out)["status"] == "ok"
+
+
+def _broker_input(*, account_label: str, identity: int) -> BrokerEconomicLedgerInput:
+    return BrokerEconomicLedgerInput(
+        id=uuid.UUID(int=identity),
+        provider="alpaca",
+        source="account_activities_rest",
+        environment="paper",
+        account_label=account_label,
+        endpoint_fingerprint=f"{identity:064x}",
+        quote_currency="USD",
+        source_cursor_id=uuid.UUID(int=identity + 100),
+        source_watermark=BASE_TIME,
+        input_count=1,
+        duplicate_count=0,
+        corrected_count=0,
+        manifest_canonical_json="[]",
+        manifest_sha256=f"{identity:064x}",
+    )

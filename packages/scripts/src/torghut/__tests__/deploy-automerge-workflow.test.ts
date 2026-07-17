@@ -58,6 +58,7 @@ describe('torghut-deploy-automerge workflow', () => {
     const promotedMaintenanceManifests = [
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
       'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
+      'argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml',
       'argocd/applications/torghut/tigerbeetle-smoke-job.yaml',
     ]
 
@@ -75,14 +76,19 @@ describe('torghut-deploy-automerge workflow', () => {
   })
 
   test('validates reconciliation-only releases against the shared image contract', () => {
-    const reconciliationManifest = 'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml'
+    const reconciliationManifests = [
+      'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
+      'argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml',
+    ]
 
     expect(torghutCiWorkflow).toContain(
-      'generated-resource-retention-cronjob|broker-economic-ledger-reconciliation-cronjob|whitepaper-semantic-backfill-job',
+      'generated-resource-retention-cronjob|broker-economic-ledger-reconciliation-cronjob|order-lineage-reconciliation-cronjob|whitepaper-semantic-backfill-job',
     )
-    expect(torghutCiWorkflow).toContain(reconciliationManifest)
-    expect(countOccurrences(releaseWorkflow, reconciliationManifest)).toBe(3)
-    expect(countOccurrences(deployAutomergeWorkflow, `'${reconciliationManifest}'`)).toBe(2)
+    for (const manifest of reconciliationManifests) {
+      expect(torghutCiWorkflow).toContain(manifest)
+      expect(countOccurrences(releaseWorkflow, manifest)).toBe(3)
+      expect(countOccurrences(deployAutomergeWorkflow, `'${manifest}'`)).toBe(2)
+    }
   })
 
   test('carries the options archive image through release and automatic deploy merge allowlists', () => {
