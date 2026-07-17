@@ -1,8 +1,9 @@
 # Atlas Code Search
 
-Status: Current operating entrypoint. The in-place repair is implemented, but Atlas remains untrusted until the
-production images are deployed, the one corpus is rebuilt from the then-current `origin/main`, and every live acceptance
-gate passes.
+Status: Current operating entrypoint. Initial production acceptance passed on 2026-07-17. Atlas is trusted only while
+the live indexed commit matches the exact requested Git ref, search reports no degradation, and current behavior does not
+contradict the acceptance contract below. A mismatch, timeout, stale result, or irrelevant lexical fallback reopens the
+gate until reconciliation and `atlas:verify` pass again.
 
 Atlas is the repository ingestion, indexing, and search system used by Jangar, Bumba, Codex, and other agents. Its job
 is not merely to return plausible code. It must identify the exact indexed repository snapshot, search the complete
@@ -32,20 +33,25 @@ When sources disagree, use this order:
 The design describes required behavior. It must never be used to claim that behavior is already deployed. Every
 production claim needs current runtime proof against the active snapshot.
 
-## Agent Use Until Live Proof
+## Agent Trust and Reverification
 
-Atlas remains a navigation aid while the production acceptance gates are open.
+Atlas is a production navigation surface when its live index agrees with the requested Git ref. Git remains the source
+of truth.
 
 1. Search Atlas first when repository guidance requires it.
-2. Treat returned paths and line ranges as leads, not proof.
-3. Verify important results against the exact requested ref with `git show`, `rg`, or direct file reads.
+2. Check the returned commit and degradation fields before relying on a result.
+3. Verify high-impact findings against the returned exact commit with `git show`, `rg`, or direct file reads.
 4. If Atlas misses a known symbol, returns a deleted path, silently falls back from semantic search, or serves source
    from a different commit, report that contradiction rather than working around it invisibly.
-5. Do not infer corpus completeness from `atlas_stats`, sampled health, pod readiness, Argo health, or a few successful
-   queries.
+5. If `origin/main` and the indexed commit differ, wait for the single reconcile workflow or run the operator verifier;
+   do not start a duplicate reconcile.
+6. Do not infer corpus completeness from `atlas_stats`, sampled health, pod readiness, Argo health, or a few successful
+   queries. `atlas:verify` checks the complete Git, PostgreSQL, and Jangar corpus/search contract.
+7. For a complete rollout claim, also inspect the Definition of Done's Argo state, live image digest, single consumer,
+   and ten-minute convergence evidence; `atlas:verify` does not check those runtime gates.
 
-No agent should claim that Atlas works correctly until every gate in the production design's Definition of Done is
-proven on the live active snapshot.
+The dated execution record in the production design closed the initial rollout gate. Any later contradictory live
+evidence takes precedence and reopens it.
 
 ## Operator Commands
 
@@ -63,9 +69,10 @@ bun run atlas:verify \
   --base-url "$ATLAS_BASE_URL"
 ```
 
-The GitOps manifest intentionally sets `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED=false` during cutover. Leave it disabled
-until `atlas:verify` exits zero against the live image and indexed commit. If `origin/main` advances, run rebuild and
-verification again. Re-enable the same consumer in Git only after the final verification passes.
+Production GitOps enables exactly one Bumba GitHub event consumer. During a future destructive rebuild, disable that
+same consumer through GitOps and leave it disabled until `atlas:verify` exits zero against the live image and indexed
+commit. If `origin/main` advances, let the existing reconcile finish and verify again. Re-enable the same consumer in Git
+only after the final verification passes; never add a second consumer or corpus.
 
 The rebuild writes bounded file batches while repository status is `building`, so all search surfaces return unavailable
 until the final complete-manifest transaction changes the status to `ready`. Temporal heartbeats detect a dead worker in
