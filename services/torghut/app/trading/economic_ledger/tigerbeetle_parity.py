@@ -469,6 +469,14 @@ def _read_actual_projection(
     _create_missing_accounts(client, summary, state)
     if _accounts_are_safe_for_transfers(client, summary, state):
         _create_missing_transfer_chains(client, summary, state)
+    return _verify_actual_projection(client, summary, state)
+
+
+def _verify_actual_projection(
+    client: TigerBeetleClientProtocol,
+    summary: projection.ProjectionSummary,
+    state: _AuditState,
+) -> dict[str, object]:
     account_count, account_digest = _verify_accounts(client, summary, state)
     transfer_count, transfer_digest = _verify_transfers(client, summary, state)
     return {
@@ -500,13 +508,18 @@ def _run_audit(
         _add_blocker(state.blockers, _BLOCKER_PROJECTION_EMPTY)
     if source_age_seconds > observation.max_source_age_seconds:
         _add_blocker(state.blockers, _BLOCKER_SOURCE_STALE)
+    actual = (
+        _read_actual_projection(client, summary, state)
+        if replay.reduction.admissible
+        else _verify_actual_projection(client, summary, state)
+    )
     return _AuditResult(
         observed_at=observed_at,
         source_watermark=source_watermark,
         source_age_seconds=source_age_seconds,
         summary=summary,
         state=state,
-        actual=_read_actual_projection(client, summary, state),
+        actual=actual,
     )
 
 

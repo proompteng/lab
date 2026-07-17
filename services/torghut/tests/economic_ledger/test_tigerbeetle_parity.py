@@ -266,6 +266,33 @@ def test_full_projection_is_exact_idempotent_and_bound_to_immutable_runs() -> No
     assert first.payload["actual"] == second.payload["actual"]
 
 
+def test_inadmissible_projection_is_a_read_only_parity_audit() -> None:
+    replay = _replay(
+        _activity("cash", "CSD", offset=0, net_amount="1000"),
+        _activity(
+            "buy",
+            "FILL",
+            offset=1,
+            symbol="AAPL",
+            side="buy",
+            quantity="1",
+            price="100",
+        ),
+        _activity("unsupported", "MA", offset=2),
+    )
+    assert replay.reduction.admissible is False
+    client = ExactTigerBeetleClient()
+
+    result = _audit(client, replay, runs=_runs(replay))
+
+    assert result.parity is False
+    assert "tigerbeetle_economic_projection_inadmissible" in result.payload["blockers"]
+    assert client.account_create_calls == 0
+    assert client.transfer_create_calls == 0
+    assert client.accounts == {}
+    assert client.transfers == {}
+
+
 def test_linked_transaction_projection_is_deterministic_and_atomic() -> None:
     replay = _flat_replay()
     transaction = replay.reduction.journal.transactions[1]
