@@ -207,6 +207,27 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
             value=["decision_lineage_incomplete", "decision_lineage_incomplete"],
             error="blockers are not canonical",
         )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="extra",
+            value="not-in-schema",
+            error="evidence shape mismatch",
+        )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="promotion_authority_eligible",
+            value="false",
+            error="evidence scalar type mismatch",
+        )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="sources.first_at",
+            value="2026-07-16T20:00:00Z",
+            error="source evidence mismatch",
+        )
     finally:
         with admin_engine.begin() as connection:
             connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
@@ -339,7 +360,7 @@ def _assert_evidence_value_rejected(
                     source.evidence,
                     string_to_array(:json_path, '.'),
                     CAST(:json_value AS jsonb),
-                    false
+                    true
                 ) AS changed_evidence
               FROM source
         ), sealed AS (

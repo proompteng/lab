@@ -145,6 +145,10 @@ def _create_guard() -> None:
             DECLARE
                 evidence_document jsonb;
                 expected_evidence_canonical_json text;
+                order_identity_document jsonb;
+                links_document jsonb;
+                sources_document jsonb;
+                source_counts_document jsonb;
                 blockers jsonb;
                 match_basis jsonb;
                 order_event_ids jsonb;
@@ -168,6 +172,8 @@ def _create_guard() -> None:
                 expected_primary_order_id text;
                 expected_order_identity_material text;
                 expected_order_identity_sha256 text;
+                expected_source_first_at text;
+                expected_source_last_at text;
             BEGIN
                 IF TG_OP IN ('UPDATE', 'DELETE', 'TRUNCATE') THEN
                     RAISE EXCEPTION 'order lineage repair receipt is append-only'
@@ -194,6 +200,123 @@ def _create_guard() -> None:
                     'hex'
                 ) THEN
                     RAISE EXCEPTION 'order lineage repair evidence hash mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                order_identity_document := evidence_document->'order_identity';
+                links_document := evidence_document->'links';
+                sources_document := evidence_document->'sources';
+                source_counts_document := sources_document->'counts';
+                IF jsonb_typeof(evidence_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(order_identity_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(links_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(sources_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(source_counts_document) IS DISTINCT FROM 'object'
+                THEN
+                    RAISE EXCEPTION 'order lineage repair evidence objects missing'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF (
+                       SELECT count(*) FROM jsonb_object_keys(evidence_document)
+                   ) <> 11
+                   OR NOT evidence_document ?& ARRAY[
+                       'blockers',
+                       'classification',
+                       'confidence',
+                       'execution_source',
+                       'links',
+                       'match_basis',
+                       'order_identity',
+                       'promotion_authority_eligible',
+                       'repair_version',
+                       'schema_version',
+                       'sources'
+                   ]
+                   OR (
+                       SELECT count(*)
+                         FROM jsonb_object_keys(order_identity_document)
+                   ) <> 8
+                   OR NOT order_identity_document ?& ARRAY[
+                       'account_label',
+                       'alpaca_order_id',
+                       'client_order_id',
+                       'environment',
+                       'primary_order_id',
+                       'primary_order_id_kind',
+                       'provider',
+                       'sha256'
+                   ]
+                   OR (SELECT count(*) FROM jsonb_object_keys(links_document)) <> 5
+                   OR NOT links_document ?& ARRAY[
+                       'execution_id',
+                       'strategy_id',
+                       'submission_claim_id',
+                       'tca_metric_id',
+                       'trade_decision_id'
+                   ]
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(sources_document)
+                   ) <> 7
+                   OR NOT sources_document ?& ARRAY[
+                       'broker_activity_ids',
+                       'broker_fill_activity_ids',
+                       'counts',
+                       'fill_order_event_ids',
+                       'first_at',
+                       'last_at',
+                       'order_event_ids'
+                   ]
+                   OR (
+                       SELECT count(*)
+                         FROM jsonb_object_keys(source_counts_document)
+                   ) <> 4
+                   OR NOT source_counts_document ?& ARRAY[
+                       'broker_activities',
+                       'broker_fills',
+                       'fill_order_events',
+                       'order_events'
+                   ] THEN
+                    RAISE EXCEPTION 'order lineage repair evidence shape mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF jsonb_typeof(evidence_document->'schema_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'repair_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'classification')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'confidence')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'execution_source')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(
+                       evidence_document->'promotion_authority_eligible'
+                   ) IS DISTINCT FROM 'boolean'
+                   OR jsonb_typeof(order_identity_document->'provider')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'environment')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'account_label')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'primary_order_id_kind')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'primary_order_id')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'sha256')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'alpaca_order_id')
+                       NOT IN ('string', 'null')
+                   OR jsonb_typeof(order_identity_document->'client_order_id')
+                       NOT IN ('string', 'null')
+                   OR jsonb_typeof(sources_document->'first_at')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(sources_document->'last_at')
+                       IS DISTINCT FROM 'string'
+                   OR EXISTS (
+                       SELECT 1
+                         FROM jsonb_each(source_counts_document)
+                        WHERE jsonb_typeof(value) IS DISTINCT FROM 'number'
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage repair evidence scalar type mismatch'
                         USING ERRCODE = '23514';
                 END IF;
                 IF evidence_document->>'schema_version'
@@ -282,23 +405,55 @@ def _create_guard() -> None:
                         USING ERRCODE = '23514';
                 END IF;
 
-                IF NULLIF(evidence_document#>>'{{sources,first_at}}', '')::timestamptz
-                       IS DISTINCT FROM NEW.source_first_at
-                   OR NULLIF(evidence_document#>>'{{sources,last_at}}', '')::timestamptz
-                       IS DISTINCT FROM NEW.source_last_at THEN
+                expected_source_first_at :=
+                    to_char(
+                        NEW.source_first_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS'
+                    ) || CASE
+                        WHEN extract(microseconds FROM NEW.source_first_at)::bigint
+                                 % 1000000 = 0 THEN ''
+                        ELSE '.' || lpad(
+                            (
+                                extract(microseconds FROM NEW.source_first_at)::bigint
+                                % 1000000
+                            )::text,
+                            6,
+                            '0'
+                        )
+                    END || '+00:00';
+                expected_source_last_at :=
+                    to_char(
+                        NEW.source_last_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS'
+                    ) || CASE
+                        WHEN extract(microseconds FROM NEW.source_last_at)::bigint
+                                 % 1000000 = 0 THEN ''
+                        ELSE '.' || lpad(
+                            (
+                                extract(microseconds FROM NEW.source_last_at)::bigint
+                                % 1000000
+                            )::text,
+                            6,
+                            '0'
+                        )
+                    END || '+00:00';
+                IF evidence_document#>>'{{sources,first_at}}'
+                       IS DISTINCT FROM expected_source_first_at
+                   OR evidence_document#>>'{{sources,last_at}}'
+                       IS DISTINCT FROM expected_source_last_at THEN
                     RAISE EXCEPTION 'order lineage repair source evidence mismatch'
                         USING ERRCODE = '23514';
                 END IF;
 
                 blockers := evidence_document->'blockers';
                 match_basis := evidence_document->'match_basis';
-                order_event_ids := evidence_document#>'{{sources,order_event_ids}}';
+                order_event_ids := sources_document->'order_event_ids';
                 fill_order_event_ids :=
-                    evidence_document#>'{{sources,fill_order_event_ids}}';
+                    sources_document->'fill_order_event_ids';
                 broker_activity_ids :=
-                    evidence_document#>'{{sources,broker_activity_ids}}';
+                    sources_document->'broker_activity_ids';
                 broker_fill_activity_ids :=
-                    evidence_document#>'{{sources,broker_fill_activity_ids}}';
+                    sources_document->'broker_fill_activity_ids';
                 IF jsonb_typeof(blockers) IS DISTINCT FROM 'array'
                    OR jsonb_typeof(match_basis) IS DISTINCT FROM 'array'
                    OR jsonb_typeof(order_event_ids) IS DISTINCT FROM 'array'

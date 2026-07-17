@@ -31,6 +31,8 @@ def test_order_lineage_migration_is_append_only_and_non_promotional() -> None:
     assert "match basis is not canonical" in text
     assert "blockers are not canonical" in text
     assert "causal link UUID is not canonical" in text
+    assert "evidence shape mismatch" in text
+    assert "evidence scalar type mismatch" in text
     assert "promotion_authority_eligible IS FALSE" in text
     assert "torghut.order-lineage-repair-evidence.v1" in text
     assert "uq_order_lineage_receipt_evidence" in text
