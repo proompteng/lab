@@ -68,7 +68,11 @@ class BrokerEconomicLedgerReconciliationCronJobTests(TestCase):
         seccomp = cast(Mapping[str, object], pod_security["seccompProfile"])
         self.assertEqual(seccomp["type"], "RuntimeDefault")
         container_security = cast(Mapping[str, object], container["securityContext"])
+        container_seccomp = cast(
+            Mapping[str, object], container_security["seccompProfile"]
+        )
         capabilities = cast(Mapping[str, object], container_security["capabilities"])
+        self.assertEqual(container_seccomp["type"], "Unconfined")
         self.assertFalse(container_security["allowPrivilegeEscalation"])
         self.assertEqual(capabilities["drop"], ["ALL"])
         self.assertEqual(
