@@ -18,6 +18,7 @@ Node-level patches:
 - `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
 - `devices/ryzen/manifests/node-labels.patch.yaml` (labels for KubeVirt scheduling)
 - `devices/ryzen/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 500)
+- `devices/ryzen/manifests/network-mtu.patch.yaml` (set the Flannel underlay to 1450 so VXLAN pod MTU is 1400)
 - `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
@@ -92,6 +93,7 @@ If you need to re-layout these volumes on an already-installed node, follow:
 - `devices/ryzen/manifests/hostname.patch.yaml`
 - `devices/ryzen/manifests/node-labels.patch.yaml`
 - `devices/ryzen/manifests/kubelet-maxpods.patch.yaml`
+- `devices/ryzen/manifests/network-mtu.patch.yaml`
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generate via `bun run packages/scripts/src/tailscale/generate-ryzen-extension-service.ts`)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml`
 

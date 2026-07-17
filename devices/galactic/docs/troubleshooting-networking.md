@@ -4,8 +4,31 @@ This cluster uses Talos-managed Flannel in VXLAN mode. Talos owns the Flannel Co
 and RBAC resources. Do not manage only a subset of those resources through Argo CD; split ownership causes Talos
 Kubernetes upgrades and Argo reconciliation to overwrite each other.
 
-If a future network requires a custom Flannel backend or MTU, either use Talos-supported Flannel configuration or
-disable Talos CNI management and move the complete Flannel installation to one GitOps application.
+The physical underlay interfaces use MTU 1450 so Flannel derives MTU 1400 after VXLAN overhead. Keep the node-specific
+Talos patches in sync with the active interface names:
+
+- Ryzen (`eno1`): `devices/ryzen/manifests/network-mtu.patch.yaml`
+- Altra (`enP5p1s0`): `devices/altra/manifests/network-mtu.patch.yaml`
+- Turin (`eno2np1`): `devices/turin/manifests/network-mtu.patch.yaml`
+
+This is required for GitHub Actions runner traffic. A fresh ARC runner at MTU 1450 repeatedly timed out while fetching
+GitHub pipeline connection data; lowering the same pod to MTU 1400 made it connect and claim a queued job immediately.
+Keeping the constraint in Talos machine configuration lets Talos remain the sole owner of the complete Flannel
+installation instead of maintaining a competing Argo-managed ConfigMap.
+
+Apply the patches without rebooting, one healthy node at a time:
+
+```bash
+talosctl -e 100.100.244.141 -n 100.100.244.141 patch machineconfig \
+  --patch @devices/ryzen/manifests/network-mtu.patch.yaml --mode=no-reboot
+talosctl -e 100.100.244.141 -n 100.100.244.142 patch machineconfig \
+  --patch @devices/altra/manifests/network-mtu.patch.yaml --mode=no-reboot
+talosctl -e 100.100.244.141 -n 100.100.244.190 patch machineconfig \
+  --patch @devices/turin/manifests/network-mtu.patch.yaml --mode=no-reboot
+```
+
+After restarting each Flannel pod, `/run/flannel/subnet.env` must report `FLANNEL_MTU=1400`. The Talos-managed
+`kube-flannel-cfg` ConfigMap should not contain an explicit CNI `mtu` field or Argo tracking annotations.
 
 Before every Kubernetes upgrade, inspect the Talos manifest plan:
 
@@ -14,7 +37,11 @@ talosctl -e <control-plane-ip> -n <control-plane-ip> upgrade-k8s --to <target-ve
 ```
 
 The plan must show Talos as the single manager of all Flannel resources and must not conflict with an Argo tracking
-annotation on `kube-system/kube-flannel-cfg`.
+annotation on `kube-system/kube-flannel-cfg`. Also verify the derived MTU before and after the upgrade:
+
+```bash
+talosctl -e <control-plane-ip> -n <node-ip> read /run/flannel/subnet.env
+```
 
 If VXLAN forwarding breaks, pods on one node cannot reach pods on another node, even though nodes may still appear
 `Ready`.

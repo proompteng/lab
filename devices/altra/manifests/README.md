@@ -14,6 +14,7 @@ Files:
 - `devices/altra/manifests/nvidia-kernel-modules.patch.yaml`
 - `devices/altra/manifests/node-labels.patch.yaml`
 - `devices/altra/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 500)
+- `devices/altra/manifests/network-mtu.patch.yaml` (set the Flannel underlay to 1450 so VXLAN pod MTU is 1400)
 - `devices/altra/manifests/tailscale-extension-service.template.yaml`
 - `devices/altra/manifests/tailscale-dns.patch.yaml`
 - `devices/altra/manifests/altra-tailscale-nvidia-lts-schematic.yaml`
