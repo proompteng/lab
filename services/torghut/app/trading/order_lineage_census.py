@@ -6,7 +6,7 @@ import hashlib
 import json
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Final, Sequence, TypeVar
 
@@ -373,6 +373,16 @@ def _resolve_execution(
     local_index: _ExecutionIndex,
     canonical_index: _ExecutionIndex,
 ) -> _ExecutionResolution:
+    resolution = _resolve_execution_candidate(group, local_index, canonical_index)
+    resolution = _project_consistent_links(resolution)
+    return _validate_direct_decision_links(group, resolution)
+
+
+def _resolve_execution_candidate(
+    group: _OrderGroup,
+    local_index: _ExecutionIndex,
+    canonical_index: _ExecutionIndex,
+) -> _ExecutionResolution:
     if group.identity_blockers:
         return _ambiguous_resolution(group, min(group.identity_blockers))
     direct_ids = {
@@ -407,6 +417,82 @@ def _resolve_execution(
         ambiguous=False,
         match_basis=(),
         blockers=("canonical_execution_unproved",),
+    )
+
+
+def _project_consistent_links(
+    resolution: _ExecutionResolution,
+) -> _ExecutionResolution:
+    candidate = resolution.candidate
+    if candidate is None:
+        return resolution
+    blockers = set(resolution.blockers)
+    if candidate.trade_decision_id is None:
+        if candidate.strategy_id is not None:
+            blockers.add("strategy_without_decision_unprojected")
+        if candidate.submission_claim_id is not None:
+            blockers.add("submission_claim_without_decision_unprojected")
+        candidate = replace(
+            candidate,
+            strategy_id=None,
+            submission_claim_id=None,
+        )
+    elif (
+        candidate.submission_claim_id is not None
+        and candidate.submission_claim_id != candidate.trade_decision_id
+    ):
+        blockers.add("submission_claim_identity_inconsistent")
+        candidate = replace(candidate, submission_claim_id=None)
+    return replace(
+        resolution,
+        candidate=candidate,
+        blockers=tuple(sorted(blockers)),
+    )
+
+
+def _validate_direct_decision_links(
+    group: _OrderGroup,
+    resolution: _ExecutionResolution,
+) -> _ExecutionResolution:
+    direct_decision_ids = {
+        event.trade_decision_id
+        for event in group.order_events
+        if event.trade_decision_id is not None
+    }
+    if not direct_decision_ids or resolution.ambiguous:
+        return resolution
+    if len(direct_decision_ids) != 1:
+        return _ambiguous_resolution(
+            group,
+            "direct_decision_identity_inconsistent",
+        )
+    candidate = resolution.candidate
+    if candidate is None:
+        return _resolution_with_blocker(
+            resolution,
+            "direct_decision_without_execution",
+        )
+    direct_decision_id = next(iter(direct_decision_ids))
+    if candidate.trade_decision_id is None:
+        return _resolution_with_blocker(
+            resolution,
+            "direct_decision_link_unprojected",
+        )
+    if candidate.trade_decision_id != direct_decision_id:
+        return _ambiguous_resolution(
+            group,
+            "direct_decision_identity_inconsistent",
+        )
+    return resolution
+
+
+def _resolution_with_blocker(
+    resolution: _ExecutionResolution,
+    blocker: str,
+) -> _ExecutionResolution:
+    return replace(
+        resolution,
+        blockers=tuple(sorted({*resolution.blockers, blocker})),
     )
 
 

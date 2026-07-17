@@ -113,6 +113,35 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
         _assert_invalid_run_rejected(
             schema_engine,
             draft,
+            mutate_input=lambda value: _set_nested(value, "unexpected", True),
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: _set_nested(
+                value,
+                "broker_economic_input_id",
+                str(input_id).upper(),
+            ),
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: _set_nested(
+                value,
+                "broker_source_watermark",
+                "2026-07-17T01:00:00Z",
+            ),
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: value,
+            mutate_result=lambda value: _set_nested(value, "unexpected", True),
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
             mutate_input=lambda value: _set_nested(
                 value,
                 "order_feed",
@@ -162,6 +191,9 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
             broker_order_link_manifest={
                 "activity_count": 1,
                 "activity_set_sha256": "d" * 64,
+                "fill_count": 1,
+                "first_activity_at": changed_at.isoformat(),
+                "last_activity_at": changed_at.isoformat(),
             },
         )
         with Session(schema_engine) as session, session.begin():
@@ -290,14 +322,23 @@ def _sources(
         broker_order_link_manifest={
             "activity_count": 1,
             "activity_set_sha256": "a" * 64,
+            "fill_count": 1,
+            "first_activity_at": NOW.isoformat(),
+            "last_activity_at": NOW.isoformat(),
         },
         order_feed_manifest={
             "event_count": 1,
             "event_set_sha256": "b" * 64,
+            "first_event_at": NOW.isoformat(),
+            "last_event_at": NOW.isoformat(),
+            "partitions": [],
         },
         execution_manifest={
-            "execution_count": 1,
+            "canonical_account_label_sha256": "c" * 64,
+            "canonical_execution_count": 1,
             "execution_set_sha256": "c" * 64,
+            "latest_updated_at": NOW.isoformat(),
+            "local_execution_count": 0,
         },
     )
 

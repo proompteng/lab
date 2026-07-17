@@ -134,8 +134,13 @@ def _create_guard() -> None:
             DECLARE
                 input_document jsonb;
                 result_document jsonb;
+                scope_document jsonb;
+                broker_order_links_document jsonb;
+                order_feed_document jsonb;
+                executions_document jsonb;
                 expected_input_canonical_json text;
                 expected_result_canonical_json text;
+                expected_broker_source_watermark text;
                 classification_counts jsonb;
                 classified_receipt_count bigint;
                 confidence_counts jsonb;
@@ -170,6 +175,244 @@ def _create_guard() -> None:
                     RAISE EXCEPTION 'order lineage repair run document mismatch'
                         USING ERRCODE = '23514';
                 END IF;
+                scope_document := input_document->'scope';
+                broker_order_links_document :=
+                    input_document->'broker_order_links';
+                order_feed_document := input_document->'order_feed';
+                executions_document := input_document->'executions';
+                IF jsonb_typeof(input_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(result_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(scope_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(broker_order_links_document)
+                       IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(order_feed_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(executions_document) IS DISTINCT FROM 'object'
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(input_document)
+                   ) <> 12
+                   OR NOT input_document ?& ARRAY[
+                       'broker_activity_count',
+                       'broker_economic_input_id',
+                       'broker_economic_manifest_sha256',
+                       'broker_economic_source',
+                       'broker_order_links',
+                       'broker_source_watermark',
+                       'executions',
+                       'expected_order_identity_count',
+                       'order_feed',
+                       'repair_version',
+                       'schema_version',
+                       'scope'
+                   ]
+                   OR (SELECT count(*) FROM jsonb_object_keys(scope_document)) <> 3
+                   OR NOT scope_document ?& ARRAY[
+                       'account_label', 'environment', 'provider'
+                   ]
+                   OR (
+                       SELECT count(*)
+                         FROM jsonb_object_keys(broker_order_links_document)
+                   ) <> 5
+                   OR NOT broker_order_links_document ?& ARRAY[
+                       'activity_count',
+                       'activity_set_sha256',
+                       'fill_count',
+                       'first_activity_at',
+                       'last_activity_at'
+                   ]
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(order_feed_document)
+                   ) <> 5
+                   OR NOT order_feed_document ?& ARRAY[
+                       'event_count',
+                       'event_set_sha256',
+                       'first_event_at',
+                       'last_event_at',
+                       'partitions'
+                   ]
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(executions_document)
+                   ) <> 5
+                   OR NOT executions_document ?& ARRAY[
+                       'canonical_account_label_sha256',
+                       'canonical_execution_count',
+                       'execution_set_sha256',
+                       'latest_updated_at',
+                       'local_execution_count'
+                   ]
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(result_document)
+                   ) <> 9
+                   OR NOT result_document ?& ARRAY[
+                       'classification_counts',
+                       'confidence_counts',
+                       'execution_source_counts',
+                       'promotion_authority_eligible',
+                       'receipt_count',
+                       'receipt_set_sha256',
+                       'repair_version',
+                       'schema_version',
+                       'source_coverage_counts'
+                   ] THEN
+                    RAISE EXCEPTION 'order lineage repair run shape mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF jsonb_typeof(input_document->'schema_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(input_document->'repair_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(input_document->'broker_economic_input_id')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(input_document->'broker_economic_source')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(
+                       input_document->'broker_economic_manifest_sha256'
+                   ) IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(input_document->'broker_source_watermark')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(input_document->'broker_activity_count')
+                       IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(
+                       input_document->'expected_order_identity_count'
+                   ) IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(scope_document->'provider')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(scope_document->'environment')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(scope_document->'account_label')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(
+                       broker_order_links_document->'activity_count'
+                   ) IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(
+                       broker_order_links_document->'activity_set_sha256'
+                   ) IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(broker_order_links_document->'fill_count')
+                       IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(
+                       broker_order_links_document->'first_activity_at'
+                   ) NOT IN ('null', 'string')
+                   OR jsonb_typeof(
+                       broker_order_links_document->'last_activity_at'
+                   ) NOT IN ('null', 'string')
+                   OR jsonb_typeof(order_feed_document->'event_count')
+                       IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(order_feed_document->'event_set_sha256')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_feed_document->'first_event_at')
+                       NOT IN ('null', 'string')
+                   OR jsonb_typeof(order_feed_document->'last_event_at')
+                       NOT IN ('null', 'string')
+                   OR jsonb_typeof(order_feed_document->'partitions')
+                       IS DISTINCT FROM 'array'
+                   OR jsonb_typeof(
+                       executions_document->'canonical_account_label_sha256'
+                   ) IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(
+                       executions_document->'canonical_execution_count'
+                   ) IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(executions_document->'execution_set_sha256')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(executions_document->'latest_updated_at')
+                       NOT IN ('null', 'string')
+                   OR jsonb_typeof(
+                       executions_document->'local_execution_count'
+                   ) IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(result_document->'schema_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(result_document->'repair_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(result_document->'receipt_count')
+                       IS DISTINCT FROM 'number'
+                   OR jsonb_typeof(result_document->'receipt_set_sha256')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(
+                       result_document->'promotion_authority_eligible'
+                   ) IS DISTINCT FROM 'boolean' THEN
+                    RAISE EXCEPTION 'order lineage repair run types mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF input_document->>'broker_activity_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR input_document->>'expected_order_identity_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR broker_order_links_document->>'activity_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR broker_order_links_document->>'fill_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR order_feed_document->>'event_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR executions_document->>'canonical_execution_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR executions_document->>'local_execution_count'
+                       !~ '^(0|[1-9][0-9]*)$'
+                   OR broker_order_links_document->>'activity_set_sha256'
+                       !~ '^[0-9a-f]{{64}}$'
+                   OR order_feed_document->>'event_set_sha256'
+                       !~ '^[0-9a-f]{{64}}$'
+                   OR executions_document->>'canonical_account_label_sha256'
+                       !~ '^[0-9a-f]{{64}}$'
+                   OR executions_document->>'execution_set_sha256'
+                       !~ '^[0-9a-f]{{64}}$' THEN
+                    RAISE EXCEPTION 'order lineage repair source manifest mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF EXISTS (
+                    SELECT 1
+                      FROM jsonb_array_elements(
+                          order_feed_document->'partitions'
+                      ) AS partition_document
+                     WHERE jsonb_typeof(partition_document)
+                               IS DISTINCT FROM 'object'
+                        OR NOT (
+                            (
+                                (SELECT count(*)
+                                   FROM jsonb_object_keys(partition_document)) = 5
+                                AND partition_document ?& ARRAY[
+                                    'event_count',
+                                    'max_offset',
+                                    'min_offset',
+                                    'partition',
+                                    'topic'
+                                ]
+                                AND jsonb_typeof(
+                                    partition_document->'event_count'
+                                ) = 'number'
+                                AND jsonb_typeof(
+                                    partition_document->'max_offset'
+                                ) = 'number'
+                                AND jsonb_typeof(
+                                    partition_document->'min_offset'
+                                ) = 'number'
+                                AND jsonb_typeof(
+                                    partition_document->'partition'
+                                ) = 'number'
+                                AND jsonb_typeof(partition_document->'topic')
+                                    = 'string'
+                                AND partition_document->>'event_count'
+                                    ~ '^[1-9][0-9]*$'
+                                AND partition_document->>'max_offset'
+                                    ~ '^(0|[1-9][0-9]*)$'
+                                AND partition_document->>'min_offset'
+                                    ~ '^(0|[1-9][0-9]*)$'
+                                AND partition_document->>'partition'
+                                    ~ '^(0|[1-9][0-9]*)$'
+                                AND length(btrim(partition_document->>'topic')) > 0
+                            )
+                            OR (
+                                (SELECT count(*)
+                                   FROM jsonb_object_keys(partition_document)) = 1
+                                AND partition_document ? 'missing_offset_count'
+                                AND jsonb_typeof(
+                                    partition_document->'missing_offset_count'
+                                ) = 'number'
+                                AND partition_document->>'missing_offset_count'
+                                    ~ '^[1-9][0-9]*$'
+                            )
+                        )
+                ) THEN
+                    RAISE EXCEPTION 'order lineage order-feed partitions mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
                 IF NEW.input_manifest_sha256 IS DISTINCT FROM encode(
                     sha256(convert_to(NEW.input_manifest_canonical_json, 'UTF8')),
                     'hex'
@@ -180,7 +423,32 @@ def _create_guard() -> None:
                     RAISE EXCEPTION 'order lineage repair run hash mismatch'
                         USING ERRCODE = '23514';
                 END IF;
-                IF input_document->>'schema_version'
+                SELECT to_char(
+                           broker_input.source_watermark AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS'
+                       ) || CASE
+                           WHEN extract(
+                               microseconds FROM broker_input.source_watermark
+                           )::bigint % 1000000 = 0 THEN ''
+                           ELSE '.' || lpad(
+                               (
+                                   extract(
+                                       microseconds
+                                       FROM broker_input.source_watermark
+                                   )::bigint % 1000000
+                               )::text,
+                               6,
+                               '0'
+                           )
+                       END || '+00:00'
+                  INTO expected_broker_source_watermark
+                  FROM broker_economic_ledger_inputs AS broker_input
+                 WHERE broker_input.id = NEW.broker_economic_input_id;
+                IF NEW.repair_version IS DISTINCT FROM btrim(NEW.repair_version)
+                   OR NEW.provider IS DISTINCT FROM btrim(NEW.provider)
+                   OR NEW.environment IS DISTINCT FROM btrim(NEW.environment)
+                   OR NEW.account_label IS DISTINCT FROM btrim(NEW.account_label)
+                   OR input_document->>'schema_version'
                        IS DISTINCT FROM 'torghut.order-lineage-census-input.v1'
                    OR input_document->>'repair_version'
                        IS DISTINCT FROM NEW.repair_version
@@ -190,16 +458,19 @@ def _create_guard() -> None:
                        IS DISTINCT FROM NEW.environment
                    OR input_document#>>'{{scope,account_label}}'
                        IS DISTINCT FROM NEW.account_label
-                   OR NULLIF(
-                       input_document->>'broker_economic_input_id', ''
-                   )::uuid IS DISTINCT FROM NEW.broker_economic_input_id
+                   OR input_document->>'broker_economic_input_id'
+                       IS DISTINCT FROM NEW.broker_economic_input_id::text
                    OR (input_document->>'expected_order_identity_count')::bigint
                        IS DISTINCT FROM NEW.receipt_count
-                   OR (input_document->>'broker_activity_count')::bigint < 0
-                   OR NULLIF(input_document->>'broker_economic_source', '')
-                       IS NULL
+                   OR input_document->>'broker_economic_source'
+                       IS DISTINCT FROM btrim(
+                           input_document->>'broker_economic_source'
+                       )
+                   OR length(input_document->>'broker_economic_source') = 0
                    OR input_document->>'broker_economic_manifest_sha256'
-                       !~ '^[0-9a-f]{{64}}$' THEN
+                       !~ '^[0-9a-f]{{64}}$'
+                   OR input_document->>'broker_source_watermark'
+                       IS DISTINCT FROM expected_broker_source_watermark THEN
                     RAISE EXCEPTION 'order lineage repair run input mismatch'
                         USING ERRCODE = '23514';
                 END IF;

@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import cast
 
 from app.trading.order_lineage_census import (
     BrokerActivityFact,
@@ -37,6 +38,7 @@ def event(
     client_order_id: str | None = "decision-hash",
     is_fill: bool = False,
     execution_id: uuid.UUID | None = None,
+    trade_decision_id: uuid.UUID | None = None,
 ) -> OrderEventFact:
     return OrderEventFact(
         id=uuid.UUID(int=identity),
@@ -46,7 +48,7 @@ def event(
         event_at=BASE_TIME + timedelta(seconds=identity),
         is_fill=is_fill,
         execution_id=execution_id,
-        trade_decision_id=None,
+        trade_decision_id=trade_decision_id,
         source_topic="torghut.alpaca.trade_updates.v1",
         source_partition=0,
         source_offset=identity,
@@ -333,3 +335,69 @@ def test_client_only_source_with_multiple_broker_aliases_is_ambiguous() -> None:
         "broker_fill_activity_missing",
         "client_order_alias_ambiguous",
     ]
+
+
+def test_conflicting_direct_decision_identity_never_selects_execution() -> None:
+    result = build_order_lineage_census(
+        census(
+            events=(
+                event(
+                    1,
+                    is_fill=True,
+                    trade_decision_id=uuid.UUID(int=999),
+                ),
+            ),
+            activities=(activity(11),),
+            canonical_executions=(execution(),),
+        )
+    )
+
+    receipt = result.receipts[0]
+    assert receipt.classification == CLASSIFICATION_AMBIGUOUS
+    assert receipt.execution_source == "none"
+    assert receipt.evidence["blockers"] == ["direct_decision_identity_inconsistent"]
+
+
+def test_multiple_direct_decision_identities_are_ambiguous_without_execution() -> None:
+    result = build_order_lineage_census(
+        census(
+            events=(
+                event(1, is_fill=True, trade_decision_id=uuid.UUID(int=998)),
+                event(2, trade_decision_id=uuid.UUID(int=999)),
+            ),
+            activities=(activity(11),),
+        )
+    )
+
+    receipt = result.receipts[0]
+    assert receipt.classification == CLASSIFICATION_AMBIGUOUS
+    assert receipt.execution_source == "none"
+    assert receipt.evidence["blockers"] == ["direct_decision_identity_inconsistent"]
+
+
+def test_inconsistent_downstream_links_are_excluded_with_blockers() -> None:
+    result = build_order_lineage_census(
+        census(
+            events=(event(1, is_fill=True),),
+            activities=(activity(11),),
+            canonical_executions=(execution(decision_id=None),),
+        )
+    )
+
+    receipt = result.receipts[0]
+    links = receipt.evidence["links"]
+    assert isinstance(links, dict)
+    assert links["execution_id"] == str(EXECUTION_ID)
+    assert links["trade_decision_id"] is None
+    assert links["strategy_id"] is None
+    assert links["submission_claim_id"] is None
+    blockers = receipt.evidence["blockers"]
+    assert isinstance(blockers, list)
+    raw_blockers = cast(list[object], blockers)
+    assert all(isinstance(blocker, str) for blocker in raw_blockers)
+    typed_blockers = cast(list[str], raw_blockers)
+    assert {
+        "strategy_without_decision_unprojected",
+        "submission_claim_without_decision_unprojected",
+        "trade_decision_missing",
+    }.issubset(typed_blockers)
