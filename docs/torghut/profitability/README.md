@@ -41,6 +41,8 @@ readback. The audit snapshot records what was observed at its stated time.
   evidence, atomic settlement, rate limits, fail-closed readiness, rollout proof, and rollback contract.
 - [Risk-reduction mutation fencing](risk-reduction-mutation-fencing.md): one coordinator, broker-observed per-action
   permits, cancel/replace/close invariants, causal identity, fault schedules, and live proof contract.
+- [Order and fill lineage repair receipts](order-lineage-repair-receipts.md): append-only order-level repair evidence,
+  explicit residual classifications, and a permanent non-promotion boundary.
 - [Implementation roadmap](implementation-roadmap.md): ordered PR-sized delivery slices, tests, rollout proof,
   dependencies, and rollback posture.
 - [Slice 3 production evidence](evidence/slice-03-autoresearch-completion-2026-07-14.md): committed revision, CI and

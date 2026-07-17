@@ -1,0 +1,772 @@
+"""Add append-only order-lineage repair receipts.
+
+Revision ID: 0081_order_lineage_receipts
+Revises: 0080_broker_econ_recon_freshness
+Create Date: 2026-07-16 17:00:00.000000
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import conv
+
+
+revision = "0081_order_lineage_receipts"
+down_revision = "0080_broker_econ_recon_freshness"
+branch_labels = None
+depends_on = None
+
+
+_TABLE = "order_lineage_repair_receipts"
+_GUARD = "torghut_guard_order_lineage_receipt_0081"
+_ROW_TRIGGER = "trg_guard_order_lineage_receipt"
+_TRUNCATE_TRIGGER = "trg_guard_order_lineage_receipt_truncate"
+
+
+def _create_table() -> None:
+    op.create_table(
+        _TABLE,
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("repair_version", sa.String(length=64), nullable=False),
+        sa.Column("provider", sa.String(length=32), nullable=False),
+        sa.Column("environment", sa.String(length=16), nullable=False),
+        sa.Column("account_label", sa.String(length=64), nullable=False),
+        sa.Column("order_identity_sha256", sa.String(length=64), nullable=False),
+        sa.Column("alpaca_order_id", sa.String(length=128), nullable=True),
+        sa.Column("client_order_id", sa.String(length=128), nullable=True),
+        sa.Column("classification", sa.String(length=32), nullable=False),
+        sa.Column("confidence", sa.String(length=16), nullable=False),
+        sa.Column("execution_source", sa.String(length=32), nullable=False),
+        sa.Column("source_first_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("source_last_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "evidence",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
+        sa.Column("evidence_canonical_json", sa.Text(), nullable=False),
+        sa.Column("evidence_sha256", sa.String(length=64), nullable=False),
+        sa.Column(
+            "promotion_authority_eligible",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+        sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("clock_timestamp()"),
+        ),
+        sa.CheckConstraint(
+            "length(repair_version) BETWEEN 1 AND 64 "
+            "AND length(provider) BETWEEN 1 AND 32 "
+            "AND length(environment) BETWEEN 1 AND 16 "
+            "AND length(account_label) BETWEEN 1 AND 64",
+            name=conv("ck_order_lineage_receipt_scope"),
+        ),
+        sa.CheckConstraint(
+            "order_identity_sha256 ~ '^[0-9a-f]{64}$' "
+            "AND evidence_sha256 ~ '^[0-9a-f]{64}$'",
+            name=conv("ck_order_lineage_receipt_hashes"),
+        ),
+        sa.CheckConstraint(
+            "alpaca_order_id IS NOT NULL OR client_order_id IS NOT NULL",
+            name=conv("ck_order_lineage_receipt_order_identity"),
+        ),
+        sa.CheckConstraint(
+            "classification IN ('complete', 'linked_incomplete', "
+            "'external_or_unproved', 'ambiguous', 'broker_activity_only', "
+            "'order_feed_only')",
+            name=conv("ck_order_lineage_receipt_classification"),
+        ),
+        sa.CheckConstraint(
+            "confidence IN ('exact', 'unproved', 'ambiguous')",
+            name=conv("ck_order_lineage_receipt_confidence"),
+        ),
+        sa.CheckConstraint(
+            "execution_source IN ('local', 'canonical_cross_dsn', 'none')",
+            name=conv("ck_order_lineage_receipt_execution_source"),
+        ),
+        sa.CheckConstraint(
+            "source_first_at <= source_last_at",
+            name=conv("ck_order_lineage_receipt_source_window"),
+        ),
+        sa.CheckConstraint(
+            "promotion_authority_eligible IS FALSE",
+            name=conv("ck_order_lineage_receipt_non_promotional"),
+        ),
+        sa.CheckConstraint(
+            "(classification IN ('complete', 'linked_incomplete') "
+            "AND confidence = 'exact' AND execution_source <> 'none') OR "
+            "(classification = 'ambiguous' AND confidence = 'ambiguous' "
+            "AND execution_source = 'none') OR "
+            "(classification = 'external_or_unproved' "
+            "AND confidence = 'unproved' AND execution_source = 'none') OR "
+            "(classification IN ('broker_activity_only', 'order_feed_only') "
+            "AND ((confidence = 'exact' AND execution_source <> 'none') OR "
+            "(confidence = 'unproved' AND execution_source = 'none')))",
+            name=conv("ck_order_lineage_receipt_classification_confidence"),
+        ),
+        sa.PrimaryKeyConstraint("id", name=conv("pk_order_lineage_repair_receipts")),
+    )
+    op.create_index(
+        "uq_order_lineage_receipt_evidence",
+        _TABLE,
+        ["order_identity_sha256", "repair_version", "evidence_sha256"],
+        unique=True,
+    )
+    op.create_index(
+        "ix_order_lineage_receipt_current",
+        _TABLE,
+        [
+            "repair_version",
+            "order_identity_sha256",
+            "source_last_at",
+            "created_at",
+        ],
+    )
+    op.create_index(
+        "ix_order_lineage_receipt_classification",
+        _TABLE,
+        ["repair_version", "classification", "confidence"],
+    )
+    op.create_index(
+        "ix_order_lineage_receipt_alpaca_alias",
+        _TABLE,
+        [
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "alpaca_order_id",
+        ],
+        postgresql_where=sa.text("alpaca_order_id IS NOT NULL"),
+    )
+    op.create_index(
+        "ix_order_lineage_receipt_client_alias",
+        _TABLE,
+        [
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "client_order_id",
+        ],
+        postgresql_where=sa.text("client_order_id IS NOT NULL"),
+    )
+
+
+def _create_guard() -> None:
+    op.execute(
+        sa.text(
+            f"""
+            CREATE FUNCTION {_GUARD}()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            DECLARE
+                evidence_document jsonb;
+                expected_evidence_canonical_json text;
+                order_identity_document jsonb;
+                links_document jsonb;
+                sources_document jsonb;
+                source_counts_document jsonb;
+                blockers jsonb;
+                match_basis jsonb;
+                order_event_ids jsonb;
+                fill_order_event_ids jsonb;
+                broker_activity_ids jsonb;
+                broker_fill_activity_ids jsonb;
+                order_event_count bigint;
+                fill_order_event_count bigint;
+                broker_activity_count bigint;
+                broker_fill_count bigint;
+                source_ids_invalid boolean;
+                match_basis_invalid boolean;
+                blockers_invalid boolean;
+                link_ids_invalid boolean;
+                execution_id text;
+                trade_decision_id text;
+                strategy_id text;
+                submission_claim_id text;
+                tca_metric_id text;
+                expected_primary_order_id_kind text;
+                expected_primary_order_id text;
+                expected_order_identity_material text;
+                expected_order_identity_sha256 text;
+                expected_source_first_at text;
+                expected_source_last_at text;
+            BEGIN
+                IF TG_OP IN ('UPDATE', 'DELETE', 'TRUNCATE') THEN
+                    RAISE EXCEPTION 'order lineage repair receipt is append-only'
+                        USING ERRCODE = '23514';
+                END IF;
+                PERFORM pg_advisory_xact_lock(hashtextextended(
+                    NEW.repair_version || chr(31) ||
+                    NEW.provider || chr(31) ||
+                    NEW.environment || chr(31) ||
+                    NEW.account_label,
+                    0
+                ));
+                BEGIN
+                    evidence_document := NEW.evidence_canonical_json::jsonb;
+                EXCEPTION WHEN invalid_text_representation THEN
+                    RAISE EXCEPTION 'order lineage repair evidence JSON is invalid'
+                        USING ERRCODE = '23514';
+                END;
+                expected_evidence_canonical_json := NEW.evidence::text;
+                IF NEW.evidence_canonical_json
+                       IS DISTINCT FROM expected_evidence_canonical_json THEN
+                    RAISE EXCEPTION 'order lineage repair evidence JSON is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF evidence_document IS DISTINCT FROM NEW.evidence THEN
+                    RAISE EXCEPTION 'order lineage repair evidence identity mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF NEW.evidence_sha256 IS DISTINCT FROM encode(
+                    sha256(convert_to(NEW.evidence_canonical_json, 'UTF8')),
+                    'hex'
+                ) THEN
+                    RAISE EXCEPTION 'order lineage repair evidence hash mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                order_identity_document := evidence_document->'order_identity';
+                links_document := evidence_document->'links';
+                sources_document := evidence_document->'sources';
+                source_counts_document := sources_document->'counts';
+                IF jsonb_typeof(evidence_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(order_identity_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(links_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(sources_document) IS DISTINCT FROM 'object'
+                   OR jsonb_typeof(source_counts_document) IS DISTINCT FROM 'object'
+                THEN
+                    RAISE EXCEPTION 'order lineage repair evidence objects missing'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF (
+                       SELECT count(*) FROM jsonb_object_keys(evidence_document)
+                   ) <> 11
+                   OR NOT evidence_document ?& ARRAY[
+                       'blockers',
+                       'classification',
+                       'confidence',
+                       'execution_source',
+                       'links',
+                       'match_basis',
+                       'order_identity',
+                       'promotion_authority_eligible',
+                       'repair_version',
+                       'schema_version',
+                       'sources'
+                   ]
+                   OR (
+                       SELECT count(*)
+                         FROM jsonb_object_keys(order_identity_document)
+                   ) <> 8
+                   OR NOT order_identity_document ?& ARRAY[
+                       'account_label',
+                       'alpaca_order_id',
+                       'client_order_id',
+                       'environment',
+                       'primary_order_id',
+                       'primary_order_id_kind',
+                       'provider',
+                       'sha256'
+                   ]
+                   OR (SELECT count(*) FROM jsonb_object_keys(links_document)) <> 5
+                   OR NOT links_document ?& ARRAY[
+                       'execution_id',
+                       'strategy_id',
+                       'submission_claim_id',
+                       'tca_metric_id',
+                       'trade_decision_id'
+                   ]
+                   OR (
+                       SELECT count(*) FROM jsonb_object_keys(sources_document)
+                   ) <> 7
+                   OR NOT sources_document ?& ARRAY[
+                       'broker_activity_ids',
+                       'broker_fill_activity_ids',
+                       'counts',
+                       'fill_order_event_ids',
+                       'first_at',
+                       'last_at',
+                       'order_event_ids'
+                   ]
+                   OR (
+                       SELECT count(*)
+                         FROM jsonb_object_keys(source_counts_document)
+                   ) <> 4
+                   OR NOT source_counts_document ?& ARRAY[
+                       'broker_activities',
+                       'broker_fills',
+                       'fill_order_events',
+                       'order_events'
+                   ] THEN
+                    RAISE EXCEPTION 'order lineage repair evidence shape mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF jsonb_typeof(evidence_document->'schema_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'repair_version')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'classification')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'confidence')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(evidence_document->'execution_source')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(
+                       evidence_document->'promotion_authority_eligible'
+                   ) IS DISTINCT FROM 'boolean'
+                   OR jsonb_typeof(order_identity_document->'provider')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'environment')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'account_label')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'primary_order_id_kind')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'primary_order_id')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'sha256')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(order_identity_document->'alpaca_order_id')
+                       NOT IN ('string', 'null')
+                   OR jsonb_typeof(order_identity_document->'client_order_id')
+                       NOT IN ('string', 'null')
+                   OR jsonb_typeof(sources_document->'first_at')
+                       IS DISTINCT FROM 'string'
+                   OR jsonb_typeof(sources_document->'last_at')
+                       IS DISTINCT FROM 'string'
+                   OR EXISTS (
+                       SELECT 1
+                         FROM jsonb_each(source_counts_document)
+                        WHERE jsonb_typeof(value) IS DISTINCT FROM 'number'
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage repair evidence scalar type mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF evidence_document->>'schema_version'
+                       IS DISTINCT FROM 'torghut.order-lineage-repair-evidence.v1'
+                   OR evidence_document->>'repair_version'
+                       IS DISTINCT FROM NEW.repair_version
+                   OR evidence_document->>'classification'
+                       IS DISTINCT FROM NEW.classification
+                   OR evidence_document->>'confidence'
+                       IS DISTINCT FROM NEW.confidence
+                   OR evidence_document->>'execution_source'
+                       IS DISTINCT FROM NEW.execution_source
+                   OR (evidence_document->>'promotion_authority_eligible')::boolean
+                       IS DISTINCT FROM NEW.promotion_authority_eligible THEN
+                    RAISE EXCEPTION 'order lineage repair evidence contract mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF btrim(NEW.provider) IS DISTINCT FROM NEW.provider
+                   OR btrim(NEW.environment) IS DISTINCT FROM NEW.environment
+                   OR btrim(NEW.account_label) IS DISTINCT FROM NEW.account_label
+                   OR (
+                       NEW.alpaca_order_id IS NOT NULL
+                       AND (
+                           btrim(NEW.alpaca_order_id) = ''
+                           OR btrim(NEW.alpaca_order_id)
+                               IS DISTINCT FROM NEW.alpaca_order_id
+                       )
+                   )
+                   OR (
+                       NEW.client_order_id IS NOT NULL
+                       AND (
+                           btrim(NEW.client_order_id) = ''
+                           OR btrim(NEW.client_order_id)
+                               IS DISTINCT FROM NEW.client_order_id
+                       )
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage scope or order ID is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF evidence_document#>>'{{order_identity,provider}}'
+                       IS DISTINCT FROM NEW.provider
+                   OR evidence_document#>>'{{order_identity,environment}}'
+                       IS DISTINCT FROM NEW.environment
+                   OR evidence_document#>>'{{order_identity,account_label}}'
+                       IS DISTINCT FROM NEW.account_label
+                   OR NULLIF(evidence_document#>>'{{order_identity,alpaca_order_id}}', '')
+                       IS DISTINCT FROM NEW.alpaca_order_id
+                   OR NULLIF(evidence_document#>>'{{order_identity,client_order_id}}', '')
+                       IS DISTINCT FROM NEW.client_order_id
+                   OR evidence_document#>>'{{order_identity,sha256}}'
+                       IS DISTINCT FROM NEW.order_identity_sha256 THEN
+                    RAISE EXCEPTION 'order lineage repair order identity mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                expected_primary_order_id_kind :=
+                    evidence_document#>>'{{order_identity,primary_order_id_kind}}';
+                expected_primary_order_id := CASE expected_primary_order_id_kind
+                    WHEN 'alpaca_order_id' THEN NEW.alpaca_order_id
+                    WHEN 'client_order_id' THEN NEW.client_order_id
+                    ELSE NULL
+                END;
+                IF expected_primary_order_id IS NULL
+                   OR evidence_document#>>'{{order_identity,primary_order_id}}'
+                       IS DISTINCT FROM expected_primary_order_id THEN
+                    RAISE EXCEPTION 'order lineage repair primary identity mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                expected_order_identity_material :=
+                    octet_length(NEW.provider)::text || ':' || NEW.provider ||
+                    octet_length(NEW.environment)::text || ':' || NEW.environment ||
+                    octet_length(NEW.account_label)::text || ':' || NEW.account_label ||
+                    octet_length(expected_primary_order_id_kind)::text || ':' ||
+                        expected_primary_order_id_kind ||
+                    octet_length(expected_primary_order_id)::text || ':' ||
+                        expected_primary_order_id;
+                expected_order_identity_sha256 := encode(
+                    sha256(convert_to(expected_order_identity_material, 'UTF8')),
+                    'hex'
+                );
+                IF NEW.order_identity_sha256
+                       IS DISTINCT FROM expected_order_identity_sha256 THEN
+                    RAISE EXCEPTION 'order lineage repair identity hash mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF EXISTS (
+                    SELECT 1
+                      FROM order_lineage_repair_receipts AS existing
+                     WHERE existing.repair_version = NEW.repair_version
+                       AND existing.provider = NEW.provider
+                       AND existing.environment = NEW.environment
+                       AND existing.account_label = NEW.account_label
+                       AND (
+                           (
+                               NEW.alpaca_order_id IS NOT NULL
+                               AND existing.alpaca_order_id = NEW.alpaca_order_id
+                           )
+                           OR (
+                               NEW.client_order_id IS NOT NULL
+                               AND existing.client_order_id = NEW.client_order_id
+                           )
+                       )
+                       AND (
+                           existing.order_identity_sha256
+                               <> NEW.order_identity_sha256
+                           OR (
+                               existing.alpaca_order_id IS NOT NULL
+                               AND NEW.alpaca_order_id IS NOT NULL
+                               AND existing.alpaca_order_id
+                                   <> NEW.alpaca_order_id
+                           )
+                           OR (
+                               existing.client_order_id IS NOT NULL
+                               AND NEW.client_order_id IS NOT NULL
+                               AND existing.client_order_id
+                                   <> NEW.client_order_id
+                           )
+                       )
+                ) THEN
+                    RAISE EXCEPTION 'order lineage receipt identity alias conflict'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                expected_source_first_at :=
+                    to_char(
+                        NEW.source_first_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS'
+                    ) || CASE
+                        WHEN extract(microseconds FROM NEW.source_first_at)::bigint
+                                 % 1000000 = 0 THEN ''
+                        ELSE '.' || lpad(
+                            (
+                                extract(microseconds FROM NEW.source_first_at)::bigint
+                                % 1000000
+                            )::text,
+                            6,
+                            '0'
+                        )
+                    END || '+00:00';
+                expected_source_last_at :=
+                    to_char(
+                        NEW.source_last_at AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS'
+                    ) || CASE
+                        WHEN extract(microseconds FROM NEW.source_last_at)::bigint
+                                 % 1000000 = 0 THEN ''
+                        ELSE '.' || lpad(
+                            (
+                                extract(microseconds FROM NEW.source_last_at)::bigint
+                                % 1000000
+                            )::text,
+                            6,
+                            '0'
+                        )
+                    END || '+00:00';
+                IF evidence_document#>>'{{sources,first_at}}'
+                       IS DISTINCT FROM expected_source_first_at
+                   OR evidence_document#>>'{{sources,last_at}}'
+                       IS DISTINCT FROM expected_source_last_at THEN
+                    RAISE EXCEPTION 'order lineage repair source evidence mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                blockers := evidence_document->'blockers';
+                match_basis := evidence_document->'match_basis';
+                order_event_ids := sources_document->'order_event_ids';
+                fill_order_event_ids :=
+                    sources_document->'fill_order_event_ids';
+                broker_activity_ids :=
+                    sources_document->'broker_activity_ids';
+                broker_fill_activity_ids :=
+                    sources_document->'broker_fill_activity_ids';
+                IF jsonb_typeof(blockers) IS DISTINCT FROM 'array'
+                   OR jsonb_typeof(match_basis) IS DISTINCT FROM 'array'
+                   OR jsonb_typeof(order_event_ids) IS DISTINCT FROM 'array'
+                   OR jsonb_typeof(fill_order_event_ids) IS DISTINCT FROM 'array'
+                   OR jsonb_typeof(broker_activity_ids) IS DISTINCT FROM 'array'
+                   OR jsonb_typeof(broker_fill_activity_ids) IS DISTINCT FROM 'array'
+                THEN
+                    RAISE EXCEPTION 'order lineage repair evidence arrays missing'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                WITH blocker_values AS (
+                    SELECT
+                        item,
+                        item#>>'{{}}' AS value,
+                        ordinality
+                      FROM jsonb_array_elements(blockers) WITH ORDINALITY
+                           AS entries(item, ordinality)
+                ), ordered_blockers AS (
+                    SELECT
+                        item,
+                        value,
+                        lag(value) OVER (ORDER BY ordinality) AS prior_value
+                      FROM blocker_values
+                )
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM ordered_blockers
+                     WHERE jsonb_typeof(item) IS DISTINCT FROM 'string'
+                        OR value IS NULL
+                        OR btrim(value) = ''
+                        OR btrim(value) IS DISTINCT FROM value
+                        OR prior_value COLLATE "C" >= value COLLATE "C"
+                ) INTO blockers_invalid;
+                IF blockers_invalid THEN
+                    RAISE EXCEPTION 'order lineage blockers are not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                WITH basis_values AS (
+                    SELECT
+                        item,
+                        item#>>'{{}}' AS value,
+                        ordinality
+                      FROM jsonb_array_elements(match_basis) WITH ORDINALITY
+                           AS entries(item, ordinality)
+                ), ordered_bases AS (
+                    SELECT
+                        item,
+                        value,
+                        lag(value) OVER (ORDER BY ordinality) AS prior_value
+                      FROM basis_values
+                )
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM ordered_bases
+                     WHERE jsonb_typeof(item) IS DISTINCT FROM 'string'
+                        OR value NOT IN ('alpaca_order_id', 'client_order_id')
+                        OR prior_value COLLATE "C" >= value COLLATE "C"
+                        OR (value = 'alpaca_order_id' AND NEW.alpaca_order_id IS NULL)
+                        OR (value = 'client_order_id' AND NEW.client_order_id IS NULL)
+                ) INTO match_basis_invalid;
+                IF match_basis_invalid THEN
+                    RAISE EXCEPTION 'order lineage match basis is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                WITH source_ids AS (
+                    SELECT 'order_event_ids' AS source_array, value, ordinality
+                      FROM jsonb_array_elements_text(order_event_ids)
+                           WITH ORDINALITY
+                    UNION ALL
+                    SELECT 'fill_order_event_ids', value, ordinality
+                      FROM jsonb_array_elements_text(fill_order_event_ids)
+                           WITH ORDINALITY
+                    UNION ALL
+                    SELECT 'broker_activity_ids', value, ordinality
+                      FROM jsonb_array_elements_text(broker_activity_ids)
+                           WITH ORDINALITY
+                    UNION ALL
+                    SELECT 'broker_fill_activity_ids', value, ordinality
+                      FROM jsonb_array_elements_text(broker_fill_activity_ids)
+                           WITH ORDINALITY
+                ), ordered_source_ids AS (
+                    SELECT
+                        source_array,
+                        value,
+                        lag(value) OVER (
+                            PARTITION BY source_array ORDER BY ordinality
+                        ) AS prior_value
+                      FROM source_ids
+                )
+                SELECT EXISTS (
+                    SELECT 1
+                     FROM ordered_source_ids
+                     WHERE value IS NULL
+                        OR value !~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-'
+                            '[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                        OR prior_value >= value
+                ) INTO source_ids_invalid;
+                IF source_ids_invalid THEN
+                    RAISE EXCEPTION 'order lineage source IDs are not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                order_event_count := jsonb_array_length(order_event_ids);
+                fill_order_event_count := jsonb_array_length(fill_order_event_ids);
+                broker_activity_count := jsonb_array_length(broker_activity_ids);
+                broker_fill_count := jsonb_array_length(broker_fill_activity_ids);
+                IF (evidence_document#>>'{{sources,counts,order_events}}')::bigint
+                       IS DISTINCT FROM order_event_count
+                   OR (evidence_document#>>'{{sources,counts,fill_order_events}}')::bigint
+                       IS DISTINCT FROM fill_order_event_count
+                   OR (evidence_document#>>'{{sources,counts,broker_activities}}')::bigint
+                       IS DISTINCT FROM broker_activity_count
+                   OR (evidence_document#>>'{{sources,counts,broker_fills}}')::bigint
+                       IS DISTINCT FROM broker_fill_count
+                   OR NOT order_event_ids @> fill_order_event_ids
+                   OR NOT broker_activity_ids @> broker_fill_activity_ids THEN
+                    RAISE EXCEPTION 'order lineage repair source arrays mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                execution_id := NULLIF(
+                    evidence_document#>>'{{links,execution_id}}', ''
+                );
+                trade_decision_id := NULLIF(
+                    evidence_document#>>'{{links,trade_decision_id}}', ''
+                );
+                strategy_id := NULLIF(
+                    evidence_document#>>'{{links,strategy_id}}', ''
+                );
+                submission_claim_id := NULLIF(
+                    evidence_document#>>'{{links,submission_claim_id}}', ''
+                );
+                tca_metric_id := NULLIF(
+                    evidence_document#>>'{{links,tca_metric_id}}', ''
+                );
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM unnest(ARRAY[
+                          execution_id,
+                          trade_decision_id,
+                          strategy_id,
+                          submission_claim_id,
+                          tca_metric_id
+                      ]) AS links(link_id)
+                     WHERE link_id IS NOT NULL
+                       AND link_id !~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-'
+                           '[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                ) INTO link_ids_invalid;
+                IF link_ids_invalid THEN
+                    RAISE EXCEPTION 'order lineage causal link UUID is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                IF (NEW.execution_source = 'none' AND (
+                        execution_id IS NOT NULL
+                        OR trade_decision_id IS NOT NULL
+                        OR strategy_id IS NOT NULL
+                        OR submission_claim_id IS NOT NULL
+                        OR tca_metric_id IS NOT NULL
+                    ))
+                   OR (NEW.execution_source <> 'none' AND execution_id IS NULL)
+                   OR (trade_decision_id IS NULL AND (
+                        strategy_id IS NOT NULL OR submission_claim_id IS NOT NULL
+                    ))
+                   OR (
+                       submission_claim_id IS NOT NULL
+                       AND submission_claim_id IS DISTINCT FROM trade_decision_id
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage repair causal links invalid'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                IF NEW.classification = 'complete' THEN
+                    IF trade_decision_id IS NULL
+                       OR strategy_id IS NULL
+                       OR submission_claim_id IS NULL
+                       OR tca_metric_id IS NULL
+                       OR order_event_count = 0
+                       OR fill_order_event_count = 0
+                       OR broker_fill_count = 0
+                       OR jsonb_array_length(blockers) <> 0
+                       OR jsonb_array_length(match_basis) = 0 THEN
+                        RAISE EXCEPTION 'complete order lineage evidence is incomplete'
+                            USING ERRCODE = '23514';
+                    END IF;
+                ELSIF jsonb_array_length(blockers) = 0 THEN
+                    RAISE EXCEPTION 'incomplete order lineage blockers missing'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                IF (NEW.classification IN ('linked_incomplete', 'ambiguous')
+                    OR (
+                        NEW.classification IN (
+                            'broker_activity_only', 'order_feed_only'
+                        ) AND NEW.confidence = 'exact'
+                    )) AND jsonb_array_length(match_basis) = 0 THEN
+                    RAISE EXCEPTION 'order lineage match basis missing'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF (NEW.classification = 'broker_activity_only'
+                        AND (order_event_count <> 0 OR broker_activity_count = 0))
+                   OR (NEW.classification = 'order_feed_only'
+                        AND (order_event_count = 0 OR broker_activity_count <> 0))
+                   OR (NEW.classification = 'external_or_unproved'
+                        AND (order_event_count = 0 OR broker_activity_count = 0))
+                THEN
+                    RAISE EXCEPTION 'order lineage source classification invalid'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                NEW.created_at := clock_timestamp();
+                RETURN NEW;
+            END;
+            $$
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            f"""
+            CREATE TRIGGER {_ROW_TRIGGER}
+            BEFORE INSERT OR UPDATE OR DELETE ON {_TABLE}
+            FOR EACH ROW EXECUTE FUNCTION {_GUARD}()
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            f"""
+            CREATE TRIGGER {_TRUNCATE_TRIGGER}
+            BEFORE TRUNCATE ON {_TABLE}
+            FOR EACH STATEMENT EXECUTE FUNCTION {_GUARD}()
+            """
+        )
+    )
+
+
+def upgrade() -> None:
+    _create_table()
+    _create_guard()
+
+
+def downgrade() -> None:
+    op.execute(sa.text(f"DROP TRIGGER {_TRUNCATE_TRIGGER} ON {_TABLE}"))
+    op.execute(sa.text(f"DROP TRIGGER {_ROW_TRIGGER} ON {_TABLE}"))
+    op.execute(sa.text(f"DROP FUNCTION {_GUARD}()"))
+    op.drop_table(_TABLE)
