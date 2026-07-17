@@ -1,6 +1,7 @@
 # Order And Fill Lineage Repair Receipts
 
-Status: normative Slice 9 implementation contract; Delivery 1 schema and deterministic evidence builder implemented.
+Status: normative Slice 9 implementation contract; Deliveries 1 and 2 implemented, production census and fresh-paper
+proof pending.
 
 ## Decision
 
@@ -12,10 +13,12 @@ The receipt is evidence, not authority. It is always marked `promotion_authority
 row can explain a result or exclude it from promotion; it can never turn an unfenced legacy order into a valid current
 submission.
 
-This is intentionally one table and one deterministic builder. The immutable JSON document is the causal evidence
-authority; the table projects only scope, classification, identity, and source-window fields needed for current-state
-selection. Slice 9 does not add a lineage graph service, queue, mutable repair cursor, approval workflow, confidence
-score formula, duplicate writable link columns, or generic provenance framework.
+Receipt evidence intentionally stays in one table with one deterministic builder. Delivery 2 adds only the closed-run
+table and a compact, immutable cross-DSN import table needed to prove the run's input boundary. The immutable JSON
+document is the causal evidence authority; the receipt table projects only scope, classification, identity, and
+source-window fields needed for current-state selection. Slice 9 does not add a lineage graph service, queue, mutable
+repair cursor, approval workflow, confidence score formula, duplicate writable link columns, or generic provenance
+framework.
 
 ## Evidence That Requires Repair
 
@@ -117,13 +120,60 @@ The trigger stamps `created_at`; callers supply `observed_at`. No repaired recei
 different database, because that would be a false database guarantee. Cross-DSN IDs instead remain scope-bound inside
 the hashed evidence contract.
 
+Migration `0082_order_lineage_runs` adds the closed-census boundary. One append-only run binds:
+
+- the exact Slice 8 broker-economic input row, source, manifest hash, source watermark, and activity count;
+- complete order-feed, broker-order-link, local-execution, and canonical-execution manifests;
+- the expected order-identity count and digest of every current receipt identity/evidence pair;
+- classification, confidence, execution-source, and source-coverage counts that each sum to the receipt count.
+
+The database does not trust caller-supplied local coverage hashes. Its insert guard derives the broker-order-link
+manifest from `broker_account_activities`, the order-feed manifest and partition bounds from
+`execution_order_events`, and the local-execution manifest from executions, decisions, submission claims, and TCA
+rows. It derives the complete current receipt set and every result count from persisted receipts, then compares the
+entire input and result documents rather than checking selected fields.
+
+PostgreSQL cannot re-query a different database inside this transaction. The canonical cross-DSN projection is
+therefore bound through an immutable, content-addressed import containing the source-database identity hash, canonical
+account-label hash, execution count, execution-set digest, and watermark. The run has a restrictive foreign key to
+that exact import. The import's canonical document and content hash are independently checked on insert; update,
+delete, and truncate are rejected. Identical canonical projections reuse the import instead of copying the execution
+set every hour. This is the explicit cross-database trust boundary, not a false foreign-key claim.
+
+PostgreSQL also verifies the referenced broker input and every count and takes one transaction-scoped advisory lock
+per repair scope. Both run documents must use exact PostgreSQL JSONB canonical bytes, so alternate whitespace or key
+ordering cannot manufacture a second input hash. Timestamp text follows PostgreSQL's UTC JSONB rendering, including
+trimmed fractional-second zeros, and the guards execute with a function-local UTC setting. The import, receipt states,
+and run are committed in the same transaction. Repeating identical inputs reuses the run; the same input producing a
+different result fails as nondeterministic.
+
+## Runtime Census
+
+`reconcile_cross_dsn_order_feed_links.py` now performs one full closed census and never mutates `raw_event`, source
+windows, executions, decisions, or orders. It bulk-loads the source sets, indexes executions by broker and client
+identity, preserves one-to-many fills, and rejects ambiguous stable-ID matches without timestamp heuristics. Client-only
+events join a broker order only when the alias is unique.
+
+The hourly `torghut-order-lineage-reconciliation` CronJob is staged with `suspend: true` until the closed-census image
+has been built and promoted. A separate GitOps change must enable it after that artifact is live, preventing the prior
+image's legacy mutation path from running during the source-to-promotion gap. Once enabled, it runs after the
+broker-economic ledger window with `concurrencyPolicy: Forbid`, no service-account token, no broker credentials, and no
+configured account label. Source and canonical account scopes are inferred only when each is unique; ambiguity fails
+the job. The release updater pins this CronJob to the same image digest and source commit as the API, scheduler,
+simulation service, and economic-ledger job without changing its suspension state.
+
+`/trading/status` exposes the latest supported closed-run counts under `order_lineage`. The payload is diagnostic only,
+does not claim time freshness for a reused run, and always reports `promotion_authority_eligible=false`. Kubernetes job
+success plus the immutable source manifests provide execution-freshness proof; an old reused run row alone does not.
+
 ## Delivery Sequence
 
-1. Land the table, database guards, deterministic builder, and contract tests.
-2. Replace `reconcile_cross_dsn_order_feed_links.py` raw-JSON mutation with order-level receipt construction, a closed
-   run manifest, and repeatable atomic backfill. Retain original event rows unchanged.
-3. Add current-version coverage metrics and explicit residual classifications to trading status.
-4. Run the historical census, then prove a fresh bounded paper lifecycle with complete claim/order/fill/event linkage.
+1. **Implemented:** land the receipt table, database guards, deterministic builder, and contract tests.
+2. **Implemented:** replace raw-JSON mutation with order-level receipt construction, a closed run manifest, and
+   repeatable atomic backfill while retaining original rows unchanged.
+3. **Implemented:** add current-version coverage and explicit residual classifications to trading status.
+4. **Pending runtime promotion:** promote the closed-census image, enable the CronJob through a separate GitOps change,
+   run the historical census, then prove a fresh bounded paper lifecycle with complete claim/order/fill/event linkage.
 
 Delivery 1 grants no runtime writer and cannot change an existing event, order, decision, or execution.
 

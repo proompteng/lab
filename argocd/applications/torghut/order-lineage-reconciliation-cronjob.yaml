@@ -1,0 +1,107 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-order-lineage-reconciliation
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: order-lineage-reconciliation
+    app.kubernetes.io/part-of: lab
+spec:
+  # Staged inert until the closed-census image is promoted and a follow-up
+  # GitOps change explicitly enables the schedule.
+  suspend: true
+  schedule: "12 * * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: 1200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: torghut
+            app.kubernetes.io/component: order-lineage-reconciliation
+            app.kubernetes.io/part-of: lab
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconcile
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:1846d913a72d0f56ef825d2f25624fd2e1d1be3379513da86957083798912292
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 64Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+                  ephemeral-storage: 256Mi
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: APP_ENV
+                  value: prod
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: TORGHUT_VERSION
+                  value: v0.596.0-2147-gcc16d7d2f
+                - name: TORGHUT_COMMIT
+                  value: cc16d7d2f4645a0d5ef8cfbc80389e7c56d4ec65
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:1846d913a72d0f56ef825d2f25624fd2e1d1be3379513da86957083798912292
+                - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
+                  value: linux/amd64,linux/arm64
+                - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
+                  value: linux/amd64,linux/arm64
+              command:
+                - python
+                - scripts/reconcile_cross_dsn_order_feed_links.py
+              args:
+                - --apply
+                - --json
+                - --environment
+                - paper

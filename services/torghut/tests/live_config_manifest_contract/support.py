@@ -56,6 +56,9 @@ def _load_yaml_mapping(relative_path: str) -> dict[str, object]:
     return manifest
 
 
+load_yaml_mapping = _load_yaml_mapping
+
+
 def _load_yaml_mappings(relative_path: str) -> list[dict[str, object]]:
     manifest_path = _repo_root() / relative_path
     manifests: list[dict[str, object]] = []
@@ -361,6 +364,7 @@ __all__: tuple[str, ...] = (
     "_strategy_decimal",
     "cast",
     "json",
+    "load_yaml_mapping",
     "safe_load",
     "safe_load_all",
     "tigerbeetle_journal_runner",

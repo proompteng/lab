@@ -314,7 +314,7 @@ def build_order_lineage_receipt(
             "order_event_ids": [str(value) for value in normalized.order_event_ids],
         },
     }
-    canonical_json = _jsonb_canonical_json(payload)
+    canonical_json = canonical_jsonb_text(payload)
     return OrderLineageReceiptDraft(
         repair_version=ORDER_LINEAGE_REPAIR_VERSION,
         provider=normalized.provider,
@@ -433,7 +433,7 @@ def _resolve_durable_order_identity(
         }
     )
     payload["order_identity"] = order_identity
-    canonical_json = _jsonb_canonical_json(payload)
+    canonical_json = canonical_jsonb_text(payload)
     resolved = replace(
         draft,
         order_identity_sha256=durable.sha256,
@@ -578,8 +578,8 @@ def _validate_reused_receipt(
         receipt.classification,
         receipt.confidence,
         receipt.execution_source,
-        receipt.source_first_at,
-        receipt.source_last_at,
+        _persisted_utc_timestamp(receipt.source_first_at),
+        _persisted_utc_timestamp(receipt.source_last_at),
         receipt.evidence,
         receipt.evidence_canonical_json,
         receipt.evidence_sha256,
@@ -596,8 +596,8 @@ def _validate_reused_receipt(
         draft.classification,
         draft.confidence,
         draft.execution_source,
-        draft.source_first_at,
-        draft.source_last_at,
+        _required_utc(draft.source_first_at),
+        _required_utc(draft.source_last_at),
         draft.evidence,
         draft.evidence_canonical_json,
         draft.evidence_sha256,
@@ -608,13 +608,19 @@ def _validate_reused_receipt(
 
 
 def _validate_draft_document(draft: OrderLineageReceiptDraft) -> None:
-    canonical_json = _jsonb_canonical_json(draft.evidence)
+    canonical_json = canonical_jsonb_text(draft.evidence)
     evidence_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     if (
         canonical_json != draft.evidence_canonical_json
         or evidence_sha256 != draft.evidence_sha256
     ):
         raise ValueError("order_lineage_draft_document_mismatch")
+
+
+def _persisted_utc_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _validate_linkage_contract(evidence: _NormalizedOrderLineageEvidence) -> None:
@@ -724,7 +730,7 @@ def _validate_classification_sources(
         raise ValueError("order_lineage_external_sources_invalid")
 
 
-def _jsonb_canonical_json(value: object) -> str:
+def canonical_jsonb_text(value: object) -> str:
     """Serialize the receipt subset exactly like PostgreSQL JSONB text output."""
 
     if isinstance(value, dict):
@@ -735,14 +741,27 @@ def _jsonb_canonical_json(value: object) -> str:
             key=lambda item: (len(item.encode("utf-8")), item.encode("utf-8")),
         ):
             rendered_key = json.dumps(key, ensure_ascii=False)
-            items.append(f"{rendered_key}: {_jsonb_canonical_json(mapping[key])}")
+            items.append(f"{rendered_key}: {canonical_jsonb_text(mapping[key])}")
         return "{" + ", ".join(items) + "}"
     if isinstance(value, (list, tuple)):
         sequence = cast(list[object] | tuple[object, ...], value)
-        return "[" + ", ".join(_jsonb_canonical_json(item) for item in sequence) + "]"
+        return "[" + ", ".join(canonical_jsonb_text(item) for item in sequence) + "]"
     if value is None or isinstance(value, (str, bool, int)):
         return json.dumps(value, allow_nan=False, ensure_ascii=False)
     raise TypeError(f"unsupported order-lineage JSON value: {type(value).__name__}")
+
+
+def canonical_timestamptz_text(value: datetime) -> str:
+    """Render UTC timestamps exactly like PostgreSQL JSONB text output."""
+
+    normalized = _required_utc(value)
+    rendered = normalized.isoformat(
+        timespec="microseconds" if normalized.microsecond else "seconds"
+    )
+    if not normalized.microsecond:
+        return rendered
+    timestamp, offset = rendered.rsplit("+", maxsplit=1)
+    return f"{timestamp.rstrip('0')}+{offset}"
 
 
 def _order_identity_sha256(
@@ -830,5 +849,7 @@ __all__ = (
     "OrderLineageReceiptDraft",
     "PersistedOrderLineageReceipt",
     "build_order_lineage_receipt",
+    "canonical_jsonb_text",
+    "canonical_timestamptz_text",
     "persist_order_lineage_receipt",
 )

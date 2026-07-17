@@ -24,6 +24,8 @@ const defaultGeneratedResourceRetentionManifestPath =
   'argocd/applications/torghut/generated-resource-retention-cronjob.yaml'
 const defaultBrokerEconomicLedgerReconciliationManifestPath =
   'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml'
+const defaultOrderLineageReconciliationManifestPath =
+  'argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
 const defaultHyperliquidRuntimeManifestPath = 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
 const defaultHyperliquidRuntimeMigrationManifestPath =
@@ -52,6 +54,7 @@ type UpdateManifestsOptions = {
   analysisArtifactManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   brokerEconomicLedgerReconciliationManifestPath?: string
+  orderLineageReconciliationManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
@@ -80,6 +83,7 @@ type CliOptions = {
   analysisArtifactManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   brokerEconomicLedgerReconciliationManifestPath?: string
+  orderLineageReconciliationManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
@@ -345,6 +349,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.brokerEconomicLedgerReconciliationManifestPath ?? defaultBrokerEconomicLedgerReconciliationManifestPath,
     'torghut-broker-economic-ledger-reconciliation image reference',
   )
+  const orderLineageReconciliation = updateImageOnlyManifest(
+    options,
+    options.orderLineageReconciliationManifestPath ?? defaultOrderLineageReconciliationManifestPath,
+    'torghut-order-lineage-reconciliation image reference',
+  )
   const tigerBeetleSmoke = updateImageOnlyManifest(
     options,
     options.tigerBeetleSmokeManifestPath ?? defaultTigerBeetleSmokeManifestPath,
@@ -401,6 +410,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisArtifact,
     generatedResourceRetention,
     brokerEconomicLedgerReconciliation,
+    orderLineageReconciliation,
     tigerBeetleSmoke,
     hyperliquidRuntime,
     hyperliquidRuntimeMigration,
@@ -442,6 +452,7 @@ Options:
   --analysis-artifact-manifest-path <path>
   --generated-resource-retention-manifest-path <path>
   --broker-economic-ledger-reconciliation-manifest-path <path>
+  --order-lineage-reconciliation-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
   --hyperliquid-runtime-migration-manifest-path <path>
@@ -524,6 +535,9 @@ Options:
         break
       case '--broker-economic-ledger-reconciliation-manifest-path':
         options.brokerEconomicLedgerReconciliationManifestPath = value
+        break
+      case '--order-lineage-reconciliation-manifest-path':
+        options.orderLineageReconciliationManifestPath = value
         break
       case '--tigerbeetle-smoke-manifest-path':
         options.tigerBeetleSmokeManifestPath = value

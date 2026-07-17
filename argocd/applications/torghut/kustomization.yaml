@@ -41,6 +41,7 @@ resources:
   - generated-resource-retention-rbac.yaml
   - generated-resource-retention-cronjob.yaml
   - broker-economic-ledger-reconciliation-cronjob.yaml
+  - order-lineage-reconciliation-cronjob.yaml
   - historical-simulation-workflowtemplate.yaml
   - analysis-template-runtime-ready.yaml
   - analysis-template-activity.yaml

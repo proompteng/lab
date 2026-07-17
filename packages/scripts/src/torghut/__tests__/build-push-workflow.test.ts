@@ -325,30 +325,35 @@ describe('torghut build-push workflow', () => {
     expect(compareCall).toBeGreaterThan(authHeader)
   })
 
-  it('retries central pull-request changed-file router GitHub API calls', () => {
-    const fetchFilesStep = pullRequestWorkflow.indexOf('Fetch changed files once')
-    const tokenEnv = pullRequestWorkflow.indexOf('GH_TOKEN: ${{ github.token }}', fetchFilesStep)
-    const retryCurl = pullRequestWorkflow.indexOf('curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors', tokenEnv)
-    const authHeader = pullRequestWorkflow.indexOf('-H "Authorization: Bearer ${GH_TOKEN}"', retryCurl)
-    const prFilesCall = pullRequestWorkflow.indexOf('/pulls/${PR_NUMBER}/files?per_page=100&page=${page}', authHeader)
+  it('derives pull-request changed files from the checked-out merge commit', () => {
+    const deriveFilesStep = pullRequestWorkflow.indexOf('Derive changed files from Git')
+    const firstParent = pullRequestWorkflow.indexOf("git rev-parse --verify 'HEAD^1'", deriveFilesStep)
+    const secondParent = pullRequestWorkflow.indexOf("git rev-parse --verify 'HEAD^2'", firstParent)
+    const diffCall = pullRequestWorkflow.indexOf(
+      "git diff --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2'",
+      secondParent,
+    )
 
-    expect(fetchFilesStep).toBeGreaterThan(-1)
-    expect(tokenEnv).toBeGreaterThan(fetchFilesStep)
-    expect(retryCurl).toBeGreaterThan(tokenEnv)
-    expect(authHeader).toBeGreaterThan(retryCurl)
-    expect(prFilesCall).toBeGreaterThan(authHeader)
+    expect(deriveFilesStep).toBeGreaterThan(-1)
+    expect(firstParent).toBeGreaterThan(deriveFilesStep)
+    expect(secondParent).toBeGreaterThan(firstParent)
+    expect(diffCall).toBeGreaterThan(secondParent)
+    expect(pullRequestWorkflow).not.toContain('/pulls/${PR_NUMBER}/files')
     expect(pullRequestWorkflow).not.toContain('check_changed_files:')
   })
 
   it('keeps deleted manifests out of kubeconform inputs', () => {
-    const fetchFilesStep = pullRequestWorkflow.indexOf('Fetch changed files once')
-    const activeManifestFilter = pullRequestWorkflow.indexOf('select(.status != "removed") | .filename', fetchFilesStep)
+    const deriveFilesStep = pullRequestWorkflow.indexOf('Derive changed files from Git')
+    const activeManifestFilter = pullRequestWorkflow.indexOf(
+      "git diff --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2'",
+      deriveFilesStep,
+    )
     const activeManifestOutput = pullRequestWorkflow.indexOf('changed_manifests=', activeManifestFilter)
     const manifestValidation = pullRequestWorkflow.indexOf('CHANGED_MANIFESTS_JSON:', activeManifestOutput)
     const kubeconformInput = pullRequestWorkflow.indexOf('<<< "${CHANGED_MANIFESTS_JSON}"', manifestValidation)
 
-    expect(fetchFilesStep).toBeGreaterThan(-1)
-    expect(activeManifestFilter).toBeGreaterThan(fetchFilesStep)
+    expect(deriveFilesStep).toBeGreaterThan(-1)
+    expect(activeManifestFilter).toBeGreaterThan(deriveFilesStep)
     expect(activeManifestOutput).toBeGreaterThan(activeManifestFilter)
     expect(manifestValidation).toBeGreaterThan(activeManifestOutput)
     expect(kubeconformInput).toBeGreaterThan(manifestValidation)
@@ -449,14 +454,15 @@ describe('torghut build-push workflow', () => {
       ],
     ])
     const parityCall = runtimeGroupLines.indexOf('assert_image_contract_parity \\')
-    expect(runtimeGroupLines.slice(parityCall, parityCall + 7)).toEqual([
+    expect(runtimeGroupLines.slice(parityCall, parityCall + 8)).toEqual([
       'assert_image_contract_parity \\',
       'TORGHUT_COMMIT \\',
       'registry.ide-newton.ts.net/lab/torghut \\',
       'argocd/applications/torghut/knative-service.yaml \\',
       'argocd/applications/torghut/knative-service-sim.yaml \\',
       'argocd/applications/torghut/scheduler-deployment.yaml \\',
-      'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml',
+      'argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml \\',
+      'argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml',
     ])
     expect(releaseManifestJobBody).toContain('if [ "${source_sha}" != "${reference_source_sha}" ]; then')
     expect(releaseManifestJobBody).toContain('if [ "${image_ref}" != "${reference_image_ref}" ]; then')

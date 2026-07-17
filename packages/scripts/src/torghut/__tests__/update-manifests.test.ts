@@ -19,6 +19,7 @@ const createFixture = () => {
   const analysisArtifactManifestPath = join(dir, 'analysis-template-artifact-bundle.yaml')
   const generatedResourceRetentionManifestPath = join(dir, 'generated-resource-retention-cronjob.yaml')
   const brokerEconomicLedgerReconciliationManifestPath = join(dir, 'broker-economic-ledger-reconciliation-cronjob.yaml')
+  const orderLineageReconciliationManifestPath = join(dir, 'order-lineage-reconciliation-cronjob.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const hyperliquidRuntimeManifestPath = join(dir, 'hyperliquid-runtime-deployment.yaml')
   const hyperliquidRuntimeMigrationManifestPath = join(dir, 'hyperliquid-runtime-db-migrations-job.yaml')
@@ -119,6 +120,7 @@ spec:
     analysisArtifactManifestPath,
     generatedResourceRetentionManifestPath,
     brokerEconomicLedgerReconciliationManifestPath,
+    orderLineageReconciliationManifestPath,
     tigerBeetleSmokeManifestPath,
   ]) {
     writeFileSync(
@@ -215,6 +217,7 @@ spec:
     analysisArtifactManifestPath,
     generatedResourceRetentionManifestPath,
     brokerEconomicLedgerReconciliationManifestPath,
+    orderLineageReconciliationManifestPath,
     tigerBeetleSmokeManifestPath,
     hyperliquidRuntimeManifestPath,
     hyperliquidRuntimeMigrationManifestPath,
@@ -249,6 +252,7 @@ const updateOptionsForFixture = (
     repoRoot,
     fixture.brokerEconomicLedgerReconciliationManifestPath,
   ),
+  orderLineageReconciliationManifestPath: relative(repoRoot, fixture.orderLineageReconciliationManifestPath),
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
   hyperliquidRuntimeManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeManifestPath),
   hyperliquidRuntimeMigrationManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeMigrationManifestPath),
@@ -316,6 +320,7 @@ describe('update-manifests', () => {
       fixture.brokerEconomicLedgerReconciliationManifestPath,
       'utf8',
     )
+    const orderLineageReconciliationManifest = readFileSync(fixture.orderLineageReconciliationManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const hyperliquidRuntimeManifest = readFileSync(fixture.hyperliquidRuntimeManifestPath, 'utf8')
     const hyperliquidRuntimeMigrationManifest = readFileSync(fixture.hyperliquidRuntimeMigrationManifestPath, 'utf8')
@@ -361,6 +366,7 @@ describe('update-manifests', () => {
       analysisArtifactManifest,
       generatedResourceRetentionManifest,
       brokerEconomicLedgerReconciliationManifest,
+      orderLineageReconciliationManifest,
       tigerBeetleSmokeManifest,
       hyperliquidRuntimeManifest,
       hyperliquidRuntimeMigrationManifest,
@@ -389,7 +395,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(17)
+    expect(result.changedPaths.length).toBe(18)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -417,7 +423,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(14)
+    expect(result.changedPaths.length).toBe(15)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

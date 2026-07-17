@@ -25,6 +25,7 @@ from app.trading.broker_mutation_receipts.runtime_status import (
 )
 from app.trading.economic_ledger import LedgerScope, load_broker_economic_ledger_status
 from app.trading.execution_runtime import build_execution_status_payload
+from app.trading.order_lineage_runs import load_order_lineage_repair_status
 from app.trading.scheduler import TradingScheduler
 from app.trading.scheduler.runtime_health import scheduler_readiness_payload
 from app.trading.strategy_capital_authority_store import (
@@ -80,7 +81,7 @@ def _configured_broker_endpoint() -> str:
     )
 
 
-def _configured_broker_environment() -> str:
+def configured_broker_environment() -> str:
     try:
         return classify_alpaca_trading_endpoint(_configured_broker_endpoint())
     except ValueError:
@@ -200,7 +201,7 @@ def trading_status() -> dict[str, object] | Response:
         lambda session: load_broker_account_activity_status(
             session,
             account_label=settings.trading_account_label,
-            environment=_configured_broker_environment(),
+            environment=configured_broker_environment(),
             observed_at=datetime.now(timezone.utc),
         ),
         unavailable={
@@ -215,7 +216,7 @@ def trading_status() -> dict[str, object] | Response:
             session,
             scope=LedgerScope(
                 provider="alpaca",
-                environment=_configured_broker_environment(),
+                environment=configured_broker_environment(),
                 account_label=settings.trading_account_label,
                 endpoint_fingerprint=fingerprint_broker_endpoint(
                     _configured_broker_endpoint()
@@ -231,6 +232,23 @@ def trading_status() -> dict[str, object] | Response:
             "diagnostic_only": True,
             "capital_authority": False,
             "reason_codes": ["economic_reconciliation_status_unavailable"],
+        },
+    )
+    order_lineage = _read_with_session(
+        lambda session: load_order_lineage_repair_status(
+            session,
+            provider="alpaca",
+            environment=configured_broker_environment(),
+            account_label=settings.trading_account_label,
+        ),
+        unavailable={
+            "schema_version": "torghut.order-lineage-repair-status.v1",
+            "state": "unavailable",
+            "closed_census": False,
+            "current_version": False,
+            "diagnostic_only": True,
+            "promotion_authority_eligible": False,
+            "reason_codes": ["order_lineage_status_unavailable"],
         },
     )
     tca = _read_with_session(
@@ -265,6 +283,7 @@ def trading_status() -> dict[str, object] | Response:
         "broker_mutation_safety": broker_mutation,
         "broker_economic_activities": broker_economic_activities,
         "broker_economic_ledger": broker_economic_ledger,
+        "order_lineage": order_lineage,
         "capital_controls": _capital_controls(state),
         "execution": build_execution_status_payload(
             state=state,
@@ -282,4 +301,4 @@ def trading_status() -> dict[str, object] | Response:
     }
 
 
-__all__ = ("router", "trading_status")
+__all__ = ("configured_broker_environment", "router", "trading_status")
