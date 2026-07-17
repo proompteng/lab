@@ -27,11 +27,145 @@ def test_default_mode_is_read_only_replay() -> None:
 
     assert args.observe is False
     assert args.publish_token is None
+    assert args.source_consistency_timeout_seconds == 0
 
 
 def test_tigerbeetle_parity_requires_observation_mode() -> None:
     with pytest.raises(SystemExit):
         replay_cli._parse_args(["--tigerbeetle-parity"])
+
+
+def test_source_consistency_retry_requires_observation_mode() -> None:
+    with pytest.raises(SystemExit):
+        replay_cli._parse_args(["--source-consistency-timeout-seconds", "1"])
+
+
+def test_source_consistency_retry_rejects_negative_timeout() -> None:
+    with pytest.raises(SystemExit):
+        replay_cli._parse_args(
+            ["--observe", "--source-consistency-timeout-seconds", "-1"]
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    sorted(replay_cli._SOURCE_CONSISTENCY_RETRY_REASONS),
+)
+def test_observation_retries_only_source_consistency_races(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    reason: str,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def execute_attempt(
+        *_args: object, **_kwargs: object
+    ) -> tuple[dict[str, object], int]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise replay_cli.EconomicLedgerError(reason)
+        return {"schema_version": "test-observation"}, 0
+
+    monkeypatch.setattr(
+        replay_cli,
+        "TorghutAlpacaClient",
+        lambda: SimpleNamespace(
+            endpoint_class="paper",
+            endpoint_url="https://paper-api.alpaca.markets",
+        ),
+    )
+    monkeypatch.setattr(replay_cli, "_execute_attempt", execute_attempt)
+    monkeypatch.setattr(replay_cli.time, "sleep", delays.append)
+    monkeypatch.setattr(replay_cli, "BUILD_COMMIT", "a" * 40)
+    monkeypatch.setattr(replay_cli, "BUILD_IMAGE_DIGEST", f"sha256:{'b' * 64}")
+
+    assert (
+        replay_cli.main(["--observe", "--source-consistency-timeout-seconds", "30"])
+        == 0
+    )
+
+    captured = capsys.readouterr()
+    retry_log = json.loads(captured.err)
+    assert attempts == 2
+    assert delays == [replay_cli._SOURCE_CONSISTENCY_RETRY_DELAY_SECONDS]
+    assert retry_log["reason"] == reason
+    assert retry_log["schema_version"] == (
+        "torghut.broker-economic-source-retry-log.v1"
+    )
+    assert json.loads(captured.out)["schema_version"] == "test-observation"
+
+
+def test_observation_does_not_retry_non_source_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    def execute_attempt(
+        *_args: object, **_kwargs: object
+    ) -> tuple[dict[str, object], int]:
+        nonlocal attempts
+        attempts += 1
+        raise replay_cli.EconomicLedgerError("tigerbeetle_economic_account_mismatch")
+
+    monkeypatch.setattr(
+        replay_cli,
+        "TorghutAlpacaClient",
+        lambda: SimpleNamespace(
+            endpoint_class="paper",
+            endpoint_url="https://paper-api.alpaca.markets",
+        ),
+    )
+    monkeypatch.setattr(replay_cli, "_execute_attempt", execute_attempt)
+    monkeypatch.setattr(replay_cli.time, "sleep", delays.append)
+    monkeypatch.setattr(replay_cli, "BUILD_COMMIT", "a" * 40)
+    monkeypatch.setattr(replay_cli, "BUILD_IMAGE_DIGEST", f"sha256:{'b' * 64}")
+
+    with pytest.raises(
+        replay_cli.EconomicLedgerError,
+        match="tigerbeetle_economic_account_mismatch",
+    ):
+        replay_cli.main(["--observe", "--source-consistency-timeout-seconds", "30"])
+
+    assert attempts == 1
+    assert delays == []
+
+
+def test_observation_source_retry_timeout_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    monotonic_values = iter((10.0, 11.0))
+
+    def execute_attempt(
+        *_args: object, **_kwargs: object
+    ) -> tuple[dict[str, object], int]:
+        nonlocal attempts
+        attempts += 1
+        raise replay_cli.EconomicLedgerError("economic_ledger_source_cursor_incomplete")
+
+    monkeypatch.setattr(
+        replay_cli,
+        "TorghutAlpacaClient",
+        lambda: SimpleNamespace(
+            endpoint_class="paper",
+            endpoint_url="https://paper-api.alpaca.markets",
+        ),
+    )
+    monkeypatch.setattr(replay_cli, "_execute_attempt", execute_attempt)
+    monkeypatch.setattr(replay_cli.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(replay_cli, "BUILD_COMMIT", "a" * 40)
+    monkeypatch.setattr(replay_cli, "BUILD_IMAGE_DIGEST", f"sha256:{'b' * 64}")
+
+    with pytest.raises(
+        replay_cli.EconomicLedgerError,
+        match="economic_ledger_source_cursor_incomplete",
+    ):
+        replay_cli.main(["--observe", "--source-consistency-timeout-seconds", "1"])
+
+    assert attempts == 1
 
 
 def test_observation_log_excludes_token_scope_and_broker_economics() -> None:
