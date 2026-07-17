@@ -15,13 +15,16 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from app.models import OrderLineageRepairReceipt
 from app.trading.order_lineage_receipts import (
     CLASSIFICATION_LINKED_INCOMPLETE,
     CLASSIFICATION_ORDER_FEED_ONLY,
     CONFIDENCE_EXACT,
     EXECUTION_SOURCE_CROSS_DSN,
     MATCH_BASIS_ALPACA_ORDER_ID,
+    MATCH_BASIS_CLIENT_ORDER_ID,
     OrderLineageEvidence,
+    OrderLineageReceiptDraft,
     build_order_lineage_receipt,
     persist_order_lineage_receipt,
 )
@@ -97,6 +100,48 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
                 observed_at=now,
             )
             assert not source_gap.reused_existing
+            client_fallback = persist_order_lineage_receipt(
+                session,
+                build_order_lineage_receipt(
+                    replace(
+                        evidence,
+                        alpaca_order_id=None,
+                        client_order_id="fallback-client-order",
+                        match_basis=(MATCH_BASIS_CLIENT_ORDER_ID,),
+                    )
+                ),
+                observed_at=now,
+            )
+            broker_primary_draft = build_order_lineage_receipt(
+                replace(
+                    evidence,
+                    alpaca_order_id="fallback-broker-order",
+                    client_order_id="fallback-client-order",
+                    match_basis=(
+                        MATCH_BASIS_ALPACA_ORDER_ID,
+                        MATCH_BASIS_CLIENT_ORDER_ID,
+                    ),
+                )
+            )
+            enriched_fallback = persist_order_lineage_receipt(
+                session,
+                broker_primary_draft,
+                observed_at=now,
+            )
+            assert (
+                client_fallback.receipt.order_identity_sha256
+                == enriched_fallback.receipt.order_identity_sha256
+            )
+            fallback_identity = enriched_fallback.receipt.evidence["order_identity"]
+            assert isinstance(fallback_identity, dict)
+            assert (
+                fallback_identity["primary_order_id_kind"]
+                == MATCH_BASIS_CLIENT_ORDER_ID
+            )
+            with pytest.raises(DBAPIError, match="identity alias conflict"):
+                with session.begin_nested():
+                    session.add(_receipt_row(broker_primary_draft, observed_at=now))
+                    session.flush()
 
         concurrent_draft = build_order_lineage_receipt(
             replace(
@@ -233,6 +278,32 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
             connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         schema_engine.dispose()
         admin_engine.dispose()
+
+
+def _receipt_row(
+    draft: OrderLineageReceiptDraft,
+    *,
+    observed_at: datetime,
+) -> OrderLineageRepairReceipt:
+    return OrderLineageRepairReceipt(
+        repair_version=draft.repair_version,
+        provider=draft.provider,
+        environment=draft.environment,
+        account_label=draft.account_label,
+        order_identity_sha256=draft.order_identity_sha256,
+        alpaca_order_id=draft.alpaca_order_id,
+        client_order_id=draft.client_order_id,
+        classification=draft.classification,
+        confidence=draft.confidence,
+        execution_source=draft.execution_source,
+        source_first_at=draft.source_first_at,
+        source_last_at=draft.source_last_at,
+        evidence=draft.evidence,
+        evidence_canonical_json=draft.evidence_canonical_json,
+        evidence_sha256=draft.evidence_sha256,
+        promotion_authority_eligible=False,
+        observed_at=observed_at,
+    )
 
 
 def _apply_migration(engine: Engine, filename: str) -> None:

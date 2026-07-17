@@ -134,6 +134,30 @@ def _create_table() -> None:
         _TABLE,
         ["repair_version", "classification", "confidence"],
     )
+    op.create_index(
+        "ix_order_lineage_receipt_alpaca_alias",
+        _TABLE,
+        [
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "alpaca_order_id",
+        ],
+        postgresql_where=sa.text("alpaca_order_id IS NOT NULL"),
+    )
+    op.create_index(
+        "ix_order_lineage_receipt_client_alias",
+        _TABLE,
+        [
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "client_order_id",
+        ],
+        postgresql_where=sa.text("client_order_id IS NOT NULL"),
+    )
 
 
 def _create_guard() -> None:
@@ -179,6 +203,13 @@ def _create_guard() -> None:
                     RAISE EXCEPTION 'order lineage repair receipt is append-only'
                         USING ERRCODE = '23514';
                 END IF;
+                PERFORM pg_advisory_xact_lock(hashtextextended(
+                    NEW.repair_version || chr(31) ||
+                    NEW.provider || chr(31) ||
+                    NEW.environment || chr(31) ||
+                    NEW.account_label,
+                    0
+                ));
                 BEGIN
                     evidence_document := NEW.evidence_canonical_json::jsonb;
                 EXCEPTION WHEN invalid_text_representation THEN
@@ -372,16 +403,14 @@ def _create_guard() -> None:
                         USING ERRCODE = '23514';
                 END IF;
 
-                expected_primary_order_id_kind := CASE
-                    WHEN NEW.alpaca_order_id IS NOT NULL THEN 'alpaca_order_id'
-                    ELSE 'client_order_id'
+                expected_primary_order_id_kind :=
+                    evidence_document#>>'{{order_identity,primary_order_id_kind}}';
+                expected_primary_order_id := CASE expected_primary_order_id_kind
+                    WHEN 'alpaca_order_id' THEN NEW.alpaca_order_id
+                    WHEN 'client_order_id' THEN NEW.client_order_id
+                    ELSE NULL
                 END;
-                expected_primary_order_id := COALESCE(
-                    NEW.alpaca_order_id,
-                    NEW.client_order_id
-                );
-                IF evidence_document#>>'{{order_identity,primary_order_id_kind}}'
-                       IS DISTINCT FROM expected_primary_order_id_kind
+                IF expected_primary_order_id IS NULL
                    OR evidence_document#>>'{{order_identity,primary_order_id}}'
                        IS DISTINCT FROM expected_primary_order_id THEN
                     RAISE EXCEPTION 'order lineage repair primary identity mismatch'
@@ -402,6 +431,43 @@ def _create_guard() -> None:
                 IF NEW.order_identity_sha256
                        IS DISTINCT FROM expected_order_identity_sha256 THEN
                     RAISE EXCEPTION 'order lineage repair identity hash mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF EXISTS (
+                    SELECT 1
+                      FROM order_lineage_repair_receipts AS existing
+                     WHERE existing.repair_version = NEW.repair_version
+                       AND existing.provider = NEW.provider
+                       AND existing.environment = NEW.environment
+                       AND existing.account_label = NEW.account_label
+                       AND (
+                           (
+                               NEW.alpaca_order_id IS NOT NULL
+                               AND existing.alpaca_order_id = NEW.alpaca_order_id
+                           )
+                           OR (
+                               NEW.client_order_id IS NOT NULL
+                               AND existing.client_order_id = NEW.client_order_id
+                           )
+                       )
+                       AND (
+                           existing.order_identity_sha256
+                               <> NEW.order_identity_sha256
+                           OR (
+                               existing.alpaca_order_id IS NOT NULL
+                               AND NEW.alpaca_order_id IS NOT NULL
+                               AND existing.alpaca_order_id
+                                   <> NEW.alpaca_order_id
+                           )
+                           OR (
+                               existing.client_order_id IS NOT NULL
+                               AND NEW.client_order_id IS NOT NULL
+                               AND existing.client_order_id
+                                   <> NEW.client_order_id
+                           )
+                       )
+                ) THEN
+                    RAISE EXCEPTION 'order lineage receipt identity alias conflict'
                         USING ERRCODE = '23514';
                 END IF;
 

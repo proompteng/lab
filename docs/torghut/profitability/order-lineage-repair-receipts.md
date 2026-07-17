@@ -44,12 +44,14 @@ The grain is one observed evidence state under a stable primary order identity:
 (provider, environment, account label, primary order-ID kind, primary order-ID value)
 ```
 
-At least one order ID is required. The broker order ID is primary when present; the client order ID is the explicit
-fallback. Adding a client ID to evidence that already has a broker order ID therefore appends evidence under the same
-identity instead of manufacturing a second order. The canonical primary identity is SHA-256 hashed from a
-byte-length-prefixed scope and primary-ID tuple so PostgreSQL can independently derive it. A receipt is
-uniquely keyed by identity, repair version, and evidence digest. Repeating the same evidence reuses the same row. Later
-order events or broker activities produce a new append-only evidence state; older states remain inspectable.
+At least one order ID is required. A new identity uses the broker order ID when present and otherwise uses the client
+order ID as its fallback. Once established, that primary identity never changes: when a later observation adds the
+missing broker or client alias, the writer resolves the existing scoped alias under a transaction lock, carries both
+IDs forward, and appends under the original identity. Conflicting independent histories fail closed instead of being
+silently merged. No second alias table or mutable mapping authority is introduced. The canonical primary identity is
+SHA-256 hashed from a byte-length-prefixed scope and primary-ID tuple so PostgreSQL can independently derive it. A
+receipt is uniquely keyed by identity, repair version, and evidence digest. Repeating the same evidence reuses the same
+row. Later order events or broker activities produce a new append-only evidence state; older states remain inspectable.
 
 Consumers select only the explicitly supported `repair_version` and the latest evidence state per order identity.
 Removing a version from the supported set invalidates it for current proof without deleting or rewriting its rows.
@@ -104,7 +106,7 @@ Migration `0081_order_lineage_receipts` creates `order_lineage_repair_receipts` 
 
 - check constraints for identity, classifications, execution-source consistency, and source windows;
 - unique evidence-state identity for repeatable backfill;
-- indexes for current-version selection and classification census;
+- indexes for current-version selection, classification census, and scoped broker/client alias resolution;
 - a PostgreSQL trigger that verifies the immutable JSON document and SHA-256, primary identity, source arrays and
   subsets, timestamps, causal-link shape, explicit blockers, and complete-link requirements on insert;
 - exact PostgreSQL JSONB canonical bytes, with the identity digest independently recomputed instead of trusted from the

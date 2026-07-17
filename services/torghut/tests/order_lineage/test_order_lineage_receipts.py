@@ -121,6 +121,75 @@ def test_broker_order_identity_does_not_change_when_client_id_arrives() -> None:
     }
 
 
+def test_client_fallback_identity_does_not_change_when_broker_id_arrives() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    OrderLineageRepairReceipt.__table__.create(engine)
+    evidence = linked_incomplete_evidence()
+    client_only = build_order_lineage_receipt(
+        replace(
+            evidence,
+            alpaca_order_id=None,
+            match_basis=(MATCH_BASIS_CLIENT_ORDER_ID,),
+        )
+    )
+    both_ids = build_order_lineage_receipt(evidence)
+
+    with Session(engine) as session, session.begin():
+        first = persist_order_lineage_receipt(
+            session,
+            client_only,
+            observed_at=BASE_TIME,
+        )
+        enriched = persist_order_lineage_receipt(
+            session,
+            both_ids,
+            observed_at=BASE_TIME + timedelta(seconds=1),
+        )
+
+        assert (
+            first.receipt.order_identity_sha256
+            == enriched.receipt.order_identity_sha256
+        )
+        assert enriched.receipt.alpaca_order_id == evidence.alpaca_order_id
+        assert enriched.receipt.client_order_id == evidence.client_order_id
+        identity = enriched.receipt.evidence["order_identity"]
+        assert isinstance(identity, dict)
+        assert identity["primary_order_id_kind"] == MATCH_BASIS_CLIENT_ORDER_ID
+        assert identity["primary_order_id"] == evidence.client_order_id
+        assert session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == 2
+
+
+def test_conflicting_independent_identity_histories_fail_closed() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    OrderLineageRepairReceipt.__table__.create(engine)
+    evidence = linked_incomplete_evidence()
+    client_only = build_order_lineage_receipt(
+        replace(
+            evidence,
+            alpaca_order_id=None,
+            match_basis=(MATCH_BASIS_CLIENT_ORDER_ID,),
+        )
+    )
+    broker_only = build_order_lineage_receipt(
+        replace(
+            evidence,
+            client_order_id=None,
+            match_basis=(MATCH_BASIS_ALPACA_ORDER_ID,),
+        )
+    )
+
+    with Session(engine) as session, session.begin():
+        persist_order_lineage_receipt(session, client_only, observed_at=BASE_TIME)
+        persist_order_lineage_receipt(session, broker_only, observed_at=BASE_TIME)
+        with pytest.raises(ValueError, match="identity_alias_conflict"):
+            persist_order_lineage_receipt(
+                session,
+                build_order_lineage_receipt(evidence),
+                observed_at=BASE_TIME + timedelta(seconds=1),
+            )
+        assert session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == 2
+
+
 def test_complete_receipt_requires_every_causal_link_and_no_blockers() -> None:
     complete = replace(
         linked_incomplete_evidence(),

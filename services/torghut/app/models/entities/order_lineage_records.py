@@ -129,6 +129,24 @@ class OrderLineageRepairReceipt(Base, CreatedAtMixin):
             "classification",
             "confidence",
         ),
+        Index(
+            "ix_order_lineage_receipt_alpaca_alias",
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "alpaca_order_id",
+            postgresql_where=text("alpaca_order_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_order_lineage_receipt_client_alias",
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "client_order_id",
+            postgresql_where=text("client_order_id IS NOT NULL"),
+        ),
     )
 
 

@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Final, cast
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, text as sql_text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..models import OrderLineageRepairReceipt, coerce_json_payload
 
@@ -64,6 +65,7 @@ MATCH_BASIS_CLIENT_ORDER_ID: Final = "client_order_id"
 MATCH_BASES: Final = frozenset(
     {MATCH_BASIS_ALPACA_ORDER_ID, MATCH_BASIS_CLIENT_ORDER_ID}
 )
+_IDENTITY_SCOPE_LOCK_STATE: Final = "order_lineage_identity_scope_lock_state"
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +142,21 @@ class OrderLineageReceiptDraft:
 class PersistedOrderLineageReceipt:
     receipt: OrderLineageRepairReceipt
     reused_existing: bool
+
+
+@dataclass(slots=True)
+class _IdentityScopeLockState:
+    transaction: object
+    locked_scopes: set[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _DurableOrderIdentity:
+    sha256: str
+    primary_order_id_kind: str
+    primary_order_id: str
+    alpaca_order_id: str | None
+    client_order_id: str | None
 
 
 def _normalize_evidence(
@@ -326,14 +343,8 @@ def persist_order_lineage_receipt(
 ) -> PersistedOrderLineageReceipt:
     """Append a new evidence state or reuse the exact existing receipt."""
 
-    existing = session.scalar(
-        select(OrderLineageRepairReceipt).where(
-            OrderLineageRepairReceipt.order_identity_sha256
-            == draft.order_identity_sha256,
-            OrderLineageRepairReceipt.repair_version == draft.repair_version,
-            OrderLineageRepairReceipt.evidence_sha256 == draft.evidence_sha256,
-        )
-    )
+    _acquire_identity_scope_lock(session, draft)
+    draft, existing = _resolve_durable_order_identity(session, draft)
     if existing is not None:
         return PersistedOrderLineageReceipt(
             receipt=existing,
@@ -376,6 +387,193 @@ def persist_order_lineage_receipt(
             raise
         return PersistedOrderLineageReceipt(receipt=existing, reused_existing=True)
     return PersistedOrderLineageReceipt(receipt=row, reused_existing=False)
+
+
+def _acquire_identity_scope_lock(
+    session: Session,
+    draft: OrderLineageReceiptDraft,
+) -> None:
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.connection()
+    transaction = session.get_transaction()
+    if transaction is None:
+        raise RuntimeError("order_lineage_transaction_missing")
+    scope = "\x1f".join(
+        (
+            draft.repair_version,
+            draft.provider,
+            draft.environment,
+            draft.account_label,
+        )
+    )
+    state = session.info.get(_IDENTITY_SCOPE_LOCK_STATE)
+    if not isinstance(state, _IdentityScopeLockState) or (
+        state.transaction is not transaction
+    ):
+        state = _IdentityScopeLockState(transaction=transaction, locked_scopes=set())
+        session.info[_IDENTITY_SCOPE_LOCK_STATE] = state
+    if scope in state.locked_scopes:
+        return
+    session.execute(
+        sql_text("SELECT pg_advisory_xact_lock(hashtextextended(:identity_scope, 0))"),
+        {"identity_scope": scope},
+    )
+    state.locked_scopes.add(scope)
+
+
+def _resolve_durable_order_identity(
+    session: Session,
+    draft: OrderLineageReceiptDraft,
+) -> tuple[OrderLineageReceiptDraft, OrderLineageRepairReceipt | None]:
+    matches = _matching_identity_receipts(session, draft)
+    if not matches:
+        return draft, None
+    durable = _durable_identity_for_matches(matches, draft)
+
+    payload = dict(draft.evidence)
+    identity_value = payload.get("order_identity")
+    if not isinstance(identity_value, dict):
+        raise ValueError("order_lineage_order_identity_document_missing")
+    order_identity = dict(cast(dict[str, object], identity_value))
+    order_identity.update(
+        {
+            "alpaca_order_id": durable.alpaca_order_id,
+            "client_order_id": durable.client_order_id,
+            "primary_order_id": durable.primary_order_id,
+            "primary_order_id_kind": durable.primary_order_id_kind,
+            "sha256": durable.sha256,
+        }
+    )
+    payload["order_identity"] = order_identity
+    canonical_json = _jsonb_canonical_json(payload)
+    resolved = replace(
+        draft,
+        order_identity_sha256=durable.sha256,
+        alpaca_order_id=durable.alpaca_order_id,
+        client_order_id=durable.client_order_id,
+        evidence=coerce_json_payload(payload),
+        evidence_canonical_json=canonical_json,
+        evidence_sha256=hashlib.sha256(canonical_json.encode("utf-8")).hexdigest(),
+    )
+    existing = next(
+        (
+            row
+            for row in matches
+            if row.order_identity_sha256 == resolved.order_identity_sha256
+            and row.evidence_sha256 == resolved.evidence_sha256
+        ),
+        None,
+    )
+    return resolved, existing
+
+
+def _durable_identity_for_matches(
+    matches: list[OrderLineageRepairReceipt],
+    draft: OrderLineageReceiptDraft,
+) -> _DurableOrderIdentity:
+    identity_hashes = {row.order_identity_sha256 for row in matches}
+    if len(identity_hashes) != 1:
+        raise ValueError("order_lineage_identity_alias_conflict")
+    primary_identities = {_persisted_primary_identity(row) for row in matches}
+    if len(primary_identities) != 1:
+        raise ValueError("order_lineage_primary_identity_conflict")
+    primary_order_id_kind, primary_order_id = next(iter(primary_identities))
+    alpaca_order_id = _single_order_alias(
+        draft.alpaca_order_id,
+        *(row.alpaca_order_id for row in matches),
+    )
+    client_order_id = _single_order_alias(
+        draft.client_order_id,
+        *(row.client_order_id for row in matches),
+    )
+    expected_primary_order_id = (
+        alpaca_order_id
+        if primary_order_id_kind == MATCH_BASIS_ALPACA_ORDER_ID
+        else client_order_id
+    )
+    if expected_primary_order_id != primary_order_id:
+        raise ValueError("order_lineage_primary_identity_alias_missing")
+    return _DurableOrderIdentity(
+        sha256=next(iter(identity_hashes)),
+        primary_order_id_kind=primary_order_id_kind,
+        primary_order_id=primary_order_id,
+        alpaca_order_id=alpaca_order_id,
+        client_order_id=client_order_id,
+    )
+
+
+def _matching_identity_receipts(
+    session: Session,
+    draft: OrderLineageReceiptDraft,
+) -> list[OrderLineageRepairReceipt]:
+    identity_conditions: list[ColumnElement[bool]] = []
+    if draft.alpaca_order_id is not None:
+        identity_conditions.append(
+            OrderLineageRepairReceipt.alpaca_order_id == draft.alpaca_order_id
+        )
+    if draft.client_order_id is not None:
+        identity_conditions.append(
+            OrderLineageRepairReceipt.client_order_id == draft.client_order_id
+        )
+    if not identity_conditions:
+        raise ValueError("order_lineage_order_identity_missing")
+    return list(
+        session.scalars(
+            select(OrderLineageRepairReceipt)
+            .where(
+                OrderLineageRepairReceipt.repair_version == draft.repair_version,
+                OrderLineageRepairReceipt.provider == draft.provider,
+                OrderLineageRepairReceipt.environment == draft.environment,
+                OrderLineageRepairReceipt.account_label == draft.account_label,
+                or_(*identity_conditions),
+            )
+            .order_by(
+                OrderLineageRepairReceipt.created_at,
+                OrderLineageRepairReceipt.id,
+            )
+        )
+    )
+
+
+def _persisted_primary_identity(
+    row: OrderLineageRepairReceipt,
+) -> tuple[str, str]:
+    identity_value = row.evidence.get("order_identity")
+    if not isinstance(identity_value, dict):
+        raise ValueError("order_lineage_order_identity_document_missing")
+    identity = cast(dict[str, object], identity_value)
+    primary_order_id_kind = _enum_value(
+        identity.get("primary_order_id_kind"),
+        MATCH_BASES,
+        "order_lineage_primary_identity_kind_invalid",
+    )
+    primary_order_id = _required_text(
+        identity.get("primary_order_id"),
+        "order_lineage_primary_identity_missing",
+    )
+    expected_alias = (
+        row.alpaca_order_id
+        if primary_order_id_kind == MATCH_BASIS_ALPACA_ORDER_ID
+        else row.client_order_id
+    )
+    expected_hash = _order_identity_sha256(
+        provider=row.provider,
+        environment=row.environment,
+        account_label=row.account_label,
+        primary_order_id_kind=primary_order_id_kind,
+        primary_order_id=primary_order_id,
+    )
+    if expected_alias != primary_order_id or expected_hash != row.order_identity_sha256:
+        raise ValueError("order_lineage_persisted_identity_invalid")
+    return primary_order_id_kind, primary_order_id
+
+
+def _single_order_alias(*values: str | None) -> str | None:
+    aliases = {value for value in values if value is not None}
+    if len(aliases) > 1:
+        raise ValueError("order_lineage_identity_alias_conflict")
+    return next(iter(aliases), None)
 
 
 def _validate_linkage_contract(evidence: _NormalizedOrderLineageEvidence) -> None:
