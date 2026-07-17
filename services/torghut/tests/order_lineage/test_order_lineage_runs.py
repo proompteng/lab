@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -22,9 +23,12 @@ from app.trading.order_lineage_receipts import (
     EXECUTION_SOURCE_CROSS_DSN,
     EXECUTION_SOURCE_NONE,
     MATCH_BASIS_ALPACA_ORDER_ID,
+    MATCH_BASIS_CLIENT_ORDER_ID,
     OrderLineageEvidence,
     OrderLineageReceiptDraft,
     build_order_lineage_receipt,
+    canonical_jsonb_text,
+    persist_order_lineage_receipt,
 )
 from app.trading.order_lineage_runs import (
     OrderLineageCensusSources,
@@ -257,6 +261,87 @@ def test_census_persistence_reuses_exact_run_and_rejects_nondeterminism() -> Non
                 )
         assert session.scalar(select(func.count(OrderLineageRepairRun.id))) == 1
         assert session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == 2
+
+
+def test_census_seals_the_durable_receipt_identity_after_alias_resolution() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    order_event_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    broker_fill_id = uuid.UUID("00000000-0000-0000-0001-000000000001")
+    client_only = build_order_lineage_receipt(
+        OrderLineageEvidence(
+            provider="alpaca",
+            environment="paper",
+            account_label="paper-account",
+            alpaca_order_id=None,
+            client_order_id="decision-1",
+            classification=CLASSIFICATION_LINKED_INCOMPLETE,
+            confidence=CONFIDENCE_EXACT,
+            execution_source=EXECUTION_SOURCE_CROSS_DSN,
+            canonical_execution_id=uuid.UUID("00000000-0000-0000-0003-000000000001"),
+            order_event_ids=(order_event_id,),
+            fill_order_event_ids=(order_event_id,),
+            broker_activity_ids=(broker_fill_id,),
+            broker_fill_activity_ids=(broker_fill_id,),
+            source_first_at=BASE_TIME,
+            source_last_at=BASE_TIME,
+            match_basis=(MATCH_BASIS_CLIENT_ORDER_ID,),
+            blockers=("submission_claim_missing",),
+        )
+    )
+    enriched = linked_receipt(1)
+    assert client_only.order_identity_sha256 != enriched.order_identity_sha256
+
+    with Session(engine) as session, session.begin():
+        session.add(
+            BrokerEconomicLedgerInput(
+                id=BROKER_INPUT_ID,
+                provider="alpaca",
+                source="account_activities_rest",
+                environment="paper",
+                account_label="paper-account",
+                endpoint_fingerprint="e" * 64,
+                quote_currency="USD",
+                source_cursor_id=uuid.uuid4(),
+                source_watermark=BASE_TIME,
+                input_count=2,
+                duplicate_count=0,
+                corrected_count=0,
+                manifest_canonical_json="{}",
+                manifest_sha256="b" * 64,
+            )
+        )
+        persist_order_lineage_receipt(
+            session,
+            client_only,
+            observed_at=BASE_TIME,
+        )
+        persisted = persist_order_lineage_census(
+            session,
+            census_sources(),
+            [enriched],
+            observed_at=BASE_TIME + timedelta(minutes=1),
+        )
+        current_receipt = session.scalar(
+            select(OrderLineageRepairReceipt)
+            .where(OrderLineageRepairReceipt.alpaca_order_id == "broker-order-1")
+            .limit(1)
+        )
+        assert current_receipt is not None
+        receipt_set = [
+            [
+                current_receipt.order_identity_sha256,
+                current_receipt.evidence_sha256,
+            ]
+        ]
+        expected_digest = hashlib.sha256(
+            canonical_jsonb_text(receipt_set).encode("utf-8")
+        ).hexdigest()
+
+        assert (
+            current_receipt.order_identity_sha256 == client_only.order_identity_sha256
+        )
+        assert persisted.run.run.result["receipt_set_sha256"] == expected_digest
 
 
 def test_status_is_explicitly_missing_without_a_closed_run() -> None:

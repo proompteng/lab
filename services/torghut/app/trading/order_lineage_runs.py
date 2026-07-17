@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
 from collections import Counter
 from dataclasses import dataclass
@@ -14,7 +13,11 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import OrderLineageRepairRun, coerce_json_payload
+from ..models import (
+    OrderLineageRepairReceipt,
+    OrderLineageRepairRun,
+    coerce_json_payload,
+)
 from .order_lineage_receipts import (
     CLASSIFICATIONS,
     CONFIDENCES,
@@ -180,8 +183,8 @@ def persist_order_lineage_census(
 ) -> PersistedOrderLineageCensus:
     """Persist changed receipt states and the closed run in one caller transaction."""
 
-    run_draft = build_order_lineage_repair_run(sources, receipts)
-    _acquire_scope_lock(session, run_draft)
+    normalized_sources = _normalize_sources(sources)
+    _acquire_scope_lock(session, normalized_sources)
     persisted_receipts = [
         persist_order_lineage_receipt(
             session,
@@ -190,6 +193,13 @@ def persist_order_lineage_census(
         )
         for receipt in receipts
     ]
+    run_draft = build_order_lineage_repair_run(
+        normalized_sources,
+        [
+            _draft_from_persisted_receipt(receipt.receipt)
+            for receipt in persisted_receipts
+        ],
+    )
     persisted_run = persist_order_lineage_repair_run(
         session,
         run_draft,
@@ -487,18 +497,43 @@ def _reused_run(
     return PersistedOrderLineageRepairRun(run=existing, reused_existing=True)
 
 
+def _draft_from_persisted_receipt(
+    receipt: OrderLineageRepairReceipt,
+) -> OrderLineageReceiptDraft:
+    """Bind a run to the exact receipt projection accepted by persistence."""
+
+    return OrderLineageReceiptDraft(
+        repair_version=receipt.repair_version,
+        provider=receipt.provider,
+        environment=receipt.environment,
+        account_label=receipt.account_label,
+        order_identity_sha256=receipt.order_identity_sha256,
+        alpaca_order_id=receipt.alpaca_order_id,
+        client_order_id=receipt.client_order_id,
+        classification=receipt.classification,
+        confidence=receipt.confidence,
+        execution_source=receipt.execution_source,
+        source_first_at=_persisted_utc(receipt.source_first_at),
+        source_last_at=_persisted_utc(receipt.source_last_at),
+        evidence=coerce_json_payload(receipt.evidence),
+        evidence_canonical_json=receipt.evidence_canonical_json,
+        evidence_sha256=receipt.evidence_sha256,
+        promotion_authority_eligible=receipt.promotion_authority_eligible,
+    )
+
+
 def _acquire_scope_lock(
     session: Session,
-    draft: OrderLineageRepairRunDraft,
+    sources: OrderLineageCensusSources,
 ) -> None:
     if session.get_bind().dialect.name != "postgresql":
         return
     scope = "\x1f".join(
         (
-            draft.repair_version,
-            draft.provider,
-            draft.environment,
-            draft.account_label,
+            ORDER_LINEAGE_REPAIR_VERSION,
+            sources.provider,
+            sources.environment,
+            sources.account_label,
         )
     )
     session.execute(
@@ -507,18 +542,8 @@ def _acquire_scope_lock(
     )
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
 def _canonical_sha256(value: object) -> str:
-    return _sha256(_canonical_json(value))
+    return _sha256(canonical_jsonb_text(value))
 
 
 def _sha256(value: str) -> str:
@@ -535,6 +560,12 @@ def _required_text(value: object, error: str) -> str:
 def _required_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("order_lineage_timestamp_timezone_missing")
+    return value.astimezone(timezone.utc)
+
+
+def _persisted_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 

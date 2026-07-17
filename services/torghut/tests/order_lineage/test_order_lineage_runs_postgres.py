@@ -169,6 +169,34 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
                 2,
             ),
         )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: _set_manifest_value(
+                value,
+                "order_feed",
+                "event_set_sha256",
+                "d" * 64,
+            ),
+            mutate_result=lambda value: _set_nested(
+                value,
+                "receipt_set_sha256",
+                "f" * 64,
+            ),
+            match="receipt membership mismatch",
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: _set_expected_receipt_count(
+                value,
+                count=2,
+                event_set_sha256="e" * 64,
+            ),
+            mutate_result=lambda value: _set_result_receipt_count(value, count=2),
+            receipt_count=2,
+            match="receipt membership mismatch",
+        )
         _assert_row_counts(schema_engine, receipts=1, runs=1)
 
         changed_input_id = uuid.uuid4()
@@ -349,6 +377,8 @@ def _assert_invalid_run_rejected(
     *,
     mutate_input: Callable[[dict[str, object]], dict[str, object]],
     mutate_result: Callable[[dict[str, object]], dict[str, object]] | None = None,
+    receipt_count: int | None = None,
+    match: str | None = None,
 ) -> None:
     input_manifest = mutate_input(copy.deepcopy(draft.input_manifest))
     result = copy.deepcopy(draft.result)
@@ -365,14 +395,14 @@ def _assert_invalid_run_rejected(
         input_manifest=input_manifest,
         input_manifest_canonical_json=input_json,
         input_manifest_sha256=_sha256(input_json),
-        receipt_count=draft.receipt_count,
+        receipt_count=(draft.receipt_count if receipt_count is None else receipt_count),
         result=result,
         result_canonical_json=result_json,
         result_sha256=_sha256(result_json),
         promotion_authority_eligible=False,
         observed_at=NOW,
     )
-    with pytest.raises(DBAPIError):
+    with pytest.raises(DBAPIError, match=match):
         with Session(engine) as session, session.begin():
             session.add(row)
             session.flush()
@@ -419,6 +449,49 @@ def _set_count(
     counts = value[section]
     assert isinstance(counts, dict)
     counts[key] = count
+    return value
+
+
+def _set_manifest_value(
+    value: dict[str, object],
+    section: str,
+    key: str,
+    replacement: object,
+) -> dict[str, object]:
+    document = value[section]
+    assert isinstance(document, dict)
+    document[key] = replacement
+    return value
+
+
+def _set_expected_receipt_count(
+    value: dict[str, object],
+    *,
+    count: int,
+    event_set_sha256: str,
+) -> dict[str, object]:
+    value["expected_order_identity_count"] = count
+    return _set_manifest_value(
+        value,
+        "order_feed",
+        "event_set_sha256",
+        event_set_sha256,
+    )
+
+
+def _set_result_receipt_count(
+    value: dict[str, object],
+    *,
+    count: int,
+) -> dict[str, object]:
+    value["receipt_count"] = count
+    for section, key in (
+        ("classification_counts", "linked_incomplete"),
+        ("confidence_counts", "exact"),
+        ("execution_source_counts", "canonical_cross_dsn"),
+        ("source_coverage_counts", "both"),
+    ):
+        _set_count(value, section, key, count)
     return value
 
 

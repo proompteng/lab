@@ -149,6 +149,12 @@ def _create_guard() -> None:
                 execution_source_receipt_count bigint;
                 source_coverage_counts jsonb;
                 source_covered_receipt_count bigint;
+                persisted_receipt_count bigint;
+                persisted_receipt_set_sha256 text;
+                persisted_classification_counts jsonb;
+                persisted_confidence_counts jsonb;
+                persisted_execution_source_counts jsonb;
+                persisted_source_coverage_counts jsonb;
             BEGIN
                 IF TG_OP IN ('UPDATE', 'DELETE', 'TRUNCATE') THEN
                     RAISE EXCEPTION 'order lineage repair run is append-only'
@@ -506,6 +512,112 @@ def _create_guard() -> None:
                     RAISE EXCEPTION 'order lineage repair run result mismatch'
                         USING ERRCODE = '23514';
                 END IF;
+                WITH current_receipts AS (
+                    SELECT DISTINCT ON (receipt.order_identity_sha256)
+                           receipt.order_identity_sha256,
+                           receipt.evidence_sha256,
+                           receipt.classification,
+                           receipt.confidence,
+                           receipt.execution_source,
+                           receipt.evidence
+                      FROM order_lineage_repair_receipts AS receipt
+                     WHERE receipt.repair_version = NEW.repair_version
+                       AND receipt.provider = NEW.provider
+                       AND receipt.environment = NEW.environment
+                       AND receipt.account_label = NEW.account_label
+                     ORDER BY receipt.order_identity_sha256,
+                              receipt.source_last_at DESC,
+                              receipt.created_at DESC,
+                              receipt.id DESC
+                )
+                SELECT count(*),
+                       encode(
+                           sha256(
+                               convert_to(
+                                   COALESCE(
+                                       jsonb_agg(
+                                           jsonb_build_array(
+                                               order_identity_sha256,
+                                               evidence_sha256
+                                           )
+                                           ORDER BY order_identity_sha256
+                                       ),
+                                       '[]'::jsonb
+                                   )::text,
+                                   'UTF8'
+                               )
+                           ),
+                           'hex'
+                       ),
+                       jsonb_build_object(
+                           'ambiguous', count(*) FILTER (
+                               WHERE classification = 'ambiguous'
+                           ),
+                           'broker_activity_only', count(*) FILTER (
+                               WHERE classification = 'broker_activity_only'
+                           ),
+                           'complete', count(*) FILTER (
+                               WHERE classification = 'complete'
+                           ),
+                           'external_or_unproved', count(*) FILTER (
+                               WHERE classification = 'external_or_unproved'
+                           ),
+                           'linked_incomplete', count(*) FILTER (
+                               WHERE classification = 'linked_incomplete'
+                           ),
+                           'order_feed_only', count(*) FILTER (
+                               WHERE classification = 'order_feed_only'
+                           )
+                       ),
+                       jsonb_build_object(
+                           'ambiguous', count(*) FILTER (
+                               WHERE confidence = 'ambiguous'
+                           ),
+                           'exact', count(*) FILTER (
+                               WHERE confidence = 'exact'
+                           ),
+                           'unproved', count(*) FILTER (
+                               WHERE confidence = 'unproved'
+                           )
+                       ),
+                       jsonb_build_object(
+                           'canonical_cross_dsn', count(*) FILTER (
+                               WHERE execution_source = 'canonical_cross_dsn'
+                           ),
+                           'local', count(*) FILTER (
+                               WHERE execution_source = 'local'
+                           ),
+                           'none', count(*) FILTER (
+                               WHERE execution_source = 'none'
+                           )
+                       ),
+                       jsonb_build_object(
+                           'both', count(*) FILTER (
+                               WHERE (evidence#>>'{{sources,counts,order_events}}')::bigint > 0
+                                 AND (evidence#>>'{{sources,counts,broker_activities}}')::bigint > 0
+                           ),
+                           'broker_activity_only', count(*) FILTER (
+                               WHERE (evidence#>>'{{sources,counts,order_events}}')::bigint = 0
+                                 AND (evidence#>>'{{sources,counts,broker_activities}}')::bigint > 0
+                           ),
+                           'order_feed_only', count(*) FILTER (
+                               WHERE (evidence#>>'{{sources,counts,order_events}}')::bigint > 0
+                                 AND (evidence#>>'{{sources,counts,broker_activities}}')::bigint = 0
+                           )
+                       )
+                  INTO persisted_receipt_count,
+                       persisted_receipt_set_sha256,
+                       persisted_classification_counts,
+                       persisted_confidence_counts,
+                       persisted_execution_source_counts,
+                       persisted_source_coverage_counts
+                  FROM current_receipts;
+                IF persisted_receipt_count IS DISTINCT FROM NEW.receipt_count
+                   OR persisted_receipt_set_sha256 IS DISTINCT FROM
+                       result_document->>'receipt_set_sha256' THEN
+                    RAISE EXCEPTION 'order lineage receipt membership mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
                 classification_counts := result_document->'classification_counts';
                 IF jsonb_typeof(classification_counts) IS DISTINCT FROM 'object'
                    OR (
@@ -530,7 +642,9 @@ def _create_guard() -> None:
                 SELECT COALESCE(sum(value::bigint), 0)
                   INTO classified_receipt_count
                   FROM jsonb_each_text(classification_counts);
-                IF classified_receipt_count IS DISTINCT FROM NEW.receipt_count THEN
+                IF classified_receipt_count IS DISTINCT FROM NEW.receipt_count
+                   OR classification_counts IS DISTINCT FROM
+                       persisted_classification_counts THEN
                     RAISE EXCEPTION 'order lineage classification counts mismatch'
                         USING ERRCODE = '23514';
                 END IF;
@@ -553,7 +667,9 @@ def _create_guard() -> None:
                 SELECT COALESCE(sum(value::bigint), 0)
                   INTO confidence_receipt_count
                   FROM jsonb_each_text(confidence_counts);
-                IF confidence_receipt_count IS DISTINCT FROM NEW.receipt_count THEN
+                IF confidence_receipt_count IS DISTINCT FROM NEW.receipt_count
+                   OR confidence_counts IS DISTINCT FROM
+                       persisted_confidence_counts THEN
                     RAISE EXCEPTION 'order lineage confidence counts mismatch'
                         USING ERRCODE = '23514';
                 END IF;
@@ -579,7 +695,9 @@ def _create_guard() -> None:
                   INTO execution_source_receipt_count
                   FROM jsonb_each_text(execution_source_counts);
                 IF execution_source_receipt_count
-                       IS DISTINCT FROM NEW.receipt_count THEN
+                       IS DISTINCT FROM NEW.receipt_count
+                   OR execution_source_counts IS DISTINCT FROM
+                       persisted_execution_source_counts THEN
                     RAISE EXCEPTION 'order lineage execution source counts mismatch'
                         USING ERRCODE = '23514';
                 END IF;
@@ -605,7 +723,9 @@ def _create_guard() -> None:
                 SELECT COALESCE(sum(value::bigint), 0)
                   INTO source_covered_receipt_count
                   FROM jsonb_each_text(source_coverage_counts);
-                IF source_covered_receipt_count IS DISTINCT FROM NEW.receipt_count THEN
+                IF source_covered_receipt_count IS DISTINCT FROM NEW.receipt_count
+                   OR source_coverage_counts IS DISTINCT FROM
+                       persisted_source_coverage_counts THEN
                     RAISE EXCEPTION 'order lineage source coverage counts mismatch'
                         USING ERRCODE = '23514';
                 END IF;
