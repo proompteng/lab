@@ -52,6 +52,7 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
         now = datetime(2026, 7, 16, 20, 0, tzinfo=timezone.utc)
         source_event_id = uuid.uuid4()
         broker_fill_id = uuid.uuid4()
+        execution_id = uuid.uuid4()
         evidence = OrderLineageEvidence(
             provider="alpaca",
             environment="paper",
@@ -61,7 +62,7 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
             classification=CLASSIFICATION_LINKED_INCOMPLETE,
             confidence=CONFIDENCE_EXACT,
             execution_source=EXECUTION_SOURCE_CROSS_DSN,
-            canonical_execution_id=uuid.uuid4(),
+            canonical_execution_id=execution_id,
             order_event_ids=(source_event_id,),
             fill_order_event_ids=(source_event_id,),
             broker_activity_ids=(broker_fill_id,),
@@ -164,15 +165,47 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
             schema_engine,
             receipt_id=receipt_id,
         )
-        _assert_source_ids_rejected(
+        _assert_evidence_value_rejected(
             schema_engine,
             receipt_id=receipt_id,
-            source_ids=["not-a-uuid"],
+            json_path="sources.order_event_ids",
+            value=["not-a-uuid"],
+            error="source IDs are not canonical",
         )
-        _assert_source_ids_rejected(
+        _assert_evidence_value_rejected(
             schema_engine,
             receipt_id=receipt_id,
-            source_ids=[str(source_event_id), str(source_event_id)],
+            json_path="sources.order_event_ids",
+            value=[str(source_event_id), str(source_event_id)],
+            error="source IDs are not canonical",
+        )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="match_basis",
+            value=["unrelated"],
+            error="match basis is not canonical",
+        )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="match_basis",
+            value=["alpaca_order_id", "alpaca_order_id"],
+            error="match basis is not canonical",
+        )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="links.execution_id",
+            value=str(execution_id).upper(),
+            error="causal link UUID is not canonical",
+        )
+        _assert_evidence_value_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+            json_path="blockers",
+            value=["decision_lineage_incomplete", "decision_lineage_incomplete"],
+            error="blockers are not canonical",
         )
     finally:
         with admin_engine.begin() as connection:
@@ -285,11 +318,13 @@ def _assert_identity_hash_rejected(
             )
 
 
-def _assert_source_ids_rejected(
+def _assert_evidence_value_rejected(
     engine: Engine,
     *,
     receipt_id: uuid.UUID,
-    source_ids: list[str],
+    json_path: str,
+    value: object,
+    error: str,
 ) -> None:
     statement = text(
         """
@@ -302,8 +337,8 @@ def _assert_source_ids_rejected(
                 source.*,
                 jsonb_set(
                     source.evidence,
-                    '{sources,order_event_ids}',
-                    CAST(:source_ids AS jsonb),
+                    string_to_array(:json_path, '.'),
+                    CAST(:json_value AS jsonb),
                     false
                 ) AS changed_evidence
               FROM source
@@ -332,13 +367,14 @@ def _assert_source_ids_rejected(
           FROM sealed
         """
     )
-    with pytest.raises(DBAPIError, match="source IDs are not canonical"):
+    with pytest.raises(DBAPIError, match=error):
         with engine.begin() as connection:
             connection.execute(
                 statement,
                 {
                     "new_id": uuid.uuid4(),
                     "receipt_id": receipt_id,
-                    "source_ids": json.dumps(source_ids),
+                    "json_path": json_path,
+                    "json_value": json.dumps(value),
                 },
             )

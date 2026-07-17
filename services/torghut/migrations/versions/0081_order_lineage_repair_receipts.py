@@ -156,6 +156,9 @@ def _create_guard() -> None:
                 broker_activity_count bigint;
                 broker_fill_count bigint;
                 source_ids_invalid boolean;
+                match_basis_invalid boolean;
+                blockers_invalid boolean;
+                link_ids_invalid boolean;
                 execution_id text;
                 trade_decision_id text;
                 strategy_id text;
@@ -206,6 +209,28 @@ def _create_guard() -> None:
                    OR (evidence_document->>'promotion_authority_eligible')::boolean
                        IS DISTINCT FROM NEW.promotion_authority_eligible THEN
                     RAISE EXCEPTION 'order lineage repair evidence contract mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF btrim(NEW.provider) IS DISTINCT FROM NEW.provider
+                   OR btrim(NEW.environment) IS DISTINCT FROM NEW.environment
+                   OR btrim(NEW.account_label) IS DISTINCT FROM NEW.account_label
+                   OR (
+                       NEW.alpaca_order_id IS NOT NULL
+                       AND (
+                           btrim(NEW.alpaca_order_id) = ''
+                           OR btrim(NEW.alpaca_order_id)
+                               IS DISTINCT FROM NEW.alpaca_order_id
+                       )
+                   )
+                   OR (
+                       NEW.client_order_id IS NOT NULL
+                       AND (
+                           btrim(NEW.client_order_id) = ''
+                           OR btrim(NEW.client_order_id)
+                               IS DISTINCT FROM NEW.client_order_id
+                       )
+                   ) THEN
+                    RAISE EXCEPTION 'order lineage scope or order ID is not canonical'
                         USING ERRCODE = '23514';
                 END IF;
                 IF evidence_document#>>'{{order_identity,provider}}'
@@ -285,6 +310,62 @@ def _create_guard() -> None:
                         USING ERRCODE = '23514';
                 END IF;
 
+                WITH blocker_values AS (
+                    SELECT
+                        item,
+                        item#>>'{{}}' AS value,
+                        ordinality
+                      FROM jsonb_array_elements(blockers) WITH ORDINALITY
+                           AS entries(item, ordinality)
+                ), ordered_blockers AS (
+                    SELECT
+                        item,
+                        value,
+                        lag(value) OVER (ORDER BY ordinality) AS prior_value
+                      FROM blocker_values
+                )
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM ordered_blockers
+                     WHERE jsonb_typeof(item) IS DISTINCT FROM 'string'
+                        OR value IS NULL
+                        OR btrim(value) = ''
+                        OR btrim(value) IS DISTINCT FROM value
+                        OR prior_value COLLATE "C" >= value COLLATE "C"
+                ) INTO blockers_invalid;
+                IF blockers_invalid THEN
+                    RAISE EXCEPTION 'order lineage blockers are not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+
+                WITH basis_values AS (
+                    SELECT
+                        item,
+                        item#>>'{{}}' AS value,
+                        ordinality
+                      FROM jsonb_array_elements(match_basis) WITH ORDINALITY
+                           AS entries(item, ordinality)
+                ), ordered_bases AS (
+                    SELECT
+                        item,
+                        value,
+                        lag(value) OVER (ORDER BY ordinality) AS prior_value
+                      FROM basis_values
+                )
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM ordered_bases
+                     WHERE jsonb_typeof(item) IS DISTINCT FROM 'string'
+                        OR value NOT IN ('alpaca_order_id', 'client_order_id')
+                        OR prior_value COLLATE "C" >= value COLLATE "C"
+                        OR (value = 'alpaca_order_id' AND NEW.alpaca_order_id IS NULL)
+                        OR (value = 'client_order_id' AND NEW.client_order_id IS NULL)
+                ) INTO match_basis_invalid;
+                IF match_basis_invalid THEN
+                    RAISE EXCEPTION 'order lineage match basis is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
+
                 WITH source_ids AS (
                     SELECT 'order_event_ids' AS source_array, value, ordinality
                       FROM jsonb_array_elements_text(order_event_ids)
@@ -356,11 +437,23 @@ def _create_guard() -> None:
                 tca_metric_id := NULLIF(
                     evidence_document#>>'{{links,tca_metric_id}}', ''
                 );
-                PERFORM execution_id::uuid;
-                PERFORM trade_decision_id::uuid;
-                PERFORM strategy_id::uuid;
-                PERFORM submission_claim_id::uuid;
-                PERFORM tca_metric_id::uuid;
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM unnest(ARRAY[
+                          execution_id,
+                          trade_decision_id,
+                          strategy_id,
+                          submission_claim_id,
+                          tca_metric_id
+                      ]) AS links(link_id)
+                     WHERE link_id IS NOT NULL
+                       AND link_id !~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-'
+                           '[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$'
+                ) INTO link_ids_invalid;
+                IF link_ids_invalid THEN
+                    RAISE EXCEPTION 'order lineage causal link UUID is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
 
                 IF (NEW.execution_source = 'none' AND (
                         execution_id IS NOT NULL
@@ -372,7 +465,11 @@ def _create_guard() -> None:
                    OR (NEW.execution_source <> 'none' AND execution_id IS NULL)
                    OR (trade_decision_id IS NULL AND (
                         strategy_id IS NOT NULL OR submission_claim_id IS NOT NULL
-                    )) THEN
+                    ))
+                   OR (
+                       submission_claim_id IS NOT NULL
+                       AND submission_claim_id IS DISTINCT FROM trade_decision_id
+                   ) THEN
                     RAISE EXCEPTION 'order lineage repair causal links invalid'
                         USING ERRCODE = '23514';
                 END IF;

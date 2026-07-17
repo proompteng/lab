@@ -28,6 +28,9 @@ def test_order_lineage_migration_is_append_only_and_non_promotional() -> None:
     assert "jsonb_array_elements_text(order_event_ids)" in text
     assert "value !~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-'" in text
     assert "prior_value >= value" in text
+    assert "match basis is not canonical" in text
+    assert "blockers are not canonical" in text
+    assert "causal link UUID is not canonical" in text
     assert "promotion_authority_eligible IS FALSE" in text
     assert "torghut.order-lineage-repair-evidence.v1" in text
     assert "uq_order_lineage_receipt_evidence" in text

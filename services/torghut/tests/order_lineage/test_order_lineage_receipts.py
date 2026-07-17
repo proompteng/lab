@@ -139,6 +139,10 @@ def test_complete_receipt_requires_every_causal_link_and_no_blockers() -> None:
         build_order_lineage_receipt(replace(complete, blockers=("stale",)))
     with pytest.raises(ValueError, match="complete_evidence_incomplete"):
         build_order_lineage_receipt(replace(complete, fill_order_event_ids=()))
+    with pytest.raises(ValueError, match="submission_claim_identity_inconsistent"):
+        build_order_lineage_receipt(
+            replace(complete, canonical_submission_claim_id=uuid.uuid4())
+        )
 
 
 def test_ambiguous_receipt_cannot_claim_an_execution() -> None:

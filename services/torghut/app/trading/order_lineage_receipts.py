@@ -400,6 +400,8 @@ def _validate_link_identity(evidence: _NormalizedOrderLineageEvidence) -> None:
         evidence.strategy_id is not None or evidence.claim_id is not None
     ):
         raise ValueError("order_lineage_decision_identity_inconsistent")
+    if evidence.claim_id is not None and evidence.claim_id != evidence.decision_id:
+        raise ValueError("order_lineage_submission_claim_identity_inconsistent")
     if evidence.confidence == CONFIDENCE_EXACT and (
         not linked or not evidence.match_basis
     ):
