@@ -38,7 +38,11 @@ BASE_TIME = datetime(2026, 7, 17, 1, 0, tzinfo=timezone.utc)
 BROKER_INPUT_ID = uuid.UUID("00000000-0000-0000-0000-000000000100")
 
 
-def linked_receipt(order_number: int) -> OrderLineageReceiptDraft:
+def linked_receipt(
+    order_number: int,
+    *,
+    blocker: str = "submission_claim_missing",
+) -> OrderLineageReceiptDraft:
     order_event_id = uuid.UUID(f"00000000-0000-0000-0000-{order_number:012d}")
     broker_fill_id = uuid.UUID(f"00000000-0000-0000-0001-{order_number:012d}")
     return build_order_lineage_receipt(
@@ -51,7 +55,9 @@ def linked_receipt(order_number: int) -> OrderLineageReceiptDraft:
             classification=CLASSIFICATION_LINKED_INCOMPLETE,
             confidence=CONFIDENCE_EXACT,
             execution_source=EXECUTION_SOURCE_CROSS_DSN,
-            canonical_execution_id=uuid.uuid4(),
+            canonical_execution_id=uuid.UUID(
+                f"00000000-0000-0000-0003-{order_number:012d}"
+            ),
             order_event_ids=(order_event_id,),
             fill_order_event_ids=(order_event_id,),
             broker_activity_ids=(broker_fill_id,),
@@ -59,7 +65,7 @@ def linked_receipt(order_number: int) -> OrderLineageReceiptDraft:
             source_first_at=BASE_TIME,
             source_last_at=BASE_TIME,
             match_basis=(MATCH_BASIS_ALPACA_ORDER_ID,),
-            blockers=("submission_claim_missing",),
+            blockers=(blocker,),
         )
     )
 
@@ -98,15 +104,31 @@ def census_sources() -> OrderLineageCensusSources:
         broker_order_link_manifest={
             "activity_count": 2,
             "activity_set_sha256": "a" * 64,
+            "fill_count": 2,
+            "first_activity_at": BASE_TIME.isoformat(),
+            "last_activity_at": BASE_TIME.isoformat(),
         },
         order_feed_manifest={
             "event_count": 1,
             "event_set_sha256": "c" * 64,
-            "partitions": [{"partition": 0, "max_offset": 10}],
+            "first_event_at": BASE_TIME.isoformat(),
+            "last_event_at": BASE_TIME.isoformat(),
+            "partitions": [
+                {
+                    "event_count": 1,
+                    "max_offset": 10,
+                    "min_offset": 10,
+                    "partition": 0,
+                    "topic": "torghut.alpaca.trade_updates.v1",
+                }
+            ],
         },
         execution_manifest={
-            "execution_count": 1,
+            "canonical_account_label_sha256": "e" * 64,
+            "canonical_execution_count": 1,
             "execution_set_sha256": "d" * 64,
+            "latest_updated_at": BASE_TIME.isoformat(),
+            "local_execution_count": 0,
         },
     )
 
@@ -224,10 +246,7 @@ def test_census_persistence_reuses_exact_run_and_rejects_nondeterminism() -> Non
         }
         assert status["promotion_authority_eligible"] is False
 
-        changed_receipt = replace(
-            receipts[0],
-            evidence_sha256="f" * 64,
-        )
+        changed_receipt = linked_receipt(1, blocker="strategy_missing")
         with pytest.raises(ValueError, match="run_nondeterministic"):
             with session.begin_nested():
                 persist_order_lineage_census(

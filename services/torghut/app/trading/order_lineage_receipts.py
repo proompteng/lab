@@ -433,7 +433,7 @@ def _resolve_durable_order_identity(
         }
     )
     payload["order_identity"] = order_identity
-    canonical_json = _jsonb_canonical_json(payload)
+    canonical_json = canonical_jsonb_text(payload)
     resolved = replace(
         draft,
         order_identity_sha256=durable.sha256,
@@ -578,8 +578,8 @@ def _validate_reused_receipt(
         receipt.classification,
         receipt.confidence,
         receipt.execution_source,
-        receipt.source_first_at,
-        receipt.source_last_at,
+        _persisted_utc_timestamp(receipt.source_first_at),
+        _persisted_utc_timestamp(receipt.source_last_at),
         receipt.evidence,
         receipt.evidence_canonical_json,
         receipt.evidence_sha256,
@@ -596,8 +596,8 @@ def _validate_reused_receipt(
         draft.classification,
         draft.confidence,
         draft.execution_source,
-        draft.source_first_at,
-        draft.source_last_at,
+        _required_utc(draft.source_first_at),
+        _required_utc(draft.source_last_at),
         draft.evidence,
         draft.evidence_canonical_json,
         draft.evidence_sha256,
@@ -608,13 +608,19 @@ def _validate_reused_receipt(
 
 
 def _validate_draft_document(draft: OrderLineageReceiptDraft) -> None:
-    canonical_json = _jsonb_canonical_json(draft.evidence)
+    canonical_json = canonical_jsonb_text(draft.evidence)
     evidence_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
     if (
         canonical_json != draft.evidence_canonical_json
         or evidence_sha256 != draft.evidence_sha256
     ):
         raise ValueError("order_lineage_draft_document_mismatch")
+
+
+def _persisted_utc_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _validate_linkage_contract(evidence: _NormalizedOrderLineageEvidence) -> None:
