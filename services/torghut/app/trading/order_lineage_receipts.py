@@ -7,7 +7,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Final
+from typing import Final, cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -236,14 +236,23 @@ def build_order_lineage_receipt(
         if normalized.alpaca_order_id is not None
         else MATCH_BASIS_CLIENT_ORDER_ID
     )
+    primary_order_id = normalized.alpaca_order_id or normalized.client_order_id
+    if primary_order_id is None:
+        raise ValueError("order_lineage_order_identity_missing")
     order_identity_key: dict[str, object] = {
         "account_label": normalized.account_label,
         "environment": normalized.environment,
-        "primary_order_id": normalized.alpaca_order_id or normalized.client_order_id,
+        "primary_order_id": primary_order_id,
         "primary_order_id_kind": primary_order_id_kind,
         "provider": normalized.provider,
     }
-    order_identity_sha256 = _canonical_sha256(order_identity_key)
+    order_identity_sha256 = _order_identity_sha256(
+        provider=normalized.provider,
+        environment=normalized.environment,
+        account_label=normalized.account_label,
+        primary_order_id_kind=primary_order_id_kind,
+        primary_order_id=primary_order_id,
+    )
     order_identity: dict[str, object] = {
         **order_identity_key,
         "alpaca_order_id": normalized.alpaca_order_id,
@@ -289,7 +298,7 @@ def build_order_lineage_receipt(
             "order_event_ids": [str(value) for value in normalized.order_event_ids],
         },
     }
-    canonical_json = _canonical_json(payload)
+    canonical_json = _jsonb_canonical_json(payload)
     return OrderLineageReceiptDraft(
         repair_version=ORDER_LINEAGE_REPAIR_VERSION,
         provider=normalized.provider,
@@ -474,18 +483,44 @@ def _validate_classification_sources(
         raise ValueError("order_lineage_external_sources_invalid")
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
+def _jsonb_canonical_json(value: object) -> str:
+    """Serialize the receipt subset exactly like PostgreSQL JSONB text output."""
+
+    if isinstance(value, dict):
+        mapping = cast(dict[str, object], value)
+        items: list[str] = []
+        for key in sorted(
+            mapping,
+            key=lambda item: (len(item.encode("utf-8")), item.encode("utf-8")),
+        ):
+            rendered_key = json.dumps(key, ensure_ascii=False)
+            items.append(f"{rendered_key}: {_jsonb_canonical_json(mapping[key])}")
+        return "{" + ", ".join(items) + "}"
+    if isinstance(value, (list, tuple)):
+        sequence = cast(list[object] | tuple[object, ...], value)
+        return "[" + ", ".join(_jsonb_canonical_json(item) for item in sequence) + "]"
+    if value is None or isinstance(value, (str, bool, int)):
+        return json.dumps(value, allow_nan=False, ensure_ascii=False)
+    raise TypeError(f"unsupported order-lineage JSON value: {type(value).__name__}")
+
+
+def _order_identity_sha256(
+    *,
+    provider: str,
+    environment: str,
+    account_label: str,
+    primary_order_id_kind: str,
+    primary_order_id: str,
+) -> str:
+    values = (
+        provider,
+        environment,
+        account_label,
+        primary_order_id_kind,
+        primary_order_id,
     )
-
-
-def _canonical_sha256(value: object) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+    material = "".join(f"{len(value.encode('utf-8'))}:{value}" for value in values)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def _required_text(value: object, error: str) -> str:

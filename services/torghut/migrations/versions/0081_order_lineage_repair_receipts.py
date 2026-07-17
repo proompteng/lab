@@ -144,6 +144,7 @@ def _create_guard() -> None:
             RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
                 evidence_document jsonb;
+                expected_evidence_canonical_json text;
                 blockers jsonb;
                 match_basis jsonb;
                 order_event_ids jsonb;
@@ -162,6 +163,8 @@ def _create_guard() -> None:
                 tca_metric_id text;
                 expected_primary_order_id_kind text;
                 expected_primary_order_id text;
+                expected_order_identity_material text;
+                expected_order_identity_sha256 text;
             BEGIN
                 IF TG_OP IN ('UPDATE', 'DELETE', 'TRUNCATE') THEN
                     RAISE EXCEPTION 'order lineage repair receipt is append-only'
@@ -173,6 +176,12 @@ def _create_guard() -> None:
                     RAISE EXCEPTION 'order lineage repair evidence JSON is invalid'
                         USING ERRCODE = '23514';
                 END;
+                expected_evidence_canonical_json := NEW.evidence::text;
+                IF NEW.evidence_canonical_json
+                       IS DISTINCT FROM expected_evidence_canonical_json THEN
+                    RAISE EXCEPTION 'order lineage repair evidence JSON is not canonical'
+                        USING ERRCODE = '23514';
+                END IF;
                 IF evidence_document IS DISTINCT FROM NEW.evidence THEN
                     RAISE EXCEPTION 'order lineage repair evidence identity mismatch'
                         USING ERRCODE = '23514';
@@ -228,6 +237,23 @@ def _create_guard() -> None:
                    OR evidence_document#>>'{{order_identity,primary_order_id}}'
                        IS DISTINCT FROM expected_primary_order_id THEN
                     RAISE EXCEPTION 'order lineage repair primary identity mismatch'
+                        USING ERRCODE = '23514';
+                END IF;
+                expected_order_identity_material :=
+                    octet_length(NEW.provider)::text || ':' || NEW.provider ||
+                    octet_length(NEW.environment)::text || ':' || NEW.environment ||
+                    octet_length(NEW.account_label)::text || ':' || NEW.account_label ||
+                    octet_length(expected_primary_order_id_kind)::text || ':' ||
+                        expected_primary_order_id_kind ||
+                    octet_length(expected_primary_order_id)::text || ':' ||
+                        expected_primary_order_id;
+                expected_order_identity_sha256 := encode(
+                    sha256(convert_to(expected_order_identity_material, 'UTF8')),
+                    'hex'
+                );
+                IF NEW.order_identity_sha256
+                       IS DISTINCT FROM expected_order_identity_sha256 THEN
+                    RAISE EXCEPTION 'order lineage repair identity hash mismatch'
                         USING ERRCODE = '23514';
                 END IF;
 

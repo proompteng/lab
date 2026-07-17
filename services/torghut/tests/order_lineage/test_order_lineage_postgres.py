@@ -8,14 +8,13 @@ from datetime import datetime, timezone
 from threading import Barrier
 
 import pytest
-from alembic import command
-from alembic.config import Config as AlembicConfig
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.trading.order_lineage_receipts import (
     CLASSIFICATION_LINKED_INCOMPLETE,
     CLASSIFICATION_ORDER_FEED_ONLY,
@@ -28,18 +27,16 @@ from app.trading.order_lineage_receipts import (
 )
 from tests.execution.decision_submission_claims_postgres_support import (
     POSTGRES_DSN,
-    SERVICE_ROOT,
     assert_rejected,
 )
+from tests.migration_testing import load_migration_module
 
 
 @pytest.mark.skipif(
     not POSTGRES_DSN,
     reason="set TORGHUT_TEST_POSTGRES_DSN for the opt-in PostgreSQL guard test",
 )
-def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> None:
     assert POSTGRES_DSN is not None
     schema = f"order_lineage_{uuid.uuid4().hex}"
     admin_engine = create_engine(POSTGRES_DSN, future=True)
@@ -50,14 +47,7 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
     try:
         with admin_engine.begin() as connection:
             connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
-        monkeypatch.setattr(
-            settings,
-            "db_dsn",
-            schema_url.render_as_string(hide_password=False),
-        )
-        alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        command.stamp(alembic, "0080_broker_econ_recon_freshness")
-        command.upgrade(alembic, "0081_order_lineage_receipts")
+        _apply_migration(schema_engine, "0081_order_lineage_repair_receipts.py")
 
         now = datetime(2026, 7, 16, 20, 0, tzinfo=timezone.utc)
         source_event_id = uuid.uuid4()
@@ -166,6 +156,14 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
             """,
             id=uuid.uuid4(),
         )
+        _assert_noncanonical_evidence_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+        )
+        _assert_identity_hash_rejected(
+            schema_engine,
+            receipt_id=receipt_id,
+        )
         _assert_source_ids_rejected(
             schema_engine,
             receipt_id=receipt_id,
@@ -177,10 +175,114 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only(
             source_ids=[str(source_event_id), str(source_event_id)],
         )
     finally:
-        schema_engine.dispose()
         with admin_engine.begin() as connection:
             connection.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        schema_engine.dispose()
         admin_engine.dispose()
+
+
+def _apply_migration(engine: Engine, filename: str) -> None:
+    module = load_migration_module(filename)
+    with engine.begin() as connection:
+        context = MigrationContext.configure(connection)
+        with Operations.context(context):
+            module.upgrade()
+
+
+def _assert_noncanonical_evidence_rejected(
+    engine: Engine,
+    *,
+    receipt_id: uuid.UUID,
+) -> None:
+    statement = text(
+        """
+        INSERT INTO order_lineage_repair_receipts (
+            id, repair_version, provider, environment, account_label,
+            order_identity_sha256, alpaca_order_id, client_order_id,
+            classification, confidence, execution_source,
+            source_first_at, source_last_at, evidence,
+            evidence_canonical_json, evidence_sha256,
+            promotion_authority_eligible, observed_at
+        )
+        SELECT
+            :new_id, repair_version, provider, environment, account_label,
+            order_identity_sha256, alpaca_order_id, client_order_id,
+            classification, confidence, execution_source,
+            source_first_at, source_last_at, evidence,
+            evidence_canonical_json || E'\n',
+            encode(
+                sha256(convert_to(evidence_canonical_json || E'\n', 'UTF8')),
+                'hex'
+            ),
+            promotion_authority_eligible, observed_at
+          FROM order_lineage_repair_receipts
+         WHERE id = :receipt_id
+        """
+    )
+    with pytest.raises(DBAPIError, match="evidence JSON is not canonical"):
+        with engine.begin() as connection:
+            connection.execute(
+                statement,
+                {"new_id": uuid.uuid4(), "receipt_id": receipt_id},
+            )
+
+
+def _assert_identity_hash_rejected(
+    engine: Engine,
+    *,
+    receipt_id: uuid.UUID,
+) -> None:
+    statement = text(
+        """
+        WITH source AS (
+            SELECT *
+              FROM order_lineage_repair_receipts
+             WHERE id = :receipt_id
+        ), changed AS (
+            SELECT
+                source.*,
+                jsonb_set(
+                    source.evidence,
+                    '{order_identity,sha256}',
+                    to_jsonb(CAST(:identity_sha256 AS text)),
+                    false
+                ) AS changed_evidence
+              FROM source
+        ), sealed AS (
+            SELECT
+                changed.*,
+                changed_evidence::text AS changed_canonical_json
+              FROM changed
+        )
+        INSERT INTO order_lineage_repair_receipts (
+            id, repair_version, provider, environment, account_label,
+            order_identity_sha256, alpaca_order_id, client_order_id,
+            classification, confidence, execution_source,
+            source_first_at, source_last_at, evidence,
+            evidence_canonical_json, evidence_sha256,
+            promotion_authority_eligible, observed_at
+        )
+        SELECT
+            :new_id, repair_version, provider, environment, account_label,
+            :identity_sha256, alpaca_order_id, client_order_id,
+            classification, confidence, execution_source,
+            source_first_at, source_last_at, changed_evidence,
+            changed_canonical_json,
+            encode(sha256(convert_to(changed_canonical_json, 'UTF8')), 'hex'),
+            promotion_authority_eligible, observed_at
+          FROM sealed
+        """
+    )
+    with pytest.raises(DBAPIError, match="identity hash mismatch"):
+        with engine.begin() as connection:
+            connection.execute(
+                statement,
+                {
+                    "identity_sha256": "f" * 64,
+                    "new_id": uuid.uuid4(),
+                    "receipt_id": receipt_id,
+                },
+            )
 
 
 def _assert_source_ids_rejected(

@@ -22,6 +22,9 @@ def test_order_lineage_migration_is_append_only_and_non_promotional() -> None:
     assert "order lineage repair receipt is append-only" in text
     assert "BEFORE INSERT OR UPDATE OR DELETE" in text
     assert "BEFORE TRUNCATE" in text
+    assert "evidence JSON is not canonical" in text
+    assert "expected_order_identity_material" in text
+    assert "identity hash mismatch" in text
     assert "jsonb_array_elements_text(order_event_ids)" in text
     assert "value !~ '^[0-9a-f]{{8}}-[0-9a-f]{{4}}-'" in text
     assert "prior_value >= value" in text
