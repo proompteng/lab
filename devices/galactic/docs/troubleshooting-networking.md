@@ -1,6 +1,23 @@
-# Troubleshooting: pod networking (flannel VXLAN)
+# Troubleshooting: pod networking (Talos-managed Flannel VXLAN)
 
-This cluster uses flannel in VXLAN mode. If VXLAN forwarding breaks, pods on one node cannot reach pods on another node, even though nodes may still appear `Ready`.
+This cluster uses Talos-managed Flannel in VXLAN mode. Talos owns the Flannel ConfigMap, DaemonSet, service account,
+and RBAC resources. Do not manage only a subset of those resources through Argo CD; split ownership causes Talos
+Kubernetes upgrades and Argo reconciliation to overwrite each other.
+
+If a future network requires a custom Flannel backend or MTU, either use Talos-supported Flannel configuration or
+disable Talos CNI management and move the complete Flannel installation to one GitOps application.
+
+Before every Kubernetes upgrade, inspect the Talos manifest plan:
+
+```bash
+talosctl -e <control-plane-ip> -n <control-plane-ip> upgrade-k8s --to <target-version> --dry-run
+```
+
+The plan must show Talos as the single manager of all Flannel resources and must not conflict with an Argo tracking
+annotation on `kube-system/kube-flannel-cfg`.
+
+If VXLAN forwarding breaks, pods on one node cannot reach pods on another node, even though nodes may still appear
+`Ready`.
 
 This often shows up during bootstrap because Argo CD depends on cross-node networking (repo-server <-> redis-ha-haproxy <-> redis/sentinel, dex <-> server, etc.).
 
