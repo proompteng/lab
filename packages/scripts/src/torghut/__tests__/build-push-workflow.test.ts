@@ -325,16 +325,20 @@ describe('torghut build-push workflow', () => {
     expect(compareCall).toBeGreaterThan(authHeader)
   })
 
-  it('derives pull-request changed files from the checked-out merge commit', () => {
+  it('derives pull-request changed files from the merge base to the PR head', () => {
+    const checkoutStep = pullRequestWorkflow.indexOf('name: Check out repository')
+    const fullHistory = pullRequestWorkflow.indexOf('fetch-depth: 0', checkoutStep)
     const deriveFilesStep = pullRequestWorkflow.indexOf('Derive changed files from Git')
     const firstParent = pullRequestWorkflow.indexOf("git rev-parse --verify 'HEAD^1'", deriveFilesStep)
     const secondParent = pullRequestWorkflow.indexOf("git rev-parse --verify 'HEAD^2'", firstParent)
     const diffCall = pullRequestWorkflow.indexOf(
-      "git diff --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2'",
+      "git diff --merge-base --find-renames --name-only --diff-filter=ACDMRTUXB 'HEAD^1' 'HEAD^2'",
       secondParent,
     )
 
-    expect(deriveFilesStep).toBeGreaterThan(-1)
+    expect(checkoutStep).toBeGreaterThan(-1)
+    expect(fullHistory).toBeGreaterThan(checkoutStep)
+    expect(deriveFilesStep).toBeGreaterThan(fullHistory)
     expect(firstParent).toBeGreaterThan(deriveFilesStep)
     expect(secondParent).toBeGreaterThan(firstParent)
     expect(diffCall).toBeGreaterThan(secondParent)
@@ -345,7 +349,7 @@ describe('torghut build-push workflow', () => {
   it('keeps deleted manifests out of kubeconform inputs', () => {
     const deriveFilesStep = pullRequestWorkflow.indexOf('Derive changed files from Git')
     const activeManifestFilter = pullRequestWorkflow.indexOf(
-      "git diff --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2'",
+      "git diff --merge-base --find-renames --name-only --diff-filter=ACMRTUXB 'HEAD^1' 'HEAD^2'",
       deriveFilesStep,
     )
     const activeManifestOutput = pullRequestWorkflow.indexOf('changed_manifests=', activeManifestFilter)
