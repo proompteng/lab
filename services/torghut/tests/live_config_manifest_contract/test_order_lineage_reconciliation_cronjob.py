@@ -46,6 +46,7 @@ class OrderLineageReconciliationCronJobTests(TestCase):
 
         self.assertEqual(metadata["name"], "torghut-order-lineage-reconciliation")
         self.assertEqual(metadata["namespace"], "torghut")
+        self.assertTrue(spec["suspend"])
         self.assertEqual(spec["schedule"], "12 * * * *")
         self.assertEqual(spec["timeZone"], "America/New_York")
         self.assertEqual(spec["concurrencyPolicy"], "Forbid")
