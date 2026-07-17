@@ -12,6 +12,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -57,7 +58,7 @@ class _TestRepairOrderFeedSourceWindowsScriptBase(TestCase):
     pass
 
 
-def _sqlite_model_engine() -> object:
+def _sqlite_model_engine() -> Engine:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
     return engine
@@ -168,12 +169,20 @@ def _seed_live_source_window(
     return source_window
 
 
+FakeSession = _FakeSession
+FakeSessionFactory = _FakeSessionFactory
+seed_canonical_execution = _seed_canonical_execution
+sqlite_model_engine = _sqlite_model_engine
+
+
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",
     "Execution",
     "ExecutionOrderEvent",
     "ExecutionTCAMetric",
+    "FakeSession",
+    "FakeSessionFactory",
     "OrderFeedSourceWindow",
     "Session",
     "Strategy",
@@ -198,4 +207,6 @@ __all__: tuple[str, ...] = (
     "timedelta",
     "timezone",
     "uuid",
+    "seed_canonical_execution",
+    "sqlite_model_engine",
 )

@@ -691,6 +691,7 @@ jobs:
             tests/execution/test_linked_submission_terminal_postgres.py \
             tests/execution/test_validation_observation_timestamp_postgres.py \
             tests/order_lineage/test_order_lineage_postgres.py \
+            tests/order_lineage/test_order_lineage_runs_postgres.py \
             tests/trading/test_strategy_capital_authority_postgres.py
 
       - name: Upload PostgreSQL coverage data

@@ -6,9 +6,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
+    ForeignKey,
     Index,
     String,
     Text,
@@ -150,4 +152,83 @@ class OrderLineageRepairReceipt(Base, CreatedAtMixin):
     )
 
 
-__all__ = ("OrderLineageRepairReceipt",)
+class OrderLineageRepairRun(Base, CreatedAtMixin):
+    """One immutable, closed census over current order-lineage evidence."""
+
+    __tablename__ = "order_lineage_repair_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    repair_version: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    environment: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    broker_economic_input_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey(
+            "broker_economic_ledger_inputs.id",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        nullable=False,
+    )
+    input_manifest: Mapped[dict[str, object]] = mapped_column(JSONType, nullable=False)
+    input_manifest_canonical_json: Mapped[str] = mapped_column(Text, nullable=False)
+    input_manifest_sha256: Mapped[str] = mapped_column(
+        String(length=64), nullable=False
+    )
+    receipt_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    result: Mapped[dict[str, object]] = mapped_column(JSONType, nullable=False)
+    result_canonical_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    promotion_authority_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "length(repair_version) BETWEEN 1 AND 64 "
+            "AND length(provider) BETWEEN 1 AND 32 "
+            "AND length(environment) BETWEEN 1 AND 16 "
+            "AND length(account_label) BETWEEN 1 AND 64",
+            name=conv("ck_order_lineage_run_scope"),
+        ),
+        CheckConstraint(
+            "length(input_manifest_sha256) = 64 AND length(result_sha256) = 64",
+            name=conv("ck_order_lineage_run_hashes"),
+        ),
+        CheckConstraint(
+            "receipt_count >= 0",
+            name=conv("ck_order_lineage_run_receipt_count"),
+        ),
+        CheckConstraint(
+            "promotion_authority_eligible IS FALSE",
+            name=conv("ck_order_lineage_run_non_promotional"),
+        ),
+        Index(
+            "uq_order_lineage_run_input",
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "input_manifest_sha256",
+            unique=True,
+        ),
+        Index(
+            "ix_order_lineage_run_current",
+            "repair_version",
+            "provider",
+            "environment",
+            "account_label",
+            "created_at",
+        ),
+        Index(
+            "ix_order_lineage_run_broker_input",
+            "broker_economic_input_id",
+        ),
+    )
+
+
+__all__ = ("OrderLineageRepairReceipt", "OrderLineageRepairRun")
