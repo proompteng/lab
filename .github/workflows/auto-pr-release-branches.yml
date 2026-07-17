@@ -107,7 +107,6 @@ jobs:
             "argocd/applications/docs/kustomization.yaml"
             "argocd/applications/headlamp/values.yaml"
             "argocd/applications/oirat/kustomization.yaml"
-            "argocd/applications/olden/kustomization.yaml"
             "argocd/applications/proompteng/kustomization.yaml"
             "argocd/sag/kustomization.yaml"
             "argocd/applications/symphony/kustomization.yaml"
@@ -115,6 +114,20 @@ jobs:
             "argocd/applications/symphony-torghut/kustomization.yaml"
             "argocd/applications/synthesis/kustomization.yaml"
           )
+
+          disabled_image_paths=(
+            "argocd/applications/olden/kustomization.yaml"
+          )
+
+          for path in "${changed_files[@]}"; do
+            for disabled_path in "${disabled_image_paths[@]}"; do
+              if [[ "$path" == "$disabled_path" ]]; then
+                create_pr="false"
+                reason="disabled-image-app:${path}"
+                break 2
+              fi
+            done
+          done
 
           for path in "${changed_files[@]}"; do
             for migrated_path in "${migrated_nix_image_paths[@]}"; do

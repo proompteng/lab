@@ -437,29 +437,62 @@ jobs:
         run: |
           set -euo pipefail
 
-          pr_state="$(
-            gh pr view "${PR_NUMBER}" \
-              -R "${GH_REPO}" \
-              --json state,mergeStateStatus,isDraft \
-              --jq '[.state, .mergeStateStatus, (.isDraft|tostring)] | @tsv'
-          )"
-          IFS=$'\t' read -r state merge_state is_draft <<< "${pr_state}"
+          MERGE_ATTEMPTS=4
+          for merge_attempt in $(seq 1 "${MERGE_ATTEMPTS}"); do
+            pr_state="$(
+              gh pr view "${PR_NUMBER}" \
+                -R "${GH_REPO}" \
+                --json state,mergeStateStatus,isDraft,headRefOid \
+                --jq '[.state, .mergeStateStatus, (.isDraft|tostring), .headRefOid] | @tsv'
+            )"
+            IFS=$'\t' read -r state merge_state is_draft current_head_sha <<< "${pr_state}"
 
-          if [ "${state}" != 'OPEN' ]; then
-            echo "PR #${PR_NUMBER} is not open: ${state}"
-            exit 0
-          fi
-          if [ "${is_draft}" = 'true' ]; then
-            echo "PR #${PR_NUMBER} is draft; skipping merge."
-            exit 0
-          fi
-          case "${merge_state}" in
-            CLEAN | UNSTABLE)
-              ;;
-            *)
-              echo "PR #${PR_NUMBER} is not mergeable after required checks passed: ${merge_state}"
+            if [ "${state}" != 'OPEN' ]; then
+              echo "PR #${PR_NUMBER} is not open: ${state}"
+              exit 0
+            fi
+            if [ "${is_draft}" = 'true' ]; then
+              echo "PR #${PR_NUMBER} is draft; skipping merge."
+              exit 0
+            fi
+            if [ "${current_head_sha}" != "${PR_HEAD_SHA}" ]; then
+              echo "PR #${PR_NUMBER} head changed from ${PR_HEAD_SHA} to ${current_head_sha}; refusing stale merge."
               exit 1
-              ;;
-          esac
+            fi
+            case "${merge_state}" in
+              CLEAN | UNSTABLE | BEHIND)
+                ;;
+              UNKNOWN)
+                if [ "${merge_attempt}" -lt "${MERGE_ATTEMPTS}" ]; then
+                  sleep $((merge_attempt * 5))
+                  continue
+                fi
+                ;;
+              *)
+                echo "PR #${PR_NUMBER} is not mergeable after required checks passed: ${merge_state}"
+                exit 1
+                ;;
+            esac
 
-          gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --squash --match-head-commit "${PR_HEAD_SHA}"
+            set +e
+            merge_output="$(
+              gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --squash --match-head-commit "${PR_HEAD_SHA}" 2>&1
+            )"
+            merge_status=$?
+            set -e
+            if [ "${merge_status}" -eq 0 ]; then
+              printf '%s\n' "${merge_output}"
+              exit 0
+            fi
+            if grep -Fq 'Base branch was modified' <<< "${merge_output}" &&
+              [ "${merge_attempt}" -lt "${MERGE_ATTEMPTS}" ]; then
+              echo "Base moved during merge attempt ${merge_attempt}; refreshing PR state before retry."
+              sleep $((merge_attempt * 5))
+              continue
+            fi
+            printf '%s\n' "${merge_output}" >&2
+            exit "${merge_status}"
+          done
+
+          echo "PR #${PR_NUMBER} did not reach a mergeable state after ${MERGE_ATTEMPTS} attempts."
+          exit 1

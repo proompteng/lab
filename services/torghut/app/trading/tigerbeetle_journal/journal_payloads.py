@@ -498,19 +498,14 @@ def event_amount_usd(
 
 def _explicit_fill_delta_notional_usd(event: ExecutionOrderEvent) -> Decimal | None:
     raw_event = nested_mapping(event.raw_event)
-    nested_order = nested_mapping(raw_event.get("order"))
-    value = lookup_payload_decimal(
+    event_payloads = (
         raw_event,
-        (
-            "fill_notional",
-            "last_fill_notional",
-            "filled_notional_delta",
-            "execution_notional",
-        ),
+        nested_mapping(raw_event.get("payload")),
+        nested_mapping(raw_event.get("data")),
     )
-    if value is None:
+    for payload in event_payloads:
         value = lookup_payload_decimal(
-            nested_order,
+            payload,
             (
                 "fill_notional",
                 "last_fill_notional",
@@ -518,6 +513,36 @@ def _explicit_fill_delta_notional_usd(event: ExecutionOrderEvent) -> Decimal | N
                 "execution_notional",
             ),
         )
+        if value is not None:
+            return abs(value)
+
+    # Alpaca trade-update envelopes expose the latest execution as payload
+    # qty/price while payload.order carries cumulative filled quantity and
+    # average price. Preserve the immutable execution economics when present;
+    # recomputing from the cumulative fields can change a journaled transfer
+    # after later normalization or precision repair.
+    for payload in event_payloads:
+        qty = lookup_payload_decimal(
+            payload,
+            ("fill_qty", "last_fill_qty", "filled_qty_delta", "qty", "quantity"),
+        )
+        price = lookup_payload_decimal(
+            payload,
+            ("fill_price", "last_fill_price", "execution_price", "price"),
+        )
+        if qty is not None and price is not None:
+            return abs(qty * price)
+
+    nested_order = nested_mapping(raw_event.get("order"))
+    value = lookup_payload_decimal(
+        nested_order,
+        (
+            "fill_notional",
+            "last_fill_notional",
+            "filled_notional_delta",
+            "execution_notional",
+        ),
+    )
     return abs(value) if value is not None else None
 
 

@@ -134,7 +134,17 @@ jobs:
 
           expected_revision="${EXPECTED_REVISION_INPUT:-${GITHUB_SHA}}"
           for attempt in $(seq 1 90); do
-            app_json="$(kubectl -n argocd get application sag -o json)"
+            app_json="$(kubectl -n argocd get application sag -o json 2> "${RUNNER_TEMP}/sag-application.err" || true)"
+            if ! jq -e . >/dev/null 2>&1 <<< "${app_json}"; then
+              if [ "${attempt}" -eq 90 ]; then
+                echo "Sag Argo application did not become readable." >&2
+                cat "${RUNNER_TEMP}/sag-application.err" >&2 || true
+                exit 1
+              fi
+              echo "Attempt ${attempt}: Sag Argo application is not readable yet; retrying."
+              sleep 10
+              continue
+            fi
             sync_status="$(jq -r '.status.sync.status // ""' <<< "${app_json}")"
             health_status="$(jq -r '.status.health.status // ""' <<< "${app_json}")"
             revision="$(jq -r '.status.sync.revision // ""' <<< "${app_json}")"

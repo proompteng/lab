@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from importlib import import_module
+from time import monotonic
 from typing import Any, Callable, cast
 
 from sqlalchemy.orm import Session
@@ -78,6 +79,7 @@ class OrderFeedIngestor:
         self._consumer: Any | None = None
         self._disabled_logged = False
         self._manual_assignment_ready = False
+        self._last_tigerbeetle_reconcile_at: float | None = None
 
     @property
     def default_account_label(self) -> str:
@@ -102,10 +104,12 @@ class OrderFeedIngestor:
         consumer = self._ensure_consumer(session)
         if consumer is None:
             counters["consumer_errors_total"] += 1
+            self._reconcile_tigerbeetle_if_due(session)
             return counters
 
         records = self._poll_records(consumer=consumer, counters=counters)
         if not records:
+            self._reconcile_tigerbeetle_if_due(session)
             return counters
 
         durable_any = False
@@ -126,7 +130,7 @@ class OrderFeedIngestor:
             # optional cross-store audit performs network I/O; otherwise a slow
             # TigerBeetle lookup can hide a fill from risk and lifecycle readers.
             session.commit()
-            self._reconcile_tigerbeetle_if_enabled(session)
+        self._reconcile_tigerbeetle_if_due(session, force=durable_any)
         if durable_any and commit_allowed:
             if _consumer_commit_enabled():
                 if _commit_consumer(consumer):
@@ -138,6 +142,28 @@ class OrderFeedIngestor:
                     settings.trading_order_feed_assignment_mode,
                 )
         return counters
+
+    def _reconcile_tigerbeetle_if_due(
+        self,
+        session: Session,
+        *,
+        force: bool = False,
+    ) -> None:
+        if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+            return
+        now = monotonic()
+        interval_seconds = max(
+            30.0,
+            min(300.0, settings.tigerbeetle_reconcile_max_age_seconds / 2),
+        )
+        if (
+            not force
+            and self._last_tigerbeetle_reconcile_at is not None
+            and now - self._last_tigerbeetle_reconcile_at < interval_seconds
+        ):
+            return
+        self._last_tigerbeetle_reconcile_at = now
+        self._reconcile_tigerbeetle_if_enabled(session)
 
     def _reconcile_tigerbeetle_if_enabled(self, session: Session) -> None:
         if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
@@ -152,9 +178,7 @@ class OrderFeedIngestor:
             session.rollback()
             if settings.tigerbeetle_reconcile_required:
                 raise
-            logger.warning(
-                "TigerBeetle reconciliation failed after order-feed ingest: %s", exc
-            )
+            logger.warning("TigerBeetle reconciliation failed: %s", exc)
 
     @staticmethod
     def _new_counters() -> dict[str, int]:

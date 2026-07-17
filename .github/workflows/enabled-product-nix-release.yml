@@ -17,7 +17,6 @@ on:
           - app
           - synthesis
           - docs
-          - olden
       commit_sha:
         description: Commit SHA to promote
         required: true
@@ -137,10 +136,6 @@ jobs:
                 manifest_path="argocd/applications/docs/kustomization.yaml"
                 input_paths=(apps/docs packages/design nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
-              olden)
-                manifest_path="argocd/applications/olden/kustomization.yaml"
-                input_paths=(apps/olden packages/design nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
-                ;;
               *)
                 echo "Unsupported service in release contract: ${service}" >&2
                 exit 2
@@ -234,7 +229,6 @@ jobs:
             argocd/applications/app/kustomization.yaml
             argocd/applications/synthesis/kustomization.yaml
             argocd/applications/docs/kustomization.yaml
-            argocd/applications/olden/kustomization.yaml
 
       - name: Promotion skipped
         if: steps.promote.outputs.promoted != 'true'

@@ -588,7 +588,20 @@ jobs:
           MARKET_DATA_PRINT_SUMMARIES: 'false'
         run: |
           set -euo pipefail
-          bun run smoke:torghut-market-data
+          TA_FRESHNESS_ATTEMPTS=4
+          TA_FRESHNESS_INTERVAL_SECONDS=30
+          for ta_attempt in $(seq 1 "${TA_FRESHNESS_ATTEMPTS}"); do
+            if bun run smoke:torghut-market-data; then
+              echo "Torghut market-data freshness converged on attempt ${ta_attempt}."
+              exit 0
+            fi
+            if [ "${ta_attempt}" -eq "${TA_FRESHNESS_ATTEMPTS}" ]; then
+              echo "Torghut market-data freshness did not converge after ${TA_FRESHNESS_ATTEMPTS} attempts."
+              exit 1
+            fi
+            echo "Torghut market-data freshness is not converged on attempt ${ta_attempt}; waiting for the next TA heartbeat."
+            sleep "${TA_FRESHNESS_INTERVAL_SECONDS}"
+          done
 
       - name: Upload revenue repair evidence
         if: always()

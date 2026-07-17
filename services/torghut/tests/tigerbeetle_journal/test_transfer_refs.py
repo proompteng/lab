@@ -686,6 +686,54 @@ class TestTigerBeetleLedgerJournalTransferRefs(_TestTigerBeetleLedgerJournalBase
         self.assertEqual(second_plan.transfer_spec.amount, 190600000)
         self.assertIsNone(duplicate_cumulative_plan)
 
+    def test_fill_event_amount_prefers_raw_execution_delta_over_cumulative_average(
+        self,
+    ) -> None:
+        event = ExecutionOrderEvent(
+            event_fingerprint="crypto-partial-fill-raw-execution",
+            source_topic="torghut.trade-updates.v2",
+            source_partition=0,
+            source_offset=66074,
+            alpaca_account_label="PA3SX7FYNUTF",
+            event_ts=datetime.now(timezone.utc),
+            symbol="BTC/USD",
+            alpaca_order_id="crypto-order",
+            client_order_id="crypto-client",
+            event_type="fill",
+            status="filled",
+            qty=Decimal("0.000449274"),
+            filled_qty=Decimal("0.000449274"),
+            filled_qty_delta=Decimal("0.000229274"),
+            avg_fill_price=Decimal("64747.862313288"),
+            filled_notional_delta=Decimal("14.84500138"),
+            fill_quantity_basis="cumulative_to_delta",
+            raw_event={
+                "channel": "trade_updates",
+                "payload": {
+                    "event": "fill",
+                    "qty": "0.000229274",
+                    "price": "64729.4",
+                    "order": {
+                        "filled_qty": "0.000449274",
+                        "filled_avg_price": "64747.862313288",
+                    },
+                },
+            },
+        )
+
+        with Session(self.engine) as session:
+            session.add(event)
+            session.flush()
+            plan = build_order_event_transfer_plan(
+                session,
+                event,
+                settings_obj=_settings(),
+            )
+
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertEqual(plan.transfer_spec.amount, 14840768)
+
     def test_order_event_precedence_falls_back_deterministically(self) -> None:
         older = ExecutionOrderEvent(
             event_fingerprint="older",
