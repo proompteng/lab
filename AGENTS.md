@@ -50,9 +50,11 @@ Prefer the Sol-specific guidance when the sources differ.
   only production `main`; use Git or `rg` for branches, pull-request refs, and uncommitted work. Narrow only as needed
   with `--path-prefix` and `--language`; pass `--ref main` only when an explicit ref is useful.
 - Atlas initial production acceptance has passed, but trust remains conditional. For conceptual queries, require
-  relevant `semantic` or `hybrid` results, no degradation, and a returned commit matching fresh `origin/main`. Treat
-  lexical-only, irrelevant, missing, or stale results as contradictory evidence. Exact-identifier queries may
-  legitimately report `semanticDistance=n/a`.
+  relevant results, no degradation, and a returned commit matching the locally available requested Git ref: fresh
+  `origin/main` when configured, otherwise local `main`. If neither ref exists, treat Atlas as a navigation lead until
+  commit identity is independently verified. `semantic` and `hybrid` modes demonstrate semantic participation; a
+  relevant `lexical` result with `degradation=null` is valid. Treat irrelevant lexical fallbacks, missing, or stale
+  results as contradictory evidence. Exact-identifier queries may legitimately report `semanticDistance=n/a`.
 - Follow `docs/atlas/README.md` for the full trust and reverification contract. Report contradictions instead of hiding
   them with narrower queries; Atlas health, statistics, or a few successful results do not prove corpus completeness.
 - Install dependencies with `bun install`.
