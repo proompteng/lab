@@ -21,7 +21,7 @@ talosctl -e <control-plane-ip> -n <control-plane-ip> upgrade-k8s --to <target-ve
 ```
 
 The dry run must keep the VXLAN backend on UDP 4789. Immediately after the upgrade, sync `flannel-cni`, verify the
-guarded ConfigMap, restart the Flannel DaemonSet one node at a time, and confirm the derived MTU:
+guarded ConfigMap, restart the Flannel DaemonSet, and validate a newly-created pod on every node:
 
 ```bash
 argocd app sync flannel-cni
@@ -29,11 +29,13 @@ kubectl -n kube-system get configmap kube-flannel-cfg \
   -o jsonpath='{.data.cni-conf\.json}' | jq -e '.plugins[0].delegate.mtu == 1400'
 kubectl -n kube-system rollout restart daemonset/kube-flannel
 kubectl -n kube-system rollout status daemonset/kube-flannel --timeout=180s
-talosctl -e <control-plane-ip> -n <node-ip> read /run/flannel/subnet.env
+kubectl -n <workload-namespace> exec <fresh-pod-on-each-node> -- \
+  sh -c "ip -o link show eth0 | grep -q 'mtu 1400'"
 ```
 
-Do not continue workload validation unless every node reports `FLANNEL_MTU=1400` and fresh pods have interface MTU
-1400.
+The guard does not set Flannel's backend MTU, and `/run/flannel/subnet.env` may still report `FLANNEL_MTU=1450` on a
+normal 1500-byte underlay. Do not continue workload validation unless the guarded CNI value is 1400 and fresh pod
+interfaces on every node report MTU 1400.
 
 If VXLAN forwarding breaks, pods on one node cannot reach pods on another node, even though nodes may still appear
 `Ready`.
@@ -52,7 +54,6 @@ If a `Service` is `type: LoadBalancer`, shows an `EXTERNAL-IP`, but nothing on y
 ### Cause (Talos default node label)
 
 Talos commonly sets the node label `node.kubernetes.io/exclude-from-external-load-balancers` on control-plane nodes.
-
 MetalLB treats nodes with that label as ineligible for external load balancers, so speakers will not advertise VIPs from those nodes.
 
 ### Fix
