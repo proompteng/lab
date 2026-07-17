@@ -486,6 +486,7 @@ def test_postgres_0069_negative_observation_commits_and_releases_pair(
         "rejected": 0,
         "expired": 0,
         "manual_review": 1,
+        "validation_quarantine_closed": 0,
     }
     with terminal_harness.engine.connect() as connection:
         event_types = tuple(
