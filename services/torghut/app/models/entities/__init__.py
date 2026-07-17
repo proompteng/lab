@@ -15,7 +15,11 @@ from .broker_mutation_records import (
     BrokerMutationReceiptEvent,
 )
 from .model_mixins import CreatedAtMixin, TimestampMixin
-from .order_lineage_records import OrderLineageRepairReceipt, OrderLineageRepairRun
+from .order_lineage_records import (
+    OrderLineageCanonicalExecutionImport,
+    OrderLineageRepairReceipt,
+    OrderLineageRepairRun,
+)
 from .research_records import (
     ResearchAttempt,
     ResearchCandidate,
@@ -130,6 +134,7 @@ __all__ = [
     "LLMDecisionReview",
     "OrderFeedConsumerCursor",
     "OrderFeedSourceWindow",
+    "OrderLineageCanonicalExecutionImport",
     "OrderLineageRepairReceipt",
     "OrderLineageRepairRun",
     "PositionSnapshot",

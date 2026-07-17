@@ -32,6 +32,7 @@ from app.trading.order_lineage_receipts import (
 )
 from app.trading.order_lineage_runs import (
     OrderLineageCensusSources,
+    build_order_lineage_canonical_execution_import,
     build_order_lineage_repair_run,
     load_order_lineage_repair_status,
     persist_order_lineage_census,
@@ -96,6 +97,17 @@ def broker_only_receipt(order_number: int) -> OrderLineageReceiptDraft:
 
 
 def census_sources() -> OrderLineageCensusSources:
+    execution_manifest = {
+        "canonical_account_label_sha256": "e" * 64,
+        "canonical_execution_count": 1,
+        "canonical_execution_set_sha256": "d" * 64,
+        "canonical_latest_updated_at": BASE_TIME.isoformat(),
+        "execution_set_sha256": "f" * 64,
+        "latest_updated_at": BASE_TIME.isoformat(),
+        "local_execution_count": 0,
+        "local_execution_set_sha256": "0" * 64,
+        "local_latest_updated_at": None,
+    }
     return OrderLineageCensusSources(
         provider="alpaca",
         environment="paper",
@@ -127,13 +139,16 @@ def census_sources() -> OrderLineageCensusSources:
                 }
             ],
         },
-        execution_manifest={
-            "canonical_account_label_sha256": "e" * 64,
-            "canonical_execution_count": 1,
-            "execution_set_sha256": "d" * 64,
-            "latest_updated_at": BASE_TIME.isoformat(),
-            "local_execution_count": 0,
-        },
+        execution_manifest=execution_manifest,
+        canonical_execution_import=(
+            build_order_lineage_canonical_execution_import(
+                provider="alpaca",
+                environment="paper",
+                account_label="paper-account",
+                source_database_sha256="9" * 64,
+                execution_manifest=execution_manifest,
+            )
+        ),
     )
 
 
@@ -182,7 +197,7 @@ def test_run_rejects_duplicate_identity_and_scope_drift() -> None:
     receipt = linked_receipt(1)
     with pytest.raises(ValueError, match="duplicate_order_identity"):
         build_order_lineage_repair_run(census_sources(), [receipt, receipt])
-    with pytest.raises(ValueError, match="receipt_scope_mismatch"):
+    with pytest.raises(ValueError, match="execution_import_scope_mismatch"):
         build_order_lineage_repair_run(
             replace(census_sources(), environment="live"),
             [receipt],

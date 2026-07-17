@@ -19,21 +19,24 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     BrokerEconomicLedgerInput,
+    OrderLineageCanonicalExecutionImport,
     OrderLineageRepairReceipt,
     OrderLineageRepairRun,
 )
+from app.trading.order_lineage_census import (
+    BrokerActivityFact,
+    ExecutionLineageFact,
+    OrderEventFact,
+    OrderLineageCensusEvidence,
+    build_order_lineage_census,
+)
 from app.trading.order_lineage_receipts import (
-    CLASSIFICATION_LINKED_INCOMPLETE,
-    CONFIDENCE_EXACT,
-    EXECUTION_SOURCE_CROSS_DSN,
-    MATCH_BASIS_ALPACA_ORDER_ID,
-    OrderLineageEvidence,
-    build_order_lineage_receipt,
     canonical_jsonb_text,
 )
 from app.trading.order_lineage_runs import (
     OrderLineageCensusSources,
     OrderLineageRepairRunDraft,
+    build_order_lineage_canonical_execution_import,
     build_order_lineage_repair_run,
     persist_order_lineage_census,
 )
@@ -44,7 +47,7 @@ from tests.execution.decision_submission_claims_postgres_support import (
 from tests.migration_testing import load_migration_module
 
 
-NOW = datetime(2026, 7, 17, 1, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 17, 1, 0, 0, 120_000, tzinfo=timezone.utc)
 
 
 @pytest.mark.skipif(
@@ -56,7 +59,7 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
     schema = f"order_lineage_run_{uuid.uuid4().hex}"
     admin_engine = create_engine(POSTGRES_DSN, future=True)
     schema_url = make_url(POSTGRES_DSN).update_query_dict(
-        {"options": f"-csearch_path={schema}"}
+        {"options": (f"-csearch_path={schema} -cTimeZone=America/Los_Angeles")}
     )
     schema_engine = create_engine(schema_url, future=True)
     try:
@@ -64,12 +67,18 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
             connection.execute(text(f'CREATE SCHEMA "{schema}"'))
         _apply_migration(schema_engine, "0081_order_lineage_repair_receipts.py")
         _create_broker_input_parent(schema_engine)
+        _create_source_tables(schema_engine)
         _apply_migration(schema_engine, "0082_order_lineage_repair_runs.py")
 
         input_id = uuid.uuid4()
+        activity_id = uuid.uuid4()
         _insert_broker_input(schema_engine, input_id=input_id, manifest_sha="b" * 64)
-        receipt = _receipt(activity_id=uuid.uuid4(), source_last_at=NOW)
-        sources = _sources(input_id=input_id, manifest_sha="b" * 64)
+        _insert_source_rows(schema_engine, activity_id=activity_id)
+        sources, receipt = _sources(
+            input_id=input_id,
+            manifest_sha="b" * 64,
+            activity_id=activity_id,
+        )
         start = Barrier(2)
 
         def persist_concurrently(_: int) -> tuple[bool, int, int]:
@@ -98,6 +107,18 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
         )
         assert_rejected(schema_engine, "DELETE FROM order_lineage_repair_runs")
         assert_rejected(schema_engine, "TRUNCATE order_lineage_repair_runs")
+        assert_rejected(
+            schema_engine,
+            "UPDATE order_lineage_canonical_execution_imports SET observed_at = now()",
+        )
+        assert_rejected(
+            schema_engine,
+            "DELETE FROM order_lineage_canonical_execution_imports",
+        )
+        assert_rejected(
+            schema_engine,
+            "TRUNCATE order_lineage_canonical_execution_imports",
+        )
 
         draft = build_order_lineage_repair_run(sources, [receipt])
         _assert_noncanonical_run_rejected(schema_engine, draft)
@@ -174,16 +195,33 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
             draft,
             mutate_input=lambda value: _set_manifest_value(
                 value,
+                "broker_order_links",
+                "activity_set_sha256",
+                "d" * 64,
+            ),
+            match="persisted source manifest mismatch",
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: _set_manifest_value(
+                value,
                 "order_feed",
                 "event_set_sha256",
                 "d" * 64,
             ),
-            mutate_result=lambda value: _set_nested(
+            match="persisted source manifest mismatch",
+        )
+        _assert_invalid_run_rejected(
+            schema_engine,
+            draft,
+            mutate_input=lambda value: _set_manifest_value(
                 value,
-                "receipt_set_sha256",
-                "f" * 64,
+                "executions",
+                "local_execution_set_sha256",
+                "e" * 64,
             ),
-            match="receipt membership mismatch",
+            match="persisted source manifest mismatch",
         )
         _assert_invalid_run_rejected(
             schema_engine,
@@ -195,7 +233,7 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
             ),
             mutate_result=lambda value: _set_result_receipt_count(value, count=2),
             receipt_count=2,
-            match="receipt membership mismatch",
+            match="persisted source manifest mismatch",
         )
         _assert_row_counts(schema_engine, receipts=1, runs=1)
 
@@ -207,33 +245,22 @@ def test_postgres_census_is_atomic_closed_and_append_only() -> None:
             manifest_sha="c" * 64,
             source_watermark=changed_at,
         )
-        changed_receipt = _receipt(
-            activity_id=uuid.uuid4(),
-            source_last_at=changed_at,
-        )
         changed_sources = replace(
             sources,
             broker_economic_input_id=changed_input_id,
             broker_economic_manifest_sha256="c" * 64,
             broker_source_watermark=changed_at,
-            broker_order_link_manifest={
-                "activity_count": 1,
-                "activity_set_sha256": "d" * 64,
-                "fill_count": 1,
-                "first_activity_at": changed_at.isoformat(),
-                "last_activity_at": changed_at.isoformat(),
-            },
         )
         with Session(schema_engine) as session, session.begin():
             changed = persist_order_lineage_census(
                 session,
                 changed_sources,
-                [changed_receipt],
+                [receipt],
                 observed_at=changed_at,
             )
             assert not changed.run.reused_existing
-            assert changed.inserted_receipt_count == 1
-        _assert_row_counts(schema_engine, receipts=2, runs=2)
+            assert changed.reused_receipt_count == 1
+        _assert_row_counts(schema_engine, receipts=1, runs=2)
     finally:
         with admin_engine.begin() as connection:
             connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
@@ -266,6 +293,77 @@ def _create_broker_input_parent(engine: Engine) -> None:
                 """
             )
         )
+
+
+def _create_source_tables(engine: Engine) -> None:
+    statements = (
+        """
+        CREATE TABLE broker_account_activities (
+            id UUID PRIMARY KEY,
+            provider VARCHAR(32) NOT NULL,
+            source VARCHAR(64) NOT NULL,
+            environment VARCHAR(16) NOT NULL,
+            account_label VARCHAR(64) NOT NULL,
+            endpoint_fingerprint VARCHAR(64) NOT NULL,
+            external_activity_id VARCHAR(256) NOT NULL,
+            activity_type VARCHAR(32) NOT NULL,
+            event_at TIMESTAMPTZ,
+            order_id VARCHAR(128),
+            client_order_id VARCHAR(128),
+            first_observed_at TIMESTAMPTZ NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE execution_order_events (
+            id UUID PRIMARY KEY,
+            event_fingerprint VARCHAR(64) NOT NULL,
+            source_topic VARCHAR(128) NOT NULL,
+            source_partition INTEGER,
+            source_offset BIGINT,
+            alpaca_account_label VARCHAR(64) NOT NULL,
+            event_ts TIMESTAMPTZ,
+            alpaca_order_id VARCHAR(128),
+            client_order_id VARCHAR(128),
+            filled_qty_delta NUMERIC(21, 9),
+            execution_id UUID,
+            trade_decision_id UUID,
+            created_at TIMESTAMPTZ NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE trade_decisions (
+            id UUID PRIMARY KEY,
+            strategy_id UUID NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE executions (
+            id UUID PRIMARY KEY,
+            trade_decision_id UUID,
+            alpaca_account_label VARCHAR(64) NOT NULL,
+            alpaca_order_id VARCHAR(128) NOT NULL,
+            client_order_id VARCHAR(128),
+            execution_idempotency_key VARCHAR(96),
+            updated_at TIMESTAMPTZ NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE execution_tca_metrics (
+            id UUID PRIMARY KEY,
+            execution_id UUID NOT NULL UNIQUE,
+            trade_decision_id UUID,
+            strategy_id UUID
+        )
+        """,
+        """
+        CREATE TABLE trade_decision_submission_claims (
+            trade_decision_id UUID PRIMARY KEY
+        )
+        """,
+    )
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
 
 
 def _apply_migration(engine: Engine, filename: str) -> None:
@@ -304,41 +402,68 @@ def _insert_broker_input(
         )
 
 
-def _receipt(
-    *,
-    activity_id: uuid.UUID,
-    source_last_at: datetime,
-):
-    event_id = uuid.UUID(int=1)
-    return build_order_lineage_receipt(
-        OrderLineageEvidence(
-            provider="alpaca",
-            environment="paper",
-            account_label="paper-account",
-            alpaca_order_id="broker-order",
-            client_order_id="client-order",
-            classification=CLASSIFICATION_LINKED_INCOMPLETE,
-            confidence=CONFIDENCE_EXACT,
-            execution_source=EXECUTION_SOURCE_CROSS_DSN,
-            canonical_execution_id=uuid.UUID(int=2),
-            order_event_ids=(event_id,),
-            fill_order_event_ids=(event_id,),
-            broker_activity_ids=(activity_id,),
-            broker_fill_activity_ids=(activity_id,),
-            source_first_at=NOW,
-            source_last_at=source_last_at,
-            match_basis=(MATCH_BASIS_ALPACA_ORDER_ID,),
-            blockers=("submission_claim_missing",),
-        )
-    )
-
-
 def _sources(
     *,
     input_id: uuid.UUID,
     manifest_sha: str,
-) -> OrderLineageCensusSources:
-    return OrderLineageCensusSources(
+    activity_id: uuid.UUID,
+) -> tuple[OrderLineageCensusSources, object]:
+    census = build_order_lineage_census(
+        OrderLineageCensusEvidence(
+            provider="alpaca",
+            environment="paper",
+            account_label="paper-account",
+            canonical_account_label_sha256="c" * 64,
+            order_events=(
+                OrderEventFact(
+                    id=uuid.UUID(int=1),
+                    event_fingerprint="f" * 64,
+                    broker_order_id="broker-order",
+                    client_order_id="client-order",
+                    event_at=NOW,
+                    is_fill=True,
+                    execution_id=None,
+                    trade_decision_id=None,
+                    source_topic="trade-updates",
+                    source_partition=0,
+                    source_offset=1,
+                ),
+            ),
+            broker_activities=(
+                BrokerActivityFact(
+                    id=activity_id,
+                    external_activity_id="activity-1",
+                    activity_type="FILL",
+                    broker_order_id="broker-order",
+                    client_order_id="client-order",
+                    event_at=NOW,
+                ),
+            ),
+            local_executions=(),
+            canonical_executions=(
+                ExecutionLineageFact(
+                    source="canonical_cross_dsn",
+                    execution_id=uuid.UUID(int=2),
+                    broker_order_id="broker-order",
+                    client_order_id="client-order",
+                    idempotency_key=None,
+                    trade_decision_id=None,
+                    strategy_id=None,
+                    submission_claim_id=None,
+                    tca_metric_id=None,
+                    updated_at=NOW,
+                ),
+            ),
+        )
+    )
+    execution_import = build_order_lineage_canonical_execution_import(
+        provider="alpaca",
+        environment="paper",
+        account_label="paper-account",
+        source_database_sha256="9" * 64,
+        execution_manifest=census.execution_manifest,
+    )
+    sources = OrderLineageCensusSources(
         provider="alpaca",
         environment="paper",
         account_label="paper-account",
@@ -347,28 +472,49 @@ def _sources(
         broker_economic_manifest_sha256=manifest_sha,
         broker_activity_count=1,
         broker_source_watermark=NOW,
-        broker_order_link_manifest={
-            "activity_count": 1,
-            "activity_set_sha256": "a" * 64,
-            "fill_count": 1,
-            "first_activity_at": NOW.isoformat(),
-            "last_activity_at": NOW.isoformat(),
-        },
-        order_feed_manifest={
-            "event_count": 1,
-            "event_set_sha256": "b" * 64,
-            "first_event_at": NOW.isoformat(),
-            "last_event_at": NOW.isoformat(),
-            "partitions": [],
-        },
-        execution_manifest={
-            "canonical_account_label_sha256": "c" * 64,
-            "canonical_execution_count": 1,
-            "execution_set_sha256": "c" * 64,
-            "latest_updated_at": NOW.isoformat(),
-            "local_execution_count": 0,
-        },
+        broker_order_link_manifest=census.broker_order_link_manifest,
+        order_feed_manifest=census.order_feed_manifest,
+        execution_manifest=census.execution_manifest,
+        canonical_execution_import=execution_import,
     )
+    return sources, census.receipts[0]
+
+
+def _insert_source_rows(engine: Engine, *, activity_id: uuid.UUID) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO broker_account_activities (
+                    id, provider, source, environment, account_label,
+                    endpoint_fingerprint, external_activity_id, activity_type,
+                    event_at, order_id, client_order_id, first_observed_at
+                ) VALUES (
+                    :id, 'alpaca', 'account_activities_rest', 'paper',
+                    'paper-account', :endpoint, 'activity-1', 'FILL', :now,
+                    'broker-order', 'client-order', :now
+                )
+                """
+            ),
+            {"id": activity_id, "endpoint": "e" * 64, "now": NOW},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO execution_order_events (
+                    id, event_fingerprint, source_topic, source_partition,
+                    source_offset, alpaca_account_label, event_ts,
+                    alpaca_order_id, client_order_id, filled_qty_delta,
+                    execution_id, trade_decision_id, created_at
+                ) VALUES (
+                    :id, :fingerprint, 'trade-updates', 0, 1,
+                    'paper-account', :now, 'broker-order', 'client-order',
+                    1, NULL, NULL, :now
+                )
+                """
+            ),
+            {"id": uuid.UUID(int=1), "fingerprint": "f" * 64, "now": NOW},
+        )
 
 
 def _assert_invalid_run_rejected(
@@ -392,6 +538,7 @@ def _assert_invalid_run_rejected(
         environment=draft.environment,
         account_label=draft.account_label,
         broker_economic_input_id=draft.broker_economic_input_id,
+        canonical_execution_import_sha256=(draft.canonical_execution_import_sha256),
         input_manifest=input_manifest,
         input_manifest_canonical_json=input_json,
         input_manifest_sha256=_sha256(input_json),
@@ -419,6 +566,7 @@ def _assert_noncanonical_run_rejected(
         environment=draft.environment,
         account_label=draft.account_label,
         broker_economic_input_id=draft.broker_economic_input_id,
+        canonical_execution_import_sha256=(draft.canonical_execution_import_sha256),
         input_manifest=draft.input_manifest,
         input_manifest_canonical_json=input_json,
         input_manifest_sha256=_sha256(input_json),
@@ -501,6 +649,12 @@ def _sha256(value: str) -> str:
 
 def _assert_row_counts(engine: Engine, *, receipts: int, runs: int) -> None:
     with Session(engine) as session:
+        assert (
+            session.scalar(
+                select(func.count(OrderLineageCanonicalExecutionImport.manifest_sha256))
+            )
+            == 1
+        )
         assert (
             session.scalar(select(func.count(OrderLineageRepairReceipt.id))) == receipts
         )

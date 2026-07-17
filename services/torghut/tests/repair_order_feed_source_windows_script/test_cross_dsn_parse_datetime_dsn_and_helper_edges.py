@@ -87,6 +87,7 @@ def runtime_census() -> script.RuntimeCensus:
         census=census,
         source_account_label_sha256="d" * 64,
         canonical_account_label_sha256="c" * 64,
+        canonical_source_database_sha256="9" * 64,
     )
 
 

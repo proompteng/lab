@@ -40,6 +40,7 @@ from app.trading.order_lineage_runs import (
     OrderLineageCensusSources,
     OrderLineageRepairRunDraft,
     PersistedOrderLineageCensus,
+    build_order_lineage_canonical_execution_import,
     build_order_lineage_repair_run,
     persist_order_lineage_census,
 )
@@ -51,6 +52,7 @@ class RuntimeCensus:
     census: OrderLineageCensusBuild
     source_account_label_sha256: str
     canonical_account_label_sha256: str
+    canonical_source_database_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +199,7 @@ def load_runtime_census(
         census=census,
         source_account_label_sha256=_sha256(resolved_source_account),
         canonical_account_label_sha256=_sha256(resolved_canonical_account),
+        canonical_source_database_sha256=_database_identity_sha256(canonical_session),
     )
 
 
@@ -417,6 +420,13 @@ def resolve_source_account_label(
 
 def _census_sources(runtime: RuntimeCensus) -> OrderLineageCensusSources:
     broker_input = runtime.broker_input
+    canonical_execution_import = build_order_lineage_canonical_execution_import(
+        provider=broker_input.provider,
+        environment=broker_input.environment,
+        account_label=broker_input.account_label,
+        source_database_sha256=runtime.canonical_source_database_sha256,
+        execution_manifest=runtime.census.execution_manifest,
+    )
     return OrderLineageCensusSources(
         provider=broker_input.provider,
         environment=broker_input.environment,
@@ -429,6 +439,7 @@ def _census_sources(runtime: RuntimeCensus) -> OrderLineageCensusSources:
         broker_order_link_manifest=runtime.census.broker_order_link_manifest,
         order_feed_manifest=runtime.census.order_feed_manifest,
         execution_manifest=runtime.census.execution_manifest,
+        canonical_execution_import=canonical_execution_import,
     )
 
 
@@ -551,6 +562,21 @@ def _optional_text(value: object) -> str | None:
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _database_identity_sha256(session: Session) -> str:
+    bind = session.get_bind()
+    url = getattr(bind, "url", None)
+    if url is None:
+        identity = {"backend": bind.dialect.name}
+    else:
+        identity = {
+            "backend": url.get_backend_name(),
+            "database": url.database or "",
+            "host": url.host or "",
+            "port": url.port,
+        }
+    return _sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")))
 
 
 if __name__ == "__main__":

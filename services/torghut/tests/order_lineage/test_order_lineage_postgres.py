@@ -44,7 +44,7 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
     schema = f"order_lineage_{uuid.uuid4().hex}"
     admin_engine = create_engine(POSTGRES_DSN, future=True)
     schema_url = make_url(POSTGRES_DSN).update_query_dict(
-        {"options": f"-csearch_path={schema}"}
+        {"options": (f"-csearch_path={schema} -cTimeZone=America/Los_Angeles")}
     )
     schema_engine = create_engine(schema_url, future=True)
     try:
@@ -52,7 +52,7 @@ def test_postgres_receipts_have_one_evidence_authority_and_are_append_only() -> 
             connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
         _apply_migration(schema_engine, "0081_order_lineage_repair_receipts.py")
 
-        now = datetime(2026, 7, 16, 20, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 7, 16, 20, 0, 0, 120_000, tzinfo=timezone.utc)
         source_event_id = uuid.uuid4()
         broker_fill_id = uuid.uuid4()
         execution_id = uuid.uuid4()

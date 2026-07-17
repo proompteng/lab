@@ -13,10 +13,12 @@ The receipt is evidence, not authority. It is always marked `promotion_authority
 row can explain a result or exclude it from promotion; it can never turn an unfenced legacy order into a valid current
 submission.
 
-This is intentionally one table and one deterministic builder. The immutable JSON document is the causal evidence
-authority; the table projects only scope, classification, identity, and source-window fields needed for current-state
-selection. Slice 9 does not add a lineage graph service, queue, mutable repair cursor, approval workflow, confidence
-score formula, duplicate writable link columns, or generic provenance framework.
+Receipt evidence intentionally stays in one table with one deterministic builder. Delivery 2 adds only the closed-run
+table and a compact, immutable cross-DSN import table needed to prove the run's input boundary. The immutable JSON
+document is the causal evidence authority; the receipt table projects only scope, classification, identity, and
+source-window fields needed for current-state selection. Slice 9 does not add a lineage graph service, queue, mutable
+repair cursor, approval workflow, confidence score formula, duplicate writable link columns, or generic provenance
+framework.
 
 ## Evidence That Requires Repair
 
@@ -125,11 +127,25 @@ Migration `0082_order_lineage_runs` adds the closed-census boundary. One append-
 - the expected order-identity count and digest of every current receipt identity/evidence pair;
 - classification, confidence, execution-source, and source-coverage counts that each sum to the receipt count.
 
-PostgreSQL verifies the referenced broker input and every count, rejects update/delete/truncate, and takes one
-transaction-scoped advisory lock per repair scope. Both run documents must use exact PostgreSQL JSONB canonical bytes,
-so alternate whitespace or key ordering cannot manufacture a second input hash. Receipt states and the run are
-committed in the same transaction. Repeating identical inputs reuses the run; the same input producing a different
-result fails as nondeterministic.
+The database does not trust caller-supplied local coverage hashes. Its insert guard derives the broker-order-link
+manifest from `broker_account_activities`, the order-feed manifest and partition bounds from
+`execution_order_events`, and the local-execution manifest from executions, decisions, submission claims, and TCA
+rows. It derives the complete current receipt set and every result count from persisted receipts, then compares the
+entire input and result documents rather than checking selected fields.
+
+PostgreSQL cannot re-query a different database inside this transaction. The canonical cross-DSN projection is
+therefore bound through an immutable, content-addressed import containing the source-database identity hash, canonical
+account-label hash, execution count, execution-set digest, and watermark. The run has a restrictive foreign key to
+that exact import. The import's canonical document and content hash are independently checked on insert; update,
+delete, and truncate are rejected. Identical canonical projections reuse the import instead of copying the execution
+set every hour. This is the explicit cross-database trust boundary, not a false foreign-key claim.
+
+PostgreSQL also verifies the referenced broker input and every count and takes one transaction-scoped advisory lock
+per repair scope. Both run documents must use exact PostgreSQL JSONB canonical bytes, so alternate whitespace or key
+ordering cannot manufacture a second input hash. Timestamp text follows PostgreSQL's UTC JSONB rendering, including
+trimmed fractional-second zeros, and the guards execute with a function-local UTC setting. The import, receipt states,
+and run are committed in the same transaction. Repeating identical inputs reuses the run; the same input producing a
+different result fails as nondeterministic.
 
 ## Runtime Census
 

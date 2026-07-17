@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import (
+    OrderLineageCanonicalExecutionImport,
     OrderLineageRepairReceipt,
     OrderLineageRepairRun,
     coerce_json_payload,
@@ -25,6 +26,7 @@ from .order_lineage_receipts import (
     ORDER_LINEAGE_REPAIR_VERSION,
     OrderLineageReceiptDraft,
     canonical_jsonb_text,
+    canonical_timestamptz_text,
     persist_order_lineage_receipt,
 )
 
@@ -35,11 +37,29 @@ ORDER_LINEAGE_CENSUS_INPUT_SCHEMA_VERSION: Final = (
 ORDER_LINEAGE_CENSUS_RESULT_SCHEMA_VERSION: Final = (
     "torghut.order-lineage-census-result.v1"
 )
+ORDER_LINEAGE_CANONICAL_EXECUTION_IMPORT_SCHEMA_VERSION: Final = (
+    "torghut.order-lineage-canonical-execution-import.v1"
+)
 _SOURCE_COVERAGE_CLASSES: Final = (
     "both",
     "broker_activity_only",
     "order_feed_only",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class OrderLineageCanonicalExecutionImportDraft:
+    provider: str
+    environment: str
+    account_label: str
+    source_database_sha256: str
+    canonical_account_label_sha256: str
+    execution_count: int
+    execution_set_sha256: str
+    latest_updated_at: datetime | None
+    manifest: dict[str, object]
+    manifest_canonical_json: str
+    manifest_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +75,7 @@ class OrderLineageCensusSources:
     broker_order_link_manifest: Mapping[str, object]
     order_feed_manifest: Mapping[str, object]
     execution_manifest: Mapping[str, object]
+    canonical_execution_import: OrderLineageCanonicalExecutionImportDraft
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +85,7 @@ class OrderLineageRepairRunDraft:
     environment: str
     account_label: str
     broker_economic_input_id: uuid.UUID
+    canonical_execution_import_sha256: str
     input_manifest: dict[str, object]
     input_manifest_canonical_json: str
     input_manifest_sha256: str
@@ -85,6 +107,79 @@ class PersistedOrderLineageCensus:
     run: PersistedOrderLineageRepairRun
     inserted_receipt_count: int
     reused_receipt_count: int
+
+
+def build_order_lineage_canonical_execution_import(
+    *,
+    provider: str,
+    environment: str,
+    account_label: str,
+    source_database_sha256: str,
+    execution_manifest: Mapping[str, object],
+) -> OrderLineageCanonicalExecutionImportDraft:
+    """Bind the cross-database execution component to one immutable import."""
+
+    normalized_provider = _required_text(provider, "order_lineage_provider_missing")
+    normalized_environment = _required_text(
+        environment,
+        "order_lineage_environment_missing",
+    )
+    normalized_account = _required_text(
+        account_label,
+        "order_lineage_account_label_missing",
+    )
+    source_database = _sha256_value(
+        source_database_sha256,
+        "order_lineage_source_database_hash_invalid",
+    )
+    canonical_account = _sha256_value(
+        execution_manifest.get("canonical_account_label_sha256"),
+        "order_lineage_canonical_scope_hash_invalid",
+    )
+    execution_count = _nonnegative_int(
+        execution_manifest.get("canonical_execution_count"),
+        "order_lineage_canonical_execution_count_invalid",
+    )
+    execution_set = _sha256_value(
+        execution_manifest.get("canonical_execution_set_sha256"),
+        "order_lineage_canonical_execution_set_hash_invalid",
+    )
+    latest_updated_at = _optional_utc_text(
+        execution_manifest.get("canonical_latest_updated_at"),
+        "order_lineage_canonical_latest_updated_at_invalid",
+    )
+    manifest: dict[str, object] = {
+        "canonical_account_label_sha256": canonical_account,
+        "execution_count": execution_count,
+        "execution_set_sha256": execution_set,
+        "latest_updated_at": (
+            canonical_timestamptz_text(latest_updated_at)
+            if latest_updated_at is not None
+            else None
+        ),
+        "schema_version": ORDER_LINEAGE_CANONICAL_EXECUTION_IMPORT_SCHEMA_VERSION,
+        "scope": {
+            "account_label": normalized_account,
+            "environment": normalized_environment,
+            "provider": normalized_provider,
+        },
+        "source": "canonical_cross_dsn",
+        "source_database_sha256": source_database,
+    }
+    canonical_json = canonical_jsonb_text(manifest)
+    return OrderLineageCanonicalExecutionImportDraft(
+        provider=normalized_provider,
+        environment=normalized_environment,
+        account_label=normalized_account,
+        source_database_sha256=source_database,
+        canonical_account_label_sha256=canonical_account,
+        execution_count=execution_count,
+        execution_set_sha256=execution_set,
+        latest_updated_at=latest_updated_at,
+        manifest=coerce_json_payload(manifest),
+        manifest_canonical_json=canonical_json,
+        manifest_sha256=_sha256(canonical_json),
+    )
 
 
 def build_order_lineage_repair_run(
@@ -109,21 +204,25 @@ def build_order_lineage_repair_run(
     source_coverage_counts = Counter(
         _source_coverage(receipt) for receipt in ordered_receipts
     )
+    execution_manifest = coerce_json_payload(normalized_sources.execution_manifest)
+    execution_manifest["canonical_execution_import_sha256"] = (
+        normalized_sources.canonical_execution_import.manifest_sha256
+    )
     input_manifest: dict[str, object] = {
         "broker_economic_source": normalized_sources.broker_economic_source,
         "broker_economic_input_id": str(normalized_sources.broker_economic_input_id),
         "broker_economic_manifest_sha256": (
             normalized_sources.broker_economic_manifest_sha256
         ),
-        "broker_source_watermark": (
-            normalized_sources.broker_source_watermark.isoformat()
+        "broker_source_watermark": canonical_timestamptz_text(
+            normalized_sources.broker_source_watermark
         ),
         "broker_activity_count": normalized_sources.broker_activity_count,
         "expected_order_identity_count": len(ordered_receipts),
         "broker_order_links": coerce_json_payload(
             normalized_sources.broker_order_link_manifest
         ),
-        "executions": coerce_json_payload(normalized_sources.execution_manifest),
+        "executions": execution_manifest,
         "order_feed": coerce_json_payload(normalized_sources.order_feed_manifest),
         "repair_version": ORDER_LINEAGE_REPAIR_VERSION,
         "schema_version": ORDER_LINEAGE_CENSUS_INPUT_SCHEMA_VERSION,
@@ -164,6 +263,9 @@ def build_order_lineage_repair_run(
         environment=normalized_sources.environment,
         account_label=normalized_sources.account_label,
         broker_economic_input_id=normalized_sources.broker_economic_input_id,
+        canonical_execution_import_sha256=(
+            normalized_sources.canonical_execution_import.manifest_sha256
+        ),
         input_manifest=coerce_json_payload(input_manifest),
         input_manifest_canonical_json=input_json,
         input_manifest_sha256=_sha256(input_json),
@@ -185,6 +287,11 @@ def persist_order_lineage_census(
 
     normalized_sources = _normalize_sources(sources)
     _acquire_scope_lock(session, normalized_sources)
+    _persist_canonical_execution_import(
+        session,
+        normalized_sources.canonical_execution_import,
+        observed_at=observed_at,
+    )
     persisted_receipts = [
         persist_order_lineage_receipt(
             session,
@@ -233,6 +340,7 @@ def persist_order_lineage_repair_run(
         environment=draft.environment,
         account_label=draft.account_label,
         broker_economic_input_id=draft.broker_economic_input_id,
+        canonical_execution_import_sha256=(draft.canonical_execution_import_sha256),
         input_manifest=draft.input_manifest,
         input_manifest_canonical_json=draft.input_manifest_canonical_json,
         input_manifest_sha256=draft.input_manifest_sha256,
@@ -342,6 +450,7 @@ def load_order_lineage_repair_status(
         "execution_source_counts": execution_source_counts,
         "source_coverage_counts": source_coverage_counts,
         "broker_economic_input_id": str(row.broker_economic_input_id),
+        "canonical_execution_import_sha256": (row.canonical_execution_import_sha256),
         "input_manifest_sha256": row.input_manifest_sha256,
         "result_sha256": row.result_sha256,
         "receipt_set_sha256": result.get("receipt_set_sha256"),
@@ -374,6 +483,33 @@ def _normalize_sources(
         raise ValueError("order_lineage_broker_manifest_hash_invalid")
     if sources.broker_activity_count < 0:
         raise ValueError("order_lineage_broker_activity_count_invalid")
+    canonical_import = _normalize_canonical_execution_import(
+        sources.canonical_execution_import
+    )
+    if (
+        canonical_import.provider != provider
+        or canonical_import.environment != environment
+        or canonical_import.account_label != account_label
+    ):
+        raise ValueError("order_lineage_execution_import_scope_mismatch")
+    execution_manifest = coerce_json_payload(sources.execution_manifest)
+    expected_canonical_fields = {
+        "canonical_account_label_sha256": (
+            canonical_import.canonical_account_label_sha256
+        ),
+        "canonical_execution_count": canonical_import.execution_count,
+        "canonical_execution_set_sha256": canonical_import.execution_set_sha256,
+        "canonical_latest_updated_at": (
+            canonical_timestamptz_text(canonical_import.latest_updated_at)
+            if canonical_import.latest_updated_at is not None
+            else None
+        ),
+    }
+    if any(
+        execution_manifest.get(key) != value
+        for key, value in expected_canonical_fields.items()
+    ):
+        raise ValueError("order_lineage_execution_import_manifest_mismatch")
     return OrderLineageCensusSources(
         provider=provider,
         environment=environment,
@@ -387,8 +523,101 @@ def _normalize_sources(
             sources.broker_order_link_manifest
         ),
         order_feed_manifest=coerce_json_payload(sources.order_feed_manifest),
-        execution_manifest=coerce_json_payload(sources.execution_manifest),
+        execution_manifest=execution_manifest,
+        canonical_execution_import=canonical_import,
     )
+
+
+def _normalize_canonical_execution_import(
+    draft: OrderLineageCanonicalExecutionImportDraft,
+) -> OrderLineageCanonicalExecutionImportDraft:
+    rebuilt = build_order_lineage_canonical_execution_import(
+        provider=draft.provider,
+        environment=draft.environment,
+        account_label=draft.account_label,
+        source_database_sha256=draft.source_database_sha256,
+        execution_manifest={
+            "canonical_account_label_sha256": (draft.canonical_account_label_sha256),
+            "canonical_execution_count": draft.execution_count,
+            "canonical_execution_set_sha256": draft.execution_set_sha256,
+            "canonical_latest_updated_at": (
+                canonical_timestamptz_text(draft.latest_updated_at)
+                if draft.latest_updated_at is not None
+                else None
+            ),
+        },
+    )
+    if (
+        draft.manifest != rebuilt.manifest
+        or draft.manifest_canonical_json != rebuilt.manifest_canonical_json
+        or draft.manifest_sha256 != rebuilt.manifest_sha256
+    ):
+        raise ValueError("order_lineage_execution_import_document_mismatch")
+    return rebuilt
+
+
+def _persist_canonical_execution_import(
+    session: Session,
+    draft: OrderLineageCanonicalExecutionImportDraft,
+    *,
+    observed_at: datetime,
+) -> OrderLineageCanonicalExecutionImport:
+    existing = session.get(
+        OrderLineageCanonicalExecutionImport,
+        draft.manifest_sha256,
+    )
+    if existing is not None:
+        _validate_reused_execution_import(existing, draft)
+        return existing
+    row = OrderLineageCanonicalExecutionImport(
+        manifest_sha256=draft.manifest_sha256,
+        provider=draft.provider,
+        environment=draft.environment,
+        account_label=draft.account_label,
+        source_database_sha256=draft.source_database_sha256,
+        canonical_account_label_sha256=(draft.canonical_account_label_sha256),
+        execution_count=draft.execution_count,
+        execution_set_sha256=draft.execution_set_sha256,
+        latest_updated_at=draft.latest_updated_at,
+        manifest=draft.manifest,
+        manifest_canonical_json=draft.manifest_canonical_json,
+        observed_at=_required_utc(observed_at),
+    )
+    try:
+        with session.begin_nested():
+            session.add(row)
+            session.flush()
+    except IntegrityError:
+        existing = session.get(
+            OrderLineageCanonicalExecutionImport,
+            draft.manifest_sha256,
+        )
+        if existing is None:
+            raise
+        _validate_reused_execution_import(existing, draft)
+        return existing
+    return row
+
+
+def _validate_reused_execution_import(
+    existing: OrderLineageCanonicalExecutionImport,
+    draft: OrderLineageCanonicalExecutionImportDraft,
+) -> None:
+    if (
+        existing.provider != draft.provider
+        or existing.environment != draft.environment
+        or existing.account_label != draft.account_label
+        or existing.source_database_sha256 != draft.source_database_sha256
+        or existing.canonical_account_label_sha256
+        != draft.canonical_account_label_sha256
+        or existing.execution_count != draft.execution_count
+        or existing.execution_set_sha256 != draft.execution_set_sha256
+        or _optional_persisted_utc(existing.latest_updated_at)
+        != draft.latest_updated_at
+        or coerce_json_payload(existing.manifest) != draft.manifest
+        or existing.manifest_canonical_json != draft.manifest_canonical_json
+    ):
+        raise ValueError("order_lineage_execution_import_hash_collision")
 
 
 def _validated_receipts(
@@ -492,7 +721,11 @@ def _reused_run(
     existing: OrderLineageRepairRun,
     draft: OrderLineageRepairRunDraft,
 ) -> PersistedOrderLineageRepairRun:
-    if existing.result_sha256 != draft.result_sha256:
+    if (
+        existing.result_sha256 != draft.result_sha256
+        or existing.canonical_execution_import_sha256
+        != draft.canonical_execution_import_sha256
+    ):
         raise ValueError("order_lineage_run_nondeterministic")
     return PersistedOrderLineageRepairRun(run=existing, reused_existing=True)
 
@@ -557,6 +790,35 @@ def _required_text(value: object, error: str) -> str:
     return normalized
 
 
+def _sha256_value(value: object, error: str) -> str:
+    normalized = str(value).strip().lower() if value is not None else ""
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise ValueError(error)
+    return normalized
+
+
+def _nonnegative_int(value: object, error: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(error)
+    return value
+
+
+def _optional_utc_text(value: object, error: str) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(error)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(error) from exc
+    if parsed.tzinfo is None:
+        raise ValueError(error)
+    return parsed.astimezone(timezone.utc)
+
+
 def _required_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("order_lineage_timestamp_timezone_missing")
@@ -569,13 +831,20 @@ def _persisted_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _optional_persisted_utc(value: datetime | None) -> datetime | None:
+    return _persisted_utc(value) if value is not None else None
+
+
 __all__ = (
     "ORDER_LINEAGE_CENSUS_INPUT_SCHEMA_VERSION",
     "ORDER_LINEAGE_CENSUS_RESULT_SCHEMA_VERSION",
+    "ORDER_LINEAGE_CANONICAL_EXECUTION_IMPORT_SCHEMA_VERSION",
+    "OrderLineageCanonicalExecutionImportDraft",
     "OrderLineageCensusSources",
     "OrderLineageRepairRunDraft",
     "PersistedOrderLineageCensus",
     "PersistedOrderLineageRepairRun",
+    "build_order_lineage_canonical_execution_import",
     "build_order_lineage_repair_run",
     "load_order_lineage_repair_status",
     "persist_order_lineage_census",

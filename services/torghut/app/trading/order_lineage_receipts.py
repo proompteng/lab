@@ -751,6 +751,19 @@ def canonical_jsonb_text(value: object) -> str:
     raise TypeError(f"unsupported order-lineage JSON value: {type(value).__name__}")
 
 
+def canonical_timestamptz_text(value: datetime) -> str:
+    """Render UTC timestamps exactly like PostgreSQL JSONB text output."""
+
+    normalized = _required_utc(value)
+    rendered = normalized.isoformat(
+        timespec="microseconds" if normalized.microsecond else "seconds"
+    )
+    if not normalized.microsecond:
+        return rendered
+    timestamp, offset = rendered.rsplit("+", maxsplit=1)
+    return f"{timestamp.rstrip('0')}+{offset}"
+
+
 def _order_identity_sha256(
     *,
     provider: str,
@@ -837,5 +850,6 @@ __all__ = (
     "PersistedOrderLineageReceipt",
     "build_order_lineage_receipt",
     "canonical_jsonb_text",
+    "canonical_timestamptz_text",
     "persist_order_lineage_receipt",
 )

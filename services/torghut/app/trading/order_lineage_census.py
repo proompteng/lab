@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -28,6 +27,8 @@ from .order_lineage_receipts import (
     OrderLineageEvidence,
     OrderLineageReceiptDraft,
     build_order_lineage_receipt,
+    canonical_jsonb_text,
+    canonical_timestamptz_text,
 )
 
 
@@ -639,7 +640,7 @@ def _order_feed_manifest(events: Sequence[OrderEventFact]) -> dict[str, object]:
         {
             "broker_order_id": event.broker_order_id,
             "client_order_id": event.client_order_id,
-            "event_at": _required_utc(event.event_at).isoformat(),
+            "event_at": canonical_timestamptz_text(event.event_at),
             "event_fingerprint": event.event_fingerprint,
             "execution_id": _uuid_text(event.execution_id),
             "id": str(event.id),
@@ -655,8 +656,12 @@ def _order_feed_manifest(events: Sequence[OrderEventFact]) -> dict[str, object]:
     return {
         "event_count": len(events),
         "event_set_sha256": _canonical_sha256(payload),
-        "first_event_at": min(timestamps).isoformat() if timestamps else None,
-        "last_event_at": max(timestamps).isoformat() if timestamps else None,
+        "first_event_at": (
+            canonical_timestamptz_text(min(timestamps)) if timestamps else None
+        ),
+        "last_event_at": (
+            canonical_timestamptz_text(max(timestamps)) if timestamps else None
+        ),
         "partitions": _partition_manifest(events),
     }
 
@@ -695,7 +700,7 @@ def _broker_order_link_manifest(
             "activity_type": activity.activity_type,
             "broker_order_id": activity.broker_order_id,
             "client_order_id": activity.client_order_id,
-            "event_at": _required_utc(activity.event_at).isoformat(),
+            "event_at": canonical_timestamptz_text(activity.event_at),
             "external_activity_id": activity.external_activity_id,
             "id": str(activity.id),
         }
@@ -708,15 +713,54 @@ def _broker_order_link_manifest(
         "fill_count": sum(
             activity.activity_type.upper() == _FILL_ACTIVITY for activity in activities
         ),
-        "first_activity_at": min(timestamps).isoformat() if timestamps else None,
-        "last_activity_at": max(timestamps).isoformat() if timestamps else None,
+        "first_activity_at": (
+            canonical_timestamptz_text(min(timestamps)) if timestamps else None
+        ),
+        "last_activity_at": (
+            canonical_timestamptz_text(max(timestamps)) if timestamps else None
+        ),
     }
 
 
 def _execution_manifest(
     evidence: OrderLineageCensusEvidence,
 ) -> dict[str, object]:
-    rows = (*evidence.local_executions, *evidence.canonical_executions)
+    local = _execution_component_manifest(evidence.local_executions)
+    canonical = _execution_component_manifest(evidence.canonical_executions)
+    timestamps = tuple(
+        _required_utc(row.updated_at)
+        for row in (*evidence.local_executions, *evidence.canonical_executions)
+    )
+    component_manifest = [
+        {
+            "execution_count": canonical["execution_count"],
+            "execution_set_sha256": canonical["execution_set_sha256"],
+            "source": EXECUTION_SOURCE_CROSS_DSN,
+        },
+        {
+            "execution_count": local["execution_count"],
+            "execution_set_sha256": local["execution_set_sha256"],
+            "source": EXECUTION_SOURCE_LOCAL,
+        },
+    ]
+    return {
+        "canonical_account_label_sha256": evidence.canonical_account_label_sha256,
+        "canonical_execution_count": canonical["execution_count"],
+        "canonical_execution_set_sha256": canonical["execution_set_sha256"],
+        "canonical_latest_updated_at": canonical["latest_updated_at"],
+        "execution_set_sha256": _canonical_sha256(component_manifest),
+        "latest_updated_at": (
+            canonical_timestamptz_text(max(timestamps)) if timestamps else None
+        ),
+        "local_execution_count": local["execution_count"],
+        "local_execution_set_sha256": local["execution_set_sha256"],
+        "local_latest_updated_at": local["latest_updated_at"],
+    }
+
+
+def _execution_component_manifest(
+    rows: Sequence[ExecutionLineageFact],
+) -> dict[str, object]:
     payload = [
         {
             "broker_order_id": row.broker_order_id,
@@ -728,34 +772,22 @@ def _execution_manifest(
             "submission_claim_id": _uuid_text(row.submission_claim_id),
             "tca_metric_id": _uuid_text(row.tca_metric_id),
             "trade_decision_id": _uuid_text(row.trade_decision_id),
-            "updated_at": _required_utc(row.updated_at).isoformat(),
+            "updated_at": canonical_timestamptz_text(row.updated_at),
         }
-        for row in sorted(
-            rows, key=lambda value: (value.source, str(value.execution_id))
-        )
+        for row in sorted(rows, key=lambda value: str(value.execution_id))
     ]
     timestamps = tuple(_required_utc(row.updated_at) for row in rows)
     return {
-        "canonical_account_label_sha256": (evidence.canonical_account_label_sha256),
-        "canonical_execution_count": len(evidence.canonical_executions),
+        "execution_count": len(rows),
         "execution_set_sha256": _canonical_sha256(payload),
-        "latest_updated_at": max(timestamps).isoformat() if timestamps else None,
-        "local_execution_count": len(evidence.local_executions),
+        "latest_updated_at": (
+            canonical_timestamptz_text(max(timestamps)) if timestamps else None
+        ),
     }
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-
-
 def _canonical_sha256(value: object) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical_jsonb_text(value).encode("utf-8")).hexdigest()
 
 
 def _required_utc(value: datetime) -> datetime:

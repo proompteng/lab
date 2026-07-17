@@ -25,6 +25,7 @@ from app.trading.order_lineage_receipts import (
     MATCH_BASIS_CLIENT_ORDER_ID,
     OrderLineageEvidence,
     build_order_lineage_receipt,
+    canonical_timestamptz_text,
     persist_order_lineage_receipt,
 )
 
@@ -250,6 +251,14 @@ def test_source_subsets_and_timezone_fail_closed() -> None:
         build_order_lineage_receipt(
             replace(evidence, source_first_at=BASE_TIME.replace(tzinfo=None))
         )
+
+
+def test_canonical_timestamp_matches_postgres_fractional_precision() -> None:
+    assert (
+        canonical_timestamptz_text(BASE_TIME.replace(microsecond=120_000))
+        == "2026-07-16T09:30:00.12+00:00"
+    )
+    assert canonical_timestamptz_text(BASE_TIME) == "2026-07-16T09:30:00+00:00"
 
 
 @pytest.mark.parametrize(

@@ -152,6 +152,54 @@ class OrderLineageRepairReceipt(Base, CreatedAtMixin):
     )
 
 
+class OrderLineageCanonicalExecutionImport(Base, CreatedAtMixin):
+    """One immutable, content-addressed cross-database execution projection."""
+
+    __tablename__ = "order_lineage_canonical_execution_imports"
+
+    manifest_sha256: Mapped[str] = mapped_column(String(length=64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    environment: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    source_database_sha256: Mapped[str] = mapped_column(
+        String(length=64), nullable=False
+    )
+    canonical_account_label_sha256: Mapped[str] = mapped_column(
+        String(length=64), nullable=False
+    )
+    execution_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    execution_set_sha256: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    latest_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    manifest: Mapped[dict[str, object]] = mapped_column(JSONType, nullable=False)
+    manifest_canonical_json: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "length(manifest_sha256) = 64 "
+            "AND length(source_database_sha256) = 64 "
+            "AND length(canonical_account_label_sha256) = 64 "
+            "AND length(execution_set_sha256) = 64",
+            name=conv("ck_order_lineage_execution_import_hashes"),
+        ),
+        CheckConstraint(
+            "execution_count >= 0",
+            name=conv("ck_order_lineage_execution_import_count"),
+        ),
+        Index(
+            "ix_order_lineage_execution_import_scope",
+            "provider",
+            "environment",
+            "account_label",
+            "created_at",
+        ),
+    )
+
+
 class OrderLineageRepairRun(Base, CreatedAtMixin):
     """One immutable, closed census over current order-lineage evidence."""
 
@@ -166,6 +214,15 @@ class OrderLineageRepairRun(Base, CreatedAtMixin):
         GUID(),
         ForeignKey(
             "broker_economic_ledger_inputs.id",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        nullable=False,
+    )
+    canonical_execution_import_sha256: Mapped[str] = mapped_column(
+        String(length=64),
+        ForeignKey(
+            "order_lineage_canonical_execution_imports.manifest_sha256",
             ondelete="RESTRICT",
             onupdate="RESTRICT",
         ),
@@ -228,7 +285,15 @@ class OrderLineageRepairRun(Base, CreatedAtMixin):
             "ix_order_lineage_run_broker_input",
             "broker_economic_input_id",
         ),
+        Index(
+            "ix_order_lineage_run_execution_import",
+            "canonical_execution_import_sha256",
+        ),
     )
 
 
-__all__ = ("OrderLineageRepairReceipt", "OrderLineageRepairRun")
+__all__ = (
+    "OrderLineageCanonicalExecutionImport",
+    "OrderLineageRepairReceipt",
+    "OrderLineageRepairRun",
+)
