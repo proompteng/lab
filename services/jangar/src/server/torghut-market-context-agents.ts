@@ -1301,7 +1301,7 @@ const upsertRunLifecycleFromIngest = async (params: {
   now: Date
 }) => {
   const finishedAt = isLifecycleStatusTerminal(params.lifecycleStatus) ? params.now : null
-  await params.trx
+  const stored = await params.trx
     .insertInto('torghut_market_context_runs')
     .values({
       request_id: params.requestId,
@@ -1330,7 +1330,17 @@ const upsertRunLifecycleFromIngest = async (params: {
         updated_at: params.now,
       }),
     )
-    .execute()
+    .returning(['symbol', 'domain'])
+    .executeTakeFirstOrThrow()
+  const storedDomain = asDomain(stored.domain)
+  if (!storedDomain) throw new Error(`run domain is invalid for requestId ${params.requestId}`)
+  return runIdentity.resolveMarketContextRunIdentity({
+    requestId: params.requestId,
+    storedSymbol: stored.symbol,
+    storedDomain,
+    symbol: params.symbol,
+    domain: params.domain,
+  }).symbol
 }
 
 const upsertFinalizeEventFromIngest = async (params: {
@@ -1597,38 +1607,13 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
     }
 
     const shouldPersistBatchSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
-    let processedSymbols = 0
-    let updatedSymbols = 0
-    let failedSymbols = 0
-    const freshnessLagsSeconds: number[] = []
+    const processedSymbols = batchItems.length
+    const persistedItems = shouldPersistBatchSnapshot ? batchItems.filter((item) => !item.error) : []
+    const updatedSymbols = persistedItems.length
+    const failedSymbols = processedSymbols - updatedSymbols
+    const freshnessLagsSeconds = persistedItems.map((item) => resolveFreshnessSeconds(now, item.asOf))
 
     await executeDbTransaction(db, async (trx) => {
-      for (const item of batchItems) {
-        processedSymbols += 1
-        const itemShouldPersist = shouldPersistBatchSnapshot && !item.error
-
-        if (itemShouldPersist) {
-          await upsertSnapshotFromIngest({
-            trx,
-            symbol: item.symbol,
-            domain,
-            asOf: item.asOf,
-            sourceCount: item.sourceCount,
-            qualityScore: item.qualityScore,
-            payload: item.payload,
-            citations: item.citations,
-            riskFlags: item.riskFlags,
-            provider,
-            runName,
-            now,
-          })
-          updatedSymbols += 1
-          freshnessLagsSeconds.push(resolveFreshnessSeconds(now, item.asOf))
-        } else {
-          failedSymbols += 1
-        }
-      }
-
       await upsertRunLifecycleFromIngest({
         trx,
         requestId,
@@ -1648,6 +1633,23 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
         runError,
         now,
       })
+
+      for (const item of persistedItems) {
+        await upsertSnapshotFromIngest({
+          trx,
+          symbol: item.symbol,
+          domain,
+          asOf: item.asOf,
+          sourceCount: item.sourceCount,
+          qualityScore: item.qualityScore,
+          payload: item.payload,
+          citations: item.citations,
+          riskFlags: item.riskFlags,
+          provider,
+          runName,
+          now,
+        })
+      }
 
       await upsertFinalizeEventFromIngest({
         trx,
@@ -1702,6 +1704,19 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
   const shouldPersistSnapshot = runStatus === 'succeeded' || runStatus === 'partial'
 
   await executeDbTransaction(db, async (trx) => {
+    await upsertRunLifecycleFromIngest({
+      trx,
+      requestId,
+      symbol,
+      domain,
+      runName,
+      provider,
+      lifecycleStatus,
+      metadata,
+      runError,
+      now,
+    })
+
     if (shouldPersistSnapshot) {
       await upsertSnapshotFromIngest({
         trx,
@@ -1718,19 +1733,6 @@ export const ingestMarketContextProviderResult = async (input: IngestPayload) =>
         now,
       })
     }
-
-    await upsertRunLifecycleFromIngest({
-      trx,
-      requestId,
-      symbol,
-      domain,
-      runName,
-      provider,
-      lifecycleStatus,
-      metadata,
-      runError,
-      now,
-    })
 
     await upsertFinalizeEventFromIngest({
       trx,
