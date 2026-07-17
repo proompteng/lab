@@ -3,6 +3,9 @@ kind: ConfigMap
 metadata:
   name: kube-flannel-cfg
   namespace: kube-system
+  annotations:
+    # Preserve live CNI configuration while ownership transfers from Argo CD to Talos.
+    argocd.argoproj.io/sync-options: Delete=false
   labels:
     k8s-app: flannel
     tier: node
