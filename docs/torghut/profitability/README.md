@@ -45,6 +45,8 @@ readback. The audit snapshot records what was observed at its stated time.
   explicit residual classifications, and a permanent non-promotion boundary.
 - [Full broker-economic TigerBeetle parity](tigerbeetle-economic-parity.md): exact versioned projection, linked-chain
   materialization, full readback, sealed evidence, entry-only enforcement, and rollout proof.
+- [CNPG evidence storage and recovery](cnpg-evidence-storage-recovery.md): production database placement, resource,
+  backup, failover, restore, and evidence-preservation contract.
 - [Implementation roadmap](implementation-roadmap.md): ordered PR-sized delivery slices, tests, rollout proof,
   dependencies, and rollback posture.
 - [Slice 3 production evidence](evidence/slice-03-autoresearch-completion-2026-07-14.md): committed revision, CI and
