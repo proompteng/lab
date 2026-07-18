@@ -4,8 +4,32 @@ metadata:
   name: torghut-db
   namespace: torghut
 spec:
-  instances: 1
+  # Avoid unproved cross-architecture physical replication. The lab has two
+  # amd64 workers, so run one instance on each instead of retaining the legacy
+  # single-host pin.
+  instances: 2
   primaryUpdateStrategy: unsupervised
+  affinity:
+    # Explicit null removes the legacy kubectl-owned hostname selector through
+    # server-side apply. Architecture placement is expressed below instead.
+    nodeSelector: null
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                  - amd64
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
   managed:
     roles:
       - name: torghut_notebook
@@ -33,6 +57,7 @@ spec:
       encoding: "UTF8"
       dataChecksums: true
   backup:
+    target: prefer-standby
     barmanObjectStore:
       destinationPath: s3://cnpg-torghut
       serverName: torghut-db-live
