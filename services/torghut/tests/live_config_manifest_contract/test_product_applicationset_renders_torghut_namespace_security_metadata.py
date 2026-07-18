@@ -98,15 +98,18 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         )
 
     def test_torghut_knative_services_use_immediate_revision_cutover(self) -> None:
-        for path in (
-            "argocd/applications/torghut/knative-service.yaml",
-            "argocd/applications/torghut/knative-service-sim.yaml",
-        ):
+        expected_by_path = {
+            "argocd/applications/torghut/knative-service.yaml": None,
+            "argocd/applications/torghut/knative-service-sim.yaml": "0s",
+        }
+        for path, expected in expected_by_path.items():
             manifest = _load_yaml_mapping(path)
             metadata = cast(Mapping[str, object], manifest.get("metadata", {}))
             annotations = cast(Mapping[str, object], metadata.get("annotations", {}))
 
-            self.assertNotIn("serving.knative.dev/rollout-duration", annotations)
+            self.assertEqual(
+                annotations.get("serving.knative.dev/rollout-duration"), expected
+            )
 
     def test_options_ta_uses_primary_clickhouse_auth_secret(self) -> None:
         manifest = _load_yaml_mapping(
