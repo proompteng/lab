@@ -579,10 +579,15 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         service._repository = repository
         service._client = _PartialCatalogClient()
 
-        with self.assertRaisesRegex(
-            RuntimeError, "provider interrupted after first page"
+        with patch.object(
+            service,
+            "utc_now",
+            return_value=datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc),
         ):
-            service._run_discovery_cycle()
+            with self.assertRaisesRegex(
+                RuntimeError, "provider interrupted after first page"
+            ):
+                service._run_discovery_cycle()
 
         self.assertEqual(len(repository.reconciliations), 1)
         desired_symbols, deactivate_symbols = repository.reconciliations[0]
@@ -608,7 +613,12 @@ class TestOptionsServiceStatusHeartbeat(TestCase):
         client = _CompleteCatalogClient()
         service._client = client
 
-        service._run_discovery_cycle()
+        with patch.object(
+            service,
+            "utc_now",
+            return_value=datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc),
+        ):
+            service._run_discovery_cycle()
 
         self.assertEqual(len(repository.reconciliations), 1)
         final_symbols, final_deactivations = repository.reconciliations[0]
