@@ -148,6 +148,14 @@ def test_notebook_image_uses_a_dedicated_minimal_locked_dependency_group() -> No
     nix_source = (REPO_ROOT / "nix/images/torghut-notebook.nix").read_text()
     assert "--only-group notebook-runtime" in nix_source
     assert "--no-install-project" in nix_source
+    extra_commands = nix_source.split("extraCommands = ''", maxsplit=1)[1].split(
+        "'';", maxsplit=1
+    )[0]
+    fake_root_commands = nix_source.split("fakeRootCommands = ''", maxsplit=1)[1].split(
+        "'';", maxsplit=1
+    )[0]
+    assert "chown" not in extra_commands
+    assert "chown 1000:100 ./home/jovyan" in fake_root_commands
 
 
 def test_notebook_entrypoint_seeds_only_absent_canonical_notebooks() -> None:
