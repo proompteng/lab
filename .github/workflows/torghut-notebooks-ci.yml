@@ -1,0 +1,107 @@
+name: torghut-notebooks-ci
+
+on:
+  pull_request:
+    paths:
+      - 'services/torghut/app/notebook_data/**'
+      - 'services/torghut/notebooks/00-system-flow.ipynb'
+      - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
+      - 'services/torghut/notebooks/20-execution-evidence.ipynb'
+      - 'services/torghut/notebooks/30-capital-authority.ipynb'
+      - 'services/torghut/scripts/generate_diagnostics_notebooks.py'
+      - 'services/torghut/tests/notebook_data/**'
+      - 'services/torghut/pyproject.toml'
+      - 'services/torghut/uv.lock'
+      - 'argocd/applications/torghut/notebooks/**'
+      - 'nix/images/torghut-notebook.nix'
+      - '.github/workflows/torghut-notebooks-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/torghut/app/notebook_data/**'
+      - 'services/torghut/notebooks/00-system-flow.ipynb'
+      - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
+      - 'services/torghut/notebooks/20-execution-evidence.ipynb'
+      - 'services/torghut/notebooks/30-capital-authority.ipynb'
+      - 'services/torghut/scripts/generate_diagnostics_notebooks.py'
+      - 'services/torghut/tests/notebook_data/**'
+      - 'services/torghut/pyproject.toml'
+      - 'services/torghut/uv.lock'
+      - 'argocd/applications/torghut/notebooks/**'
+      - 'nix/images/torghut-notebook.nix'
+      - '.github/workflows/torghut-notebooks-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: torghut-notebooks-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: fixture notebooks and manifest contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Verify lockfile
+        working-directory: services/torghut
+        run: uv lock --check
+
+      - name: Sync locked notebook test environment
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev --extra notebook
+
+      - name: Ruff
+        working-directory: services/torghut
+        run: |
+          uv run --frozen ruff format --check app/notebook_data tests/notebook_data scripts/generate_diagnostics_notebooks.py
+          uv run --frozen ruff check app/notebook_data tests/notebook_data scripts/generate_diagnostics_notebooks.py
+
+      - name: Strict notebook client type check
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.json
+
+      - name: Verify canonical notebooks are generated
+        working-directory: services/torghut
+        run: |
+          uv run --frozen python scripts/generate_diagnostics_notebooks.py
+          git diff --exit-code -- notebooks/00-system-flow.ipynb notebooks/10-strategy-lifecycle.ipynb notebooks/20-execution-evidence.ipynb notebooks/30-capital-authority.ipynb
+
+      - name: Execute canonical notebooks with explicit fixtures
+        working-directory: services/torghut
+        env:
+          TORGHUT_NOTEBOOK_DATA_MODE: fixture
+        run: uv run --frozen pytest tests/notebook_data -q
+
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Nix image evaluates for both cluster architectures
+        run: |
+          nix eval --raw .#packages.x86_64-linux.torghut-notebook-image.name
+          nix eval --raw .#packages.aarch64-linux.torghut-notebook-image.name
+
+      - name: Render deterministic JupyterHub manifests
+        run: |
+          render_dir="$(mktemp -d)"
+          first="${render_dir}/first.yaml"
+          second="${render_dir}/second.yaml"
+          nix develop -c kustomize build --enable-helm argocd/applications/torghut/notebooks > "${first}"
+          nix develop -c kustomize build --enable-helm argocd/applications/torghut/notebooks > "${second}"
+          cmp "${first}" "${second}"
+          services/torghut/.venv/bin/python services/torghut/scripts/validate_notebook_render.py "${first}"
+          nix develop -c scripts/kubeconform.sh "${first}"

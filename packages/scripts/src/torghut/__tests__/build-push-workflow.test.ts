@@ -34,6 +34,14 @@ const hyperliquidFeedReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-release.yml', import.meta.url),
   'utf8',
 )
+const notebookWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebook-build-push.yaml', import.meta.url),
+  'utf8',
+)
+const notebookReleaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebook-release.yml', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
 const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
@@ -285,6 +293,23 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedReleaseWorkflow).toContain('## Testing')
     expect(hyperliquidFeedReleaseWorkflow).toContain('## Breaking Changes')
     expect(hyperliquidFeedReleaseWorkflow).toContain('## Checklist')
+  })
+
+  it('builds and promotes the dedicated Torghut notebook image', () => {
+    expect(notebookWorkflow).toContain('image_name: torghut-notebook')
+    expect(notebookWorkflow).toContain('package_attr: torghut-notebook-image')
+    expect(notebookWorkflow).toContain('torghut-notebook-release-contract')
+    expect(notebookWorkflow).toContain("- 'services/torghut/app/__init__.py'")
+    expect(notebookWorkflow).toContain("- 'services/torghut/app/notebook_data/**'")
+    expect(notebookWorkflow).toContain("- 'nix/images/torghut-notebook.nix'")
+    expect(notebookReleaseWorkflow).toContain('torghut-notebook-build-push')
+    expect(notebookReleaseWorkflow).toContain("IMAGE='registry.ide-newton.ts.net/lab/torghut-notebook'")
+    expect(notebookReleaseWorkflow).toContain('bun run packages/scripts/src/torghut/update-notebook-manifest.ts')
+    expect(notebookReleaseWorkflow).toContain('Update only the notebook image digest')
+    expect(notebookReleaseWorkflow).toContain('linux/amd64 linux/arm64')
+    const staleDiffBlock = staleDiffBlockFor(notebookReleaseWorkflow, 'services/torghut/app/notebook_data')
+    expect(staleDiffBlock).toContain('services/torghut/app/__init__.py')
+    expect(staleDiffBlock).toContain('services/torghut/scripts/start_torghut_notebook.sh')
   })
 
   it('defines native amd64 and arm64 GitHub runner scale sets for Torghut image builds', () => {

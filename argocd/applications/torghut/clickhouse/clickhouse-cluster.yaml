@@ -82,6 +82,13 @@ spec:
             </default>
           </profiles>
         </yandex>
+    profiles:
+      notebook/readonly: 1
+      notebook/max_execution_time: 30
+      notebook/max_result_rows: 100000
+      notebook/result_overflow_mode: throw
+      notebook/max_memory_usage: 2147483648
+      notebook/max_threads: 4
     zookeeper:
       nodes:
         - host: keeper-torghut-keeper
@@ -104,6 +111,17 @@ spec:
       torghut/profile: default
       torghut/quota: default
       torghut/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      torghut_notebook/password:
+        valueFrom:
+          secretKeyRef:
+            name: torghut-notebook-clickhouse
+            key: password
+      torghut_notebook/profile: notebook
+      torghut_notebook/quota: default
+      torghut_notebook/networks/ip:
         - 10.0.0.0/8
         - 172.16.0.0/12
         - 192.168.0.0/16

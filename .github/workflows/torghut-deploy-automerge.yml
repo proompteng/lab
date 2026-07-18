@@ -28,6 +28,7 @@ on:
       - 'argocd/applications/torghut/ta/flinkdeployment.yaml'
       - 'argocd/applications/torghut/ta-sim/flinkdeployment.yaml'
       - 'argocd/applications/torghut/ws/deployment.yaml'
+      - 'argocd/applications/torghut/notebooks/values.yaml'
       - 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
       - 'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
@@ -54,6 +55,7 @@ jobs:
           startsWith(github.event.pull_request.head.ref, 'codex/torghut-release-') ||
           startsWith(github.event.pull_request.head.ref, 'codex/torghut-ta-release-') ||
           startsWith(github.event.pull_request.head.ref, 'codex/torghut-ws-release-') ||
+          startsWith(github.event.pull_request.head.ref, 'codex/torghut-notebook-release-') ||
           startsWith(github.event.pull_request.head.ref, 'codex/torghut-hyperliquid-feed-release-')
         ) &&
         github.event.pull_request.base.ref == 'main' &&
@@ -84,6 +86,8 @@ jobs:
           release_lane='torghut'
           if [[ "${PR_HEAD_REF}" == codex/torghut-hyperliquid-feed-release-* ]]; then
             release_lane='hyperliquid-feed'
+          elif [[ "${PR_HEAD_REF}" == codex/torghut-notebook-release-* ]]; then
+            release_lane='notebook'
           fi
           echo "release_lane=${release_lane}" >> "$GITHUB_OUTPUT"
 
@@ -117,9 +121,14 @@ jobs:
           feed_allowed_paths=(
             'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
           )
+          notebook_allowed_paths=(
+            'argocd/applications/torghut/notebooks/values.yaml'
+          )
 
           if [ "${release_lane}" = 'hyperliquid-feed' ]; then
             active_allowed_paths=("${feed_allowed_paths[@]}")
+          elif [ "${release_lane}" = 'notebook' ]; then
+            active_allowed_paths=("${notebook_allowed_paths[@]}")
           else
             active_allowed_paths=("${allowed_paths[@]}")
           fi
@@ -202,7 +211,12 @@ jobs:
           require-preinstalled: 'true'
 
       - name: Verify source image digest contract
-        if: steps.gates.outputs.eligible == 'true' && steps.gates.outputs.release_lane != 'hyperliquid-feed'
+        if: >-
+          ${{
+            steps.gates.outputs.eligible == 'true' &&
+            steps.gates.outputs.release_lane != 'hyperliquid-feed' &&
+            steps.gates.outputs.release_lane != 'notebook'
+          }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
@@ -356,6 +370,41 @@ jobs:
 
           echo "Hyperliquid feed release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
 
+      - name: Verify notebook image digest contract
+        if: steps.gates.outputs.eligible == 'true' && steps.gates.outputs.release_lane == 'notebook'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          values="$(
+            gh api \
+              -H 'Accept: application/vnd.github.raw' \
+              "repos/${GH_REPO}/contents/argocd/applications/torghut/notebooks/values.yaml?ref=${PR_HEAD_SHA}"
+          )"
+          digest_hex="$(
+            printf '%s\n' "${values}" |
+              awk '
+                $0 ~ "^[[:space:]]+name:[[:space:]]*registry.ide-newton.ts.net/lab/torghut-notebook@sha256[[:space:]]*$" { found = 1; next }
+                found && $0 ~ "^[[:space:]]+tag:" {
+                  sub(/^[[:space:]]*tag:[[:space:]]*/, "")
+                  gsub(/[\047\042]/, "")
+                  print
+                  exit
+                }
+              '
+          )"
+          if ! printf '%s' "${digest_hex}" | grep -Eiq '^[0-9a-f]{64}$'; then
+            echo 'Unable to resolve digest-pinned Torghut notebook image from values.yaml'
+            exit 1
+          fi
+          image_ref="registry.ide-newton.ts.net/lab/torghut-notebook@sha256:${digest_hex}"
+          nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
+          echo "Torghut notebook values pin a multi-architecture image: ${image_ref}"
+
       - name: Wait for required release checks
         if: steps.gates.outputs.eligible == 'true'
         shell: bash
@@ -373,7 +422,9 @@ jobs:
             'CI|PR validation (argo-lint)'
             'CI|PR validation (kubeconform)'
           )
-          if [ "${RELEASE_LANE}" != 'hyperliquid-feed' ]; then
+          if [ "${RELEASE_LANE}" = 'notebook' ]; then
+            required_checks+=('torghut-notebooks-ci|fixture notebooks and manifest contracts')
+          elif [ "${RELEASE_LANE}" != 'hyperliquid-feed' ]; then
             required_checks+=('torghut-ci|Release manifest changes')
           fi
 

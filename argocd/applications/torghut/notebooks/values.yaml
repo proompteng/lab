@@ -1,0 +1,216 @@
+fullnameOverride: torghut-notebooks
+
+hub:
+  image:
+    name: quay.io/jupyterhub/k8s-hub
+    tag: '4.4.0'
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 2Gi
+  db:
+    type: sqlite-pvc
+    pvc:
+      accessModes:
+        - ReadWriteOnce
+      storage: 1Gi
+      storageClassName: rook-ceph-block
+  activeServerLimit: 1
+  concurrentSpawnLimit: 1
+  allowNamedServers: false
+  cookieSecret: '1111111111111111111111111111111111111111111111111111111111111111'
+  config:
+    JupyterHub:
+      admin_access: false
+      authenticator_class: jupyterhub.auth.NullAuthenticator
+    Authenticator:
+      allow_all: true
+      manage_groups: false
+      manage_roles: false
+    CryptKeeper:
+      keys:
+        - '3333333333333333333333333333333333333333333333333333333333333333'
+  extraEnv:
+    TORGHUT_HUB_COOKIE_SECRET:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-notebook-hub
+          key: cookie-secret
+    TORGHUT_HUB_CRYPT_KEY:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-notebook-hub
+          key: crypt-key
+  extraConfig:
+    00-torghut-single-operator: |
+      import os
+
+      from jupyterhub.auth import Authenticator
+
+      class TorghutSingleOperatorAuthenticator(Authenticator):
+          auto_login = True
+
+          async def authenticate(self, handler, data=None):
+              return {"name": "torghut", "admin": False}
+
+      cookie_secret = os.environ.get("TORGHUT_HUB_COOKIE_SECRET", "")
+      if len(cookie_secret) != 64:
+          raise RuntimeError("TORGHUT_HUB_COOKIE_SECRET must be 64 hexadecimal characters")
+      crypt_key = os.environ.get("TORGHUT_HUB_CRYPT_KEY", "")
+      if len(crypt_key) != 64:
+          raise RuntimeError("TORGHUT_HUB_CRYPT_KEY must be 64 hexadecimal characters")
+
+      c.JupyterHub.authenticator_class = TorghutSingleOperatorAuthenticator
+      c.JupyterHub.admin_access = False
+      c.JupyterHub.cookie_secret = bytes.fromhex(cookie_secret)
+      c.CryptKeeper.keys = [crypt_key]
+      c.Authenticator.allow_all = True
+      c.Authenticator.manage_groups = False
+      c.Authenticator.manage_roles = False
+      c.Authenticator.allow_existing_users = False
+
+proxy:
+  secretToken: '2222222222222222222222222222222222222222222222222222222222222222'
+  service:
+    type: ClusterIP
+  chp:
+    image:
+      name: quay.io/jupyterhub/configurable-http-proxy
+      tag: '5.2.0'
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+singleuser:
+  image:
+    name: registry.ide-newton.ts.net/lab/torghut-notebook@sha256
+    tag: '0000000000000000000000000000000000000000000000000000000000000000'
+    pullPolicy: IfNotPresent
+  cmd: start-torghut-notebook
+  defaultUrl: /lab/tree/work/00-system-flow.ipynb
+  startTimeout: 600
+  uid: 1000
+  fsGid: 100
+  cpu:
+    guarantee: 2
+    limit: 8
+  memory:
+    guarantee: 8Gi
+    limit: 16Gi
+  storage:
+    type: dynamic
+    capacity: 50Gi
+    homeMountPath: /home/jovyan
+    dynamic:
+      storageClass: rook-ceph-block
+      storageAccessModes:
+        - ReadWriteOnce
+  cloudMetadata:
+    blockWithIptables: false
+  extraEnv:
+    TORGHUT_NOTEBOOK_DATA_MODE: live
+    PGHOST: torghut-db-r.torghut.svc.cluster.local
+    PGPORT: '5432'
+    PGDATABASE: torghut
+    PGUSER:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-notebook-postgres
+          key: username
+    PGPASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-notebook-postgres
+          key: password
+    PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=30000'
+    CLICKHOUSE_URL: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+    CLICKHOUSE_DATABASE: torghut
+    CLICKHOUSE_USER: torghut_notebook
+    CLICKHOUSE_PASSWORD:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-notebook-clickhouse
+          key: password
+    TORGHUT_STATUS_URL: http://torghut-scheduler.torghut.svc.cluster.local:8183/trading/status
+  extraPodConfig:
+    automountServiceAccountToken: false
+    enableServiceLinks: false
+  networkPolicy:
+    enabled: true
+    egressAllowRules:
+      cloudMetadataServer: false
+      dnsPortsCloudMetadataServer: true
+      dnsPortsKubeSystemNamespace: true
+      dnsPortsPrivateIPs: true
+      nonPrivateIPs: false
+      privateIPs: false
+    egress:
+      - to:
+          - podSelector:
+              matchLabels:
+                cnpg.io/cluster: torghut-db
+        ports:
+          - protocol: TCP
+            port: 5432
+      - to:
+          - podSelector:
+              matchLabels:
+                clickhouse.altinity.com/chi: torghut-clickhouse
+        ports:
+          - protocol: TCP
+            port: 8123
+      - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: torghut
+                app.kubernetes.io/component: trading-scheduler
+        ports:
+          - protocol: TCP
+            port: 8183
+
+scheduling:
+  userScheduler:
+    enabled: false
+  userPlaceholder:
+    enabled: false
+    replicas: 0
+
+prePuller:
+  hook:
+    enabled: false
+  continuous:
+    enabled: false
+
+cull:
+  enabled: true
+  users: false
+  adminUsers: false
+  removeNamedServers: false
+  timeout: 14400
+  every: 600
+  concurrency: 1
+
+ingress:
+  enabled: true
+  ingressClassName: tailscale
+  hosts:
+    - torghut-notebooks.ide-newton.ts.net
+  pathType: Prefix
+  tls:
+    - hosts:
+        - torghut-notebooks.ide-newton.ts.net
+
+rbac:
+  create: true
+
+global:
+  safeToShowValues: false

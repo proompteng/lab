@@ -71,6 +71,7 @@ smcrakp.properties
 !packages/backend/convex/_generated/
 !services/jangar/convex/_generated/
 argocd/applications/*/charts/
+argocd/applications/**/charts/
 
 **/temporal/lib
 

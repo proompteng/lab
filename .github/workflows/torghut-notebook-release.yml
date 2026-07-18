@@ -1,0 +1,256 @@
+name: torghut-notebook-release
+
+on:
+  workflow_run:
+    workflows:
+      - torghut-notebook-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote (defaults to current main HEAD)
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote (defaults to sha-<full commit SHA>)
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...)
+        required: false
+        type: string
+
+concurrency:
+  group: torghut-notebook-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Download release contract artifact from triggering build
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: torghut-notebook-release-contract
+          path: .artifacts/torghut-notebook
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+
+          MAIN_HEAD="$(git rev-parse origin/main)"
+          IMAGE='registry.ide-newton.ts.net/lab/torghut-notebook'
+          SOURCE_SHA=''
+          TAG=''
+          CONTRACT_DIGEST=''
+          PROMOTE='true'
+
+          if [ "${EVENT_NAME}" = 'workflow_run' ]; then
+            CONTRACT_PATH='.artifacts/torghut-notebook/release-contract.json'
+            if [ ! -f "${CONTRACT_PATH}" ]; then
+              echo "Release contract artifact is missing at ${CONTRACT_PATH}"
+              exit 1
+            fi
+
+            SOURCE_SHA="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field sourceSha)"
+            TAG="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field tag)"
+            CONTRACT_DIGEST="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field digest)"
+            CONTRACT_IMAGE="$(bun run packages/scripts/src/torghut/release-contract.ts get --path "${CONTRACT_PATH}" --field image)"
+
+            if [ "${CONTRACT_IMAGE}" != "${IMAGE}" ]; then
+              echo "Release contract image mismatch: expected ${IMAGE}, got ${CONTRACT_IMAGE}"
+              exit 1
+            fi
+            if [ "${SOURCE_SHA}" != "${WORKFLOW_RUN_HEAD_SHA}" ]; then
+              echo "Release contract source SHA ${SOURCE_SHA} does not match workflow_run head ${WORKFLOW_RUN_HEAD_SHA}"
+              exit 1
+            fi
+            if [ "${SOURCE_SHA}" != "${MAIN_HEAD}" ]; then
+              if ! git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"; then
+                echo "Skipping stale notebook promotion for ${SOURCE_SHA}; main is ${MAIN_HEAD}."
+                PROMOTE='false'
+              else
+                NOTEBOOK_CHANGES="$(
+                  git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
+                    services/torghut/app/__init__.py \
+                    services/torghut/app/notebook_data \
+                    services/torghut/notebooks/00-system-flow.ipynb \
+                    services/torghut/notebooks/10-strategy-lifecycle.ipynb \
+                    services/torghut/notebooks/20-execution-evidence.ipynb \
+                    services/torghut/notebooks/30-capital-authority.ipynb \
+                    services/torghut/scripts/start_torghut_notebook.sh \
+                    services/torghut/pyproject.toml \
+                    services/torghut/uv.lock \
+                    nix/images/torghut-notebook.nix \
+                    flake.nix flake.lock
+                )"
+                if [ -n "${NOTEBOOK_CHANGES}" ]; then
+                  echo "Skipping stale notebook promotion; newer notebook build inputs changed:"
+                  printf '%s\n' "${NOTEBOOK_CHANGES}"
+                  PROMOTE='false'
+                else
+                  echo "Promoting ${SOURCE_SHA}; newer main changes are unrelated."
+                fi
+              fi
+            fi
+          else
+            SOURCE_SHA="${COMMIT_SHA_INPUT:-${MAIN_HEAD}}"
+            SOURCE_SHA="$(git rev-parse "${SOURCE_SHA}^{commit}")"
+            TAG="${IMAGE_TAG_INPUT:-sha-${SOURCE_SHA}}"
+          fi
+
+          {
+            echo "source_sha=${SOURCE_SHA}"
+            echo "tag=${TAG}"
+            echo "contract_digest=${CONTRACT_DIGEST}"
+            echo "image=${IMAGE}"
+            echo "promote=${PROMOTE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source revision
+        if: steps.meta.outputs.promote == 'true'
+        run: git checkout --force "${{ steps.meta.outputs.source_sha }}"
+
+      - name: Resolve image digest
+        if: steps.meta.outputs.promote == 'true'
+        id: digest
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.meta.outputs.image }}
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+          CONTRACT_DIGEST: ${{ steps.meta.outputs.contract_digest }}
+          DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DIGEST_INPUT}" ]; then
+            DIGEST="${DIGEST_INPUT}"
+          elif [ -n "${CONTRACT_DIGEST}" ]; then
+            DIGEST="${CONTRACT_DIGEST}"
+          else
+            DIGEST="$(crane digest "${IMAGE_NAME}:${IMAGE_TAG}")"
+          fi
+          DIGEST="${DIGEST#*@}"
+          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+            echo "Resolved digest '${DIGEST}' is invalid"
+            exit 1
+          fi
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify promoted image platform contract
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE_NAME: ${{ steps.meta.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
+        run: nix run .#assert-oci-platforms -- "${IMAGE_NAME}@${IMAGE_DIGEST}" linux/amd64 linux/arm64
+
+      - name: Update only the notebook image digest
+        if: steps.meta.outputs.promote == 'true'
+        run: |
+          bun run packages/scripts/src/torghut/update-notebook-manifest.ts \
+            --tag "${{ steps.meta.outputs.tag }}" \
+            --digest "${{ steps.digest.outputs.digest }}"
+
+      - name: Check for values changes
+        if: steps.meta.outputs.promote == 'true'
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- argocd/applications/torghut/notebooks/values.yaml; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            changed_paths="$(git diff --name-only)"
+            if [ "${changed_paths}" != 'argocd/applications/torghut/notebooks/values.yaml' ]; then
+              echo "Notebook promotion changed unexpected paths:"
+              printf '%s\n' "${changed_paths}"
+              exit 1
+            fi
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create deploy pull request
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/torghut-notebook-release-${{ steps.meta.outputs.tag }}
+          base: main
+          title: 'chore(torghut): promote notebook image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut): promote notebook image ${{ steps.meta.outputs.tag }}'
+          delete-branch: true
+          add-paths: |
+            argocd/applications/torghut/notebooks/values.yaml
+          body: |
+            ## Summary
+
+            - Promote the immutable multi-architecture Torghut notebook image built from `${{ steps.meta.outputs.source_sha }}`.
+            - Update only the digest-pinned JupyterHub single-user image.
+
+            ## Related Issues
+
+            None.
+
+            ## Testing
+
+            - The source commit passed notebook fixture execution and manifest contracts.
+            - The release workflow verified `linux/amd64` and `linux/arm64` for `${{ steps.digest.outputs.digest }}`.
+
+            ## Breaking Changes
+
+            None.
+
+            ## Checklist
+
+            - [x] The single-user image is immutable and multi-architecture.
+            - [x] Promotion changes only the notebook image digest.
+            - [x] PVCs and read-only credentials are unchanged.
+
+      - name: No values changes detected
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
+        run: echo 'No Torghut notebook image digest change detected.'
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale Torghut notebook promotion.'

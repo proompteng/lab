@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import type { BuildAndPushNixImageOptions } from '../../shared/nix-oci-deploy'
 import { buildHyperliquidFeedImage } from '../build-hyperliquid-feed-image'
 import { __private, buildImage } from '../build-image'
+import { buildNotebookImage } from '../build-notebook-image'
 import { buildTechnicalAnalysisImage } from '../build-ta-image'
 import { buildWebsocketImage } from '../build-ws-image'
 
@@ -136,6 +137,15 @@ describe('buildImage', () => {
           imageName: 'torghut-hyperliquid-feed',
           packageAttr: 'torghut-hyperliquid-feed-image',
           repository: 'lab/torghut-hyperliquid-feed',
+        },
+      ],
+      [
+        buildNotebookImage,
+        {
+          service: 'torghut-notebook',
+          imageName: 'torghut-notebook',
+          packageAttr: 'torghut-notebook-image',
+          repository: 'lab/torghut-notebook',
         },
       ],
     ] as const) {

@@ -6,6 +6,18 @@ metadata:
 spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
+  managed:
+    roles:
+      - name: torghut_notebook
+        ensure: present
+        login: true
+        inherit: true
+        connectionLimit: 4
+        comment: Read-only Torghut diagnostics notebooks
+        inRoles:
+          - pg_read_all_data
+        passwordSecret:
+          name: torghut-notebook-postgres
   postgresql:
     parameters:
       # The automatic 4 MiB allocation exhausted repeatedly under short write bursts.
