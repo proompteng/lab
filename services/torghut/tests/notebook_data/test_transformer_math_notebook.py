@@ -19,6 +19,14 @@ def test_committed_transformer_notebook_is_valid_and_pairs_math_with_geometry() 
     assert "TL;DR" in notebook.cells[0].source
     assert "geometric" in notebook.cells[0].source.lower()
     source = "\n".join(cell.source for cell in notebook.cells).lower()
+    markdown_control_characters = [
+        (cell.id, offset, ord(character))
+        for cell in notebook.cells
+        if cell.cell_type == "markdown"
+        for offset, character in enumerate(cell.source)
+        if ord(character) < 32 and character not in "\n\r"
+    ]
+    assert markdown_control_characters == []
     for concept in (
         "scaled dot-product attention",
         "probability simplex",
