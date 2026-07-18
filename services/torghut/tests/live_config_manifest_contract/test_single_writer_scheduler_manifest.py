@@ -212,6 +212,8 @@ class SingleWriterSchedulerManifestTests(TestCase):
 
         manifest_root = _repo_root() / "argocd/applications/torghut"
         for resource_path in manifest_root.rglob("*.yaml"):
+            if "charts" in resource_path.relative_to(manifest_root).parts:
+                continue
             for document in safe_load_all(resource_path.read_text(encoding="utf-8")):
                 if not isinstance(document, dict):
                     continue

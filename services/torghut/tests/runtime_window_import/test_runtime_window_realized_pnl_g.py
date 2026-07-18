@@ -186,6 +186,8 @@ class TestRuntimeWindowImportRealizedPnlG(RuntimeWindowImportTestCaseBase):
                     "avg_fill_price": Decimal("100"),
                     "filled_notional_delta": Decimal("100"),
                     "fill_quantity_basis": "cumulative_to_delta",
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
                     "source_topic": "alpaca-trade-updates",
                     "source_partition": 0,
                     "source_offset": 12,
@@ -236,6 +238,8 @@ class TestRuntimeWindowImportRealizedPnlG(RuntimeWindowImportTestCaseBase):
                     "avg_fill_price": Decimal("101"),
                     "filled_notional_delta": Decimal("101"),
                     "fill_quantity_basis": "cumulative_to_delta",
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
                     "source_topic": "alpaca-trade-updates",
                     "source_partition": 0,
                     "source_offset": 14,
@@ -253,6 +257,7 @@ class TestRuntimeWindowImportRealizedPnlG(RuntimeWindowImportTestCaseBase):
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertTrue(row["post_cost_promotion_eligible"])
+        self.assertTrue(row["authoritative"])
         self.assertEqual(
             row["authority_reason"],
             "event_sourced_runtime_ledger_profit_proof",

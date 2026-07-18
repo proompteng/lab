@@ -112,6 +112,7 @@ let
       test -f "$out/app/app/main.py"
       test -f "$out/app/app/trading/forecast_runtime.py"
       test -f "$out/app/app/trading/lean_runtime.py"
+      test -f "$out/app/config/economic-policy-v1.json"
       runHook postInstall
     '';
   };

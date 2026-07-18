@@ -577,10 +577,10 @@ class TestRuntimeWindowImportRealizedPnlD(RuntimeWindowImportTestCaseBase):
         self.assertEqual(ledger_row["filled_notional"], Decimal("6793.75"))
         self.assertEqual(ledger_row["filled_notional_delta"], Decimal("6793.75"))
         self.assertEqual(ledger_row["fill_quantity_basis"], "delta")
-        self.assertEqual(ledger_row["cost_amount"], Decimal("0.15"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.16"))
         self.assertEqual(
             ledger_row["cost_basis"],
-            "alpaca_2026_equity_sec_taf_cat_fee_schedule",
+            "modeled_alpaca_2026_equity_sec_taf_cat_per_order_conservative",
         )
         self.assertEqual(
             ledger_row["cost_model_hash"],
@@ -741,10 +741,10 @@ class TestRuntimeWindowImportRealizedPnlD(RuntimeWindowImportTestCaseBase):
         self.assertEqual(ledger_row["filled_qty"], Decimal("10"))
         self.assertEqual(ledger_row["avg_fill_price"], Decimal("100"))
         self.assertEqual(ledger_row["filled_notional"], Decimal("1000"))
-        self.assertEqual(ledger_row["cost_amount"], Decimal("0.04"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.05"))
         self.assertEqual(
             ledger_row["cost_basis"],
-            "alpaca_2026_equity_sec_taf_cat_fee_schedule",
+            "modeled_alpaca_2026_equity_sec_taf_cat_per_order_conservative",
         )
         self.assertEqual(
             ledger_row["cost_model_hash"],

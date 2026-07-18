@@ -199,7 +199,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             ):
                 self.assertEqual(name, "microbar-cross-sectional-pairs-v1")
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
-                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "4.0")
+                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "1.0")
                 self.assertEqual(params.get("max_pair_legs"), "2")
                 self.assertEqual(params.get("top_n"), "1")
                 self.assertEqual(
@@ -370,7 +370,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY"), "0.50")
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "4.0",
+            "1.0",
         )
         self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_WORKFLOW_ENABLED"))
         self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_KAFKA_ENABLED"))
@@ -397,11 +397,11 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(sim_env.get("TRADING_PRICE_TABLE"), "torghut.ta_microbars")
         self.assertEqual(
             sim_env.get("TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"),
-            "300",
+            "60",
         )
         self.assertEqual(
             sim_env.get("TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS"),
-            "60",
+            "0",
         )
         self.assertEqual(
             sim_env.get("TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"),
@@ -431,11 +431,11 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             _load_torghut_knative_env().get(
                 "TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"
             ),
-            "300",
+            "60",
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS"),
-            "60",
+            "0",
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"),
@@ -507,7 +507,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY"), "0.50")
         self.assertEqual(
             live_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "4.0",
+            "1.0",
         )
         self.assertEqual(
             live_env.get("TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY"),

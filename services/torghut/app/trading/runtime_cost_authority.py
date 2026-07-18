@@ -13,9 +13,18 @@ NON_PROMOTION_GRADE_RUNTIME_COST_BASES = frozenset(
     }
 )
 
+NON_PROMOTION_GRADE_RUNTIME_COST_BASIS_PREFIXES = (
+    "alpaca_2026_equity_",
+    "modeled_alpaca_2026_equity_",
+)
+
 
 def is_non_promotion_grade_runtime_cost_basis(value: object) -> bool:
-    return str(value or "").strip() in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
+    normalized = str(value or "").strip()
+    return (
+        normalized in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
+        or normalized.startswith(NON_PROMOTION_GRADE_RUNTIME_COST_BASIS_PREFIXES)
+    )
 
 
 def cost_basis_counts_have_non_promotion_grade_costs(value: Any) -> bool:
@@ -34,6 +43,7 @@ def cost_basis_counts_have_non_promotion_grade_costs(value: Any) -> bool:
 
 __all__ = [
     "NON_PROMOTION_GRADE_RUNTIME_COST_BASES",
+    "NON_PROMOTION_GRADE_RUNTIME_COST_BASIS_PREFIXES",
     "cost_basis_counts_have_non_promotion_grade_costs",
     "is_non_promotion_grade_runtime_cost_basis",
 ]

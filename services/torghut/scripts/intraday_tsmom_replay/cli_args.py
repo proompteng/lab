@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import argparse
-
 import os
-
-from app.trading.quote_quality import (
-    DEFAULT_MAX_EXECUTABLE_SPREAD_BPS,
-    DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS,
-    DEFAULT_MAX_QUOTE_MID_JUMP_BPS,
-)
-
 from pathlib import Path
+
+from app.trading.economic_policy import DEFAULT_ECONOMIC_POLICY_PATH
 
 from .replay_types import (
     DEFAULT_CHUNK_MINUTES,
@@ -29,6 +23,21 @@ def _parse_args() -> argparse.Namespace:
         "--strategy-configmap",
         type=Path,
         default=default_strategy_configmap_path(),
+    )
+    parser.add_argument(
+        "--economic-policy",
+        type=Path,
+        default=Path(
+            os.environ.get(
+                "TRADING_ECONOMIC_POLICY_PATH", str(DEFAULT_ECONOMIC_POLICY_PATH)
+            )
+        ),
+        help="Immutable economic policy shared with shadow, paper, and live execution.",
+    )
+    parser.add_argument(
+        "--economic-policy-expected-digest",
+        default=os.environ.get("TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST"),
+        help="Expected sha256 digest for the immutable economic policy.",
     )
     parser.add_argument(
         "--clickhouse-http-url",
@@ -91,21 +100,6 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_PROGRESS_LOG_INTERVAL_SECONDS,
         help="Emit replay heartbeat logs at most once per this many seconds.",
-    )
-    parser.add_argument(
-        "--max-executable-spread-bps",
-        default=str(DEFAULT_MAX_EXECUTABLE_SPREAD_BPS),
-        help="Reject quotes wider than this when evaluating, filling, or flattening.",
-    )
-    parser.add_argument(
-        "--max-quote-mid-jump-bps",
-        default=str(DEFAULT_MAX_QUOTE_MID_JUMP_BPS),
-        help="Reject wide-spread quotes whose midpoint jumps beyond this many bps from the last sane price.",
-    )
-    parser.add_argument(
-        "--max-jump-with-wide-spread-bps",
-        default=str(DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS),
-        help="Minimum spread width required before the jump filter blocks a quote.",
     )
     parser.add_argument(
         "--log-level",

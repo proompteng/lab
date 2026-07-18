@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from app.trading.economic_policy import load_economic_policy
+from app.trading.quote_quality import assess_signal_quote_quality
+
 from tests.local_intraday_tsmom_replay.support import (
     date,
     datetime,
     timezone,
     Decimal,
-    Path,
     patch,
     FlattenPositionsRequest,
     TransactionCostModel,
@@ -13,14 +15,12 @@ from tests.local_intraday_tsmom_replay.support import (
     StrategyDecision,
     PendingOrder,
     PositionState,
-    ReplayConfig,
     _SHARED_POSITION_OWNER,
     _apply_filled_decision,
     _apply_order_preferences,
     _flatten_positions,
     _init_funnel_stats,
     _positions_payload,
-    _quote_quality_status,
     _reconcile_pending_order_before_immediate_fill,
     _should_replace_pending_order,
     _TestLocalIntradayTsmomReplayBase,
@@ -79,22 +79,10 @@ class TestOrderPreferencesPositionsAndFlattening(_TestLocalIntradayTsmomReplayBa
 
     def test_quote_quality_rejects_wide_spread_outlier(self) -> None:
         signal = self._signal(bid="239.11", ask="253.69", price="246.40")
-        config = ReplayConfig(
-            strategy_configmap_path=Path("/tmp/strategies.yaml"),
-            clickhouse_http_url="http://localhost:8123",
-            clickhouse_username=None,
-            clickhouse_password=None,
-            start_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
-            end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
-            chunk_minutes=10,
-            flatten_eod=True,
-            start_equity=Decimal("31590.02"),
-        )
-
-        status = _quote_quality_status(
+        status = assess_signal_quote_quality(
             signal=signal,
             previous_price=Decimal("253.70"),
-            config=config,
+            policy=load_economic_policy().quote_quality_policy(),
         )
 
         self.assertFalse(status.valid)
@@ -102,22 +90,10 @@ class TestOrderPreferencesPositionsAndFlattening(_TestLocalIntradayTsmomReplayBa
 
     def test_quote_quality_accepts_normal_tight_quote(self) -> None:
         signal = self._signal(bid="253.69", ask="253.72", price="253.705")
-        config = ReplayConfig(
-            strategy_configmap_path=Path("/tmp/strategies.yaml"),
-            clickhouse_http_url="http://localhost:8123",
-            clickhouse_username=None,
-            clickhouse_password=None,
-            start_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
-            end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
-            chunk_minutes=10,
-            flatten_eod=True,
-            start_equity=Decimal("31590.02"),
-        )
-
-        status = _quote_quality_status(
+        status = assess_signal_quote_quality(
             signal=signal,
             previous_price=Decimal("253.68"),
-            config=config,
+            policy=load_economic_policy().quote_quality_policy(),
         )
 
         self.assertTrue(status.valid)

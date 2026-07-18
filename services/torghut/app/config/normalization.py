@@ -112,6 +112,8 @@ class SettingsNormalizationMixin(
             "trading_order_feed_sasl_username",
             "trading_order_feed_sasl_password",
             "trading_accounts_json",
+            "trading_economic_policy_path",
+            "trading_economic_policy_expected_digest",
             "trading_autonomy_approval_token",
             "trading_forecast_registry_manifest_path",
             "trading_simulation_run_id",
@@ -133,6 +135,27 @@ class SettingsNormalizationMixin(
                 continue
             normalized_value = raw_value.strip()
             setattr(self, field_name, normalized_value or None)
+
+        policy_path = self.trading_economic_policy_path
+        policy_digest = self.trading_economic_policy_expected_digest
+        if bool(policy_path) != bool(policy_digest):
+            raise ValueError(
+                "TRADING_ECONOMIC_POLICY_PATH and TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST "
+                "must be configured together"
+            )
+        if policy_digest is not None:
+            normalized_digest = policy_digest.lower()
+            prefix, separator, value = normalized_digest.partition(":")
+            if (
+                separator != ":"
+                or prefix != "sha256"
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(
+                    "TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST must use sha256:<64 lowercase hex>"
+                )
+            self.trading_economic_policy_expected_digest = normalized_digest
 
         if self.trading_hypothesis_registry_path is not None:
             self.trading_hypothesis_registry_path = (

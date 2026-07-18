@@ -89,7 +89,7 @@ def _promotion_decision(
 
 def _runtime_ledger_source_authority_payload(
     *,
-    cost_basis: str | None = 'alpaca_2026_equity_fee_schedule',
+    cost_basis: str | None = 'broker_reported_fees',
     cost_basis_counts: dict[str, int] | None = None,
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:

@@ -173,6 +173,11 @@ def _identity_payload(
         "start_date": state.config.start_date.isoformat(),
         "end_date": state.config.end_date.isoformat(),
         "start_equity": str(state.config.start_equity),
+        "economic_policy": {
+            "schema_version": state.economic_policy.schema_version,
+            "policy_id": state.economic_policy.policy_id,
+            "digest": state.economic_policy.digest,
+        },
         "final_cash": str(state.cash),
         "final_equity": str(metrics.final_equity),
     }

@@ -27,6 +27,7 @@ from app.trading.economic_ledger import (
     configured_broker_environment,
     load_broker_economic_ledger_status,
 )
+from app.trading.economic_policy import economic_policy_status
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.order_lineage_runs import load_order_lineage_repair_status
 from app.trading.scheduler import TradingScheduler
@@ -268,6 +269,7 @@ def trading_status() -> dict[str, object] | Response:
         "broker_economic_ledger": broker_economic_ledger,
         "order_lineage": order_lineage,
         "capital_controls": _capital_controls(state),
+        "economic_policy": economic_policy_status(settings),
         "execution": build_execution_status_payload(
             state=state,
             live_submission_gate=live_gate,

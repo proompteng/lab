@@ -150,6 +150,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
                 "broker_economic_ledger",
                 "order_lineage",
                 "capital_controls",
+                "economic_policy",
                 "execution",
                 "signal_continuity",
                 "market_context",
@@ -190,7 +191,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
         self.assertEqual(
             payload["broker_mutation_safety"]["database_status"], "current"
         )
-        self.assertEqual(payload["capital_controls"]["gross_limit"], 4.0)
+        self.assertEqual(payload["capital_controls"]["gross_limit"], 1.0)
         self.assertEqual(payload["capital_controls"]["net_limit"], 0.5)
         self.assertEqual(payload["capital_controls"]["symbol_limit"], 0.5)
         status_proxy.assert_not_called()

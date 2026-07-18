@@ -285,7 +285,7 @@ class TestTorghutScheduledMaintenance(_TestLiveConfigManifestContractBase):
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY"), "0.50")
         self.assertEqual(
             env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "4.0",
+            "1.0",
         )
         self.assertEqual(env.get("TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY"), "0.50")
         self.assertEqual(env.get("TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS"), "1000")

@@ -4,9 +4,12 @@ import time as time_mod
 from datetime import date
 from decimal import Decimal
 from typing import Any
-from unittest.mock import patch
 
 from app.config import settings
+from app.trading.economic_policy import (
+    bind_economic_policy_settings,
+    load_pinned_economic_policy,
+)
 from app.trading.models import SignalEnvelope
 from app.trading.session_context import regular_session_close_utc_for
 
@@ -37,16 +40,16 @@ from .signal_rows import _extract_price, _iter_signal_rows, _log_quote_skipped
 
 
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
-    state = ReplayRunState.create(config)
-    _log_replay_start(state)
-    with (
-        patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-        patch.object(settings, "trading_allow_shorts", True),
-        patch.object(settings, "trading_fractional_equities_enabled", True),
-    ):
+    economic_policy = load_pinned_economic_policy(
+        config.economic_policy_path,
+        expected_digest=config.economic_policy_expected_digest,
+    )
+    with bind_economic_policy_settings(economic_policy, settings):
+        state = ReplayRunState.create(config, economic_policy)
+        _log_replay_start(state)
         _consume_signals(state)
         _complete_current_day(state, censor_reason="replay_end")
-    return _build_payload(state)
+        return _build_payload(state)
 
 
 def _log_replay_start(state: ReplayRunState) -> None:

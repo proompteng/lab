@@ -5,14 +5,20 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import ROUND_CEILING, Decimal
+from decimal import Decimal
 from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...config import settings
 from ...models import Execution, ExecutionTCAMetric, TradeDecision
+from ..economic_policy import (
+    alpaca_equity_fee_schedule_cost,
+    alpaca_equity_fee_schedule_hash,
+    load_effective_economic_policy,
+)
 from .adaptive_policy import (
     ExecutionChurnContext,
     derive_execution_churn,
@@ -36,16 +42,6 @@ from .lineage_read_model import journal_tigerbeetle_execution_cost
 EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION = "torghut.execution-tca-cost-lineage.v1"
 
 POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
-
-_CENT = Decimal("0.01")
-
-_ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
-
-_ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
-
-_ALPACA_2026_EQUITY_TAF_CAP = Decimal("9.79")
-
-_ALPACA_2026_FEE_SCHEDULE_REVISED_ON = "2026-04-01"
 
 _EXPLICIT_COST_AMOUNT_KEYS = (
     "cost_amount",
@@ -662,7 +658,7 @@ def _resolve_explicit_cost(
         )
         if fee_schedule_cost is not None:
             amount, basis = fee_schedule_cost
-            return amount, basis, "alpaca_2026_equity_fee_schedule"
+            return amount, basis, "modeled_alpaca_2026_equity_fee_schedule"
     return None, None, None
 
 
@@ -692,17 +688,12 @@ def _alpaca_2026_equity_fee_schedule_cost(
         return None
     if not _has_alpaca_us_equity_source(payloads, execution=execution):
         return None
-    normalized_side = str(execution.side or "").strip().lower().replace("-", "_")
-    if normalized_side in {"buy", "buy_to_cover", "cover"}:
-        return Decimal("0"), "alpaca_2026_equity_zero_commission_and_cat_fee_schedule"
-    if normalized_side not in {"sell", "sell_short", "short"}:
-        return None
-    sec_fee = _decimal_ceil_cent(filled_notional * _ALPACA_2026_EQUITY_SEC_FEE_RATE)
-    taf_fee = min(
-        _decimal_ceil_cent(filled_qty * _ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
-        _ALPACA_2026_EQUITY_TAF_CAP,
+    return alpaca_equity_fee_schedule_cost(
+        side=execution.side,
+        filled_qty=filled_qty,
+        filled_notional=filled_notional,
+        policy=load_effective_economic_policy(settings),
     )
-    return sec_fee + taf_fee, "alpaca_2026_equity_sec_taf_cat_fee_schedule"
 
 
 def _has_alpaca_us_equity_source(
@@ -747,30 +738,15 @@ def _has_alpaca_us_equity_source(
     )
 
 
-def _decimal_ceil_cent(value: Decimal) -> Decimal:
-    if value <= 0:
-        return Decimal("0")
-    return value.quantize(_CENT, rounding=ROUND_CEILING)
-
-
 def _alpaca_2026_equity_fee_schedule_hash() -> str:
-    return stable_payload_digest(
-        {
-            "broker": "alpaca",
-            "asset_class": "us_equity",
-            "schedule": "alpaca_brokerage_fee_schedule",
-            "revised_on": _ALPACA_2026_FEE_SCHEDULE_REVISED_ON,
-            "sec_fee_rate_per_notional": str(_ALPACA_2026_EQUITY_SEC_FEE_RATE),
-            "taf_rate_per_share": str(_ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
-            "taf_cap": str(_ALPACA_2026_EQUITY_TAF_CAP),
-            "cat_fee_equities": "0",
-            "commission": "0",
-        }
+    return alpaca_equity_fee_schedule_hash(
+        policy=load_effective_economic_policy(settings)
     )
 
 
 def _cost_basis_is_alpaca_fee_schedule(value: object) -> bool:
-    return str(value or "").strip().startswith("alpaca_2026_equity_")
+    normalized = str(value or "").strip()
+    return normalized.startswith(("alpaca_2026_equity_", "modeled_alpaca_2026_equity_"))
 
 
 __all__ = [

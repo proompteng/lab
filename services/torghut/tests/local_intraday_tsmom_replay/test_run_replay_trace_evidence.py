@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from app.trading.economic_policy import load_economic_policy
+from scripts.intraday_tsmom_replay.ledger import _build_replay_ledger_context
+
 from tests.local_intraday_tsmom_replay.support import (
     datetime,
     timezone,
     Decimal,
     Path,
     patch,
+    TransactionCostModel,
     GateTrace,
     StrategyTrace,
     ThresholdTrace,
@@ -20,6 +26,44 @@ from tests.local_intraday_tsmom_replay.support import (
 
 
 class TestRunReplayTraceEvidence(_TestLocalIntradayTsmomReplayBase):
+    def test_replay_cost_hash_changes_with_fee_rounding(self) -> None:
+        policy = load_economic_policy()
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+        )
+        default_context = _build_replay_ledger_context(
+            config=config,
+            cost_model=TransactionCostModel(policy.cost_model_config()),
+            economic_policy=policy,
+        )
+        finer_rounding_context = _build_replay_ledger_context(
+            config=config,
+            cost_model=TransactionCostModel(
+                replace(
+                    policy.cost_model_config(),
+                    regulatory_fee_rounding_increment=Decimal("0.001"),
+                )
+            ),
+            economic_policy=policy,
+        )
+
+        self.assertNotEqual(
+            default_context.cost_model_hash,
+            finer_rounding_context.cost_model_hash,
+        )
+        self.assertNotEqual(
+            default_context.cost_lineage_hash,
+            finer_rounding_context.cost_lineage_hash,
+        )
+
     def test_run_replay_emits_trace_funnel_and_near_misses(self) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",
@@ -324,6 +368,10 @@ class TestRunReplayTraceEvidence(_TestLocalIntradayTsmomReplayBase):
         self.assertEqual(
             exact_ledger["cost_lineage"]["warning_contract"],
             ["missing_adv", "participation_exceeds_max"],
+        )
+        self.assertEqual(
+            exact_ledger["cost_lineage"]["config"]["regulatory_fee_rounding_increment"],
+            "0.01",
         )
         self.assertEqual(exact_ledger["decision_row_count"], 3)
         self.assertEqual(exact_ledger["submitted_order_row_count"], 3)

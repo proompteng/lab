@@ -171,17 +171,19 @@ spec:
             - name: TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY
               value: "0.50"
             - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
-              value: "4.0"
+              value: "1.0"
             - name: TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY
               value: "0.50"
             - name: TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS
               value: "1000"
+            - name: TRADING_MAX_POSITION_PCT_EQUITY
+              value: "0.50"
             - name: TRADING_ALLOCATOR_ENABLED
               value: "true"
             - name: TRADING_ALLOCATOR_MAX_SYMBOL_PCT_EQUITY
               value: "0.50"
             - name: TRADING_PORTFOLIO_MAX_GROSS_EXPOSURE_PCT_EQUITY
-              value: "4.0"
+              value: "1.0"
             - name: TRADING_PORTFOLIO_MAX_NET_EXPOSURE_PCT_EQUITY
               value: "0.50"
             - name: TRADING_MARKET_CONTEXT_URL
@@ -224,9 +226,9 @@ spec:
             - name: TRADING_PRICE_TABLE
               value: torghut.ta_microbars
             - name: TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS
-              value: "300"
-            - name: TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS
               value: "60"
+            - name: TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS
+              value: "0"
             - name: TRADING_ALPACA_QUOTE_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_ALPACA_QUOTE_FEED
@@ -278,6 +280,12 @@ spec:
               value: earliest
             - name: TRADING_EXECUTION_PREFER_LIMIT
               value: "true"
+            - name: TRADING_MAX_PARTICIPATION_RATE
+              value: "0.10"
+            - name: TRADING_ECONOMIC_POLICY_PATH
+              value: /app/config/economic-policy-v1.json
+            - name: TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST
+              value: sha256:071068019c37c8f6e7d379529e6506661429d88bb082e876bfca2df221bc4d65
             - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
               value: "false"
             - name: TRADING_EXECUTION_ADVISOR_ENABLED

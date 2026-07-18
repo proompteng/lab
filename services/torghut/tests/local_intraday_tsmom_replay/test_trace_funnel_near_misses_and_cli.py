@@ -20,6 +20,7 @@ from tests.local_intraday_tsmom_replay.support import (
     ThresholdTrace,
     StrategyDecision,
     PositionState,
+    ReplayConfig,
     _SHARED_POSITION_OWNER,
     _apply_filled_decision,
     _build_near_miss,
@@ -33,6 +34,34 @@ from tests.local_intraday_tsmom_replay.support import (
 
 
 class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
+    def test_programmatic_replay_config_uses_runtime_policy_pin(self) -> None:
+        configured_path = "/tmp/runtime-economic-policy.json"
+        configured_digest = "sha256:" + "b" * 64
+        with patch.dict(
+            os.environ,
+            {
+                "TRADING_ECONOMIC_POLICY_PATH": configured_path,
+                "TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST": configured_digest,
+            },
+        ):
+            config = ReplayConfig(
+                strategy_configmap_path=Path("/tmp/strategies.yaml"),
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username=None,
+                clickhouse_password=None,
+                start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+                end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+                chunk_minutes=10,
+                flatten_eod=True,
+                start_equity=Decimal("10000"),
+            )
+
+        self.assertEqual(config.economic_policy_path, Path(configured_path))
+        self.assertEqual(
+            config.economic_policy_expected_digest,
+            configured_digest,
+        )
+
     def test_parse_signal_row_preserves_vwap_and_imbalance_sizes(self) -> None:
         parsed = _parse_signal_row(
             [
@@ -526,6 +555,7 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
                 "TA_CLICKHOUSE_URL": "http://clickhouse.example:8123",
                 "TA_CLICKHOUSE_USERNAME": "env-user",
                 "TA_CLICKHOUSE_PASSWORD": "env-secret",
+                "TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST": "sha256:" + "a" * 64,
             },
             clear=False,
         ):
@@ -535,6 +565,10 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
         self.assertEqual(args.clickhouse_http_url, "http://clickhouse.example:8123")
         self.assertEqual(args.clickhouse_username, "env-user")
         self.assertEqual(args.clickhouse_password, "env-secret")
+        self.assertEqual(
+            args.economic_policy_expected_digest,
+            "sha256:" + "a" * 64,
+        )
 
     def test_parse_args_uses_repo_root_strategy_configmap_by_default(self) -> None:
         with patch.object(sys, "argv", ["local_intraday_tsmom_replay.py"]):

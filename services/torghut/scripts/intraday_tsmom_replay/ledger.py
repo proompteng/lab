@@ -1,30 +1,25 @@
 from __future__ import annotations
 
 import uuid
-
-from app.trading.costs import TransactionCostModel
-
-from app.trading.models import StrategyDecision
-
 from collections import defaultdict
-
 from dataclasses import dataclass
-
 from datetime import datetime
-
 from decimal import Decimal
-
 from typing import Any
 
+from app.trading.costs import TransactionCostModel
+from app.trading.economic_policy import EconomicPolicy
+from app.trading.models import StrategyDecision
+
 from .replay_types import (
-    ReplayConfig,
-    ReplayCostLineage,
-    ReplayLedgerContext,
     _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION,
     _REPLAY_ADV_SOURCE,
     _REPLAY_COST_BASIS,
     _REPLAY_LEDGER_ACCOUNT_LABEL,
     _REPLAY_LEDGER_SOURCE,
+    ReplayConfig,
+    ReplayCostLineage,
+    ReplayLedgerContext,
     _decimal_text,
     _decimal_text_or_none,
     _file_sha256,
@@ -95,6 +90,7 @@ def _build_replay_ledger_context(
     *,
     config: ReplayConfig,
     cost_model: TransactionCostModel,
+    economic_policy: EconomicPolicy,
 ) -> ReplayLedgerContext:
     config_hash = _file_sha256(config.strategy_configmap_path)
     replay_manifest_hash = _file_sha256(config.replay_tape_manifest_path)
@@ -105,29 +101,44 @@ def _build_replay_ledger_context(
             "strategy_configmap_sha256": config_hash,
             "flatten_eod": config.flatten_eod,
             "force_position_isolation": config.force_position_isolation,
-            "max_executable_spread_bps": str(config.max_executable_spread_bps),
-            "max_quote_mid_jump_bps": str(config.max_quote_mid_jump_bps),
-            "max_jump_with_wide_spread_bps": str(config.max_jump_with_wide_spread_bps),
+            "economic_policy_digest": economic_policy.digest,
+            "max_executable_spread_bps": str(
+                economic_policy.slippage.max_executable_spread_bps
+            ),
+            "max_quote_mid_jump_bps": str(
+                economic_policy.slippage.max_quote_mid_jump_bps
+            ),
+            "max_jump_with_wide_spread_bps": str(
+                economic_policy.slippage.max_jump_with_wide_spread_bps
+            ),
         }
     )
+    cost_model_config_payload = {
+        "commission_bps": str(cost_model.config.commission_bps),
+        "commission_per_share": str(cost_model.config.commission_per_share),
+        "min_commission": str(cost_model.config.min_commission),
+        "sec_fee_rate_on_sales": str(cost_model.config.sec_fee_rate_on_sales),
+        "taf_fee_per_share_on_sales": str(cost_model.config.taf_fee_per_share_on_sales),
+        "taf_fee_cap_per_trade": str(cost_model.config.taf_fee_cap_per_trade),
+        "cat_fee_per_share": str(cost_model.config.cat_fee_per_share),
+        "regulatory_fee_rounding_increment": str(
+            cost_model.config.regulatory_fee_rounding_increment
+        ),
+        "max_participation_rate": str(cost_model.config.max_participation_rate),
+        "impact_bps_at_full_participation": str(
+            cost_model.config.impact_bps_at_full_participation
+        ),
+        "impact_participation_exponent": str(
+            cost_model.config.impact_participation_exponent
+        ),
+    }
     cost_model_hash = _stable_json_hash(
         {
             "model": cost_model.__class__.__name__,
             "module": cost_model.__class__.__module__,
             "cost_basis": _REPLAY_COST_BASIS,
             "adv_source": _REPLAY_ADV_SOURCE,
-            "config": {
-                "commission_bps": str(cost_model.config.commission_bps),
-                "commission_per_share": str(cost_model.config.commission_per_share),
-                "min_commission": str(cost_model.config.min_commission),
-                "max_participation_rate": str(cost_model.config.max_participation_rate),
-                "impact_bps_at_full_participation": str(
-                    cost_model.config.impact_bps_at_full_participation
-                ),
-                "impact_participation_exponent": str(
-                    cost_model.config.impact_participation_exponent
-                ),
-            },
+            "config": cost_model_config_payload,
         }
     )
     cost_lineage_payload = {
@@ -139,18 +150,7 @@ def _build_replay_ledger_context(
         "fill_participation_rate_required": True,
         "fill_capacity_warning_contract_required": True,
         "warning_contract": ["missing_adv", "participation_exceeds_max"],
-        "config": {
-            "commission_bps": str(cost_model.config.commission_bps),
-            "commission_per_share": str(cost_model.config.commission_per_share),
-            "min_commission": str(cost_model.config.min_commission),
-            "max_participation_rate": str(cost_model.config.max_participation_rate),
-            "impact_bps_at_full_participation": str(
-                cost_model.config.impact_bps_at_full_participation
-            ),
-            "impact_participation_exponent": str(
-                cost_model.config.impact_participation_exponent
-            ),
-        },
+        "config": cost_model_config_payload,
     }
     cost_lineage_hash = _stable_json_hash(cost_lineage_payload)
     lineage_payload = {
@@ -163,6 +163,7 @@ def _build_replay_ledger_context(
         "replay_tape_sha256": replay_tape_hash,
         "replay_tape_manifest_sha256": replay_manifest_hash,
         "allow_stale_tape": config.allow_stale_tape,
+        "economic_policy_digest": economic_policy.digest,
     }
     replay_data_hash = _stable_json_hash(
         {
@@ -185,6 +186,7 @@ def _build_replay_ledger_context(
         "cost_lineage_hash": cost_lineage_hash,
         "lineage_hash": _stable_json_hash(lineage_payload),
         "replay_data_hash": replay_data_hash,
+        "economic_policy_digest": economic_policy.digest,
     }
     candidate_identity_hash = _stable_json_hash(candidate_identity_seed)
     candidate_id = f"exact-replay-{candidate_identity_hash[:24]}"
@@ -208,6 +210,7 @@ def _build_replay_ledger_context(
         cost_lineage_hash=cost_lineage_hash,
         lineage_hash=_stable_json_hash(lineage_payload),
         replay_data_hash=replay_data_hash,
+        economic_policy_digest=economic_policy.digest,
     )
 
 
@@ -229,6 +232,7 @@ def _base_ledger_row(entry: LedgerBaseRow) -> dict[str, Any]:
         "cost_lineage_hash": entry.context.cost_lineage_hash,
         "lineage_hash": entry.context.lineage_hash,
         "replay_data_hash": entry.context.replay_data_hash,
+        "economic_policy_digest": entry.context.economic_policy_digest,
         "order_type": entry.decision.order_type,
         "time_in_force": entry.decision.time_in_force,
     }
@@ -236,6 +240,9 @@ def _base_ledger_row(entry: LedgerBaseRow) -> dict[str, Any]:
         row["limit_price"] = _decimal_text(entry.decision.limit_price)
     if entry.decision.rationale:
         row["rationale"] = entry.decision.rationale
+    pre_broker_intent = entry.decision.params.get("pre_broker_intent")
+    if isinstance(pre_broker_intent, dict):
+        row["pre_broker_intent_digest"] = pre_broker_intent.get("digest")
     return row
 
 
@@ -397,6 +404,15 @@ def _append_ledger_fill(
                 "commission_cost_bps": _decimal_text(
                     fill.cost_lineage.commission_cost_bps
                 ),
+                "sec_fee_cost": _decimal_text(fill.cost_lineage.sec_fee_cost),
+                "taf_fee_cost": _decimal_text(fill.cost_lineage.taf_fee_cost),
+                "cat_fee_cost": _decimal_text(fill.cost_lineage.cat_fee_cost),
+                "regulatory_fee_cost": _decimal_text(
+                    fill.cost_lineage.regulatory_fee_cost
+                ),
+                "regulatory_fee_cost_bps": _decimal_text(
+                    fill.cost_lineage.regulatory_fee_cost_bps
+                ),
                 "total_cost_bps": _decimal_text(fill.cost_lineage.total_cost_bps),
                 "max_participation_rate": _decimal_text(
                     fill.cost_lineage.max_participation_rate
@@ -443,6 +459,7 @@ def _exact_replay_ledger_payload(
         "window_start": config.start_date.isoformat(),
         "window_end": config.end_date.isoformat(),
         "execution_policy_hash": context.execution_policy_hash,
+        "economic_policy_digest": context.economic_policy_digest,
         "cost_model_hash": context.cost_model_hash,
         "cost_lineage": {
             **context.cost_lineage,

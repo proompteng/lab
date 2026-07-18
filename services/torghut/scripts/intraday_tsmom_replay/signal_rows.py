@@ -12,13 +12,10 @@ from app.trading.discovery.replay_tape import (
     slice_tape_by_window,
     validate_tape_freshness,
 )
-
 from app.trading.models import SignalEnvelope
 
 from app.trading.quote_quality import (
-    QuoteQualityPolicy,
     QuoteQualityStatus,
-    assess_signal_quote_quality,
 )
 
 from app.trading.session_context import (
@@ -381,23 +378,6 @@ def _signal_mid_jump_bps(
     if reference_price is None or reference_price <= 0:
         return None
     return (abs(price - reference_price) / reference_price) * Decimal("10000")
-
-
-def _quote_quality_status(
-    *,
-    signal: SignalEnvelope,
-    previous_price: Decimal | None,
-    config: ReplayConfig,
-) -> QuoteQualityStatus:
-    return assess_signal_quote_quality(
-        signal=signal,
-        previous_price=previous_price,
-        policy=QuoteQualityPolicy(
-            max_executable_spread_bps=config.max_executable_spread_bps,
-            max_quote_mid_jump_bps=config.max_quote_mid_jump_bps,
-            max_jump_with_wide_spread_bps=config.max_jump_with_wide_spread_bps,
-        ),
-    )
 
 
 def _log_quote_skipped(

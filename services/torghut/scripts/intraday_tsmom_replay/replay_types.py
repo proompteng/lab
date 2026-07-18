@@ -1,44 +1,29 @@
+"""Types and constants for deterministic intraday TSMOM replay."""
+
 from __future__ import annotations
 
 import hashlib
-
 import json
-
 import logging
-
 import os
-
-from app.trading.models import (
-    SignalEnvelope,
-    StrategyDecision,
-)
-
-from app.trading.quote_quality import (
-    DEFAULT_MAX_EXECUTABLE_SPREAD_BPS,
-    DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS,
-    DEFAULT_MAX_QUOTE_MID_JUMP_BPS,
-)
-
-from dataclasses import dataclass
-
+from dataclasses import dataclass, field
 from datetime import (
     date,
     datetime,
     timezone,
 )
-
 from decimal import Decimal
-
 from pathlib import Path
-
 from typing import (
     Any,
     Mapping,
 )
 
-"""Run a local deterministic intraday TSMOM replay against ClickHouse signals."""
-
-logging.getLogger("alembic").setLevel(logging.WARNING)
+from app.trading.economic_policy import DEFAULT_ECONOMIC_POLICY_PATH
+from app.trading.models import (
+    SignalEnvelope,
+    StrategyDecision,
+)
 
 logging.getLogger("alembic").setLevel(logging.WARNING)
 
@@ -92,6 +77,22 @@ def default_strategy_configmap_path() -> Path:
     return _REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml"
 
 
+def _default_economic_policy_path() -> Path:
+    configured_path = str(os.environ.get("TRADING_ECONOMIC_POLICY_PATH") or "").strip()
+    return (
+        Path(configured_path).expanduser()
+        if configured_path
+        else DEFAULT_ECONOMIC_POLICY_PATH
+    )
+
+
+def _default_economic_policy_expected_digest() -> str | None:
+    return (
+        str(os.environ.get("TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST") or "").strip()
+        or None
+    )
+
+
 def _position_key(symbol: str, strategy_id: str) -> tuple[str, str]:
     return (symbol.strip().upper(), strategy_id.strip())
 
@@ -132,6 +133,10 @@ class ReplayConfig:
     chunk_minutes: int
     flatten_eod: bool
     start_equity: Decimal
+    economic_policy_path: Path = field(default_factory=_default_economic_policy_path)
+    economic_policy_expected_digest: str | None = field(
+        default_factory=_default_economic_policy_expected_digest
+    )
     symbols: tuple[str, ...] = ()
     replay_tape_path: Path | None = None
     replay_tape_manifest_path: Path | None = None
@@ -141,9 +146,6 @@ class ReplayConfig:
     capture_trace_funnel: bool = False
     capture_exact_replay_ledger: bool = False
     force_position_isolation: bool = False
-    max_executable_spread_bps: Decimal = DEFAULT_MAX_EXECUTABLE_SPREAD_BPS
-    max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
-    max_jump_with_wide_spread_bps: Decimal = DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS
     clickhouse_query_timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
 
 
@@ -177,6 +179,7 @@ class ReplayLedgerContext:
     cost_lineage_hash: str
     lineage_hash: str
     replay_data_hash: str | None
+    economic_policy_digest: str
 
 
 @dataclass(frozen=True)
@@ -193,6 +196,11 @@ class ReplayCostLineage:
     impact_cost_bps: Decimal
     commission_cost: Decimal
     commission_cost_bps: Decimal
+    sec_fee_cost: Decimal
+    taf_fee_cost: Decimal
+    cat_fee_cost: Decimal
+    regulatory_fee_cost: Decimal
+    regulatory_fee_cost_bps: Decimal
     total_cost_bps: Decimal
     capacity_ok: bool
     warnings: tuple[str, ...]

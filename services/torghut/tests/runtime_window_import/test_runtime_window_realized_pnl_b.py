@@ -507,7 +507,7 @@ class TestRuntimeWindowImportRealizedPnlB(RuntimeWindowImportTestCaseBase):
         self.assertTrue(rows)
         self.assertLessEqual(event_sourced_order_ids.call_count, 3)
 
-    def test_build_realized_strategy_pnl_rows_authorizes_source_backed_short_round_trip(
+    def test_build_realized_strategy_pnl_rows_blocks_modeled_fee_short_round_trip(
         self,
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
@@ -661,35 +661,29 @@ class TestRuntimeWindowImportRealizedPnlB(RuntimeWindowImportTestCaseBase):
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0]["post_cost_promotion_eligible"])
-        self.assertTrue(rows[0]["authoritative"])
+        self.assertFalse(rows[0]["post_cost_promotion_eligible"])
+        self.assertFalse(rows[0]["authoritative"])
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
-        self.assertEqual(bucket["blockers"], [])
-        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertIn(
+            "runtime_ledger_cost_basis_non_promotion_grade",
+            bucket["blockers"],
+        )
+        self.assertEqual(bucket["closed_trade_count"], 0)
         self.assertEqual(bucket["open_position_count"], 0)
-        self.assertEqual(bucket["filled_notional"], "201")
-        self.assertEqual(bucket["gross_strategy_pnl"], "1")
-        self.assertEqual(bucket["cost_amount"], "0.02")
-        self.assertEqual(bucket["net_strategy_pnl_after_costs"], "0.98")
-        self.assertEqual(
-            bucket["cost_basis_counts"],
-            {
-                "alpaca_2026_equity_sec_taf_cat_fee_schedule": 1,
-                "alpaca_2026_equity_zero_commission_and_cat_fee_schedule": 1,
-            },
-        )
-        self.assertEqual(
-            bucket["cost_model_hash_counts"],
-            {_alpaca_2026_equity_fee_schedule_hash(): 2},
-        )
+        self.assertEqual(bucket["filled_notional"], "0")
+        self.assertEqual(bucket["gross_strategy_pnl"], "0")
+        self.assertEqual(bucket["cost_amount"], "0")
+        self.assertEqual(bucket["net_strategy_pnl_after_costs"], "0")
+        self.assertEqual(bucket["cost_basis_counts"], {})
+        self.assertEqual(bucket["cost_model_hash_counts"], {})
         self.assertEqual(
             bucket["source_decision_mode_counts"],
             {"strategy_signal_paper": 4},
         )
         self.assertEqual(bucket["source_materialization"], "source_execution_lifecycle")
-        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_runtime_carry_in_source_filters_reject_wrong_symbol_and_decision(
         self,
