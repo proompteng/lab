@@ -18,7 +18,7 @@ spec:
   type: {{ .Values.controllers.service.type | default "ClusterIP" }}
   ports:
     - port: {{ .Values.controllers.service.port | default .Values.grpc.servicePort | default .Values.grpc.port | default 50051 }}
-      targetPort: grpc
+      targetPort: {{ .Values.grpc.port | default 50051 }}
       protocol: TCP
       name: grpc
   selector:
