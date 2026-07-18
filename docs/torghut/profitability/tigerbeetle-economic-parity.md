@@ -66,6 +66,12 @@ TigerBeetle parity payload.
 Changing any economic encoding rule requires a new projection version. Versioned IDs prevent a revised projection from
 silently inheriting balances from an older encoding.
 
+Ordering is part of economic identity. Timestamped fills retain event-time ordering. A date-only broker fact such as a
+cash fee must use first-observed time before external ID as its deterministic tie-break so a later-discovered fact
+appends after existing facts instead of changing their transaction IDs. If a prior projection namespace was populated
+with a non-monotonic ordering rule, it is permanently historical: the implementation must allocate a new projection
+version and must never delete, overwrite, or reinterpret the old immutable objects.
+
 ### Amounts
 
 Every broker-economic ledger amount is already bounded to 18 decimal places. TigerBeetle amounts use the exact absolute

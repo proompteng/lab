@@ -441,7 +441,9 @@ Synced/Healthy remains deployment evidence only.
 The economic truth plane cannot depend on an unbounded query or a single unrehearsed database instance.
 
 - Use bounded statements and explicit transaction deadlines on scheduler/readiness paths.
-- Eliminate idle-in-transaction sessions and keep outcome labeling outside long-held transactions.
+- Keep counterfactual outcome labeling and quote I/O outside both database transactions and the
+  strategy-to-risk-to-broker order path; use the immutable event-time quote captured with the decision before falling
+  back to a historical lookup.
 - Partition or index high-volume event and options data using measured PostgreSQL plans.
 - Tune autovacuum/WAL behavior from observed table churn, not estimated tuple ratios alone.
 - Run CNPG with tested recovery point/recovery time objectives, continuous backups, at least one replica where the

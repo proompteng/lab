@@ -1,10 +1,11 @@
 # Slice 10 Production Evidence: Full TigerBeetle Economic Parity
 
-Status: production-proven. Source, image, GitOps, manual parity, idempotence, sealed-storage, API, fault-injection,
-recovery, and a natural Cron-owned source-race retry all passed. Slice 10 is complete; profitability and capital gates
-remain blocked.
+Status: production-proven after a superseding late-fee correction. The original v1 materialization remains below as a
+historical record, but it is not current accounting evidence. Reducer v4, TigerBeetle projection v2, first
+materialization, exact idempotent rerun, sealed CNPG observation, direct runtime status, and a natural Cron-owned run
+all passed. Profitability and capital gates remain blocked.
 
-Evidence window: `2026-07-17T07:41:06Z` through `2026-07-18T04:24:58Z`.
+Evidence window: `2026-07-17T07:41:06Z` through `2026-07-18T06:47:48Z`.
 
 ## Invariant And Scope
 
@@ -14,9 +15,86 @@ account and transfer manifests gate entry and promotion evidence. Protocol reach
 not parity.
 
 This is accounting-integrity evidence, not a strategy return, market edge, profitable order, capital grant, or
-permission to increase exposure. Existing broker reconciliation residuals remain independent and blocking.
+permission to increase exposure. The source correction removed the three historical broker residuals, but order
+lineage, runtime-ledger, strategy-evidence, and capital-authority gates remain independent and blocking.
 
-## Delivery Chain
+## Superseding Correction: Late-Fee Monotonicity
+
+The v1 projection was exact for the source rows visible during its original evidence window. It was not stable under a
+late broker fee whose economic date preceded its observation time. The later source readback therefore invalidated the
+v1 materialization as current proof even though the original run, rerun, and readback were internally consistent.
+
+### Source correction
+
+PR `#12764`, merged as `0676c7dc1e36e42abf0f8ab21798b0d9577ac727`, extended broker-activity backfill to a
+bounded two-day overlap. Production source evidence changed from seven to fourteen `CFEE` activities: six asset fees
+and eight cash fees. The previously reported three broker reconciliation residuals fell to zero. The overlap does not
+invent a new accounting authority; the existing natural-key upsert remains the only source writer.
+
+### Why projection v1 could not be reused
+
+Date-only cash-fee rows were originally ordered by economic date and external ID. A fee first observed on the next day
+could have a lexically earlier external ID than a fee already projected for the prior economic date. Inserting it into
+the middle of the state-dependent fee and rounding chain changed existing deterministic transaction identities.
+
+TigerBeetle is correctly immutable, so the v1 namespace retained the old chains while the recomputed projection
+expected replacements. Five account cumulative-balance fields then mismatched even though the newly expected transfer
+count and manifests were internally exact. The system did not delete transfers, overwrite accounts, tolerate the
+mismatch, or relabel it as parity. Projection v1 is permanently retained as historical evidence and permanently barred
+from current authority.
+
+### Reducer v4 and projection v2
+
+PR `#12766`, merged as `aca95091f629ca433fac687e61034da64ac3063e`, introduced reducer v4 and TigerBeetle
+projection v2. Timestamped fills retain economic-time ordering. Date-only fees now use first-observed time before
+external ID, so a later-discovered fee appends after already observed facts instead of rewriting their identities.
+Promotion PR `#12769` merged as `42b2b9aa2103fba8eaa263d4dcd95f2d1b6c1e3a`; the correction image was
+`sha256:44131fdc982d4a956d0d956790d68198cf309dcda1f3d4d97834ac741a6e7ab9`.
+
+The published v4 input and reducer pair contained:
+
+- input `39d45f12-fb08-40e4-9ef5-e06c01baa8d6` with 40,172 source activities and manifest
+  `283dc4710eb3da7a0c6656c709277679509b66749caaf418e9c96c5e50be3a60`;
+- journal run `a0fa236d-9469-49ce-830a-990dac3d710c`, 40,172 transactions, 195,207 entries, and digest
+  `dffcf45fb2dd62768cb6da768dd6835ac0b3b5a27be7ebe5d1ce31635842e465`;
+- state run `e3f82f54-c7c2-4f04-bc77-dfd65e0020a2` and comparison digest
+  `20b82b73a05d5b46e9f6314ba3503133a1ea0ab0312632282504095b313b41b3`;
+- exact reducer equivalence, admissibility, zero unsupported activities, and zero broker residuals.
+
+Manual Job `torghut-broker-economic-ledger-v2-parity-1-0610` performed the first v2 materialization. It created all 96
+expected accounts and 114,935 expected transfers across 40,172 linked transaction chains. Exact readback reproduced
+account manifest
+`23131300047a58dff2b80ceee0c75d3d5988a2f36a6c8f6771948b047e157d50` and transfer manifest
+`3241194bfa1ecfb5dd567487ff531374bb8fa5252057dc554b5d528bba01bb1e`. Every create, lookup,
+missing, mismatch, and partial-chain error counter was zero.
+
+Immediate rerun Job `torghut-broker-economic-ledger-v2-parity-2-0612` selected zero accounts and zero transfers for
+creation, reused all 96 accounts and all 40,172 transaction chains, and reproduced both manifests exactly with every
+error counter still zero. The completed manual Jobs were removed after the evidence was recorded; the immutable
+TigerBeetle objects and sealed PostgreSQL records remain.
+
+### Natural v4/v2 proof
+
+Cron-owned Job `torghut-broker-economic-ledger-reconciliation-29739287` started at `2026-07-18T06:47:00Z` and
+completed at `06:47:48Z` on source `a6ee6c1f529d8c6240e3535c15152b57605179db` and image
+`sha256:bfadb9f0fd415d8884f74de9551a2f4740a8c89dd6d36f1de16f34606085a995`. It used Kubernetes
+`backoffLimit: 0`, a 1,200-second active deadline, and the bounded 180-second source-consistency retry contract.
+
+The natural run proved:
+
+- reducer v4 equivalence and admissibility with zero reconciliation residuals and zero open orders;
+- projection v2 parity with 96 accounts, 40,172 chains, and 114,935 transfers;
+- zero selected account or transfer creates, 96 existing accounts, and 40,172 existing chains;
+- exact expected-versus-actual account and transfer manifests and zero TigerBeetle errors or blockers;
+- sealed observation `6f311274-80a7-4aaa-a603-e669fc078460`, result digest
+  `3260f0f3b1fda0757a197efba9d1f09e86673365914b1ee0e2e97cbba6e8c793`, and exact input, run, reducer,
+  comparison, journal, source-commit, and image bindings.
+
+Direct scheduler status then reported the economic observation current, reconciled, admissible, and
+`accounting_parity_satisfied=true`. The parity payload still correctly reported `capital_authority=false` and
+`promotion_authority=false`; accounting truth alone does not authorize a strategy or exposure.
+
+## Historical V1 Delivery Chain
 
 | Boundary                | Evidence                                                                                                                                                                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -74,7 +152,7 @@ The correction is deliberately narrow:
 
 After merge, Argo reconciled the intended source and the live CronJob exposed that exact security boundary.
 
-## First Full Materialization
+## Historical V1 Materialization
 
 Manual Job `torghut-broker-economic-parity-manual-20260717080927` completed successfully on the promoted image. Its
 closed input contained 40,165 broker activities. The balanced journal contained 40,165 transactions and 195,184
@@ -93,7 +171,7 @@ The account manifest was
 exactly. Every create, lookup, missing, mismatch, and partial-chain counter was zero after readback. Parity was true
 with no parity blocker.
 
-## Exact Rerun And Idempotence
+## Historical V1 Exact Rerun And Idempotence
 
 Manual Job `torghut-broker-economic-parity-rerun-20260717081027` completed against the identical input and journal.
 It selected zero accounts and zero transfers for creation, reused all 96 accounts and all 40,165 transaction chains,
@@ -102,7 +180,7 @@ and reproduced both manifests exactly. All error counters remained zero.
 This proves object-level idempotence and complete linked-chain reuse. It does not infer parity from TigerBeetle's
 duplicate-ID response.
 
-## CNPG Sealing And Runtime Status
+## Historical V1 CNPG Sealing And Runtime Status
 
 Direct `kubectl cnpg psql` readback of the final natural reconciliation independently verified:
 
@@ -174,7 +252,7 @@ until an image containing merge `63e5bdd8a837aa1e601908c46a9c0fc4e0dc71f0` was p
 another manifest-before-image failure. Activation PR `#12755` then added the two manifest arguments. No queue,
 controller, schema, service, or alternate accounting authority was introduced.
 
-## Natural Schedule
+## Historical V1 Natural Schedule
 
 Cron-owned Job `torghut-broker-economic-ledger-reconciliation-29739107` started on schedule at
 `2026-07-18T03:47:00Z` and completed successfully at `03:47:37Z`. The immutable Job template independently showed:
@@ -201,22 +279,25 @@ scheduler status exposed that exact current observation and result digest with `
 `tigerbeetle_economic_parity.parity=true`, while retaining `entry_allowed=false`, all three independent reconciliation
 residuals, and no recovery degradation.
 
-## Independent Residuals And Capital Verdict
+## Residual And Capital Verdict
 
-TigerBeetle parity is exact, but the broker-derived economic comparison still reports:
+The historical v1 observation reported:
 
 - `broker_cash_mismatch`;
 - `ledger_position_fresh_mark_missing`;
 - `ledger_position_missing_from_broker`.
 
-The latest observation has three residuals and zero open orders. These are Slice 8 broker reconciliation blockers, not
-TigerBeetle projection errors. Slice 9 also still lacks its changed-source append proof and a fresh complete paper
-causal chain. Consequently P0 has not exited, no strategy has earned capital authority, and real-capital
-risk-increasing submission remains blocked.
+The bounded source-overlap correction recovered the omitted fees, and the latest natural v4/v2 observation has zero
+residuals and zero open orders. This supersedes the historical three-residual verdict; it does not retroactively make
+the v1 projection authoritative.
+
+Slice 9 still lacks a complete current order-lineage census and a fresh, fenced paper causal chain. The runtime ledger
+and strategy-capital evidence are also incomplete. Consequently P0 has not exited, no strategy has earned capital
+authority, and real-capital risk-increasing submission remains blocked.
 
 ## Verdict
 
-The implementation now proves deterministic full-object TigerBeetle economic parity, idempotent replay, sealed CNPG
-bindings, fail-closed discrepancy detection, clean recovery, and bounded whole-attempt retry on the promoted production
-path. This closes only the Slice 10 accounting-parity invariant. It does not close Slices 8 or 9, authorize capital, or
-prove Torghut is profitable.
+Reducer v4 and TigerBeetle projection v2 now prove deterministic full-object economic parity, monotonic late-fee
+identity, idempotent replay, sealed CNPG bindings, fail-closed discrepancy detection, clean recovery, and a natural
+Cron-owned production run. This closes only the Slice 10 accounting-parity invariant. It does not close order lineage,
+runtime-ledger, strategy-validation, or capital-authority gates, and it does not prove Torghut is profitable.
