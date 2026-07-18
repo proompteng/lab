@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import io
+import os
+from contextlib import redirect_stdout
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -18,7 +22,13 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_CODE_FILL_POST,
     TRANSFER_KIND_FILL_POST,
 )
-from scripts.backfill_tigerbeetle_stable_refs import run_stable_ref_backfill
+from scripts.backfill_tigerbeetle_stable_refs import (
+    _parse_args,
+    _print_payload,
+    _result_int,
+    main,
+    run_stable_ref_backfill,
+)
 
 
 DEBIT_ACCOUNT_ID = "101"
@@ -94,6 +104,80 @@ class TestBackfillTigerBeetleStableRefs(TestCase):
 
     def tearDown(self) -> None:
         self.engine.dispose()
+
+    def test_cli_accepts_bounded_apply_configuration(self) -> None:
+        args = _parse_args(
+            [
+                "--dsn-env",
+                "CUSTOM_DSN",
+                "--batch-size",
+                "5000",
+                "--max-batches",
+                "1000",
+                "--apply",
+                "--require-complete",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(args.dsn_env, "CUSTOM_DSN")
+        self.assertEqual(args.batch_size, 5_000)
+        self.assertEqual(args.max_batches, 1_000)
+        self.assertTrue(args.apply)
+        self.assertTrue(args.require_complete)
+        self.assertTrue(args.json)
+
+    def test_cli_rejects_unsafe_bounds_and_uncommitted_completion(self) -> None:
+        invalid_argv = (
+            ["--batch-size", "0"],
+            ["--batch-size", "5001"],
+            ["--max-batches", "0"],
+            ["--max-batches", "1001"],
+            ["--require-complete"],
+        )
+        for argv in invalid_argv:
+            with self.subTest(argv=argv), patch("sys.stderr", new=io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    _parse_args(argv)
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_result_counts_reject_bool_negative_and_non_integer_values(self) -> None:
+        for value in (True, -1, "1", None):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "tigerbeetle_stable_ref_backfill_selected_invalid",
+                ):
+                    _result_int({"selected": value}, "selected")
+
+    def test_receipt_prints_json_and_human_formats(self) -> None:
+        payload = {
+            "apply": True,
+            "complete": True,
+            "missing_before": 3,
+            "missing_after": 0,
+            "postgres_rows_updated": 3,
+        }
+        json_output = io.StringIO()
+        human_output = io.StringIO()
+
+        with redirect_stdout(json_output):
+            _print_payload(payload, as_json=True)
+        with redirect_stdout(human_output):
+            _print_payload(payload, as_json=False)
+
+        self.assertEqual(
+            json_output.getvalue().strip(),
+            '{"apply":true,"complete":true,"missing_after":0,'
+            '"missing_before":3,"postgres_rows_updated":3}',
+        )
+        self.assertIn("apply=True complete=True", human_output.getvalue())
+        self.assertIn("missing_before=3 missing_after=0", human_output.getvalue())
+
+    def test_main_requires_the_selected_dsn_environment_variable(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(SystemExit, "missing DSN env var: CUSTOM_DSN"):
+                main(["--dsn-env", "CUSTOM_DSN"])
 
     def test_postgresql_missing_predicate_uses_a_text_json_key(self) -> None:
         engine = create_engine("postgresql+psycopg://", future=True)
