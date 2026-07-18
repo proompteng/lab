@@ -42,6 +42,10 @@ const notebookReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-notebook-release.yml', import.meta.url),
   'utf8',
 )
+const notebookCiWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebooks-ci.yml', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
 const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
@@ -307,6 +311,10 @@ describe('torghut build-push workflow', () => {
     expect(notebookReleaseWorkflow).toContain('bun run packages/scripts/src/torghut/update-notebook-manifest.ts')
     expect(notebookReleaseWorkflow).toContain('Update only the notebook image digest')
     expect(notebookReleaseWorkflow).toContain('linux/amd64 linux/arm64')
+    expect(notebookReleaseWorkflow).not.toContain('name: Checkout source revision')
+    expect(notebookReleaseWorkflow).toContain('name: Verify promotion workspace remains on current main')
+    expect(notebookReleaseWorkflow).toContain('echo "main_head=${MAIN_HEAD}"')
+    expect(notebookCiWorkflow.match(/- 'services\/torghut\/scripts\/start_torghut_notebook\.sh'/g)).toHaveLength(2)
     const staleDiffBlock = staleDiffBlockFor(notebookReleaseWorkflow, 'services/torghut/app/notebook_data')
     expect(staleDiffBlock).toContain('services/torghut/app/__init__.py')
     expect(staleDiffBlock).toContain('services/torghut/scripts/start_torghut_notebook.sh')

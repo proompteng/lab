@@ -142,6 +142,7 @@ jobs:
           fi
 
           {
+            echo "main_head=${MAIN_HEAD}"
             echo "source_sha=${SOURCE_SHA}"
             echo "tag=${TAG}"
             echo "contract_digest=${CONTRACT_DIGEST}"
@@ -149,9 +150,17 @@ jobs:
             echo "promote=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Checkout source revision
+      - name: Verify promotion workspace remains on current main
         if: steps.meta.outputs.promote == 'true'
-        run: git checkout --force "${{ steps.meta.outputs.source_sha }}"
+        shell: bash
+        env:
+          MAIN_HEAD: ${{ steps.meta.outputs.main_head }}
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "${MAIN_HEAD}" ] || [ "$(git rev-parse origin/main)" != "${MAIN_HEAD}" ]; then
+            echo "Promotion workspace moved away from the checked-out main revision ${MAIN_HEAD}."
+            exit 1
+          fi
 
       - name: Resolve image digest
         if: steps.meta.outputs.promote == 'true'
