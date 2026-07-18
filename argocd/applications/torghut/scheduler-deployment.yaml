@@ -37,7 +37,7 @@ spec:
           securityContext:
             seccompProfile:
               type: Unconfined
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:9c4148e72c87bb4f49e8be8111e1397997c0d66650b5ee773d44acd40422c524
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:3595fc32a40461b4b5085c6aede61c9bc1a7efaa6bbe9a31388f83695d880935
           command:
             - uvicorn
           args:
@@ -462,11 +462,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.596.0-2211-ge4d64be1a
+              value: v0.596.0-2212-gfcc3118e1
             - name: TORGHUT_COMMIT
-              value: e4d64be1a15400cf6a531451eba72e3934afc66e
+              value: fcc3118e176e1d1189326d1d15558bec012a93cc
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:9c4148e72c87bb4f49e8be8111e1397997c0d66650b5ee773d44acd40422c524
+              value: sha256:3595fc32a40461b4b5085c6aede61c9bc1a7efaa6bbe9a31388f83695d880935
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
               value: linux/amd64,linux/arm64
             - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
