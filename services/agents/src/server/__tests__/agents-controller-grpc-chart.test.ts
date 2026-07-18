@@ -10,7 +10,10 @@ describe('Agents controller gRPC chart wiring', () => {
     const service = readChartTemplate('service-controllers-grpc.yaml')
     const deployment = readChartTemplate('deployment-controllers.yaml')
 
-    expect(service).toContain('targetPort: {{ .Values.grpc.port | default 50051 }}')
+    expect(service).toContain('$controllerGrpcPort := .Values.grpc.port | default 50051')
+    expect(service).toContain('hasKey $controllersEnvVars "AGENTS_GRPC_PORT"')
+    expect(service).toContain('$controllerGrpcPort = index $controllersEnvVars "AGENTS_GRPC_PORT"')
+    expect(service).toContain('targetPort: {{ $controllerGrpcPort }}')
     expect(service).not.toContain('targetPort: grpc')
     expect(deployment).toContain('- name: AGENTS_GRPC_PORT')
     expect(deployment).toContain('value: {{ .Values.grpc.port | quote }}')
