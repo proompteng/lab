@@ -35,7 +35,10 @@ from .broker_mutation_receipts import fingerprint_broker_endpoint
 logger = logging.getLogger(__name__)
 
 _INITIAL_SCAN_AFTER = datetime(2016, 1, 1, tzinfo=timezone.utc)
-_SCAN_OVERLAP = timedelta(minutes=5)
+# Alpaca posts date-only crypto fee activities after the trading day closes.
+# Re-read two full UTC dates so those immutable late arrivals cannot fall behind
+# a cursor that already advanced past their settlement date.
+_SCAN_OVERLAP = timedelta(days=2)
 _PAGE_SIZE = 100
 _HTTP_TIMEOUT_SECONDS = 10.0
 _DEFAULT_PAGES_PER_RUN = 3

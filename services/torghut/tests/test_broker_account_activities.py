@@ -511,6 +511,55 @@ def test_ingestor_drains_bounded_pages_then_deduplicates_overlap() -> None:
         )
 
 
+def test_completed_scan_rewinds_two_days_for_late_date_only_crypto_fees() -> None:
+    late_fee = {
+        "activity_type": "CFEE",
+        "date": "2026-07-15",
+        "description": "Coin Pair Transaction Fee (Non USD)",
+        "id": "late-crypto-fee",
+        "net_amount": "0",
+        "price": "100000",
+        "qty": "-0.000001",
+        "status": "executed",
+        "symbol": "BTCUSD",
+    }
+    pages: list[object] = [[], [late_fee]]
+    requested_after: list[object] = []
+
+    def get_json(**kwargs: object) -> object:
+        params = kwargs["params"]
+        assert isinstance(params, Mapping)
+        requested_after.append(cast(Mapping[str, object], params)["after"])
+        return pages.pop(0)
+
+    sessions = _session_factory()
+    ingestor = BrokerAccountActivityIngestor(
+        client=AlpacaAccountActivitiesClient(
+            api_key="key",
+            secret_key="secret",
+            endpoint_url="https://paper-api.alpaca.markets",
+            get_json=get_json,
+        ),
+        session_factory=sessions,
+        account_label="paper-account",
+        now=_Clock(),
+    )
+
+    first = ingestor.ingest_once()
+    second = ingestor.ingest_once()
+
+    assert first.complete is True
+    assert second.inserted == 1
+    assert requested_after == [
+        "2016-01-01T00:00:00Z",
+        "2026-07-14T01:00:00Z",
+    ]
+    with sessions() as session:
+        stored = session.scalar(select(BrokerAccountActivity))
+        assert stored is not None
+        assert stored.external_activity_id == "late-crypto-fee"
+
+
 def test_changed_payload_for_same_activity_is_hard_contradiction() -> None:
     pages: list[object] = [
         [_fill("activity-001")],
