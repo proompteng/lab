@@ -306,6 +306,24 @@ def test_hub_extra_config_has_a_valid_fixed_authenticator_contract() -> None:
     result = next(node for node in authenticate.body if isinstance(node, ast.Return))
     assert ast.literal_eval(result.value) == {"name": "torghut", "admin": False}
 
+    assignments = {
+        target.id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert ast.dump(assignments["cookie_secret"]) == ast.dump(
+        ast.parse(
+            'os.environ.get("TORGHUT_HUB_COOKIE_SECRET", "").strip()', mode="eval"
+        ).body
+    )
+    assert ast.dump(assignments["crypt_key"]) == ast.dump(
+        ast.parse(
+            'os.environ.get("TORGHUT_HUB_CRYPT_KEY", "").strip()', mode="eval"
+        ).body
+    )
+
 
 def test_no_namespace_or_plaintext_secret_is_committed() -> None:
     yaml_sources = "\n".join(path.read_text() for path in NOTEBOOKS_DIR.glob("*.yaml"))
