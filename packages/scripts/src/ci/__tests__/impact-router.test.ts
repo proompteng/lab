@@ -99,10 +99,10 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
-  test('routes Nix lock changes to one compatibility target', () => {
+  test('routes Nix lock changes through compatibility and Agents image validation', () => {
     const plan = selectImpactPlan(['flake.lock'], map)
     expect(plan.validationTargets).toEqual(['shared-compat'])
-    expect(plan.delegatedWorkflows).toEqual([])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
   })
 
   test('routes per-service Nix image changes to compatibility validation', () => {
@@ -113,14 +113,22 @@ describe('impact router', () => {
 
   test('routes Agents-owned Nix image changes through compatibility and Agents smoke validation', () => {
     for (const path of [
+      'flake.nix',
       'nix/images/agents.nix',
       'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
     ]) {
       const plan = selectImpactPlan([path], map)
       expect(plan.validationTargets).toEqual(['shared-compat'])
       expect(plan.delegatedWorkflows).toEqual(['agents-ci'])
     }
+  })
+
+  test('routes the shared Nix OCI deploy helper through Agents local-image validation', () => {
+    const plan = selectImpactPlan(['packages/scripts/src/shared/nix-oci-deploy.ts'], map)
+    expect(plan.validationTargets).toEqual(['planner'])
+    expect(plan.delegatedWorkflows).toEqual(['agents-ci', 'scripts-ci'])
   })
 
   test('routes a package and infrastructure change without duplicate targets', () => {

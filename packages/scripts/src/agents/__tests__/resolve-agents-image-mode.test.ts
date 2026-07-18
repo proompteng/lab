@@ -108,8 +108,8 @@ describe('classifyAgentsImageMode', () => {
     ])
   })
 
-  it('keeps shared workspace and Nix inputs out of Agents runtime CI', () => {
-    const result = classifyAgentsImageMode(['bun.lock', 'flake.lock', 'nix/packages.nix', 'tsconfig.base.json'])
+  it('keeps shared JavaScript workspace inputs out of Agents runtime CI', () => {
+    const result = classifyAgentsImageMode(['bun.lock', 'tsconfig.base.json'])
 
     expect(result).toMatchObject({
       tier: 'unit',
@@ -118,5 +118,24 @@ describe('classifyAgentsImageMode', () => {
       runIntegration: false,
       imageTargets: [],
     })
+  })
+
+  it('builds all Agents images for shared Nix image inputs', () => {
+    for (const path of [
+      'flake.lock',
+      'flake.nix',
+      'nix/packages.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+    ]) {
+      const result = classifyAgentsImageMode([path])
+      expect(result).toMatchObject({
+        tier: 'local-smoke',
+        mode: 'build-local-image',
+        needsLocalAgentsImage: true,
+        runIntegration: true,
+        imageTargets: ['control-plane', 'controller', 'runner'],
+        matchedPaths: [path],
+      })
+    }
   })
 })

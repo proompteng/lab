@@ -165,14 +165,18 @@ targets:
       - packages/temporal-bun-sdk/**/*.spec.tsx
     paths:
       - .github/workflows/agents-ci.yml
+      - flake.lock
+      - flake.nix
       - nix/images/agents.nix
       - nix/images/bun-workspace-service.nix
       - nix/images/openai-codex-cli.nix
+      - nix/packages.nix
       - packages/agent-contracts/**
       - packages/codex/**
       - packages/cx-tools/**
       - packages/otel/**
       - packages/scripts/src/agents/**
+      - packages/scripts/src/shared/nix-oci-deploy.ts
       - packages/temporal-bun-sdk/**
       - services/agents/**
       - charts/agents/**
