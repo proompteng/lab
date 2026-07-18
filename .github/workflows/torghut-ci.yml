@@ -170,6 +170,33 @@ jobs:
         with:
           require-preinstalled: 'true'
 
+      - name: Verify Torghut Alloy config rollout digest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          config_manifest='argocd/applications/torghut/alloy-configmap.yaml'
+          deployment_manifest='argocd/applications/torghut/alloy-deployment.yaml'
+          annotation='torghut.proompteng.ai/alloy-config-sha256'
+          expected="$(yq -r ".spec.template.metadata.annotations.\"${annotation}\"" "${deployment_manifest}")"
+          actual="$(
+            yq -o=json -I=0 '.data."config.river"' "${config_manifest}" \
+              | jq -jr . \
+              | sha256sum \
+              | awk '{print $1}'
+          )"
+
+          if ! [[ "${expected}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "${deployment_manifest} is missing a valid ${annotation} annotation" >&2
+            exit 1
+          fi
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Alloy config digest mismatch: update ${annotation} to ${actual}" >&2
+            exit 1
+          fi
+
+          echo "Torghut Alloy Deployment digest matches config.river."
+
       - name: Verify source image digest contract
         shell: bash
         env:
