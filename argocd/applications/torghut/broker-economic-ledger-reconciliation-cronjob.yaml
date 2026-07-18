@@ -92,9 +92,9 @@ spec:
                 - name: TRADING_ACCOUNT_LABEL
                   value: PA3SX7FYNUTF
                 - name: TORGHUT_VERSION
-                  value: v0.596.0-2212-gfcc3118e1
+                  value: v0.596.0-2215-g8b539d3b4
                 - name: TORGHUT_COMMIT
-                  value: fcc3118e176e1d1189326d1d15558bec012a93cc
+                  value: 8b539d3b449c81bee479a6168301077231dc40be
                 - name: TORGHUT_IMAGE_DIGEST
                   value: sha256:3595fc32a40461b4b5085c6aede61c9bc1a7efaa6bbe9a31388f83695d880935
                 - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
