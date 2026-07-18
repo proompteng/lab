@@ -15,4 +15,8 @@ for notebook in \
   fi
 done
 
-exec jupyterhub-singleuser "$@"
+if [[ "$#" -eq 0 ]]; then
+  set -- jupyterhub-singleuser
+fi
+
+exec "$@"
