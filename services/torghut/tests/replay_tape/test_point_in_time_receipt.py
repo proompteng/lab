@@ -101,7 +101,6 @@ class TestPointInTimeReplayTapeReceipt(TestCase):
             feature_schema_hash=_FEATURE_SCHEMA_HASH,
             source_table_versions=_SOURCE_TABLE_VERSIONS,
             point_in_time_spec=spec,
-            require_point_in_time_receipt=spec is not None,
         )
 
     def test_spec_round_trips_without_losing_causal_metadata(self) -> None:
