@@ -218,7 +218,7 @@ def _validate_singleuser_values(values: YamlObject) -> None:
     )
     assert re.fullmatch(r"[0-9a-f]{64}", str(_at(singleuser, "image", "tag")))
     assert singleuser["cpu"] == {"guarantee": 2, "limit": 8}
-    assert singleuser["memory"] == {"guarantee": "8Gi", "limit": "16Gi"}
+    assert singleuser["memory"] == {"guarantee": "8G", "limit": "16G"}
     assert _at(singleuser, "storage", "capacity") == "50Gi"
     assert _at(singleuser, "storage", "dynamic", "storageClass") == "rook-ceph-block"
     assert _at(singleuser, "extraPodConfig", "automountServiceAccountToken") is False
