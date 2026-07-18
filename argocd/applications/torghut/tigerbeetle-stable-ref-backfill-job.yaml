@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-tigerbeetle-stable-ref-backfill-20260718
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-tigerbeetle-stable-ref-backfill
+    app.kubernetes.io/component: accounting-repair
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "20"
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 1200
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-tigerbeetle-stable-ref-backfill
+        app.kubernetes.io/component: accounting-repair
+        app.kubernetes.io/part-of: torghut
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backfill
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:c7e7010a84e140d847099ed95eb426132e4af160642ef738be906c15b165f1b6
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command:
+            - python
+            - scripts/backfill_tigerbeetle_stable_refs.py
+          args:
+            - --apply
+            - --require-complete
+            - --batch-size
+            - "1000"
+            - --max-batches
+            - "30"
+            - --json
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+            - name: TORGHUT_TIGERBEETLE_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+              value: "2001"
+            - name: TORGHUT_COMMIT
+              value: 3fe01ebebe96a5c1edd5194a5ef76fbbd65a6786
+            - name: TORGHUT_IMAGE_DIGEST
+              value: sha256:c7e7010a84e140d847099ed95eb426132e4af160642ef738be906c15b165f1b6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 256Mi
