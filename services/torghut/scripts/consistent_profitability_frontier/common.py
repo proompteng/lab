@@ -125,7 +125,10 @@ def _candidate_replay_tape_metadata_blockers(item: Mapping[str, Any]) -> list[st
     if not replay_tape:
         replay_tape = _mapping(item.get("replay_tape"))
     if not replay_tape:
-        return []
+        return [
+            "missing_replay_tape_metadata",
+            "missing_point_in_time_replay_receipt",
+        ]
 
     required_fields = (
         "content_sha256",

@@ -124,6 +124,28 @@ class TestSearchFrontierShortlist(SearchConsistentProfitabilityFrontierTestCaseB
                 "dataset_snapshot_id": "snapshot-microbar",
                 "replay_lineage": {"lineage_hash": "lineage-microbar"},
                 "candidate_evaluation_key": "eval-microbar",
+                "candidate_evaluation_key_payload": {
+                    "candidate_evaluation_key": "eval-microbar",
+                    "replay_tape": {
+                        "content_sha256": "tape-sha",
+                        "dataset_snapshot_ref": "snapshot-microbar",
+                        "source_query_digest": "query-sha",
+                        "feature_schema_hash": "feature-sha",
+                        "cost_model_hash": "cost-sha",
+                        "strategy_family": "microbar",
+                        "replay_cache_key": "cache-key",
+                        "selected_symbols": ["NVDA"],
+                        "selected_row_count": 12,
+                        "validation_status": "valid",
+                        "point_in_time_receipt": {
+                            "status": "verified_on_load",
+                            "receipt_sha256": "sha256:receipt",
+                            "observation_cutoff": "2026-03-26T18:00:00+00:00",
+                            "input_row_set_sha256": "sha256:inputs",
+                            "feature_matrix_sha256": "sha256:features",
+                        },
+                    },
+                },
                 "hard_vetoes": [
                     "gross_exposure_pct_equity_above_max",
                     "min_cash_below_min",
@@ -580,6 +602,25 @@ class TestSearchFrontierShortlist(SearchConsistentProfitabilityFrontierTestCaseB
         self.assertIn(
             "missing_replay_tape_metadata",
             {diagnostic["category"] for diagnostic in item["handoff_diagnostics"]},
+        )
+
+    def test_replay_tape_blockers_fail_closed_when_metadata_is_omitted(self) -> None:
+        blockers = frontier._candidate_replay_tape_metadata_blockers(
+            {
+                "candidate_evaluation_key_payload": {
+                    "candidate_evaluation_key": "eval-no-tape",
+                },
+                "dataset_snapshot_id": "snapshot-no-tape",
+                "replay_lineage": {"lineage_hash": "lineage-no-tape"},
+            }
+        )
+
+        self.assertEqual(
+            blockers,
+            [
+                "missing_replay_tape_metadata",
+                "missing_point_in_time_replay_receipt",
+            ],
         )
 
     def test_paper_probation_shortlist_blocks_generic_replay_artifact(self) -> None:
