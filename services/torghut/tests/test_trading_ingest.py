@@ -145,6 +145,76 @@ def test_empty_fetch_preserves_event_cursor_tiebreakers_at_stream_tail() -> None
     assert batch.cursor_seq == 42
 
 
+def test_empty_fetch_does_not_advance_seq_aware_cursor() -> None:
+    cursor_at = datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc)
+    poll_started_at = cursor_at + timedelta(minutes=5)
+    ingestor = ClickHouseSignalIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://clickhouse.test",
+        fast_forward_stale_cursor=False,
+    )
+    ingestor.empty_batch_advance_seconds = 60
+    ingestor._columns = {"event_ts", "seq", "symbol"}
+
+    with patch.object(
+        ingestor,
+        "_query_clickhouse",
+        side_effect=AssertionError("unit test must not query ClickHouse"),
+    ) as query_clickhouse:
+        batch = ingestor._empty_fetch_batch(
+            cursor_at=cursor_at,
+            cursor_seq=42,
+            cursor_symbol="MSFT",
+            latest_signal_at=cursor_at + timedelta(minutes=1),
+            time_column="event_ts",
+            query_start=cursor_at,
+            query_end=poll_started_at,
+            poll_started_at=poll_started_at,
+        )
+
+    query_clickhouse.assert_not_called()
+    assert batch.no_signal_reason == "no_signals_in_window"
+    assert batch.cursor_at == cursor_at
+    assert batch.cursor_symbol == "MSFT"
+    assert batch.cursor_seq == 42
+
+
+def test_empty_fetch_advances_non_seq_cursor_with_symbol_tiebreaker() -> None:
+    cursor_at = datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc)
+    poll_started_at = cursor_at + timedelta(minutes=5)
+    ingestor = ClickHouseSignalIngestor(
+        schema="flat",
+        table="torghut.ta_signals",
+        url="http://clickhouse.test",
+        fast_forward_stale_cursor=False,
+    )
+    ingestor.empty_batch_advance_seconds = 60
+    ingestor._columns = {"ts", "symbol"}
+
+    with patch.object(
+        ingestor,
+        "_query_clickhouse",
+        side_effect=AssertionError("unit test must not query ClickHouse"),
+    ) as query_clickhouse:
+        batch = ingestor._empty_fetch_batch(
+            cursor_at=cursor_at,
+            cursor_seq=None,
+            cursor_symbol="MSFT",
+            latest_signal_at=cursor_at + timedelta(minutes=1),
+            time_column="ts",
+            query_start=cursor_at,
+            query_end=poll_started_at,
+            poll_started_at=poll_started_at,
+        )
+
+    query_clickhouse.assert_not_called()
+    assert batch.no_signal_reason == "empty_batch_advanced"
+    assert batch.cursor_at == poll_started_at - timedelta(seconds=60)
+    assert batch.cursor_symbol is None
+    assert batch.cursor_seq is None
+
+
 def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
