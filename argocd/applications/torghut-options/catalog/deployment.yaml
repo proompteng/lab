@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: await-options-schema
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:95f4051b1199dc24308f76d943694418cc77271763a23ca97c3129f59d47ba80
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:c984fa57cc4522b9eb189fe8cff6ad942b6ad8c9da5c7186de7dbc3992afa5b9
           imagePullPolicy: IfNotPresent
           command:
             - python
@@ -62,7 +62,7 @@ spec:
                 - ALL
       containers:
         - name: torghut-options-catalog
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:95f4051b1199dc24308f76d943694418cc77271763a23ca97c3129f59d47ba80
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:c984fa57cc4522b9eb189fe8cff6ad942b6ad8c9da5c7186de7dbc3992afa5b9
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
@@ -110,9 +110,9 @@ spec:
                   name: torghut-ws-config
                   key: SYMBOLS_ALLOWLIST
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-2199-g63ed8e880
+              value: v0.596.0-2202-g1e7360583
             - name: TORGHUT_OPTIONS_COMMIT
-              value: 63ed8e88080e3392daf1338a6f8cb68f56bb6d27
+              value: 1e736058389a7a2ebb6b179d7ab1b7360f6f302b
           ports:
             - name: http
               containerPort: 8080
