@@ -132,7 +132,7 @@ setInterval(() => {}, 1000)
     }
   })
 
-  test('advertises experimentalApi when dynamic tools are enabled', async () => {
+  test('advertises required initialize capabilities when dynamic tools are enabled', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-capabilities-'))
     const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
     const seenEvents: string[] = []
@@ -144,17 +144,26 @@ import readline from 'node:readline'
 
 const rl = readline.createInterface({ input: process.stdin })
 let experimentalApi = false
+let requestAttestation
 
 rl.on('line', (line) => {
   const message = JSON.parse(line)
 
   if (message.method === 'initialize') {
     experimentalApi = Boolean(message.params?.capabilities?.experimentalApi)
+    requestAttestation = message.params?.capabilities?.requestAttestation
     console.log(JSON.stringify({ id: message.id, result: {} }))
     return
   }
 
   if (message.method === 'thread/start') {
+    if (requestAttestation !== false) {
+      console.log(JSON.stringify({
+        id: message.id,
+        error: { code: -32600, message: 'initialize.capabilities.requestAttestation must be false' },
+      }))
+      return
+    }
     if (!experimentalApi) {
       console.log(JSON.stringify({
         id: message.id,
@@ -183,6 +192,7 @@ rl.on('line', (line) => {
     )
 
     const dynamicTool: DynamicToolSpec = {
+      type: 'function',
       name: 'linear_graphql',
       description: 'Test dynamic tool',
       inputSchema: {

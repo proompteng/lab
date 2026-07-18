@@ -726,6 +726,7 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                     clientInfo: { name: 'symphony', version: '0.1.0' },
                     capabilities: {
                       experimentalApi: options.dynamicTools.length > 0,
+                      requestAttestation: false,
                     },
                   }).pipe(
                     Effect.zipRight(writeMessage(child, { method: 'initialized', params: {} })),
@@ -760,9 +761,9 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             developerInstructions: null,
             personality: null,
             ephemeral: false,
+            historyMode: 'legacy',
             dynamicTools: options.dynamicTools,
             experimentalRawEvents: false,
-            persistExtendedHistory: false,
           }
 
           const response = (yield* withSymphonyEffectSpan(
