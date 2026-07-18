@@ -77,6 +77,26 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "1",
         )
 
+    def test_production_ta_recovers_transient_dependencies_without_losing_state(
+        self,
+    ) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/ta/flinkdeployment.yaml"
+        )
+        spec = cast(Mapping[str, object], manifest.get("spec", {}))
+        flink_config = cast(Mapping[str, object], spec.get("flinkConfiguration", {}))
+        job = cast(Mapping[str, object], spec.get("job", {}))
+
+        self.assertGreaterEqual(int(str(spec.get("restartNonce"))), 33)
+        self.assertEqual(job.get("upgradeMode"), "last-state")
+        self.assertEqual(flink_config.get("restart-strategy.type"), "exponential-delay")
+        self.assertFalse(
+            any(
+                str(key).startswith("restart-strategy.fixed-delay.")
+                for key in flink_config
+            )
+        )
+
     def test_options_ta_uses_primary_clickhouse_auth_secret(self) -> None:
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut-options/ta/flinkdeployment.yaml"
