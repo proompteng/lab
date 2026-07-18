@@ -9,6 +9,10 @@ metadata:
     app.kubernetes.io/part-of: lab
     networking.knative.dev/visibility: cluster-local
   annotations:
+    # A legacy kubectl field manager still co-owns this key in production, so SSA
+    # cannot delete the old 10s value by omission. With no cluster rollout default,
+    # 0s preserves immediate cutover while keeping GitOps authoritative.
+    serving.knative.dev/rollout-duration: 0s
     serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     argocd.argoproj.io/tracking-id: torghut:serving.knative.dev/Service:torghut/torghut-sim
 spec:
