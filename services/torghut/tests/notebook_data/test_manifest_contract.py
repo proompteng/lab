@@ -169,6 +169,10 @@ def test_notebook_entrypoint_seeds_only_absent_canonical_notebooks() -> None:
     assert 'cp "${canonical_dir}/${notebook}" "${workspace_dir}/${notebook}"' in source
     assert "cp -f" not in source
     assert "rm " not in source
+    assert 'if [[ "$#" -eq 0 ]]; then' in source
+    assert "set -- jupyterhub-singleuser" in source
+    assert 'exec "$@"' in source
+    assert 'exec jupyterhub-singleuser "$@"' not in source
 
 
 def test_chart_and_digest_contracts_are_pinned() -> None:
