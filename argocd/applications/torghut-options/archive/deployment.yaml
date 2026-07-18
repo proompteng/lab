@@ -100,9 +100,9 @@ spec:
                   name: torghut-options-alpaca
                   key: APCA_API_BASE_URL
             - name: TORGHUT_OPTIONS_VERSION
-              value: v0.596.0-2220-g240795bf6
+              value: v0.596.0-2222-gd785a4f39
             - name: TORGHUT_OPTIONS_COMMIT
-              value: 240795bf6c3344f75f622498d086b429d9c59f22
+              value: d785a4f399047c1df717a5906ce3c494b5ca3e68
           ports:
             - name: http
               containerPort: 8080
