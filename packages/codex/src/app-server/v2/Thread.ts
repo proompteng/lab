@@ -4,14 +4,33 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { GitInfo } from "./GitInfo";
 import type { SessionSource } from "./SessionSource";
+import type { ThreadExtra } from "./ThreadExtra";
+import type { ThreadHistoryMode } from "./ThreadHistoryMode";
+import type { ThreadSource } from "./ThreadSource";
 import type { ThreadStatus } from "./ThreadStatus";
 import type { Turn } from "./Turn";
 
-export type Thread = { id: string,
+export type Thread = {
+/**
+ * Identifier for this thread. Codex-generated thread IDs are UUIDv7.
+ */
+id: string,
+/**
+ * Optional implementation-specific thread data.
+ */
+extra: ThreadExtra | null,
+/**
+ * Session id shared by threads that belong to the same session tree.
+ */
+sessionId: string,
 /**
  * Source thread id when this thread was created by forking another thread.
  */
 forkedFromId: string | null,
+/**
+ * The ID of the parent thread. This will only be set if this thread is a subagent.
+ */
+parentThreadId: string | null,
 /**
  * Usually the first user message in the thread, if available.
  */
@@ -20,6 +39,10 @@ preview: string,
  * Whether the thread is ephemeral and should not be materialized on disk.
  */
 ephemeral: boolean,
+/**
+ * Persisted thread history contract selected when this thread was created.
+ */
+historyMode: ThreadHistoryMode,
 /**
  * Model provider used for this thread (for example, 'openai').
  */
@@ -32,6 +55,10 @@ createdAt: number,
  * Unix timestamp (in seconds) when the thread was last updated.
  */
 updatedAt: number,
+/**
+ * Unix timestamp (in seconds) used for thread recency ordering.
+ */
+recencyAt: number | null,
 /**
  * Current runtime status for the thread.
  */
@@ -52,6 +79,10 @@ cliVersion: string,
  * Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
  */
 source: SessionSource,
+/**
+ * Optional analytics source classification for this thread.
+ */
+threadSource: ThreadSource | null,
 /**
  * Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
  */

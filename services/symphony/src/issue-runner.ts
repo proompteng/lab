@@ -16,6 +16,7 @@ import { WorkspaceService } from './workspace-manager'
 const FALLBACK_PROMPT = 'You are working on an issue from Linear.'
 
 const LINEAR_GRAPHQL_TOOL: DynamicToolSpec = {
+  type: 'function',
   name: 'linear_graphql',
   description: 'Execute one Linear GraphQL operation using Symphony tracker credentials.',
   inputSchema: {
@@ -30,6 +31,7 @@ const LINEAR_GRAPHQL_TOOL: DynamicToolSpec = {
 }
 
 const GITHUB_DELIVERY_TOOL: DynamicToolSpec = {
+  type: 'function',
   name: 'github_delivery',
   description: 'Execute first-class GitHub delivery operations using Symphony runtime credentials.',
   inputSchema: {

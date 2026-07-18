@@ -28,6 +28,7 @@ const makeStream = async function* (): AsyncGenerator<StreamDelta, Turn | null, 
 const makeTurn = (status: Turn['status'], error: Turn['error'] = null): Turn => ({
   id: `turn-${status}`,
   items: [],
+  itemsView: 'full',
   status,
   error,
   startedAt: 1,

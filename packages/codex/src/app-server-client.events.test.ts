@@ -64,9 +64,14 @@ const respondToInitialize = async (child: FakeChildProcess, inspect?: (request: 
   writeLine(child, { id: initReq.id, result: {} })
 }
 
-const respondToThreadStart = async (child: FakeChildProcess, threadId: string) => {
+const respondToThreadStart = async (
+  child: FakeChildProcess,
+  threadId: string,
+  inspect?: (request: JsonRpcRequest) => void,
+) => {
   const request = await nextRequest(child)
   expect(request.method).toBe('thread/start')
+  inspect?.(request)
   writeLine(child, {
     id: request.id,
     result: {
@@ -203,10 +208,31 @@ describe('CodexAppServerClient v2 notifications', () => {
         },
         capabilities: {
           experimentalApi: true,
+          requestAttestation: false,
         },
       })
     })
     await client.ensureReady()
+    client.stop()
+  })
+
+  it('responds to current time requests with whole Unix seconds', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:30:45.999Z'))
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, {
+      id: 41,
+      method: 'currentTime/read',
+      params: { threadId: 'thread-1' },
+    })
+
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 41,
+      result: { currentTimeAt: 1_784_277_045 },
+    })
     client.stop()
   })
 
@@ -264,13 +290,29 @@ describe('CodexAppServerClient v2 notifications', () => {
         baseInstructions: 'system prompt',
         developerInstructions: 'developer prompt',
         excludeTurns: true,
-        persistExtendedHistory: true,
       })
+      expect(request.params).not.toHaveProperty('persistExtendedHistory')
+      expect(request.params).not.toHaveProperty('historyMode')
     })
     await respondToTurnStart(child, 'turn-1')
     const { threadId } = await runPromise
 
     expect(threadId).toBe('thread-existing')
+    client.stop()
+  })
+
+  it('maps extended history compatibility to paginated history for new threads', async () => {
+    const { child, client } = setupClient({ persistExtendedHistory: true })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1', (request) => {
+      expect(request.params).toMatchObject({ historyMode: 'paginated' })
+      expect(request.params).not.toHaveProperty('persistExtendedHistory')
+    })
+    await respondToTurnStart(child, 'turn-1')
+    await runPromise
     client.stop()
   })
 
