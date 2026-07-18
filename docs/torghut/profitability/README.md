@@ -51,6 +51,9 @@ readback. The audit snapshot records what was observed at its stated time.
   image chain, GitOps rollout, deployed candidate-processing exercise, safety readback, and unresolved deltas.
 - [Slice 9 production evidence](evidence/slice-09-order-lineage-census-2026-07-17.md): immutable historical census,
   exact-input rerun, source-table non-mutation proof, diagnostic coverage, and remaining fresh-paper gate.
+- [Slice 10 production evidence](evidence/slice-10-tigerbeetle-economic-parity-2026-07-17.md): full projection
+  materialization, exact idempotent rerun, sealed CNPG bindings, controlled mismatch, recovery, and independent
+  residual reporting.
 
 ## Current Decision
 

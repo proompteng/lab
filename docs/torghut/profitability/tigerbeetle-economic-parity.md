@@ -1,7 +1,8 @@
 # Full Broker-Economic TigerBeetle Parity
 
-Status: normative Slice 10 design; implementation must still complete CI, image promotion, GitOps reconciliation, and
-production proof before this slice is complete.
+Status: production-proven Slice 10 design. The complete delivery and runtime proof is recorded in
+[Slice 10 production evidence](evidence/slice-10-tigerbeetle-economic-parity-2026-07-17.md). This status does not grant
+capital or claim profitability.
 
 ## Decision
 
