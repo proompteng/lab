@@ -159,6 +159,14 @@ def test_notebook_image_uses_a_dedicated_minimal_locked_dependency_group() -> No
     assert (
         'Entrypoint = [ "${startNotebook}/bin/start-torghut-notebook" ];' in nix_source
     )
+    for canonical_file in (
+        "40-transformer-math-from-first-principles.ipynb",
+        "README.md",
+    ):
+        assert f'"notebooks/{canonical_file}"' in nix_source
+        assert (
+            f'cp notebooks/{canonical_file} "$out/opt/torghut-notebooks/"' in nix_source
+        )
 
 
 def test_notebook_entrypoint_seeds_only_absent_canonical_notebooks() -> None:
@@ -167,6 +175,8 @@ def test_notebook_entrypoint_seeds_only_absent_canonical_notebooks() -> None:
     ).read_text()
     assert 'if [[ ! -e "${workspace_dir}/${notebook}" ]]; then' in source
     assert 'cp "${canonical_dir}/${notebook}" "${workspace_dir}/${notebook}"' in source
+    assert "40-transformer-math-from-first-principles.ipynb" in source
+    assert 'cp "${canonical_dir}/README.md" "${workspace_dir}/README.md"' in source
     assert "cp -f" not in source
     assert "rm " not in source
     assert 'if [[ "$#" -eq 0 ]]; then' in source
