@@ -10,7 +10,7 @@ metadata:
 spec:
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:158499b56e165329827be2fee52494484e1aa33736cdbc07a07aed2b243659dd
   imagePullPolicy: IfNotPresent
-  restartNonce: 32
+  restartNonce: 33
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   logConfiguration:
@@ -90,9 +90,7 @@ spec:
     execution.checkpointing.mode: EXACTLY_ONCE
     execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
     taskmanager.numberOfTaskSlots: "2"
-    restart-strategy.type: fixed-delay
-    restart-strategy.fixed-delay.attempts: "5"
-    restart-strategy.fixed-delay.delay: 5 s
+    restart-strategy.type: exponential-delay
     execution.checkpointing.unaligned: "true"
     execution.checkpointing.tolerable-failed-checkpoints: "3"
     metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -187,5 +185,5 @@ spec:
     entryClass: ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt
     jarURI: local:///opt/flink/usrlib/app.jar
     parallelism: 8
-    upgradeMode: stateless
+    upgradeMode: last-state
     state: running
