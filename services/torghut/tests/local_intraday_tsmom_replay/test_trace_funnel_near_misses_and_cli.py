@@ -20,6 +20,7 @@ from tests.local_intraday_tsmom_replay.support import (
     ThresholdTrace,
     StrategyDecision,
     PositionState,
+    ReplayConfig,
     _SHARED_POSITION_OWNER,
     _apply_filled_decision,
     _build_near_miss,
@@ -33,6 +34,34 @@ from tests.local_intraday_tsmom_replay.support import (
 
 
 class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
+    def test_programmatic_replay_config_uses_runtime_policy_pin(self) -> None:
+        configured_path = "/tmp/runtime-economic-policy.json"
+        configured_digest = "sha256:" + "b" * 64
+        with patch.dict(
+            os.environ,
+            {
+                "TRADING_ECONOMIC_POLICY_PATH": configured_path,
+                "TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST": configured_digest,
+            },
+        ):
+            config = ReplayConfig(
+                strategy_configmap_path=Path("/tmp/strategies.yaml"),
+                clickhouse_http_url="http://example.invalid:8123",
+                clickhouse_username=None,
+                clickhouse_password=None,
+                start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+                end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+                chunk_minutes=10,
+                flatten_eod=True,
+                start_equity=Decimal("10000"),
+            )
+
+        self.assertEqual(config.economic_policy_path, Path(configured_path))
+        self.assertEqual(
+            config.economic_policy_expected_digest,
+            configured_digest,
+        )
+
     def test_parse_signal_row_preserves_vwap_and_imbalance_sizes(self) -> None:
         parsed = _parse_signal_row(
             [

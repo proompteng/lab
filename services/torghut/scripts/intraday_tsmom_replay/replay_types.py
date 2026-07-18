@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import (
     date,
     datetime,
@@ -77,6 +77,22 @@ def default_strategy_configmap_path() -> Path:
     return _REPO_ROOT / "argocd/applications/torghut/strategy-configmap.yaml"
 
 
+def _default_economic_policy_path() -> Path:
+    configured_path = str(os.environ.get("TRADING_ECONOMIC_POLICY_PATH") or "").strip()
+    return (
+        Path(configured_path).expanduser()
+        if configured_path
+        else DEFAULT_ECONOMIC_POLICY_PATH
+    )
+
+
+def _default_economic_policy_expected_digest() -> str | None:
+    return (
+        str(os.environ.get("TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST") or "").strip()
+        or None
+    )
+
+
 def _position_key(symbol: str, strategy_id: str) -> tuple[str, str]:
     return (symbol.strip().upper(), strategy_id.strip())
 
@@ -117,8 +133,10 @@ class ReplayConfig:
     chunk_minutes: int
     flatten_eod: bool
     start_equity: Decimal
-    economic_policy_path: Path = DEFAULT_ECONOMIC_POLICY_PATH
-    economic_policy_expected_digest: str | None = None
+    economic_policy_path: Path = field(default_factory=_default_economic_policy_path)
+    economic_policy_expected_digest: str | None = field(
+        default_factory=_default_economic_policy_expected_digest
+    )
     symbols: tuple[str, ...] = ()
     replay_tape_path: Path | None = None
     replay_tape_manifest_path: Path | None = None
