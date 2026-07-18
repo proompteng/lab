@@ -1,7 +1,8 @@
 # CNPG Evidence Storage And Recovery
 
-Status: Slice 11 recovery and availability proof is production-complete. Two measured order-read indexes remain in the
-normal image-promotion path before the query envelope is closed on the live database.
+Status: Slice 11 recovery, availability, and live query-envelope proof is production-complete. The Torghut Argo
+application remains independently `Progressing` because the notebook Tailscale ingress has not been provisioned; that
+access-policy rollout is not storage proof and must not be hidden by declaring the whole application healthy.
 
 ## Observed Baseline
 
@@ -141,6 +142,30 @@ the rejected-order operator report remained below 125 ms at projected volume; ne
 projected fixture and all of its resources were removed after measurement. Production creation uses
 `CREATE INDEX CONCURRENTLY` to avoid blocking writes, consistent with the PostgreSQL 17
 [index-build contract](https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
+
+## Live Migration And Rollout Closure
+
+PR `#12807` merged as `1fc0c210b17fb6bfd87c9ab7dab9b438a169eead`, and promotion PR `#12808` merged as
+`8d1e28ad3500d2cf0668b4987049bc3e7d529798`. The PreSync migration hook upgraded both the production and default
+simulation databases from `0082_order_lineage_runs` to `0083_hyperliquid_order_reads`. Direct primary readback found
+both indexes `indisvalid=true` and `indisready=true`; the migration rejects an invalid or incomplete concurrent-index
+artifact instead of allowing Alembic to stamp over it.
+
+Production `EXPLAIN (ANALYZE, BUFFERS)` then proved the exact runtime reads use the intended indexes:
+
+| Query                       | Live buffers | Live execution time |
+| --------------------------- | -----------: | ------------------: |
+| latest acknowledged order   |            3 |            0.045 ms |
+| orders in the last 24 hours |            2 |            0.018 ms |
+| exchange-order lookup       |            3 |            0.011 ms |
+
+The promoted scheduler rolled with `Recreate`, remained a one-replica writer, reacquired healthy leadership, and
+reported fresh successful trading and reconciliation cycles with zero restarts. The new Knative API revision became
+active at `14:22:42Z`; its predecessor became inactive at `14:23:21Z`, bounding readiness overlap to 39 seconds and
+leaving every retained older revision at zero replicas. Direct database checks found no trade decision, broker
+mutation receipt/event, Hyperliquid order, or Hyperliquid fill created during the rollout window. CNPG remained two of
+two ready with asynchronous streaming current, continuous archiving healthy, and the promoted primary on a different
+amd64 host from its replica.
 
 None of these storage proofs establishes strategy profitability or capital authority. Risk-increasing real-capital
 submission remains blocked.
