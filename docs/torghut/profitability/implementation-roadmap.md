@@ -315,6 +315,9 @@ at each decision time.
 
 - Implementation contract: [Point-In-Time Replay Data Receipts](point-in-time-data-receipts.md).
 
+- Production evidence:
+  [Slice 13 immutable point-in-time replay receipts](evidence/slice-13-point-in-time-data-receipts-2026-07-18.md).
+
 - Deliverable: dataset and feature receipts with event-time/arrival-time boundaries, source watermarks, universe version,
   adjustment policy, artifact hashes, and code/policy digests.
 - Primary surfaces: replay importers, feature pipelines, ClickHouse/CNPG metadata, artifact storage, and research reports.
