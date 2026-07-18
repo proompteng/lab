@@ -36,6 +36,9 @@ ECONOMIC_POLICY_SCHEMA_VERSION = "torghut.economic-policy.v1"
 DEFAULT_ECONOMIC_POLICY_PATH = (
     Path(__file__).resolve().parents[2] / "config" / "economic-policy-v1.json"
 )
+DEFAULT_ECONOMIC_POLICY_DIGEST = (
+    "sha256:071068019c37c8f6e7d379529e6506661429d88bb082e876bfca2df221bc4d65"
+)
 
 PositiveFraction = Annotated[Decimal, Field(gt=0, le=1)]
 NonNegativeDecimal = Annotated[Decimal, Field(ge=0)]
@@ -297,9 +300,25 @@ def load_economic_policy(
     return policy
 
 
+def load_pinned_economic_policy(
+    path: str | Path = DEFAULT_ECONOMIC_POLICY_PATH,
+    *,
+    expected_digest: str | None = None,
+) -> EconomicPolicy:
+    resolved = Path(path).expanduser().resolve()
+    normalized_digest = str(expected_digest or "").strip() or None
+    if normalized_digest is None:
+        if resolved != DEFAULT_ECONOMIC_POLICY_PATH.resolve():
+            raise EconomicPolicyError(
+                "economic_policy_custom_path_requires_expected_digest"
+            )
+        normalized_digest = DEFAULT_ECONOMIC_POLICY_DIGEST
+    return load_economic_policy(resolved, expected_digest=normalized_digest)
+
+
 @lru_cache(maxsize=1)
 def load_default_economic_policy() -> EconomicPolicy:
-    return load_economic_policy(DEFAULT_ECONOMIC_POLICY_PATH)
+    return load_pinned_economic_policy(DEFAULT_ECONOMIC_POLICY_PATH)
 
 
 def alpaca_equity_fee_schedule_cost(
@@ -517,6 +536,7 @@ def _canonical_digest(payload: Mapping[str, object]) -> str:
 
 __all__ = [
     "DEFAULT_ECONOMIC_POLICY_PATH",
+    "DEFAULT_ECONOMIC_POLICY_DIGEST",
     "ECONOMIC_POLICY_SCHEMA_VERSION",
     "EconomicPolicy",
     "EconomicPolicyError",
@@ -527,6 +547,7 @@ __all__ = [
     "load_effective_economic_policy",
     "load_economic_policy",
     "load_default_economic_policy",
+    "load_pinned_economic_policy",
     "load_runtime_economic_policy",
     "runtime_policy_mismatches",
 ]

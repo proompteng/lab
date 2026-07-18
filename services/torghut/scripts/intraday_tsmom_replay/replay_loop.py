@@ -8,7 +8,7 @@ from typing import Any
 from app.config import settings
 from app.trading.economic_policy import (
     bind_economic_policy_settings,
-    load_economic_policy,
+    load_pinned_economic_policy,
 )
 from app.trading.models import SignalEnvelope
 from app.trading.session_context import regular_session_close_utc_for
@@ -40,7 +40,7 @@ from .signal_rows import _extract_price, _iter_signal_rows, _log_quote_skipped
 
 
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
-    economic_policy = load_economic_policy(
+    economic_policy = load_pinned_economic_policy(
         config.economic_policy_path,
         expected_digest=config.economic_policy_expected_digest,
     )

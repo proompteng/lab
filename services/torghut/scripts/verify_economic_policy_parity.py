@@ -13,7 +13,7 @@ def main() -> int:
     os.environ.setdefault("LOG_LEVEL", "WARNING")
     from app.trading.economic_policy import (
         DEFAULT_ECONOMIC_POLICY_PATH,
-        load_economic_policy,
+        load_pinned_economic_policy,
     )
     from app.trading.economic_policy_parity import (
         ECONOMIC_POLICY_PARITY_SCHEMA_VERSION,
@@ -37,7 +37,10 @@ def main() -> int:
         default=os.environ.get("TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST"),
     )
     args = parser.parse_args()
-    policy = load_economic_policy(args.policy, expected_digest=args.expected_digest)
+    policy = load_pinned_economic_policy(
+        args.policy,
+        expected_digest=args.expected_digest,
+    )
     fixture = build_economic_policy_fixture_result(policy)
     report = {
         "schema_version": ECONOMIC_POLICY_PARITY_SCHEMA_VERSION,

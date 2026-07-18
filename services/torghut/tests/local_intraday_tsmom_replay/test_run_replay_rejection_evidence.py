@@ -20,6 +20,27 @@ from tests.local_intraday_tsmom_replay.support import (
 
 
 class TestRunReplayRejectionEvidence(_TestLocalIntradayTsmomReplayBase):
+    def test_run_replay_rejects_a_custom_policy_without_a_digest(self) -> None:
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            economic_policy_path=Path("/tmp/custom-economic-policy.json"),
+            economic_policy_expected_digest=None,
+        )
+
+        with self.assertRaisesRegex(
+            EconomicPolicyError,
+            "economic_policy_custom_path_requires_expected_digest",
+        ):
+            run_replay(config)
+
     def test_run_replay_rejects_an_economic_policy_digest_mismatch(self) -> None:
         config = ReplayConfig(
             strategy_configmap_path=Path("/tmp/strategies.yaml"),
