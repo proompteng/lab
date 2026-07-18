@@ -186,6 +186,13 @@ internal fun alpacaTradesBackfillQuery(
 
 internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
+internal fun barDedupKey(message: AlpacaMessage): String? =
+  when (message) {
+    is AlpacaBar -> "bars:${message.timestamp}-${message.symbol}"
+    is AlpacaUpdatedBar -> "updatedBars:${message.timestamp}-${message.symbol}"
+    else -> null
+  }
+
 @Serializable
 internal data class AlpacaBarsResponse(
   val bars: JsonElement? = null,
@@ -1383,17 +1390,8 @@ class ForwarderApp(
         }
       }
       is AlpacaBar, is AlpacaUpdatedBar -> {
-        val symbol =
-          when (msg) {
-            is AlpacaBar -> msg.symbol
-            is AlpacaUpdatedBar -> msg.symbol
-          }
-        val ts =
-          when (msg) {
-            is AlpacaBar -> msg.timestamp
-            is AlpacaUpdatedBar -> msg.timestamp
-          }
-        if (barsDedup.isDuplicate("$ts-$symbol")) {
+        val dedupKey = requireNotNull(barDedupKey(msg))
+        if (barsDedup.isDuplicate(dedupKey)) {
           metrics.recordDedup("bars")
           return null
         }
