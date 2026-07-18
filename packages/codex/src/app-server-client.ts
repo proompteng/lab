@@ -196,7 +196,9 @@ const normalizeSandboxMode = (mode: SandboxModeInput): SandboxMode => {
 }
 
 const normalizeApprovalPolicy = (approval: ApprovalModeInput): AskForApproval => {
-  if (approval === 'onFailure' || approval === 'on-failure') return 'on-request'
+  if (approval === 'onFailure' || approval === 'on-failure') {
+    throw new Error('Legacy approval policy on-failure is unsupported by the current Codex app-server protocol')
+  }
   if (approval === 'onRequest') return 'on-request'
   if (approval === 'unlessTrusted') return 'untrusted'
   return approval

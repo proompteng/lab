@@ -16,10 +16,17 @@ describe('normalizeSandboxMode', () => {
 
 describe('normalizeApprovalPolicy', () => {
   it('maps legacy approval strings to the new enum', () => {
-    expect(normalizeApprovalPolicy('onFailure')).toBe('on-request')
-    expect(normalizeApprovalPolicy('on-failure')).toBe('on-request')
     expect(normalizeApprovalPolicy('onRequest')).toBe('on-request')
     expect(normalizeApprovalPolicy('unlessTrusted')).toBe('untrusted')
+  })
+
+  it('rejects legacy on-failure instead of escalating it to on-request', () => {
+    expect(() => normalizeApprovalPolicy('onFailure')).toThrow(
+      'Legacy approval policy on-failure is unsupported by the current Codex app-server protocol',
+    )
+    expect(() => normalizeApprovalPolicy('on-failure')).toThrow(
+      'Legacy approval policy on-failure is unsupported by the current Codex app-server protocol',
+    )
   })
 
   it('passes through already-normalized approval values', () => {
