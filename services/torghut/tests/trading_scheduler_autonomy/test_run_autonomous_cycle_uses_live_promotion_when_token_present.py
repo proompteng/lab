@@ -165,6 +165,26 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 deps.call_kwargs["gate_policy_path"],
                 Path(settings.trading_autonomy_gate_policy_path),
             )
+            configmap_path = deps.call_kwargs["strategy_configmap_path"]
+            self.assertEqual(
+                configmap_path,
+                Path(deps.call_kwargs["output_dir"]) / "strategy-configmap-source.yaml",
+            )
+            self.assertTrue(configmap_path.is_file())
+            configmap_payload = json.loads(configmap_path.read_text(encoding="utf-8"))
+            self.assertEqual(configmap_payload["apiVersion"], "v1")
+            self.assertEqual(configmap_payload["kind"], "ConfigMap")
+            self.assertEqual(
+                configmap_payload["metadata"],
+                {
+                    "name": "torghut-strategy-config",
+                    "namespace": "torghut",
+                },
+            )
+            self.assertEqual(
+                configmap_payload["data"]["strategies.yaml"],
+                Path(settings.trading_strategy_config_path).read_text(encoding="utf-8"),
+            )
 
     def test_run_autonomous_cycle_passes_persistence_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
