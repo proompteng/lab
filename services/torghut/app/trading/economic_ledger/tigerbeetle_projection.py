@@ -27,8 +27,10 @@ if TYPE_CHECKING:
     from .persistence import BrokerEconomicLedgerReplay
 
 
+# The v1 namespace contains immutable transfer chains from the pre-monotonic
+# date-only CFEE ordering and must never be reused for current parity.
 TIGERBEETLE_ECONOMIC_PROJECTION_VERSION = (
-    "torghut.broker-economic-tigerbeetle-projection.v1"
+    "torghut.broker-economic-tigerbeetle-projection.v2"
 )
 TIGERBEETLE_MAX_BATCH_SIZE = 8_189
 

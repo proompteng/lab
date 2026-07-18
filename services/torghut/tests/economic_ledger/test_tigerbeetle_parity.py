@@ -25,6 +25,7 @@ from app.trading.economic_ledger.tigerbeetle_parity import (
     validate_tigerbeetle_economic_parity_payload,
 )
 from app.trading.economic_ledger.tigerbeetle_projection import (
+    TIGERBEETLE_ECONOMIC_PROJECTION_VERSION,
     project_broker_economic_transaction,
 )
 from app.trading.tigerbeetle_ledger_model import (
@@ -239,6 +240,12 @@ def test_full_projection_is_exact_idempotent_and_bound_to_immutable_runs() -> No
     first = _audit(client, replay, runs=runs)
     second = _audit(client, replay, runs=runs)
 
+    assert TIGERBEETLE_ECONOMIC_PROJECTION_VERSION == (
+        "torghut.broker-economic-tigerbeetle-projection.v2"
+    )
+    assert first.payload["projection_version"] == (
+        TIGERBEETLE_ECONOMIC_PROJECTION_VERSION
+    )
     assert first.parity is True
     assert first.payload["blockers"] == []
     assert first.payload["expected"] == first.payload["actual"] | {
