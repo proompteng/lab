@@ -10,7 +10,7 @@ from datetime import date, time
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast
+from typing import TYPE_CHECKING, Annotated, Literal, Self, cast
 
 from pydantic import (
     BaseModel,
@@ -422,7 +422,7 @@ def economic_policy_status(settings_obj: object) -> dict[str, object]:
     }
 
 
-def _runtime_settings_projection(policy: EconomicPolicy) -> Mapping[str, Any]:
+def _runtime_settings_projection(policy: EconomicPolicy) -> Mapping[str, object]:
     return {
         "trading_strategy_runtime_mode": policy.engine.strategy_runtime_mode,
         "trading_allow_shorts": policy.sizing.allow_shorts,
