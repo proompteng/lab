@@ -595,6 +595,70 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
             ).scalar_one()
         self.assertEqual(row.outcome_label_status, "labeled")
 
+    def test_rejected_signal_outcome_labeler_uses_captured_entry_quote(self) -> None:
+        event_ts = datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc)
+        followup_ts = event_ts + timedelta(minutes=5)
+        pipeline = self._build_rejected_outcome_pipeline(
+            price_fetcher=TimelinePriceFetcher(
+                {
+                    followup_ts: MarketSnapshot(
+                        symbol="AAPL",
+                        as_of=followup_ts,
+                        price=Decimal("101.00"),
+                        spread=None,
+                        source="test-followup",
+                    )
+                }
+            )
+        )
+        with self.session_local() as session:
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="reject-event-captured-entry-quote",
+                    source="quote_quality_gate",
+                    paper_source="ssrn-6607301",
+                    paper_claim_id="post-rejection-follow-up-sampling",
+                    account_label="paper",
+                    symbol="AAPL",
+                    event_ts=event_ts,
+                    timeframe="1Min",
+                    seq="42",
+                    reject_reason="spread_too_wide",
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=[
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                        "executable_quote",
+                    ],
+                    event_payload_json={
+                        "event_id": "reject-event-captured-entry-quote",
+                        "signal_payload": {
+                            "price": "100.00",
+                            "imbalance_bid_px": "99.99",
+                            "imbalance_ask_px": "100.01",
+                        },
+                    },
+                    outcome_payload_json=None,
+                )
+            )
+            session.commit()
+
+        pipeline.label_mature_rejected_signal_outcomes(
+            now=followup_ts + timedelta(seconds=1)
+        )
+
+        with self.session_local() as session:
+            row = session.execute(select(RejectedSignalOutcomeEvent)).scalar_one()
+
+        self.assertEqual(row.outcome_label_status, "labeled")
+        self.assertEqual(row.outcome_payload_json["executable_quote"]["bid"], "99.99")
+        self.assertEqual(
+            row.outcome_payload_json["executable_quote"]["source"],
+            "rejected_signal_event",
+        )
+
     def test_rejected_signal_outcome_labeler_keeps_missing_quote_pending(
         self,
     ) -> None:

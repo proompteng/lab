@@ -27,6 +27,7 @@ from ...portfolio import (
     AllocationResult,
     allocator_from_settings,
 )
+from ...prices import MarketSnapshot
 from ..pair_execution import partition_pair_allocations, reserve_pair_allocations
 from ...quote_quality import (
     QuoteQualityStatus,
@@ -695,7 +696,9 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
         followup_signal = entry_signal.model_copy(
             update={"event_ts": entry_signal.event_ts + followup_horizon}
         )
-        entry_snapshot = self.price_fetcher.fetch_market_snapshot(entry_signal)
+        entry_snapshot = self._captured_rejected_signal_entry_snapshot(entry_signal)
+        if entry_snapshot is None:
+            entry_snapshot = self.price_fetcher.fetch_market_snapshot(entry_signal)
         followup_snapshot = self.price_fetcher.fetch_market_snapshot(followup_signal)
         if (
             entry_snapshot is None
@@ -708,6 +711,49 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
         ):
             return None
         return entry_snapshot, followup_snapshot
+
+    @staticmethod
+    def _captured_rejected_signal_entry_snapshot(
+        signal: SignalEnvelope,
+    ) -> MarketSnapshot | None:
+        price = extract_executable_price(signal.payload)
+        bid = scheduler_optional_decimal(
+            payload_value(
+                signal.payload,
+                "imbalance_bid_px",
+                block="imbalance",
+                nested_key="bid_px",
+            )
+        )
+        ask = scheduler_optional_decimal(
+            payload_value(
+                signal.payload,
+                "imbalance_ask_px",
+                block="imbalance",
+                nested_key="ask_px",
+            )
+        )
+        if (
+            price is None
+            or bid is None
+            or ask is None
+            or price <= 0
+            or bid <= 0
+            or ask <= 0
+            or ask < bid
+        ):
+            return None
+        return MarketSnapshot(
+            symbol=signal.symbol,
+            as_of=signal.event_ts,
+            price=price,
+            spread=ask - bid,
+            source="rejected_signal_event",
+            bid=bid,
+            ask=ask,
+            quote_as_of=signal.event_ts,
+            quote_source="rejected_signal_event",
+        )
 
     @staticmethod
     def _rejected_signal_route_metrics(
