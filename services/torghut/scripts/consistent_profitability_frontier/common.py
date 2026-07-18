@@ -106,6 +106,9 @@ def _replay_tape_selection_metadata(
         "cache_identity": dict(
             cast(Mapping[str, Any], payload.get("cache_identity") or {})
         ),
+        "point_in_time_receipt": dict(
+            cast(Mapping[str, Any], payload.get("point_in_time_receipt") or {})
+        ),
         "selected_symbols": list(
             cast(Sequence[Any], payload.get("selected_symbols") or ())
         ),
@@ -114,6 +117,54 @@ def _replay_tape_selection_metadata(
         "manifest_start_date": str(payload.get("manifest_start_date") or ""),
         "manifest_end_date": str(payload.get("manifest_end_date") or ""),
     }
+
+
+def _candidate_replay_tape_metadata_blockers(item: Mapping[str, Any]) -> list[str]:
+    candidate_key = _mapping(item.get("candidate_evaluation_key_payload"))
+    replay_tape = _mapping(candidate_key.get("replay_tape"))
+    if not replay_tape:
+        replay_tape = _mapping(item.get("replay_tape"))
+    if not replay_tape:
+        return [
+            "missing_replay_tape_metadata",
+            "missing_point_in_time_replay_receipt",
+        ]
+
+    required_fields = (
+        "content_sha256",
+        "dataset_snapshot_ref",
+        "source_query_digest",
+        "feature_schema_hash",
+        "cost_model_hash",
+        "strategy_family",
+        "replay_cache_key",
+    )
+    blockers = [
+        f"missing_replay_tape_{field}"
+        for field in required_fields
+        if not str(replay_tape.get(field) or "").strip()
+    ]
+    if int(replay_tape.get("selected_row_count") or 0) <= 0:
+        blockers.append("missing_replay_tape_selected_rows")
+    point_in_time_receipt = _mapping(replay_tape.get("point_in_time_receipt"))
+    if str(point_in_time_receipt.get("status") or "") != "verified_on_load":
+        blockers.append("missing_point_in_time_replay_receipt")
+    else:
+        for field in (
+            "receipt_sha256",
+            "observation_cutoff",
+            "input_row_set_sha256",
+            "feature_matrix_sha256",
+        ):
+            if not str(point_in_time_receipt.get(field) or "").strip():
+                blockers.append(f"missing_point_in_time_replay_{field}")
+    cache_identity = _mapping(replay_tape.get("cache_identity"))
+    blockers.extend(
+        str(blocker)
+        for blocker in cast(Sequence[Any], cache_identity.get("blockers") or ())
+        if str(blocker).strip()
+    )
+    return list(dict.fromkeys(blockers))
 
 
 def _resolve_full_window(
@@ -257,6 +308,7 @@ __all__ = [
     "OrderTypeAblationPolicy",
     "_write_json_output",
     "_replay_tape_selection_metadata",
+    "_candidate_replay_tape_metadata_blockers",
     "_resolve_full_window",
     "_max_drawdown_from_daily_net",
     "_daily_filled_notional",

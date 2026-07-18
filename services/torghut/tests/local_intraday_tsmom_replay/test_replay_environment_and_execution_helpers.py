@@ -249,6 +249,11 @@ class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase
                     "META",
                     "2026-03-27 17:30:24.000",
                     "12",
+                    "2026-03-27 17:30:24.250",
+                    "2026-03-27 17:30:24.200",
+                    "2026-03-27 17:30:24.250",
+                    "7",
+                    "9",
                     "0.031",
                     "0.019",
                     "523.10",
@@ -285,7 +290,46 @@ class TestReplayEnvironmentAndExecutionHelpers(_TestLocalIntradayTsmomReplayBase
             )
 
         self.assertEqual([row.symbol for row in rows], ["META"])
-        self.assertIn("s.symbol IN ('META', 'NVDA')", captured_queries[0])
+        self.assertEqual(
+            rows[0].ingest_ts,
+            datetime(2026, 3, 27, 17, 30, 24, 250000, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            rows[0].payload["_source_ingest_ts"],
+            {
+                "ta_signals": datetime(
+                    2026, 3, 27, 17, 30, 24, 200000, tzinfo=timezone.utc
+                ),
+                "ta_microbars": datetime(
+                    2026, 3, 27, 17, 30, 24, 250000, tzinfo=timezone.utc
+                ),
+            },
+        )
+        self.assertEqual(
+            rows[0].payload["_source_versions"],
+            {"ta_signals": 7, "ta_microbars": 9},
+        )
+        self.assertEqual(captured_queries[0].count("symbol IN ('META', 'NVDA')"), 2)
+        self.assertIn("s.seq = m.seq", captured_queries[0])
+        self.assertIn("ingest_ts <= toDateTime64", captured_queries[0])
+        self.assertIn("LIMIT 1 BY symbol, event_ts, seq", captured_queries[0])
+        self.assertNotIn("ANY LEFT JOIN", captured_queries[0])
+
+    def test_fetch_chunk_rejects_naive_observation_cutoff(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "replay_observation_cutoff_timezone_missing",
+        ):
+            _fetch_chunk(
+                FetchChunkRequest(
+                    http_url="http://clickhouse",
+                    username=None,
+                    password=None,
+                    chunk_start=datetime(2026, 3, 27, 17, 0, tzinfo=timezone.utc),
+                    chunk_end=datetime(2026, 3, 27, 18, 0, tzinfo=timezone.utc),
+                    observation_cutoff=datetime(2026, 3, 27, 18, 0),
+                )
+            )
 
     def test_http_query_supports_kubectl_clickhouse_transport(self) -> None:
         completed = type(

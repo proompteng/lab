@@ -55,6 +55,18 @@ class TestMaterializeReplayTapeCli(TestCase):
             seq=seq,
             source="ta",
             payload={
+                "_source_ingest_ts": {
+                    "ta_signals": datetime(
+                        2026, month, day, 17, 31, tzinfo=timezone.utc
+                    ),
+                    "ta_microbars": datetime(
+                        2026, month, day, 17, 31, tzinfo=timezone.utc
+                    ),
+                },
+                "_source_versions": {
+                    "ta_signals": 7,
+                    "ta_microbars": 9,
+                },
                 "price": Decimal("100.25"),
                 "spread": Decimal("0.02"),
                 "window_size": "PT1S",
@@ -183,6 +195,7 @@ class TestMaterializeReplayTapeCli(TestCase):
             clickhouse_username="torghut",
             clickhouse_password="secret",
             clickhouse_query_timeout_seconds=7,
+            observation_cutoff=datetime(2026, 3, 28, 12, 0, tzinfo=timezone.utc),
         )
         with patch(
             "scripts.materialize_replay_tape.replay_mod._http_query",
@@ -201,6 +214,10 @@ class TestMaterializeReplayTapeCli(TestCase):
         )
         query_payload = str(query.call_args.kwargs["query"])
         self.assertIn("symbol IN ('META')", query_payload)
+        self.assertIn(
+            "ingest_ts <= toDateTime64('2026-03-28 12:00:00.000'", query_payload
+        )
+        self.assertEqual(query_payload.count("LIMIT 1 BY symbol, event_ts, seq"), 2)
         self.assertIn("toUInt64OrZero(toString(raw_signal_rows))", query_payload)
         self.assertEqual(query.call_args.kwargs["timeout_seconds"], 7)
         self.assertEqual(diagnostics["missing_raw_signal_days"], ["2026-03-27"])
@@ -358,6 +375,89 @@ class TestMaterializeReplayTapeCli(TestCase):
             {"META": {"2026-03-26": 1, "2026-03-27": 1}},
         )
         self.assertEqual(diagnostic_payload["missing_executable_signal_days"], [])
+
+    def test_main_builds_complete_point_in_time_receipt_from_explicit_spec(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "tape.jsonl"
+            manifest_output = root / "tape.manifest.json"
+            spec_path = root / "point-in-time-spec.json"
+            cutoff = datetime(2026, 3, 26, 18, 0, tzinfo=timezone.utc)
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.point-in-time-receipt-spec.v1",
+                        "observation_cutoff": cutoff.isoformat(),
+                        "feed_identity": "alpaca-iex",
+                        "timezone": "America/New_York",
+                        "session_calendar_version": "nyse-v1",
+                        "session_calendar_sha256": "sha256:" + "1" * 64,
+                        "universe_version": "universe-v1",
+                        "universe_sha256": "sha256:" + "2" * 64,
+                        "universe_symbols": ["META"],
+                        "corporate_actions_version": "announcements-v1",
+                        "corporate_actions_sha256": "sha256:" + "3" * 64,
+                        "adjustment_policy": "split-dividend-v1",
+                        "adjustment_policy_sha256": "sha256:" + "4" * 64,
+                        "code_digest": "5" * 40,
+                        "economic_policy_digest": "sha256:" + "6" * 64,
+                        "feature_pipeline_sha256": "sha256:" + "7" * 64,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = Namespace(
+                strategy_configmap=root / "strategy.yaml",
+                clickhouse_http_url="http://clickhouse.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_date="2026-03-26",
+                end_date="2026-03-26",
+                chunk_minutes=10,
+                clickhouse_query_timeout_seconds=7,
+                start_equity="10000",
+                symbols="meta",
+                dataset_snapshot_ref="snapshot-cli",
+                output=output,
+                manifest_output=manifest_output,
+                coverage_diagnostic_output=None,
+                source_table_version=[
+                    "torghut.ta_signals=schema-v1",
+                    "torghut.ta_microbars=schema-v1",
+                ],
+                point_in_time_spec=spec_path,
+                allow_incomplete_coverage=False,
+                log_level="WARNING",
+            )
+            stdout = io.StringIO()
+            with (
+                patch(
+                    "scripts.materialize_replay_tape._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
+                    return_value=(self._signal(day=26, seq=1),),
+                ) as fetch,
+                redirect_stdout(stdout),
+            ):
+                exit_code = materialize_cli.main()
+
+            payload = json.loads(stdout.getvalue())
+            replay_config = fetch.call_args.args[0]
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(replay_config.observation_cutoff, cutoff)
+        self.assertEqual(
+            payload["point_in_time_receipt"]["observation_cutoff"],
+            cutoff.isoformat(),
+        )
+        self.assertEqual(
+            payload["point_in_time_receipt"]["source_watermarks"].keys(),
+            {"ta_microbars", "ta_signals"},
+        )
 
     def test_main_can_materialize_latest_complete_source_window(self) -> None:
         with TemporaryDirectory() as tmpdir:

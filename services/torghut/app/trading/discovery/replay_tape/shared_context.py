@@ -6,7 +6,7 @@ import gzip
 import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -19,9 +19,15 @@ from app.trading.session_context import (
     regular_session_open_utc_for,
 )
 
+from .manifest import REPLAY_TAPE_MANIFEST_SCHEMA_VERSION, ReplayTapeManifest
+from .point_in_time import (
+    PointInTimeReceiptSpec,
+    build_point_in_time_data_receipt,
+    verify_point_in_time_data_receipt,
+)
+
 
 REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"
-REPLAY_TAPE_MANIFEST_SCHEMA_VERSION = "torghut.replay-tape-manifest.v1"
 
 REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION = "torghut.replay-tape-cache-identity.v1"
 
@@ -42,173 +48,11 @@ DECIMAL_TAG = "__torghut_decimal__"
 DATETIME_TAG = "__torghut_datetime__"
 
 
-def empty_row_count_by_trading_day() -> dict[str, int]:
-    return {}
-
-
-def empty_row_count_by_symbol_trading_day() -> dict[str, dict[str, int]]:
-    return {}
-
-
-def empty_string_mapping() -> dict[str, str]:
-    return {}
-
-
 class ReplayTapeCoverageError(ValueError):
     def __init__(self, reason: str, *, diagnostics: Mapping[str, Any]) -> None:
         super().__init__(reason)
         self.reason = reason
         self.diagnostics = dict(diagnostics)
-
-
-@dataclass(frozen=True)
-class ReplayTapeManifest:
-    schema_version: str
-    dataset_snapshot_ref: str
-    symbols: tuple[str, ...]
-    row_symbols: tuple[str, ...]
-    start_date: date
-    end_date: date
-    start_ts: datetime
-    end_ts: datetime
-    min_event_ts: datetime | None
-    max_event_ts: datetime | None
-    trading_day_count: int
-    row_count: int
-    source_query_digest: str
-    content_sha256: str
-    artifact_refs: Mapping[str, str]
-    source_table_versions: Mapping[str, str]
-    created_at: datetime
-    feature_schema_hash: str = ""
-    cost_model_hash: str = ""
-    strategy_family: str = ""
-    replay_cache_key: str = ""
-    feature_versions: Mapping[str, str] = field(default_factory=empty_string_mapping)
-    requested_trading_days: tuple[date, ...] = ()
-    observed_trading_days: tuple[date, ...] = ()
-    missing_trading_days: tuple[date, ...] = ()
-    row_count_by_trading_day: Mapping[str, int] = field(
-        default_factory=empty_row_count_by_trading_day
-    )
-    missing_symbol_trading_days: tuple[str, ...] = ()
-    row_count_by_symbol_trading_day: Mapping[str, Mapping[str, int]] = field(
-        default_factory=empty_row_count_by_symbol_trading_day
-    )
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "dataset_snapshot_ref": self.dataset_snapshot_ref,
-            "symbols": list(self.symbols),
-            "row_symbols": list(self.row_symbols),
-            "start_date": self.start_date.isoformat(),
-            "end_date": self.end_date.isoformat(),
-            "start_ts": self.start_ts.isoformat(),
-            "end_ts": self.end_ts.isoformat(),
-            "min_event_ts": self.min_event_ts.isoformat()
-            if self.min_event_ts is not None
-            else None,
-            "max_event_ts": self.max_event_ts.isoformat()
-            if self.max_event_ts is not None
-            else None,
-            "trading_day_count": self.trading_day_count,
-            "row_count": self.row_count,
-            "source_query_digest": self.source_query_digest,
-            "content_sha256": self.content_sha256,
-            "feature_schema_hash": self.feature_schema_hash,
-            "cost_model_hash": self.cost_model_hash,
-            "strategy_family": self.strategy_family,
-            "replay_cache_key": self.replay_cache_key,
-            "feature_versions": dict(self.feature_versions),
-            "cache_identity": self.cache_identity_diagnostics(),
-            "artifact_refs": dict(self.artifact_refs),
-            "source_table_versions": dict(self.source_table_versions),
-            "created_at": self.created_at.isoformat(),
-            "requested_trading_days": [
-                item.isoformat() for item in self.requested_trading_days
-            ],
-            "observed_trading_days": [
-                item.isoformat() for item in self.observed_trading_days
-            ],
-            "missing_trading_days": [
-                item.isoformat() for item in self.missing_trading_days
-            ],
-            "row_count_by_trading_day": dict(self.row_count_by_trading_day),
-            "missing_symbol_trading_days": list(self.missing_symbol_trading_days),
-            "row_count_by_symbol_trading_day": {
-                symbol: dict(days)
-                for symbol, days in self.row_count_by_symbol_trading_day.items()
-            },
-            "coverage_status": coverage_status(
-                missing_trading_days=self.missing_trading_days,
-                missing_symbol_trading_days=self.missing_symbol_trading_days,
-            ),
-        }
-
-    def cache_identity_diagnostics(self) -> dict[str, Any]:
-        return build_replay_tape_cache_identity_diagnostics(
-            dataset_snapshot_ref=self.dataset_snapshot_ref,
-            symbols=self.symbols,
-            start_date=self.start_date,
-            end_date=self.end_date,
-            source_query_digest=self.source_query_digest,
-            feature_schema_hash=self.feature_schema_hash,
-            cost_model_hash=self.cost_model_hash,
-            strategy_family=self.strategy_family,
-            feature_versions=self.feature_versions,
-            source_table_versions=self.source_table_versions,
-        )
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "ReplayTapeManifest":
-        schema_version = str(payload.get("schema_version") or "")
-        if schema_version != REPLAY_TAPE_MANIFEST_SCHEMA_VERSION:
-            raise ValueError(f"replay_tape_manifest_schema_invalid:{schema_version}")
-        return cls(
-            schema_version=schema_version,
-            dataset_snapshot_ref=str(payload.get("dataset_snapshot_ref") or ""),
-            symbols=string_tuple(payload.get("symbols")),
-            row_symbols=string_tuple(payload.get("row_symbols")),
-            start_date=date.fromisoformat(str(payload["start_date"])),
-            end_date=date.fromisoformat(str(payload["end_date"])),
-            start_ts=parse_datetime(str(payload["start_ts"])),
-            end_ts=parse_datetime(str(payload["end_ts"])),
-            min_event_ts=(
-                parse_datetime(str(payload["min_event_ts"]))
-                if payload.get("min_event_ts")
-                else None
-            ),
-            max_event_ts=(
-                parse_datetime(str(payload["max_event_ts"]))
-                if payload.get("max_event_ts")
-                else None
-            ),
-            trading_day_count=int(payload.get("trading_day_count") or 0),
-            row_count=int(payload.get("row_count") or 0),
-            source_query_digest=str(payload.get("source_query_digest") or ""),
-            content_sha256=str(payload.get("content_sha256") or ""),
-            feature_schema_hash=str(payload.get("feature_schema_hash") or ""),
-            cost_model_hash=str(payload.get("cost_model_hash") or ""),
-            strategy_family=str(payload.get("strategy_family") or ""),
-            replay_cache_key=str(payload.get("replay_cache_key") or ""),
-            feature_versions=string_mapping(payload.get("feature_versions")),
-            artifact_refs=string_mapping(payload.get("artifact_refs")),
-            source_table_versions=string_mapping(payload.get("source_table_versions")),
-            created_at=parse_datetime(str(payload["created_at"])),
-            requested_trading_days=date_tuple(payload.get("requested_trading_days")),
-            observed_trading_days=date_tuple(payload.get("observed_trading_days")),
-            missing_trading_days=date_tuple(payload.get("missing_trading_days")),
-            row_count_by_trading_day=int_mapping(
-                payload.get("row_count_by_trading_day")
-            ),
-            missing_symbol_trading_days=string_tuple(
-                payload.get("missing_symbol_trading_days")
-            ),
-            row_count_by_symbol_trading_day=nested_int_mapping(
-                payload.get("row_count_by_symbol_trading_day")
-            ),
-        )
 
 
 @dataclass(frozen=True)
@@ -532,50 +376,11 @@ def coverage_error_diagnostics(
     }
 
 
-def date_tuple(value: Any) -> tuple[date, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return ()
-    parsed: list[date] = []
-    for item in cast(Sequence[object], value):
-        try:
-            parsed.append(date.fromisoformat(str(item)))
-        except ValueError:
-            continue
-    return tuple(parsed)
-
-
-def string_tuple(value: Any) -> tuple[str, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return ()
-    return tuple(str(item) for item in cast(Sequence[object], value))
-
-
 def string_mapping(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
         return {}
     return {
         str(key): str(item)
-        for key, item in cast(Mapping[object, object], value).items()
-    }
-
-
-def int_mapping(value: Any) -> Mapping[str, int]:
-    if not isinstance(value, Mapping):
-        return {}
-    parsed: dict[str, int] = {}
-    for key, item in cast(Mapping[object, object], value).items():
-        try:
-            parsed[str(key)] = int(str(item))
-        except (TypeError, ValueError):
-            continue
-    return parsed
-
-
-def nested_int_mapping(value: Any) -> Mapping[str, Mapping[str, int]]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {
-        str(key): int_mapping(item)
         for key, item in cast(Mapping[object, object], value).items()
     }
 
@@ -848,6 +653,8 @@ def materialize_signal_tape(
     artifact_refs: Mapping[str, str] | None = None,
     created_at: datetime | None = None,
     require_complete_coverage: bool = False,
+    point_in_time_spec: PointInTimeReceiptSpec | None = None,
+    require_point_in_time_receipt: bool = False,
 ) -> ReplayTapeManifest:
     from .validate_tape_freshness import canonical_row_json as _canonical_row_json
 
@@ -902,12 +709,29 @@ def materialize_signal_tape(
     )
 
     content_hash = hashlib.sha256()
+    for row in ordered_rows:
+        line = _canonical_row_json(row)
+        content_hash.update(line.encode("utf-8"))
+        content_hash.update(b"\n")
+    content_sha256 = content_hash.hexdigest()
+    if require_point_in_time_receipt and point_in_time_spec is None:
+        raise ValueError("point_in_time_receipt_required")
+    point_in_time_receipt = (
+        build_point_in_time_data_receipt(
+            rows=ordered_rows,
+            content_sha256=content_sha256,
+            feature_schema_hash=feature_schema_hash,
+            source_table_versions=dict(source_table_versions or {}),
+            spec=point_in_time_spec,
+        )
+        if point_in_time_spec is not None
+        else None
+    )
+
+    # Validate every fail-closed receipt before replacing an existing artifact.
     with open_text_writer(tape_path) as handle:
         for row in ordered_rows:
-            line = _canonical_row_json(row)
-            content_hash.update(line.encode("utf-8"))
-            content_hash.update(b"\n")
-            handle.write(f"{line}\n")
+            handle.write(f"{_canonical_row_json(row)}\n")
 
     start_ts = regular_session_open_utc_for(start_date)
     end_ts = regular_session_close_utc_for(end_date)
@@ -941,7 +765,7 @@ def materialize_signal_tape(
         trading_day_count=len(event_dates),
         row_count=len(ordered_rows),
         source_query_digest=source_query_digest,
-        content_sha256=content_hash.hexdigest(),
+        content_sha256=content_sha256,
         feature_schema_hash=str(feature_schema_hash or ""),
         cost_model_hash=str(cost_model_hash or ""),
         strategy_family=str(strategy_family or ""),
@@ -950,6 +774,7 @@ def materialize_signal_tape(
         artifact_refs=resolved_artifact_refs,
         source_table_versions=dict(source_table_versions or {}),
         created_at=created_at or datetime.now(timezone.utc),
+        point_in_time_receipt=point_in_time_receipt,
         requested_trading_days=requested_trading_days,
         observed_trading_days=observed_trading_days,
         missing_trading_days=missing_trading_days,
@@ -994,4 +819,15 @@ def load_replay_tape(
             f"replay_tape_row_count_mismatch:{len(rows)}!={manifest.row_count}"
         )
     rows.sort(key=signal_sort_key)
+    if manifest.point_in_time_receipt is not None:
+        diagnostics = verify_point_in_time_data_receipt(
+            manifest.point_in_time_receipt,
+            rows=rows,
+            content_sha256=content_hash.hexdigest(),
+            feature_schema_hash=manifest.feature_schema_hash,
+            source_table_versions=manifest.source_table_versions,
+        )
+        if diagnostics["status"] != "complete":
+            reasons = ",".join(cast(Sequence[str], diagnostics["reason_codes"]))
+            raise ValueError(f"point_in_time_receipt_invalid:{reasons}")
     return ReplayTape(manifest=manifest, rows=tuple(rows))

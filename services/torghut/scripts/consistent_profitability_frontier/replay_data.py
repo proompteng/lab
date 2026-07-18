@@ -287,6 +287,12 @@ def _build_replay_tape_snapshot_receipt(
                     "artifact_refs": dict(
                         cast(Mapping[str, Any], validation.get("artifact_refs") or {})
                     ),
+                    "point_in_time_receipt": dict(
+                        cast(
+                            Mapping[str, Any],
+                            validation.get("point_in_time_receipt") or {},
+                        )
+                    ),
                 },
             ),
             DatasetWitness(
