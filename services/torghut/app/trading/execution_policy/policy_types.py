@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+import hashlib
+import json
 from typing import Any, Optional
 
 from ..models import StrategyDecision
@@ -115,6 +117,7 @@ class ExecutionPolicyOutcome:
     adaptive: AdaptiveExecutionApplication | None
     advisor_metadata: dict[str, Any]
     microstructure_metadata: dict[str, Any]
+    economic_policy_digest: str | None
 
     def params_update(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -131,6 +134,37 @@ class ExecutionPolicyOutcome:
         }
         if self.adaptive is not None:
             payload["execution_policy"]["adaptive"] = self.adaptive.as_payload()
+        pre_broker_intent = self.pre_broker_intent_payload()
+        payload["economic_policy"] = {"digest": self.economic_policy_digest}
+        payload["pre_broker_intent"] = pre_broker_intent
+        return payload
+
+    def pre_broker_intent_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "schema_version": "torghut.pre-broker-intent.v1",
+            "economic_policy_digest": self.economic_policy_digest,
+            "symbol": self.decision.symbol.strip().upper(),
+            "side": self.decision.action,
+            "qty": str(self.decision.qty),
+            "order_type": self.decision.order_type,
+            "time_in_force": self.decision.time_in_force,
+            "limit_price": stringify_decimal(self.decision.limit_price),
+            "stop_price": stringify_decimal(self.decision.stop_price),
+            "approved": self.approved,
+            "reasons": list(self.reasons),
+            "notional": stringify_decimal(self.notional),
+            "participation_rate": stringify_decimal(self.participation_rate),
+            "estimated_total_cost_bps": (
+                self.impact_assumptions.get("estimate", {}).get("total_cost_bps")
+            ),
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        payload["digest"] = f"sha256:{hashlib.sha256(encoded).hexdigest()}"
         return payload
 
 

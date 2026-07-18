@@ -146,13 +146,13 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             "runtime_ledger_mean_daily_net_pnl_after_costs_below_target",
         )
 
-    def test_promotion_source_authority_accepts_scalar_cost_basis_authority(
+    def test_promotion_source_authority_accepts_broker_reported_scalar_cost_basis(
         self,
     ) -> None:
         self.assertEqual(
             runtime_ledger_promotion_source_authority_blockers(
                 _source_backed_payload(
-                    cost_basis="alpaca_2026_equity_fee_schedule",
+                    cost_basis="broker_reported_fees",
                     cost_basis_counts={},
                 )
             ),
@@ -815,7 +815,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
     ) -> None:
         for overrides in (
             {"cost_basis": "paper_cost_model_estimate"},
+            {"cost_basis": "alpaca_2026_equity_fee_schedule"},
+            {
+                "cost_basis": "modeled_alpaca_2026_equity_sec_taf_cat_per_order_conservative"
+            },
             {"cost_basis_counts": {"paper_cost_model_estimate": 1}},
+            {
+                "cost_basis_counts": {
+                    "modeled_alpaca_2026_equity_cat_per_order_conservative": 1
+                }
+            },
             {
                 "cost_basis_counts": {},
                 "post_cost_basis_counts": {"paper_cost_model_estimate": 1},

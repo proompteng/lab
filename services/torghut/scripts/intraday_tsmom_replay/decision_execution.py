@@ -6,6 +6,7 @@ from typing import Any
 
 from app.trading.evaluation_trace import ReplayTraceRecord
 from app.trading.models import SignalEnvelope, StrategyDecision
+from app.trading.prices import MarketSnapshot
 from app.trading.strategy_runtime import StrategyRuntime
 
 from .ledger import _append_ledger_submission
@@ -26,6 +27,7 @@ from .positions import (
     FillExecution,
     _apply_filled_decision,
     _decision_position_owner,
+    _positions_payload,
 )
 from .replay_state import ReplayRunState, _active_symbol_funnel
 from .replay_types import PendingOrder, _position_key
@@ -62,7 +64,49 @@ def _execute_decision(
         if strategy
         else None,
     )
+    policy_outcome = state.execution_policy.evaluate(
+        decision,
+        strategy=strategy,
+        positions=_positions_payload(
+            state.positions,
+            state.last_prices,
+            state.pending_orders,
+            force_position_isolation=state.config.force_position_isolation,
+        ),
+        market_snapshot=_replay_market_snapshot(context.signal),
+        kill_switch_enabled=False,
+        adaptive_policy=None,
+    )
+    if not policy_outcome.approved:
+        context.fill_status_by_strategy_id[decision.strategy_id] = (
+            policy_outcome.reasons[0]
+            if policy_outcome.reasons
+            else "execution_policy_rejected"
+        )
+        return
+    decision = policy_outcome.decision.model_copy(
+        update={
+            "params": {
+                **policy_outcome.decision.params,
+                **policy_outcome.params_update(),
+            }
+        }
+    )
     _record_decision_or_return(state, context, decision)
+
+
+def _replay_market_snapshot(signal: SignalEnvelope) -> MarketSnapshot:
+    from .signal_rows import _extract_price, _extract_spread
+
+    return MarketSnapshot(
+        symbol=signal.symbol,
+        as_of=signal.event_ts,
+        price=_extract_price(signal),
+        spread=_extract_spread(signal),
+        source="intraday_tsmom_replay",
+        quote_as_of=signal.event_ts,
+        quote_source="replay_tape_or_clickhouse",
+    )
 
 
 def _record_decision_or_return(

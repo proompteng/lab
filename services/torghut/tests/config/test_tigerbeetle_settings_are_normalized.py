@@ -762,7 +762,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(defaults.trading_simple_max_order_pct_equity, 0.5)
-        self.assertEqual(defaults.trading_simple_max_gross_exposure_pct_equity, 4.0)
+        self.assertEqual(defaults.trading_simple_max_gross_exposure_pct_equity, 1.0)
         self.assertEqual(defaults.trading_simple_max_net_exposure_pct_equity, 0.5)
         self.assertEqual(defaults.trading_simple_max_symbol_pct_equity, 0.5)
         self.assertEqual(defaults.trading_simple_buying_power_reserve_bps, 1000.0)

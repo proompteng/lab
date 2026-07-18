@@ -3,18 +3,18 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import ROUND_CEILING, Decimal
+from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
 
+from app.trading.economic_policy import (
+    alpaca_equity_fee_schedule_cost,
+    alpaca_equity_fee_schedule_hash,
+)
+
 from scripts.hypothesis_runtime_window_import.constants import (
-    ALPACA_2026_EQUITY_SEC_FEE_RATE,
-    ALPACA_2026_EQUITY_TAF_CAP,
-    ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE,
-    ALPACA_2026_FEE_SCHEDULE_REVISED_ON,
     CONFIGURED_PAPER_COLLECTION_HYPOTHESIS_PREFIX,
     CONFIGURED_SIMPLE_LANE_PAPER_SOURCE_KIND,
     _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS,
-    _CENT,
     _EXECUTION_ORDER_EVENT_REF_KEYS,
     _EXECUTION_TCA_REF_KEYS,
     _LINEAGE_CONTEXT_KEYS,
@@ -359,12 +359,6 @@ def _attach_source_lineage_context(
     return contextualized
 
 
-def _decimal_ceil_cent(value: Decimal) -> Decimal:
-    if value <= 0:
-        return Decimal("0")
-    return value.quantize(_CENT, rounding=ROUND_CEILING)
-
-
 def _row_has_alpaca_us_equity_order_source(row: Mapping[str, object]) -> bool:
     alpaca_markers = {
         str(item or "").strip().lower()
@@ -401,42 +395,20 @@ def _alpaca_2026_equity_fee_schedule_cost(
         or not _row_has_alpaca_us_equity_order_source(row)
     ):
         return None
-    normalized_side = str(side or "").strip().lower().replace("-", "_")
-    if normalized_side in {"buy", "buy_to_cover", "cover"}:
-        return Decimal("0"), "alpaca_2026_equity_zero_commission_and_cat_fee_schedule"
-    if normalized_side not in {"sell", "sell_short", "short"}:
-        return None
-    sec_fee = _decimal_ceil_cent(filled_notional * ALPACA_2026_EQUITY_SEC_FEE_RATE)
-    taf_fee = min(
-        _decimal_ceil_cent(filled_qty * ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
-        ALPACA_2026_EQUITY_TAF_CAP,
-    )
-    return (
-        sec_fee + taf_fee,
-        "alpaca_2026_equity_sec_taf_cat_fee_schedule",
+    return alpaca_equity_fee_schedule_cost(
+        side=side,
+        filled_qty=filled_qty,
+        filled_notional=filled_notional,
     )
 
 
 def _alpaca_2026_equity_fee_schedule_hash() -> str:
-    digest = _stable_payload_digest(
-        {
-            "broker": "alpaca",
-            "asset_class": "us_equity",
-            "schedule": "alpaca_brokerage_fee_schedule",
-            "revised_on": ALPACA_2026_FEE_SCHEDULE_REVISED_ON,
-            "sec_fee_rate_per_notional": str(ALPACA_2026_EQUITY_SEC_FEE_RATE),
-            "taf_rate_per_share": str(ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
-            "taf_cap": str(ALPACA_2026_EQUITY_TAF_CAP),
-            "cat_fee_equities": "0",
-            "commission": "0",
-        }
-    )
-    assert digest is not None
-    return digest
+    return alpaca_equity_fee_schedule_hash()
 
 
 def _cost_basis_is_alpaca_fee_schedule(value: object) -> bool:
-    return str(value or "").strip().startswith("alpaca_2026_equity_")
+    normalized = str(value or "").strip()
+    return normalized.startswith(("alpaca_2026_equity_", "modeled_alpaca_2026_equity_"))
 
 
 def _first_payload_digest(row: Mapping[str, object], *keys: str) -> str | None:
@@ -860,7 +832,6 @@ __all__ = [
     "_stable_payload_digest",
     "_runtime_source_lineage_hash",
     "_attach_source_lineage_context",
-    "_decimal_ceil_cent",
     "_row_has_alpaca_us_equity_order_source",
     "_alpaca_2026_equity_fee_schedule_cost",
     "_alpaca_2026_equity_fee_schedule_hash",

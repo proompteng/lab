@@ -291,6 +291,9 @@ mode.
 
 ### Slice 12 - Define One Versioned Economic Policy
 
+Implementation contract: [versioned economic policy and parity](economic-policy-parity.md). The slice is not complete
+until the separately loaded replay, shadow, and paper runtime fixture outputs match after image promotion.
+
 **Invariant:** replay, shadow, paper, and live use the same versioned session, sizing, fee, slippage, risk, and accounting
 policy rather than divergent defaults.
 

@@ -47,6 +47,10 @@ The audit also found that component presence is not end-to-end economic proof:
 - internal execution, TCA, ledger, and TigerBeetle rows can agree with one another while broker exits, corrections,
   actual fees, cash movements, or position truth are incomplete.
 
+The [Slice 12 economic-policy contract](economic-policy-parity.md) addresses the recorded 1x/4x configuration mismatch
+with one pinned artifact and falsifiable stage parity. This historical finding remains valid for the source baseline;
+the resolution is not production-proven until its merge, image, GitOps, and runtime evidence chain completes.
+
 These are not documentation gaps. They allow false confidence even when individual components behave as implemented.
 
 ## Goals

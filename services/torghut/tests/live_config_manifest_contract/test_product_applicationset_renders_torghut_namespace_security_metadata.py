@@ -347,12 +347,12 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.50")
         self.assertEqual(
             live_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "4.0",
+            "1.0",
         )
         self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.50")
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "4.0",
+            "1.0",
         )
         self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER", live_env)
         self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL", live_env)
@@ -362,7 +362,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertEqual(
             _strategy_decimal(hpairs, "max_position_pct_equity"), Decimal("0.5")
         )
-        self.assertEqual(_params(hpairs).get("max_gross_exposure_pct_equity"), "4.0")
+        self.assertEqual(_params(hpairs).get("max_gross_exposure_pct_equity"), "1.0")
 
     def test_torghut_scheduled_jobs_do_not_leave_failed_children_degrading_argo(
         self,

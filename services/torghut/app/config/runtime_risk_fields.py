@@ -161,6 +161,18 @@ class RuntimeRiskSettingsFields(BaseSettings):
         description="Order-submission pipeline implementation. The simple lane is the only supported path.",
     )
 
+    trading_economic_policy_path: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ECONOMIC_POLICY_PATH",
+        description="Path to the immutable economic policy used by every execution stage.",
+    )
+
+    trading_economic_policy_expected_digest: Optional[str] = Field(
+        default=None,
+        alias="TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST",
+        description="Pinned sha256 digest for the configured economic policy.",
+    )
+
     trading_simple_max_order_pct_equity: Optional[float] = Field(
         default=0.50,
         alias="TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY",
@@ -171,7 +183,7 @@ class RuntimeRiskSettingsFields(BaseSettings):
     )
 
     trading_simple_max_gross_exposure_pct_equity: Optional[float] = Field(
-        default=4.0,
+        default=1.0,
         alias="TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY",
         description=(
             "Simple-lane max gross exposure as a fraction of account equity. "

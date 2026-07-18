@@ -8,9 +8,11 @@ from typing import Any
 
 from app.trading.costs import TransactionCostModel
 from app.trading.decisions import DecisionEngine
+from app.trading.economic_policy import EconomicPolicy
 from app.trading.evaluation_trace import NearMissRecord, ReplayTraceRecord
+from app.trading.execution_policy import ExecutionPolicy
 from app.trading.models import SignalEnvelope
-from app.trading.quote_quality import QuoteQualityPolicy, SignalQuoteQualityTracker
+from app.trading.quote_quality import SignalQuoteQualityTracker
 from app.trading.session_context import SessionContextTracker
 
 from .ledger import _build_replay_ledger_context
@@ -23,10 +25,12 @@ from .strategy_loading import _load_strategies
 @dataclass
 class ReplayRunState:
     config: ReplayConfig
+    economic_policy: EconomicPolicy
     strategies: list[Any]
     strategies_by_id: dict[str, Any]
     capture_runtime_traces: bool
     engine: Any
+    execution_policy: ExecutionPolicy
     quote_quality: SignalQuoteQualityTracker
     session_context: SessionContextTracker
     cost_model: TransactionCostModel
@@ -51,23 +55,28 @@ class ReplayRunState:
     last_progress_at: float
 
     @classmethod
-    def create(cls, config: ReplayConfig) -> "ReplayRunState":
+    def create(
+        cls,
+        config: ReplayConfig,
+        economic_policy: EconomicPolicy,
+    ) -> "ReplayRunState":
         strategies = _load_strategies(config.strategy_configmap_path)
-        cost_model = TransactionCostModel()
+        cost_model = TransactionCostModel(economic_policy.cost_model_config())
         ledger_context = (
-            _build_replay_ledger_context(config=config, cost_model=cost_model)
+            _build_replay_ledger_context(
+                config=config,
+                cost_model=cost_model,
+                economic_policy=economic_policy,
+            )
             if config.capture_exact_replay_ledger
             else None
         )
         capture_runtime_traces = config.capture_traces or config.capture_trace_funnel
-        quote_policy = QuoteQualityPolicy(
-            max_executable_spread_bps=config.max_executable_spread_bps,
-            max_quote_mid_jump_bps=config.max_quote_mid_jump_bps,
-            max_jump_with_wide_spread_bps=config.max_jump_with_wide_spread_bps,
-        )
+        quote_policy = economic_policy.quote_quality_policy()
         replay_started_at = time_mod.monotonic()
         return cls(
             config=config,
+            economic_policy=economic_policy,
             strategies=strategies,
             strategies_by_id={str(strategy.id): strategy for strategy in strategies},
             capture_runtime_traces=capture_runtime_traces,
@@ -75,6 +84,7 @@ class ReplayRunState:
                 price_fetcher=None,
                 runtime_trace_enabled=capture_runtime_traces,
             ),
+            execution_policy=ExecutionPolicy(economic_policy=economic_policy),
             quote_quality=SignalQuoteQualityTracker(policy=quote_policy),
             session_context=SessionContextTracker(quote_quality_policy=quote_policy),
             cost_model=cost_model,

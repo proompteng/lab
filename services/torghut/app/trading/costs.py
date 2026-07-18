@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from typing import Literal, Optional
 
 BPS_SCALE = Decimal("10000")
@@ -44,6 +44,11 @@ class CostModelConfig:
     commission_bps: Decimal = Decimal("0")
     commission_per_share: Decimal = Decimal("0")
     min_commission: Decimal = Decimal("0")
+    sec_fee_rate_on_sales: Decimal = Decimal("0")
+    taf_fee_per_share_on_sales: Decimal = Decimal("0")
+    taf_fee_cap_per_trade: Decimal = Decimal("0")
+    cat_fee_per_share: Decimal = Decimal("0")
+    regulatory_fee_rounding_increment: Decimal = Decimal("0.01")
     max_participation_rate: Decimal = Decimal("0.1")
     impact_bps_at_full_participation: Decimal = Decimal("50")
     impact_participation_exponent: Decimal = Decimal("0.5")
@@ -61,11 +66,27 @@ class CostEstimate:
     impact_cost_bps: Decimal
     commission_cost: Decimal
     commission_cost_bps: Decimal
+    sec_fee_cost: Decimal
+    taf_fee_cost: Decimal
+    cat_fee_cost: Decimal
+    regulatory_fee_cost: Decimal
+    regulatory_fee_cost_bps: Decimal
     total_cost_bps: Decimal
     total_cost: Decimal
     participation_rate: Optional[Decimal]
     capacity_ok: bool
     warnings: list[str] = field(default_factory=_string_list)
+
+
+@dataclass(frozen=True)
+class RegulatoryFeeEstimate:
+    sec_fee_cost: Decimal
+    taf_fee_cost: Decimal
+    cat_fee_cost: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.sec_fee_cost + self.taf_fee_cost + self.cat_fee_cost
 
 
 class TransactionCostModel:
@@ -120,18 +141,27 @@ class TransactionCostModel:
 
         commission_cost = self._commission_cost(notional=notional, qty=qty)
         commission_cost_bps = _bps_from_cost(commission_cost, notional)
+        regulatory_fees = self.estimate_regulatory_fees(
+            side=order.side,
+            notional=notional,
+            qty=qty,
+        )
+        regulatory_fee_cost = regulatory_fees.total
+        regulatory_fee_cost_bps = _bps_from_cost(regulatory_fee_cost, notional)
 
         total_cost_bps = (
             spread_cost_bps
             + volatility_cost_bps
             + impact_cost_bps
             + commission_cost_bps
+            + regulatory_fee_cost_bps
         )
         total_cost = (
             _cost_from_bps(
                 notional, spread_cost_bps + volatility_cost_bps + impact_cost_bps
             )
             + commission_cost
+            + regulatory_fee_cost
         )
 
         return CostEstimate(
@@ -141,6 +171,11 @@ class TransactionCostModel:
             impact_cost_bps=impact_cost_bps,
             commission_cost=commission_cost,
             commission_cost_bps=commission_cost_bps,
+            sec_fee_cost=regulatory_fees.sec_fee_cost,
+            taf_fee_cost=regulatory_fees.taf_fee_cost,
+            cat_fee_cost=regulatory_fees.cat_fee_cost,
+            regulatory_fee_cost=regulatory_fee_cost,
+            regulatory_fee_cost_bps=regulatory_fee_cost_bps,
             total_cost_bps=total_cost_bps,
             total_cost=total_cost,
             participation_rate=participation_rate,
@@ -156,6 +191,37 @@ class TransactionCostModel:
             commission_cost = max(commission_cost, self.config.min_commission)
         return commission_cost
 
+    def estimate_regulatory_fees(
+        self,
+        *,
+        side: Literal["buy", "sell"],
+        notional: Decimal,
+        qty: Decimal,
+    ) -> RegulatoryFeeEstimate:
+        increment = self.config.regulatory_fee_rounding_increment
+        sec_fee = Decimal("0")
+        taf_fee = Decimal("0")
+        if side == "sell":
+            sec_fee = _round_up_to_increment(
+                notional * self.config.sec_fee_rate_on_sales,
+                increment,
+            )
+            taf_fee = _round_up_to_increment(
+                qty * self.config.taf_fee_per_share_on_sales,
+                increment,
+            )
+            if self.config.taf_fee_cap_per_trade > 0:
+                taf_fee = min(taf_fee, self.config.taf_fee_cap_per_trade)
+        cat_fee = _round_up_to_increment(
+            qty * self.config.cat_fee_per_share,
+            increment,
+        )
+        return RegulatoryFeeEstimate(
+            sec_fee_cost=sec_fee,
+            taf_fee_cost=taf_fee,
+            cat_fee_cost=cat_fee,
+        )
+
 
 def _cost_from_bps(notional: Decimal, bps: Decimal) -> Decimal:
     if notional <= 0:
@@ -167,6 +233,15 @@ def _bps_from_cost(cost: Decimal, notional: Decimal) -> Decimal:
     if notional <= 0:
         return Decimal("0")
     return (cost / notional) * BPS_SCALE
+
+
+def _round_up_to_increment(value: Decimal, increment: Decimal) -> Decimal:
+    if value <= 0:
+        return Decimal("0")
+    if increment <= 0:
+        return value
+    units = (value / increment).quantize(Decimal("1"), rounding=ROUND_CEILING)
+    return units * increment
 
 
 def participation_power(participation_rate: Decimal, exponent: Decimal) -> Decimal:
@@ -200,6 +275,11 @@ def _empty_estimate(warnings: list[str]) -> CostEstimate:
         impact_cost_bps=Decimal("0"),
         commission_cost=Decimal("0"),
         commission_cost_bps=Decimal("0"),
+        sec_fee_cost=Decimal("0"),
+        taf_fee_cost=Decimal("0"),
+        cat_fee_cost=Decimal("0"),
+        regulatory_fee_cost=Decimal("0"),
+        regulatory_fee_cost_bps=Decimal("0"),
         total_cost_bps=Decimal("0"),
         total_cost=Decimal("0"),
         participation_rate=None,
@@ -213,6 +293,7 @@ __all__ = [
     "CostModelInputs",
     "CostModelConfig",
     "CostEstimate",
+    "RegulatoryFeeEstimate",
     "TransactionCostModel",
     "participation_power",
 ]

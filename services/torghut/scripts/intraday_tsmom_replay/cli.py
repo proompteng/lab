@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import json
-
 import logging
-
 from datetime import date
-
 from decimal import Decimal
-
 from pathlib import Path
 
+from app.trading.economic_policy import DEFAULT_ECONOMIC_POLICY_PATH
+
 from .cli_args import _parse_args
-
 from .replay_loop import run_replay
-
 from .replay_types import (
     DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
     ReplayConfig,
@@ -37,6 +33,9 @@ def main() -> None:
         chunk_minutes=max(1, int(args.chunk_minutes)),
         flatten_eod=not args.no_flatten_eod,
         start_equity=Decimal(str(args.start_equity)),
+        economic_policy_path=Path(
+            getattr(args, "economic_policy", DEFAULT_ECONOMIC_POLICY_PATH)
+        ).resolve(),
         symbols=tuple(
             symbol.strip().upper()
             for symbol in str(args.symbols or "").split(",")
@@ -66,9 +65,6 @@ def main() -> None:
             getattr(args, "exact_replay_ledger_output", None) is not None
         ),
         force_position_isolation=bool(getattr(args, "force_position_isolation", False)),
-        max_executable_spread_bps=Decimal(str(args.max_executable_spread_bps)),
-        max_quote_mid_jump_bps=Decimal(str(args.max_quote_mid_jump_bps)),
-        max_jump_with_wide_spread_bps=Decimal(str(args.max_jump_with_wide_spread_bps)),
         clickhouse_query_timeout_seconds=max(
             1,
             int(

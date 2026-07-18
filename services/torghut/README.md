@@ -30,7 +30,7 @@ order quantity is projected into portfolio exposure before any new quantity is a
 
 The live limits are:
 
-- gross exposure ceiling: `4.0 * equity`;
+- gross exposure ceiling: `1.0 * equity`;
 - absolute net exposure ceiling: `0.5 * equity`;
 - absolute per-symbol exposure ceiling: `0.5 * equity`;
 - buying-power reserve: `10%`;
@@ -43,7 +43,7 @@ The live limits are:
 The gross capacity for a decision is therefore bounded by both the configured gross ceiling and the broker:
 
 ```text
-gross_target = min(4 * equity, current_gross + 0.9 * available_buying_power)
+gross_target = min(equity, current_gross + 0.9 * available_buying_power)
 ```
 
 The allocator only sizes active strategy signals. It does not create orders to consume unused capacity. Pair entries
@@ -135,7 +135,7 @@ TRADING_SIGNAL_ALLOWED_SOURCES=ta
 TRADING_ALPACA_QUOTE_FEED=iex
 TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY=0.50
 TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY=0.50
-TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY=4.0
+TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY=1.0
 TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY=0.50
 TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS=1000
 TRADING_DAILY_LOSS_STOP_PCT_EQUITY=0.01

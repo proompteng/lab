@@ -262,6 +262,7 @@ def build_impact_inputs(
     market_snapshot: Optional[MarketSnapshot],
     *,
     execution_seconds_scale: Decimal | None = None,
+    default_execution_seconds: int = DEFAULT_EXECUTION_SECONDS,
 ) -> dict[str, Any]:
     resolved_price = resolve_price(decision, market_snapshot)
     price = resolved_price if resolved_price is not None else Decimal("0")
@@ -277,11 +278,11 @@ def build_impact_inputs(
     )
     execution_seconds = decision.params.get("execution_seconds")
     if execution_seconds is None:
-        execution_seconds = DEFAULT_EXECUTION_SECONDS
+        execution_seconds = default_execution_seconds
     try:
         execution_seconds = int(execution_seconds)
     except (TypeError, ValueError):
-        execution_seconds = DEFAULT_EXECUTION_SECONDS
+        execution_seconds = default_execution_seconds
 
     if execution_seconds_scale is not None and execution_seconds_scale > 0:
         scaled = int(round(float(execution_seconds) * float(execution_seconds_scale)))
@@ -343,6 +344,13 @@ def build_impact_assumptions(
             "commission_bps": str(config.commission_bps),
             "commission_per_share": str(config.commission_per_share),
             "min_commission": str(config.min_commission),
+            "sec_fee_rate_on_sales": str(config.sec_fee_rate_on_sales),
+            "taf_fee_per_share_on_sales": str(config.taf_fee_per_share_on_sales),
+            "taf_fee_cap_per_trade": str(config.taf_fee_cap_per_trade),
+            "cat_fee_per_share": str(config.cat_fee_per_share),
+            "regulatory_fee_rounding_increment": str(
+                config.regulatory_fee_rounding_increment
+            ),
             "max_participation_rate": str(max_participation),
             "impact_bps_at_full_participation": str(
                 config.impact_bps_at_full_participation
@@ -355,6 +363,11 @@ def build_impact_assumptions(
             "volatility_cost_bps": str(estimate.volatility_cost_bps),
             "impact_cost_bps": str(estimate.impact_cost_bps),
             "commission_cost_bps": str(estimate.commission_cost_bps),
+            "sec_fee_cost": str(estimate.sec_fee_cost),
+            "taf_fee_cost": str(estimate.taf_fee_cost),
+            "cat_fee_cost": str(estimate.cat_fee_cost),
+            "regulatory_fee_cost": str(estimate.regulatory_fee_cost),
+            "regulatory_fee_cost_bps": str(estimate.regulatory_fee_cost_bps),
             "total_cost_bps": str(estimate.total_cost_bps),
             "participation_rate": stringify_decimal(estimate.participation_rate),
             "capacity_ok": estimate.capacity_ok,

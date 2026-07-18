@@ -389,15 +389,16 @@ class TestExecutionTcaCostLineage(TestCase):
         self.assertEqual(lineage["status"], "source_backed")
         self.assertEqual(lineage["blockers"], [])
         self.assertEqual(lineage["filled_notional"], "1000")
-        self.assertEqual(lineage["explicit_cost_amount"], "0.04")
+        self.assertEqual(lineage["explicit_cost_amount"], "0.05")
         self.assertEqual(
-            lineage["cost_basis"], "alpaca_2026_equity_sec_taf_cat_fee_schedule"
+            lineage["cost_basis"],
+            "modeled_alpaca_2026_equity_sec_taf_cat_per_order_conservative",
         )
         self.assertIsInstance(lineage["execution_policy_hash"], str)
         self.assertIsInstance(lineage["cost_model_hash"], str)
         self.assertEqual(
             lineage["source_fields"]["explicit_cost"],
-            "alpaca_2026_equity_fee_schedule",
+            "modeled_alpaca_2026_equity_fee_schedule",
         )
         self.assertEqual(
             lineage["source_fields"]["execution_policy_hash"],

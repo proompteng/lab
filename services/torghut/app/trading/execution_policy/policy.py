@@ -8,7 +8,13 @@ from typing import Any, Optional
 
 from ...config import settings
 from ...models import Strategy
-from ..costs import CostModelConfig, CostModelInputs, OrderIntent, TransactionCostModel
+from ..costs import (
+    CostModelConfig,
+    CostModelInputs,
+    OrderIntent,
+    TransactionCostModel,
+)
+from ..economic_policy import EconomicPolicy, load_runtime_economic_policy
 from ..microstructure import (
     MicrostructureStateV5,
     is_microstructure_stale,
@@ -44,6 +50,7 @@ from .policy_types import (
     MICROSTRUCTURE_STRESSED_RATE_SCALE,
     MICROSTRUCTURE_STRESS_EXECUTION_SCALE,
     AdaptiveExecutionApplication,
+    DEFAULT_EXECUTION_SECONDS,
     ExecutionPolicyConfig,
     ExecutionPolicyOutcome,
 )
@@ -85,7 +92,19 @@ class ExecutionPolicy:
         self,
         config: Optional[ExecutionPolicyConfig] = None,
         cost_model_config: Optional[CostModelConfig] = None,
+        economic_policy: EconomicPolicy | None = None,
     ) -> None:
+        if economic_policy is None and config is None and cost_model_config is None:
+            economic_policy = load_runtime_economic_policy(
+                settings,
+                required=(
+                    settings.trading_enabled
+                    and settings.process_role in {"scheduler", "simulation"}
+                ),
+            )
+        if economic_policy is not None and cost_model_config is None:
+            cost_model_config = economic_policy.cost_model_config()
+        self.economic_policy = economic_policy
         self.config = config
         self.cost_model = TransactionCostModel(cost_model_config or CostModelConfig())
 
@@ -111,6 +130,11 @@ class ExecutionPolicy:
             adaptive=runtime.adaptive_application,
             advisor_metadata=runtime.advisor_metadata,
             microstructure_metadata=runtime.microstructure_metadata,
+            economic_policy_digest=(
+                self.economic_policy.digest
+                if self.economic_policy is not None
+                else None
+            ),
         )
 
     def _evaluation_runtime(
@@ -252,6 +276,11 @@ class ExecutionPolicy:
         impact_inputs = build_impact_inputs(
             selection.decision,
             request.market_snapshot,
+            default_execution_seconds=(
+                self.economic_policy.latency.assumed_execution_seconds
+                if self.economic_policy is not None
+                else DEFAULT_EXECUTION_SECONDS
+            ),
             execution_seconds_scale=combined_execution_seconds_scale(
                 adaptive_application=runtime.adaptive_application,
                 microstructure_execution_scale=runtime.microstructure_execution_scale,
@@ -790,6 +819,16 @@ class ExecutionPolicy:
     ) -> ExecutionPolicyConfig:
         if self.config is not None:
             return self.config
+
+        if self.economic_policy is not None:
+            resolved_kill_switch_enabled = (
+                settings.trading_kill_switch_enabled
+                if kill_switch_enabled is None
+                else kill_switch_enabled
+            )
+            return self.economic_policy.execution_policy_config(
+                kill_switch_enabled=resolved_kill_switch_enabled
+            )
 
         min_notional = optional_decimal(settings.trading_min_notional_per_trade)
         max_notional = optional_decimal(
