@@ -15,9 +15,11 @@ class PostgresClusterResilienceManifestTests(TestCase):
 
     def test_cluster_has_one_cross_host_amd64_standby(self) -> None:
         self.assertEqual(self.cluster_spec["instances"], 2)
+        self.assertEqual(self.cluster_spec["primaryUpdateStrategy"], "unsupervised")
+        self.assertEqual(self.cluster_spec["primaryUpdateMethod"], "switchover")
 
         affinity = cast(Mapping[str, object], self.cluster_spec["affinity"])
-        self.assertIsNone(affinity["nodeSelector"])
+        self.assertNotIn("nodeSelector", affinity)
         self.assertEqual(affinity["podAntiAffinityType"], "required")
         self.assertEqual(affinity["topologyKey"], "kubernetes.io/hostname")
         self.assertEqual(

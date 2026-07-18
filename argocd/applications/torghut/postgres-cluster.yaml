@@ -9,10 +9,10 @@ spec:
   # single-host pin.
   instances: 2
   primaryUpdateStrategy: unsupervised
+  # Planned pod-spec updates must hand writes to the ready standby instead of
+  # stopping the active primary in place.
+  primaryUpdateMethod: switchover
   affinity:
-    # Explicit null removes the legacy kubectl-owned hostname selector through
-    # server-side apply. Architecture placement is expressed below instead.
-    nodeSelector: null
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
