@@ -93,7 +93,7 @@ proxy:
 singleuser:
   image:
     name: registry.ide-newton.ts.net/lab/torghut-notebook@sha256
-    tag: 'd6dc573a9df115480fc81773beb60bcf90c37bf189f31195f88f1ad3afd288ad'
+    tag: '06c6c1c96a9e98761b697db1e0c3971a5159de0e480535a5396077bc3766c9c6'
     pullPolicy: IfNotPresent
   defaultUrl: /lab/tree/work/00-system-flow.ipynb
   startTimeout: 600
