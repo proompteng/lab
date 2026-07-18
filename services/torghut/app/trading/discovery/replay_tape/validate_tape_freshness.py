@@ -47,6 +47,7 @@ def validate_tape_freshness(
     end_date: date,
     symbols: Sequence[str] = (),
     allow_stale_tape: bool = False,
+    require_point_in_time_receipt: bool = False,
     require_exact_cache_identity: bool = False,
     expected_dataset_snapshot_ref: str | None = None,
     expected_source_query_digest: str | None = None,
@@ -58,6 +59,8 @@ def validate_tape_freshness(
     expected_source_table_versions: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
+    if require_point_in_time_receipt and manifest.point_in_time_receipt is None:
+        raise ValueError("replay_tape_point_in_time_receipt_required")
     if manifest.start_date > start_date or manifest.end_date < end_date:
         reasons.append(
             "window_not_covered:"
@@ -139,6 +142,7 @@ def validate_tape_freshness(
 
     if reasons and not allow_stale_tape:
         raise ValueError(f"replay_tape_stale:{';'.join(reasons)}")
+    point_in_time_receipt = manifest.point_in_time_receipt
     return {
         "schema_version": "torghut.replay-tape-validation.v1",
         "status": "stale_override" if reasons else "valid",
@@ -154,6 +158,17 @@ def validate_tape_freshness(
         "feature_versions": dict(manifest.feature_versions),
         "replay_cache_key": manifest.replay_cache_key,
         "cache_identity": manifest.cache_identity_diagnostics(),
+        "point_in_time_receipt": (
+            {
+                "status": "verified_on_load",
+                "receipt_sha256": point_in_time_receipt.receipt_sha256,
+                "observation_cutoff": point_in_time_receipt.observation_cutoff.isoformat(),
+                "input_row_set_sha256": point_in_time_receipt.input_row_set_sha256,
+                "feature_matrix_sha256": point_in_time_receipt.feature_matrix_sha256,
+            }
+            if point_in_time_receipt is not None
+            else {"status": "missing"}
+        ),
         "row_count": manifest.row_count,
         "trading_day_count": manifest.trading_day_count,
         "requested_symbols": sorted(requested_symbols),

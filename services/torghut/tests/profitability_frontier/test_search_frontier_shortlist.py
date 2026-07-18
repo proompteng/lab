@@ -290,6 +290,13 @@ class TestSearchFrontierShortlist(SearchConsistentProfitabilityFrontierTestCaseB
                         "selected_symbols": ["NVDA"],
                         "selected_row_count": 10,
                         "validation_status": "valid",
+                        "point_in_time_receipt": {
+                            "status": "verified_on_load",
+                            "receipt_sha256": "sha256:receipt",
+                            "observation_cutoff": "2026-03-26T18:00:00+00:00",
+                            "input_row_set_sha256": "sha256:inputs",
+                            "feature_matrix_sha256": "sha256:features",
+                        },
                     },
                 },
                 "hard_vetoes": [],

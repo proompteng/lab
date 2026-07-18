@@ -313,6 +313,8 @@ policy rather than divergent defaults.
 **Invariant:** every result names the exact causal market, corporate-action, universe, feature, and code inputs available
 at each decision time.
 
+- Implementation contract: [Point-In-Time Replay Data Receipts](point-in-time-data-receipts.md).
+
 - Deliverable: dataset and feature receipts with event-time/arrival-time boundaries, source watermarks, universe version,
   adjustment policy, artifact hashes, and code/policy digests.
 - Primary surfaces: replay importers, feature pipelines, ClickHouse/CNPG metadata, artifact storage, and research reports.

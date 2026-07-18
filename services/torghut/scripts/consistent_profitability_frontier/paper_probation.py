@@ -9,6 +9,7 @@ from app.trading.discovery.objectives import ObjectiveVetoPolicy
 from app.trading.runtime_ledger import POST_COST_PNL_BASIS
 
 from scripts.consistent_profitability_frontier.common import (
+    _candidate_replay_tape_metadata_blockers,
     _mapping,
     _nonnegative_int_metric,
 )
@@ -274,39 +275,6 @@ def _candidate_source_lineage_ok(item: Mapping[str, Any]) -> bool:
             or ""
         ).strip()
     )
-
-
-def _candidate_replay_tape_metadata_blockers(item: Mapping[str, Any]) -> list[str]:
-    candidate_key = _mapping(item.get("candidate_evaluation_key_payload"))
-    replay_tape = _mapping(candidate_key.get("replay_tape"))
-    if not replay_tape:
-        replay_tape = _mapping(item.get("replay_tape"))
-    if not replay_tape:
-        return []
-
-    required_fields = (
-        "content_sha256",
-        "dataset_snapshot_ref",
-        "source_query_digest",
-        "feature_schema_hash",
-        "cost_model_hash",
-        "strategy_family",
-        "replay_cache_key",
-    )
-    blockers = [
-        f"missing_replay_tape_{field}"
-        for field in required_fields
-        if not str(replay_tape.get(field) or "").strip()
-    ]
-    if int(replay_tape.get("selected_row_count") or 0) <= 0:
-        blockers.append("missing_replay_tape_selected_rows")
-    cache_identity = _mapping(replay_tape.get("cache_identity"))
-    blockers.extend(
-        str(blocker)
-        for blocker in cast(Sequence[Any], cache_identity.get("blockers") or ())
-        if str(blocker).strip()
-    )
-    return list(dict.fromkeys(blockers))
 
 
 def _candidate_post_cost_proof_blockers(item: Mapping[str, Any]) -> list[str]:

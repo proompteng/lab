@@ -56,6 +56,7 @@ from .strategy_loading import (
 
 from .signal_rows import (
     FetchChunkRequest,
+    REPLAY_SIGNAL_FEATURE_SCHEMA_VERSION,
     _extract_ask,
     _extract_bid,
     _extract_decimal_payload,
@@ -74,6 +75,7 @@ from .signal_rows import (
     _signal_mid_jump_bps,
     _signal_spread_bps,
     _to_decimal,
+    replay_signal_feature_schema_hash,
 )
 
 from .fill_stats import (
@@ -176,6 +178,7 @@ __all__ = [
     "ReplayConfig",
     "ReplayCostLineage",
     "ReplayLedgerContext",
+    "REPLAY_SIGNAL_FEATURE_SCHEMA_VERSION",
     "TraceBlockContext",
     "_EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION",
     "_FILL_LATENCY_BUCKETS_MS",
@@ -279,5 +282,6 @@ __all__ = [
     "default_strategy_configmap_path",
     "logger",
     "main",
+    "replay_signal_feature_schema_hash",
     "run_replay",
 ]

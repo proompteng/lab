@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 
 import time as time_mod
 
@@ -48,6 +50,40 @@ from .replay_types import (
 from .strategy_loading import _http_query
 
 
+REPLAY_SIGNAL_FEATURE_SCHEMA_VERSION = "torghut.ta-replay-feature-schema.v2"
+
+
+def replay_signal_feature_schema_hash() -> str:
+    payload = {
+        "schema_version": REPLAY_SIGNAL_FEATURE_SCHEMA_VERSION,
+        "identity": ["symbol", "event_ts", "seq", "source", "window_size"],
+        "availability": "max_signal_and_microbar_ingest_time_v1",
+        "source_arrivals": ["ta_signals", "ta_microbars"],
+        "source_revisions": ["ta_signals", "ta_microbars"],
+        "join": "exact_symbol_event_ts_seq_source_window",
+        "revision_selection": "latest_ingest_then_version_at_observation_cutoff",
+        "features": [
+            "macd",
+            "macd_signal",
+            "ema12",
+            "ema26",
+            "rsi14",
+            "price",
+            "imbalance_bid_px",
+            "imbalance_ask_px",
+            "imbalance_bid_sz",
+            "imbalance_ask_sz",
+            "imbalance_spread",
+            "vwap_session",
+            "vwap_w5m",
+            "vol_realized_w60s",
+            "microbar_volume",
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass(frozen=True)
 class FetchChunkRequest:
     http_url: str
@@ -57,6 +93,7 @@ class FetchChunkRequest:
     chunk_end: datetime
     timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
     symbols: tuple[str, ...] = ()
+    observation_cutoff: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +101,11 @@ class _SignalRowParts:
     symbol: str
     event_ts: str
     seq: str
+    available_ts: str
+    signal_ingest_ts: str
+    microbar_ingest_ts: str
+    signal_version: str
+    microbar_version: str
     macd: str
     macd_signal: str
     ema12: str
@@ -88,6 +130,7 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
         return
 
     chunk_delta = timedelta(minutes=config.chunk_minutes)
+    observation_cutoff = config.observation_cutoff or datetime.now(timezone.utc)
     current_day = config.start_date
     while current_day <= config.end_date:
         if not is_regular_equities_session_date(current_day):
@@ -125,6 +168,7 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
                     chunk_start=chunk_start,
                     chunk_end=chunk_end,
                     symbols=config.symbols,
+                    observation_cutoff=observation_cutoff,
                 )
             )
             logger.debug(
@@ -177,15 +221,36 @@ def _iter_signal_rows_from_replay_tape(
 
 
 def _fetch_chunk(request: FetchChunkRequest) -> list[SignalEnvelope]:
-    symbol_filter = ""
+    signal_symbol_filter = ""
+    microbar_symbol_filter = ""
     if request.symbols:
-        rendered_symbols = ", ".join(f"'{symbol}'" for symbol in request.symbols)
-        symbol_filter = f"\n  AND s.symbol IN ({rendered_symbols})"
+        rendered_symbols = ", ".join(
+            f"'{symbol.replace(chr(39), chr(39) * 2)}'" for symbol in request.symbols
+        )
+        signal_symbol_filter = f"\n    AND symbol IN ({rendered_symbols})"
+        microbar_symbol_filter = f"\n    AND symbol IN ({rendered_symbols})"
+    observation_cutoff = request.observation_cutoff or datetime.now(timezone.utc)
+    if observation_cutoff.tzinfo is None or observation_cutoff.utcoffset() is None:
+        raise ValueError("replay_observation_cutoff_timezone_missing")
+    cutoff_literal = observation_cutoff.astimezone(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    )[:-3]
+    chunk_start_literal = request.chunk_start.astimezone(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    )[:-3]
+    chunk_end_literal = request.chunk_end.astimezone(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    )[:-3]
     query = f"""
 SELECT
   s.symbol,
   s.event_ts,
   s.seq,
+  toString(greatest(s.ingest_ts, ifNull(m.ingest_ts, s.ingest_ts))) AS available_ts,
+  toString(s.ingest_ts) AS signal_ingest_ts,
+  toString(m.ingest_ts) AS microbar_ingest_ts,
+  toString(s.version) AS signal_version,
+  toString(m.version) AS microbar_version,
   toString(s.macd) AS macd,
   toString(s.macd_signal) AS macd_signal,
   toString(s.ema12) AS ema12,
@@ -202,19 +267,41 @@ SELECT
   toString(s.vwap_w5m) AS vwap_w5m,
   toString(s.vol_realized_w60s) AS vol_realized_w60s,
   toString(m.v) AS microbar_volume
-FROM torghut.ta_signals AS s
-ANY LEFT JOIN torghut.ta_microbars AS m
+FROM
+(
+  SELECT *
+  FROM torghut.ta_signals
+  WHERE source = 'ta'
+    AND window_size = 'PT1S'
+    AND event_ts >= toDateTime64('{chunk_start_literal}', 3, 'UTC')
+    AND event_ts < toDateTime64('{chunk_end_literal}', 3, 'UTC')
+    AND ingest_ts <= toDateTime64('{cutoff_literal}', 3, 'UTC')
+    {signal_symbol_filter}
+  ORDER BY symbol, event_ts, seq, ingest_ts DESC, version DESC
+  LIMIT 1 BY symbol, event_ts, seq
+) AS s
+LEFT JOIN
+(
+  SELECT *
+  FROM torghut.ta_microbars
+  WHERE source = 'ta'
+    AND window_size = 'PT1S'
+    AND event_ts >= toDateTime64('{chunk_start_literal}', 3, 'UTC')
+    AND event_ts < toDateTime64('{chunk_end_literal}', 3, 'UTC')
+    AND ingest_ts <= toDateTime64('{cutoff_literal}', 3, 'UTC')
+    {microbar_symbol_filter}
+  ORDER BY symbol, event_ts, seq, ingest_ts DESC, version DESC
+  LIMIT 1 BY symbol, event_ts, seq
+) AS m
   ON s.symbol = m.symbol
   AND s.event_ts = m.event_ts
+  AND s.seq = m.seq
   AND s.source = m.source
   AND s.window_size = m.window_size
-WHERE s.source = 'ta'
-  AND s.window_size = 'PT1S'
-  AND s.event_ts >= toDateTime64('{request.chunk_start.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
-  AND s.event_ts < toDateTime64('{request.chunk_end.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
-  {symbol_filter}
-  AND isNotNull(s.imbalance_bid_px)
+WHERE isNotNull(s.imbalance_bid_px)
   AND isNotNull(s.imbalance_ask_px)
+ORDER BY s.event_ts, s.symbol, s.seq
+SETTINGS join_use_nulls = 1
 FORMAT TSVRaw
 """.strip()
     raw = _http_query(
@@ -234,11 +321,12 @@ FORMAT TSVRaw
 
 
 def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
-    if len(parts) != 19:
+    if len(parts) != 24:
         return None
     row = _SignalRowParts(*parts)
     return SignalEnvelope(
         event_ts=_parse_clickhouse_ts(row.event_ts),
+        ingest_ts=_parse_clickhouse_ts(row.available_ts),
         symbol=row.symbol,
         timeframe="1Sec",
         seq=int(row.seq),
@@ -256,6 +344,22 @@ def _signal_payload(row: _SignalRowParts) -> dict[str, Any]:
     ask_sz_value = _to_decimal(row.ask_sz)
     imbalance_spread_value = _to_decimal(row.imbalance_spread)
     payload = {
+        "_source_ingest_ts": {
+            "ta_signals": _parse_clickhouse_ts(row.signal_ingest_ts),
+            **(
+                {"ta_microbars": _parse_clickhouse_ts(row.microbar_ingest_ts)}
+                if row.microbar_ingest_ts.strip() not in {"", "\\N"}
+                else {}
+            ),
+        },
+        "_source_versions": {
+            "ta_signals": int(row.signal_version),
+            **(
+                {"ta_microbars": int(row.microbar_version)}
+                if row.microbar_version.strip() not in {"", "\\N"}
+                else {}
+            ),
+        },
         "macd": _to_decimal(row.macd),
         "macd_signal": _to_decimal(row.macd_signal),
         "ema12": _to_decimal(row.ema12),

@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from app.trading.session_context import iter_regular_equities_session_dates
 from app.trading.discovery.replay_tape import (
+    PointInTimeReceiptSpec,
     ReplayTapeCoverageError,
     build_source_query_digest,
     default_manifest_path,
@@ -104,6 +105,14 @@ def _parse_args() -> argparse.Namespace:
         default=[],
         metavar="NAME=VALUE",
         help="Optional source table/version metadata, repeatable.",
+    )
+    parser.add_argument(
+        "--point-in-time-spec",
+        type=Path,
+        help=(
+            "Immutable causal-lineage JSON spec. When supplied, materialization "
+            "fails unless it can produce a complete point-in-time receipt."
+        ),
     )
     parser.add_argument(
         "--allow-incomplete-coverage",
@@ -210,6 +219,28 @@ def _parse_source_table_versions(values: list[str]) -> dict[str, str]:
     return parsed
 
 
+def _load_point_in_time_spec(path: Path | None) -> PointInTimeReceiptSpec | None:
+    if path is None:
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("point_in_time_receipt_spec_payload_invalid")
+    return PointInTimeReceiptSpec.from_payload(payload)
+
+
+def _observation_cutoff(args: argparse.Namespace) -> datetime:
+    value = getattr(args, "observation_cutoff", None)
+    if value is None:
+        return datetime.now(timezone.utc)
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("replay_observation_cutoff_timezone_missing")
+    return parsed.astimezone(timezone.utc)
+
+
 def _executable_day_policy(args: argparse.Namespace) -> dict[str, Any]:
     min_rows = max(
         0,
@@ -280,6 +311,9 @@ def _source_query_payload(
         "source": "ta",
         "window_size": "PT1S",
         "join": "torghut.ta_microbars",
+        "join_identity": "symbol,event_ts,seq,source,window_size",
+        "revision_selection": "latest_ingest_then_version_at_observation_cutoff",
+        "observation_cutoff": _observation_cutoff(args).isoformat(),
     }
 
 
@@ -293,6 +327,7 @@ def _coverage_diagnostics_query(
     end_date: date,
     symbols: tuple[str, ...],
     max_spread_bps: Decimal,
+    observation_cutoff: datetime,
 ) -> str:
     start_ts = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
     end_ts = datetime.combine(
@@ -300,37 +335,84 @@ def _coverage_diagnostics_query(
     )
     symbol_filter = ""
     if symbols:
-        rendered_symbols = ", ".join(f"'{symbol}'" for symbol in symbols)
+        rendered_symbols = ", ".join(
+            f"'{symbol.replace(chr(39), chr(39) * 2)}'" for symbol in symbols
+        )
         symbol_filter = f"\n  AND symbol IN ({rendered_symbols})"
     start_literal = start_ts.strftime("%Y-%m-%d %H:%M:%S")
     end_literal = end_ts.strftime("%Y-%m-%d %H:%M:%S")
-    shared_where = f"""
-WHERE source = 'ta'
+    cutoff_literal = observation_cutoff.astimezone(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    )[:-3]
+    source_where = f"""
+  WHERE source = 'ta'
   AND window_size = 'PT1S'
   AND event_ts >= toDateTime64('{start_literal}', 3, 'UTC')
   AND event_ts < toDateTime64('{end_literal}', 3, 'UTC')
+  AND ingest_ts <= toDateTime64('{cutoff_literal}', 3, 'UTC')
   {symbol_filter}
 """.rstrip()
-    executable_where = f"""
-{shared_where}
-  AND isNotNull(imbalance_bid_px)
-  AND isNotNull(imbalance_ask_px)
-""".rstrip()
-    sane_quote_where = f"""
-{executable_where}
-  AND imbalance_bid_px > 0
-  AND imbalance_ask_px > 0
-  AND imbalance_ask_px >= imbalance_bid_px
-""".rstrip()
-    spread_sane_where = f"""
-{sane_quote_where}
-  AND if(
-    (imbalance_bid_px + imbalance_ask_px) <= 0,
-    1000000000,
-    abs(imbalance_ask_px - imbalance_bid_px) / ((imbalance_bid_px + imbalance_ask_px) / 2) * 10000
-  ) <= {str(max_spread_bps)}
-""".rstrip()
     return f"""
+WITH
+signals AS
+(
+  SELECT *
+  FROM torghut.ta_signals
+{source_where}
+  ORDER BY symbol, event_ts, seq, ingest_ts DESC, version DESC
+  LIMIT 1 BY symbol, event_ts, seq
+),
+microbars AS
+(
+  SELECT *
+  FROM torghut.ta_microbars
+{source_where}
+  ORDER BY symbol, event_ts, seq, ingest_ts DESC, version DESC
+  LIMIT 1 BY symbol, event_ts, seq
+),
+signal_quality AS
+(
+  SELECT
+    *,
+    isNotNull(imbalance_bid_px) AND isNotNull(imbalance_ask_px) AS executable,
+    executable
+      AND imbalance_bid_px > 0
+      AND imbalance_ask_px > 0
+      AND imbalance_ask_px >= imbalance_bid_px AS quote_sane,
+    quote_sane
+      AND abs(imbalance_ask_px - imbalance_bid_px)
+        / ((imbalance_bid_px + imbalance_ask_px) / 2) * 10000
+        <= {str(max_spread_bps)} AS spread_sane
+  FROM signals
+),
+spread_gaps AS
+(
+  SELECT
+    trading_day,
+    symbol,
+    max(gap_seconds) AS max_executable_gap_seconds
+  FROM
+  (
+    SELECT
+      toDate(event_ts, 'UTC') AS trading_day,
+      symbol,
+      greatest(
+        0,
+        dateDiff(
+          'second',
+          lagInFrame(event_ts, 1, event_ts) OVER (
+            PARTITION BY symbol, toDate(event_ts, 'UTC')
+            ORDER BY event_ts
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ),
+          event_ts
+        )
+      ) AS gap_seconds
+    FROM signal_quality
+    WHERE spread_sane
+  )
+  GROUP BY trading_day, symbol
+)
 SELECT
   toString(trading_day) AS trading_day,
   toString(sum(raw_signal_rows_by_symbol)) AS raw_signal_rows,
@@ -371,89 +453,18 @@ FROM
   FROM
   (
     SELECT
-    toDate(event_ts, 'UTC') AS trading_day,
-    symbol,
-    count() AS raw_signal_rows,
-    0 AS executable_signal_rows,
-    0 AS quote_sane_signal_rows,
-    0 AS spread_sane_signal_rows,
-    0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
-  FROM torghut.ta_signals
-  {shared_where}
-  GROUP BY trading_day, symbol
-  UNION ALL
-  SELECT
-    toDate(event_ts, 'UTC') AS trading_day,
-    symbol,
-    0 AS raw_signal_rows,
-    count() AS executable_signal_rows,
-    0 AS quote_sane_signal_rows,
-    0 AS spread_sane_signal_rows,
-    0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
-  FROM torghut.ta_signals
-  {executable_where}
-  GROUP BY trading_day, symbol
-  UNION ALL
-  SELECT
-    toDate(event_ts, 'UTC') AS trading_day,
-    symbol,
-    0 AS raw_signal_rows,
-    0 AS executable_signal_rows,
-    count() AS quote_sane_signal_rows,
-    0 AS spread_sane_signal_rows,
-    0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
-  FROM torghut.ta_signals
-  {sane_quote_where}
-  GROUP BY trading_day, symbol
-  UNION ALL
-  SELECT
-    toDate(event_ts, 'UTC') AS trading_day,
-    symbol,
-    0 AS raw_signal_rows,
-    0 AS executable_signal_rows,
-    0 AS quote_sane_signal_rows,
-    count() AS spread_sane_signal_rows,
-    0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
-  FROM torghut.ta_signals
-  {spread_sane_where}
-  GROUP BY trading_day, symbol
-  UNION ALL
-  SELECT
-    trading_day,
-    symbol,
-    0 AS raw_signal_rows,
-    0 AS executable_signal_rows,
-    0 AS quote_sane_signal_rows,
-    0 AS spread_sane_signal_rows,
-    0 AS microbar_rows,
-    max(gap_seconds) AS max_executable_gap_seconds
-  FROM
-  (
-    SELECT
       toDate(event_ts, 'UTC') AS trading_day,
       symbol,
-      greatest(
-        0,
-        dateDiff(
-          'second',
-          lagInFrame(event_ts, 1, event_ts) OVER (
-            PARTITION BY symbol, toDate(event_ts, 'UTC')
-            ORDER BY event_ts
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          ),
-          event_ts
-        )
-      ) AS gap_seconds
-    FROM torghut.ta_signals
-    {spread_sane_where}
-  )
-  GROUP BY trading_day, symbol
-  UNION ALL
-  SELECT
+      count() AS raw_signal_rows,
+      countIf(executable) AS executable_signal_rows,
+      countIf(quote_sane) AS quote_sane_signal_rows,
+      countIf(spread_sane) AS spread_sane_signal_rows,
+      0 AS microbar_rows,
+      0 AS max_executable_gap_seconds
+    FROM signal_quality
+    GROUP BY trading_day, symbol
+    UNION ALL
+    SELECT
     toDate(event_ts, 'UTC') AS trading_day,
     symbol,
     0 AS raw_signal_rows,
@@ -462,9 +473,19 @@ FROM
     0 AS spread_sane_signal_rows,
     count() AS microbar_rows,
     0 AS max_executable_gap_seconds
-  FROM torghut.ta_microbars
-  {shared_where}
-  GROUP BY trading_day, symbol
+    FROM microbars
+    GROUP BY trading_day, symbol
+    UNION ALL
+    SELECT
+      trading_day,
+      symbol,
+      0 AS raw_signal_rows,
+      0 AS executable_signal_rows,
+      0 AS quote_sane_signal_rows,
+      0 AS spread_sane_signal_rows,
+      0 AS microbar_rows,
+      max_executable_gap_seconds
+    FROM spread_gaps
   )
   GROUP BY trading_day, symbol
 )
@@ -649,6 +670,7 @@ def _fetch_coverage_diagnostics(
                 )
             )
         ),
+        observation_cutoff=_observation_cutoff(args),
     )
     raw = replay_mod._http_query(
         url=str(args.clickhouse_http_url),
@@ -697,6 +719,10 @@ def _fetch_coverage_diagnostics(
                 "end_date": end_date,
                 "symbols": list(symbols),
                 "executable_day_policy": _executable_day_policy(args=args),
+                "observation_cutoff": _observation_cutoff(args).isoformat(),
+                "revision_selection": (
+                    "latest_ingest_then_version_at_observation_cutoff"
+                ),
             }
         ),
     }
@@ -829,6 +855,14 @@ def main() -> int:
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    point_in_time_spec = _load_point_in_time_spec(
+        getattr(args, "point_in_time_spec", None)
+    )
+    args.observation_cutoff = (
+        point_in_time_spec.observation_cutoff
+        if point_in_time_spec is not None
+        else datetime.now(timezone.utc)
+    )
     symbols = _parse_symbols(str(args.symbols or ""))
     requested_start_date = date.fromisoformat(str(args.start_date))
     requested_end_date = date.fromisoformat(str(args.end_date))
@@ -866,9 +900,11 @@ def main() -> int:
         flatten_eod=True,
         start_equity=Decimal(str(args.start_equity)),
         symbols=symbols,
+        observation_cutoff=args.observation_cutoff,
     )
     rows = tuple(replay_mod._iter_signal_rows(config))
     manifest_path = args.manifest_output or default_manifest_path(args.output)
+    source_table_versions = _parse_source_table_versions(args.source_table_version)
     try:
         manifest = materialize_signal_tape(
             rows=rows,
@@ -879,10 +915,11 @@ def main() -> int:
             start_date=start_date,
             end_date=end_date,
             source_query_digest=source_query_digest,
-            source_table_versions=_parse_source_table_versions(
-                args.source_table_version
-            ),
+            feature_schema_hash=replay_mod.replay_signal_feature_schema_hash(),
+            source_table_versions=source_table_versions,
             require_complete_coverage=not bool(args.allow_incomplete_coverage),
+            point_in_time_spec=point_in_time_spec,
+            require_point_in_time_receipt=point_in_time_spec is not None,
         )
     except ReplayTapeCoverageError as exc:
         diagnostic_output = getattr(args, "coverage_diagnostic_output", None)

@@ -147,6 +147,7 @@ class ReplayConfig:
     capture_exact_replay_ledger: bool = False
     force_position_isolation: bool = False
     clickhouse_query_timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+    observation_cutoff: datetime | None = None
 
 
 @dataclass

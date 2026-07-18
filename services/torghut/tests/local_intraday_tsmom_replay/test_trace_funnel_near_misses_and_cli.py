@@ -68,6 +68,11 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
                 "META",
                 "2026-03-27 17:30:24.000",
                 "12",
+                "2026-03-27 17:30:24.250",
+                "2026-03-27 17:30:24.200",
+                "2026-03-27 17:30:24.250",
+                "7",
+                "9",
                 "0.031",
                 "0.019",
                 "523.10",
@@ -93,6 +98,10 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
         self.assertEqual(parsed.payload["microbar_volume"], Decimal("18200"))
         self.assertEqual(parsed.payload["imbalance_bid_sz"], Decimal("1200"))
         self.assertEqual(parsed.payload["imbalance_ask_sz"], Decimal("800"))
+        self.assertEqual(
+            parsed.payload["_source_versions"],
+            {"ta_signals": 7, "ta_microbars": 9},
+        )
         imbalance = parsed.payload["imbalance"]
         assert isinstance(imbalance, dict)
         self.assertEqual(imbalance["bid_sz"], Decimal("1200"))
