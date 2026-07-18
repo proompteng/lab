@@ -86,6 +86,8 @@ class BrokerEconomicLedgerReconciliationCronJobTests(TestCase):
                 "--tigerbeetle-parity",
                 "--max-source-age-seconds",
                 "300",
+                "--source-consistency-timeout-seconds",
+                "180",
             ],
         )
         invocation = " ".join(
