@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import Any, cast
+from typing import cast
 
 from .point_in_time import PointInTimeDataReceipt
 
@@ -26,21 +26,21 @@ def _empty_string_mapping() -> dict[str, str]:
     return {}
 
 
-def _string_tuple(value: Any) -> tuple[str, ...]:
+def _string_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
     items = cast(list[object] | tuple[object, ...], value)
     return tuple(str(item) for item in items)
 
 
-def _date_tuple(value: Any) -> tuple[date, ...]:
+def _date_tuple(value: object) -> tuple[date, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
     items = cast(list[object] | tuple[object, ...], value)
     return tuple(date.fromisoformat(str(item)) for item in items)
 
 
-def _string_mapping(value: Any) -> Mapping[str, str]:
+def _string_mapping(value: object) -> Mapping[str, str]:
     if not isinstance(value, Mapping):
         return {}
     return {
@@ -49,7 +49,7 @@ def _string_mapping(value: Any) -> Mapping[str, str]:
     }
 
 
-def _int_mapping(value: Any) -> Mapping[str, int]:
+def _int_mapping(value: object) -> Mapping[str, int]:
     if not isinstance(value, Mapping):
         return {}
     parsed: dict[str, int] = {}
@@ -61,7 +61,7 @@ def _int_mapping(value: Any) -> Mapping[str, int]:
     return parsed
 
 
-def _nested_int_mapping(value: Any) -> Mapping[str, Mapping[str, int]]:
+def _nested_int_mapping(value: object) -> Mapping[str, Mapping[str, int]]:
     if not isinstance(value, Mapping):
         return {}
     return {
@@ -113,7 +113,7 @@ class ReplayTapeManifest:
         default_factory=_empty_nested_int_mapping
     )
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> dict[str, object]:
         from .shared_context import (
             build_replay_tape_cache_identity_diagnostics,
             coverage_status,
@@ -184,7 +184,7 @@ class ReplayTapeManifest:
             ),
         }
 
-    def cache_identity_diagnostics(self) -> dict[str, Any]:
+    def cache_identity_diagnostics(self) -> dict[str, object]:
         from .shared_context import build_replay_tape_cache_identity_diagnostics
 
         return build_replay_tape_cache_identity_diagnostics(
@@ -201,7 +201,7 @@ class ReplayTapeManifest:
         )
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "ReplayTapeManifest":
+    def from_payload(cls, payload: Mapping[str, object]) -> "ReplayTapeManifest":
         schema_version = str(payload.get("schema_version") or "")
         if schema_version not in {
             LEGACY_REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
@@ -224,8 +224,8 @@ class ReplayTapeManifest:
             max_event_ts=_parse_datetime(payload["max_event_ts"])
             if payload.get("max_event_ts")
             else None,
-            trading_day_count=int(payload.get("trading_day_count") or 0),
-            row_count=int(payload.get("row_count") or 0),
+            trading_day_count=int(str(payload.get("trading_day_count") or 0)),
+            row_count=int(str(payload.get("row_count") or 0)),
             source_query_digest=str(payload.get("source_query_digest") or ""),
             content_sha256=str(payload.get("content_sha256") or ""),
             feature_schema_hash=str(payload.get("feature_schema_hash") or ""),
@@ -238,7 +238,7 @@ class ReplayTapeManifest:
             created_at=_parse_datetime(payload["created_at"]),
             point_in_time_receipt=(
                 PointInTimeDataReceipt.from_payload(
-                    cast(Mapping[str, Any], raw_receipt)
+                    cast(Mapping[str, object], raw_receipt)
                 )
                 if isinstance(raw_receipt, Mapping)
                 else None

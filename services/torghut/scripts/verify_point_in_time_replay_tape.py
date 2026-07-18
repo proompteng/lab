@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
 from app.trading.discovery.replay_tape import (
     default_manifest_path,
@@ -38,7 +37,7 @@ def verify_replay_tape(
     expected_receipt_sha256: str = "",
     expected_input_row_set_sha256: str = "",
     expected_feature_matrix_sha256: str = "",
-) -> dict[str, Any]:
+) -> dict[str, object]:
     resolved_manifest_path = manifest_path or default_manifest_path(tape_path)
     tape = load_replay_tape(tape_path, manifest_path=resolved_manifest_path)
     receipt = tape.manifest.point_in_time_receipt

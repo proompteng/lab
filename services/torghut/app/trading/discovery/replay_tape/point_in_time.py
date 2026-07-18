@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, cast
+from typing import TypeAlias, TypedDict, cast
 
 from app.trading.models import SignalEnvelope
 
@@ -24,6 +24,20 @@ _WINDOW_SIZE_KEY = "window_size"
 _REQUIRED_SOURCES = ("ta_microbars", "ta_signals")
 _SHA256_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 _CODE_DIGEST_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$")
+
+JsonValue: TypeAlias = (
+    None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+)
+
+
+class PointInTimeVerification(TypedDict):
+    schema_version: str
+    status: str
+    reason_codes: list[str]
+    receipt_sha256: str
+    input_row_set_sha256: str
+    feature_matrix_sha256: str
+    row_count: int
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -40,7 +54,7 @@ def _datetime_from_payload(value: object, *, field: str) -> datetime:
     return _aware_utc(parsed)
 
 
-def _json_ready(value: Any) -> Any:
+def _json_ready(value: object) -> JsonValue:
     if isinstance(value, datetime):
         return {"__datetime__": _aware_utc(value).isoformat()}
     if isinstance(value, Decimal):
@@ -52,10 +66,12 @@ def _json_ready(value: Any) -> Any:
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_json_ready(item) for item in cast(Sequence[object], value)]
-    return value
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    raise TypeError(f"point_in_time_json_value_unsupported:{type(value).__name__}")
 
 
-def _canonical_json(payload: Mapping[str, Any]) -> str:
+def _canonical_json(payload: Mapping[str, object]) -> str:
     return json.dumps(
         _json_ready(payload),
         sort_keys=True,
@@ -64,12 +80,12 @@ def _canonical_json(payload: Mapping[str, Any]) -> str:
     )
 
 
-def _sha256_payload(payload: Mapping[str, Any]) -> str:
+def _sha256_payload(payload: Mapping[str, object]) -> str:
     encoded = _canonical_json(payload).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
-def _hash_records(records: Iterable[Mapping[str, Any]]) -> str:
+def _hash_records(records: Iterable[Mapping[str, object]]) -> str:
     digest = hashlib.sha256()
     for record in records:
         digest.update(_canonical_json(record).encode("utf-8"))
@@ -122,7 +138,7 @@ def _source_versions(row: SignalEnvelope) -> dict[str, int]:
     return parsed
 
 
-def _input_row_identity(row: SignalEnvelope) -> dict[str, Any]:
+def _input_row_identity(row: SignalEnvelope) -> dict[str, object]:
     return {
         "symbol": row.symbol.upper(),
         "event_ts": _aware_utc(row.event_ts),
@@ -141,8 +157,10 @@ def input_row_set_sha256(rows: Iterable[SignalEnvelope]) -> str:
     return _hash_records(_input_row_identity(row) for row in rows)
 
 
-def _feature_matrix_row(row: SignalEnvelope) -> dict[str, Any]:
-    source_features = dict(row.payload)
+def _feature_matrix_row(row: SignalEnvelope) -> dict[str, object]:
+    source_features: dict[str, object] = {
+        str(key): value for key, value in row.payload.items()
+    }
     # This field is deterministically injected while loading a tape from the
     # separately serialized hpairs feature block. It is derived output, not a
     # second causal input authority.
@@ -172,7 +190,7 @@ class SourceWatermark:
     min_arrival_ts: datetime
     max_arrival_ts: datetime
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> dict[str, object]:
         return {
             "source": self.source,
             "row_count": self.row_count,
@@ -183,10 +201,10 @@ class SourceWatermark:
         }
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "SourceWatermark":
+    def from_payload(cls, payload: Mapping[str, object]) -> "SourceWatermark":
         return cls(
             source=str(payload.get("source") or ""),
-            row_count=int(payload.get("row_count") or 0),
+            row_count=int(str(payload.get("row_count") or 0)),
             min_event_ts=_datetime_from_payload(
                 payload.get("min_event_ts"), field="min_event_ts"
             ),
@@ -247,7 +265,7 @@ class PointInTimeReceiptSpec:
     timezone_name: str = "America/New_York"
     availability_policy: str = POINT_IN_TIME_AVAILABILITY_POLICY
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> dict[str, object]:
         return {
             "schema_version": POINT_IN_TIME_RECEIPT_SPEC_SCHEMA_VERSION,
             "observation_cutoff": _aware_utc(self.observation_cutoff).isoformat(),
@@ -269,7 +287,7 @@ class PointInTimeReceiptSpec:
         }
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "PointInTimeReceiptSpec":
+    def from_payload(cls, payload: Mapping[str, object]) -> "PointInTimeReceiptSpec":
         schema_version = str(payload.get("schema_version") or "")
         if schema_version != POINT_IN_TIME_RECEIPT_SPEC_SCHEMA_VERSION:
             raise ValueError(
@@ -335,8 +353,8 @@ class PointInTimeDataReceipt:
     replay_tape_sha256: str
     receipt_sha256: str
 
-    def to_payload(self, *, include_receipt_sha256: bool = True) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def to_payload(self, *, include_receipt_sha256: bool = True) -> dict[str, object]:
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "observation_cutoff": _aware_utc(self.observation_cutoff).isoformat(),
             "event_time_boundary": {
@@ -377,12 +395,12 @@ class PointInTimeDataReceipt:
         return payload
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "PointInTimeDataReceipt":
+    def from_payload(cls, payload: Mapping[str, object]) -> "PointInTimeDataReceipt":
         event_boundary = cast(
-            Mapping[str, Any], payload.get("event_time_boundary") or {}
+            Mapping[str, object], payload.get("event_time_boundary") or {}
         )
         arrival_boundary = cast(
-            Mapping[str, Any], payload.get("arrival_time_boundary") or {}
+            Mapping[str, object], payload.get("arrival_time_boundary") or {}
         )
         raw_watermarks_value: object = payload.get("source_watermarks")
         raw_watermarks: Mapping[object, object]
@@ -392,7 +410,7 @@ class PointInTimeDataReceipt:
             raw_watermarks = {}
         watermarks = {
             str(source): SourceWatermark.from_payload(
-                cast(Mapping[str, Any], watermark)
+                cast(Mapping[str, object], watermark)
             )
             for source, watermark in raw_watermarks.items()
             if isinstance(watermark, Mapping)
@@ -644,7 +662,7 @@ def verify_point_in_time_data_receipt(
     content_sha256: str,
     feature_schema_hash: str,
     source_table_versions: Mapping[str, str] | None = None,
-) -> dict[str, Any]:
+) -> PointInTimeVerification:
     reasons = _metadata_reason_codes(receipt)
     reasons.extend(
         _row_reason_codes(
@@ -714,6 +732,7 @@ __all__ = [
     "POINT_IN_TIME_RECEIPT_SPEC_SCHEMA_VERSION",
     "PointInTimeDataReceipt",
     "PointInTimeReceiptSpec",
+    "PointInTimeVerification",
     "SourceWatermark",
     "build_point_in_time_data_receipt",
     "build_source_watermarks",
