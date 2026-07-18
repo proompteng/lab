@@ -93,7 +93,7 @@ def _representative_render() -> list[dict[str, object]]:
             "kind": "Ingress",
             "metadata": {
                 "name": "torghut-notebooks",
-                "annotations": {"tailscale.com/tags": "tag:torghut-notebooks"},
+                "annotations": {"tailscale.com/tags": "tag:k8s"},
             },
             "spec": {
                 "ingressClassName": "tailscale",
@@ -264,19 +264,19 @@ def test_hub_has_fixed_auto_login_without_identity() -> None:
     assert values["hub"]["allowNamedServers"] is False
 
 
-def test_tailscale_owner_is_the_only_notebook_ingress_principal() -> None:
+def test_notebook_ingress_reuses_existing_kubernetes_tag() -> None:
     values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
-    assert values["ingress"]["annotations"] == {
-        "tailscale.com/tags": "tag:torghut-notebooks"
-    }
+    assert values["ingress"]["annotations"] == {"tailscale.com/tags": "tag:k8s"}
 
     policy_source = (
         REPO_ROOT / "tofu/tailscale/templates/policy.hujson.tmpl"
     ).read_text()
     policy = json.loads(re.sub(r"//.*", "", policy_source))
-    assert policy["tagOwners"]["tag:torghut-notebooks"] == ["tag:k8s-operator"]
+    assert policy["tagOwners"]["tag:k8s"] == ["tag:k8s-operator"]
+    assert "tag:torghut-notebooks" not in policy["tagOwners"]
 
     general_rule = next(rule for rule in policy["acls"] if rule["src"] == ["*"])
+    assert "tag:k8s:*" in general_rule["dst"]
     assert "10.244.0.0/16:*" not in general_rule["dst"]
     assert "10.96.0.0/12:*" not in general_rule["dst"]
 
@@ -291,10 +291,11 @@ def test_tailscale_owner_is_the_only_notebook_ingress_principal() -> None:
         "tag:kube-node",
     ]
 
-    notebook_rule = next(
-        rule for rule in policy["acls"] if rule["dst"] == ["tag:torghut-notebooks:443"]
+    assert all(
+        "tag:torghut-notebooks" not in destination
+        for rule in policy["acls"]
+        for destination in rule["dst"]
     )
-    assert notebook_rule["src"] == ["autogroup:owner"]
 
 
 def test_hub_extra_config_has_a_valid_fixed_authenticator_contract() -> None:

@@ -202,7 +202,7 @@ ingress:
   enabled: true
   ingressClassName: tailscale
   annotations:
-    tailscale.com/tags: tag:torghut-notebooks
+    tailscale.com/tags: tag:k8s
   hosts:
     - torghut-notebooks.ide-newton.ts.net
   pathType: Prefix

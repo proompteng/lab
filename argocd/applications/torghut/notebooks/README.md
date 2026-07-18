@@ -9,11 +9,11 @@ password, Keycloak, OAuth, admin user, named server, or account-management flow.
 come from `torghut-notebook-hub`; deterministic values in the chart-generated Secret are rendering placeholders and
 are not referenced by the running Hub or proxy.
 
-The ingress overrides the default Kubernetes proxy tag with `tag:torghut-notebooks`. The tailnet policy admits only
-`autogroup:owner` to that tag on HTTPS, so admission happens at the Tailscale network boundary without adding an
-application identity or login flow. Direct Pod and Service CIDR routes are likewise restricted to the tailnet owner
-and tagged Kubernetes infrastructure identities; ordinary tailnet members cannot bypass the tagged ingress through
-the proxy's ClusterIP or Pod IP.
+The ingress uses the repository's existing `tag:k8s` convention, which is already delegated to the Kubernetes
+operator and avoids a separate tailnet-policy bootstrap. Admission follows the tailnet's established Kubernetes
+service ACL boundary without adding an application identity or login flow. Direct Pod and Service CIDR routes remain
+restricted to the tailnet owner and tagged Kubernetes infrastructure identities so routed cluster addresses do not
+broaden access beyond the existing infrastructure policy.
 
 Notebook pods receive only a CNPG-managed `pg_read_all_data` role, a ClickHouse `readonly=1` profile, and the GET-only
 Torghut scheduler status URL. They do not receive broker, TigerBeetle, Kafka, Flink, Alpaca, or Kubernetes credentials,
