@@ -28,7 +28,7 @@ def test_migration_graph_has_one_merged_head_and_knows_the_released_revision() -
     config = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["0082_order_lineage_runs"]
+    assert scripts.get_heads() == ["0083_hyperliquid_order_reads"]
     assert scripts.get_revision("0063_strategy_capital_authority") is not None
     assert scripts.get_revision("0064_strategy_capital_authority") is not None
     assert scripts.get_revision("0065_strategy_capital_compat") is not None
@@ -49,3 +49,4 @@ def test_migration_graph_has_one_merged_head_and_knows_the_released_revision() -
     assert scripts.get_revision("0080_broker_econ_recon_freshness") is not None
     assert scripts.get_revision("0081_order_lineage_receipts") is not None
     assert scripts.get_revision("0082_order_lineage_runs") is not None
+    assert scripts.get_revision("0083_hyperliquid_order_reads") is not None
