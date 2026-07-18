@@ -340,7 +340,7 @@ jobs:
           require_published_digest controller "${CONTROLLER_IMAGE_DIGEST}"
           require_published_digest runner "${RUNNER_IMAGE_DIGEST}"
 
-          if [ "$(jq 'length' <<< "${IMAGE_TARGETS}")" -lt 3 ]; then
+          if [ "$(jq 'length' <<< "${IMAGE_TARGETS}")" -lt 4 ]; then
             if ! getent hosts registry.ide-newton.ts.net >/dev/null 2>&1; then
               echo 'Published Agents registry is required for this tier but is not resolvable; refusing an unrelated local rebuild.' >&2
               exit 1
@@ -427,6 +427,7 @@ jobs:
               control-plane) echo agents-control-plane-image ;;
               controller) echo agents-controller-image ;;
               runner) echo agents-codex-runner-image ;;
+              agents-shell) echo agents-shell-image ;;
               *) echo "Unknown Agents image target: $1" >&2; return 2 ;;
             esac
           }
@@ -436,6 +437,7 @@ jobs:
               control-plane) echo registry.ide-newton.ts.net/lab/agents-control-plane ;;
               controller) echo registry.ide-newton.ts.net/lab/agents-controller ;;
               runner) echo registry.ide-newton.ts.net/lab/agents-codex-runner ;;
+              agents-shell) echo registry.ide-newton.ts.net/lab/agents-shell ;;
               *) echo "Unknown Agents image target: $1" >&2; return 2 ;;
             esac
           }
@@ -505,6 +507,13 @@ jobs:
                   echo "BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY=${repository}"
                   echo 'BUILT_AGENTS_RUNNER_IMAGE_TAG=nix'
                   echo 'BUILT_AGENTS_RUNNER_IMAGE_DIGEST='
+                } >> "${GITHUB_ENV}"
+                ;;
+              agents-shell)
+                {
+                  echo "BUILT_AGENTS_SHELL_IMAGE_REPOSITORY=${repository}"
+                  echo 'BUILT_AGENTS_SHELL_IMAGE_TAG=nix'
+                  echo 'BUILT_AGENTS_SHELL_IMAGE_DIGEST='
                 } >> "${GITHUB_ENV}"
                 ;;
             esac

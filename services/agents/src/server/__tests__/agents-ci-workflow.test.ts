@@ -39,6 +39,8 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('run_with_progress \'Nix image build\' 30 nix build --no-link "${installables[@]}"')
     expect(workflow).toContain('nix path-info ".#${package_attr}"')
     expect(workflow).toContain('kind load image-archive --name "${KIND_CLUSTER_NAME}" "${load_archives[@]}"')
+    expect(workflow).toContain('agents-shell) echo agents-shell-image')
+    expect(workflow).toContain('agents-shell) echo registry.ide-newton.ts.net/lab/agents-shell')
     expect(workflow.match(/nix build --no-link/g)).toHaveLength(1)
     expect(workflow.match(/kind load image-archive/g)).toHaveLength(1)
     expect(workflow).not.toContain('docker build')

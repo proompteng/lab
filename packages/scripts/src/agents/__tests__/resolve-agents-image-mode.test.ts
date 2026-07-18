@@ -52,6 +52,7 @@ describe('classifyAgentsImageMode', () => {
       'control-plane',
       'controller',
       'runner',
+      'agents-shell',
     ])
   })
 
@@ -79,6 +80,7 @@ describe('classifyAgentsImageMode', () => {
       'control-plane',
       'controller',
       'runner',
+      'agents-shell',
     ])
   })
 
@@ -133,7 +135,7 @@ describe('classifyAgentsImageMode', () => {
         mode: 'build-local-image',
         needsLocalAgentsImage: true,
         runIntegration: true,
-        imageTargets: ['control-plane', 'controller', 'runner'],
+        imageTargets: ['control-plane', 'controller', 'runner', 'agents-shell'],
         matchedPaths: [path],
       })
     }

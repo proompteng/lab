@@ -2,7 +2,7 @@
 
 import { appendFileSync } from 'node:fs'
 
-export const AGENTS_IMAGE_TARGETS = ['control-plane', 'controller', 'runner'] as const
+export const AGENTS_IMAGE_TARGETS = ['control-plane', 'controller', 'runner', 'agents-shell'] as const
 
 export type AgentsImageTarget = (typeof AGENTS_IMAGE_TARGETS)[number]
 export type AgentsImageMode = 'build-local-image' | 'reuse-published-image'
