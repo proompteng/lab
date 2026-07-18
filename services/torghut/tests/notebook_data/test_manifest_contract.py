@@ -187,6 +187,13 @@ def test_chart_and_digest_contracts_are_pinned() -> None:
     assert re.fullmatch(r"[0-9a-f]{64}", values["singleuser"]["image"]["tag"])
 
 
+def test_singleuser_memory_uses_jupyterhub_byte_specifications() -> None:
+    values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
+    memory = values["singleuser"]["memory"]
+    assert memory == {"guarantee": "8G", "limit": "16G"}
+    assert all(re.fullmatch(r"[1-9][0-9]*[KMGT]", value) for value in memory.values())
+
+
 def test_render_validator_accepts_the_complete_production_contract(
     tmp_path: Path,
 ) -> None:

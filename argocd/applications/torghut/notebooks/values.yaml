@@ -104,8 +104,8 @@ singleuser:
     guarantee: 2
     limit: 8
   memory:
-    guarantee: 8Gi
-    limit: 16Gi
+    guarantee: 8G
+    limit: 16G
   storage:
     type: dynamic
     capacity: 50Gi
