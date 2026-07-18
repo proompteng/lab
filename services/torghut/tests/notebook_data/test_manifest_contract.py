@@ -156,6 +156,9 @@ def test_notebook_image_uses_a_dedicated_minimal_locked_dependency_group() -> No
     )[0]
     assert "chown" not in extra_commands
     assert "chown 1000:100 ./home/jovyan" in fake_root_commands
+    assert (
+        'Entrypoint = [ "${startNotebook}/bin/start-torghut-notebook" ];' in nix_source
+    )
 
 
 def test_notebook_entrypoint_seeds_only_absent_canonical_notebooks() -> None:
@@ -183,6 +186,7 @@ def test_chart_and_digest_contracts_are_pinned() -> None:
     values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
     assert values["hub"]["image"]["tag"] == "4.4.0"
     assert values["proxy"]["chp"]["image"]["tag"] == "5.2.0"
+    assert "cmd" not in values["singleuser"]
     assert values["singleuser"]["image"]["name"].endswith("@sha256")
     assert re.fullmatch(r"[0-9a-f]{64}", values["singleuser"]["image"]["tag"])
 
