@@ -64,7 +64,7 @@ Notes:
 
 - Edit `argocd/applications/metallb-system/ipaddresspool.yaml` to match your LAN range and avoid static IPs. Current pools:
   - `metallb-plex-pool`: `100.100.244.180/32`, reserved for Plex LAN access.
-  - `metallb-ip-pool`: `100.100.244.181-100.100.244.190`, shared platform services.
+  - `metallb-ip-pool`: `100.100.244.181-100.100.244.189`, shared platform services (`.190` is Turin).
 - Traefik and Forgejo SSH share `100.100.244.181`; Istio ingress uses `100.100.244.182`.
 
 4. Apply the root Application (ApplicationSet) to sync the rest of the stack:

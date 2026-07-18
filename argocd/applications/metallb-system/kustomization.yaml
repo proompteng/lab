@@ -5,3 +5,13 @@ resources:
   - github.com/metallb/metallb//config/native?ref=v0.15.3
   - ipaddresspool.yaml
   - l2advertisement.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: DaemonSet
+      name: speaker
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --ignore-exclude-lb
