@@ -160,9 +160,11 @@ pkgs.dockerTools.buildLayeredImage {
     mkdir -p etc home/jovyan tmp var/tmp
     echo 'jovyan:x:1000:100:Torghut Notebook:/home/jovyan:/bin/bash' > etc/passwd
     echo 'users:x:100:jovyan' > etc/group
-    chown 1000:100 home/jovyan
     chmod 0750 home/jovyan
     chmod 1777 tmp var/tmp
+  '';
+  fakeRootCommands = ''
+    chown 1000:100 ./home/jovyan
   '';
   config = {
     Entrypoint = [ "${startNotebook}/bin/start-torghut-notebook" ];
