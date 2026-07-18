@@ -294,6 +294,8 @@ mode.
 Implementation contract: [versioned economic policy and parity](economic-policy-parity.md). The slice is not complete
 until the separately loaded replay, shadow, and paper runtime fixture outputs match after image promotion.
 
+Production evidence: [Slice 12 versioned economic policy parity](evidence/slice-12-economic-policy-parity-2026-07-18.md).
+
 **Invariant:** replay, shadow, paper, and live use the same versioned session, sizing, fee, slippage, risk, and accounting
 policy rather than divergent defaults.
 
