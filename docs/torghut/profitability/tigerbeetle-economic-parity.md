@@ -23,6 +23,9 @@ exposure-reducing actions, and never disables recovery.
 
 The design follows TigerBeetle's native contracts:
 
+- [Alpaca crypto activity](https://docs.alpaca.markets/us/docs/crypto-trading) records `CFEE` charges at end of day and
+  notes that a fee may not be available on the trade day. Economic date and first-observed time are therefore distinct
+  facts; neither may be substituted for the other.
 - [Requests](https://docs.tigerbeetle.com/coding/requests/) are committed as batches, create events are idempotent, and
   the default create/lookup batch limit is 8,189 events.
 - [Accounts](https://docs.tigerbeetle.com/reference/account/) are immutable except for cumulative debit and credit
@@ -65,6 +68,25 @@ TigerBeetle parity payload.
 
 Changing any economic encoding rule requires a new projection version. Versioned IDs prevent a revised projection from
 silently inheriting balances from an older encoding.
+
+Ordering is part of economic identity. The first publication in a reducer namespace orders the complete closed source
+economically; timestamped fills retain event-time order, and date-only fees use first-observed time only as a same-date
+tie-break. A later replay loads and hash-validates the latest complete published manifest for that exact reducer pair,
+keeps every published activity in the same order, and economically sorts only the newly observed cohort.
+
+Crossing the published economic frontier is not a generic ingestion-time rule. A missing historical trade or a
+correction of published history requires a new reducer and projection version. A documented late date-only `CFEE` may
+append only after the canonical and independent reducers also replay the complete source in economic order and prove:
+
+- the transaction ID and digest multiset is identical;
+- the final economic projection is identical, excluding only the order-dependent input-manifest digest; and
+- both reductions remain admissible and exactly equivalent.
+
+This rejects both obvious insufficient-position cases and sufficient-position cases where later trades changed the
+fee's average cost. The implementation never guesses that an append is safe from position quantity alone. A malformed,
+hash-invalid, duplicate, or incomplete published manifest also fails closed. Reducer v4 and TigerBeetle projection v2
+remain immutable historical evidence because their rule did not preserve this invariant across settlement dates;
+reducer v5 and projection v3 own the corrected namespace. Old objects are never deleted, overwritten, or reinterpreted.
 
 ### Amounts
 
