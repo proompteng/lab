@@ -71,8 +71,10 @@ class SchedulerObservabilityManifestTests(TestCase):
         api_down = str(by_alert["TorghutActiveApiRevisionMetricsDown"]["expr"])
         self.assertIn("kube_service_info", api_missing)
         self.assertIn('service="torghut"', api_missing)
-        self.assertIn('service=~"torghut-[0-9]{5}-private"', api_down)
+        self.assertIn('service="torghut"', api_down)
+        self.assertNotIn("-private", api_down)
         self.assertNotIn('service="torghut-scheduler"', api_missing)
+        self.assertNotIn('service="torghut-scheduler"', api_down)
 
         for alert in ("TorghutSchedulerMetricsMissing", "TorghutSchedulerMetricsDown"):
             expr = str(by_alert[alert]["expr"])
@@ -120,12 +122,15 @@ class SchedulerObservabilityManifestTests(TestCase):
             self.assertIn('service="torghut-scheduler"', expression)
             self.assertNotIn('service="torghut"', expression)
 
-    def test_namespace_alloy_discovers_scheduler_metrics_port(self) -> None:
+    def test_namespace_alloy_scrapes_api_through_stable_route(self) -> None:
         alloy_config = _configmap_data(
             "argocd/applications/torghut/alloy-configmap.yaml",
             "config.river",
         )
+        self.assertIn('regex         = "metric(s)?;.*"', alloy_config)
+        self.assertIn('prometheus.scrape "torghut_api"', alloy_config)
         self.assertIn(
-            'regex         = "metric(s)?;.*|http;torghut-[0-9]{5}-private"',
+            '"__address__" = "torghut.torghut.svc.cluster.local:80"',
             alloy_config,
         )
+        self.assertNotIn("torghut-[0-9]{5}-private", alloy_config)
