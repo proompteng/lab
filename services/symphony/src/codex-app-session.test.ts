@@ -145,6 +145,7 @@ import readline from 'node:readline'
 const rl = readline.createInterface({ input: process.stdin })
 let experimentalApi = false
 let requestAttestation
+let pendingThreadStartId
 
 rl.on('line', (line) => {
   const message = JSON.parse(line)
@@ -172,7 +173,24 @@ rl.on('line', (line) => {
       return
     }
 
-    console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'thread-1' } } }))
+    pendingThreadStartId = message.id
+    console.log(JSON.stringify({
+      id: 900,
+      method: 'currentTime/read',
+      params: { threadId: 'thread-1' },
+    }))
+    return
+  }
+
+  if (message.id === 900) {
+    if (!Number.isInteger(message.result?.currentTimeAt) || message.result.currentTimeAt <= 0) {
+      console.log(JSON.stringify({
+        id: pendingThreadStartId,
+        error: { code: -32600, message: 'currentTime/read returned an invalid timestamp' },
+      }))
+      return
+    }
+    console.log(JSON.stringify({ id: pendingThreadStartId, result: { thread: { id: 'thread-1' } } }))
     return
   }
 

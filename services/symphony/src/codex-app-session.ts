@@ -351,6 +351,14 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               return
             }
 
+            if (method === 'currentTime/read') {
+              yield* writeMessage(child, {
+                id,
+                result: { currentTimeAt: Math.floor(Date.now() / 1_000) },
+              })
+              return
+            }
+
             if (method === 'item/tool/requestUserInput') {
               yield* writeMessage(child, { id, error: { code: -32000, message: 'turn_input_required' } })
               const activeTurn = yield* SynchronizedRef.get(activeTurnRef)
