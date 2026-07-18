@@ -25,7 +25,7 @@ from .types import (
 
 
 JOURNAL_REDUCER_NAME = "balanced_journal"
-JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v4"
+JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v5"
 
 _MAX_TRANSACTION_ID_LENGTH = 512
 _REVERSAL_TRANSACTION_ID_PREFIX = "correction-reversal:sha256:"
@@ -295,6 +295,10 @@ class _JournalWriter:
                 "economic_crypto_fee_fair_value_below_ledger_quantum"
             )
         if position.quantity <= ZERO or abs(quantity) > position.quantity:
+            if activity.external_activity_id in self.prepared.retroactive_append_ids:
+                raise EconomicLedgerError(
+                    "economic_ledger_unappendable_late_fee_requires_new_version"
+                )
             raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
         if abs(quantity) == position.quantity:
             position_cost_delta = -position.signed_cost

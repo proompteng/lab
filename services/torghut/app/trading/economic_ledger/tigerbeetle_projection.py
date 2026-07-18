@@ -27,10 +27,12 @@ if TYPE_CHECKING:
     from .persistence import BrokerEconomicLedgerReplay
 
 
-# The v1 namespace contains immutable transfer chains from the pre-monotonic
-# date-only CFEE ordering and must never be reused for current parity.
+# The v1 namespace orders date-only fees by external ID. The v2 namespace only
+# preserves observation order within one settlement date. Both contain
+# immutable transfers and must never be reused after the cross-date ordering
+# correction.
 TIGERBEETLE_ECONOMIC_PROJECTION_VERSION = (
-    "torghut.broker-economic-tigerbeetle-projection.v2"
+    "torghut.broker-economic-tigerbeetle-projection.v3"
 )
 TIGERBEETLE_MAX_BATCH_SIZE = 8_189
 

@@ -21,7 +21,7 @@ from .types import (
 
 
 STATE_REDUCER_NAME = "independent_position_state"
-STATE_REDUCER_VERSION = "torghut.broker-economic-state.v4"
+STATE_REDUCER_VERSION = "torghut.broker-economic-state.v5"
 
 _EXTERNAL_FLOW_TYPES = frozenset({"ACATC", "CSD", "CSW", "JNLC", "TRANS"})
 _DIVIDEND_ACTIVITY_TYPES = frozenset(
@@ -231,6 +231,10 @@ class _StateReducer:
                 "economic_crypto_fee_fair_value_below_ledger_quantum"
             )
         if holding.units <= ZERO or abs(units) > holding.units:
+            if activity.external_activity_id in self.prepared.retroactive_append_ids:
+                raise EconomicLedgerError(
+                    "economic_ledger_unappendable_late_fee_requires_new_version"
+                )
             raise EconomicLedgerError("economic_crypto_fee_position_insufficient")
         if abs(units) == holding.units:
             released_cost = holding.carrying_value

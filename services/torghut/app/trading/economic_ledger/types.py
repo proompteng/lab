@@ -186,9 +186,9 @@ class EconomicActivity:
 
     @property
     def sort_key(self) -> tuple[datetime, date, datetime, str, str]:
-        # Alpaca can publish date-only crypto fees after their economic date.
-        # Preserve observation order so a late append cannot rewrite an earlier
-        # state-dependent fee transaction and its immutable ledger identity.
+        # Alpaca can publish multiple date-only crypto fees for one settlement
+        # date. Preserve their broker observation order inside that economic
+        # date; cross-scan append stability is enforced by prepare_activities.
         observation_order = (
             self.first_observed_at
             if self.activity_type == "CFEE"
@@ -243,6 +243,8 @@ class ActivityChain:
 class PreparedActivities:
     scope: LedgerScope
     chains: tuple[ActivityChain, ...]
+    activity_order: tuple[str, ...]
+    retroactive_append_ids: tuple[str, ...]
     manifest_digest: str
     input_count: int
     duplicate_count: int
@@ -477,23 +479,90 @@ class JournalReduction:
         )
 
 
-def prepare_activities(activities: Iterable[EconomicActivity]) -> PreparedActivities:
-    """Deduplicate immutable identities and resolve correction chains."""
+def prepare_activities(
+    activities: Iterable[EconomicActivity],
+    *,
+    prior_activity_order: tuple[str, ...] = (),
+) -> PreparedActivities:
+    """Deduplicate identities and preserve an immutable published order anchor."""
 
     unique, duplicate_count = _deduplicate_activities(activities)
     scope = _single_scope(unique.values())
-    chains = _activity_chains(unique)
-    manifest = [
-        activity.manifest_payload()
-        for activity in sorted(unique.values(), key=lambda activity: activity.sort_key)
-    ]
+    ordered, retroactive_append_ids = _ordered_activities(
+        unique,
+        prior_activity_order=prior_activity_order,
+    )
+    activity_order = tuple(activity.external_activity_id for activity in ordered)
+    order_rank = {
+        external_activity_id: index
+        for index, external_activity_id in enumerate(activity_order)
+    }
+    chains = _activity_chains(unique, order_rank=order_rank)
+    manifest = [activity.manifest_payload() for activity in ordered]
     return PreparedActivities(
         scope=scope,
         chains=chains,
+        activity_order=activity_order,
+        retroactive_append_ids=retroactive_append_ids,
         manifest_digest=canonical_sha256(manifest),
         input_count=len(unique),
         duplicate_count=duplicate_count,
         corrected_count=sum(len(chain.activities) - 1 for chain in chains),
+    )
+
+
+def _ordered_activities(
+    unique: Mapping[str, EconomicActivity],
+    *,
+    prior_activity_order: tuple[str, ...],
+) -> tuple[tuple[EconomicActivity, ...], tuple[str, ...]]:
+    if len(set(prior_activity_order)) != len(prior_activity_order):
+        raise EconomicLedgerError("economic_ledger_prior_activity_order_duplicate")
+    if any(external_id not in unique for external_id in prior_activity_order):
+        raise EconomicLedgerError("economic_ledger_prior_activity_missing")
+
+    anchored_ids = set(prior_activity_order)
+    new_activities = tuple(
+        activity
+        for external_id, activity in unique.items()
+        if external_id not in anchored_ids
+    )
+    retroactive_append_ids: tuple[str, ...] = ()
+    if prior_activity_order:
+        frontier = max(unique[external_id].sort_key for external_id in anchored_ids)
+        if any(
+            activity.correction_of_external_id in anchored_ids
+            for activity in new_activities
+        ):
+            raise EconomicLedgerError(
+                "economic_ledger_retroactive_correction_requires_new_version"
+            )
+        if any(
+            activity.sort_key < frontier and not _is_late_date_only_fee(activity)
+            for activity in new_activities
+        ):
+            raise EconomicLedgerError(
+                "economic_ledger_retroactive_activity_requires_new_version"
+            )
+        retroactive_append_ids = tuple(
+            activity.external_activity_id
+            for activity in new_activities
+            if activity.sort_key < frontier
+        )
+    appended = sorted(new_activities, key=lambda activity: activity.sort_key)
+    return (
+        tuple(unique[external_id] for external_id in prior_activity_order)
+        + tuple(appended),
+        retroactive_append_ids,
+    )
+
+
+def _is_late_date_only_fee(activity: EconomicActivity) -> bool:
+    return (
+        activity.activity_type == "CFEE"
+        and activity.event_at is None
+        and activity.settle_date is not None
+        and activity.correction_of_external_id is None
     )
 
 
@@ -529,6 +598,8 @@ def _single_scope(activities: Iterable[EconomicActivity]) -> LedgerScope:
 
 def _activity_chains(
     unique: Mapping[str, EconomicActivity],
+    *,
+    order_rank: Mapping[str, int],
 ) -> tuple[ActivityChain, ...]:
     successor = _correction_successors(unique)
     roots = sorted(
@@ -537,7 +608,7 @@ def _activity_chains(
             for activity in unique.values()
             if activity.correction_of_external_id is None
         ),
-        key=lambda activity: activity.sort_key,
+        key=lambda activity: order_rank[activity.external_activity_id],
     )
     visited: set[str] = set()
     chains = tuple(_walk_correction_chain(root, successor, visited) for root in roots)

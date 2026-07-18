@@ -42,8 +42,8 @@ def test_option_fill_cash_and_cost_use_the_explicit_contract_size() -> None:
     )
 
     assert buy.manifest_payload()["notional_multiplier"] == "10"
-    assert JOURNAL_REDUCER_VERSION == "torghut.broker-economic-journal.v4"
-    assert STATE_REDUCER_VERSION == "torghut.broker-economic-state.v4"
+    assert JOURNAL_REDUCER_VERSION == "torghut.broker-economic-journal.v5"
+    assert STATE_REDUCER_VERSION == "torghut.broker-economic-state.v5"
     assert result.admissible
     assert result.comparison.equivalent
     assert cash(result.journal.projection) == Decimal("3")
