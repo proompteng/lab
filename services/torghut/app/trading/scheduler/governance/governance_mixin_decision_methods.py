@@ -463,6 +463,30 @@ class TradingSchedulerGovernanceDecisionMethods(
         signals_path.write_text(json.dumps(signal_payloads, indent=2), encoding="utf-8")
         return run_output_dir, signals_path
 
+    @staticmethod
+    def _write_autonomy_strategy_configmap_source(
+        *,
+        strategy_config_path: Path,
+        run_output_dir: Path,
+    ) -> Path:
+        configmap_path = run_output_dir / "strategy-configmap-source.yaml"
+        configmap_payload = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "torghut-strategy-config",
+                "namespace": "torghut",
+            },
+            "data": {
+                "strategies.yaml": strategy_config_path.read_text(encoding="utf-8"),
+            },
+        }
+        configmap_path.write_text(
+            json.dumps(configmap_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return configmap_path
+
     def _next_autonomy_iteration(self, *, artifact_root: Path) -> int:
         notes_root = artifact_root / "notes"
         notes_root.mkdir(parents=True, exist_ok=True)
@@ -601,6 +625,10 @@ class TradingSchedulerGovernanceDecisionMethods(
                 gate_policy_path=gate_policy_path,
                 output_dir=run_output_dir,
                 promotion_target=promotion_target,
+                strategy_configmap_path=self._write_autonomy_strategy_configmap_source(
+                    strategy_config_path=strategy_config_path,
+                    run_output_dir=run_output_dir,
+                ),
                 code_version="live",
                 approval_token=approval_token,
                 drift_promotion_evidence=dict(drift_gate_evidence),
