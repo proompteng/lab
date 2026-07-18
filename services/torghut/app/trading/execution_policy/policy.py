@@ -820,6 +820,13 @@ class ExecutionPolicy:
         if self.config is not None:
             return self.config
 
+        min_notional = optional_decimal(settings.trading_min_notional_per_trade)
+        max_notional = optional_decimal(
+            strategy.max_notional_per_trade if strategy else None
+        )
+        if max_notional is None:
+            max_notional = optional_decimal(settings.trading_max_notional_per_trade)
+
         if self.economic_policy is not None:
             resolved_kill_switch_enabled = (
                 settings.trading_kill_switch_enabled
@@ -827,15 +834,10 @@ class ExecutionPolicy:
                 else kill_switch_enabled
             )
             return self.economic_policy.execution_policy_config(
-                kill_switch_enabled=resolved_kill_switch_enabled
+                min_notional=min_notional,
+                max_notional=max_notional,
+                kill_switch_enabled=resolved_kill_switch_enabled,
             )
-
-        min_notional = optional_decimal(settings.trading_min_notional_per_trade)
-        max_notional = optional_decimal(
-            strategy.max_notional_per_trade if strategy else None
-        )
-        if max_notional is None:
-            max_notional = optional_decimal(settings.trading_max_notional_per_trade)
 
         max_participation = optional_decimal(settings.trading_max_participation_rate)
         if max_participation is None:

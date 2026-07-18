@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import Settings, settings
+from app.models import Strategy
 from app.trading.costs import CostModelInputs, OrderIntent, TransactionCostModel
 from app.trading.economic_policy import (
     DEFAULT_ECONOMIC_POLICY_PATH,
@@ -18,6 +20,8 @@ from app.trading.economic_policy import (
     load_runtime_economic_policy,
 )
 from app.trading.economic_policy_parity import build_economic_policy_parity_report
+from app.trading.execution_policy import ExecutionPolicy
+from app.trading.models import StrategyDecision
 
 
 def test_committed_policy_is_strict_pinned_and_cross_stage_identical(
@@ -143,3 +147,64 @@ def test_policy_cost_model_applies_current_alpaca_sell_and_buy_fees() -> None:
     assert sell.cat_fee_cost == Decimal("0.01")
     assert sell.regulatory_fee_cost == Decimal("0.05")
     assert buy.regulatory_fee_cost == Decimal("0.01")
+
+
+def test_policy_execution_preserves_strategy_and_global_notional_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "trading_min_notional_per_trade", Decimal("10"))
+    monkeypatch.setattr(settings, "trading_max_notional_per_trade", Decimal("1000"))
+    policy = ExecutionPolicy(economic_policy=load_economic_policy())
+    strategy = Strategy(
+        name="notional-cap-fixture",
+        base_timeframe="1Min",
+        universe_type="static",
+        max_notional_per_trade=Decimal("100"),
+    )
+
+    def decision(*, qty: str, price: str) -> StrategyDecision:
+        return StrategyDecision(
+            strategy_id="notional-cap-fixture",
+            symbol="AAPL",
+            event_ts=datetime(2026, 7, 1, 15, 0, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal(qty),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": price,
+                "spread": "0.02",
+                "adv": "100000000",
+                "volatility": "0.0001",
+            },
+        )
+
+    strategy_capped = policy.evaluate(
+        decision(qty="2", price="75"),
+        strategy=strategy,
+        positions=(),
+        market_snapshot=None,
+        kill_switch_enabled=False,
+    )
+    global_capped = policy.evaluate(
+        decision(qty="20", price="75"),
+        strategy=None,
+        positions=(),
+        market_snapshot=None,
+        kill_switch_enabled=False,
+    )
+    below_minimum = policy.evaluate(
+        decision(qty="1", price="5"),
+        strategy=None,
+        positions=(),
+        market_snapshot=None,
+        kill_switch_enabled=False,
+    )
+
+    assert strategy_capped.approved is False
+    assert "max_notional_exceeded" in strategy_capped.reasons
+    assert global_capped.approved is False
+    assert "max_notional_exceeded" in global_capped.reasons
+    assert below_minimum.approved is False
+    assert "min_notional_not_met" in below_minimum.reasons

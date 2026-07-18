@@ -246,13 +246,17 @@ class EconomicPolicy(StrictPolicyModel):
         )
 
     def execution_policy_config(
-        self, *, kill_switch_enabled: bool
+        self,
+        *,
+        min_notional: Decimal | None,
+        max_notional: Decimal | None,
+        kill_switch_enabled: bool,
     ) -> ExecutionPolicyConfig:
         from .execution_policy.policy_types import ExecutionPolicyConfig
 
         return ExecutionPolicyConfig(
-            min_notional=None,
-            max_notional=None,
+            min_notional=min_notional,
+            max_notional=max_notional,
             max_participation_rate=self.sizing.max_participation_rate,
             allow_shorts=self.sizing.allow_shorts,
             kill_switch_enabled=kill_switch_enabled,
