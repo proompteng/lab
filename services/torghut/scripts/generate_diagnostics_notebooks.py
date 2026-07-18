@@ -333,8 +333,9 @@ def execution_evidence_notebook() -> list[nbformat.NotebookNode]:
                 # Torghut execution evidence
 
                 **TL;DR.** This notebook shows 30 days of TCA evidence and up to 180 days of server-aggregated runtime
-                ledger history. P&L is always split by `observed_stage` and `account_label`. Historical paper/replay
-                evidence is not broker equity. If no current live ledger exists, the notebook renders
+                ledger history. P&L is always split by `observed_stage` and `account_label`. When `strategy_id` is set,
+                TCA is filtered but ledger P&L is explicitly omitted because the ledger has no verified strategy UUID
+                lineage. Historical paper/replay evidence is not broker equity. If no current live ledger exists, it renders
                 **CURRENT PROFITABILITY UNPROVEN** instead of a zero-P&L line.
                 """
             ).strip()
@@ -410,7 +411,7 @@ def execution_evidence_notebook() -> list[nbformat.NotebookNode]:
             dedent(
                 """
                 if ledger.empty:
-                    empty_panel('CURRENT PROFITABILITY UNPROVEN — no runtime-ledger rows exist in the bounded 180-day window.')
+                    empty_panel(str(ledger_state['message']))
                 else:
                     ledger['bucket_day'] = pd.to_datetime(ledger['bucket_day'], utc=True)
                     ledger['net_strategy_pnl_after_costs'] = pd.to_numeric(ledger['net_strategy_pnl_after_costs'])

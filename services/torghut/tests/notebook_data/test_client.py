@@ -7,6 +7,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Mapping
+from uuid import UUID
 
 import pytest
 
@@ -104,6 +105,23 @@ class NewerStatusWatermarkAdapter(StatusUnavailableAdapter):
     def status(self, query_identifier: str) -> QueryResult:
         result = fixture_query(query_identifier, {}, row_limit=1)
         return QueryResult(result.records, FIXTURE_AS_OF + timedelta(days=1))
+
+
+@dataclass
+class StrategyScopedExecutionAdapter(EmptyEquitiesAdapter):
+    def postgres(
+        self,
+        query_identifier: str,
+        sql: str,
+        parameters: Mapping[str, object],
+        *,
+        row_limit: int = MAX_PROJECTED_ROWS,
+    ) -> QueryResult:
+        if query_identifier == "execution.ledger":
+            raise AssertionError(
+                "strategy-scoped execution evidence queried an all-strategy ledger"
+            )
+        return fixture_query(query_identifier, parameters, row_limit=row_limit)
 
 
 def _live_adapter() -> LiveDataAdapter:
@@ -273,6 +291,21 @@ def test_missing_current_ledger_never_becomes_zero_pnl() -> None:
     assert state["current_profitability_proven"] is False
     assert "CURRENT PROFITABILITY UNPROVEN" in state["message"]
     assert set(snapshot.frame("runtime_ledger")["observed_stage"]) == {"paper"}
+
+
+def test_strategy_scoped_execution_omits_unlinked_all_strategy_ledger() -> None:
+    strategy_id = UUID("11111111-1111-1111-1111-111111111111")
+    snapshot = execution_evidence(
+        strategy_id,
+        Window.days(30, as_of=FIXTURE_AS_OF),
+        adapter=StrategyScopedExecutionAdapter(),
+    )
+    assert snapshot.datasets["runtime_ledger"] == ()
+    assert not snapshot.frame("tca").empty
+    state = snapshot.datasets["ledger_state"][0]
+    assert state["ledger_included"] is False
+    assert state["strategy_id"] == str(strategy_id)
+    assert "STRATEGY-SCOPED LEDGER EVIDENCE UNAVAILABLE" in state["message"]
 
 
 def test_execution_evidence_survives_auxiliary_status_failure() -> None:

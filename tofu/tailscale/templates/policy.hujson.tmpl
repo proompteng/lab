@@ -28,7 +28,22 @@
         "tag:k8s-operator:*",
         "tag:k8s:*",
         "tag:k8s-subnet-router:*",
-        "tag:kube-node:*",
+        "tag:kube-node:*"
+      ]
+    },
+    // Direct access to cluster Pod and Service networks is reserved for the
+    // tailnet owner and infrastructure identities. This prevents bypassing
+    // owner-only ingress controls through a routed ClusterIP or Pod IP.
+    {
+      "action": "accept",
+      "src": [
+        "autogroup:owner",
+        "tag:k8s-operator",
+        "tag:k8s",
+        "tag:k8s-subnet-router",
+        "tag:kube-node"
+      ],
+      "dst": [
         "10.244.0.0/16:*",
         "10.96.0.0/12:*"
       ]

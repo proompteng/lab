@@ -152,6 +152,12 @@ LEDGER_SCHEMA = frozenset(
     }
 )
 
+STRATEGY_SCOPED_LEDGER_MESSAGE = (
+    "STRATEGY-SCOPED LEDGER EVIDENCE UNAVAILABLE — "
+    "strategy_runtime_ledger_buckets has no verified strategy UUID lineage; "
+    "all-strategy P&L was omitted from this scoped view."
+)
+
 
 def default_flow_window(lane: FlowLane) -> Window:
     if lane == "equities":
@@ -474,15 +480,17 @@ def _query_execution_sources(
             "strategy_id": str(strategy_id) if strategy_id else None,
         },
     )
-    ledger = adapter.postgres(
-        "execution.ledger",
-        LEDGER_EVIDENCE_QUERY,
-        {
-            "start": ledger_window.start(now=captured_at),
-            "end": ledger_window.end(now=captured_at),
-            "strategy_id": None,
-        },
-    )
+    if strategy_id is None:
+        ledger = adapter.postgres(
+            "execution.ledger",
+            LEDGER_EVIDENCE_QUERY,
+            {
+                "start": ledger_window.start(now=captured_at),
+                "end": ledger_window.end(now=captured_at),
+            },
+        )
+    else:
+        ledger = QueryResult(())
     _validate_exact_schema("execution.tca", tca, TCA_SCHEMA)
     _validate_exact_schema("execution.ledger", ledger, LEDGER_SCHEMA)
     return tca, ledger
@@ -498,16 +506,35 @@ def _optional_runtime_status(
 
 
 def _ledger_state_records(
-    ledger: QueryResult, *, captured_at: datetime
+    ledger: QueryResult,
+    *,
+    captured_at: datetime,
+    strategy_id: UUID | None,
 ) -> tuple[Records, tuple[str, ...]]:
+    if strategy_id is not None:
+        records: Records = (
+            {
+                "current_profitability_proven": False,
+                "message": STRATEGY_SCOPED_LEDGER_MESSAGE,
+                "historical_ledger_rows": 0,
+                "ledger_included": False,
+                "scope": "strategy",
+                "strategy_id": str(strategy_id),
+            },
+        )
+        return records, (STRATEGY_SCOPED_LEDGER_MESSAGE,)
+
     current_proven, message = _current_profitability_state(
         ledger, captured_at=captured_at
     )
-    records: Records = (
+    records = (
         {
             "current_profitability_proven": current_proven,
             "message": message,
             "historical_ledger_rows": len(ledger.records),
+            "ledger_included": True,
+            "scope": "all_strategies",
+            "strategy_id": None,
         },
     )
     return records, (message,)
@@ -536,7 +563,7 @@ def execution_evidence(
         )
         status, status_messages = _optional_runtime_status(selected)
         ledger_state, profitability_messages = _ledger_state_records(
-            ledger, captured_at=captured_at
+            ledger, captured_at=captured_at, strategy_id=strategy_id
         )
         return _snapshot(
             adapter=selected,

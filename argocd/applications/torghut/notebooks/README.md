@@ -11,7 +11,9 @@ are not referenced by the running Hub or proxy.
 
 The ingress overrides the default Kubernetes proxy tag with `tag:torghut-notebooks`. The tailnet policy admits only
 `autogroup:owner` to that tag on HTTPS, so admission happens at the Tailscale network boundary without adding an
-application identity or login flow.
+application identity or login flow. Direct Pod and Service CIDR routes are likewise restricted to the tailnet owner
+and tagged Kubernetes infrastructure identities; ordinary tailnet members cannot bypass the tagged ingress through
+the proxy's ClusterIP or Pod IP.
 
 Notebook pods receive only a CNPG-managed `pg_read_all_data` role, a ClickHouse `readonly=1` profile, and the GET-only
 Torghut scheduler status URL. They do not receive broker, TigerBeetle, Kafka, Flink, Alpaca, or Kubernetes credentials,

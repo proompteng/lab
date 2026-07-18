@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -246,11 +247,31 @@ def test_tailscale_owner_is_the_only_notebook_ingress_principal() -> None:
         "tailscale.com/tags": "tag:torghut-notebooks"
     }
 
-    policy = (REPO_ROOT / "tofu/tailscale/templates/policy.hujson.tmpl").read_text()
-    assert '"tag:torghut-notebooks": ["tag:k8s-operator"]' in policy
-    assert '"src": ["autogroup:owner"]' in policy
-    assert '"dst": ["tag:torghut-notebooks:443"]' in policy
-    assert '"dst": ["*:*"]' not in policy
+    policy_source = (
+        REPO_ROOT / "tofu/tailscale/templates/policy.hujson.tmpl"
+    ).read_text()
+    policy = json.loads(re.sub(r"//.*", "", policy_source))
+    assert policy["tagOwners"]["tag:torghut-notebooks"] == ["tag:k8s-operator"]
+
+    general_rule = next(rule for rule in policy["acls"] if rule["src"] == ["*"])
+    assert "10.244.0.0/16:*" not in general_rule["dst"]
+    assert "10.96.0.0/12:*" not in general_rule["dst"]
+
+    route_rule = next(
+        rule for rule in policy["acls"] if "10.244.0.0/16:*" in rule["dst"]
+    )
+    assert route_rule["src"] == [
+        "autogroup:owner",
+        "tag:k8s-operator",
+        "tag:k8s",
+        "tag:k8s-subnet-router",
+        "tag:kube-node",
+    ]
+
+    notebook_rule = next(
+        rule for rule in policy["acls"] if rule["dst"] == ["tag:torghut-notebooks:443"]
+    )
+    assert notebook_rule["src"] == ["autogroup:owner"]
 
 
 def test_hub_extra_config_has_a_valid_fixed_authenticator_contract() -> None:
