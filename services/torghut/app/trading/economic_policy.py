@@ -307,6 +307,7 @@ def alpaca_equity_fee_schedule_cost(
     side: object,
     filled_qty: Decimal,
     filled_notional: Decimal,
+    policy: EconomicPolicy,
 ) -> tuple[Decimal, str] | None:
     if filled_qty <= 0 or filled_notional <= 0:
         return None
@@ -317,7 +318,6 @@ def alpaca_equity_fee_schedule_cost(
         normalized_side = "sell"
     if normalized_side not in {"buy", "sell"}:
         return None
-    policy = load_default_economic_policy()
     estimate = TransactionCostModel(
         policy.cost_model_config()
     ).estimate_regulatory_fees(
@@ -333,8 +333,7 @@ def alpaca_equity_fee_schedule_cost(
     return estimate.total, basis
 
 
-def alpaca_equity_fee_schedule_hash() -> str:
-    policy = load_default_economic_policy()
+def alpaca_equity_fee_schedule_hash(*, policy: EconomicPolicy) -> str:
     return _canonical_digest(
         cast(dict[str, object], policy.fees.model_dump(mode="json"))
     ).removeprefix("sha256:")
@@ -364,6 +363,17 @@ def load_runtime_economic_policy(
             "economic_policy_runtime_mismatch:" + ",".join(mismatches)
         )
     return policy
+
+
+def load_effective_economic_policy(settings_obj: object) -> EconomicPolicy:
+    """Resolve the runtime pin when configured, otherwise use the bundled policy."""
+    return (
+        load_runtime_economic_policy(
+            settings_obj,
+            required=False,
+        )
+        or load_default_economic_policy()
+    )
 
 
 def runtime_policy_mismatches(
@@ -514,6 +524,7 @@ __all__ = [
     "alpaca_equity_fee_schedule_hash",
     "bind_economic_policy_settings",
     "economic_policy_status",
+    "load_effective_economic_policy",
     "load_economic_policy",
     "load_default_economic_policy",
     "load_runtime_economic_policy",

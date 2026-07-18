@@ -6,9 +6,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
 
+from app.config import settings
 from app.trading.economic_policy import (
     alpaca_equity_fee_schedule_cost,
     alpaca_equity_fee_schedule_hash,
+    load_effective_economic_policy,
 )
 
 from scripts.hypothesis_runtime_window_import.constants import (
@@ -399,11 +401,14 @@ def _alpaca_2026_equity_fee_schedule_cost(
         side=side,
         filled_qty=filled_qty,
         filled_notional=filled_notional,
+        policy=load_effective_economic_policy(settings),
     )
 
 
 def _alpaca_2026_equity_fee_schedule_hash() -> str:
-    return alpaca_equity_fee_schedule_hash()
+    return alpaca_equity_fee_schedule_hash(
+        policy=load_effective_economic_policy(settings)
+    )
 
 
 def _cost_basis_is_alpaca_fee_schedule(value: object) -> bool:

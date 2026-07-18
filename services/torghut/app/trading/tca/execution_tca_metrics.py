@@ -12,10 +12,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...config import settings
 from ...models import Execution, ExecutionTCAMetric, TradeDecision
 from ..economic_policy import (
     alpaca_equity_fee_schedule_cost,
     alpaca_equity_fee_schedule_hash,
+    load_effective_economic_policy,
 )
 from .adaptive_policy import (
     ExecutionChurnContext,
@@ -690,6 +692,7 @@ def _alpaca_2026_equity_fee_schedule_cost(
         side=execution.side,
         filled_qty=filled_qty,
         filled_notional=filled_notional,
+        policy=load_effective_economic_policy(settings),
     )
 
 
@@ -736,7 +739,9 @@ def _has_alpaca_us_equity_source(
 
 
 def _alpaca_2026_equity_fee_schedule_hash() -> str:
-    return alpaca_equity_fee_schedule_hash()
+    return alpaca_equity_fee_schedule_hash(
+        policy=load_effective_economic_policy(settings)
+    )
 
 
 def _cost_basis_is_alpaca_fee_schedule(value: object) -> bool:

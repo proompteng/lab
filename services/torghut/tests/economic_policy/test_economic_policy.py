@@ -15,7 +15,10 @@ from app.trading.economic_policy import (
     DEFAULT_ECONOMIC_POLICY_PATH,
     EconomicPolicy,
     EconomicPolicyError,
+    alpaca_equity_fee_schedule_cost,
+    alpaca_equity_fee_schedule_hash,
     bind_economic_policy_settings,
+    load_effective_economic_policy,
     load_economic_policy,
     load_runtime_economic_policy,
 )
@@ -147,6 +150,52 @@ def test_policy_cost_model_applies_current_alpaca_sell_and_buy_fees() -> None:
     assert sell.cat_fee_cost == Decimal("0.01")
     assert sell.regulatory_fee_cost == Decimal("0.05")
     assert buy.regulatory_fee_cost == Decimal("0.01")
+
+
+def test_fee_fallback_uses_the_runtime_pinned_policy(tmp_path: Path) -> None:
+    default_policy = load_economic_policy()
+    rotated_policy = default_policy.model_copy(
+        update={
+            "fees": default_policy.fees.model_copy(
+                update={"cat_fee_per_share": Decimal("0.01")}
+            )
+        }
+    )
+    rotated_path = tmp_path / "rotated-economic-policy.json"
+    rotated_path.write_text(rotated_policy.model_dump_json(indent=2), encoding="utf-8")
+    runtime_settings = Settings(
+        _env_file=None,
+        TRADING_ECONOMIC_POLICY_PATH=str(rotated_path),
+        TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST=rotated_policy.digest,
+        TRADING_ALLOW_SHORTS=True,
+        TRADING_FRACTIONAL_EQUITIES_ENABLED=True,
+        TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY="1.0",
+        TRADING_MAX_POSITION_PCT_EQUITY="0.50",
+        TRADING_ALLOCATOR_MAX_SYMBOL_PCT_EQUITY="0.50",
+        TRADING_PORTFOLIO_MAX_GROSS_EXPOSURE_PCT_EQUITY="1.0",
+        TRADING_PORTFOLIO_MAX_NET_EXPOSURE_PCT_EQUITY="0.50",
+        TRADING_MAX_PARTICIPATION_RATE="0.10",
+        TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS="60",
+        TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS="0",
+        TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS="20",
+    )
+
+    effective_policy = load_effective_economic_policy(runtime_settings)
+    modeled_cost = alpaca_equity_fee_schedule_cost(
+        side="sell",
+        filled_qty=Decimal("10"),
+        filled_notional=Decimal("1000"),
+        policy=effective_policy,
+    )
+
+    assert effective_policy.digest == rotated_policy.digest
+    assert modeled_cost == (
+        Decimal("0.14"),
+        "modeled_alpaca_2026_equity_sec_taf_cat_per_order_conservative",
+    )
+    assert alpaca_equity_fee_schedule_hash(policy=effective_policy) != (
+        alpaca_equity_fee_schedule_hash(policy=default_policy)
+    )
 
 
 def test_policy_execution_preserves_strategy_and_global_notional_caps(
