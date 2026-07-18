@@ -1,9 +1,10 @@
 # Scheduler Critical Path And Knative Revision Scaling Production Evidence
 
-Status: production-proven for scheduler liveness, bounded rejected-outcome learning, and inactive API revision
-scale-to-zero. This evidence does not prove strategy profitability or authorize capital.
+Status: production-proven for scheduler liveness, bounded rejected-outcome learning, inactive API revision
+scale-to-zero, and immediate API revision cutover. This evidence does not prove strategy profitability or authorize
+capital.
 
-Evidence window: `2026-07-18T04:30:00Z` through `2026-07-18T08:26:15Z`.
+Evidence window: `2026-07-18T04:30:00Z` through `2026-07-18T11:56:40Z`.
 
 ## Result
 
@@ -15,7 +16,10 @@ The six `torghut-01510` through `torghut-01515` Deployments observed during the 
 not six schedulers and not six trading owners. Only the latest revision received traffic. Old API pods remained running
 because namespace Alloy scraped every revision-private metrics Service every 30 seconds, which Knative counted as
 traffic. The deployed scrape correction moved API metrics collection to the stable `torghut` Service, and all inactive
-revision pods then scaled to zero.
+revision pods then scaled to zero. Separately, the Services still requested a 10-second gradual rollout on every rapid
+image promotion. That added brief old/new reachability overlap and route churn without adding capacity because both
+Services are fixed at one replica. The gradual rollout was removed from production and explicitly disabled on the
+simulator.
 
 The rejected-outcome labeler now runs outside the order path and outside database transactions that span quote I/O. A
 bounded fairness correction prevents structurally incomplete rows from monopolizing every batch. The existing
@@ -84,6 +88,39 @@ unresolved review threads, adds a pod-template annotation containing the SHA-256
 manifest contract and the manifest-only CI path recompute the digest, so every future Alloy config change must update
 the annotation and roll the Deployment. This avoids a sidecar, reloader controller, polling loop, or second
 configuration authority.
+
+### Immediate-cutover hardening
+
+[Knative's rollout contract](https://knative.dev/docs/serving/rolling-out-latest-revision/) shifts 100% of traffic to a
+ready Revision immediately unless gradual rollout is configured. A configured rollout is time-based, starts at 1%, and
+does not interact with autoscaling. For Torghut's single-replica API and simulator, it therefore adds overlap without
+providing rollout capacity.
+
+PR `#12796`, merged as `d5d9bd4b9003431c62214982b1fe550d7e9c9c1e`, removed the `10s` annotation from
+both desired manifests and added a focused manifest contract. Production converged to an absent annotation. The
+simulator did not: live `managedFields` showed a legacy `kubectl` manager from `2026-05-05` still co-owned the key, so
+Argo server-side apply could relinquish its ownership but could not delete the other manager's value by omission.
+
+PR `#12801`, merged as `8f9bf697dec51117ee96c7fc3a93e140e111036f`, made that one legacy boundary explicit
+with `rollout-duration: 0s`. Knative's
+[validation](https://github.com/knative/serving/blob/dbce551f802c2e3b5fe4275fe7370275568ad717/pkg/apis/serving/metadata_validation.go#L50-L75)
+accepts zero and its
+[route reconciliation](https://github.com/knative/serving/blob/dbce551f802c2e3b5fe4275fe7370275568ad717/pkg/reconciler/route/reconcile_resources.go#L331-L347)
+resolves zero through the cluster default. Direct `config-network` readback showed no cluster rollout default, so the
+effective behavior is immediate cutover. This required one annotation and one existing manifest test—not a cleanup
+controller, hook, second reconciler, or manual resource deletion.
+
+Live readback at `2026-07-18T11:56:35Z` proved:
+
+- Argo targeted exact revision `8f9bf697dec51117ee96c7fc3a93e140e111036f`, reported `Synced`, and completed the
+  operation successfully at `11:56:40Z`; aggregate health was still `Progressing` and was not used as workload proof;
+- production annotation absent and simulator annotation `0s`;
+- exactly one ready `2/2` production pod and one ready `2/2` simulator pod, both with zero restarts;
+- current production and simulator PodAutoscalers each desired and actual scale one; and
+- all five retained production and all five retained simulator PodAutoscalers desired and actual scale zero.
+
+The six retained Deployment objects per Service remain intentional rollback history. Only six simultaneous live pods
+were defective.
 
 ## Delivery And Live Readback
 
