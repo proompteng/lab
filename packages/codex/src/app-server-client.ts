@@ -1,7 +1,4 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 
 import type { ClientInfo, InitializeCapabilities, RequestId } from './app-server'
 import type { ReasoningEffort } from './app-server/ReasoningEffort'
@@ -17,6 +14,7 @@ import type {
   CurrentTimeReadResponse,
   DynamicToolCallParams,
   DynamicToolCallResponse,
+  DynamicToolSpec,
   ErrorNotification,
   FileChangeOutputDeltaNotification,
   ItemCompletedNotification,
@@ -157,17 +155,14 @@ export type CodexAppServerOptions = {
     params: ToolRequestUserInputParams,
   ) => ToolRequestUserInputResponse | Promise<ToolRequestUserInputResponse>
   onDynamicToolCall?: (params: DynamicToolCallParams) => DynamicToolCallResponse | Promise<DynamicToolCallResponse>
+  /** Dynamic tools advertised to the model when a new thread is created. */
+  dynamicTools?: DynamicToolSpec[]
   onPermissionsRequestApproval?: (
     params: PermissionsRequestApprovalParams,
   ) => PermissionsRequestApprovalResponse | Promise<PermissionsRequestApprovalResponse>
   onChatgptAuthTokensRefresh?: (
     params: ChatgptAuthTokensRefreshParams,
   ) => ChatgptAuthTokensRefreshResponse | Promise<ChatgptAuthTokensRefreshResponse>
-  /**
-   * Auth file used for the default ChatGPT token refresh handler.
-   * Defaults to CODEX_AUTH, CODEX_HOME/auth.json, or ~/.codex/auth.json.
-   */
-  chatgptAuthPath?: string
   bootstrapTimeoutMs?: number
 }
 
@@ -240,38 +235,6 @@ const defaultInitializeCapabilities: InitializeCapabilities = {
 }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
-
-const defaultChatgptAuthPath = (): string => {
-  const explicitPath = process.env.CODEX_AUTH?.trim()
-  if (explicitPath) return explicitPath
-  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), '.codex')
-  return join(codexHome, 'auth.json')
-}
-
-const requiredAuthString = (value: unknown, field: string): string => {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`Codex auth file is missing ${field}`)
-  }
-  return value.trim()
-}
-
-const loadChatgptAuthTokens = async (
-  authPath: string,
-  params: ChatgptAuthTokensRefreshParams,
-): Promise<ChatgptAuthTokensRefreshResponse> => {
-  const auth = JSON.parse(await readFile(authPath, 'utf8')) as {
-    tokens?: { access_token?: unknown; account_id?: unknown }
-  }
-  const tokens = auth.tokens
-  if (!tokens || typeof tokens !== 'object') {
-    throw new Error(`Codex auth file ${authPath} does not contain ChatGPT tokens`)
-  }
-  const accessToken = requiredAuthString(tokens.access_token, 'tokens.access_token')
-  const accountIdCandidate =
-    typeof tokens.account_id === 'string' && tokens.account_id.trim() ? tokens.account_id : params.previousAccountId
-  const chatgptAccountId = requiredAuthString(accountIdCandidate, 'tokens.account_id')
-  return { accessToken, chatgptAccountId, chatgptPlanType: null }
-}
 
 const declineAdditionalPermissions = (): PermissionsRequestApprovalResponse => ({
   permissions: {},
@@ -527,9 +490,9 @@ export class CodexAppServerClient {
   private historyMode: ThreadHistoryMode | null
   private onRequestUserInput: NonNullable<CodexAppServerOptions['onRequestUserInput']> | null
   private onDynamicToolCall: NonNullable<CodexAppServerOptions['onDynamicToolCall']> | null
+  private dynamicTools: DynamicToolSpec[] | null
   private onPermissionsRequestApproval: NonNullable<CodexAppServerOptions['onPermissionsRequestApproval']> | null
   private onChatgptAuthTokensRefresh: NonNullable<CodexAppServerOptions['onChatgptAuthTokensRefresh']> | null
-  private chatgptAuthPath: string
 
   constructor({
     binaryPath = 'codex',
@@ -547,9 +510,9 @@ export class CodexAppServerClient {
     logger,
     onRequestUserInput,
     onDynamicToolCall,
+    dynamicTools,
     onPermissionsRequestApproval,
     onChatgptAuthTokensRefresh,
-    chatgptAuthPath = defaultChatgptAuthPath(),
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
@@ -563,9 +526,9 @@ export class CodexAppServerClient {
     this.historyMode = historyMode ?? (persistExtendedHistory ? 'paginated' : null)
     this.onRequestUserInput = onRequestUserInput ?? null
     this.onDynamicToolCall = onDynamicToolCall ?? null
+    this.dynamicTools = dynamicTools ? [...dynamicTools] : null
     this.onPermissionsRequestApproval = onPermissionsRequestApproval ?? null
     this.onChatgptAuthTokensRefresh = onChatgptAuthTokensRefresh ?? null
-    this.chatgptAuthPath = chatgptAuthPath
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox]
@@ -735,6 +698,7 @@ export class CodexAppServerClient {
         personality: turnOptions.personality ?? null,
         ephemeral: null,
         historyMode: this.historyMode,
+        dynamicTools: this.dynamicTools,
         experimentalRawEvents: this.experimentalRawEvents,
       }
 
@@ -1008,9 +972,10 @@ export class CodexAppServerClient {
           break
         }
         case 'account/chatgptAuthTokens/refresh':
-          result = this.onChatgptAuthTokensRefresh
-            ? await this.onChatgptAuthTokensRefresh(params as ChatgptAuthTokensRefreshParams)
-            : await loadChatgptAuthTokens(this.chatgptAuthPath, params as ChatgptAuthTokensRefreshParams)
+          if (!this.onChatgptAuthTokensRefresh) {
+            throw new Error('ChatGPT auth token refresh handler is not configured')
+          }
+          result = await this.onChatgptAuthTokensRefresh(params as ChatgptAuthTokensRefreshParams)
           break
         case 'mcpServer/elicitation/request':
           result = { action: 'decline', content: null }

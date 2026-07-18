@@ -1,8 +1,5 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -342,66 +339,73 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
-  it('declines permission escalation and refreshes ChatGPT tokens from the Codex auth file', async () => {
-    const tempDir = await mkdtemp(path.join(tmpdir(), 'codex-app-server-auth-'))
-    const authPath = path.join(tempDir, 'auth.json')
-    await writeFile(
-      authPath,
-      JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          access_token: 'access-token-1',
-          account_id: 'account-1',
-        },
-      }),
-      'utf8',
-    )
+  it('declines permission escalation and rejects auth refresh without a real handler', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
 
-    const { child, client } = setupClient({ chatgptAuthPath: authPath })
-    try {
-      await respondToInitialize(child)
-      await client.ensureReady()
+    writeLine(child, {
+      id: 46,
+      method: 'item/permissions/requestApproval',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        environmentId: null,
+        startedAtMs: 1_784_277_045_000,
+        cwd: '/workspace/lab',
+        reason: 'needs network access',
+        permissions: { network: { enabled: true }, fileSystem: null },
+      },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 46,
+      result: {
+        permissions: {},
+        scope: 'turn',
+        strictAutoReview: true,
+      },
+    })
 
-      writeLine(child, {
-        id: 46,
-        method: 'item/permissions/requestApproval',
-        params: {
-          threadId: 'thread-1',
-          turnId: 'turn-1',
-          itemId: 'item-1',
-          environmentId: null,
-          startedAtMs: 1_784_277_045_000,
-          cwd: '/workspace/lab',
-          reason: 'needs network access',
-          permissions: { network: { enabled: true }, fileSystem: null },
-        },
-      })
-      await expect(nextMessage(child)).resolves.toEqual({
-        id: 46,
-        result: {
-          permissions: {},
-          scope: 'turn',
-          strictAutoReview: true,
-        },
-      })
+    writeLine(child, {
+      id: 47,
+      method: 'account/chatgptAuthTokens/refresh',
+      params: { reason: 'unauthorized', previousAccountId: 'account-old' },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 47,
+      error: {
+        code: -32_000,
+        message: 'ChatGPT auth token refresh handler is not configured',
+      },
+    })
 
-      writeLine(child, {
-        id: 47,
-        method: 'account/chatgptAuthTokens/refresh',
-        params: { reason: 'unauthorized', previousAccountId: 'account-old' },
-      })
-      await expect(nextMessage(child)).resolves.toEqual({
-        id: 47,
-        result: {
-          accessToken: 'access-token-1',
-          chatgptAccountId: 'account-1',
-          chatgptPlanType: null,
-        },
-      })
-    } finally {
-      client.stop()
-      await rm(tempDir, { recursive: true, force: true })
-    }
+    client.stop()
+  })
+
+  it('delegates ChatGPT token refresh to a configured refresh handler', async () => {
+    const onChatgptAuthTokensRefresh = vi.fn(async () => ({
+      accessToken: 'fresh-access-token',
+      chatgptAccountId: 'account-1',
+      chatgptPlanType: 'pro' as const,
+    }))
+    const { child, client } = setupClient({ onChatgptAuthTokensRefresh })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const params = { reason: 'unauthorized' as const, previousAccountId: 'account-old' }
+    writeLine(child, { id: 48, method: 'account/chatgptAuthTokens/refresh', params })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 48,
+      result: {
+        accessToken: 'fresh-access-token',
+        chatgptAccountId: 'account-1',
+        chatgptPlanType: 'pro',
+      },
+    })
+    expect(onChatgptAuthTokensRefresh).toHaveBeenCalledWith(params)
+
+    client.stop()
   })
 
   it('returns a JSON-RPC error for unsupported server request methods', async () => {
@@ -409,16 +413,47 @@ describe('CodexAppServerClient v2 notifications', () => {
     await respondToInitialize(child)
     await client.ensureReady()
 
-    writeLine(child, { id: 48, method: 'future/request', params: {} })
+    writeLine(child, { id: 49, method: 'future/request', params: {} })
 
     await expect(nextMessage(child)).resolves.toEqual({
-      id: 48,
+      id: 49,
       error: {
         code: -32_000,
         message: 'Unsupported codex app-server request method: future/request',
       },
     })
 
+    client.stop()
+  })
+
+  it('advertises configured dynamic tools when creating a thread', async () => {
+    const dynamicTools = [
+      {
+        type: 'function' as const,
+        name: 'linear_graphql',
+        description: 'Query Linear GraphQL',
+        inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    ]
+    const { child, client } = setupClient({
+      dynamicTools,
+      onDynamicToolCall: async () => ({ contentItems: [], success: true }),
+    })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1', (request) => {
+      expect(request.params).toMatchObject({ dynamicTools })
+    })
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+    await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
     client.stop()
   })
 
