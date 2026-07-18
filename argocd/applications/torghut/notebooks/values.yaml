@@ -57,10 +57,10 @@ hub:
           async def authenticate(self, handler, data=None):
               return {"name": "torghut", "admin": False}
 
-      cookie_secret = os.environ.get("TORGHUT_HUB_COOKIE_SECRET", "")
+      cookie_secret = os.environ.get("TORGHUT_HUB_COOKIE_SECRET", "").strip()
       if len(cookie_secret) != 64:
           raise RuntimeError("TORGHUT_HUB_COOKIE_SECRET must be 64 hexadecimal characters")
-      crypt_key = os.environ.get("TORGHUT_HUB_CRYPT_KEY", "")
+      crypt_key = os.environ.get("TORGHUT_HUB_CRYPT_KEY", "").strip()
       if len(crypt_key) != 64:
           raise RuntimeError("TORGHUT_HUB_CRYPT_KEY must be 64 hexadecimal characters")
 
