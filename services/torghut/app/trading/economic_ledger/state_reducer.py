@@ -21,7 +21,7 @@ from .types import (
 
 
 STATE_REDUCER_NAME = "independent_position_state"
-STATE_REDUCER_VERSION = "torghut.broker-economic-state.v3"
+STATE_REDUCER_VERSION = "torghut.broker-economic-state.v4"
 
 _EXTERNAL_FLOW_TYPES = frozenset({"ACATC", "CSD", "CSW", "JNLC", "TRANS"})
 _DIVIDEND_ACTIVITY_TYPES = frozenset(

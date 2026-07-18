@@ -19,6 +19,7 @@ _USD_CASH_QUANTUM = Decimal("0.01")
 _LEDGER_ABSOLUTE_LIMIT = Decimal("100000000000000000000")
 _UNIT_NOTIONAL_MULTIPLIER = Decimal("1")
 _OCC_OPTION_SYMBOL = re.compile(r"^[A-Z0-9]{1,6}[0-9]{6}[CP][0-9]{8}$")
+_MIN_UTC_DATETIME = datetime.min.replace(tzinfo=timezone.utc)
 
 
 class EconomicLedgerError(RuntimeError):
@@ -184,10 +185,21 @@ class EconomicActivity:
         return _UNIT_NOTIONAL_MULTIPLIER
 
     @property
-    def sort_key(self) -> tuple[datetime, date, str, str]:
+    def sort_key(self) -> tuple[datetime, date, datetime, str, str]:
+        # Alpaca can publish date-only crypto fees after their economic date.
+        # Preserve observation order so a late append cannot rewrite an earlier
+        # state-dependent fee transaction and its immutable ledger identity.
+        observation_order = (
+            self.first_observed_at
+            if self.activity_type == "CFEE"
+            and self.event_at is None
+            and self.settle_date is not None
+            else _MIN_UTC_DATETIME
+        )
         return (
             self.economic_at,
             self.settle_date or date.min,
+            observation_order,
             self.external_activity_id,
             self.raw_payload_sha256,
         )

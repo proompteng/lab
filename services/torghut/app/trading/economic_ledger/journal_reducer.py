@@ -25,7 +25,7 @@ from .types import (
 
 
 JOURNAL_REDUCER_NAME = "balanced_journal"
-JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v3"
+JOURNAL_REDUCER_VERSION = "torghut.broker-economic-journal.v4"
 
 _MAX_TRANSACTION_ID_LENGTH = 512
 _REVERSAL_TRANSACTION_ID_PREFIX = "correction-reversal:sha256:"
