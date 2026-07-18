@@ -172,7 +172,11 @@ def _validate_account_label(
     account_specs: Sequence[TigerBeetleAccountSpec],
 ) -> None:
     labels = [str(spec.account_label or "").strip() for spec in account_specs]
-    if not labels or any(not label for label in labels):
+    if not labels:
+        raise RuntimeError("tigerbeetle_stable_ref_backfill_account_label_missing")
+    if all(not label for label in labels):
+        return
+    if any(not label for label in labels):
         raise RuntimeError("tigerbeetle_stable_ref_backfill_account_label_missing")
     account_labels = set(labels)
     payload_account_label = str(payload.get("account_label") or "").strip()

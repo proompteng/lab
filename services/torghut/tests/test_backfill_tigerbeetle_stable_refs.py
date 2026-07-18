@@ -47,7 +47,9 @@ def _seed_refs(
     *,
     count: int,
     include_credit_account_ref: bool = True,
+    debit_account_label: str | None = "paper",
     credit_account_label: str | None = "paper",
+    payload_account_label: str | None = "paper",
 ) -> None:
     account_refs = [
         TigerBeetleAccountRef(
@@ -56,7 +58,7 @@ def _seed_refs(
             account_key="cash:paper:usd",
             ledger=LEDGER_USD_MICRO,
             code=1001,
-            account_label="paper",
+            account_label=debit_account_label,
         )
     ]
     if include_credit_account_ref:
@@ -86,7 +88,7 @@ def _seed_refs(
                 source_id=f"event-{index}",
                 event_fingerprint=f"fingerprint-{index}",
                 payload_json={
-                    "account_label": "paper",
+                    "account_label": payload_account_label,
                     "debit_account_id": DEBIT_ACCOUNT_ID,
                     "credit_account_id": CREDIT_ACCOUNT_ID,
                 },
@@ -157,6 +159,7 @@ class TestBackfillTigerBeetleStableRefs(TestCase):
             "missing_before": 3,
             "missing_after": 0,
             "postgres_rows_updated": 3,
+            "postgres_rows_would_update": 0,
         }
         json_output = io.StringIO()
         human_output = io.StringIO()
@@ -169,10 +172,28 @@ class TestBackfillTigerBeetleStableRefs(TestCase):
         self.assertEqual(
             json_output.getvalue().strip(),
             '{"apply":true,"complete":true,"missing_after":0,'
-            '"missing_before":3,"postgres_rows_updated":3}',
+            '"missing_before":3,"postgres_rows_updated":3,'
+            '"postgres_rows_would_update":0}',
         )
         self.assertIn("apply=True complete=True", human_output.getvalue())
         self.assertIn("missing_before=3 missing_after=0", human_output.getvalue())
+        self.assertIn("updated=3 would_update=0", human_output.getvalue())
+
+    def test_preview_receipt_shows_rows_that_would_be_updated(self) -> None:
+        output = io.StringIO()
+        payload = {
+            "apply": False,
+            "complete": False,
+            "missing_before": 3,
+            "missing_after": 3,
+            "postgres_rows_updated": 0,
+            "postgres_rows_would_update": 2,
+        }
+
+        with redirect_stdout(output):
+            _print_payload(payload, as_json=False)
+
+        self.assertIn("updated=0 would_update=2", output.getvalue())
 
     def test_main_requires_the_selected_dsn_environment_variable(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -317,7 +338,35 @@ class TestBackfillTigerBeetleStableRefs(TestCase):
 
         self.assertNotIn("stable_ref", payload)
 
-    def test_missing_account_label_fails_closed(self) -> None:
+    def test_unknown_account_labels_use_stable_ref_fallback(self) -> None:
+        with Session(self.engine) as session:
+            _seed_refs(
+                session,
+                count=1,
+                debit_account_label=None,
+                credit_account_label=None,
+                payload_account_label=None,
+            )
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=FakeTigerBeetleClient(),
+            )
+
+            result = run_stable_ref_backfill(
+                session,
+                journal,
+                batch_size=1,
+                max_batches=1,
+                apply=True,
+            )
+            payload = session.scalar(select(TigerBeetleTransferRef.payload_json))
+
+        self.assertTrue(result["complete"])
+        self.assertEqual(
+            payload["stable_ref"]["components"]["account_label"], "unknown"
+        )
+
+    def test_partial_account_label_metadata_fails_closed(self) -> None:
         with Session(self.engine) as session:
             _seed_refs(session, count=1, credit_account_label=None)
             journal = TigerBeetleLedgerJournal(

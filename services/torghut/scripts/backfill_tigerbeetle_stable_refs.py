@@ -184,7 +184,8 @@ def _print_payload(payload: Mapping[str, object], *, as_json: bool) -> None:
         f"apply={payload['apply']} complete={payload['complete']} "
         f"missing_before={payload['missing_before']} "
         f"missing_after={payload['missing_after']} "
-        f"updated={payload['postgres_rows_updated']}"
+        f"updated={payload['postgres_rows_updated']} "
+        f"would_update={payload['postgres_rows_would_update']}"
     )
 
 
