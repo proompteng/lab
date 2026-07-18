@@ -34,6 +34,18 @@ const hyperliquidFeedReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-release.yml', import.meta.url),
   'utf8',
 )
+const notebookWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebook-build-push.yaml', import.meta.url),
+  'utf8',
+)
+const notebookReleaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebook-release.yml', import.meta.url),
+  'utf8',
+)
+const notebookCiWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebooks-ci.yml', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../../../../../.github/workflows/torghut-ci.yml', import.meta.url), 'utf8')
 const pullRequestWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/pull-request.yml', import.meta.url),
@@ -285,6 +297,40 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedReleaseWorkflow).toContain('## Testing')
     expect(hyperliquidFeedReleaseWorkflow).toContain('## Breaking Changes')
     expect(hyperliquidFeedReleaseWorkflow).toContain('## Checklist')
+  })
+
+  it('builds and promotes the dedicated Torghut notebook image', () => {
+    expect(notebookWorkflow).toContain('image_name: torghut-notebook')
+    expect(notebookWorkflow).toContain('package_attr: torghut-notebook-image')
+    expect(notebookWorkflow).toContain('torghut-notebook-release-contract')
+    expect(notebookWorkflow).toContain("- 'services/torghut/app/__init__.py'")
+    expect(notebookWorkflow).toContain("- 'services/torghut/app/notebook_data/**'")
+    expect(notebookWorkflow).toContain("- 'nix/images/torghut-notebook.nix'")
+    expect(notebookReleaseWorkflow).toContain('torghut-notebook-build-push')
+    expect(notebookReleaseWorkflow).toContain("IMAGE='registry.ide-newton.ts.net/lab/torghut-notebook'")
+    expect(notebookReleaseWorkflow).toContain('bun run packages/scripts/src/torghut/update-notebook-manifest.ts')
+    expect(notebookReleaseWorkflow).toContain('Update only the notebook image digest')
+    expect(notebookReleaseWorkflow).toContain('linux/amd64 linux/arm64')
+    expect(notebookReleaseWorkflow).not.toContain('name: Checkout source revision')
+    expect(notebookReleaseWorkflow).toContain('name: Refresh and revalidate promotion base')
+    expect(notebookReleaseWorkflow).toContain('git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main')
+    expect(notebookReleaseWorkflow).toContain('git merge --ff-only origin/main')
+    expect(notebookReleaseWorkflow).toContain('name: Verify promotion base before pull request creation')
+    expect(notebookReleaseWorkflow).toContain(
+      'Main advanced while preparing the notebook promotion; rerun against the new base.',
+    )
+    const refreshBase = notebookReleaseWorkflow.indexOf('name: Refresh and revalidate promotion base')
+    const updateDigest = notebookReleaseWorkflow.indexOf('name: Update only the notebook image digest')
+    const verifyBase = notebookReleaseWorkflow.indexOf('name: Verify promotion base before pull request creation')
+    const createPr = notebookReleaseWorkflow.indexOf('name: Create deploy pull request')
+    expect(refreshBase).toBeLessThan(updateDigest)
+    expect(verifyBase).toBeGreaterThan(updateDigest)
+    expect(verifyBase).toBeLessThan(createPr)
+    expect(notebookCiWorkflow.match(/- 'services\/torghut\/app\/__init__\.py'/g)).toHaveLength(2)
+    expect(notebookCiWorkflow.match(/- 'services\/torghut\/scripts\/start_torghut_notebook\.sh'/g)).toHaveLength(2)
+    const staleDiffBlock = staleDiffBlockFor(notebookReleaseWorkflow, 'services/torghut/app/notebook_data')
+    expect(staleDiffBlock).toContain('services/torghut/app/__init__.py')
+    expect(staleDiffBlock).toContain('services/torghut/scripts/start_torghut_notebook.sh')
   })
 
   it('defines native amd64 and arm64 GitHub runner scale sets for Torghut image builds', () => {

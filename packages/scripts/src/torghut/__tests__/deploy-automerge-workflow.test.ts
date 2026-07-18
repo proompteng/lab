@@ -26,6 +26,10 @@ const hyperliquidFeedReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-release.yml', import.meta.url),
   'utf8',
 )
+const notebookReleaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-notebook-release.yml', import.meta.url),
+  'utf8',
+)
 
 const countOccurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1
 
@@ -196,5 +200,21 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).toContain('name: Verify source Hyperliquid feed image digest contract')
     expect(deployAutomergeWorkflow).toContain('Hyperliquid feed release manifest pins a multi-arch image digest')
     expect(deployAutomergeWorkflow).toContain('TORGHUT_HYPERLIQUID_FEED_COMMIT')
+  })
+
+  test('allowlists notebook digest-only promotions with a multi-architecture gate', () => {
+    const valuesPath = 'argocd/applications/torghut/notebooks/values.yaml'
+
+    expect(notebookReleaseWorkflow).toContain(valuesPath)
+    expect(notebookReleaseWorkflow).toContain('branch: codex/torghut-notebook-release-${{ steps.meta.outputs.tag }}')
+    expect(countOccurrences(deployAutomergeWorkflow, `'${valuesPath}'`)).toBeGreaterThanOrEqual(2)
+    expect(deployAutomergeWorkflow).toContain(
+      "startsWith(github.event.pull_request.head.ref, 'codex/torghut-notebook-release-')",
+    )
+    expect(deployAutomergeWorkflow).toContain("steps.gates.outputs.release_lane == 'notebook'")
+    expect(deployAutomergeWorkflow).toContain('name: Verify notebook image digest contract')
+    expect(deployAutomergeWorkflow).toContain(
+      "required_checks+=('torghut-notebooks-ci|fixture notebooks and manifest contracts')",
+    )
   })
 })

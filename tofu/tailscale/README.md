@@ -57,4 +57,8 @@ If the `nuc` Tailscale IP changes, update `dns_split_nameservers` before applyin
 
 Kubernetes subnet routes approved for Tailscale subnet routers come from `kubernetes_routes`. Keep this aligned with the actual pod and service CIDRs used by the cluster. As of 2026-03-11, the live cluster was observed with `--cluster-cidr=10.244.0.0/16`, `--service-cluster-ip-range=10.96.0.0/12`, and `kube-dns` at `10.96.0.10`, so the defaults include `10.244.0.0/16` and `10.96.0.0/12`.
 
+The ACL grants those Pod and Service CIDRs only to `autogroup:owner` and tagged Kubernetes infrastructure identities.
+Do not add them to the general `src = ["*"]` rule: doing so would let any tailnet member bypass an owner-only tagged
+Ingress by connecting directly to a ClusterIP or Pod IP.
+
 > ℹ️ HTTPS certificates remain a manual tailnet toggle today. Enable MagicDNS and HTTPS in the Tailscale admin console under **DNS → HTTPS certificates** before relying on `tailscale serve` or automated cert provisioning.

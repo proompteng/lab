@@ -10,18 +10,50 @@
     "tag:k8s-operator": ["autogroup:admin"],
     "tag:k8s": ["tag:k8s-operator"],
     "tag:k8s-subnet-router": ["tag:k8s-operator"],
-    "tag:kube-node": ["tag:k8s-operator"]
+    "tag:kube-node": ["tag:k8s-operator"],
+    "tag:torghut-notebooks": ["tag:k8s-operator"]
   },
 
   // Define access control lists for users, groups, autogroups, tags,
   // Tailscale IP addresses, and subnet ranges.
   "acls": [
-    // Allow all connections.
-    // Comment this section out if you want to define specific restrictions.
+    // Preserve the tailnet's existing broad connectivity for member-owned
+    // devices, existing infrastructure tags, and approved Kubernetes routes.
+    // The dedicated Torghut notebooks tag is intentionally excluded.
     {
       "action": "accept",
       "src": ["*"],
-      "dst": ["*:*"]
+      "dst": [
+        "autogroup:member:*",
+        "tag:k8s-operator:*",
+        "tag:k8s:*",
+        "tag:k8s-subnet-router:*",
+        "tag:kube-node:*"
+      ]
+    },
+    // Direct access to cluster Pod and Service networks is reserved for the
+    // tailnet owner and infrastructure identities. This prevents bypassing
+    // owner-only ingress controls through a routed ClusterIP or Pod IP.
+    {
+      "action": "accept",
+      "src": [
+        "autogroup:owner",
+        "tag:k8s-operator",
+        "tag:k8s",
+        "tag:k8s-subnet-router",
+        "tag:kube-node"
+      ],
+      "dst": [
+        "10.244.0.0/16:*",
+        "10.96.0.0/12:*"
+      ]
+    },
+    // JupyterHub has no application login. Admission is therefore restricted
+    // to devices owned by the tailnet owner at the network boundary.
+    {
+      "action": "accept",
+      "src": ["autogroup:owner"],
+      "dst": ["tag:torghut-notebooks:443"]
     }
   ],
 

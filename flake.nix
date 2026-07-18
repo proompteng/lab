@@ -293,6 +293,10 @@
               inherit pkgs lib;
               repoRoot = ./.;
             };
+            "torghut-notebook-image" = import ./nix/images/torghut-notebook.nix {
+              inherit pkgs lib repoRevision;
+              repoRoot = ./.;
+            };
           } // (import ./nix/images/agents.nix {
             inherit
               pkgs

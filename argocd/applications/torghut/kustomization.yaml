@@ -51,3 +51,4 @@ resources:
   - ws
   - ta
   - ta-sim
+  - notebooks

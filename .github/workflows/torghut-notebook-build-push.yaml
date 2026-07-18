@@ -1,0 +1,41 @@
+name: torghut-notebook-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/torghut/app/__init__.py'
+      - 'services/torghut/app/notebook_data/**'
+      - 'services/torghut/notebooks/00-system-flow.ipynb'
+      - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
+      - 'services/torghut/notebooks/20-execution-evidence.ipynb'
+      - 'services/torghut/notebooks/30-capital-authority.ipynb'
+      - 'services/torghut/scripts/start_torghut_notebook.sh'
+      - 'services/torghut/pyproject.toml'
+      - 'services/torghut/uv.lock'
+      - 'nix/images/torghut-notebook.nix'
+      - 'flake.nix'
+      - 'flake.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: torghut-notebook-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: torghut-notebook
+      package_attr: torghut-notebook-image
+      tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-notebook-release-contract' || '' }}
+      image_build_timeout: 15m
+    secrets: inherit

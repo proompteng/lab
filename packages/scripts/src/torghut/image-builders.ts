@@ -21,7 +21,7 @@ export type BuildImageResult = {
   commit: string
 }
 
-type TorghutImageVariant = 'core' | 'ws' | 'ta' | 'hyperliquid-feed'
+type TorghutImageVariant = 'core' | 'ws' | 'ta' | 'hyperliquid-feed' | 'notebook'
 
 type TorghutImageConfig = {
   service: string
@@ -74,6 +74,14 @@ const imageConfigs: Record<TorghutImageVariant, TorghutImageConfig> = {
     packageAttr: 'torghut-hyperliquid-feed-image',
     repository: 'lab/torghut-hyperliquid-feed',
     envPrefix: 'TORGHUT_HYPERLIQUID_FEED_IMAGE',
+    defaultTag: 'latest',
+  },
+  notebook: {
+    service: 'torghut-notebook',
+    imageName: 'torghut-notebook',
+    packageAttr: 'torghut-notebook-image',
+    repository: 'lab/torghut-notebook',
+    envPrefix: 'TORGHUT_NOTEBOOK_IMAGE',
     defaultTag: 'latest',
   },
 }
