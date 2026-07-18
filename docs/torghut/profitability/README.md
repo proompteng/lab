@@ -58,6 +58,9 @@ readback. The audit snapshot records what was observed at its stated time.
 - [Slice 10 production evidence](evidence/slice-10-tigerbeetle-economic-parity-2026-07-17.md): full projection
   materialization, exact idempotent rerun, sealed CNPG bindings, controlled mismatch, recovery, and independent
   residual reporting.
+- [Slice 12 production evidence](evidence/slice-12-economic-policy-parity-2026-07-18.md): exact replay/shadow/paper
+  policy and intent parity, promoted image identity, corrected rollout contract, singleton readback, and fail-closed
+  capital verdict.
 - [Scheduler critical-path production evidence](evidence/scheduler-critical-path-2026-07-18.md): singleton ownership,
   bounded rejected-outcome learning, Knative revision scale-to-zero repair, live backlog progress, and capital verdict.
 
