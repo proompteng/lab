@@ -1,7 +1,7 @@
 # CNPG Evidence Storage And Recovery
 
-Status: Slice 11 implementation contract. The high-availability rollout and isolated restore drill are not yet
-production-proven.
+Status: Slice 11 implementation contract. Cross-host replication is production-proven; standby backup, controlled
+switchover, query-envelope, and isolated-restore proofs remain open.
 
 ## Observed Baseline
 
@@ -26,6 +26,12 @@ Each instance has a `500m` CPU and `1Gi` memory request plus a `4` CPU and `8Gi`
 the observed primary use of roughly `379m` CPU and `453Mi` memory while preventing an unbounded database pod from
 consuming a worker. Base backups prefer the standby and fall back to the primary when no standby is available.
 
+Planned primary updates use `primaryUpdateMethod: switchover`. The first two-instance rollout exposed why this must be
+explicit: the operator defaulted to an in-place smart shutdown, the write endpoint rejected connections for about
+3 minutes 13 seconds, and the singleton scheduler became ready again about 4 minutes 31 seconds after the interruption
+started. No trade decision, broker-mutation receipt, or mutation event was created during the interruption, but that
+downtime is not an acceptable planned-update contract when a ready replica exists.
+
 CloudNativePG manages `instances - 1` replicas and automated failover whenever `instances` is greater than one. Its
 backup guidance states that WAL archiving provides a default disaster-recovery RPO of at most five minutes and that
 restore time must be measured regularly. See the official
@@ -46,7 +52,22 @@ kubectl -n torghut patch cluster torghut-db --type=json \
 This removes only the stale scheduling pin. It does not restart, delete, or recreate the primary. The committed
 architecture affinity and required hostname anti-affinity then become the only scheduling contract. Verify the result
 through `metadata.managedFields`, the live Cluster spec, and pod node placement; do not retain a cleanup Job or second
-configuration writer.
+configuration writer. After the one-time patch, omit `nodeSelector` from Git; a null sentinel is not valid against the
+CNPG schema once the legacy map no longer exists.
+
+If Argo has already raised `instances` before the field-ownership patch lands, CNPG may create an unschedulable join Job
+whose immutable pod template still contains the old hostname. Confirm that the join pod never started and that the PVC
+is only marked `initializing`; then delete that generated join Job and the empty replica PVC so CNPG can rebuild them
+from the corrected Cluster spec. Never delete the primary pod or primary PVC. This is the operator's supported replica
+rebuild boundary, not a recurring controller or cleanup path.
+
+## First HA Rollout Evidence
+
+The `2026-07-18` rollout cloned 23,655,938,048 bytes in about 12 minutes. The resulting primary and replica were ready
+on different amd64 hosts with zero container restarts. Direct `pg_stat_replication` readback reported `streaming`,
+`async`, and zero byte replay lag after catch-up. Both pods applied the bounded resource contract. Continuous archiving
+and the latest completed backup remained healthy, and direct CNPG readback found no new trade decisions or broker
+mutations during the rollout.
 
 ## Production Proof Sequence
 
