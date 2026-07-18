@@ -420,15 +420,19 @@ class TestPointInTimeReplayTapeReceipt(TestCase):
             verified = verify_replay_tape(
                 tape_path=root / "verified.jsonl",
                 manifest_path=root / "verified.manifest.json",
-                expected_content_sha256=manifest.content_sha256,
-                expected_receipt_sha256=receipt.receipt_sha256,
-                expected_input_row_set_sha256=receipt.input_row_set_sha256,
-                expected_feature_matrix_sha256=receipt.feature_matrix_sha256,
+                expected_hashes={
+                    "content_sha256": manifest.content_sha256,
+                    "receipt_sha256": receipt.receipt_sha256,
+                    "input_row_set_sha256": receipt.input_row_set_sha256,
+                    "feature_matrix_sha256": receipt.feature_matrix_sha256,
+                },
             )
             rejected = verify_replay_tape(
                 tape_path=root / "verified.jsonl",
                 manifest_path=root / "verified.manifest.json",
-                expected_input_row_set_sha256="sha256:" + "0" * 64,
+                expected_hashes={
+                    "input_row_set_sha256": "sha256:" + "0" * 64,
+                },
             )
 
         self.assertEqual(verified["status"], "verified")

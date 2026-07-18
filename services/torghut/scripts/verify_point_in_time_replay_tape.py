@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 from app.trading.discovery.replay_tape import (
@@ -33,10 +34,7 @@ def verify_replay_tape(
     *,
     tape_path: Path,
     manifest_path: Path | None = None,
-    expected_content_sha256: str = "",
-    expected_receipt_sha256: str = "",
-    expected_input_row_set_sha256: str = "",
-    expected_feature_matrix_sha256: str = "",
+    expected_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     resolved_manifest_path = manifest_path or default_manifest_path(tape_path)
     tape = load_replay_tape(tape_path, manifest_path=resolved_manifest_path)
@@ -50,12 +48,7 @@ def verify_replay_tape(
         feature_schema_hash=tape.manifest.feature_schema_hash,
         source_table_versions=tape.manifest.source_table_versions,
     )
-    expected = {
-        "content_sha256": expected_content_sha256,
-        "receipt_sha256": expected_receipt_sha256,
-        "input_row_set_sha256": expected_input_row_set_sha256,
-        "feature_matrix_sha256": expected_feature_matrix_sha256,
-    }
+    expected = dict(expected_hashes or {})
     actual = {
         "content_sha256": tape.manifest.content_sha256,
         "receipt_sha256": receipt.receipt_sha256,
@@ -91,10 +84,12 @@ def main() -> int:
     result = verify_replay_tape(
         tape_path=args.tape.resolve(),
         manifest_path=args.manifest.resolve() if args.manifest else None,
-        expected_content_sha256=str(args.expected_content_sha256),
-        expected_receipt_sha256=str(args.expected_receipt_sha256),
-        expected_input_row_set_sha256=str(args.expected_input_row_set_sha256),
-        expected_feature_matrix_sha256=str(args.expected_feature_matrix_sha256),
+        expected_hashes={
+            "content_sha256": str(args.expected_content_sha256),
+            "receipt_sha256": str(args.expected_receipt_sha256),
+            "input_row_set_sha256": str(args.expected_input_row_set_sha256),
+            "feature_matrix_sha256": str(args.expected_feature_matrix_sha256),
+        },
     )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["status"] == "verified" else 1

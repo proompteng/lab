@@ -515,6 +515,81 @@ def _metadata_reason_codes(receipt: PointInTimeDataReceipt) -> list[str]:
     return reasons
 
 
+def _row_times(
+    row: SignalEnvelope,
+    *,
+    cutoff: datetime,
+) -> tuple[datetime | None, datetime | None, set[str]]:
+    reasons: set[str] = set()
+    try:
+        event_ts = _aware_utc(row.event_ts)
+    except ValueError:
+        return None, None, {"point_in_time_event_timezone_missing"}
+    if row.ingest_ts is None:
+        return event_ts, None, {"point_in_time_arrival_missing"}
+    try:
+        available_ts = _aware_utc(row.ingest_ts)
+    except ValueError:
+        return event_ts, None, {"point_in_time_arrival_timezone_missing"}
+    if event_ts > available_ts:
+        reasons.add("point_in_time_negative_feature_age")
+    if available_ts > cutoff:
+        reasons.add("point_in_time_arrival_after_observation_cutoff")
+    return event_ts, available_ts, reasons
+
+
+def _identity_reason_codes(
+    row: SignalEnvelope,
+    event_ts: datetime,
+    universe: set[str],
+    identities: set[tuple[str, datetime, int | None, str | None, str]],
+) -> set[str]:
+    reasons: set[str] = set()
+    symbol = row.symbol.upper()
+    window_size = str(row.payload.get(_WINDOW_SIZE_KEY) or "")
+    identity = (symbol, event_ts, row.seq, row.source, window_size)
+    if identity in identities:
+        reasons.add("point_in_time_duplicate_input_identity")
+    identities.add(identity)
+    if row.seq is None or row.seq < 0:
+        reasons.add("point_in_time_sequence_invalid")
+    if row.source != "ta":
+        reasons.add("point_in_time_source_invalid")
+    if row.timeframe != "1Sec" or window_size != "PT1S":
+        reasons.add("point_in_time_window_invalid")
+    if symbol not in universe:
+        reasons.add(f"point_in_time_symbol_outside_universe:{symbol}")
+    return reasons
+
+
+def _source_lineage_reason_codes(
+    row: SignalEnvelope,
+    event_ts: datetime,
+    available_ts: datetime,
+    cutoff: datetime,
+) -> set[str]:
+    reasons: set[str] = set()
+    source_times = _source_ingest_times(row)
+    source_versions = _source_versions(row)
+    for source in _REQUIRED_SOURCES:
+        if source not in source_times:
+            reasons.add(f"point_in_time_row_source_arrival_missing:{source}")
+        if source not in source_versions:
+            reasons.add(f"point_in_time_row_source_revision_missing:{source}")
+    required_sources = set(_REQUIRED_SOURCES)
+    if set(source_times) - required_sources:
+        reasons.add("point_in_time_source_arrival_set_invalid")
+    if set(source_versions) - required_sources:
+        reasons.add("point_in_time_source_revision_set_invalid")
+    if source_times and max(source_times.values()) != available_ts:
+        reasons.add("point_in_time_available_timestamp_mismatch")
+    if any(source_ts < event_ts for source_ts in source_times.values()):
+        reasons.add("point_in_time_source_arrival_before_event")
+    if any(source_ts > cutoff for source_ts in source_times.values()):
+        reasons.add("point_in_time_source_arrival_after_observation_cutoff")
+    return reasons
+
+
 def _row_reason_codes(
     rows: Sequence[SignalEnvelope],
     *,
@@ -528,55 +603,14 @@ def _row_reason_codes(
     if not rows:
         reasons.add("point_in_time_rows_empty")
     for row in rows:
-        try:
-            event_ts = _aware_utc(row.event_ts)
-        except ValueError:
-            reasons.add("point_in_time_event_timezone_missing")
+        event_ts, available_ts, time_reasons = _row_times(row, cutoff=cutoff)
+        reasons.update(time_reasons)
+        if event_ts is None or available_ts is None:
             continue
-        if row.ingest_ts is None:
-            reasons.add("point_in_time_arrival_missing")
-            continue
-        try:
-            available_ts = _aware_utc(row.ingest_ts)
-        except ValueError:
-            reasons.add("point_in_time_arrival_timezone_missing")
-            continue
-        if event_ts > available_ts:
-            reasons.add("point_in_time_negative_feature_age")
-        if available_ts > cutoff:
-            reasons.add("point_in_time_arrival_after_observation_cutoff")
-        window_size = str(row.payload.get(_WINDOW_SIZE_KEY) or "")
-        identity = (row.symbol.upper(), event_ts, row.seq, row.source, window_size)
-        if identity in identities:
-            reasons.add("point_in_time_duplicate_input_identity")
-        identities.add(identity)
-        if row.seq is None or row.seq < 0:
-            reasons.add("point_in_time_sequence_invalid")
-        if row.source != "ta":
-            reasons.add("point_in_time_source_invalid")
-        if row.timeframe != "1Sec" or window_size != "PT1S":
-            reasons.add("point_in_time_window_invalid")
-        if row.symbol.upper() not in universe:
-            reasons.add(f"point_in_time_symbol_outside_universe:{row.symbol.upper()}")
-        source_times = _source_ingest_times(row)
-        source_versions = _source_versions(row)
-        for source in _REQUIRED_SOURCES:
-            if source not in source_times:
-                reasons.add(f"point_in_time_row_source_arrival_missing:{source}")
-            if source not in source_versions:
-                reasons.add(f"point_in_time_row_source_revision_missing:{source}")
-        required_sources = set(_REQUIRED_SOURCES)
-        if set(source_times) - required_sources:
-            reasons.add("point_in_time_source_arrival_set_invalid")
-        if set(source_versions) - required_sources:
-            reasons.add("point_in_time_source_revision_set_invalid")
-        if source_times:
-            if max(source_times.values()) != available_ts:
-                reasons.add("point_in_time_available_timestamp_mismatch")
-            if any(source_ts < event_ts for source_ts in source_times.values()):
-                reasons.add("point_in_time_source_arrival_before_event")
-            if any(source_ts > cutoff for source_ts in source_times.values()):
-                reasons.add("point_in_time_source_arrival_after_observation_cutoff")
+        reasons.update(_identity_reason_codes(row, event_ts, universe, identities))
+        reasons.update(
+            _source_lineage_reason_codes(row, event_ts, available_ts, cutoff)
+        )
     return sorted(reasons)
 
 
@@ -591,7 +625,6 @@ def build_point_in_time_data_receipt(
     feature_schema_hash: str,
     source_table_versions: Mapping[str, str],
     spec: PointInTimeReceiptSpec,
-    require_complete: bool = True,
 ) -> PointInTimeDataReceipt:
     if not rows:
         raise ValueError("point_in_time_rows_empty")
@@ -601,7 +634,7 @@ def build_point_in_time_data_receipt(
         observation_cutoff=spec.observation_cutoff,
         universe_symbols=spec.universe_symbols,
     )
-    if require_complete and preflight_reasons:
+    if preflight_reasons:
         raise ValueError(
             "point_in_time_receipt_incomplete:" + ",".join(preflight_reasons)
         )
@@ -649,8 +682,8 @@ def build_point_in_time_data_receipt(
         feature_schema_hash=feature_schema_hash,
         source_table_versions=source_table_versions,
     )
-    if require_complete and diagnostics["status"] != "complete":
-        reasons = ",".join(cast(Sequence[str], diagnostics["reason_codes"]))
+    if diagnostics["status"] != "complete":
+        reasons = ",".join(diagnostics["reason_codes"])
         raise ValueError(f"point_in_time_receipt_incomplete:{reasons}")
     return receipt
 

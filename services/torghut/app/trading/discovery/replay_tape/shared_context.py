@@ -723,7 +723,6 @@ def materialize_signal_tape(
             feature_schema_hash=feature_schema_hash,
             source_table_versions=dict(source_table_versions or {}),
             spec=point_in_time_spec,
-            require_complete=require_point_in_time_receipt,
         )
         if point_in_time_spec is not None
         else None
