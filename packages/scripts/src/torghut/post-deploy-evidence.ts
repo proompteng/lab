@@ -38,7 +38,7 @@ const EXPECTED_CAPITAL_LIMITS = {
   buying_power_reserve_bps: 1_000,
   daily_loss_limit: 0.01,
   drawdown_limit: 0.05,
-  gross_limit: 4,
+  gross_limit: 1,
   net_limit: 0.5,
   symbol_limit: 0.5,
 } as const
@@ -369,7 +369,7 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
       '- API readiness: `process-local` (external scheduler owner)',
       `- Live gate: \`${statusGate.reason}\``,
       `- Execution route: \`${statusGate.route}\``,
-      '- Capital limits: `4x gross`, `0.5x net`, `0.5x symbol`, `10% buying-power reserve`',
+      '- Capital limits: `1x gross`, `0.5x net`, `0.5x symbol`, `10% buying-power reserve`',
       '- TigerBeetle reconciliation: `current`',
       simulationSummaryLine(simulationContract),
     ],

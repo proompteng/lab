@@ -56,7 +56,7 @@ const tradingStatus = (gate: typeof activeGate | typeof marketClosedGate = activ
     buying_power_reserve_bps: 1_000,
     daily_loss_limit: 0.01,
     drawdown_limit: 0.05,
-    gross_limit: 4,
+    gross_limit: 1,
     net_limit: 0.5,
     symbol_limit: 0.5,
   },
@@ -151,7 +151,7 @@ describe('Torghut post-deploy evidence', () => {
     expect(result.simulationContract).toBe('simulation_active')
     expect(result.apiReadyzStatusCode).toBe(200)
     expect(result.schedulerReadyzStatusCode).toBe(200)
-    expect(result.summaryLines.join('\n')).toContain('4x gross')
+    expect(result.summaryLines.join('\n')).toContain('1x gross')
     expect(result.summaryLines.join('\n')).toContain('Simulation runtime: `simulation_active`')
   })
 
@@ -239,10 +239,10 @@ describe('Torghut post-deploy evidence', () => {
 
   it('rejects a drifted capital limit', () => {
     const status = tradingStatus()
-    status.capital_controls.gross_limit = 1
+    status.capital_controls.gross_limit = 4
 
     expect(() => validatePostDeployEvidence(activeEvidence({ tradingStatus: status }))).toThrow(
-      'capital_controls.gross_limit must be 4',
+      'capital_controls.gross_limit must be 1',
     )
   })
 
