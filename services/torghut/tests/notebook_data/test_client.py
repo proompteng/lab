@@ -124,6 +124,19 @@ class StrategyScopedExecutionAdapter(EmptyEquitiesAdapter):
         return fixture_query(query_identifier, parameters, row_limit=row_limit)
 
 
+@dataclass
+class MissingParityAdapter(EmptyEquitiesAdapter):
+    def status(self, query_identifier: str) -> QueryResult:
+        result = fixture_query(query_identifier, {}, row_limit=1)
+        status = dict(result.records[0])
+        broker_ledger = dict(status["broker_economic_ledger"])
+        broker_ledger["tigerbeetle_economic_parity"] = None
+        broker_ledger["state"] = "unavailable"
+        broker_ledger["reason_codes"] = ["economic_reconciliation_status_unavailable"]
+        status["broker_economic_ledger"] = broker_ledger
+        return QueryResult((status,), result.watermark)
+
+
 def _live_adapter() -> LiveDataAdapter:
     return LiveDataAdapter(
         postgres_host="postgres.example",
@@ -328,6 +341,27 @@ def test_accounting_parity_does_not_override_final_action_authority() -> None:
     assert components["broker reconciliation"]["authority_value"] is True
     assert components["final action authority"]["authority_value"] is False
     assert components["final action authority"]["authoritative"] is True
+
+
+def test_unavailable_parity_preserves_final_action_authority() -> None:
+    snapshot = capital_authority(adapter=MissingParityAdapter())
+    assert snapshot.quality == "ok"
+    assert (
+        snapshot.datasets["raw_status"][0]["action_authority"]["entry_allowed"] is False
+    )
+    assert snapshot.datasets["raw_status"][0]["action_authority"]["reason_codes"] == {
+        "service": ["scheduler_success_stale"],
+        "entry": ["scheduler_success_stale", "mainnet_route_unavailable"],
+        "reduce_only": ["mainnet_route_unavailable"],
+        "recovery": ["scheduler_success_stale"],
+    }
+    components = {row["component"]: row for row in snapshot.datasets["components"]}
+    parity = components["TigerBeetle parity"]
+    assert parity["state"] == "unavailable"
+    assert parity["authority_value"] is None
+    assert parity["payload"] is None
+    assert components["final action authority"]["authority_value"] is False
+    assert any("parity is unavailable" in message for message in snapshot.messages)
 
 
 def test_fixture_adapter_rejects_row_cap_breach() -> None:

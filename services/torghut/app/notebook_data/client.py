@@ -619,6 +619,23 @@ def _component(
     }
 
 
+def _unavailable_component(
+    name: str,
+    payload: object,
+    *,
+    authority_field: str,
+) -> Record:
+    return {
+        "component": name,
+        "authoritative": False,
+        "authority_field": authority_field,
+        "authority_value": None,
+        "state": "unavailable",
+        "reason_codes": [],
+        "payload": payload,
+    }
+
+
 def capital_authority(*, adapter: DataAdapter | None = None) -> Snapshot:
     """Return verbatim authority components without deriving a new allowed flag."""
 
@@ -650,14 +667,30 @@ def capital_authority(*, adapter: DataAdapter | None = None) -> Snapshot:
         broker_ledger = _as_string_mapping(status["broker_economic_ledger"])
         if broker_ledger is None:
             raise NotebookDataError("broker_economic_ledger is not an object")
-        tigerbeetle_parity = _as_string_mapping(
-            broker_ledger.get("tigerbeetle_economic_parity")
-        )
-        if tigerbeetle_parity is None or not isinstance(
-            tigerbeetle_parity.get("parity"), bool
-        ):
-            raise NotebookDataError(
-                "broker_economic_ledger.tigerbeetle_economic_parity.parity is not a boolean"
+        raw_tigerbeetle_parity = broker_ledger.get("tigerbeetle_economic_parity")
+        parity_messages: tuple[str, ...] = ()
+        if raw_tigerbeetle_parity is None:
+            tigerbeetle_component = _unavailable_component(
+                "TigerBeetle parity",
+                raw_tigerbeetle_parity,
+                authority_field="parity",
+            )
+            parity_messages = (
+                "TigerBeetle economic parity is unavailable; final action authority remains authoritative.",
+            )
+        else:
+            tigerbeetle_parity = _as_string_mapping(raw_tigerbeetle_parity)
+            if tigerbeetle_parity is None or not isinstance(
+                tigerbeetle_parity.get("parity"), bool
+            ):
+                raise NotebookDataError(
+                    "broker_economic_ledger.tigerbeetle_economic_parity.parity is not a boolean"
+                )
+            tigerbeetle_component = _component(
+                "TigerBeetle parity",
+                tigerbeetle_parity,
+                authority_field="parity",
+                authoritative=False,
             )
         components = (
             _component(
@@ -684,12 +717,7 @@ def capital_authority(*, adapter: DataAdapter | None = None) -> Snapshot:
                 authority_field="reconciled",
                 authoritative=False,
             ),
-            _component(
-                "TigerBeetle parity",
-                tigerbeetle_parity,
-                authority_field="parity",
-                authoritative=False,
-            ),
+            tigerbeetle_component,
             _component(
                 "capital authority",
                 broker_ledger,
@@ -713,6 +741,7 @@ def capital_authority(*, adapter: DataAdapter | None = None) -> Snapshot:
             quality="ok",
             messages=(
                 "Final action_authority.entry_allowed is authoritative; lower-level successes do not override it.",
+                *parity_messages,
             ),
         )
     except (NotebookDataError, ValueError) as error:
