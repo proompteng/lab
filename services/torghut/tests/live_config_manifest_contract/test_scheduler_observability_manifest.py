@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Mapping, cast
@@ -134,3 +135,20 @@ class SchedulerObservabilityManifestTests(TestCase):
             alloy_config,
         )
         self.assertNotIn("torghut-[0-9]{5}-private", alloy_config)
+
+    def test_alloy_config_digest_rolls_deployment(self) -> None:
+        alloy_config = _configmap_data(
+            "argocd/applications/torghut/alloy-configmap.yaml",
+            "config.river",
+        )
+        deployment = safe_load(
+            (
+                _repo_root() / "argocd/applications/torghut/alloy-deployment.yaml"
+            ).read_text(encoding="utf-8")
+        )
+        annotations = deployment["spec"]["template"]["metadata"]["annotations"]
+
+        self.assertEqual(
+            annotations.get("torghut.proompteng.ai/alloy-config-sha256"),
+            hashlib.sha256(alloy_config.encode()).hexdigest(),
+        )
