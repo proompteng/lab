@@ -49,6 +49,8 @@ spec:
           env:
             - name: APP_ENV
               value: prod
+            - name: TMPDIR
+              value: /tmp
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
@@ -79,3 +81,10 @@ spec:
               cpu: "1"
               memory: 1Gi
               ephemeral-storage: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
