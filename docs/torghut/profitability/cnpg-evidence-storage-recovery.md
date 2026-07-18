@@ -1,7 +1,7 @@
 # CNPG Evidence Storage And Recovery
 
-Status: Slice 11 implementation contract. Cross-host replication is production-proven; standby backup, controlled
-switchover, query-envelope, and isolated-restore proofs remain open.
+Status: Slice 11 recovery and availability proof is production-complete. Two measured order-read indexes remain in the
+normal image-promotion path before the query envelope is closed on the live database.
 
 ## Observed Baseline
 
@@ -88,6 +88,47 @@ source. See the official [recovery contract](https://cloudnative-pg.io/docs/curr
 The installed CloudNativePG `1.30.0` operator warns that native Barman object-store support is removed in `1.31`.
 Migration to the supported Barman Cloud CNPG-I plugin is therefore a blocking follow-up before the next operator
 upgrade; backup availability must not be silently lost during that upgrade.
+
+## Standby Backup, Switchover, And Restore Evidence
+
+The controlled `2026-07-18` proof completed all destructive-risk work against isolated or redundant capacity:
+
+- `Backup/torghut-db-ha-proof-20260718` ran on standby `torghut-db-2` from `13:00:21Z` to `13:12:02Z` and completed
+  with end LSN `881/FE0A7450`;
+- a controlled promotion made that standby primary, moved the read-write endpoint, restored a healthy two-instance
+  topology with zero replay lag, and produced no duplicate trade decision or broker mutation;
+- an isolated one-instance cluster restored Barman backup ID `20260718T130021` with `targetImmediate: true`. The base
+  restore and WAL replay completed in 8 minutes 49 seconds, and the cluster became ready in 9 minutes 1 second;
+- recovery stopped at the backup-end LSN, with the last completed transaction at `13:11:38.162862Z`. The restored
+  database retained the source system identifier, 21 GB database size, data checksums, Alembic revision
+  `0082_order_lineage_runs`, and the 1,656-column schema fingerprint;
+- full-row canonical hashes and counts matched for `broker_economic_ledger_entries` (1,336,109),
+  `broker_mutation_receipt_events` (269), `broker_mutation_receipts` (34), `evidence_receipts` (56), and
+  `execution_order_events` (15,428).
+
+For a `targetImmediate` restore, use `Backup.status.backupId` (`20260718T130021` here), not
+`Backup.status.backupName`. The admission webhook requires that ID even when `bootstrap.recovery.backup.name` already
+references the exact Kubernetes Backup object. The restore cluster had no application route and no backup stanza, so
+it could neither receive Torghut traffic nor write into the source archive.
+
+## Measured Query Envelope
+
+The live statistics history showed repeated full scans of `hyperliquid_execution_orders`. The table held only 4,290
+rows, but the affected reads sit on status and fill-ingestion paths, so their cumulative work matters. The restored
+copy was analyzed and used to benchmark the exact SQL from `loop_status.py`, `reporting.py`, and `repository.py`.
+
+| Query                       | Baseline buffers / time | Measured index buffers / time | Result                              |
+| --------------------------- | ----------------------: | ----------------------------: | ----------------------------------- |
+| latest acknowledged order   |           59 / 0.147 ms |                  3 / 0.014 ms | 95% fewer buffers; about 10x faster |
+| orders in the last 24 hours |          283 / 0.469 ms |                  2 / 0.011 ms | 99% fewer buffers; about 43x faster |
+| exchange-order lookup       |          283 / 0.330 ms |                  3 / 0.018 ms | 99% fewer buffers; about 18x faster |
+
+Two B-tree indexes produced those results: `(execution_network, created_at DESC)` and the partial
+`(execution_network, exchange_order_id, created_at DESC) WHERE exchange_order_id IS NOT NULL`. Together they occupied
+336 KiB on the restored data. Stale-open-order, rejection-cooldown, and rejected-order-report plans did not improve,
+so no speculative indexes were added for them. Production creation uses `CREATE INDEX CONCURRENTLY` to avoid blocking
+writes, consistent with the PostgreSQL 17
+[index-build contract](https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
 
 None of these storage proofs establishes strategy profitability or capital authority. Risk-increasing real-capital
 submission remains blocked.
