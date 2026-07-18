@@ -1,7 +1,0 @@
----
-description: File name convention
-globs: *.tsx
-alwaysApply: false
----
-
-use kebab case for file names.
