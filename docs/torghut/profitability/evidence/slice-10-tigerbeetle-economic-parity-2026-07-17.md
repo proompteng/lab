@@ -1,11 +1,11 @@
 # Slice 10 Production Evidence: Full TigerBeetle Economic Parity
 
-Status: production-proven after a superseding late-fee correction. The original v1 materialization remains below as a
-historical record, but it is not current accounting evidence. Reducer v4, TigerBeetle projection v2, first
-materialization, exact idempotent rerun, sealed CNPG observation, direct runtime status, and a natural Cron-owned run
-all passed. Profitability and capital gates remain blocked.
+Status: production-proven in the current reducer v5 and TigerBeetle projection v3 namespace. First materialization,
+an exact zero-write manual rerun, sealed CNPG readback, and the required natural hourly zero-write run all passed.
+Reducer v4/projection v2 and v1 remain below as historical evidence only. Profitability and capital gates remain
+blocked.
 
-Evidence window: `2026-07-17T07:41:06Z` through `2026-07-18T06:47:48Z`.
+Evidence window: `2026-07-17T07:41:06Z` through `2026-07-18T11:48:49Z`.
 
 ## Invariant And Scope
 
@@ -18,7 +18,66 @@ This is accounting-integrity evidence, not a strategy return, market edge, profi
 permission to increase exposure. The source correction removed the three historical broker residuals, but order
 lineage, runtime-ledger, strategy-evidence, and capital-authority gates remain independent and blocking.
 
-## Superseding Correction: Late-Fee Monotonicity
+## Current V5/V3 Production Proof
+
+PR `#12781`, merged as `e4d64be1a15400cf6a531451eba72e3934afc66e`, corrected the remaining identity defect
+without adding a service, table, queue, cursor, or repair writer. The first publication in a reducer namespace retains
+economic ordering. Subsequent publications hash-validate and preserve that exact published prefix. A newly observed
+date-only `CFEE` may append only when complete canonical-journal and independent-state replay prove identical final
+economics. A missing historical trade, correction, malformed manifest, duplicate, or unsafe late fee fails closed and
+requires a new reducer and projection namespace.
+
+The deployed v5 publication reused the closed 40,172-activity input manifest
+`283dc4710eb3da7a0c6656c709277679509b66749caaf418e9c96c5e50be3a60` and produced:
+
+- journal run `3c0d04a9-5c1f-4322-b590-6730ebe26958`, containing 40,172 transactions and 195,207 entries;
+- state run `f9e1dbd5-edc1-4ce2-a6d0-f31ed4c1a947`;
+- journal digest `dffcf45fb2dd62768cb6da768dd6835ac0b3b5a27be7ebe5d1ce31635842e465`;
+- journal projection digest `890f24ec765e204491022656453553255a51547acef7d4f57e1d01c4cc200918`;
+- state projection digest `dec6a3f32cab6a349eab514872d311b0601064568a68a5013f001acc48482cd9`;
+- comparison digest `e2b8e72304aee0ef8577ca1b90a2063b37d3adb5e181c3cec1599e75826a23ee`;
+- exact reducer equivalence, admissibility, zero unsupported activities, zero broker residuals, and zero open orders.
+
+Manual first materialization used deployed source `dd5b56089b2ee8229684c5b4dc2255bb775ea65b` and image
+`sha256:3595fc32a40461b4b5085c6aede61c9bc1a7efaa6bbe9a31388f83695d880935`. It created all 96 expected
+accounts and 114,935 expected transfers across 40,172 linked transaction chains. Exact readback reproduced account
+manifest `69eb4089d25c4994e88df5ccaacb4831102695106815f9fda16c984af817e603` and transfer manifest
+`1847fbe1cfb8f54556097d2865ed0f107ce3a9c0f016e93de629f3da8a84e454`. Every create, lookup,
+missing, mismatch, partial-chain, and blocker count was zero.
+
+The immediate rerun used descendant source `240795bf6c3344f75f622498d086b429d9c59f22` and image
+`sha256:451f6d40fc4882a5b13467e62c36ebc7a3a56518874d1d547fea7d00960e9f4c`. It reused the same
+published input and reducer runs, selected zero accounts and zero transfers for creation, observed all 96 accounts and
+all 40,172 existing transaction chains, and reproduced both manifests exactly with zero errors or blockers.
+
+Direct CNPG readback independently confirmed the persisted 195,207 entries, 40,172 distinct transactions, exact
+v5 input/run/comparison bindings, and two latest v5/v3 reconciliation rows with `reconciled=true`, zero residuals,
+zero open orders, exact parity, and zero blockers. The first row recorded all creates; the second recorded none. Both
+correctly retained `capital_authority=false` and `promotion_authority=false`.
+
+The manual Jobs were removed after readback; no ad hoc child Job remains.
+
+### Natural v5/v3 proof
+
+The CronJob controller created Job `torghut-broker-economic-ledger-reconciliation-29739587` at
+`2026-07-18T11:47:00Z`; it completed at `11:47:31Z` with one pod, zero container restarts, and no Kubernetes retry.
+The immutable child Job retained
+`backoffLimit: 0`, the 1,200-second active deadline, source `d5d9bd4b9003431c62214982b1fe550d7e9c9c1e`, and image
+`sha256:66ac029b53896d28e9d2f64dcf2599b2fef13ac2c2fac1d97d934ac7b6c09dc6`.
+
+CNPG sealed observation `564ef45b-d9b8-475f-95bc-9c6c21d4d9a5`, observed at
+`2026-07-18T11:47:09.953091Z`, with result digest
+`3cb41858d5ba6c305b63fc9e363070d4ecce34ea127b3d061e4ae22c32c6d309`. It reused the same input, journal,
+state, comparison, account-manifest, and transfer-manifest bindings as the manual v5/v3 proof. It selected zero
+accounts and zero transfers for creation, observed all 96 existing accounts and 40,172 existing transaction chains,
+and matched all 114,935 expected transfers. Every TigerBeetle error, blocker, exception, broker residual, and open-order
+count was zero. Independent SQL recomputation matched both stored canonical-document hashes.
+
+Direct scheduler status resolved the same observation as current, reconciled, admissible, differentially equivalent,
+and `accounting_parity_satisfied=true`. The nested v3 payload retained exact parity while correctly keeping
+`capital_authority=false` and `promotion_authority=false`.
+
+## Historical V4/V2 Correction: Late-Fee Monotonicity
 
 The v1 projection was exact for the source rows visible during its original evidence window. It was not stable under a
 late broker fee whose economic date preceded its observation time. The later source readback therefore invalidated the
@@ -46,9 +105,10 @@ from current authority.
 ### Reducer v4 and projection v2
 
 PR `#12766`, merged as `aca95091f629ca433fac687e61034da64ac3063e`, introduced reducer v4 and TigerBeetle
-projection v2. Timestamped fills retain economic-time ordering. Date-only fees now use first-observed time before
-external ID, so a later-discovered fee appends after already observed facts instead of rewriting their identities.
-Promotion PR `#12769` merged as `42b2b9aa2103fba8eaa263d4dcd95f2d1b6c1e3a`; the correction image was
+projection v2. It retained economic-time ordering and used first-observed time to break ties among date-only fees with
+the same settlement date. That rule did not preserve the published prefix when a newly observed fee had an earlier
+settlement date than already published later activity; v4/v2 is therefore historical rather than a current ordering
+guarantee. Promotion PR `#12769` merged as `42b2b9aa2103fba8eaa263d4dcd95f2d1b6c1e3a`; the correction image was
 `sha256:44131fdc982d4a956d0d956790d68198cf309dcda1f3d4d97834ac741a6e7ab9`.
 
 The published v4 input and reducer pair contained:
@@ -93,6 +153,9 @@ The natural run proved:
 Direct scheduler status then reported the economic observation current, reconciled, admissible, and
 `accounting_parity_satisfied=true`. The parity payload still correctly reported `capital_authority=false` and
 `promotion_authority=false`; accounting truth alone does not authorize a strategy or exposure.
+
+This run proved exact consistency for its closed snapshot. It did not prove prefix stability under a later cross-date
+fee and has been superseded by the v5/v3 production evidence above.
 
 ## Historical V1 Delivery Chain
 
@@ -287,9 +350,9 @@ The historical v1 observation reported:
 - `ledger_position_fresh_mark_missing`;
 - `ledger_position_missing_from_broker`.
 
-The bounded source-overlap correction recovered the omitted fees, and the latest natural v4/v2 observation has zero
+The bounded source-overlap correction recovered the omitted fees, and the latest natural v5/v3 observation has zero
 residuals and zero open orders. This supersedes the historical three-residual verdict; it does not retroactively make
-the v1 projection authoritative.
+the v1 or v4/v2 projection authoritative.
 
 Slice 9 still lacks a complete current order-lineage census and a fresh, fenced paper causal chain. The runtime ledger
 and strategy-capital evidence are also incomplete. Consequently P0 has not exited, no strategy has earned capital
@@ -297,7 +360,7 @@ authority, and real-capital risk-increasing submission remains blocked.
 
 ## Verdict
 
-Reducer v4 and TigerBeetle projection v2 now prove deterministic full-object economic parity, monotonic late-fee
-identity, idempotent replay, sealed CNPG bindings, fail-closed discrepancy detection, clean recovery, and a natural
-Cron-owned production run. This closes only the Slice 10 accounting-parity invariant. It does not close order lineage,
-runtime-ledger, strategy-validation, or capital-authority gates, and it does not prove Torghut is profitable.
+Reducer v5 and TigerBeetle projection v3 now prove deterministic full-object economic parity, published-prefix
+validation, guarded late-fee append, idempotent replay, sealed CNPG bindings, fail-closed discrepancy detection, and a
+natural Cron-owned production run. This closes only the Slice 10 accounting-parity invariant. It does not close order
+lineage, runtime-ledger, strategy-validation, or capital-authority gates, and it does not prove Torghut is profitable.
