@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.trading.economic_policy import EconomicPolicyError
+
 from tests.local_intraday_tsmom_replay.support import (
     datetime,
     timezone,
@@ -18,6 +20,25 @@ from tests.local_intraday_tsmom_replay.support import (
 
 
 class TestRunReplayRejectionEvidence(_TestLocalIntradayTsmomReplayBase):
+    def test_run_replay_rejects_an_economic_policy_digest_mismatch(self) -> None:
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategies.yaml"),
+            clickhouse_http_url="http://example.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=datetime(2026, 3, 26, tzinfo=timezone.utc).date(),
+            end_date=datetime(2026, 3, 27, tzinfo=timezone.utc).date(),
+            chunk_minutes=10,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            economic_policy_expected_digest="sha256:" + "0" * 64,
+        )
+
+        with self.assertRaisesRegex(
+            EconomicPolicyError, "economic_policy_digest_mismatch"
+        ):
+            run_replay(config)
+
     def test_run_replay_marks_passed_trace_with_allocator_reject_reason(self) -> None:
         strategy = Strategy(
             name="breakout-continuation-long-v1",

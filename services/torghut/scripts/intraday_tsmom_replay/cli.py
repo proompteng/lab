@@ -36,6 +36,10 @@ def main() -> None:
         economic_policy_path=Path(
             getattr(args, "economic_policy", DEFAULT_ECONOMIC_POLICY_PATH)
         ).resolve(),
+        economic_policy_expected_digest=(
+            str(getattr(args, "economic_policy_expected_digest", "") or "").strip()
+            or None
+        ),
         symbols=tuple(
             symbol.strip().upper()
             for symbol in str(args.symbols or "").split(",")

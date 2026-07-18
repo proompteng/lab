@@ -40,7 +40,10 @@ from .signal_rows import _extract_price, _iter_signal_rows, _log_quote_skipped
 
 
 def run_replay(config: ReplayConfig) -> dict[str, Any]:
-    economic_policy = load_economic_policy(config.economic_policy_path)
+    economic_policy = load_economic_policy(
+        config.economic_policy_path,
+        expected_digest=config.economic_policy_expected_digest,
+    )
     with bind_economic_policy_settings(economic_policy, settings):
         state = ReplayRunState.create(config, economic_policy)
         _log_replay_start(state)

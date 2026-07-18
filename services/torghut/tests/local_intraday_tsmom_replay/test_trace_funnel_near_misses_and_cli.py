@@ -526,6 +526,7 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
                 "TA_CLICKHOUSE_URL": "http://clickhouse.example:8123",
                 "TA_CLICKHOUSE_USERNAME": "env-user",
                 "TA_CLICKHOUSE_PASSWORD": "env-secret",
+                "TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST": "sha256:" + "a" * 64,
             },
             clear=False,
         ):
@@ -535,6 +536,10 @@ class TestTraceFunnelNearMissesAndCli(_TestLocalIntradayTsmomReplayBase):
         self.assertEqual(args.clickhouse_http_url, "http://clickhouse.example:8123")
         self.assertEqual(args.clickhouse_username, "env-user")
         self.assertEqual(args.clickhouse_password, "env-secret")
+        self.assertEqual(
+            args.economic_policy_expected_digest,
+            "sha256:" + "a" * 64,
+        )
 
     def test_parse_args_uses_repo_root_strategy_configmap_by_default(self) -> None:
         with patch.object(sys, "argv", ["local_intraday_tsmom_replay.py"]):

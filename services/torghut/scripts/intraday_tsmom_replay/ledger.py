@@ -113,30 +113,32 @@ def _build_replay_ledger_context(
             ),
         }
     )
+    cost_model_config_payload = {
+        "commission_bps": str(cost_model.config.commission_bps),
+        "commission_per_share": str(cost_model.config.commission_per_share),
+        "min_commission": str(cost_model.config.min_commission),
+        "sec_fee_rate_on_sales": str(cost_model.config.sec_fee_rate_on_sales),
+        "taf_fee_per_share_on_sales": str(cost_model.config.taf_fee_per_share_on_sales),
+        "taf_fee_cap_per_trade": str(cost_model.config.taf_fee_cap_per_trade),
+        "cat_fee_per_share": str(cost_model.config.cat_fee_per_share),
+        "regulatory_fee_rounding_increment": str(
+            cost_model.config.regulatory_fee_rounding_increment
+        ),
+        "max_participation_rate": str(cost_model.config.max_participation_rate),
+        "impact_bps_at_full_participation": str(
+            cost_model.config.impact_bps_at_full_participation
+        ),
+        "impact_participation_exponent": str(
+            cost_model.config.impact_participation_exponent
+        ),
+    }
     cost_model_hash = _stable_json_hash(
         {
             "model": cost_model.__class__.__name__,
             "module": cost_model.__class__.__module__,
             "cost_basis": _REPLAY_COST_BASIS,
             "adv_source": _REPLAY_ADV_SOURCE,
-            "config": {
-                "commission_bps": str(cost_model.config.commission_bps),
-                "commission_per_share": str(cost_model.config.commission_per_share),
-                "min_commission": str(cost_model.config.min_commission),
-                "sec_fee_rate_on_sales": str(cost_model.config.sec_fee_rate_on_sales),
-                "taf_fee_per_share_on_sales": str(
-                    cost_model.config.taf_fee_per_share_on_sales
-                ),
-                "taf_fee_cap_per_trade": str(cost_model.config.taf_fee_cap_per_trade),
-                "cat_fee_per_share": str(cost_model.config.cat_fee_per_share),
-                "max_participation_rate": str(cost_model.config.max_participation_rate),
-                "impact_bps_at_full_participation": str(
-                    cost_model.config.impact_bps_at_full_participation
-                ),
-                "impact_participation_exponent": str(
-                    cost_model.config.impact_participation_exponent
-                ),
-            },
+            "config": cost_model_config_payload,
         }
     )
     cost_lineage_payload = {
@@ -148,24 +150,7 @@ def _build_replay_ledger_context(
         "fill_participation_rate_required": True,
         "fill_capacity_warning_contract_required": True,
         "warning_contract": ["missing_adv", "participation_exceeds_max"],
-        "config": {
-            "commission_bps": str(cost_model.config.commission_bps),
-            "commission_per_share": str(cost_model.config.commission_per_share),
-            "min_commission": str(cost_model.config.min_commission),
-            "sec_fee_rate_on_sales": str(cost_model.config.sec_fee_rate_on_sales),
-            "taf_fee_per_share_on_sales": str(
-                cost_model.config.taf_fee_per_share_on_sales
-            ),
-            "taf_fee_cap_per_trade": str(cost_model.config.taf_fee_cap_per_trade),
-            "cat_fee_per_share": str(cost_model.config.cat_fee_per_share),
-            "max_participation_rate": str(cost_model.config.max_participation_rate),
-            "impact_bps_at_full_participation": str(
-                cost_model.config.impact_bps_at_full_participation
-            ),
-            "impact_participation_exponent": str(
-                cost_model.config.impact_participation_exponent
-            ),
-        },
+        "config": cost_model_config_payload,
     }
     cost_lineage_hash = _stable_json_hash(cost_lineage_payload)
     lineage_payload = {

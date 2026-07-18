@@ -35,6 +35,11 @@ def _parse_args() -> argparse.Namespace:
         help="Immutable economic policy shared with shadow, paper, and live execution.",
     )
     parser.add_argument(
+        "--economic-policy-expected-digest",
+        default=os.environ.get("TRADING_ECONOMIC_POLICY_EXPECTED_DIGEST"),
+        help="Expected sha256 digest for the immutable economic policy.",
+    )
+    parser.add_argument(
         "--clickhouse-http-url",
         default=os.environ.get(
             "TA_CLICKHOUSE_URL",

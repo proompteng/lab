@@ -118,6 +118,7 @@ class ReplayConfig:
     flatten_eod: bool
     start_equity: Decimal
     economic_policy_path: Path = DEFAULT_ECONOMIC_POLICY_PATH
+    economic_policy_expected_digest: str | None = None
     symbols: tuple[str, ...] = ()
     replay_tape_path: Path | None = None
     replay_tape_manifest_path: Path | None = None
