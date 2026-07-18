@@ -53,10 +53,85 @@ from tests.tigerbeetle_journal.support import (
 
 
 class TestTigerBeetleLedgerJournalTransferRefs(_TestTigerBeetleLedgerJournalBase):
+    @staticmethod
+    def _add_stable_ref_account_refs(session: Session) -> None:
+        session.add_all(
+            [
+                TigerBeetleAccountRef(
+                    cluster_id=2001,
+                    account_id="100100100100100100100100100100100101",
+                    account_key="cash:paper:usd",
+                    ledger=LEDGER_USD_MICRO,
+                    code=1001,
+                    account_label="paper",
+                ),
+                TigerBeetleAccountRef(
+                    cluster_id=2001,
+                    account_id="100100100100100100100100100100100102",
+                    account_key="runtime_ledger:paper:hypothesis-1",
+                    ledger=LEDGER_USD_MICRO,
+                    code=1503,
+                    account_label="paper",
+                ),
+            ]
+        )
+
+    def test_stable_ref_backfill_selects_missing_ref_before_newer_complete_ref(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            self._add_stable_ref_account_refs(session)
+            missing = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="100100100100100100100100100100100201",
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=2012,
+                amount=Decimal("2500000"),
+                status="created",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id="00000000-0000-4000-8000-000000000001",
+                payload_json={
+                    "debit_account_id": "100100100100100100100100100100100101",
+                    "credit_account_id": "100100100100100100100100100100100102",
+                    "runtime_key": "hypothesis-1:runtime-run-1:source-window",
+                },
+                created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            )
+            complete = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="100100100100100100100100100100100202",
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=2012,
+                amount=Decimal("2500000"),
+                status="created",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id="00000000-0000-4000-8000-000000000002",
+                payload_json={"stable_ref": {"schema_version": "already-present"}},
+                created_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+            )
+            session.add_all([missing, complete])
+            session.flush()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=FakeTigerBeetleClient(),
+            )
+
+            result = journal.backfill_stable_ref_payloads(session, limit=1)
+
+            self.assertEqual(result, {"selected": 1, "updated": 1, "skipped": 0})
+            self.assertIn("stable_ref", missing.payload_json)
+            self.assertEqual(
+                complete.payload_json,
+                {"stable_ref": {"schema_version": "already-present"}},
+            )
+
     def test_stable_ref_payload_backfill_is_idempotent_without_tigerbeetle_write(
         self,
     ) -> None:
         with Session(self.engine) as session:
+            self._add_stable_ref_account_refs(session)
             bucket = _runtime_bucket()
             session.add(bucket)
             session.flush()
@@ -90,10 +165,19 @@ class TestTigerBeetleLedgerJournalTransferRefs(_TestTigerBeetleLedgerJournalBase
             second = journal.backfill_stable_ref_payloads(session)
 
             self.assertEqual(first, {"selected": 1, "updated": 1, "skipped": 0})
-            self.assertEqual(second, {"selected": 1, "updated": 0, "skipped": 1})
+            self.assertEqual(second, {"selected": 0, "updated": 0, "skipped": 0})
             self.assertEqual(client.transfers, {})
             self.assertEqual(ref.payload_json, first_payload)
             self.assertIn("stable_ref", ref.payload_json)
+            stable_ref = ref.payload_json["stable_ref"]
+            self.assertEqual(
+                stable_ref["components"]["account_label"],
+                "paper",
+            )
+            self.assertEqual(
+                stable_ref["account_keys"],
+                ["cash:paper:usd", "runtime_ledger:paper:hypothesis-1"],
+            )
 
     def test_runtime_bucket_journal_payload_marks_aggregate_only_non_authority(
         self,

@@ -8,7 +8,6 @@ from decimal import Decimal
 from types import TracebackType
 from typing import Any, Self, cast
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -38,7 +37,6 @@ from .journal_payloads import (
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     PreparedTigerBeetleTransferWrite,
     StableRefPayloadInput,
-    nested_mapping,
     result_statuses_by_index,
     tigerbeetle_stable_ref_payload,
     transfer_attr,
@@ -47,6 +45,10 @@ from .source_transfer_plans import (
     build_execution_tca_metric_transfer_plan,
     build_execution_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
+)
+from .stable_ref_backfill import (
+    backfill_stable_ref_payloads as backfill_stable_ref_payloads_in_postgres,
+    count_missing_stable_ref_payloads as count_missing_stable_ref_payloads_in_postgres,
 )
 from .transfer_refs import (
     build_order_event_transfer_plan,
@@ -80,6 +82,10 @@ class TigerBeetleLedgerJournal:
         self._settings = settings_obj
         self._client = client
         self._owns_client = client is None
+
+    @property
+    def cluster_id(self) -> int:
+        return self._settings.tigerbeetle_cluster_id
 
     def __enter__(self) -> Self:
         return self
@@ -367,64 +373,24 @@ class TigerBeetleLedgerJournal:
             or not self._settings.tigerbeetle_journal_enabled
         ):
             return {"selected": 0, "updated": 0, "skipped": 0}
-
-        refs = (
-            session.execute(
-                select(TigerBeetleTransferRef)
-                .where(
-                    TigerBeetleTransferRef.cluster_id
-                    == self._settings.tigerbeetle_cluster_id,
-                    TigerBeetleTransferRef.source_type.is_not(None),
-                    TigerBeetleTransferRef.source_id.is_not(None),
-                )
-                .order_by(TigerBeetleTransferRef.created_at.desc())
-                .limit(max(1, int(limit)))
-            )
-            .scalars()
-            .all()
+        return backfill_stable_ref_payloads_in_postgres(
+            session,
+            cluster_id=self.cluster_id,
+            limit=limit,
         )
-        updated = 0
-        skipped = 0
-        for ref in refs:
-            existing_payload = nested_mapping(ref.payload_json)
-            if isinstance(existing_payload.get("stable_ref"), Mapping):
-                skipped += 1
-                continue
-            source_type = str(ref.source_type or "").strip()
-            source_id = str(ref.source_id or "").strip()
-            if not source_type or not source_id:
-                skipped += 1
-                continue
-            transfer_spec = TigerBeetleTransferSpec(
-                transfer_id=int(ref.transfer_id),
-                transfer_kind=ref.transfer_kind,
-                debit_account_id=0,
-                credit_account_id=0,
-                amount=int(ref.amount),
-                ledger=ref.ledger,
-                code=ref.code,
-            )
-            ref.payload_json = coerce_json_payload(
-                {
-                    **existing_payload,
-                    **tigerbeetle_stable_ref_payload(
-                        StableRefPayloadInput(
-                            cluster_id=ref.cluster_id,
-                            account_specs=(),
-                            transfer_spec=transfer_spec,
-                            source_type=source_type,
-                            source_id=source_id,
-                            payload_json=existing_payload,
-                            event_fingerprint=ref.event_fingerprint,
-                        )
-                    ),
-                }
-            )
-            session.add(ref)
-            updated += 1
-        if updated:
-            session.flush()
-        return {"selected": len(refs), "updated": updated, "skipped": skipped}
+
+    def count_missing_stable_ref_payloads(self, session: Session) -> int:
+        """Count repairable PostgreSQL transfer refs without a stable-ref object."""
+
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return 0
+        return count_missing_stable_ref_payloads_in_postgres(
+            session,
+            cluster_id=self.cluster_id,
+        )
 
     def journal_order_events(
         self,
