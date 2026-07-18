@@ -93,7 +93,7 @@ proxy:
 singleuser:
   image:
     name: registry.ide-newton.ts.net/lab/torghut-notebook@sha256
-    tag: '0000000000000000000000000000000000000000000000000000000000000000'
+    tag: 'd6dc573a9df115480fc81773beb60bcf90c37bf189f31195f88f1ad3afd288ad'
     pullPolicy: IfNotPresent
   cmd: start-torghut-notebook
   defaultUrl: /lab/tree/work/00-system-flow.ipynb
