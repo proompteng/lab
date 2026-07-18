@@ -2,7 +2,7 @@
 
 import { appendFileSync } from 'node:fs'
 
-export const AGENTS_IMAGE_TARGETS = ['control-plane', 'controller', 'runner'] as const
+export const AGENTS_IMAGE_TARGETS = ['control-plane', 'controller', 'runner', 'agents-shell'] as const
 
 export type AgentsImageTarget = (typeof AGENTS_IMAGE_TARGETS)[number]
 export type AgentsImageMode = 'build-local-image' | 'reuse-published-image'
@@ -47,8 +47,12 @@ const STATIC_EXACT_PATHS = new Set([
 
 const ALL_IMAGE_EXACT_PATHS = new Set([
   'services/agents/package.json',
+  'flake.lock',
+  'flake.nix',
   'nix/images/agents.nix',
   'nix/images/bun-workspace-service.nix',
+  'nix/packages.nix',
+  'packages/scripts/src/shared/nix-oci-deploy.ts',
 ])
 
 const RUNNER_IMAGE_EXACT_PATHS = new Set(['nix/images/openai-codex-cli.nix'])

@@ -39,6 +39,8 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('run_with_progress \'Nix image build\' 30 nix build --no-link "${installables[@]}"')
     expect(workflow).toContain('nix path-info ".#${package_attr}"')
     expect(workflow).toContain('kind load image-archive --name "${KIND_CLUSTER_NAME}" "${load_archives[@]}"')
+    expect(workflow).toContain('agents-shell) echo agents-shell-image')
+    expect(workflow).toContain('agents-shell) echo registry.ide-newton.ts.net/lab/agents-shell')
     expect(workflow.match(/nix build --no-link/g)).toHaveLength(1)
     expect(workflow.match(/kind load image-archive/g)).toHaveLength(1)
     expect(workflow).not.toContain('docker build')
@@ -54,11 +56,27 @@ describe('agents-ci workflow', () => {
     expect(workflow).not.toContain('AGENTS_IMAGE_MODE="build-local-image"')
   })
 
-  it('does not trigger Agents runtime CI for generic shared dependency inputs', () => {
+  it('does not trigger Agents runtime CI for generic shared JavaScript inputs', () => {
     const workflow = readWorkflow('agents-ci.yml')
 
-    for (const path of ['bun.lock', 'flake.lock', 'flake.nix', 'nix/packages.nix', 'tsconfig.base.json']) {
+    for (const path of ['bun.lock', 'tsconfig.base.json']) {
       expect(workflow).not.toContain(`- '${path}'`)
+    }
+  })
+
+  it('triggers Agents runtime CI for shared Nix image inputs', () => {
+    const workflow = readWorkflow('agents-ci.yml')
+
+    for (const path of [
+      'flake.lock',
+      'flake.nix',
+      'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+    ]) {
+      expect(workflow).toContain(`- '${path}'`)
     }
   })
 
