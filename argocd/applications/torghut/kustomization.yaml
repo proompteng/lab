@@ -16,7 +16,6 @@ resources:
   - db-migrations-job.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-smoke-job.yaml
-  - tigerbeetle-stable-ref-backfill-job.yaml
   - knative-service.yaml
   - scheduler-deployment.yaml
   - scheduler-service.yaml
