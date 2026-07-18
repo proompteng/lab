@@ -142,25 +142,12 @@ jobs:
           fi
 
           {
-            echo "main_head=${MAIN_HEAD}"
             echo "source_sha=${SOURCE_SHA}"
             echo "tag=${TAG}"
             echo "contract_digest=${CONTRACT_DIGEST}"
             echo "image=${IMAGE}"
             echo "promote=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Verify promotion workspace remains on current main
-        if: steps.meta.outputs.promote == 'true'
-        shell: bash
-        env:
-          MAIN_HEAD: ${{ steps.meta.outputs.main_head }}
-        run: |
-          set -euo pipefail
-          if [ "$(git rev-parse HEAD)" != "${MAIN_HEAD}" ] || [ "$(git rev-parse origin/main)" != "${MAIN_HEAD}" ]; then
-            echo "Promotion workspace moved away from the checked-out main revision ${MAIN_HEAD}."
-            exit 1
-          fi
 
       - name: Resolve image digest
         if: steps.meta.outputs.promote == 'true'
@@ -194,6 +181,48 @@ jobs:
           IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
         run: nix run .#assert-oci-platforms -- "${IMAGE_NAME}@${IMAGE_DIGEST}" linux/amd64 linux/arm64
 
+      - name: Refresh and revalidate promotion base
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.meta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge --ff-only origin/main
+          CURRENT_MAIN="$(git rev-parse HEAD)"
+          if [ "${CURRENT_MAIN}" != "$(git rev-parse origin/main)" ]; then
+            echo "Promotion workspace is not on current origin/main."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${SOURCE_SHA}" "${CURRENT_MAIN}"; then
+            echo "Notebook source ${SOURCE_SHA} is not an ancestor of current main ${CURRENT_MAIN}."
+            exit 1
+          fi
+
+          if [ "${SOURCE_SHA}" != "${CURRENT_MAIN}" ]; then
+            NOTEBOOK_CHANGES="$(
+              git diff --name-only "${SOURCE_SHA}..${CURRENT_MAIN}" -- \
+                services/torghut/app/__init__.py \
+                services/torghut/app/notebook_data \
+                services/torghut/notebooks/00-system-flow.ipynb \
+                services/torghut/notebooks/10-strategy-lifecycle.ipynb \
+                services/torghut/notebooks/20-execution-evidence.ipynb \
+                services/torghut/notebooks/30-capital-authority.ipynb \
+                services/torghut/scripts/start_torghut_notebook.sh \
+                services/torghut/pyproject.toml \
+                services/torghut/uv.lock \
+                nix/images/torghut-notebook.nix \
+                flake.nix flake.lock
+            )"
+            if [ -n "${NOTEBOOK_CHANGES}" ]; then
+              echo "Refusing stale notebook promotion; current main changed notebook build inputs:"
+              printf '%s\n' "${NOTEBOOK_CHANGES}"
+              exit 1
+            fi
+          fi
+
       - name: Update only the notebook image digest
         if: steps.meta.outputs.promote == 'true'
         run: |
@@ -217,6 +246,18 @@ jobs:
               exit 1
             fi
             echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify promotion base before pull request creation
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROMOTION_BASE="$(git rev-parse HEAD)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if [ "${PROMOTION_BASE}" != "$(git rev-parse origin/main)" ]; then
+            echo "Main advanced while preparing the notebook promotion; rerun against the new base."
+            exit 1
           fi
 
       - name: Create deploy pull request
