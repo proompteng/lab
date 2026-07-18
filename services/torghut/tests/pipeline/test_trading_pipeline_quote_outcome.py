@@ -703,6 +703,144 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self.assertEqual(row.outcome_label_status, "pending")
         self.assertIsNone(row.outcome_payload_json)
 
+    def test_rejected_signal_outcome_labeler_retries_fairly_within_account(
+        self,
+    ) -> None:
+        foreign_event_ts = datetime(2026, 1, 1, 14, 28, tzinfo=timezone.utc)
+        incomplete_event_ts = datetime(2026, 1, 1, 14, 29, tzinfo=timezone.utc)
+        complete_event_ts = datetime(2026, 1, 1, 14, 30, tzinfo=timezone.utc)
+        followup_ts = complete_event_ts + timedelta(minutes=5)
+        first_attempt_at = datetime(2026, 1, 1, 14, 36, tzinfo=timezone.utc)
+        pipeline = self._build_rejected_outcome_pipeline(
+            price_fetcher=TimelinePriceFetcher(
+                {
+                    followup_ts: MarketSnapshot(
+                        symbol="MSFT",
+                        as_of=followup_ts,
+                        price=Decimal("201.00"),
+                        spread=None,
+                        source="test-followup",
+                    )
+                }
+            )
+        )
+        initial_updated_at = {
+            "foreign": datetime(2026, 1, 1, 13, 1, tzinfo=timezone.utc),
+            "incomplete": datetime(2026, 1, 1, 13, 2, tzinfo=timezone.utc),
+            "complete": datetime(2026, 1, 1, 13, 3, tzinfo=timezone.utc),
+        }
+        with self.session_local() as session:
+            session.add_all(
+                [
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-foreign-account",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="live",
+                        symbol="NVDA",
+                        event_ts=foreign_event_ts,
+                        timeframe="1Min",
+                        seq="40",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=["counterfactual_return"],
+                        event_payload_json={"event_id": "reject-event-foreign-account"},
+                        outcome_payload_json=None,
+                        created_at=initial_updated_at["foreign"],
+                        updated_at=initial_updated_at["foreign"],
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-incomplete-oldest",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="AAPL",
+                        event_ts=incomplete_event_ts,
+                        timeframe="1Min",
+                        seq="41",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=["counterfactual_return"],
+                        event_payload_json={
+                            "event_id": "reject-event-incomplete-oldest"
+                        },
+                        outcome_payload_json=None,
+                        created_at=initial_updated_at["incomplete"],
+                        updated_at=initial_updated_at["incomplete"],
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="reject-event-complete-next",
+                        source="quote_quality_gate",
+                        paper_source="ssrn-6607301",
+                        paper_claim_id="post-rejection-follow-up-sampling",
+                        account_label="paper",
+                        symbol="MSFT",
+                        event_ts=complete_event_ts,
+                        timeframe="1Min",
+                        seq="42",
+                        reject_reason="spread_too_wide",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=["counterfactual_return"],
+                        event_payload_json={
+                            "event_id": "reject-event-complete-next",
+                            "signal_payload": {
+                                "price": "200.00",
+                                "imbalance_bid_px": "199.99",
+                                "imbalance_ask_px": "200.01",
+                            },
+                        },
+                        outcome_payload_json=None,
+                        created_at=initial_updated_at["complete"],
+                        updated_at=initial_updated_at["complete"],
+                    ),
+                ]
+            )
+            session.commit()
+            foreign_initial_timestamp = session.execute(
+                select(RejectedSignalOutcomeEvent.updated_at).where(
+                    RejectedSignalOutcomeEvent.event_id
+                    == "reject-event-foreign-account"
+                )
+            ).scalar_one()
+            incomplete_initial_timestamp = session.execute(
+                select(RejectedSignalOutcomeEvent.updated_at).where(
+                    RejectedSignalOutcomeEvent.event_id
+                    == "reject-event-incomplete-oldest"
+                )
+            ).scalar_one()
+
+        pipeline.label_mature_rejected_signal_outcomes(
+            now=first_attempt_at,
+            limit=1,
+        )
+        pipeline.label_mature_rejected_signal_outcomes(
+            now=first_attempt_at + timedelta(seconds=1),
+            limit=1,
+        )
+
+        with self.session_local() as session:
+            rows = {
+                row.event_id: row
+                for row in session.execute(select(RejectedSignalOutcomeEvent)).scalars()
+            }
+
+        foreign = rows["reject-event-foreign-account"]
+        incomplete = rows["reject-event-incomplete-oldest"]
+        complete = rows["reject-event-complete-next"]
+        self.assertEqual(foreign.outcome_label_status, "pending")
+        self.assertEqual(foreign.updated_at, foreign_initial_timestamp)
+        self.assertEqual(incomplete.outcome_label_status, "pending")
+        self.assertGreater(incomplete.updated_at, incomplete_initial_timestamp)
+        self.assertEqual(complete.outcome_label_status, "labeled")
+        self.assertEqual(
+            complete.outcome_payload_json["counterfactual_return"], "0.005"
+        )
+
     def test_rejected_signal_outcome_persistence_logs_and_continues_on_db_error(
         self,
     ) -> None:

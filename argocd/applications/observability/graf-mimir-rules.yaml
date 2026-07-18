@@ -862,7 +862,7 @@ data:
               summary: Torghut API service is missing
               description: |
                 The stable Knative API Service is absent from Kubernetes inventory.
-                Private revision metrics may be absent normally while the stateless API is scaled to zero.
+                The Torghut metrics scrape uses this Service to reach the current revision.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
           - alert: TorghutActiveApiRevisionMetricsDown
             expr: |
@@ -870,7 +870,7 @@ data:
                 up{
                   job="torghut",
                   namespace="torghut",
-                  service=~"torghut-[0-9]{5}-private"
+                  service="torghut"
                 }
               ) == 0
             for: 5m
@@ -879,8 +879,7 @@ data:
             annotations:
               summary: Active Torghut API revision metrics endpoint is down
               description: |
-                A currently active stateless Knative API revision is being scraped but up=0 for 5 minutes.
-                No alert is expected while Knative has intentionally scaled the API to zero.
+                The stable Knative route to the current stateless API revision has reported up=0 for 5 minutes.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
           - alert: TorghutSchedulerMetricsMissing
             expr: |

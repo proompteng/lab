@@ -70,7 +70,7 @@ data:
 
       rule {
         source_labels = ["__meta_kubernetes_endpoint_port_name", "__meta_kubernetes_service_name"]
-        regex         = "metric(s)?;.*|http;torghut-[0-9]{5}-private"
+        regex         = "metric(s)?;.*"
         action        = "keep"
       }
 
@@ -101,6 +101,19 @@ data:
       scrape_interval = "30s"
       targets         = discovery.relabel.torghut_metrics.output
       forward_to      = [prometheus.remote_write.mimir.receiver]
+    }
+
+    // Scraping every revision-private endpoint prevents Knative from scaling
+    // inactive revisions to zero. The stable route always targets the current revision.
+    prometheus.scrape "torghut_api" {
+      job_name        = "torghut"
+      scrape_interval = "30s"
+      targets = [{
+        "__address__" = "torghut.torghut.svc.cluster.local:80",
+        "namespace"   = "torghut",
+        "service"     = "torghut",
+      }]
+      forward_to = [prometheus.remote_write.mimir.receiver]
     }
 
     loki.write "default" {

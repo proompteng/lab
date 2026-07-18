@@ -566,16 +566,25 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
                     session.execute(
                         select(RejectedSignalOutcomeEvent)
                         .where(
-                            RejectedSignalOutcomeEvent.outcome_label_status == "pending"
+                            RejectedSignalOutcomeEvent.outcome_label_status
+                            == "pending",
+                            RejectedSignalOutcomeEvent.account_label
+                            == self.account_label,
+                            RejectedSignalOutcomeEvent.event_ts <= mature_before,
                         )
-                        .where(RejectedSignalOutcomeEvent.event_ts <= mature_before)
-                        .order_by(RejectedSignalOutcomeEvent.event_ts.asc())
+                        .order_by(
+                            RejectedSignalOutcomeEvent.updated_at.asc(),
+                            RejectedSignalOutcomeEvent.event_ts.asc(),
+                        )
                         .limit(max(0, limit))
                     )
                     .scalars()
                     .all()
                 )
                 session.expunge_all()
+
+            if not candidates:
+                return
 
             # Quote lookups can consume their full network timeout. End the read
             # transaction before that I/O so PostgreSQL never sees an idle
@@ -603,25 +612,30 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
                 if outcome is not None:
                     outcomes[candidate.event_id] = outcome
 
-            if not outcomes:
-                return
+            candidate_event_ids = tuple(candidate.event_id for candidate in candidates)
             with self.session_factory() as session:
-                rows_to_label = (
+                rows_to_update = (
                     session.execute(
-                        select(RejectedSignalOutcomeEvent)
-                        .where(RejectedSignalOutcomeEvent.event_id.in_(tuple(outcomes)))
-                        .where(
-                            RejectedSignalOutcomeEvent.outcome_label_status == "pending"
+                        select(RejectedSignalOutcomeEvent).where(
+                            RejectedSignalOutcomeEvent.event_id.in_(
+                                candidate_event_ids
+                            ),
+                            RejectedSignalOutcomeEvent.account_label
+                            == self.account_label,
+                            RejectedSignalOutcomeEvent.outcome_label_status
+                            == "pending",
                         )
                     )
                     .scalars()
                     .all()
                 )
-                for row in rows_to_label:
-                    row.outcome_label_status = "labeled"
-                    row.outcome_payload_json = outcomes[row.event_id]
+                for row in rows_to_update:
+                    outcome = outcomes.get(row.event_id)
+                    if outcome is not None:
+                        row.outcome_label_status = "labeled"
+                        row.outcome_payload_json = outcome
                     row.updated_at = resolved_now
-                if rows_to_label:
+                if rows_to_update:
                     session.commit()
         except (SQLAlchemyError, ValueError):
             logger.exception("Failed to label mature rejected signal outcome events")
