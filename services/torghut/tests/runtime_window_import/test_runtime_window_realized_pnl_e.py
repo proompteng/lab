@@ -236,6 +236,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
             "source_decision_mode": "strategy_signal_paper",
             "profit_proof_eligible": True,
             "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
         }
 
         def order_row(
@@ -280,6 +281,12 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
                 "qty": Decimal("2"),
                 "filled_qty": Decimal(payload_qty or "0"),
                 "avg_fill_price": Decimal(payload_price or "0"),
+                "cost_amount": Decimal("0.10") if payload_qty is not None else None,
+                "cost_basis": (
+                    "broker_reported_commission_and_fees"
+                    if payload_qty is not None
+                    else None
+                ),
                 "raw_event": {
                     "channel": "trade_updates",
                     "payload": raw_event_payload,
@@ -392,6 +399,7 @@ class TestRuntimeWindowImportRealizedPnlE(RuntimeWindowImportTestCaseBase):
 
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["authoritative"])
+        self.assertTrue(rows[0]["post_cost_promotion_eligible"])
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
