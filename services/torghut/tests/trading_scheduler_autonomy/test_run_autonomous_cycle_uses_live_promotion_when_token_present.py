@@ -170,6 +170,7 @@ class TestRunAutonomousCycleUsesLivePromotionWhenTokenPresent(
                 configmap_path,
                 Path(deps.call_kwargs["output_dir"]) / "strategy-configmap-source.yaml",
             )
+            self.assertTrue(configmap_path.is_file())
             configmap_payload = json.loads(configmap_path.read_text(encoding="utf-8"))
             self.assertEqual(configmap_payload["apiVersion"], "v1")
             self.assertEqual(configmap_payload["kind"], "ConfigMap")
