@@ -7,14 +7,23 @@ import type {
   AccountRateLimitsUpdatedNotification,
   AgentMessageDeltaNotification,
   AskForApproval,
+  AttestationGenerateParams,
+  AttestationGenerateResponse,
+  ChatgptAuthTokensRefreshParams,
+  ChatgptAuthTokensRefreshResponse,
   CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
   CurrentTimeReadResponse,
+  DynamicToolCallParams,
+  DynamicToolCallResponse,
+  DynamicToolSpec,
   ErrorNotification,
   FileChangeOutputDeltaNotification,
   ItemCompletedNotification,
   ItemStartedNotification,
   McpToolCallProgressNotification,
+  PermissionsRequestApprovalParams,
+  PermissionsRequestApprovalResponse,
   RateLimitSnapshot,
   SandboxMode,
   SandboxPolicy,
@@ -36,6 +45,8 @@ import type {
   ThreadStatus,
   ThreadStatusChangedNotification,
   ThreadTokenUsageUpdatedNotification,
+  ToolRequestUserInputParams,
+  ToolRequestUserInputResponse,
   Turn,
   TurnCompletedNotification,
   TurnDiffUpdatedNotification,
@@ -142,6 +153,21 @@ export type CodexAppServerOptions = {
   persistExtendedHistory?: boolean
   clientInfo?: ClientInfo
   logger?: (level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, unknown>) => void
+  onRequestUserInput?: (
+    params: ToolRequestUserInputParams,
+  ) => ToolRequestUserInputResponse | Promise<ToolRequestUserInputResponse>
+  onDynamicToolCall?: (params: DynamicToolCallParams) => DynamicToolCallResponse | Promise<DynamicToolCallResponse>
+  /** Dynamic tools advertised to the model when a new thread is created. */
+  dynamicTools?: DynamicToolSpec[]
+  onAttestationGenerate?: (
+    params: AttestationGenerateParams,
+  ) => AttestationGenerateResponse | Promise<AttestationGenerateResponse>
+  onPermissionsRequestApproval?: (
+    params: PermissionsRequestApprovalParams,
+  ) => PermissionsRequestApprovalResponse | Promise<PermissionsRequestApprovalResponse>
+  onChatgptAuthTokensRefresh?: (
+    params: ChatgptAuthTokensRefreshParams,
+  ) => ChatgptAuthTokensRefreshResponse | Promise<ChatgptAuthTokensRefreshResponse>
   bootstrapTimeoutMs?: number
 }
 
@@ -214,6 +240,12 @@ const defaultInitializeCapabilities: InitializeCapabilities = {
 }
 const DEFAULT_EFFORT: ReasoningEffort = 'high'
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10_000
+
+const declineAdditionalPermissions = (): PermissionsRequestApprovalResponse => ({
+  permissions: {},
+  scope: 'turn',
+  strictAutoReview: true,
+})
 
 const newId = (() => {
   let id = 1
@@ -461,6 +493,12 @@ export class CodexAppServerClient {
   private threadConfig: { [key in string]?: JsonValue } | null
   private experimentalRawEvents: boolean
   private historyMode: ThreadHistoryMode | null
+  private onRequestUserInput: NonNullable<CodexAppServerOptions['onRequestUserInput']> | null
+  private onDynamicToolCall: NonNullable<CodexAppServerOptions['onDynamicToolCall']> | null
+  private dynamicTools: DynamicToolSpec[] | null
+  private onAttestationGenerate: NonNullable<CodexAppServerOptions['onAttestationGenerate']> | null
+  private onPermissionsRequestApproval: NonNullable<CodexAppServerOptions['onPermissionsRequestApproval']> | null
+  private onChatgptAuthTokensRefresh: NonNullable<CodexAppServerOptions['onChatgptAuthTokensRefresh']> | null
 
   constructor({
     binaryPath = 'codex',
@@ -476,6 +514,12 @@ export class CodexAppServerClient {
     persistExtendedHistory = false,
     clientInfo = defaultClientInfo,
     logger,
+    onRequestUserInput,
+    onDynamicToolCall,
+    dynamicTools,
+    onAttestationGenerate,
+    onPermissionsRequestApproval,
+    onChatgptAuthTokensRefresh,
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
   }: CodexAppServerOptions = {}) {
     this.logger = logger
@@ -487,6 +531,12 @@ export class CodexAppServerClient {
     this.threadConfig = threadConfig === undefined ? { mcp_servers: {}, web_search: 'live' } : threadConfig
     this.experimentalRawEvents = experimentalRawEvents
     this.historyMode = historyMode ?? (persistExtendedHistory ? 'paginated' : null)
+    this.onRequestUserInput = onRequestUserInput ?? null
+    this.onDynamicToolCall = onDynamicToolCall ?? null
+    this.dynamicTools = dynamicTools ? [...dynamicTools] : null
+    this.onAttestationGenerate = onAttestationGenerate ?? null
+    this.onPermissionsRequestApproval = onPermissionsRequestApproval ?? null
+    this.onChatgptAuthTokensRefresh = onChatgptAuthTokensRefresh ?? null
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
 
     const args = ['--sandbox', this.sandbox]
@@ -656,6 +706,7 @@ export class CodexAppServerClient {
         personality: turnOptions.personality ?? null,
         ephemeral: null,
         historyMode: this.historyMode,
+        dynamicTools: this.dynamicTools,
         experimentalRawEvents: this.experimentalRawEvents,
       }
 
@@ -854,7 +905,13 @@ export class CodexAppServerClient {
       for (const line of lines) this.handleLine(line)
     })
 
-    const initializeParams = { clientInfo, capabilities: defaultInitializeCapabilities }
+    const initializeParams = {
+      clientInfo,
+      capabilities: {
+        ...defaultInitializeCapabilities,
+        requestAttestation: this.onAttestationGenerate !== null,
+      },
+    }
     await this.request('initialize', initializeParams)
     this.log('info', 'codex app-server initialized', { clientInfo })
   }
@@ -879,7 +936,7 @@ export class CodexAppServerClient {
     }
 
     if (hasId && hasMethod) {
-      this.handleServerRequest(msg as { id: RequestId; method: string; params?: unknown })
+      void this.handleServerRequest(msg as { id: RequestId; method: string; params?: unknown })
       return
     }
 
@@ -888,39 +945,82 @@ export class CodexAppServerClient {
     }
   }
 
-  private handleServerRequest(message: { id: RequestId; method: string; params?: unknown }): void {
+  private async handleServerRequest(message: { id: RequestId; method: string; params?: unknown }): Promise<void> {
     const { id, method, params } = message
     this.log('info', 'codex app-server request (server → client)', { id, method })
 
-    // Auto-decline risky requests to avoid hangs; extend if approvals are needed later.
-    let result: unknown = { acknowledged: true }
+    try {
+      // Auto-decline risky requests to avoid hangs; extend if approvals are needed later.
+      let result: unknown = null
 
-    switch (method) {
-      case 'item/commandExecution/requestApproval':
-        result = { decision: 'decline', acceptSettings: null }
-        break
-      case 'item/fileChange/requestApproval':
-        result = { decision: 'decline' }
-        break
-      case 'mcpServer/elicitation/request':
-        result = { action: 'decline', content: null }
-        break
-      case 'currentTime/read':
-        result = {
-          currentTimeAt: Math.floor(Date.now() / 1000),
-        } satisfies CurrentTimeReadResponse
-        break
-      case 'applyPatchApproval':
-        result = { decision: 'denied' }
-        break
-      case 'execCommandApproval':
-        result = { decision: 'denied' }
-        break
-      default:
-        this.log('warn', 'unrecognized server request method, sending empty ack', { method, params })
+      switch (method) {
+        case 'item/commandExecution/requestApproval':
+          result = { decision: 'decline', acceptSettings: null }
+          break
+        case 'item/fileChange/requestApproval':
+          result = { decision: 'decline' }
+          break
+        case 'item/tool/requestUserInput':
+          result = this.onRequestUserInput
+            ? await this.onRequestUserInput(params as ToolRequestUserInputParams)
+            : ({ answers: {} } satisfies ToolRequestUserInputResponse)
+          break
+        case 'item/permissions/requestApproval':
+          result = this.onPermissionsRequestApproval
+            ? await this.onPermissionsRequestApproval(params as PermissionsRequestApprovalParams)
+            : declineAdditionalPermissions()
+          break
+        case 'item/tool/call': {
+          const toolCall = params as DynamicToolCallParams
+          result = this.onDynamicToolCall
+            ? await this.onDynamicToolCall(toolCall)
+            : ({
+                contentItems: [
+                  {
+                    type: 'inputText',
+                    text: `Dynamic tool handler is not configured for ${toolCall.tool ?? 'unknown tool'}`,
+                  },
+                ],
+                success: false,
+              } satisfies DynamicToolCallResponse)
+          break
+        }
+        case 'account/chatgptAuthTokens/refresh':
+          if (!this.onChatgptAuthTokensRefresh) {
+            throw new Error('ChatGPT auth token refresh handler is not configured')
+          }
+          result = await this.onChatgptAuthTokensRefresh(params as ChatgptAuthTokensRefreshParams)
+          break
+        case 'attestation/generate':
+          if (!this.onAttestationGenerate) {
+            throw new Error('Attestation generation handler is not configured')
+          }
+          result = await this.onAttestationGenerate(params as AttestationGenerateParams)
+          break
+        case 'mcpServer/elicitation/request':
+          result = { action: 'decline', content: null }
+          break
+        case 'currentTime/read':
+          result = {
+            currentTimeAt: Math.floor(Date.now() / 1000),
+          } satisfies CurrentTimeReadResponse
+          break
+        case 'applyPatchApproval':
+          result = { decision: 'denied' }
+          break
+        case 'execCommandApproval':
+          result = { decision: 'denied' }
+          break
+        default:
+          throw new Error(`Unsupported codex app-server request method: ${method}`)
+      }
+
+      this.send({ id, result })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.log('error', 'codex app-server request handler failed', { id, method, error: message })
+      this.send({ id, error: { code: -32_000, message } })
     }
-
-    this.send({ id, result })
   }
 
   private handleResponse(message: { id: RequestId; result?: unknown; error?: unknown }): void {

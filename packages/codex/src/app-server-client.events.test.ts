@@ -216,6 +216,26 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('advertises and handles attestation generation only when a handler is configured', async () => {
+    const onAttestationGenerate = vi.fn(async () => ({ token: 'opaque-attestation-token' }))
+    const { child, client } = setupClient({ onAttestationGenerate })
+    await respondToInitialize(child, (request) => {
+      expect(request.params).toMatchObject({
+        capabilities: { requestAttestation: true },
+      })
+    })
+    await client.ensureReady()
+
+    writeLine(child, { id: 40, method: 'attestation/generate', params: {} })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 40,
+      result: { token: 'opaque-attestation-token' },
+    })
+    expect(onAttestationGenerate).toHaveBeenCalledWith({})
+
+    client.stop()
+  })
+
   it('responds to current time requests with whole Unix seconds', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-17T08:30:45.999Z'))
@@ -233,6 +253,227 @@ describe('CodexAppServerClient v2 notifications', () => {
       id: 41,
       result: { currentTimeAt: 1_784_277_045 },
     })
+    client.stop()
+  })
+
+  it('returns protocol-valid defaults for unattended tool requests', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, {
+      id: 42,
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'input-1',
+        questions: [],
+        autoResolutionMs: null,
+      },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({ id: 42, result: { answers: {} } })
+
+    writeLine(child, {
+      id: 43,
+      method: 'item/tool/call',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        namespace: null,
+        tool: 'browser.click',
+        arguments: { ref: 'button-1' },
+      },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 43,
+      result: {
+        contentItems: [
+          {
+            type: 'inputText',
+            text: 'Dynamic tool handler is not configured for browser.click',
+          },
+        ],
+        success: false,
+      },
+    })
+
+    client.stop()
+  })
+
+  it('delegates user-input and dynamic tool requests to configured handlers', async () => {
+    const onRequestUserInput = vi.fn(async () => ({
+      answers: { choice: { answers: ['continue'] } },
+    }))
+    const onDynamicToolCall = vi.fn(async () => ({
+      contentItems: [{ type: 'inputText' as const, text: 'clicked' }],
+      success: true,
+    }))
+    const { child, client } = setupClient({ onRequestUserInput, onDynamicToolCall })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const inputParams = {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'input-1',
+      questions: [
+        {
+          id: 'choice',
+          header: 'Action',
+          question: 'Continue?',
+          isOther: false,
+          isSecret: false,
+          options: null,
+        },
+      ],
+      autoResolutionMs: null,
+    }
+    writeLine(child, { id: 44, method: 'item/tool/requestUserInput', params: inputParams })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 44,
+      result: { answers: { choice: { answers: ['continue'] } } },
+    })
+    expect(onRequestUserInput).toHaveBeenCalledWith(inputParams)
+
+    const params = {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      namespace: 'browser',
+      tool: 'click',
+      arguments: { ref: 'button-1' },
+    }
+    writeLine(child, { id: 45, method: 'item/tool/call', params })
+
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 45,
+      result: {
+        contentItems: [{ type: 'inputText', text: 'clicked' }],
+        success: true,
+      },
+    })
+    expect(onDynamicToolCall).toHaveBeenCalledWith(params)
+
+    client.stop()
+  })
+
+  it('declines permission escalation and rejects auth refresh without a real handler', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, {
+      id: 46,
+      method: 'item/permissions/requestApproval',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        environmentId: null,
+        startedAtMs: 1_784_277_045_000,
+        cwd: '/workspace/lab',
+        reason: 'needs network access',
+        permissions: { network: { enabled: true }, fileSystem: null },
+      },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 46,
+      result: {
+        permissions: {},
+        scope: 'turn',
+        strictAutoReview: true,
+      },
+    })
+
+    writeLine(child, {
+      id: 47,
+      method: 'account/chatgptAuthTokens/refresh',
+      params: { reason: 'unauthorized', previousAccountId: 'account-old' },
+    })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 47,
+      error: {
+        code: -32_000,
+        message: 'ChatGPT auth token refresh handler is not configured',
+      },
+    })
+
+    client.stop()
+  })
+
+  it('delegates ChatGPT token refresh to a configured refresh handler', async () => {
+    const onChatgptAuthTokensRefresh = vi.fn(async () => ({
+      accessToken: 'fresh-access-token',
+      chatgptAccountId: 'account-1',
+      chatgptPlanType: 'pro' as const,
+    }))
+    const { child, client } = setupClient({ onChatgptAuthTokensRefresh })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const params = { reason: 'unauthorized' as const, previousAccountId: 'account-old' }
+    writeLine(child, { id: 48, method: 'account/chatgptAuthTokens/refresh', params })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 48,
+      result: {
+        accessToken: 'fresh-access-token',
+        chatgptAccountId: 'account-1',
+        chatgptPlanType: 'pro',
+      },
+    })
+    expect(onChatgptAuthTokensRefresh).toHaveBeenCalledWith(params)
+
+    client.stop()
+  })
+
+  it('returns a JSON-RPC error for unsupported server request methods', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    writeLine(child, { id: 49, method: 'future/request', params: {} })
+
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 49,
+      error: {
+        code: -32_000,
+        message: 'Unsupported codex app-server request method: future/request',
+      },
+    })
+
+    client.stop()
+  })
+
+  it('advertises configured dynamic tools when creating a thread', async () => {
+    const dynamicTools = [
+      {
+        type: 'function' as const,
+        name: 'linear_graphql',
+        description: 'Query Linear GraphQL',
+        inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    ]
+    const { child, client } = setupClient({
+      dynamicTools,
+      onDynamicToolCall: async () => ({ contentItems: [], success: true }),
+    })
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const runPromise = client.runTurnStream('hello')
+    await respondToThreadStart(child, 'thread-1', (request) => {
+      expect(request.params).toMatchObject({ dynamicTools })
+    })
+    await respondToTurnStart(child, 'turn-1')
+    const { stream } = await runPromise
+
+    writeLine(child, {
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed', items: [], error: null } },
+    })
+    await drainStream(stream as unknown as AsyncGenerator<unknown, unknown, void>)
     client.stop()
   })
 
