@@ -192,8 +192,11 @@ and submission.
 ## Scheduled Operation and Logging
 
 The existing hourly broker-economic reconciliation CronJob owns parity. It runs observation-only mode with
-`--tigerbeetle-parity`, `Forbid` concurrency, no retry, a bounded deadline, the exact deployed build identity, and no
-publication token.
+`--tigerbeetle-parity`, `Forbid` concurrency, zero Kubernetes backoff, a bounded deadline, the exact deployed build
+identity, and no publication token. The CLI retries the complete observation only when a concurrent broker-activity
+scan opens or changes the source snapshot, for at most three minutes. It never retries TigerBeetle mismatches, broker
+residuals, build-identity failures, or any other error; exhaustion remains a hard failure. Retrying the complete attempt
+ensures no partially stale reduction or broker snapshot can be reused.
 
 The official TigerBeetle Linux client requires `io_uring`; the upstream project documents `PermissionDenied` under
 container seccomp defaults and recommends an unconfined seccomp profile. The reconciliation container therefore uses
