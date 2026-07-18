@@ -183,7 +183,12 @@ rl.on('line', (line) => {
   }
 
   if (message.id === 900) {
-    if (!Number.isInteger(message.result?.currentTimeAt) || message.result.currentTimeAt <= 0) {
+    const currentTimeAt = message.result?.currentTimeAt
+    const expectedCurrentTimeAt = Math.floor(Date.now() / 1_000)
+    if (
+      !Number.isInteger(currentTimeAt) ||
+      Math.abs(currentTimeAt - expectedCurrentTimeAt) > 5
+    ) {
       console.log(JSON.stringify({
         id: pendingThreadStartId,
         error: { code: -32600, message: 'currentTime/read returned an invalid timestamp' },
