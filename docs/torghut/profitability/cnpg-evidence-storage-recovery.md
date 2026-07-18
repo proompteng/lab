@@ -123,11 +123,23 @@ copy was analyzed and used to benchmark the exact SQL from `loop_status.py`, `re
 | orders in the last 24 hours |          283 / 0.469 ms |                  2 / 0.011 ms | 99% fewer buffers; about 43x faster |
 | exchange-order lookup       |          283 / 0.330 ms |                  3 / 0.018 ms | 99% fewer buffers; about 18x faster |
 
+The projected-volume check used the same PostgreSQL 17 image, production column types and status mix, and a 512-byte
+row-width pad in a disposable CNPG cluster. Its 1,000,000 rows were about 233 times the live order count and occupied a
+651 MB heap (780 MB including the pre-existing indexes).
+
+| Projected-volume query       | Baseline buffers / time | Measured index buffers / time |
+| ---------------------------- | ----------------------: | ----------------------------: |
+| latest acknowledged order    |     83,425 / 341.228 ms |                  9 / 0.024 ms |
+| orders in the last 24 hours  |     83,334 / 114.007 ms |              4,327 / 1.694 ms |
+| exchange-order lookup        |     83,334 / 108.565 ms |                  4 / 0.021 ms |
+| rejection cooldown (30 days) |      25,024 / 84.645 ms |             3,573 / 20.384 ms |
+
 Two B-tree indexes produced those results: `(execution_network, created_at DESC)` and the partial
 `(execution_network, exchange_order_id, created_at DESC) WHERE exchange_order_id IS NOT NULL`. Together they occupied
-336 KiB on the restored data. Stale-open-order, rejection-cooldown, and rejected-order-report plans did not improve,
-so no speculative indexes were added for them. Production creation uses `CREATE INDEX CONCURRENTLY` to avoid blocking
-writes, consistent with the PostgreSQL 17
+336 KiB on the restored data and 51 MB on the projected fixture. Stale-open-order latency remained below 0.1 ms, and
+the rejected-order operator report remained below 125 ms at projected volume; neither justified another index. The
+projected fixture and all of its resources were removed after measurement. Production creation uses
+`CREATE INDEX CONCURRENTLY` to avoid blocking writes, consistent with the PostgreSQL 17
 [index-build contract](https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
 
 None of these storage proofs establishes strategy profitability or capital authority. Risk-increasing real-capital
