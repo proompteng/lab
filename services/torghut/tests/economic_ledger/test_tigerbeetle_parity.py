@@ -241,7 +241,7 @@ def test_full_projection_is_exact_idempotent_and_bound_to_immutable_runs() -> No
     second = _audit(client, replay, runs=runs)
 
     assert TIGERBEETLE_ECONOMIC_PROJECTION_VERSION == (
-        "torghut.broker-economic-tigerbeetle-projection.v2"
+        "torghut.broker-economic-tigerbeetle-projection.v3"
     )
     assert first.payload["projection_version"] == (
         TIGERBEETLE_ECONOMIC_PROJECTION_VERSION

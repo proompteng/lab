@@ -39,6 +39,7 @@ from ..broker_account_activities import (
 )
 from .comparison import DualReduction, reduce_and_compare
 from .journal_reducer import JOURNAL_REDUCER_NAME, JOURNAL_REDUCER_VERSION
+from .published_order import load_published_activity_order
 from .state_reducer import STATE_REDUCER_NAME, STATE_REDUCER_VERSION
 from .types import (
     EconomicActivity,
@@ -94,6 +95,7 @@ class BrokerEconomicLedgerSourceRows:
     activities_inserted: int
     rows: tuple[Row[BrokerEconomicLedgerSourceRecord], ...]
     option_contract_sizes: tuple[tuple[str, int], ...]
+    published_activity_order: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,12 +200,47 @@ def replay_broker_economic_ledger_snapshot(
     """Run both pure reducers from an already closed immutable source snapshot."""
 
     reduction = reduce_and_compare(snapshot.prepared)
+    _require_retroactive_append_equivalence(snapshot, reduction=reduction)
     token = _publication_token(snapshot, reduction)
     return BrokerEconomicLedgerReplay(
         snapshot=snapshot,
         reduction=reduction,
         publication_token=token,
     )
+
+
+def _require_retroactive_append_equivalence(
+    snapshot: BrokerEconomicLedgerSnapshot,
+    *,
+    reduction: DualReduction,
+) -> None:
+    if not snapshot.prepared.retroactive_append_ids:
+        return
+
+    economic_order = reduce_and_compare(prepare_activities(snapshot.activities))
+    anchored_transactions = tuple(
+        sorted(
+            (transaction.transaction_id, transaction.digest)
+            for transaction in reduction.journal.transactions
+        )
+    )
+    economic_transactions = tuple(
+        sorted(
+            (transaction.transaction_id, transaction.digest)
+            for transaction in economic_order.journal.transactions
+        )
+    )
+    anchored_projection = reduction.journal.projection.economic_payload()
+    economic_projection = economic_order.journal.projection.economic_payload()
+    anchored_projection.pop("input_manifest_digest")
+    economic_projection.pop("input_manifest_digest")
+    if (
+        anchored_transactions != economic_transactions
+        or anchored_projection != economic_projection
+    ):
+        raise EconomicLedgerError(
+            "economic_ledger_unappendable_late_fee_requires_new_version"
+        )
 
 
 def load_broker_economic_ledger_source_rows(
@@ -253,6 +290,7 @@ def load_broker_economic_ledger_source_rows(
         session,
         symbols=_option_symbols(rows),
     )
+    published_activity_order = load_published_activity_order(session, scope=scope)
     return BrokerEconomicLedgerSourceRows(
         cursor_id=cursor.id,
         source_watermark=as_utc(cursor.last_completed_scan_until),
@@ -260,6 +298,7 @@ def load_broker_economic_ledger_source_rows(
         activities_inserted=cursor.activities_inserted,
         rows=rows,
         option_contract_sizes=option_contract_sizes,
+        published_activity_order=published_activity_order,
     )
 
 
@@ -310,10 +349,16 @@ def prepare_broker_economic_ledger_snapshot(
         )
         for row in source_rows.rows
     )
-    prepared = prepare_activities(activities)
+    prepared = prepare_activities(
+        activities,
+        prior_activity_order=source_rows.published_activity_order,
+    )
+    activities_by_id = {
+        activity.external_activity_id: activity for activity in activities
+    }
     manifest = tuple(
-        activity.manifest_payload()
-        for activity in sorted(activities, key=lambda item: item.sort_key)
+        activities_by_id[external_id].manifest_payload()
+        for external_id in prepared.activity_order
     )
     manifest_canonical_json = _canonical_json(manifest)
     if _sha256(manifest_canonical_json) != prepared.manifest_digest:

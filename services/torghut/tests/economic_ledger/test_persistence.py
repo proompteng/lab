@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
 
@@ -109,6 +109,9 @@ def _activity(
     net_amount: str | None = None,
     currency: str | None = "USD",
     payload_sha256: str | None = None,
+    date_only: bool = False,
+    settle_date: date | None = None,
+    first_observed_at: datetime | None = None,
 ) -> BrokerAccountActivity:
     payload = {"activity_type": activity_type, "id": external_id}
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -120,7 +123,8 @@ def _activity(
         endpoint_fingerprint="a" * 64,
         external_activity_id=external_id,
         activity_type=activity_type,
-        event_at=_OBSERVED_AT + timedelta(seconds=offset),
+        event_at=None if date_only else _OBSERVED_AT + timedelta(seconds=offset),
+        settle_date=settle_date,
         symbol=symbol,
         side=side,
         quantity=Decimal(quantity) if quantity is not None else None,
@@ -135,7 +139,7 @@ def _activity(
         normalized_economic_sha256=hashlib.sha256(
             f"economic:{external_id}".encode("utf-8")
         ).hexdigest(),
-        first_observed_at=_OBSERVED_AT + timedelta(minutes=1),
+        first_observed_at=(first_observed_at or _OBSERVED_AT + timedelta(minutes=1)),
     )
 
 
@@ -278,6 +282,214 @@ def test_replay_publishes_one_atomic_idempotent_run_pair() -> None:
     assert {run.input_id for run in runs} == {inputs[0].id}
     assert inputs[0].manifest_sha256 == replay.snapshot.prepared.manifest_digest
     assert len({run.comparison_sha256 for run in runs}) == 1
+
+
+def test_late_prior_date_fee_appends_to_published_manifest_order() -> None:
+    sessions = _session_factory()
+    prior_date = (_OBSERVED_AT - timedelta(days=1)).date()
+    later_date = _OBSERVED_AT.date()
+    initial = [
+        _activity(
+            "fill-1",
+            "FILL",
+            offset=-86_399,
+            symbol="BTCUSD",
+            side="buy",
+            quantity="0.1",
+            price="1",
+            net_amount=None,
+            settle_date=prior_date,
+        ),
+        _activity(
+            "fill-2",
+            "FILL",
+            offset=-86_398,
+            symbol="BTCUSD",
+            side="buy",
+            quantity="0.1",
+            price="3.333333333333333333",
+            net_amount=None,
+            settle_date=prior_date,
+        ),
+        _activity(
+            "existing-later-date-fee",
+            "CFEE",
+            offset=0,
+            symbol="BTCUSD",
+            quantity="-0.07",
+            price="3",
+            net_amount="0",
+            date_only=True,
+            settle_date=later_date,
+            first_observed_at=_OBSERVED_AT + timedelta(days=1),
+        ),
+    ]
+    _seed_source(sessions, initial)
+
+    with sessions.begin() as session:
+        before = _replay(session)
+        published_before = publish_broker_economic_ledger(
+            session,
+            before,
+            confirmation_token=before.publication_token,
+        )
+    before_digests = {
+        transaction.transaction_id: transaction.digest
+        for transaction in before.reduction.journal.transactions
+    }
+
+    late_fee = _activity(
+        "late-prior-date-fee",
+        "CFEE",
+        offset=0,
+        symbol="BTCUSD",
+        quantity="-0.01",
+        price="4",
+        net_amount="0",
+        date_only=True,
+        settle_date=prior_date,
+        first_observed_at=_OBSERVED_AT + timedelta(days=2),
+    )
+    with sessions.begin() as session:
+        session.add(late_fee)
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None
+        assert cursor.last_completed_at is not None
+        assert cursor.last_completed_scan_until is not None
+        cursor.activities_seen += 1
+        cursor.activities_inserted += 1
+        cursor.last_completed_at += timedelta(minutes=1)
+        cursor.last_completed_scan_until += timedelta(minutes=1)
+
+    with sessions.begin() as session:
+        after = _replay(session)
+        published_after = publish_broker_economic_ledger(
+            session,
+            after,
+            confirmation_token=after.publication_token,
+        )
+    after_digests = {
+        transaction.transaction_id: transaction.digest
+        for transaction in after.reduction.journal.transactions
+    }
+
+    assert late_fee.settle_date is not None
+    assert before.snapshot.prepared.activity_order == (
+        "fill-1",
+        "fill-2",
+        "existing-later-date-fee",
+    )
+    assert after.snapshot.prepared.activity_order == (
+        *before.snapshot.prepared.activity_order,
+        late_fee.external_activity_id,
+    )
+    assert before_digests.items() <= after_digests.items()
+    assert after.reduction.admissible
+    assert published_after.reused_existing is False
+    assert published_after.journal_run_id != published_before.journal_run_id
+
+
+def test_late_fee_with_different_append_cost_basis_requires_new_version() -> None:
+    sessions = _session_factory()
+    prior_date = (_OBSERVED_AT - timedelta(days=1)).date()
+    initial = [
+        _activity(
+            "prior-buy",
+            "FILL",
+            offset=-86_399,
+            symbol="BTCUSD",
+            side="buy",
+            quantity="0.1",
+            price="10",
+            net_amount=None,
+            settle_date=prior_date,
+        ),
+        _activity(
+            "later-buy",
+            "FILL",
+            offset=1,
+            symbol="BTCUSD",
+            side="buy",
+            quantity="0.1",
+            price="20",
+            net_amount=None,
+            settle_date=_OBSERVED_AT.date(),
+        ),
+    ]
+    _seed_source(sessions, initial)
+    with sessions.begin() as session:
+        before = _replay(session)
+        publish_broker_economic_ledger(
+            session,
+            before,
+            confirmation_token=before.publication_token,
+        )
+
+    late_fee = _activity(
+        "late-prior-date-fee",
+        "CFEE",
+        offset=0,
+        symbol="BTCUSD",
+        quantity="-0.05",
+        price="10",
+        net_amount="0",
+        date_only=True,
+        settle_date=prior_date,
+        first_observed_at=_OBSERVED_AT + timedelta(days=1),
+    )
+    with sessions.begin() as session:
+        session.add(late_fee)
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None
+        assert cursor.last_completed_at is not None
+        assert cursor.last_completed_scan_until is not None
+        cursor.activities_seen += 1
+        cursor.activities_inserted += 1
+        cursor.last_completed_at += timedelta(minutes=1)
+        cursor.last_completed_scan_until += timedelta(minutes=1)
+
+    with sessions.begin() as session:
+        with pytest.raises(
+            EconomicLedgerError,
+            match="economic_ledger_unappendable_late_fee_requires_new_version",
+        ):
+            _replay(session)
+
+
+@pytest.mark.parametrize(
+    ("manifest_json", "manifest_sha256", "error"),
+    [
+        ("{", hashlib.sha256(b"{").hexdigest(), "published_manifest_invalid"),
+        (
+            "[]",
+            hashlib.sha256(b"[]").hexdigest(),
+            "published_manifest_count_mismatch",
+        ),
+        ("[]", "0" * 64, "published_manifest_hash_mismatch"),
+    ],
+)
+def test_replay_fails_closed_on_corrupt_published_manifest_anchor(
+    manifest_json: str,
+    manifest_sha256: str,
+    error: str,
+) -> None:
+    sessions = _session_factory()
+    _seed_source(sessions, _supported_history())
+    with sessions.begin() as session:
+        replay = _replay(session)
+        publish_broker_economic_ledger(
+            session,
+            replay,
+            confirmation_token=replay.publication_token,
+        )
+    with sessions.begin() as session:
+        input_row = session.scalar(select(BrokerEconomicLedgerInput))
+        assert input_row is not None
+        input_row.manifest_canonical_json = manifest_json
+        input_row.manifest_sha256 = manifest_sha256
+    with sessions.begin() as session:
+        with pytest.raises(EconomicLedgerError, match=error):
+            _replay(session)
 
 
 def test_publication_rejects_forged_replay_token() -> None:
