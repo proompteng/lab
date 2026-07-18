@@ -3,6 +3,7 @@ name: torghut-notebooks-ci
 on:
   pull_request:
     paths:
+      - 'services/torghut/app/__init__.py'
       - 'services/torghut/app/notebook_data/**'
       - 'services/torghut/notebooks/00-system-flow.ipynb'
       - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
@@ -20,6 +21,7 @@ on:
     branches:
       - main
     paths:
+      - 'services/torghut/app/__init__.py'
       - 'services/torghut/app/notebook_data/**'
       - 'services/torghut/notebooks/00-system-flow.ipynb'
       - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'

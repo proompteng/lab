@@ -326,6 +326,7 @@ describe('torghut build-push workflow', () => {
     expect(refreshBase).toBeLessThan(updateDigest)
     expect(verifyBase).toBeGreaterThan(updateDigest)
     expect(verifyBase).toBeLessThan(createPr)
+    expect(notebookCiWorkflow.match(/- 'services\/torghut\/app\/__init__\.py'/g)).toHaveLength(2)
     expect(notebookCiWorkflow.match(/- 'services\/torghut\/scripts\/start_torghut_notebook\.sh'/g)).toHaveLength(2)
     const staleDiffBlock = staleDiffBlockFor(notebookReleaseWorkflow, 'services/torghut/app/notebook_data')
     expect(staleDiffBlock).toContain('services/torghut/app/__init__.py')
