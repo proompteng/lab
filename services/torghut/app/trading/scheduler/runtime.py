@@ -54,6 +54,7 @@ from .broker_mutation_recovery_runtime import (
 )
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
+from .rejected_outcome_runtime import run_rejected_signal_outcome_iteration
 from .runtime_pipeline_factory import build_trading_pipeline_for_account
 from .simulation_state import sync_simulation_run_state
 from .state import TradingState
@@ -692,7 +693,9 @@ class TradingScheduler(
         last_autonomy = datetime.now(timezone.utc)
         last_evidence_check = datetime.now(timezone.utc)
         last_broker_activity = datetime.fromtimestamp(0, tz=timezone.utc)
+        last_rejected_outcome_label = datetime.fromtimestamp(0, tz=timezone.utc)
         broker_activity_task: asyncio.Task[None] | None = None
+        rejected_outcome_task: asyncio.Task[None] | None = None
         logger.info(
             "Trading scheduler loop running poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_interval_seconds=%s evidence_interval_seconds=%s",
             poll_interval,
@@ -708,6 +711,9 @@ class TradingScheduler(
                 if broker_activity_task is not None and broker_activity_task.done():
                     await broker_activity_task
                     broker_activity_task = None
+                if rejected_outcome_task is not None and rejected_outcome_task.done():
+                    await rejected_outcome_task
+                    rejected_outcome_task = None
                 if broker_activity_task is None and self._interval_elapsed(
                     last_broker_activity,
                     reconcile_interval,
@@ -719,6 +725,17 @@ class TradingScheduler(
                         self._run_broker_account_activity_iteration()
                     )
                     last_broker_activity = now
+                if rejected_outcome_task is None and self._interval_elapsed(
+                    last_rejected_outcome_label,
+                    reconcile_interval,
+                    now=now,
+                ):
+                    # Counterfactual learning is useful research evidence, but
+                    # quote backfills must never delay decisions or broker I/O.
+                    rejected_outcome_task = asyncio.create_task(
+                        self._run_rejected_signal_outcome_iteration()
+                    )
+                    last_rejected_outcome_label = now
                 if self._interval_elapsed(last_reconcile, reconcile_interval, now=now):
                     await self._run_reconcile_iteration()
                     last_reconcile = now
@@ -751,6 +768,8 @@ class TradingScheduler(
                 # through to_thread. Drain it before leadership can be released;
                 # stop() retains the writer fence and exits fatally on timeout.
                 await broker_activity_task
+            if rejected_outcome_task is not None:
+                await rejected_outcome_task
             self.state.running = False
             logger.info("Trading scheduler loop exited")
 
@@ -837,6 +856,12 @@ class TradingScheduler(
                 )
             elif isinstance(outcome, BaseException):
                 raise outcome
+
+    async def _run_rejected_signal_outcome_iteration(self) -> None:
+        active_pipelines = self._pipelines or (
+            [self._pipeline] if self._pipeline else []
+        )
+        await run_rejected_signal_outcome_iteration(active_pipelines)
 
     async def _run_reconcile_iteration(self) -> None:
         if self._pipeline is None:

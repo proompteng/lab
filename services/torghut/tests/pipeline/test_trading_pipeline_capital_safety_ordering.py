@@ -17,7 +17,7 @@ def _pipeline() -> tuple[TradingPipeline, object]:
         metrics=SimpleNamespace(planned_decision_age_seconds=0),
     )
     pipeline.capital_safety = Mock()
-    pipeline._label_mature_rejected_signal_outcome_events = Mock()
+    pipeline.label_mature_rejected_signal_outcomes = Mock()
     pipeline._prepare_run_once = Mock()
     pipeline._get_account_snapshot = Mock(return_value=object())
     return pipeline, session
@@ -32,6 +32,15 @@ def test_capital_safety_runs_when_no_strategy_is_enabled() -> None:
     pipeline.capital_safety.evaluate.assert_called_once_with(
         session, pipeline._get_account_snapshot.return_value
     )
+
+
+def test_rejected_outcome_learning_is_not_on_order_execution_path() -> None:
+    pipeline, _ = _pipeline()
+    pipeline._load_strategies = Mock(return_value=[])
+
+    pipeline.run_once()
+
+    pipeline.label_mature_rejected_signal_outcomes.assert_not_called()
 
 
 def test_capital_safety_runs_before_empty_signal_exit() -> None:

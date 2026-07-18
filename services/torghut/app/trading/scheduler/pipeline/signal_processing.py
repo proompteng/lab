@@ -9,6 +9,7 @@ import inspect
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from http.client import HTTPException
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -549,7 +550,7 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
                 event_payload.get("symbol"),
             )
 
-    def _label_mature_rejected_signal_outcome_events(
+    def label_mature_rejected_signal_outcomes(
         self,
         *,
         now: datetime | None = None,
@@ -560,7 +561,7 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
         mature_before = resolved_now - followup_horizon
         try:
             with self.session_factory() as session:
-                rows = (
+                candidates = (
                     session.execute(
                         select(RejectedSignalOutcomeEvent)
                         .where(
@@ -573,24 +574,53 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
                     .scalars()
                     .all()
                 )
-                for row in rows:
-                    try:
-                        outcome = self._build_rejected_signal_outcome_payload(
-                            row=row,
-                            followup_horizon=followup_horizon,
+                session.expunge_all()
+
+            # Quote lookups can consume their full network timeout. End the read
+            # transaction before that I/O so PostgreSQL never sees an idle
+            # transaction while the labeler waits on a market-data provider.
+            outcomes: dict[str, dict[str, Any]] = {}
+            for candidate in candidates:
+                try:
+                    outcome = self._build_rejected_signal_outcome_payload(
+                        row=candidate,
+                        followup_horizon=followup_horizon,
+                    )
+                except (
+                    ArithmeticError,
+                    HTTPException,
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                ):
+                    logger.exception(
+                        "Failed to build rejected signal outcome label event_id=%s",
+                        candidate.event_id,
+                    )
+                    continue
+                if outcome is not None:
+                    outcomes[candidate.event_id] = outcome
+
+            if not outcomes:
+                return
+            with self.session_factory() as session:
+                rows_to_label = (
+                    session.execute(
+                        select(RejectedSignalOutcomeEvent)
+                        .where(RejectedSignalOutcomeEvent.event_id.in_(tuple(outcomes)))
+                        .where(
+                            RejectedSignalOutcomeEvent.outcome_label_status == "pending"
                         )
-                    except Exception:
-                        logger.exception(
-                            "Failed to build rejected signal outcome label event_id=%s",
-                            row.event_id,
-                        )
-                        continue
-                    if outcome is None:
-                        continue
+                    )
+                    .scalars()
+                    .all()
+                )
+                for row in rows_to_label:
                     row.outcome_label_status = "labeled"
-                    row.outcome_payload_json = outcome
+                    row.outcome_payload_json = outcomes[row.event_id]
                     row.updated_at = resolved_now
-                if rows:
+                if rows_to_label:
                     session.commit()
         except (SQLAlchemyError, ValueError):
             logger.exception("Failed to label mature rejected signal outcome events")
