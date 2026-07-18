@@ -636,6 +636,38 @@ def _unavailable_component(
     }
 
 
+def _tigerbeetle_parity_component(
+    broker_ledger: Mapping[str, object],
+) -> tuple[Record, tuple[str, ...]]:
+    raw_parity = broker_ledger.get("tigerbeetle_economic_parity")
+    if raw_parity is None:
+        return (
+            _unavailable_component(
+                "TigerBeetle parity",
+                raw_parity,
+                authority_field="parity",
+            ),
+            (
+                "TigerBeetle economic parity is unavailable; final action authority remains authoritative.",
+            ),
+        )
+
+    parity = _as_string_mapping(raw_parity)
+    if parity is None or not isinstance(parity.get("parity"), bool):
+        raise NotebookDataError(
+            "broker_economic_ledger.tigerbeetle_economic_parity.parity is not a boolean"
+        )
+    return (
+        _component(
+            "TigerBeetle parity",
+            parity,
+            authority_field="parity",
+            authoritative=False,
+        ),
+        (),
+    )
+
+
 def capital_authority(*, adapter: DataAdapter | None = None) -> Snapshot:
     """Return verbatim authority components without deriving a new allowed flag."""
 
@@ -667,31 +699,9 @@ def capital_authority(*, adapter: DataAdapter | None = None) -> Snapshot:
         broker_ledger = _as_string_mapping(status["broker_economic_ledger"])
         if broker_ledger is None:
             raise NotebookDataError("broker_economic_ledger is not an object")
-        raw_tigerbeetle_parity = broker_ledger.get("tigerbeetle_economic_parity")
-        parity_messages: tuple[str, ...] = ()
-        if raw_tigerbeetle_parity is None:
-            tigerbeetle_component = _unavailable_component(
-                "TigerBeetle parity",
-                raw_tigerbeetle_parity,
-                authority_field="parity",
-            )
-            parity_messages = (
-                "TigerBeetle economic parity is unavailable; final action authority remains authoritative.",
-            )
-        else:
-            tigerbeetle_parity = _as_string_mapping(raw_tigerbeetle_parity)
-            if tigerbeetle_parity is None or not isinstance(
-                tigerbeetle_parity.get("parity"), bool
-            ):
-                raise NotebookDataError(
-                    "broker_economic_ledger.tigerbeetle_economic_parity.parity is not a boolean"
-                )
-            tigerbeetle_component = _component(
-                "TigerBeetle parity",
-                tigerbeetle_parity,
-                authority_field="parity",
-                authoritative=False,
-            )
+        tigerbeetle_component, parity_messages = _tigerbeetle_parity_component(
+            broker_ledger
+        )
         components = (
             _component(
                 "final action authority",
