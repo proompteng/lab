@@ -7,6 +7,8 @@ import type {
   AccountRateLimitsUpdatedNotification,
   AgentMessageDeltaNotification,
   AskForApproval,
+  AttestationGenerateParams,
+  AttestationGenerateResponse,
   ChatgptAuthTokensRefreshParams,
   ChatgptAuthTokensRefreshResponse,
   CommandExecutionOutputDeltaNotification,
@@ -157,6 +159,9 @@ export type CodexAppServerOptions = {
   onDynamicToolCall?: (params: DynamicToolCallParams) => DynamicToolCallResponse | Promise<DynamicToolCallResponse>
   /** Dynamic tools advertised to the model when a new thread is created. */
   dynamicTools?: DynamicToolSpec[]
+  onAttestationGenerate?: (
+    params: AttestationGenerateParams,
+  ) => AttestationGenerateResponse | Promise<AttestationGenerateResponse>
   onPermissionsRequestApproval?: (
     params: PermissionsRequestApprovalParams,
   ) => PermissionsRequestApprovalResponse | Promise<PermissionsRequestApprovalResponse>
@@ -491,6 +496,7 @@ export class CodexAppServerClient {
   private onRequestUserInput: NonNullable<CodexAppServerOptions['onRequestUserInput']> | null
   private onDynamicToolCall: NonNullable<CodexAppServerOptions['onDynamicToolCall']> | null
   private dynamicTools: DynamicToolSpec[] | null
+  private onAttestationGenerate: NonNullable<CodexAppServerOptions['onAttestationGenerate']> | null
   private onPermissionsRequestApproval: NonNullable<CodexAppServerOptions['onPermissionsRequestApproval']> | null
   private onChatgptAuthTokensRefresh: NonNullable<CodexAppServerOptions['onChatgptAuthTokensRefresh']> | null
 
@@ -511,6 +517,7 @@ export class CodexAppServerClient {
     onRequestUserInput,
     onDynamicToolCall,
     dynamicTools,
+    onAttestationGenerate,
     onPermissionsRequestApproval,
     onChatgptAuthTokensRefresh,
     bootstrapTimeoutMs = DEFAULT_BOOTSTRAP_TIMEOUT_MS,
@@ -527,6 +534,7 @@ export class CodexAppServerClient {
     this.onRequestUserInput = onRequestUserInput ?? null
     this.onDynamicToolCall = onDynamicToolCall ?? null
     this.dynamicTools = dynamicTools ? [...dynamicTools] : null
+    this.onAttestationGenerate = onAttestationGenerate ?? null
     this.onPermissionsRequestApproval = onPermissionsRequestApproval ?? null
     this.onChatgptAuthTokensRefresh = onChatgptAuthTokensRefresh ?? null
     this.bootstrapTimeoutMs = bootstrapTimeoutMs
@@ -897,7 +905,13 @@ export class CodexAppServerClient {
       for (const line of lines) this.handleLine(line)
     })
 
-    const initializeParams = { clientInfo, capabilities: defaultInitializeCapabilities }
+    const initializeParams = {
+      clientInfo,
+      capabilities: {
+        ...defaultInitializeCapabilities,
+        requestAttestation: this.onAttestationGenerate !== null,
+      },
+    }
     await this.request('initialize', initializeParams)
     this.log('info', 'codex app-server initialized', { clientInfo })
   }
@@ -976,6 +990,12 @@ export class CodexAppServerClient {
             throw new Error('ChatGPT auth token refresh handler is not configured')
           }
           result = await this.onChatgptAuthTokensRefresh(params as ChatgptAuthTokensRefreshParams)
+          break
+        case 'attestation/generate':
+          if (!this.onAttestationGenerate) {
+            throw new Error('Attestation generation handler is not configured')
+          }
+          result = await this.onAttestationGenerate(params as AttestationGenerateParams)
           break
         case 'mcpServer/elicitation/request':
           result = { action: 'decline', content: null }

@@ -216,6 +216,26 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('advertises and handles attestation generation only when a handler is configured', async () => {
+    const onAttestationGenerate = vi.fn(async () => ({ token: 'opaque-attestation-token' }))
+    const { child, client } = setupClient({ onAttestationGenerate })
+    await respondToInitialize(child, (request) => {
+      expect(request.params).toMatchObject({
+        capabilities: { requestAttestation: true },
+      })
+    })
+    await client.ensureReady()
+
+    writeLine(child, { id: 40, method: 'attestation/generate', params: {} })
+    await expect(nextMessage(child)).resolves.toEqual({
+      id: 40,
+      result: { token: 'opaque-attestation-token' },
+    })
+    expect(onAttestationGenerate).toHaveBeenCalledWith({})
+
+    client.stop()
+  })
+
   it('responds to current time requests with whole Unix seconds', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-17T08:30:45.999Z'))
