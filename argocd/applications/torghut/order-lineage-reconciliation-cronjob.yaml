@@ -88,9 +88,9 @@ spec:
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_VERSION
-                  value: v0.596.0-2215-g8b539d3b4
+                  value: v0.596.0-2217-gdd5b56089
                 - name: TORGHUT_COMMIT
-                  value: 8b539d3b449c81bee479a6168301077231dc40be
+                  value: dd5b56089b2ee8229684c5b4dc2255bb775ea65b
                 - name: TORGHUT_IMAGE_DIGEST
                   value: sha256:3595fc32a40461b4b5085c6aede61c9bc1a7efaa6bbe9a31388f83695d880935
                 - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
