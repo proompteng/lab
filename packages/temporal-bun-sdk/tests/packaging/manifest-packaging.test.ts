@@ -7,6 +7,7 @@ import { join } from 'node:path'
 type TemporalSdkPackageJson = {
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
+  exports?: Record<string, string | Record<string, string>>
   bin?: Record<string, string>
   files?: string[]
   scripts?: Record<string, string>
@@ -92,6 +93,23 @@ describe('temporal-bun-sdk packaging manifest', () => {
     expect(bins['temporal-bun']).toBe('./dist/src/bin/temporal-bun.js')
     expect(bins['temporal-bun-skill']).toBe('./dist/src/bin/temporal-bun-skill.js')
     expect(bins['temporal-bun-worker']).toBe('./dist/src/bin/start-worker.js')
+  })
+
+  test('declares only export targets backed by source modules', async () => {
+    const packageJson = await loadPackageJson()
+    const exports = packageJson.exports ?? {}
+
+    for (const [subpath, target] of Object.entries(exports)) {
+      const targets = typeof target === 'string' ? [target] : Object.values(target)
+      for (const exportTarget of targets) {
+        if (!exportTarget.startsWith('./dist/src/') || !exportTarget.endsWith('.js')) {
+          continue
+        }
+
+        const sourcePath = exportTarget.replace('./dist/src/', './src/').replace(/\.js$/, '.ts')
+        expect(existsSync(join(packageRoot, sourcePath)), `${subpath} -> ${sourcePath}`).toBeTrue()
+      }
+    }
   })
 
   test('exposes adoption metadata for npm and agent discovery', async () => {
