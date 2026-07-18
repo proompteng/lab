@@ -202,6 +202,8 @@ cull:
 ingress:
   enabled: true
   ingressClassName: tailscale
+  annotations:
+    tailscale.com/tags: tag:torghut-notebooks
   hosts:
     - torghut-notebooks.ide-newton.ts.net
   pathType: Prefix

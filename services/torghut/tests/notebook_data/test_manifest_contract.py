@@ -90,7 +90,10 @@ def _representative_render() -> list[dict[str, object]]:
         },
         {
             "kind": "Ingress",
-            "metadata": {"name": "torghut-notebooks"},
+            "metadata": {
+                "name": "torghut-notebooks",
+                "annotations": {"tailscale.com/tags": "tag:torghut-notebooks"},
+            },
             "spec": {
                 "ingressClassName": "tailscale",
                 "rules": [{"host": "torghut-notebooks.ide-newton.ts.net"}],
@@ -235,6 +238,19 @@ def test_hub_has_fixed_auto_login_without_identity() -> None:
     assert all(term not in extra_config for term in forbidden)
     assert values["hub"]["config"]["JupyterHub"]["admin_access"] is False
     assert values["hub"]["allowNamedServers"] is False
+
+
+def test_tailscale_owner_is_the_only_notebook_ingress_principal() -> None:
+    values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
+    assert values["ingress"]["annotations"] == {
+        "tailscale.com/tags": "tag:torghut-notebooks"
+    }
+
+    policy = (REPO_ROOT / "tofu/tailscale/templates/policy.hujson.tmpl").read_text()
+    assert '"tag:torghut-notebooks": ["tag:k8s-operator"]' in policy
+    assert '"src": ["autogroup:owner"]' in policy
+    assert '"dst": ["tag:torghut-notebooks:443"]' in policy
+    assert '"dst": ["*:*"]' not in policy
 
 
 def test_hub_extra_config_has_a_valid_fixed_authenticator_contract() -> None:

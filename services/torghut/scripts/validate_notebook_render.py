@@ -161,6 +161,10 @@ def _validate_network_exposure(documents: list[YamlObject]) -> None:
     )
     ingress = _find(documents, "Ingress", "torghut-notebooks")
     assert _at(ingress, "spec", "ingressClassName") == "tailscale"
+    assert (
+        _at(ingress, "metadata", "annotations", "tailscale.com/tags")
+        == "tag:torghut-notebooks"
+    )
     rules = [
         _as_mapping(item, f"ingress rule {index}")
         for index, item in enumerate(_list_at(ingress, "spec", "rules"))

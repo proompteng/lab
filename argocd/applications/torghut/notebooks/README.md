@@ -9,6 +9,10 @@ password, Keycloak, OAuth, admin user, named server, or account-management flow.
 come from `torghut-notebook-hub`; deterministic values in the chart-generated Secret are rendering placeholders and
 are not referenced by the running Hub or proxy.
 
+The ingress overrides the default Kubernetes proxy tag with `tag:torghut-notebooks`. The tailnet policy admits only
+`autogroup:owner` to that tag on HTTPS, so admission happens at the Tailscale network boundary without adding an
+application identity or login flow.
+
 Notebook pods receive only a CNPG-managed `pg_read_all_data` role, a ClickHouse `readonly=1` profile, and the GET-only
 Torghut scheduler status URL. They do not receive broker, TigerBeetle, Kafka, Flink, Alpaca, or Kubernetes credentials,
 and service-account token automounting is disabled.
