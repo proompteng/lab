@@ -326,6 +326,23 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertIsNone(scheduler.state.last_trading_error)
         self.assertIsNone(scheduler.state.last_reconcile_error)
 
+    def test_rejected_outcome_learning_isolated_per_lane(self) -> None:
+        scheduler = TradingScheduler()
+        failing_lane = _PipelineIterationStub(
+            account_label="paper-a",
+            rejected_outcome_fail=True,
+        )
+        healthy_lane = _PipelineIterationStub(account_label="paper-b")
+        scheduler._pipelines = [failing_lane, healthy_lane]
+        scheduler._pipeline = failing_lane
+
+        asyncio.run(scheduler._run_rejected_signal_outcome_iteration())
+
+        self.assertEqual(failing_lane.rejected_outcome_calls, 1)
+        self.assertEqual(healthy_lane.rejected_outcome_calls, 1)
+        self.assertIsNone(scheduler.state.last_trading_error)
+        self.assertIsNone(scheduler.state.last_reconcile_error)
+
     def test_recovery_worker_failure_is_counted_and_fails_reconciliation(self) -> None:
         class _FailingRecoveryWorker:
             def run_once(self) -> None:

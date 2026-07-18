@@ -504,7 +504,7 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_evidence_continuity_enabled = True
         scheduler = TradingScheduler()
-        calls = {"trading": 0, "reconcile": 0, "evidence": 0}
+        calls = {"trading": 0, "reconcile": 0, "evidence": 0, "outcomes": 0}
 
         async def fake_trading_iteration() -> None:
             calls["trading"] += 1
@@ -516,12 +516,18 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
         async def fake_evidence_iteration() -> None:
             calls["evidence"] += 1
 
+        async def fake_rejected_outcome_iteration() -> None:
+            calls["outcomes"] += 1
+
         async def fake_sleep(_delay: float) -> None:
             return None
 
         cast(Any, scheduler)._run_trading_iteration = fake_trading_iteration
         cast(Any, scheduler)._run_reconcile_iteration = fake_reconcile_iteration
         cast(Any, scheduler)._run_evidence_iteration = fake_evidence_iteration
+        cast(
+            Any, scheduler
+        )._run_rejected_signal_outcome_iteration = fake_rejected_outcome_iteration
         cast(Any, scheduler)._sync_simulation_run_context = lambda: None
         cast(Any, scheduler)._interval_elapsed = lambda *_args, **_kwargs: True
 
@@ -530,5 +536,8 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
         ):
             asyncio.run(scheduler._run_loop())
 
-        self.assertEqual(calls, {"trading": 1, "reconcile": 1, "evidence": 1})
+        self.assertEqual(
+            calls,
+            {"trading": 1, "reconcile": 1, "evidence": 1, "outcomes": 1},
+        )
         self.assertFalse(scheduler.state.running)

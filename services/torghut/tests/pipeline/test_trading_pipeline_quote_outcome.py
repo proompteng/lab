@@ -492,7 +492,7 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
             )
             session.commit()
 
-        pipeline._label_mature_rejected_signal_outcome_events(
+        pipeline.label_mature_rejected_signal_outcomes(
             now=followup_ts + timedelta(seconds=1)
         )
 
@@ -507,6 +507,93 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
         self.assertEqual(outcome["route_tca"]["horizon_seconds"], "300")
         self.assertNotIn("promotion_readiness", outcome)
         self.assertEqual(outcome["candidate_spec_id"], "spec-feedback")
+
+    def test_rejected_signal_outcome_labeler_closes_read_transaction_before_quotes(
+        self,
+    ) -> None:
+        event_ts = datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc)
+        followup_ts = event_ts + timedelta(minutes=5)
+        sessions: list[Session] = []
+
+        def tracking_session_factory() -> Session:
+            session = self.session_local()
+            sessions.append(session)
+            return session
+
+        class TransactionCheckingPriceFetcher(TimelinePriceFetcher):
+            active_transaction_seen = False
+
+            def fetch_market_snapshot(
+                self, signal: SignalEnvelope
+            ) -> MarketSnapshot | None:
+                self.active_transaction_seen = self.active_transaction_seen or any(
+                    session.in_transaction() for session in sessions
+                )
+                return super().fetch_market_snapshot(signal)
+
+        price_fetcher = TransactionCheckingPriceFetcher(
+            {
+                event_ts: MarketSnapshot(
+                    symbol="AAPL",
+                    as_of=event_ts,
+                    price=Decimal("100.00"),
+                    spread=Decimal("0.02"),
+                    source="test-entry",
+                    bid=Decimal("99.99"),
+                    ask=Decimal("100.01"),
+                ),
+                followup_ts: MarketSnapshot(
+                    symbol="AAPL",
+                    as_of=followup_ts,
+                    price=Decimal("101.00"),
+                    spread=Decimal("0.02"),
+                    source="test-followup",
+                    bid=Decimal("100.99"),
+                    ask=Decimal("101.01"),
+                ),
+            }
+        )
+        pipeline = self._build_rejected_outcome_pipeline(
+            session_factory=tracking_session_factory,
+            price_fetcher=price_fetcher,
+        )
+        with self.session_local() as session:
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="reject-event-transaction-boundary",
+                    source="quote_quality_gate",
+                    paper_source="ssrn-6607301",
+                    paper_claim_id="post-rejection-follow-up-sampling",
+                    account_label="paper",
+                    symbol="AAPL",
+                    event_ts=event_ts,
+                    timeframe="1Min",
+                    seq="42",
+                    reject_reason="missing_executable_quote",
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=["counterfactual_return"],
+                    event_payload_json={
+                        "event_id": "reject-event-transaction-boundary"
+                    },
+                    outcome_payload_json=None,
+                )
+            )
+            session.commit()
+
+        pipeline.label_mature_rejected_signal_outcomes(
+            now=followup_ts + timedelta(seconds=1)
+        )
+
+        self.assertFalse(price_fetcher.active_transaction_seen)
+        with self.session_local() as session:
+            row = session.execute(
+                select(RejectedSignalOutcomeEvent).where(
+                    RejectedSignalOutcomeEvent.event_id
+                    == "reject-event-transaction-boundary"
+                )
+            ).scalar_one()
+        self.assertEqual(row.outcome_label_status, "labeled")
 
     def test_rejected_signal_outcome_labeler_keeps_missing_quote_pending(
         self,
@@ -542,7 +629,7 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
             )
             session.commit()
 
-        pipeline._label_mature_rejected_signal_outcome_events(
+        pipeline.label_mature_rejected_signal_outcomes(
             now=event_ts + timedelta(minutes=6)
         )
 

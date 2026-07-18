@@ -254,7 +254,7 @@ class TradingPipelineInteractions(Protocol):
         decision_row: TradeDecision,
     ) -> bool: ...
 
-    def _label_mature_rejected_signal_outcome_events(
+    def label_mature_rejected_signal_outcomes(
         self,
         *,
         now: datetime | None = None,

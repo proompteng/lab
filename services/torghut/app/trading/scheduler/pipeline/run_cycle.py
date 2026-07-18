@@ -170,7 +170,6 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
             self.ingestor.commit_cursor(cursor_session, batch)
 
     def run_once(self) -> None:
-        self._label_mature_rejected_signal_outcome_events()
         with self.session_factory() as session:
             self.state.metrics.planned_decision_age_seconds = 0
             self._prepare_run_once(session)
