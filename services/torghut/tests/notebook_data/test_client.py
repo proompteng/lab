@@ -390,8 +390,17 @@ def test_live_clickhouse_and_status_reads_are_bounded_and_typed(
     assert result.watermark == FIXTURE_AS_OF
     assert result.truncated is False
     assert requests[0].method == "POST"
-    assert "readonly=1" in requests[0].full_url
-    assert "max_result_rows=100000" in requests[0].full_url
+    assert "database=torghut" in requests[0].full_url
+    assert "param_limit=10" in requests[0].full_url
+    for profile_setting in (
+        "readonly",
+        "max_execution_time",
+        "max_result_rows",
+        "result_overflow_mode",
+        "max_memory_usage",
+        "max_threads",
+    ):
+        assert f"{profile_setting}=" not in requests[0].full_url
     assert requests[0].headers["X-clickhouse-user"] == "torghut_notebook"
 
     def status_response(request: urllib.request.Request, *, timeout: int) -> io.BytesIO:

@@ -20,8 +20,6 @@ from .models import MAX_PROJECTED_ROWS, QueryResult, Record, Records, parse_utc
 from .queries import assert_query_contract
 
 STATEMENT_TIMEOUT_MS = 30_000
-CLICKHOUSE_MAX_MEMORY_USAGE = 2 * 1024 * 1024 * 1024
-CLICKHOUSE_MAX_THREADS = 4
 
 
 class NotebookDataError(RuntimeError):
@@ -187,15 +185,10 @@ class LiveDataAdapter:
     def _clickhouse_parameters(
         self, parameters: Mapping[str, object], limit: int
     ) -> dict[str, str]:
-        query_parameters = {
-            "database": self.clickhouse_database,
-            "readonly": "1",
-            "max_execution_time": "30",
-            "max_result_rows": str(MAX_PROJECTED_ROWS),
-            "result_overflow_mode": "throw",
-            "max_memory_usage": str(CLICKHOUSE_MAX_MEMORY_USAGE),
-            "max_threads": str(CLICKHOUSE_MAX_THREADS),
-        }
+        # The dedicated ClickHouse profile enforces readonly mode and resource caps.
+        # Sending those settings per request is invalid under readonly=1 because
+        # readonly users cannot change settings, even to the configured value.
+        query_parameters = {"database": self.clickhouse_database}
         for name, value in parameters.items():
             query_parameters[f"param_{name}"] = _json_safe(value)
         query_parameters["param_limit"] = str(limit)
