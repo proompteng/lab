@@ -713,6 +713,18 @@
         "vitest": "4.1.5",
       },
     },
+    "services/bayn": {
+      "name": "@proompteng/bayn",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "3.21.2",
+        "tigerbeetle-node": "0.17.4",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.14",
+        "typescript": "7.0.2",
+      },
+    },
     "services/bonjour": {
       "name": "@proompteng/bonjour",
       "version": "0.1.0",
@@ -2187,6 +2199,8 @@
     "@proompteng/atelier": ["@proompteng/atelier@workspace:packages/atelier"],
 
     "@proompteng/backend": ["@proompteng/backend@workspace:packages/backend"],
+
+    "@proompteng/bayn": ["@proompteng/bayn@workspace:services/bayn"],
 
     "@proompteng/bonjour": ["@proompteng/bonjour@workspace:services/bonjour"],
 
@@ -5395,6 +5409,8 @@
     "text-hex": ["text-hex@1.0.0", "", {}, "sha512-uuVGNWzgJ4yhRaNSiubPY7OjISw4sw4E5Uv0wbjp+OzcbmVU/rsT8ujgcXJhn9ypzsgr5vlzpPqP+MBBKcGvbg=="],
 
     "thread-stream": ["thread-stream@4.0.0", "", { "dependencies": { "real-require": "^0.2.0" } }, "sha512-4iMVL6HAINXWf1ZKZjIPcz5wYaOdPhtO8ATvZ+Xqp3BTdaqtAwQkNmKORqcIo5YkQqGXq5cwfswDwMqqQNrpJA=="],
+
+    "tigerbeetle-node": ["tigerbeetle-node@0.17.4", "", {}, "sha512-qrqx5aHiWlLbrzD/QtueqLtPzwroA3AMkEQZxZL5dlFZE9E+SW6VMZ1sUeSGQgtZpyFArUY+fQfTAPu0DGfQcQ=="],
 
     "tiny-inflate": ["tiny-inflate@1.0.3", "", {}, "sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw=="],
 

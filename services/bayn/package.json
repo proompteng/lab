@@ -1,0 +1,21 @@
+{
+  "name": "@proompteng/bayn",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "bunx oxfmt --check src README.md",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json src",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json src",
+    "test": "bun test src",
+    "tsc": "bunx tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "3.21.2",
+    "tigerbeetle-node": "0.17.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "7.0.2"
+  }
+}
