@@ -1,3 +1,6 @@
+import { lookup } from 'node:dns/promises'
+import { isIP } from 'node:net'
+
 import {
   AccountFlags,
   type Account,
@@ -16,6 +19,53 @@ import type { EvaluationResult, FillEvent, ReconciliationResult } from './types'
 
 const SCHEMA_VERSION = 1
 const BATCH_MAX = 8_189
+
+type ResolveHostname = (hostname: string) => Promise<readonly string[]>
+
+const lookupIpv4: ResolveHostname = async (hostname) =>
+  (await lookup(hostname, { all: true, family: 4, verbatim: true })).map(({ address }) => address)
+
+const parsePort = (value: string, address: string): number => {
+  if (!/^\d+$/.test(value)) throw new Error(`invalid TigerBeetle replica address: ${address}`)
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`invalid TigerBeetle replica port: ${address}`)
+  }
+  return port
+}
+
+export const resolveReplicaAddresses = async (
+  configuredAddresses: readonly string[],
+  resolveHostname: ResolveHostname = lookupIpv4,
+): Promise<string[]> => {
+  if (configuredAddresses.length === 0) throw new Error('at least one TigerBeetle replica address is required')
+
+  const resolved = await Promise.all(
+    configuredAddresses.map(async (configuredAddress) => {
+      const address = configuredAddress.trim()
+      if (/^\d+$/.test(address)) {
+        parsePort(address, address)
+        return [address]
+      }
+
+      const separator = address.lastIndexOf(':')
+      if (separator <= 0 || separator !== address.indexOf(':')) {
+        throw new Error(`invalid TigerBeetle replica address: ${configuredAddress}`)
+      }
+      const hostname = address.slice(0, separator)
+      const port = parsePort(address.slice(separator + 1), address)
+      const addressFamily = isIP(hostname)
+      if (addressFamily === 4) return [`${hostname}:${port}`]
+      if (addressFamily === 6) throw new Error(`IPv6 TigerBeetle replica addresses are not supported: ${address}`)
+
+      const ipv4Addresses = (await resolveHostname(hostname)).filter((value) => isIP(value) === 4)
+      if (ipv4Addresses.length === 0) throw new Error(`TigerBeetle replica hostname has no IPv4 address: ${hostname}`)
+      return ipv4Addresses.map((ipv4Address) => `${ipv4Address}:${port}`)
+    }),
+  )
+
+  return [...new Set(resolved.flat())]
+}
 
 const AccountCode = {
   cash: 110,
@@ -379,11 +429,11 @@ export const JournalLive = (config: BaynConfig): Layer.Layer<JournalService, Err
   Layer.scoped(
     Journal,
     Effect.acquireRelease(
-      Effect.try({
-        try: () =>
+      Effect.tryPromise({
+        try: async () =>
           createClient({
             cluster_id: config.tigerBeetle.clusterId,
-            replica_addresses: [...config.tigerBeetle.replicaAddresses],
+            replica_addresses: await resolveReplicaAddresses(config.tigerBeetle.replicaAddresses),
           }),
         catch: (cause) => new Error(`failed to create TigerBeetle client: ${String(cause)}`),
       }),
