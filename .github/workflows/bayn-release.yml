@@ -50,7 +50,14 @@ jobs:
           digest="$(jq -r '.digest' "$contract")"
           test "$source_sha" = "$WORKFLOW_SHA"
           git merge-base --is-ancestor "$source_sha" HEAD
-          git diff --quiet "$source_sha..HEAD" -- services/bayn nix/images/bayn.nix nix/images/bun-workspace-service.nix flake.lock bun.lock
+          git diff --quiet "$source_sha..HEAD" -- \
+            services/bayn \
+            nix/images/bayn.nix \
+            nix/images/bun-workspace-service.nix \
+            flake.nix \
+            flake.lock \
+            package.json \
+            bun.lock
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           {
             echo "source_sha=$source_sha"
