@@ -1,7 +1,9 @@
 import process from 'node:process'
 
 import { createClient } from '@clickhouse/client'
+import { Effect } from 'effect'
 
+import { loadBackfillConfig } from './backfill-config'
 import { defaultProtocol } from './protocol'
 
 interface AlpacaBar {
@@ -38,38 +40,21 @@ interface BackfillRow {
   readonly ingested_at: string
 }
 
-const required = (name: string): string => {
-  const value = process.env[name]?.trim()
-  if (!value) throw new Error(`${name} is required`)
-  return value
-}
-
-const identifier = (value: string, name: string): string => {
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) throw new Error(`${name} is not a valid ClickHouse identifier`)
-  return value
-}
-
-const date = (value: string, name: string): string => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
-    throw new Error(`${name} must be an ISO date`)
-  }
-  return value
-}
-
 const main = async (): Promise<void> => {
-  const clickhouseUrl = required('BAYN_CLICKHOUSE_URL')
-  const clickhouseUsername = required('BAYN_CLICKHOUSE_USERNAME')
-  const clickhousePassword = required('BAYN_CLICKHOUSE_PASSWORD')
-  const alpacaKey = required('APCA_API_KEY_ID')
-  const alpacaSecret = required('APCA_API_SECRET_KEY')
-  const database = identifier(process.env.BAYN_CLICKHOUSE_DATABASE?.trim() || 'signal', 'database')
-  const table = identifier(process.env.BAYN_CLICKHOUSE_TABLE?.trim() || 'adjusted_daily_bars_v1', 'table')
-  const cluster = identifier(process.env.BAYN_CLICKHOUSE_CLUSTER?.trim() || 'default', 'cluster')
-  const start = date(required('BAYN_DATASET_START'), 'BAYN_DATASET_START')
-  const end = date(required('BAYN_DATASET_END'), 'BAYN_DATASET_END')
-  const feed = process.env.BAYN_ALPACA_FEED?.trim() || 'iex'
-  if (!['iex', 'sip'].includes(feed)) throw new Error('BAYN_ALPACA_FEED must be iex or sip')
-  const datasetVersion = required('BAYN_DATASET_VERSION')
+  const {
+    clickhouseUrl,
+    clickhouseUsername,
+    clickhousePassword,
+    alpacaKey,
+    alpacaSecret,
+    database,
+    table,
+    cluster,
+    start,
+    end,
+    feed,
+    datasetVersion,
+  } = await Effect.runPromise(loadBackfillConfig)
   const universe = [...defaultProtocol.universe]
   const client = createClient({
     url: clickhouseUrl,

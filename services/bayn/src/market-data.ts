@@ -2,6 +2,7 @@ import { createClient, type ClickHouseClient } from '@clickhouse/client'
 import { Context, Effect, Layer } from 'effect'
 
 import type { BaynConfig } from './config'
+import { baynError, type BaynError } from './errors'
 import { hashObject } from './hash'
 import type { DailyBar, InputManifest, IsoDate, SymbolCoverage } from './types'
 
@@ -25,7 +26,7 @@ export interface MarketDataSnapshot {
 }
 
 export interface MarketDataService {
-  readonly load: Effect.Effect<MarketDataSnapshot, Error>
+  readonly load: Effect.Effect<MarketDataSnapshot, BaynError>
 }
 
 export const MarketData = Context.GenericTag<MarketDataService>('bayn/MarketData')
@@ -169,9 +170,9 @@ const loadSnapshot = (
   client: ClickHouseClient,
   config: BaynConfig['clickhouse'],
   universe: readonly string[],
-): Effect.Effect<MarketDataSnapshot, Error> =>
+): Effect.Effect<MarketDataSnapshot, BaynError> =>
   Effect.tryPromise({
-    try: async () => {
+    try: async (signal) => {
       const database = identifier(config.database, 'database')
       const table = identifier(config.table, 'table')
       const result = await client.query({
@@ -195,30 +196,51 @@ const loadSnapshot = (
         `,
         query_params: { datasetVersion: config.datasetVersion, universe: [...universe] },
         format: 'JSONEachRow',
+        abort_signal: signal,
       })
       const rows = await result.json<ClickHouseBarRow>()
       const bars = rows.map(toBar)
       const manifest = buildInputManifest(bars, database, table, universe, config.datasetVersion)
       return { bars, manifest }
     },
-    catch: (cause) => new Error(`failed to load Signal ClickHouse input: ${String(cause)}`),
+    catch: (cause) => baynError('market-data', 'load', 'failed to load Signal ClickHouse input', cause),
   })
 
-export const MarketDataLive = (config: BaynConfig): Layer.Layer<MarketDataService, Error> =>
+export interface MarketDataDependencies {
+  readonly createClient: typeof createClient
+}
+
+const defaultDependencies: MarketDataDependencies = { createClient }
+
+export const MarketDataLive = (
+  config: BaynConfig,
+  dependencies: MarketDataDependencies = defaultDependencies,
+): Layer.Layer<MarketDataService, BaynError> =>
   Layer.scoped(
     MarketData,
     Effect.acquireRelease(
       Effect.try({
         try: () =>
-          createClient({
+          dependencies.createClient({
             url: config.clickhouse.url,
             username: config.clickhouse.username,
             password: config.clickhouse.password,
             database: config.clickhouse.database,
             application: 'bayn',
+            request_timeout: config.operationTimeoutMs,
           }),
-        catch: (cause) => new Error(`failed to create ClickHouse client: ${String(cause)}`),
+        catch: (cause) => baynError('market-data', 'connect', 'failed to create ClickHouse client', cause),
       }),
-      (client) => Effect.promise(() => client.close()),
+      (client) =>
+        Effect.tryPromise({
+          try: () => client.close(),
+          catch: (cause) => baynError('market-data', 'close', 'failed to close ClickHouse client', cause),
+        }).pipe(
+          Effect.catchAll((error) =>
+            Effect.logWarning('ClickHouse client close failed').pipe(
+              Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
+            ),
+          ),
+        ),
     ).pipe(Effect.map((client) => ({ load: loadSnapshot(client, config.clickhouse, config.protocol.universe) }))),
   )

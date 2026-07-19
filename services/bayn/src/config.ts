@@ -1,7 +1,6 @@
-import process from 'node:process'
+import { Config, Effect, Redacted } from 'effect'
 
-import { Effect } from 'effect'
-
+import { baynError, type BaynError } from './errors'
 import { defaultProtocol } from './protocol'
 import type { TsmomProtocol } from './types'
 
@@ -10,6 +9,7 @@ export interface BaynConfig {
   readonly port: number
   readonly codeRevision: string
   readonly runOnStartup: boolean
+  readonly operationTimeoutMs: number
   readonly clickhouse: {
     readonly url: string
     readonly username: string
@@ -26,54 +26,82 @@ export interface BaynConfig {
   readonly protocol: TsmomProtocol
 }
 
-const required = (environment: NodeJS.ProcessEnv, name: string): string => {
-  const value = environment[name]?.trim()
-  if (!value) {
-    throw new Error(`${name} is required`)
-  }
-  return value
-}
+const nonEmptyString = (name: string) =>
+  Config.string(name).pipe(
+    Config.map((value) => value.trim()),
+    Config.validate({ message: `${name} is required`, validation: (value) => value.length > 0 }),
+  )
 
-const positiveInteger = (value: string, name: string): number => {
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer`)
-  }
-  return parsed
-}
+const positiveInteger = (name: string, fallback: number) =>
+  Config.integer(name).pipe(
+    Config.withDefault(fallback),
+    Config.validate({ message: `${name} must be a positive integer`, validation: (value) => value > 0 }),
+  )
 
-const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
-  if (value === undefined) return fallback
-  if (value === 'true') return true
-  if (value === 'false') return false
-  throw new Error(`invalid boolean: ${value}`)
-}
+const clickhouseIdentifier = (name: string, fallback: string) =>
+  nonEmptyString(name).pipe(
+    Config.withDefault(fallback),
+    Config.validate({
+      message: `${name} must be a ClickHouse identifier`,
+      validation: (value) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value),
+    }),
+  )
 
-export const parseConfig = (environment: NodeJS.ProcessEnv): BaynConfig => ({
-  host: environment.BAYN_HTTP_HOST?.trim() || '0.0.0.0',
-  port: positiveInteger(environment.BAYN_HTTP_PORT || '8080', 'BAYN_HTTP_PORT'),
-  codeRevision: required(environment, 'BAYN_CODE_REVISION'),
-  runOnStartup: parseBoolean(environment.BAYN_RUN_ON_STARTUP, true),
-  clickhouse: {
-    url: required(environment, 'BAYN_CLICKHOUSE_URL'),
-    username: required(environment, 'BAYN_CLICKHOUSE_USERNAME'),
-    password: required(environment, 'BAYN_CLICKHOUSE_PASSWORD'),
-    database: environment.BAYN_CLICKHOUSE_DATABASE?.trim() || 'signal',
-    table: environment.BAYN_CLICKHOUSE_TABLE?.trim() || 'adjusted_daily_bars_v1',
-    datasetVersion: required(environment, 'BAYN_DATASET_VERSION'),
-  },
-  tigerBeetle: {
-    clusterId: BigInt(environment.BAYN_TIGERBEETLE_CLUSTER_ID || '2001'),
-    replicaAddresses: required(environment, 'BAYN_TIGERBEETLE_ADDRESSES')
-      .split(',')
-      .map((address) => address.trim())
-      .filter(Boolean),
-    ledger: positiveInteger(environment.BAYN_TIGERBEETLE_LEDGER || '7001', 'BAYN_TIGERBEETLE_LEDGER'),
-  },
-  protocol: defaultProtocol,
-})
+const baynConfig = Config.all({
+  host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
+  port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
+  codeRevision: nonEmptyString('BAYN_CODE_REVISION'),
+  runOnStartup: Config.boolean('BAYN_RUN_ON_STARTUP').pipe(Config.withDefault(true)),
+  operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
+  clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
+  clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
+  clickhousePassword: Config.redacted(nonEmptyString('BAYN_CLICKHOUSE_PASSWORD')),
+  clickhouseDatabase: clickhouseIdentifier('BAYN_CLICKHOUSE_DATABASE', 'signal'),
+  clickhouseTable: clickhouseIdentifier('BAYN_CLICKHOUSE_TABLE', 'adjusted_daily_bars_v1'),
+  datasetVersion: nonEmptyString('BAYN_DATASET_VERSION'),
+  tigerBeetleClusterId: nonEmptyString('BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
+    Config.withDefault('2001'),
+    Config.mapAttempt((value) => BigInt(value)),
+  ),
+  tigerBeetleReplicaAddresses: nonEmptyString('BAYN_TIGERBEETLE_ADDRESSES').pipe(
+    Config.map((value) =>
+      value
+        .split(',')
+        .map((address) => address.trim())
+        .filter(Boolean),
+    ),
+    Config.validate({
+      message: 'BAYN_TIGERBEETLE_ADDRESSES must contain at least one address',
+      validation: (addresses) => addresses.length > 0,
+    }),
+  ),
+  tigerBeetleLedger: positiveInteger('BAYN_TIGERBEETLE_LEDGER', 7001),
+}).pipe(
+  Config.map(
+    (config): BaynConfig => ({
+      host: config.host,
+      port: config.port,
+      codeRevision: config.codeRevision,
+      runOnStartup: config.runOnStartup,
+      operationTimeoutMs: config.operationTimeoutMs,
+      clickhouse: {
+        url: config.clickhouseUrl,
+        username: config.clickhouseUsername,
+        password: Redacted.value(config.clickhousePassword),
+        database: config.clickhouseDatabase,
+        table: config.clickhouseTable,
+        datasetVersion: config.datasetVersion,
+      },
+      tigerBeetle: {
+        clusterId: config.tigerBeetleClusterId,
+        replicaAddresses: config.tigerBeetleReplicaAddresses,
+        ledger: config.tigerBeetleLedger,
+      },
+      protocol: defaultProtocol,
+    }),
+  ),
+)
 
-export const loadConfig = Effect.try({
-  try: () => parseConfig(process.env),
-  catch: (cause) => new Error(`invalid Bayn configuration: ${String(cause)}`),
-})
+export const loadConfig: Effect.Effect<BaynConfig, BaynError> = baynConfig.pipe(
+  Effect.mapError((cause) => baynError('config', 'load', 'invalid Bayn configuration', cause)),
+)

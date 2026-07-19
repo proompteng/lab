@@ -7,6 +7,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 ## Runtime contract
 
 - Node.js is the production runtime; Effect owns dependency acquisition, failure handling, and shutdown.
+- Effect Config validates environment input, and `BAYN_OPERATION_TIMEOUT_MS` bounds each ClickHouse or TigerBeetle
+  startup operation (30 seconds by default).
 - Signal ClickHouse is read-only at runtime. `backfill.ts` is an operator-only data preparation command and is not part
   of the Deployment.
 - The protocol is committed at `protocols/tsmom-v1.json`. A run ID binds the code revision, protocol hash, and exact

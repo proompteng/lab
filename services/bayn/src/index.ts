@@ -13,11 +13,26 @@ const main = Effect.gen(function* () {
   yield* runBayn(config).pipe(Effect.provide(dependencies))
 })
 
-Effect.runPromise(main).catch((cause) => {
+const handledMain = main.pipe(
+  Effect.catchAll((error) =>
+    Effect.sync(() => {
+      console.error(
+        JSON.stringify({
+          service: 'bayn',
+          event: 'startup_failed',
+          error: { component: error.component, operation: error.operation, message: error.message },
+        }),
+      )
+      process.exitCode = 1
+    }),
+  ),
+)
+
+Effect.runPromise(handledMain).catch((cause) => {
   console.error(
     JSON.stringify({
       service: 'bayn',
-      event: 'startup_failed',
+      event: 'startup_defect',
       error: cause instanceof Error ? cause.message : String(cause),
     }),
   )
