@@ -104,6 +104,10 @@ spec:
               cpu: "2"
               memory: 1Gi
           securityContext:
+            # TigerBeetle's native client requires io_uring, which containerd's
+            # RuntimeDefault seccomp profile blocks. Keep every other control.
+            seccompProfile:
+              type: Unconfined
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
