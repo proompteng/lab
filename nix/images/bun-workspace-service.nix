@@ -261,7 +261,6 @@ if returnRuntimeRoot then builtRuntimeRoot else pkgs.dockerTools.buildLayeredIma
   inherit maxLayers;
   contents = [
     resolvedRuntimeRoot
-    bun
     pkgs.busybox
     pkgs.cacert
     pkgs.coreutils
