@@ -258,6 +258,11 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "bayn-image" = import ./nix/images/bayn.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
             "sag-image" = import ./nix/images/sag.nix {
               inherit pkgs lib nodejs;
               repoRoot = ./.;

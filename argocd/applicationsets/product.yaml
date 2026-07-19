@@ -375,6 +375,19 @@ spec:
                       - /spec/job/upgradeMode
                 automation: auto
                 enabled: "true"
+              - name: bayn
+                path: argocd/applications/bayn
+                namespace: bayn
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "7"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                automation: auto
+                enabled: "false"
               - name: torghut-options
                 path: argocd/applications/torghut-options
                 namespace: torghut

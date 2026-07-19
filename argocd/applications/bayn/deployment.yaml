@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bayn
+  labels:
+    app.kubernetes.io/name: bayn
+    app.kubernetes.io/part-of: bayn
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bayn
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn
+        app.kubernetes.io/part-of: bayn
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "1970-01-01T00:00:00Z"
+    spec:
+      serviceAccountName: bayn
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bayn
+          image: registry.ide-newton.ts.net/lab/bayn
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: BAYN_CODE_REVISION
+              value: bootstrap
+            - name: BAYN_RUN_ON_STARTUP
+              value: "true"
+            - name: BAYN_CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: BAYN_CLICKHOUSE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: username
+            - name: BAYN_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-clickhouse-auth
+                  key: password
+            - name: BAYN_CLICKHOUSE_DATABASE
+              value: signal
+            - name: BAYN_CLICKHOUSE_TABLE
+              value: adjusted_daily_bars_v1
+            - name: BAYN_DATASET_VERSION
+              value: alpaca-all-iex-2017-01-01-2026-07-18-v1
+            - name: BAYN_TIGERBEETLE_CLUSTER_ID
+              value: "2001"
+            - name: BAYN_TIGERBEETLE_ADDRESSES
+              value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+            - name: BAYN_TIGERBEETLE_LEDGER
+              value: "7001"
+            - name: NODE_ENV
+              value: production
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

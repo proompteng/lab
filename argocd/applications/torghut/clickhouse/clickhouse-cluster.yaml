@@ -83,6 +83,12 @@ spec:
           </profiles>
         </yandex>
     profiles:
+      bayn/readonly: 1
+      bayn/max_execution_time: 60
+      bayn/max_result_rows: 1000000
+      bayn/result_overflow_mode: throw
+      bayn/max_memory_usage: 2147483648
+      bayn/max_threads: 4
       notebook/readonly: 1
       notebook/max_execution_time: 30
       notebook/max_result_rows: 100000
@@ -94,6 +100,19 @@ spec:
         - host: keeper-torghut-keeper
           port: 2181
     users:
+      bayn/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: bayn-clickhouse-auth
+            key: password_sha256_hex
+      bayn/profile: bayn
+      bayn/quota: default
+      bayn/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      bayn/grants/query:
+        - GRANT SELECT ON signal.adjusted_daily_bars_v1
       default/password_sha256_hex:
         valueFrom:
           secretKeyRef:
