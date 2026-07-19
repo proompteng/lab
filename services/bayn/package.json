@@ -1,0 +1,25 @@
+{
+  "name": "@proompteng/bayn",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/main.ts",
+    "start": "bun src/main.ts",
+    "lint": "bunx oxfmt --check .",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "test": "bun test",
+    "tsc": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform": "0.96.1",
+    "@effect/platform-bun": "0.89.0",
+    "effect": "3.21.2"
+  },
+  "devDependencies": {
+    "bun-types": "1.3.14",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "bun@1.3.14"
+}
