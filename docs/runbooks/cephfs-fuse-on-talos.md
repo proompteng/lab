@@ -14,7 +14,7 @@ The required defaults are:
 - `rook-cephfs` uses the kernel mounter with `noatime` and `ms_mode=crc`.
 - `rook-cephfs-fuse` explicitly sets `mounter: fuse`.
 - The CephFS CSI node plugin requests 1 GiB and is limited to 4 GiB.
-- The CephFS CSI node-plugin DaemonSet rolls one node at a time.
+- The CephFS CSI node-plugin DaemonSet uses `OnDelete` so an operator must coordinate each node rollout with its FUSE consumers.
 
 `ms_mode=crc` is required for the kernel client to negotiate Ceph messenger v2 with the current cluster. Do not remove it from either the Rook CSI default or the kernel StorageClass without a mount canary.
 
@@ -43,9 +43,9 @@ A PVC's storage class is immutable. Never delete a data-bearing dynamic CephFS P
 
 For an existing subvolume:
 
-1. Record the source PV's `rootPath`, `volumeHandle`, secret references, capacity, and claim UID.
+1. Record the source PV's `subvolumePath`, `volumeHandle`, secret references, capacity, and claim UID.
 2. Patch the source PV reclaim policy to `Retain`.
-3. Create a static PV with `staticVolume: "true"`, the same `rootPath`, a new unique `volumeHandle`, `mounter: kernel`, and `persistentVolumeReclaimPolicy: Retain`.
+3. Create a static PV with `staticVolume: "true"`, copy the dynamic PV's `subvolumePath` value into the static PV's `rootPath`, use a new unique `volumeHandle`, set `mounter: kernel`, and set `persistentVolumeReclaimPolicy: Retain`.
 4. Bind a new PVC explicitly to that static PV.
 5. Mount the new PVC in a canary on every target node and prove read, write, hardlink, and remount behavior.
 6. Switch workloads through GitOps and verify their mount type is `ceph`.

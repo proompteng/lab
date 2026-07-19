@@ -45,8 +45,9 @@ csi:
   cephFSKernelMountOptions: ms_mode=crc
   # Render `CSI_FORCE_CEPHFS_KERNEL_CLIENT: "false"` (Helm `with` blocks skip boolean false).
   forceCephFSKernelClient: "false"
-  cephFSPluginUpdateStrategy: RollingUpdate
-  cephFSPluginUpdateStrategyMaxUnavailable: 1
+  # FUSE mount processes live inside this pod. Roll nodes only after inventorying
+  # and restarting the node's FUSE consumers through a controlled operation.
+  cephFSPluginUpdateStrategy: OnDelete
   # A 1 GiB limit OOM-killed ceph-fuse and invalidated every FUSE mount on the node.
   # Media workloads use the kernel client, while this headroom protects compatibility clients.
   csiCephFSPluginResource: |

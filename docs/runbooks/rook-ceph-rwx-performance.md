@@ -31,7 +31,7 @@ Current GitOps defaults are tuned for safe first-pass RWX investigations:
 1. The live `CephFilesystem` keeps `activeCount: 1` and `activeStandby: true`.
 1. The MDS pods have explicit resources: requests `2 CPU / 8Gi`, limits `4 CPU / 16Gi`.
 1. Both RWX classes set `noatime`; the kernel class also sets `ms_mode=crc` for messenger v2 negotiation.
-1. The CephFS CSI node plugin requests 1 GiB and is limited to 4 GiB after a 1 GiB OOM invalidated node-local FUSE mounts.
+1. The CephFS CSI node plugin requests 1 GiB and is limited to 4 GiB after a 1 GiB OOM invalidated node-local FUSE mounts; its `OnDelete` strategy requires a controlled node rollout.
 1. CSI read affinity is enabled with `kubernetes.io/hostname` CRUSH location labels so clients can prefer closer replicas when topology allows it.
 
 These defaults do not remove the known topology ceiling:
