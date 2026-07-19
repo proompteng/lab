@@ -78,7 +78,7 @@ spec:
               value: production
           startupProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: http
             periodSeconds: 2
             failureThreshold: 30
@@ -91,7 +91,7 @@ spec:
             failureThreshold: 2
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: http
             periodSeconds: 10
             timeoutSeconds: 2
