@@ -192,6 +192,12 @@ targets:
       - services/agents/agentctl/**
       - docs/agents/agentctl-release.md
 
+  bayn:
+    kind: delegated
+    workflow: bayn-ci
+    paths:
+      - services/bayn/**
+
   bumba:
     kind: delegated
     workflow: bumba-ci

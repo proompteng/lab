@@ -25,6 +25,12 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['jangar-ci'])
   })
 
+  test('routes Bayn accounting changes to Bayn CI', () => {
+    const plan = selectImpactPlan(['services/bayn/src/accounting/journal.ts'], map)
+    expect(plan.validationTargets).toEqual(['planner'])
+    expect(plan.delegatedWorkflows).toEqual(['bayn-ci'])
+  })
+
   test('routes Olden changes to app validation', () => {
     const plan = selectImpactPlan(['apps/olden/src/app.tsx'], map)
     expect(plan.validationTargets).toEqual(['olden'])
