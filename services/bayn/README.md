@@ -18,7 +18,7 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 
 ## Endpoints
 
-- `GET /healthz`: process liveness.
+- `GET /livez`: process liveness.
 - `GET /readyz`: dependency/evaluation/accounting readiness.
 - `GET /v1/status` and `GET /v1/evidence/latest`: authority boundary, input manifest, metrics, verdict, and
   reconciliation receipt.

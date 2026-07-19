@@ -14,7 +14,7 @@ interface RuntimeEvidence {
   readonly reconciliation: ReconciliationResult
 }
 
-type RuntimeState =
+export type RuntimeState =
   | { readonly status: 'STARTING'; readonly evidence: null; readonly error: null }
   | { readonly status: 'READY'; readonly evidence: RuntimeEvidence; readonly error: null }
   | { readonly status: 'FAIL_CLOSED'; readonly evidence: null; readonly error: string }
@@ -30,7 +30,7 @@ const publicState = (state: RuntimeState) => ({
   error: state.error,
 })
 
-const makeHttpServer = (config: BaynConfig, state: Ref.Ref<RuntimeState>) =>
+export const makeHttpServer = (config: Pick<BaynConfig, 'host' | 'port'>, state: Ref.Ref<RuntimeState>) =>
   Effect.acquireRelease(
     Effect.async<Server, Error>((resume) => {
       const server = createServer((request, response) => {
@@ -41,7 +41,7 @@ const makeHttpServer = (config: BaynConfig, state: Ref.Ref<RuntimeState>) =>
             response.end(json({ error: 'method_not_allowed' }))
             return
           }
-          if (path === '/healthz') {
+          if (path === '/livez') {
             response.writeHead(200, { 'content-type': 'application/json' })
             response.end(json({ service: 'bayn', live: true }))
             return
