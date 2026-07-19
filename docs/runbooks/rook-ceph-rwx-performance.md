@@ -9,19 +9,19 @@ Non-RWX classes such as `rook-ceph-block` and non-POSIX paths such as `rook-ceph
 
 ## Decision Matrix
 
-Use `rook-cephfs-fuse` when:
-
-1. The workload requires shared POSIX semantics.
-1. The workload must run on Talos nodes that do not ship the in-kernel CephFS client.
-1. Compatibility matters more than peak throughput.
-
 Use `rook-cephfs` when:
 
 1. The workload requires shared POSIX semantics.
-1. You have a worker pool with a working kernel CephFS client.
-1. The workload is performance-sensitive enough that FUSE overhead matters.
+1. The workload runs on the `galactic` Talos nodes.
+1. The workload is durable or performance-sensitive.
 
-Do not choose between the two classes based on anecdote. Run the same benchmark suite against both classes when a kernel-capable worker pool exists.
+Use `rook-cephfs-fuse` when:
+
+1. The workload requires shared POSIX semantics.
+1. A tested compatibility issue prevents the kernel client from working.
+1. The workload owner accepts that a CSI plugin restart invalidates active FUSE mounts.
+
+Do not choose between the two classes based on anecdote. Run the same benchmark suite against both classes when validating a compatibility exception.
 
 ## Current Cluster Defaults
 
@@ -30,7 +30,8 @@ Current GitOps defaults are tuned for safe first-pass RWX investigations:
 1. The Ceph mgr `stats` module is enabled so `ceph fs perf stats` is available.
 1. The live `CephFilesystem` keeps `activeCount: 1` and `activeStandby: true`.
 1. The MDS pods have explicit resources: requests `2 CPU / 8Gi`, limits `4 CPU / 16Gi`.
-1. Both RWX classes set `mountOptions: [noatime]`.
+1. Both RWX classes set `noatime`; the kernel class also sets `ms_mode=crc` for messenger v2 negotiation.
+1. The CephFS CSI node plugin requests 1 GiB and is limited to 4 GiB after a 1 GiB OOM invalidated node-local FUSE mounts.
 1. CSI read affinity is enabled with `kubernetes.io/hostname` CRUSH location labels so clients can prefer closer replicas when topology allows it.
 
 These defaults do not remove the known topology ceiling:
@@ -60,7 +61,7 @@ kubectl apply -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-fuse.yaml
 kubectl -n rook-ceph-benchmarks logs -f job/rook-cephfs-fuse-benchmark
 ```
 
-Run the kernel benchmark job only after labeling a kernel-capable worker pool:
+Run the kernel benchmark job after labeling the target worker pool:
 
 ```bash
 kubectl label node <node-name> storage.proompteng.ai/cephfs-kernel-client=true
@@ -97,7 +98,7 @@ If you are comparing kernel vs FUSE, collect the same evidence set for both runs
 If `rook-cephfs` materially outperforms `rook-cephfs-fuse`:
 
 1. Keep FUSE as the compatibility class.
-1. Migrate only the performance-sensitive RWX workloads to a kernel-capable worker pool.
+1. Keep durable and performance-sensitive RWX workloads on the kernel class.
 
 If both RWX classes are slow and `ceph osd perf` stays high:
 
