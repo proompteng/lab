@@ -45,6 +45,7 @@ const earlyNixImageApps = new Set([
   'app',
   'arc',
   'attic',
+  'bayn',
   'bumba',
   'docs',
   'froussard',
@@ -68,6 +69,7 @@ const appToNixAttr = new Map<string, string>([
   ['app', 'app-image'],
   ['arc', 'arc-runner-image'],
   ['attic', 'atticd-image'],
+  ['bayn', 'bayn-image'],
   ['bumba', 'bumba-image'],
   ['docs', 'docs-image'],
   ['froussard', 'froussard-image'],
@@ -99,6 +101,7 @@ const appToBuildScriptPath = new Map<string, string>([
 
 const appToDeployScriptPath = new Map<string, string>([
   ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
+  ['bayn', 'packages/scripts/src/bayn/update-manifests.ts'],
   ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
