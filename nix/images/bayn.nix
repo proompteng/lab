@@ -10,7 +10,10 @@ import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
-  depsHash = lib.fakeHash;
+  depsHash = {
+    x86_64-linux = "sha256-PBr4Y0Rbp46sFbyzBwxifHCrHbJyVDZ1GpSouTy2YlI=";
+    aarch64-linux = "sha256-nCx2hzMO0DEyX2hqay6/aVRk8GD/1CNKVY36BJgJ/DY=";
+  };
   installFilters = [
     "@proompteng/bayn"
   ];
