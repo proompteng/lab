@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-19T10:23:41Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-19T10:44:17Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -47,7 +47,7 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: b742eab5c3e46e93b6ae6811b8487058aa94cc2c
+              value: 4c6ae65cf7aa3dd8e1d99b41adffd558399d212b
             - name: BAYN_RUN_ON_STARTUP
               value: "true"
             - name: BAYN_CLICKHOUSE_URL
