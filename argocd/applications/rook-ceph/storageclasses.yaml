@@ -106,6 +106,7 @@ reclaimPolicy: Delete
 volumeBindingMode: Immediate
 mountOptions:
   - noatime
+  - ms_mode=crc
 parameters:
   clusterID: rook-ceph
   fsName: cephfs
@@ -129,7 +130,7 @@ mountOptions:
 parameters:
   clusterID: rook-ceph
   fsName: cephfs
-  # Talos nodes do not ship the kernel ceph module; force userspace mounts.
+  # Compatibility class for workloads that explicitly require the userspace client.
   mounter: fuse
   csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
   csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
