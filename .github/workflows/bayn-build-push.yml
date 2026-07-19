@@ -37,7 +37,8 @@ jobs:
       image_name: bayn
       package_attr: bayn-image
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
+      # Keep OCI builds out of the repository-wide `ci-pr-*` concurrency group.
+      pr_number: ''
       latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       publish_on_dispatch: true
       release_artifact_name: ${{ github.event_name != 'pull_request' && 'bayn-release-contract' || '' }}
