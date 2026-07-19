@@ -146,6 +146,9 @@ cephClusterSpec:
         memory: 8Gi
 
   csi:
+    cephfs:
+      # The CSI-operator path sources per-cluster mount defaults from the CephCluster.
+      kernelMountOptions: "ms_mode=crc"
     readAffinity:
       enabled: true
       crushLocationLabels:
