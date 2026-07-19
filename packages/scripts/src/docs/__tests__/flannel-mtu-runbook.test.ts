@@ -8,10 +8,12 @@ const runbookPath = 'devices/galactic/docs/troubleshooting-networking.md'
 const runbook = readFileSync(join(repoRoot, runbookPath), 'utf8')
 const scriptsWorkflow = readFileSync(join(repoRoot, '.github/workflows/scripts-ci.yml'), 'utf8')
 
-it('validates the MTU value controlled by the Flannel CNI guard', () => {
+it('validates the MTU value controlled by the Talos custom Flannel CNI', () => {
+  expect(runbook).toContain('cluster.network.cni.name: custom')
   expect(runbook).toContain("jq -e '.plugins[0].delegate.mtu == 1400'")
   expect(runbook).toContain("ip -o link show eth0 | grep -q 'mtu 1400'")
-  expect(runbook).toContain('may still report `FLANNEL_MTU=1450`')
+  expect(runbook).toMatch(/may still report\s+`FLANNEL_MTU=1450`/)
+  expect(runbook).not.toContain('argocd app sync flannel-cni')
   expect(runbook).not.toContain('unless every node reports `FLANNEL_MTU=1400`')
 })
 

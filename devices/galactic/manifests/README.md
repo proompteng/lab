@@ -10,7 +10,11 @@ The upstream template is pinned by the Talos `v1.13.6` tag in
 [`flannel.go`](https://github.com/siderolabs/talos/blob/v1.13.6/internal/app/machined/pkg/controllers/k8s/internal/k8stemplates/flannel.go),
 and Talos v1.13.6 pins Flannel `v0.28.5` in its machinery constants.
 
-The file is staged separately so the cluster configuration can later reference an immutable Git commit URL. It does
-not become active merely by being present in this repository. Activation must set `cluster.network.cni.name` to
-`custom`, set `cluster.network.cni.urls` to the immutable raw URL, and remove the partial Argo `flannel-cni` owner in
-the same guarded handoff.
+`custom-flannel-cni.patch.yaml` switches Talos from its generated Flannel bundle to this complete custom bundle. The
+URL is pinned to merge commit `15f59fd037dd45ecd79cf69031215d1e79b6b479`, so node boot and Kubernetes upgrades do
+not depend on mutable `main` content.
+
+Apply that patch to every control-plane node only after etcd, the Kubernetes API, and the raw manifest URL are healthy.
+Keep the existing Flannel resources running throughout the change; Talos replaces its generated manifest source with
+the custom source at the same priority. The Argo `flannel-cni` application must be removed only after all nodes report
+the custom CNI configuration and Talos reports the custom manifest as applied.
