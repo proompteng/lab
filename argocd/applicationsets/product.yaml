@@ -383,7 +383,9 @@ spec:
                   argocd.argoproj.io/sync-wave: "7"
                 managedNamespaceMetadata:
                   labels:
-                    pod-security.kubernetes.io/enforce: restricted
+                    # The TigerBeetle client requires an explicit io_uring seccomp exception.
+                    # The Bayn container remains non-root with no capabilities or privilege escalation.
+                    pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted
                 automation: auto
