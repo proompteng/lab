@@ -10,4 +10,5 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/bayn
     newName: registry.ide-newton.ts.net/lab/bayn
-    newTag: bootstrap
+    newTag: "sha-b742eab5c3e46e93b6ae6811b8487058aa94cc2c"
+    digest: sha256:c042cfaafe323a9a91b48bc2227a5f849607851e941d1cab1fe85bd1d3b9d416
