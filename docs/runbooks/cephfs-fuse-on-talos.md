@@ -14,9 +14,11 @@ The required defaults are:
 - `rook-cephfs` uses the kernel mounter with `noatime` and `ms_mode=crc`.
 - `rook-cephfs-fuse` explicitly sets `mounter: fuse`.
 - The CephFS CSI node plugin requests 1 GiB and is limited to 4 GiB.
-- The CephFS CSI node-plugin DaemonSet uses `OnDelete` so an operator must coordinate each node rollout with its FUSE consumers.
+- The CephFS and RBD CSI node-plugin DaemonSets use `OnDelete` so an operator must coordinate each node rollout with its consumers.
 
 `ms_mode=crc` is required for the kernel client to negotiate Ceph messenger v2 with the current cluster. Do not remove it from either the Rook CSI default or the kernel StorageClass without a mount canary.
+
+Rook v1.19.7's CSI-operator path incorrectly uses `CSI_RBD_PLUGIN_UPDATE_STRATEGY` when building the CephFS `Driver` CR. `operator-values.yaml` therefore sets both the RBD and CephFS strategies to `OnDelete`. Remove the RBD workaround only after an upgrade proves the live CephFS `Driver` independently reports `OnDelete`.
 
 ## Why Kernel Is The Default
 

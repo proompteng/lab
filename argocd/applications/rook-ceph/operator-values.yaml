@@ -48,6 +48,9 @@ csi:
   # FUSE mount processes live inside this pod. Roll nodes only after inventorying
   # and restarting the node's FUSE consumers through a controlled operation.
   cephFSPluginUpdateStrategy: OnDelete
+  # Rook v1.19.7's CSI-operator path reads the RBD strategy when constructing the
+  # CephFS Driver CR. Keep both OnDelete until that upstream mapping bug is fixed.
+  rbdPluginUpdateStrategy: OnDelete
   # A 1 GiB limit OOM-killed ceph-fuse and invalidated every FUSE mount on the node.
   # Media workloads use the kernel client, while this headroom protects compatibility clients.
   csiCephFSPluginResource: |
