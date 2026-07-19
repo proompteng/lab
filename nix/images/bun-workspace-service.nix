@@ -23,6 +23,7 @@
   maxLayers ? 24,
   runtimeRoot ? null,
   returnRuntimeRoot ? false,
+  includeBunRuntime ? true,
 }:
 
 let
@@ -248,11 +249,11 @@ let
 
   resolvedRuntimeRoot = if runtimeRoot == null then builtRuntimeRoot else runtimeRoot;
 
-  runtimePath = lib.makeBinPath ([
-    bun
+  runtimeTools = (lib.optionals includeBunRuntime [ bun ]) ++ [
     pkgs.busybox
     pkgs.coreutils
-  ] ++ extraContents);
+  ] ++ extraContents;
+  runtimePath = lib.makeBinPath runtimeTools;
 in
 if returnRuntimeRoot then builtRuntimeRoot else pkgs.dockerTools.buildLayeredImage {
   name = "registry.ide-newton.ts.net/lab/${imageName}";
@@ -260,11 +261,10 @@ if returnRuntimeRoot then builtRuntimeRoot else pkgs.dockerTools.buildLayeredIma
   inherit maxLayers;
   contents = [
     resolvedRuntimeRoot
-    bun
     pkgs.busybox
     pkgs.cacert
     pkgs.coreutils
-  ] ++ extraContents;
+  ] ++ (lib.optionals includeBunRuntime [ bun ]) ++ extraContents;
   extraCommands = ''
     mkdir -p tmp var/tmp
     chmod 1777 tmp var/tmp

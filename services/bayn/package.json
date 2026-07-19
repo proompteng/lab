@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts src/backfill.ts --target=node --packages=external --outdir=dist",
+    "build": "bun build src/index.ts src/backfill.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "bun --watch src/index.ts",
     "start": "node dist/index.js",
     "backfill": "bun src/backfill.ts",
