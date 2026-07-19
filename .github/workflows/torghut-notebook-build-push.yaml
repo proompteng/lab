@@ -14,6 +14,8 @@ on:
       - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
       - 'services/torghut/notebooks/20-execution-evidence.ipynb'
       - 'services/torghut/notebooks/30-capital-authority.ipynb'
+      - 'services/torghut/notebooks/40-transformer-math-from-first-principles.ipynb'
+      - 'services/torghut/notebooks/README.md'
       - 'services/torghut/scripts/start_torghut_notebook.sh'
       - 'services/torghut/pyproject.toml'
       - 'services/torghut/uv.lock'

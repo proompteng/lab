@@ -9,6 +9,8 @@ on:
       - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
       - 'services/torghut/notebooks/20-execution-evidence.ipynb'
       - 'services/torghut/notebooks/30-capital-authority.ipynb'
+      - 'services/torghut/notebooks/40-transformer-math-from-first-principles.ipynb'
+      - 'services/torghut/notebooks/README.md'
       - 'services/torghut/scripts/generate_diagnostics_notebooks.py'
       - 'services/torghut/scripts/start_torghut_notebook.sh'
       - 'services/torghut/tests/notebook_data/**'
@@ -27,6 +29,8 @@ on:
       - 'services/torghut/notebooks/10-strategy-lifecycle.ipynb'
       - 'services/torghut/notebooks/20-execution-evidence.ipynb'
       - 'services/torghut/notebooks/30-capital-authority.ipynb'
+      - 'services/torghut/notebooks/40-transformer-math-from-first-principles.ipynb'
+      - 'services/torghut/notebooks/README.md'
       - 'services/torghut/scripts/generate_diagnostics_notebooks.py'
       - 'services/torghut/scripts/start_torghut_notebook.sh'
       - 'services/torghut/tests/notebook_data/**'
@@ -77,13 +81,13 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen pyright --project pyrightconfig.json
 
-      - name: Verify canonical notebooks are generated
+      - name: Verify generated diagnostic notebooks
         working-directory: services/torghut
         run: |
           uv run --frozen python scripts/generate_diagnostics_notebooks.py
           git diff --exit-code -- notebooks/00-system-flow.ipynb notebooks/10-strategy-lifecycle.ipynb notebooks/20-execution-evidence.ipynb notebooks/30-capital-authority.ipynb
 
-      - name: Execute canonical notebooks with explicit fixtures
+      - name: Execute notebooks with explicit fixtures
         working-directory: services/torghut
         env:
           TORGHUT_NOTEBOOK_DATA_MODE: fixture

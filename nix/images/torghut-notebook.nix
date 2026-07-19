@@ -43,6 +43,8 @@ let
         "notebooks/10-strategy-lifecycle.ipynb"
         "notebooks/20-execution-evidence.ipynb"
         "notebooks/30-capital-authority.ipynb"
+        "notebooks/40-transformer-math-from-first-principles.ipynb"
+        "notebooks/README.md"
       ]
       || lib.hasPrefix "app/notebook_data/" rel;
   };
@@ -112,6 +114,8 @@ let
       cp notebooks/10-strategy-lifecycle.ipynb "$out/opt/torghut-notebooks/"
       cp notebooks/20-execution-evidence.ipynb "$out/opt/torghut-notebooks/"
       cp notebooks/30-capital-authority.ipynb "$out/opt/torghut-notebooks/"
+      cp notebooks/40-transformer-math-from-first-principles.ipynb "$out/opt/torghut-notebooks/"
+      cp notebooks/README.md "$out/opt/torghut-notebooks/"
       runHook postInstall
     '';
   };
