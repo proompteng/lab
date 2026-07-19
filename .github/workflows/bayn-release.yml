@@ -95,10 +95,12 @@ jobs:
           add-paths: |
             argocd/applications/bayn/kustomization.yaml
             argocd/applications/bayn/deployment.yaml
+            argocd/applicationsets/product.yaml
           body: |
             ## Summary
 
-            Promote the immutable Bayn image and bind runtime evidence to its source commit.
+            Promote the immutable Bayn image, activate the Bayn Argo application, and bind runtime evidence to its
+            source commit.
 
             - Source commit: `${{ steps.release.outputs.source_sha }}`
             - Image tag: `${{ steps.release.outputs.tag }}`

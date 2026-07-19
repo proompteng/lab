@@ -17,6 +17,7 @@ describe('Bayn manifest promotion', () => {
     directory = mkdtempSync(join(tmpdir(), 'bayn-manifest-'))
     const kustomizationPath = join(directory, 'kustomization.yaml')
     const deploymentPath = join(directory, 'deployment.yaml')
+    const applicationSetPath = join(directory, 'product.yaml')
     writeFileSync(
       kustomizationPath,
       `images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n`,
@@ -24,6 +25,10 @@ describe('Bayn manifest promotion', () => {
     writeFileSync(
       deploymentPath,
       `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n            - name: BAYN_CODE_REVISION\n              value: bootstrap\n`,
+    )
+    writeFileSync(
+      applicationSetPath,
+      `elements:\n              - name: bayn\n                path: argocd/applications/bayn\n                enabled: "false"\n              - name: next\n                enabled: "true"\n`,
     )
     const sourceSha = 'a'.repeat(40)
     const digest = `sha256:${'b'.repeat(64)}`
@@ -34,10 +39,14 @@ describe('Bayn manifest promotion', () => {
       rolloutTimestamp: '2026-07-19T10:00:00Z',
       kustomizationPath,
       deploymentPath,
+      applicationSetPath,
     })
     expect(readFileSync(kustomizationPath, 'utf8')).toContain(`newTag: "sha-${sourceSha}"\n    digest: ${digest}`)
     expect(readFileSync(deploymentPath, 'utf8')).toContain(`value: ${sourceSha}`)
     expect(readFileSync(deploymentPath, 'utf8')).toContain('restartedAt: "2026-07-19T10:00:00Z"')
+    expect(readFileSync(applicationSetPath, 'utf8')).toContain(
+      '- name: bayn\n                path: argocd/applications/bayn\n                enabled: "true"',
+    )
   })
 
   test('rejects malformed release metadata', () => {
@@ -47,6 +56,7 @@ describe('Bayn manifest promotion', () => {
         tag: 'latest',
         digest: 'sha256:bad',
         rolloutTimestamp: 'now',
+        applicationSetPath: 'unused',
       }),
     ).toThrow('invalid source SHA')
   })

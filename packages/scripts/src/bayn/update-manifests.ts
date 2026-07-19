@@ -14,6 +14,7 @@ export interface UpdateBaynManifestOptions {
   readonly rolloutTimestamp: string
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
+  readonly applicationSetPath?: string
 }
 
 const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string, name: string): string => {
@@ -30,6 +31,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
 
   const kustomizationPath = options.kustomizationPath ?? 'argocd/applications/bayn/kustomization.yaml'
   const deploymentPath = options.deploymentPath ?? 'argocd/applications/bayn/deployment.yaml'
+  const applicationSetPath = options.applicationSetPath ?? 'argocd/applicationsets/product.yaml'
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const imageBlock =
     /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
@@ -54,8 +56,17 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
     'Bayn rollout annotation',
   )
 
+  const applicationSet = readFileSync(applicationSetPath, 'utf8')
+  const updatedApplicationSet = replaceExactlyOnce(
+    applicationSet,
+    /(^ {14}- name: bayn\n(?:(?!^ {14}- name:)[\s\S])*?^ {16}enabled: )"(?:false|true)"/m,
+    '$1"true"',
+    'Bayn ApplicationSet enabled state',
+  )
+
   writeFileSync(kustomizationPath, updatedKustomization)
   writeFileSync(deploymentPath, updatedDeployment)
+  writeFileSync(applicationSetPath, updatedApplicationSet)
 }
 
 const parseArguments = (argumentsToParse: readonly string[]): UpdateBaynManifestOptions => {
