@@ -2,7 +2,8 @@
 
 Status: production-proven for deterministic point-in-time replay materialization and independent verification against
 live Torghut market data. This proof does not establish adequate market-data coverage, strategy profitability, or
-capital authority.
+capital authority. The controlled tapes were not retained, so this document is a historical execution receipt rather
+than a byte-for-byte reproducible artifact.
 
 Evidence window: `2026-07-18T20:59:08Z` through `2026-07-18T21:22:04Z`.
 
@@ -99,7 +100,7 @@ matched on every required anchor:
 | Feature-matrix SHA-256 | `sha256:d09d94026eecbd97d923696e3e8b0d3dfccd0cb455ef90830d908a665ca5a8dc` | `sha256:d09d94026eecbd97d923696e3e8b0d3dfccd0cb455ef90830d908a665ca5a8dc` |
 
 The independent verifier loaded the finished artifact, recomputed the tape, input-row-set, feature-matrix, watermark,
-and receipt hashes, and compared all four expected anchors. It returned:
+and receipt hashes, and compared all four expected anchors. The selected fields relevant to this evidence were:
 
 ```json
 {
@@ -110,7 +111,7 @@ and receipt hashes, and compared all four expected anchors. It returned:
 ```
 
 The verifier was then run against the unchanged tape with an intentionally wrong expected receipt hash. It exited
-nonzero and returned exactly:
+nonzero; the selected rejection fields were:
 
 ```json
 {
@@ -118,6 +119,9 @@ nonzero and returned exactly:
   "status": "rejected"
 }
 ```
+
+The verifier also emitted its schema version, tape and manifest paths, observation cutoff, and all four computed hashes.
+The projections above are intentionally abbreviated and are not literal complete console output.
 
 A separate paper-probation negative control omitted replay metadata. It remained blocked with both independent reason
 codes:
@@ -129,7 +133,9 @@ codes:
 }
 ```
 
-The verifier boundary can be reproduced without trusting materializer console output:
+The following command documents the verifier invocation shape for a newly retained or newly materialized tape. It cannot
+reproduce the historical hashes by itself because the controlled tape and manifest referenced by this receipt were
+deleted:
 
 ```bash
 kubectl -n torghut exec <scheduler-pod> -- \
@@ -142,7 +148,9 @@ kubectl -n torghut exec <scheduler-pod> -- \
 ```
 
 The controlled validation tapes were non-candidate artifacts. Their hashes and outcomes were retained here, and their
-temporary in-pod directory was removed after verification rather than leaving garbage in the scheduler container.
+temporary in-pod directory was removed after verification rather than leaving garbage in the scheduler container. A
+future production-evidence run that claims independent reproducibility must retain the tape and manifest durably or
+record a complete immutable materialization specification and source snapshot sufficient to reconstruct them.
 
 ## GitOps And Singleton Readback
 
