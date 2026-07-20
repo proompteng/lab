@@ -3,20 +3,55 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 
 import { NodeServices } from '@effect/platform-node'
-import { Cause, Context, Effect, Exit, Fiber, Layer, Redacted, Ref } from 'effect'
+import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Redacted, Ref } from 'effect'
 import { HttpServer } from 'effect/unstable/http'
 
 import { initialize, makeHttpLayer, run, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
-import { DatabaseError, EvidenceStore, EvidenceStoreRuntimeLive, type EvidenceStoreService } from './db/evidence-store'
+import {
+  DatabaseError,
+  EvidenceStore,
+  EvidenceStoreRuntimeLive,
+  type EvidenceStoreService,
+  type StoredEvaluationEvidence,
+} from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { evaluateTsmom } from './strategy'
+import { evaluateTsmom, identifyTsmomRun, summarizeEvaluation } from './strategy'
 import { Strategy, TsmomStrategyLayer, type StrategyService } from './strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
+const historicalRunId = '9'.repeat(64)
+const historicalEvidence: StoredEvaluationEvidence = {
+  protocol: {
+    protocolHash: '8'.repeat(64),
+    schemaVersion: fixtureProtocol.schemaVersion,
+    strategyName: 'tsmom',
+    behaviorHash: provenance.strategy.behaviorHash,
+    parameterHash: provenance.strategy.parameterHash,
+    parameters: fixtureProtocol,
+  },
+  run: {
+    runId: historicalRunId,
+    protocolHash: '8'.repeat(64),
+    snapshotId: '7'.repeat(64),
+    evaluationSchemaVersion: 'bayn.evaluation.v2',
+    sourceRevision: provenance.sourceRevision,
+    imageRepository: provenance.image.repository,
+    imageDigest: provenance.image.digest,
+    strategyName: 'tsmom',
+    initialCapitalMicros: '1000000000000',
+    artifactCount: 0,
+    eventCount: 0,
+    gateCount: 0,
+  },
+  artifacts: [],
+  events: [],
+  gates: [],
+  statuses: [],
+}
 
 const config: RuntimeConfig = {
   host: '127.0.0.1',
@@ -67,11 +102,13 @@ const successfulJournal: JournalService = {
 
 const successfulEvidenceStore: EvidenceStoreService = {
   check: Effect.void,
+  read: (runId) => Effect.succeed(runId === historicalRunId ? Option.some(historicalEvidence) : Option.none()),
+  recover: () => Effect.succeed(Option.none()),
   persist: ({ evaluation }) =>
     Effect.succeed({
       runId: evaluation.runId,
       deduplicated: false,
-      artifactCount: 6,
+      artifactCount: 12,
       eventCount: evaluation.events.length,
       gateCount: evaluation.verdict.gates.length,
     }),
@@ -119,18 +156,23 @@ const waitForStatus = async (port: number, expectedStatus: string) => {
 const readyState = (): RuntimeState => {
   const snapshot = makeSnapshot()
   const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
-  const { events, ...evaluationWithoutEvents } = evaluation
   return {
     status: 'READY',
     evidence: {
+      startupMode: 'evaluated',
       provenance,
-      evaluation: { ...evaluationWithoutEvents, eventCount: events.length },
-      reconciliation: { runId: evaluation.runId, accountCount: 13, transferCount: events.length, exact: true },
+      evaluation: summarizeEvaluation(evaluation),
+      reconciliation: {
+        runId: evaluation.runId,
+        accountCount: 13,
+        transferCount: evaluation.events.length,
+        exact: true,
+      },
       persistence: {
         runId: evaluation.runId,
         deduplicated: false,
-        artifactCount: 6,
-        eventCount: events.length,
+        artifactCount: 12,
+        eventCount: evaluation.events.length,
         gateCount: evaluation.verdict.gates.length,
       },
     },
@@ -146,7 +188,13 @@ describe('Bayn HTTP probes', () => {
         Effect.gen(function* () {
           const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
           const context = yield* Layer.build(
-            makeHttpLayer({ host: '127.0.0.1', port: 0 }, state, provenance, 'embedded'),
+            makeHttpLayer(
+              { host: '127.0.0.1', operationTimeoutMs: 250, port: 0 },
+              state,
+              provenance,
+              'embedded',
+              successfulEvidenceStore,
+            ),
           )
           const address = Context.get(context, HttpServer.HttpServer).address
           if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
@@ -178,6 +226,18 @@ describe('Bayn HTTP probes', () => {
               evidence: { provenance },
             },
           })
+          expect(yield* Effect.promise(() => fetchJson(port, `/v1/evaluations/${historicalRunId}`))).toMatchObject({
+            status: 200,
+            body: { run: { runId: historicalRunId } },
+          })
+          expect(yield* Effect.promise(() => fetchJson(port, '/v1/evaluations/not-a-run'))).toMatchObject({
+            status: 400,
+            body: { error: 'invalid_run_id' },
+          })
+          expect(yield* Effect.promise(() => fetchJson(port, `/v1/evaluations/${'f'.repeat(64)}`))).toMatchObject({
+            status: 404,
+            body: { error: 'evaluation_not_found' },
+          })
           yield* Ref.set(state, { status: 'FAIL_CLOSED', evidence: null, error: 'test failure' })
           expect(yield* Effect.promise(() => fetchJson(port, '/readyz'))).toMatchObject({
             status: 503,
@@ -208,9 +268,169 @@ describe('Bayn HTTP probes', () => {
     }
     expect(rejected).toBe(true)
   })
+
+  test('returns service unavailable when durable evidence cannot be read', async () => {
+    const unavailableStore: EvidenceStoreService = {
+      ...successfulEvidenceStore,
+      read: () =>
+        Effect.fail(
+          new DatabaseError({
+            failure: 'unavailable',
+            operation: 'read-evidence',
+            message: 'database unavailable',
+          }),
+        ),
+    }
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
+          const context = yield* Layer.build(
+            makeHttpLayer(
+              { host: '127.0.0.1', operationTimeoutMs: 250, port: 0 },
+              state,
+              provenance,
+              'embedded',
+              unavailableStore,
+            ),
+          )
+          const address = Context.get(context, HttpServer.HttpServer).address
+          if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
+
+          expect(
+            yield* Effect.promise(() => fetchJson(address.port, `/v1/evaluations/${historicalRunId}`)),
+          ).toMatchObject({ status: 503, body: { error: 'evidence_unavailable' } })
+        }),
+      ),
+    )
+  })
 })
 
 describe('Bayn startup lifecycle', () => {
+  test('recovers a complete run without evaluating, journaling, or persisting again', async () => {
+    const snapshot = makeSnapshot()
+    const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    let evaluations = 0
+    let journalWrites = 0
+    let persistenceWrites = 0
+    const strategy: StrategyService = {
+      name: 'tsmom',
+      universe: fixtureProtocol.universe,
+      parameters: fixtureProtocol,
+      provenance,
+      identify: () => evaluation.runId,
+      evaluate: () => {
+        evaluations += 1
+        return evaluation
+      },
+    }
+    const journal: JournalService = {
+      check: Effect.void,
+      journalAndReconcile: () => {
+        journalWrites += 1
+        return Effect.die(new Error('recovered startup must not journal'))
+      },
+    }
+    const store: EvidenceStoreService = {
+      ...successfulEvidenceStore,
+      recover: () =>
+        Effect.succeed(
+          Option.some({
+            evaluation: summarizeEvaluation(evaluation),
+            reconciliation: { runId: evaluation.runId, accountCount: 13, transferCount: 321, exact: true },
+            persistence: {
+              runId: evaluation.runId,
+              deduplicated: true,
+              artifactCount: 12,
+              eventCount: evaluation.events.length,
+              gateCount: evaluation.verdict.gates.length,
+            },
+          }),
+        ),
+      persist: () => {
+        persistenceWrites += 1
+        return Effect.die(new Error('recovered startup must not persist'))
+      },
+    }
+    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+
+    await Effect.runPromise(
+      initialize(config, state).pipe(
+        Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(Journal, journal),
+        Effect.provideService(EvidenceStore, store),
+        Effect.provideService(Strategy, strategy),
+      ),
+    )
+
+    expect({ evaluations, journalWrites, persistenceWrites }).toEqual({
+      evaluations: 0,
+      journalWrites: 0,
+      persistenceWrites: 0,
+    })
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'READY',
+      evidence: {
+        startupMode: 'recovered',
+        evaluation: { runId: evaluation.runId },
+        persistence: { deduplicated: true },
+      },
+    })
+  })
+
+  test('fails closed instead of re-evaluating a corrupt matching durable run', async () => {
+    const snapshot = makeSnapshot()
+    let evaluations = 0
+    let journalWrites = 0
+    const strategy: StrategyService = {
+      name: 'tsmom',
+      universe: fixtureProtocol.universe,
+      parameters: fixtureProtocol,
+      provenance,
+      identify: (manifest) => identifyTsmomRun(manifest, fixtureProtocol, provenance),
+      evaluate: () => {
+        evaluations += 1
+        throw new Error('corrupt recovery must not fall back to evaluation')
+      },
+    }
+    const store: EvidenceStoreService = {
+      ...successfulEvidenceStore,
+      recover: () =>
+        Effect.fail(
+          new DatabaseError({
+            failure: 'invariant',
+            operation: 'recover-evidence',
+            message: 'stored artifact hash diverged',
+          }),
+        ),
+    }
+    const journal: JournalService = {
+      check: Effect.void,
+      journalAndReconcile: () => {
+        journalWrites += 1
+        return Effect.die(new Error('corrupt recovery must not journal'))
+      },
+    }
+    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+
+    await Effect.runPromise(
+      initialize(config, state).pipe(
+        Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(Journal, journal),
+        Effect.provideService(EvidenceStore, store),
+        Effect.provideService(Strategy, strategy),
+      ),
+    )
+
+    expect({ evaluations, journalWrites }).toEqual({ evaluations: 0, journalWrites: 0 })
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAIL_CLOSED',
+      evidence: null,
+      error: expect.stringContaining('database.recover-evaluation'),
+    })
+  })
+
   test('evaluates through the provided strategy capability', async () => {
     let calls = 0
     const snapshot = makeSnapshot()
@@ -220,6 +440,7 @@ describe('Bayn startup lifecycle', () => {
       universe: fixtureProtocol.universe,
       parameters: fixtureProtocol,
       provenance,
+      identify: (manifest) => identifyTsmomRun(manifest, fixtureProtocol, provenance),
       evaluate: (bars, manifest) => {
         calls += 1
         return evaluateTsmom(bars, manifest, fixtureProtocol, provenance)
@@ -358,6 +579,8 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
     const unavailable: EvidenceStoreService = {
       check: Effect.void,
+      read: () => Effect.succeed(Option.none()),
+      recover: () => Effect.succeed(Option.none()),
       persist: () =>
         Effect.fail(
           new DatabaseError({

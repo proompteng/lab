@@ -4,7 +4,9 @@ import { canonicalHashV1, canonicalJsonV1 } from './hash'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 
-const isIsoDate = (value: string): boolean => {
+type IsoDateValue = `${number}-${number}-${number}`
+
+const isIsoDate = (value: string): value is IsoDateValue => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00.000Z`)
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
@@ -30,9 +32,7 @@ const NonEmptyString = Schema.String.check(
     expected: 'a non-empty string without surrounding whitespace',
   }),
 )
-export const IsoDateSchema = Schema.String.check(
-  Schema.makeFilter(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }),
-)
+export const IsoDateSchema = Schema.String.pipe(Schema.refine(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }))
 const UtcInstant = Schema.String.check(
   Schema.makeFilter(isUtcInstant, { expected: 'a canonical UTC instant (YYYY-MM-DDTHH:mm:ss.sssZ)' }),
 )
@@ -193,7 +193,7 @@ export const RuntimeProvenanceSchema = Schema.Struct({
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v1'),
     inputManifest: Schema.Literal('bayn.input-manifest.v2'),
-    evaluation: Schema.Literal('bayn.evaluation.v1'),
+    evaluation: Schema.Literal('bayn.evaluation.v2'),
   }),
 })
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
@@ -319,7 +319,7 @@ export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimePro
     contractVersions: {
       runtimeProvenance: 'bayn.runtime-provenance.v1',
       inputManifest: 'bayn.input-manifest.v2',
-      evaluation: 'bayn.evaluation.v1',
+      evaluation: 'bayn.evaluation.v2',
     },
   })
 

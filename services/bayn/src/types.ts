@@ -74,6 +74,7 @@ export interface DecisionEvent {
 export interface FillEvent {
   readonly kind: 'fill'
   readonly id: string
+  readonly orderId: string
   readonly decisionId: string
   readonly sessionDate: IsoDate
   readonly symbol: string
@@ -86,6 +87,71 @@ export interface FillEvent {
 }
 
 export type EvaluationEvent = DecisionEvent | FillEvent
+
+export interface SimulatedOrder {
+  readonly id: string
+  readonly decisionId: string
+  readonly sessionDate: IsoDate
+  readonly symbol: string
+  readonly side: 'buy' | 'sell'
+  readonly requestedQuantityMicros: string
+  readonly filledQuantityMicros: string
+}
+
+export interface CashChange {
+  readonly id: string
+  readonly fillId: string
+  readonly sessionDate: IsoDate
+  readonly amountMicros: string
+  readonly cashAfterMicros: string
+}
+
+export interface PositionMark {
+  readonly symbol: string
+  readonly quantityMicros: string
+  readonly costBasisMicros: string
+  readonly priceMicros: string
+  readonly marketValueMicros: string
+}
+
+export interface DailyPositionMark {
+  readonly sessionDate: IsoDate
+  readonly cashMicros: string
+  readonly positions: readonly PositionMark[]
+  readonly equityMicros: string
+}
+
+export interface SimulationTrace {
+  readonly schemaVersion: 'bayn.simulation-trace.v1'
+  readonly transactionCostBpsMicros: string
+  readonly orders: readonly SimulatedOrder[]
+  readonly cashChanges: readonly CashChange[]
+  readonly dailyMarks: readonly DailyPositionMark[]
+}
+
+export interface EquityPoint {
+  readonly sessionDate: IsoDate
+  readonly evaluatorEquityMicros: string
+  readonly reconstructedEquityMicros: string
+  readonly differenceMicros: string
+}
+
+export interface MarkedEquityReconciliation {
+  readonly schemaVersion: 'bayn.marked-equity-reconciliation.v1'
+  readonly runId: string
+  readonly toleranceMicros: string
+  readonly maximumDailyDifferenceMicros: string
+  readonly reconstructedCashMicros: string
+  readonly reconstructedPositionValueMicros: string
+  readonly evaluatorTotalFeesMicros: string
+  readonly reconstructedTotalFeesMicros: string
+  readonly feeDifferenceMicros: string
+  readonly evaluatorEndingEquityMicros: string
+  readonly reconstructedEndingEquityMicros: string
+  readonly differenceMicros: string
+  readonly exact: boolean
+  readonly withinTolerance: true
+}
 
 export interface PerformanceMetrics {
   readonly observations: number
@@ -112,7 +178,7 @@ export interface EconomicVerdict {
 }
 
 export interface EvaluationResult {
-  readonly schemaVersion: 'bayn.evaluation.v1'
+  readonly schemaVersion: 'bayn.evaluation.v2'
   readonly runId: string
   readonly codeRevision: string
   readonly protocolHash: string
@@ -124,6 +190,37 @@ export interface EvaluationResult {
   readonly doubleCostStrategy: PerformanceMetrics
   readonly verdict: EconomicVerdict
   readonly events: readonly EvaluationEvent[]
+  readonly simulation: SimulationTrace
+  readonly equitySeries: readonly EquityPoint[]
+  readonly markedEquityReconciliation: MarkedEquityReconciliation
+}
+
+export interface EvaluationSummary {
+  readonly schemaVersion: 'bayn.evaluation-summary.v1'
+  readonly runId: string
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v2'
+  readonly codeRevision: string
+  readonly protocolHash: string
+  readonly initialCapitalMicros: string
+  readonly input: {
+    readonly snapshotId: string
+    readonly publicationId: string
+    readonly manifestHash: string
+    readonly bounds: EvaluationBounds
+    readonly rowCount: number
+    readonly sessionCount: number
+    readonly symbols: readonly string[]
+  }
+  readonly strategy: PerformanceMetrics
+  readonly buyAndHold: PerformanceMetrics
+  readonly directVolTiming: PerformanceMetrics
+  readonly doubleCostStrategy: PerformanceMetrics
+  readonly verdict: EconomicVerdict
+  readonly eventCount: number
+  readonly orderCount: number
+  readonly cashChangeCount: number
+  readonly dailyMarkCount: number
+  readonly markedEquityReconciliation: MarkedEquityReconciliation
 }
 
 export interface ReconciliationResult {

@@ -44,7 +44,7 @@ const snapshot = {
   sessionCount: 1_510,
   contentHash: sha('3'),
   sessionsContentHash: sha('4'),
-}
+} as const
 
 const bounds = {
   schemaVersion: 'bayn.evaluation-bounds.v1' as const,
@@ -53,7 +53,7 @@ const bounds = {
   lookbackStart: '2020-01-02',
   evaluationStart: '2021-01-04',
   evaluationEnd: '2025-12-31',
-}
+} as const
 
 const material = {
   schemaVersion: 'bayn.run-identity.v1' as const,
@@ -73,7 +73,7 @@ const material = {
   finalizedSnapshot: snapshot,
   calendarVersion: snapshot.calendarVersion,
   bounds,
-}
+} as const
 
 const expectFailure = async (effect: Effect.Effect<unknown, unknown>): Promise<void> => {
   expect(Exit.isFailure(await Effect.runPromiseExit(effect))).toBe(true)
@@ -196,7 +196,7 @@ describe('Bayn runtime provenance', () => {
       contractVersions: {
         runtimeProvenance: 'bayn.runtime-provenance.v1',
         inputManifest: 'bayn.input-manifest.v2',
-        evaluation: 'bayn.evaluation.v1',
+        evaluation: 'bayn.evaluation.v2',
       },
     })
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)

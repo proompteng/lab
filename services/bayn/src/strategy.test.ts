@@ -112,4 +112,18 @@ describe('TSMOM economic evaluator', () => {
       'row count does not match manifest',
     )
   })
+
+  test('retains bounded complete evidence for a production-sized history', () => {
+    const snapshot = makeSnapshot(2_400)
+    const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const serializedEvidence = JSON.stringify({
+      events: evaluation.events,
+      simulation: evaluation.simulation,
+      equitySeries: evaluation.equitySeries,
+    })
+
+    expect(evaluation.simulation.dailyMarks).toHaveLength(evaluation.strategy.observations)
+    expect(evaluation.equitySeries).toHaveLength(evaluation.strategy.observations)
+    expect(Buffer.byteLength(serializedEvidence)).toBeLessThan(10 * 1024 * 1024)
+  })
 })

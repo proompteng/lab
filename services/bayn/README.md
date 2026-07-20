@@ -31,9 +31,14 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   snapshot provenance, calendar version, and explicit bounds.
 - Signals are formed at a month-end close and may execute only at the next exchange session open.
 - After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
-  snapshot reference, run identity, metrics, reconciliation receipt, ordered events, gate outcomes, and status
-  history. An exact replay returns the existing complete receipt only after every stored payload and content hash is
-  revalidated; conflicting, altered, or partial evidence fails closed.
+  snapshot reference, run identity, metrics, simulated orders, fills, cash changes, daily position marks, the full
+  equity series, independent marked-equity proof, reconciliation receipt, gate outcomes, and status history.
+- The independent reducer rebuilds protocol costs, cash, positions, and every marked-equity point with integer micros.
+  Evaluation and recovery fail if lineage diverges or fees or equity differ by more than one cent; the exact measured
+  differences remain part of the receipt.
+- On restart, Bayn derives the expected run ID from the verified Signal manifest and current executable identity. It
+  resumes only an exact, complete, runtime-decoded PostgreSQL record; missing evidence triggers one evaluation, while
+  partial, altered, or incompatible evidence fails closed without another TigerBeetle mutation.
 - A run becomes ready only after ClickHouse validation, evaluation, TigerBeetle journal creation, exact reconciliation,
   and the PostgreSQL commit. Strategy rejection is an auditable economic `FAIL_CLOSED`; dependency, accounting, or
   persistence failure keeps the Kubernetes readiness probe closed.
@@ -42,7 +47,9 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 
 - `GET /livez`: process liveness.
 - `GET /readyz`: dependency/evaluation/accounting readiness.
-- `GET /v1/status`: authority boundary, input manifest, metrics, verdict, and reconciliation receipt.
+- `GET /v1/status`: bounded authority, provenance, metrics, verdict, and reconciliation summary.
+- `GET /v1/evaluations/:runId`: complete content-hashed evidence for one exact run ID. The service is ClusterIP-only
+  and the Bayn network policy limits HTTP ingress to the namespace.
 
 ## Validation
 

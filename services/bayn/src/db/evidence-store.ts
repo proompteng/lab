@@ -1,12 +1,26 @@
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Context, Data, Effect, FileSystem, Layer, Schema } from 'effect'
+import { Context, Data, Effect, FileSystem, Layer, Option, Schema } from 'effect'
 import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
 import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
+import {
+  decodeCashChangesArtifact,
+  decodeDailyPositionMarksArtifact,
+  decodeEquitySeriesArtifact,
+  decodeEvaluationEvents,
+  decodeEvaluationSummary,
+  decodeInputManifestArtifact,
+  decodeMarkedEquityReconciliation,
+  decodeReconciliationResult,
+  decodeSimulatedOrdersArtifact,
+  makeEquitySeriesArtifact,
+} from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
-import type { EvaluationResult, ReconciliationResult } from '../types'
+import { reconcileMarkedEquity } from '../simulation-reconciliation'
+import { summarizeEvaluation } from '../strategy'
+import type { EvaluationResult, EvaluationSummary, ReconciliationResult } from '../types'
 import { migrationLoader } from './migrations'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
@@ -36,9 +50,70 @@ export interface PersistEvaluationInput {
 export interface EvidenceStoreService {
   readonly check: Effect.Effect<void, DatabaseError>
   readonly persist: (input: PersistEvaluationInput) => Effect.Effect<PersistenceReceipt, DatabaseError>
+  readonly read: (runId: string) => Effect.Effect<Option.Option<StoredEvaluationEvidence>, DatabaseError>
+  readonly recover: (
+    runId: string,
+    provenance: RuntimeProvenance,
+  ) => Effect.Effect<Option.Option<RecoveredEvaluationEvidence>, DatabaseError>
 }
 
 export class EvidenceStore extends Context.Service<EvidenceStore, EvidenceStoreService>()('bayn/EvidenceStore') {}
+
+export interface StoredEvaluationEvidence {
+  readonly protocol: {
+    readonly protocolHash: string
+    readonly schemaVersion: string
+    readonly strategyName: string
+    readonly behaviorHash: string
+    readonly parameterHash: string
+    readonly parameters: unknown
+  }
+  readonly run: {
+    readonly runId: string
+    readonly protocolHash: string
+    readonly snapshotId: string
+    readonly evaluationSchemaVersion: string
+    readonly sourceRevision: string
+    readonly imageRepository: string
+    readonly imageDigest: string
+    readonly strategyName: string
+    readonly initialCapitalMicros: string
+    readonly artifactCount: number
+    readonly eventCount: number
+    readonly gateCount: number
+  }
+  readonly artifacts: readonly {
+    readonly name: string
+    readonly schemaVersion: string
+    readonly contentHash: string
+    readonly payload: unknown
+  }[]
+  readonly events: readonly {
+    readonly ordinal: number
+    readonly id: string
+    readonly kind: 'decision' | 'fill'
+    readonly contentHash: string
+    readonly payload: unknown
+  }[]
+  readonly gates: readonly {
+    readonly ordinal: number
+    readonly name: string
+    readonly passed: boolean
+    readonly actual: unknown
+    readonly required: unknown
+    readonly contentHash: string
+  }[]
+  readonly statuses: readonly {
+    readonly status: 'WRITING' | 'COMPLETE'
+    readonly detail: unknown
+  }[]
+}
+
+export interface RecoveredEvaluationEvidence {
+  readonly evaluation: EvaluationSummary
+  readonly reconciliation: ReconciliationResult
+  readonly persistence: PersistenceReceipt
+}
 
 interface ArtifactPlan {
   readonly name: string
@@ -190,12 +265,32 @@ const runDatabase = <A, E, R>(operation: string, effect: Effect.Effect<A, E, R>)
 const ensure = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
   condition ? Effect.void : Effect.fail(databaseError('invariant', operation, message))
 
+const protocolTransactionCostBpsMicros = (parameters: unknown): string => {
+  if (
+    typeof parameters !== 'object' ||
+    parameters === null ||
+    !('transactionCostBps' in parameters) ||
+    typeof parameters.transactionCostBps !== 'number' ||
+    !Number.isFinite(parameters.transactionCostBps) ||
+    parameters.transactionCostBps < 0 ||
+    parameters.transactionCostBps > 10_000
+  ) {
+    throw new TypeError('strategy parameters do not declare valid transaction costs')
+  }
+  const micros = parameters.transactionCostBps * 1_000_000
+  if (!Number.isSafeInteger(micros)) throw new TypeError('transaction costs exceed fixed-point precision')
+  return BigInt(micros).toString()
+}
+
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
   const { evaluation, parameters, provenance, reconciliation } = input
   const strategyName = provenance.strategy.name
   const parameterHash = canonicalHashV1(parameters)
   if (parameterHash !== provenance.strategy.parameterHash) {
     throw new TypeError('strategy parameters and provenance disagree on parameter hash')
+  }
+  if (evaluation.simulation.transactionCostBpsMicros !== protocolTransactionCostBpsMicros(parameters)) {
+    throw new TypeError('simulation transaction costs do not match strategy parameters')
   }
   const protocolHash = makeStrategyProtocolHash(provenance.strategy)
   if (protocolHash !== evaluation.protocolHash)
@@ -226,12 +321,53 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }).runId
   if (evaluation.runId !== expectedRunId) throw new TypeError('run ID does not match runtime and input provenance')
 
+  const equityProof = reconcileMarkedEquity({
+    runId: evaluation.runId,
+    initialCapitalMicros: evaluation.initialCapitalMicros,
+    evaluatorTotalFeesMicros: evaluation.strategy.totalFeesMicros,
+    evaluatorEndingEquityMicros: evaluation.strategy.endingEquityMicros,
+    events: evaluation.events,
+    simulation: evaluation.simulation,
+  })
+  if (
+    canonicalHashV1(equityProof.reconciliation) !== canonicalHashV1(evaluation.markedEquityReconciliation) ||
+    canonicalHashV1(equityProof.equitySeries) !== canonicalHashV1(evaluation.equitySeries)
+  ) {
+    throw new TypeError('independent marked-equity proof diverges from the evaluation evidence')
+  }
+
   const artifacts = [
+    ['evaluation-summary', 'bayn.evaluation-summary.v1', summarizeEvaluation(evaluation)],
     ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
     ['strategy', 'bayn.performance-metrics.v1', evaluation.strategy],
     ['buy-and-hold', 'bayn.performance-metrics.v1', evaluation.buyAndHold],
     ['direct-volatility-timing', 'bayn.performance-metrics.v1', evaluation.directVolTiming],
     ['double-cost-strategy', 'bayn.performance-metrics.v1', evaluation.doubleCostStrategy],
+    [
+      'simulated-orders',
+      'bayn.simulated-orders.v1',
+      {
+        schemaVersion: 'bayn.simulated-orders.v1',
+        transactionCostBpsMicros: evaluation.simulation.transactionCostBpsMicros,
+        items: evaluation.simulation.orders,
+      },
+    ],
+    [
+      'cash-changes',
+      'bayn.cash-changes.v1',
+      { schemaVersion: 'bayn.cash-changes.v1', items: evaluation.simulation.cashChanges },
+    ],
+    [
+      'daily-position-marks',
+      'bayn.daily-position-marks.v1',
+      { schemaVersion: 'bayn.daily-position-marks.v1', items: evaluation.simulation.dailyMarks },
+    ],
+    ['equity-series', 'bayn.equity-series.v1', makeEquitySeriesArtifact(evaluation.equitySeries)],
+    [
+      'marked-equity-reconciliation',
+      evaluation.markedEquityReconciliation.schemaVersion,
+      evaluation.markedEquityReconciliation,
+    ],
     ['reconciliation', 'bayn.reconciliation.v1', reconciliation],
   ].map(([name, schemaVersion, payload]) => ({
     name: name as string,
@@ -367,7 +503,7 @@ const makeEvidenceStore = Effect.gen(function* () {
       RETURNING run.run_id
     `,
   })
-  const getReceipt = SqlSchema.findOne({
+  const getReceipt = SqlSchema.findAll({
     Request: RunRequest,
     Result: ReceiptRow,
     execute: ({ runId }) => sql`
@@ -432,7 +568,9 @@ const makeEvidenceStore = Effect.gen(function* () {
 
   const readReceipt = (plan: PersistencePlan, deduplicated: boolean) =>
     Effect.gen(function* () {
-      const row = yield* getReceipt({ runId: plan.evaluation.runId })
+      const rows = yield* getReceipt({ runId: plan.evaluation.runId })
+      yield* ensure(rows.length === 1, 'read-receipt', 'stored run receipt is missing or duplicated')
+      const row = rows[0]
       yield* ensure(row.protocol_hash === plan.protocolHash, 'read-receipt', 'stored protocol reference diverged')
       yield* ensure(row.snapshot_id === plan.snapshotId, 'read-receipt', 'stored snapshot reference diverged')
       yield* ensure(
@@ -537,6 +675,291 @@ const makeEvidenceStore = Effect.gen(function* () {
         gateCount: row.gate_count,
       }
     })
+
+  const readStored = (runId: string) =>
+    Effect.gen(function* () {
+      const rows = yield* getReceipt({ runId })
+      if (rows.length === 0) return Option.none<StoredEvaluationEvidence>()
+      yield* ensure(rows.length === 1, 'read-evidence', 'stored run receipt is duplicated')
+      const row = rows[0]
+      const protocol = yield* getProtocol({ protocolHash: row.protocol_hash })
+      const artifacts = yield* getArtifactReferences({ runId })
+      const events = yield* getEventReferences({ runId })
+      const gates = yield* getGateReferences({ runId })
+      const statuses = yield* getStatusReferences({ runId })
+
+      yield* ensure(
+        row.strategy_name === protocol.strategy_name &&
+          canonicalHashV1(protocol.parameters) === protocol.parameter_hash,
+        'read-evidence',
+        'stored protocol lock diverged',
+      )
+
+      yield* ensure(
+        artifacts.length === row.expected_artifact_count && artifacts.length === row.artifact_count,
+        'read-evidence',
+        'stored artifact count is incomplete',
+      )
+      yield* ensure(
+        events.length === row.expected_event_count && events.length === row.event_count,
+        'read-evidence',
+        'stored event count is incomplete',
+      )
+      yield* ensure(
+        gates.length === row.expected_gate_count && gates.length === row.gate_count,
+        'read-evidence',
+        'stored gate count is incomplete',
+      )
+      yield* ensure(
+        artifacts.every((artifact) => canonicalHashV1(artifact.payload) === artifact.content_hash),
+        'read-evidence',
+        'stored artifact content hash diverged',
+      )
+      yield* ensure(
+        events.every(
+          (event, index) => event.ordinal === index && canonicalHashV1(event.payload) === event.content_hash,
+        ),
+        'read-evidence',
+        'stored event content hash or ordering diverged',
+      )
+      yield* ensure(
+        gates.every(
+          (gate, index) =>
+            gate.ordinal === index &&
+            canonicalHashV1({
+              name: gate.gate_name,
+              passed: gate.passed,
+              actual: gate.actual,
+              required: gate.required,
+            }) === gate.content_hash,
+        ),
+        'read-evidence',
+        'stored gate content hash or ordering diverged',
+      )
+      const completeDetail = statuses[1]?.detail
+      const completeDetailValid =
+        typeof completeDetail === 'object' &&
+        completeDetail !== null &&
+        'reconciliationExact' in completeDetail &&
+        completeDetail.reconciliationExact === true &&
+        'verdict' in completeDetail &&
+        (completeDetail.verdict === 'PASS' || completeDetail.verdict === 'FAIL_CLOSED')
+      yield* ensure(
+        statuses.length === 2 &&
+          statuses[0].status === 'WRITING' &&
+          canonicalHashV1(statuses[0].detail) ===
+            canonicalHashV1({
+              artifactCount: row.artifact_count,
+              eventCount: row.event_count,
+              gateCount: row.gate_count,
+            }) &&
+          statuses[1].status === 'COMPLETE' &&
+          completeDetailValid,
+        'read-evidence',
+        'stored status history is incomplete or divergent',
+      )
+
+      return Option.some({
+        protocol: {
+          protocolHash: protocol.protocol_hash,
+          schemaVersion: protocol.schema_version,
+          strategyName: protocol.strategy_name,
+          behaviorHash: protocol.behavior_hash,
+          parameterHash: protocol.parameter_hash,
+          parameters: protocol.parameters,
+        },
+        run: {
+          runId: row.run_id,
+          protocolHash: row.protocol_hash,
+          snapshotId: row.snapshot_id,
+          evaluationSchemaVersion: row.evaluation_schema_version,
+          sourceRevision: row.source_revision,
+          imageRepository: row.image_repository,
+          imageDigest: row.image_digest,
+          strategyName: row.strategy_name,
+          initialCapitalMicros: row.initial_capital_micros,
+          artifactCount: row.artifact_count,
+          eventCount: row.event_count,
+          gateCount: row.gate_count,
+        },
+        artifacts: artifacts.map((artifact) => ({
+          name: artifact.artifact_name,
+          schemaVersion: artifact.schema_version,
+          contentHash: artifact.content_hash,
+          payload: artifact.payload,
+        })),
+        events: events.map((event) => ({
+          ordinal: event.ordinal,
+          id: event.event_id,
+          kind: event.event_kind,
+          contentHash: event.content_hash,
+          payload: event.payload,
+        })),
+        gates: gates.map((gate) => ({
+          ordinal: gate.ordinal,
+          name: gate.gate_name,
+          passed: gate.passed,
+          actual: gate.actual,
+          required: gate.required,
+          contentHash: gate.content_hash,
+        })),
+        statuses,
+      } satisfies StoredEvaluationEvidence)
+    })
+
+  const read = (runId: string) => runDatabase('read-evidence', readStored(runId))
+
+  const recover = (runId: string, provenance: RuntimeProvenance) =>
+    runDatabase(
+      'recover-evidence',
+      Effect.gen(function* () {
+        const storedOption = yield* readStored(runId)
+        if (Option.isNone(storedOption)) return Option.none<RecoveredEvaluationEvidence>()
+        const stored = storedOption.value
+        const requiredArtifacts = new Map([
+          ['buy-and-hold', 'bayn.performance-metrics.v1'],
+          ['cash-changes', 'bayn.cash-changes.v1'],
+          ['daily-position-marks', 'bayn.daily-position-marks.v1'],
+          ['direct-volatility-timing', 'bayn.performance-metrics.v1'],
+          ['double-cost-strategy', 'bayn.performance-metrics.v1'],
+          ['equity-series', 'bayn.equity-series.v1'],
+          ['evaluation-summary', 'bayn.evaluation-summary.v1'],
+          ['input-manifest', 'bayn.input-manifest.v2'],
+          ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v1'],
+          ['reconciliation', 'bayn.reconciliation.v1'],
+          ['simulated-orders', 'bayn.simulated-orders.v1'],
+          ['strategy', 'bayn.performance-metrics.v1'],
+        ])
+        const artifacts = new Map(stored.artifacts.map((artifact) => [artifact.name, artifact]))
+        yield* ensure(
+          artifacts.size === requiredArtifacts.size &&
+            [...requiredArtifacts].every(
+              ([name, schemaVersion]) => artifacts.get(name)?.schemaVersion === schemaVersion,
+            ),
+          'recover-evidence',
+          'stored run does not have the exact v2 artifact contract',
+        )
+        yield* ensure(
+          stored.run.runId === runId &&
+            stored.run.evaluationSchemaVersion === 'bayn.evaluation.v2' &&
+            stored.run.sourceRevision === provenance.sourceRevision &&
+            stored.run.imageRepository === provenance.image.repository &&
+            stored.run.imageDigest === provenance.image.digest &&
+            stored.run.strategyName === provenance.strategy.name &&
+            stored.run.protocolHash === makeStrategyProtocolHash(provenance.strategy),
+          'recover-evidence',
+          'stored run does not match the current runtime identity',
+        )
+        const evaluation = yield* decodeEvaluationSummary(artifacts.get('evaluation-summary')!.payload)
+        const reconciliation = yield* decodeReconciliationResult(artifacts.get('reconciliation')!.payload)
+        const markedEquity = yield* decodeMarkedEquityReconciliation(
+          artifacts.get('marked-equity-reconciliation')!.payload,
+        )
+        const equitySeries = yield* decodeEquitySeriesArtifact(artifacts.get('equity-series')!.payload)
+        const events = yield* decodeEvaluationEvents(stored.events.map((event) => event.payload))
+        const orders = yield* decodeSimulatedOrdersArtifact(artifacts.get('simulated-orders')!.payload)
+        const storedTransactionCostBpsMicros = yield* Effect.try({
+          try: () => protocolTransactionCostBpsMicros(stored.protocol.parameters),
+          catch: (cause) =>
+            databaseError('invariant', 'recover-evidence', 'stored transaction-cost model is invalid', cause),
+        })
+        yield* ensure(
+          stored.protocol.schemaVersion === provenance.strategy.parameterSchemaVersion &&
+            stored.protocol.strategyName === provenance.strategy.name &&
+            stored.protocol.behaviorHash === provenance.strategy.behaviorHash &&
+            stored.protocol.parameterHash === provenance.strategy.parameterHash &&
+            canonicalHashV1(stored.protocol.parameters) === provenance.strategy.parameterHash &&
+            storedTransactionCostBpsMicros === orders.transactionCostBpsMicros,
+          'recover-evidence',
+          'stored protocol lock or transaction-cost model diverged',
+        )
+        const cashChanges = yield* decodeCashChangesArtifact(artifacts.get('cash-changes')!.payload)
+        const dailyMarks = yield* decodeDailyPositionMarksArtifact(artifacts.get('daily-position-marks')!.payload)
+        const inputManifest = yield* decodeInputManifestArtifact(artifacts.get('input-manifest')!.payload)
+        const equityProof = yield* Effect.try({
+          try: () =>
+            reconcileMarkedEquity({
+              runId,
+              initialCapitalMicros: evaluation.initialCapitalMicros,
+              evaluatorTotalFeesMicros: evaluation.strategy.totalFeesMicros,
+              evaluatorEndingEquityMicros: evaluation.strategy.endingEquityMicros,
+              events,
+              simulation: {
+                schemaVersion: 'bayn.simulation-trace.v1',
+                transactionCostBpsMicros: orders.transactionCostBpsMicros,
+                orders: orders.items,
+                cashChanges: cashChanges.items,
+                dailyMarks: dailyMarks.items,
+              },
+            }),
+          catch: (cause) =>
+            databaseError('invariant', 'recover-evidence', 'stored marked-equity reconstruction failed', cause),
+        })
+        const finalPoint = equitySeries.items.at(-1)!
+        yield* ensure(
+          evaluation.runId === runId &&
+            evaluation.codeRevision === provenance.sourceRevision &&
+            evaluation.protocolHash === stored.run.protocolHash &&
+            evaluation.initialCapitalMicros === stored.run.initialCapitalMicros &&
+            evaluation.input.snapshotId === stored.run.snapshotId &&
+            evaluation.input.snapshotId === inputManifest.finalizedSnapshot.snapshotId &&
+            evaluation.input.publicationId === inputManifest.finalizedSnapshot.publicationId &&
+            evaluation.input.manifestHash === inputManifest.hash &&
+            canonicalHashV1(evaluation.input.bounds) === canonicalHashV1(inputManifest.bounds) &&
+            evaluation.input.rowCount === inputManifest.rowCount &&
+            evaluation.input.sessionCount === inputManifest.sessionCount &&
+            canonicalHashV1(evaluation.input.symbols) ===
+              canonicalHashV1(inputManifest.symbols.map((coverage) => coverage.symbol)) &&
+            evaluation.eventCount === stored.run.eventCount &&
+            evaluation.eventCount === events.length &&
+            evaluation.orderCount === orders.items.length &&
+            evaluation.cashChangeCount === cashChanges.items.length &&
+            evaluation.dailyMarkCount === dailyMarks.items.length &&
+            evaluation.dailyMarkCount === evaluation.strategy.observations &&
+            evaluation.markedEquityReconciliation.runId === runId &&
+            canonicalHashV1(evaluation.markedEquityReconciliation) === canonicalHashV1(markedEquity) &&
+            canonicalHashV1(evaluation.strategy) === artifacts.get('strategy')!.contentHash &&
+            canonicalHashV1(evaluation.buyAndHold) === artifacts.get('buy-and-hold')!.contentHash &&
+            canonicalHashV1(evaluation.directVolTiming) === artifacts.get('direct-volatility-timing')!.contentHash &&
+            canonicalHashV1(evaluation.doubleCostStrategy) === artifacts.get('double-cost-strategy')!.contentHash &&
+            stored.gates.length === evaluation.verdict.gates.length &&
+            stored.gates.every(
+              (gate, index) =>
+                canonicalHashV1({
+                  name: gate.name,
+                  passed: gate.passed,
+                  actual: gate.actual,
+                  required: gate.required,
+                }) === canonicalHashV1(evaluation.verdict.gates[index]),
+            ) &&
+            stored.events.every((event, index) => event.id === events[index].id && event.kind === events[index].kind) &&
+            reconciliation.runId === runId &&
+            markedEquity.runId === runId &&
+            equitySeries.items.length === evaluation.dailyMarkCount &&
+            canonicalHashV1(equityProof.reconciliation) === canonicalHashV1(markedEquity) &&
+            canonicalHashV1(equityProof.equitySeries) === canonicalHashV1(equitySeries.items) &&
+            finalPoint.evaluatorEquityMicros === markedEquity.evaluatorEndingEquityMicros &&
+            finalPoint.reconstructedEquityMicros === markedEquity.reconstructedEndingEquityMicros &&
+            finalPoint.differenceMicros === markedEquity.differenceMicros &&
+            canonicalHashV1(stored.statuses[1]?.detail) ===
+              canonicalHashV1({ reconciliationExact: true, verdict: evaluation.verdict.status }),
+          'recover-evidence',
+          'stored v2 evidence components diverge',
+        )
+
+        return Option.some({
+          evaluation,
+          reconciliation,
+          persistence: {
+            runId,
+            deduplicated: true,
+            artifactCount: stored.run.artifactCount,
+            eventCount: stored.run.eventCount,
+            gateCount: stored.run.gateCount,
+          },
+        } satisfies RecoveredEvaluationEvidence)
+      }),
+    )
 
   const persist = (input: PersistEvaluationInput) =>
     runDatabase(
@@ -750,6 +1173,8 @@ const makeEvidenceStore = Effect.gen(function* () {
   return {
     check: runDatabase('health', health(undefined).pipe(Effect.asVoid)),
     persist,
+    read,
+    recover,
   } satisfies EvidenceStoreService
 })
 
@@ -805,6 +1230,8 @@ export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
       Layer.succeed(EvidenceStore, {
         check: Effect.fail(error),
         persist: () => Effect.fail(error),
+        read: () => Effect.fail(error),
+        recover: () => Effect.fail(error),
       }),
     ),
   )
