@@ -29,7 +29,7 @@ const run = Effect.gen(function* () {
     const repository = yield* makeSnapshotRepository
     return yield* publish(config, args, repository)
   }).pipe(
-    Effect.provide([database, NodeHttpClient.layerUndici]),
+    Effect.provide([database, NodeHttpClient.layerNodeHttp]),
     Effect.mapError((cause) =>
       cause._tag === 'PublicationError'
         ? cause
