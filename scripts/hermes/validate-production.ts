@@ -28,6 +28,9 @@ export const productionPaths = {
   clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
   clusterMetricsDeployment: 'argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
   kubeStateMetrics: 'argocd/applications/observability/kube-state-metrics-values.yaml',
+  openClawKustomization: 'argocd/applications/openclaw/kustomization.yaml',
+  openClawVirtualMachine: 'argocd/applications/openclaw/virtualmachine.yaml',
+  openClawRbac: 'argocd/applications/openclaw/openclaw-vm-rbac.yaml',
   runbook: 'docs/runbooks/hermes-production-rollout.md',
   impactMap: '.github/ci/impact-map.yml',
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
@@ -98,6 +101,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'capabilities:\n              drop:\n                - ALL',
     'seccompProfile:\n              type: RuntimeDefault',
     'API_SERVER_KEY',
+    'DISCORD_BOT_TOKEN',
+    'DISCORD_ALLOWED_USERS',
     'name: data',
     'name: backups',
     'mountPath: /opt/backups\n              readOnly: true',
@@ -111,6 +116,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hostPID: true',
     '        - name: backup\n',
   ])
+  for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
+    if (
+      count(files.statefulSet, `            - name: ${key}\n`) !== 1 ||
+      count(files.statefulSet, `                  key: ${key}\n`) !== 1
+    ) {
+      failures.push(`${productionPaths.statefulSet}: ${key} must have exactly one matching SecretKeyRef`)
+    }
+  }
 
   if (count(files.backupCronJob, `image: ${hermesImage}`) !== 1) {
     failures.push(`${productionPaths.backupCronJob}: backup must use the immutable mirrored Hermes digest`)
@@ -164,7 +177,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.config, files.config, [
     '_config_version: 33',
     'base_url: http://flamingo.flamingo.svc.cluster.local/v1',
-    'discord:\n    enabled: false',
+    'discord:\n    enabled: true',
     'api_server:\n    enabled: true',
     'cron_mode: deny',
     'orchestrator_enabled: false',
@@ -179,8 +192,50 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'name: onepassword-infra',
     'deletionPolicy: Retain',
     'key: hermes-runtime/API_SERVER_KEY',
+    'secretKey: DISCORD_BOT_TOKEN',
+    'key: hermes-runtime/DISCORD_BOT_TOKEN',
+    'secretKey: DISCORD_ALLOWED_USERS',
+    'key: hermes-runtime/DISCORD_ALLOWED_USERS',
   ])
   forbidTerms(failures, productionPaths.externalSecret, files.externalSecret, ['dataFrom:', 'kind: Secret'])
+  for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
+    if (
+      count(files.externalSecret, `    - secretKey: ${key}\n`) !== 1 ||
+      count(files.externalSecret, `        key: hermes-runtime/${key}\n`) !== 1
+    ) {
+      failures.push(`${productionPaths.externalSecret}: ${key} must have exactly one 1Password mapping`)
+    }
+  }
+
+  requireTerms(failures, productionPaths.openClawKustomization, files.openClawKustomization, [
+    'namespace: openclaw',
+    '- cloud-init-secret.yaml',
+    '- datavolume-rootdisk-rbd.yaml',
+    '- virtualmachine.yaml',
+    '- service-ssh.yaml',
+    '- openclaw-vm-rbac.yaml',
+  ])
+  requireTerms(failures, productionPaths.openClawVirtualMachine, files.openClawVirtualMachine, [
+    'kind: VirtualMachine',
+    'name: openclaw',
+    'namespace: openclaw',
+    'runStrategy: Halted',
+    'name: openclaw-rootdisk-rbd',
+    'secretRef:\n              name: openclaw-cloud-init',
+  ])
+  forbidTerms(failures, productionPaths.openClawVirtualMachine, files.openClawVirtualMachine, [
+    'running: true',
+    'running: false',
+  ])
+  requireTerms(failures, productionPaths.openClawRbac, files.openClawRbac, [
+    'name: openclaw-vm-argocd-applications',
+    'name: openclaw-vm-agentruns',
+    'resourceNames: ["codex-github-token", "codex-openai-key"]',
+  ])
+  forbidTerms(failures, productionPaths.openClawRbac, files.openClawRbac, [
+    'name: openclaw-vm-cluster-admin',
+    'name: cluster-admin',
+  ])
 
   requireTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
     'name: hermes-default-deny',
@@ -410,6 +465,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'wait-for-maintenance.sh',
   ])
 
+  const openClawApplication = files.platform.match(/\n\s+- name: openclaw\n[\s\S]*?\n\s+- name: hermes\n/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.platform, openClawApplication, [
+    'path: argocd/applications/openclaw',
+    'namespace: openclaw',
+    'automation: manual',
+  ])
+
   const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
   requireTerms(failures, productionPaths.platform, hermesApplication, [
     'path: argocd/applications/hermes',
@@ -494,6 +556,11 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
     'bash scripts/hermes/verify-network-policy-enforcement.sh',
     '`NetworkPolicy is not enforced` is a hard rollout blocker.',
+    'cleanup_api_key() { unset hermes_api_key; }',
+    'trap cleanup_api_key EXIT',
+    "op item template get 'Secure Note'",
+    'jq --rawfile api_server_key <(printf \'%s\' "$hermes_api_key")',
+    'op item create --vault infra -',
     'test "$api_key_bytes" -ge 32',
     'printf \'%s\\n\' "$api_key_bytes"',
     "hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')",
@@ -511,6 +578,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.runbook, rotationSection, [
     'set -euo pipefail',
     'trap cleanup_rotation EXIT',
+    'jq --rawfile api_server_key <(printf \'%s\' "$new_api_key")',
+    'error("exactly one API_SERVER_KEY field is required")',
+    'op item edit --vault infra hermes-runtime',
     'kubectl -n hermes delete pod hermes-0',
     'kubectl -n hermes rollout status statefulset/hermes --timeout=15m',
     'rotation_port_forward_log=$(mktemp)',
@@ -522,6 +592,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
     '--ignore-failed-read',
+    'API_SERVER_KEY[password]=',
+    'DISCORD_BOT_TOKEN[password]=',
+    'DISCORD_ALLOWED_USERS[text]=',
     'kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw',
     'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory',
     "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
@@ -634,34 +707,91 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   const cutoverSection = files.runbook.match(/## Phase 3:[\s\S]*?## Rollback/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, cutoverSection, [
+    'cleanup_discord_credentials() {',
+    'trap cleanup_discord_credentials EXIT',
+    '.channels.discord.token | select(type == "string" and length >= 20)',
+    '.channels.discord.allowFrom[]?',
+    '.channels.discord.guilds[]?.users[]?',
+    'numeric Discord allowlist required',
+    'test "${#discord_bot_token}" -ge 20',
+    'case "$discord_allowed_users" in ""|,*|*,|*,,*|*[!0-9,]*) exit 1 ;; esac',
     'systemctl --user stop openclaw-gateway.service',
-    'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`',
+    'repeat Phase 2 steps 1 through 4 from a fresh',
+    '`hermes_stage_dir`',
     'Do not reuse the earlier archive.',
     'do not run Phase 2 step 5 because merged `main` now enables',
-    'Keep the same Phase 2 shell and Lease open through cutover step 5.',
+    'Keep the same Phase 2 shell and Lease open through',
+    'cutover step 5.',
+    'argocd app sync openclaw --prune \\\n     --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
+    'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
     'argocd app sync openclaw --prune=false',
     'openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)',
+    'op item get --vault infra hermes-runtime --format json',
+    'jq --rawfile discord_bot_token <(printf \'%s\' "$discord_bot_token")',
+    '--rawfile discord_allowed_users <(printf \'%s\' "$discord_allowed_users")',
+    'def upsert_field($id; $type; $label; $value):',
+    'error("duplicate field: " + $label)',
+    'upsert_field("DISCORD_BOT_TOKEN"; "CONCEALED"; "DISCORD_BOT_TOKEN"; $discord_bot_token)',
+    'upsert_field("DISCORD_ALLOWED_USERS"; "STRING"; "DISCORD_ALLOWED_USERS"; $discord_allowed_users)',
+    'op item edit --vault infra hermes-runtime',
+    'jq -e --rawfile expected_discord_bot_token <(printf \'%s\' "$discord_bot_token")',
+    '--rawfile expected_discord_allowed_users <(printf \'%s\' "$discord_allowed_users")',
+    '.value == $expected_discord_bot_token',
+    '.value == $expected_discord_allowed_users',
+    '.label == "DISCORD_BOT_TOKEN"',
+    '.label == "DISCORD_ALLOWED_USERS"',
+    '| length == 1) and',
+    'cleanup_discord_credentials',
     'Sync Hermes from merged `main` only after the OpenClaw VMI is gone',
+    'test "$discord_secret_keys" = API_SERVER_KEY,DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN',
+    "rg -m1 '\\[discord\\] Connected as '",
+  ])
+  forbidTerms(failures, productionPaths.runbook, cutoverSection, [
+    'argocd app sync openclaw --prune=true',
+    'allow_all_users: true',
   ])
   if (cutoverSection.includes('kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete')) {
     failures.push(`${productionPaths.runbook}: cutover must treat an already-absent OpenClaw VMI as stopped`)
   }
+  const credentialCaptureIndex = cutoverSection.indexOf('discord_bot_token=$(virtctl ssh')
+  const openClawGatewayStopIndex = cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service')
+  const finalReconciliationIndex = cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')
+  const clusterAdminPruneIndex = cutoverSection.indexOf('argocd app sync openclaw --prune \\')
+  const clusterAdminAbsentIndex = cutoverSection.indexOf(
+    'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
+  )
   const cutoverOpenClawSyncIndex = cutoverSection.indexOf('argocd app sync openclaw --prune=false')
+  const openClawVmiAbsentIndex = cutoverSection.indexOf('if [ -z "$openclaw_vmi_name" ]')
+  const credentialTransferIndex = cutoverSection.indexOf('op item edit --vault infra hermes-runtime')
+  const credentialCleanupIndex = cutoverSection.lastIndexOf('\n   cleanup_discord_credentials\n')
   const cutoverHermesSyncIndex = cutoverSection.indexOf('argocd app sync hermes --prune=false')
+  const discordConnectedIndex = cutoverSection.indexOf("rg -m1 '\\[discord\\] Connected as '")
   const cutoverReleaseIndex = cutoverSection.lastIndexOf('\n   release_maintenance_lock\n')
   if (
     count(cutoverSection, maintenanceOwnershipAssertion) !== 2 ||
     count(cutoverSection, '\n   release_maintenance_lock\n') !== 1 ||
     cutoverOpenClawSyncIndex < 0 ||
     cutoverHermesSyncIndex <= cutoverOpenClawSyncIndex ||
-    cutoverReleaseIndex <= cutoverHermesSyncIndex
+    cutoverReleaseIndex <= discordConnectedIndex
   ) {
     failures.push(`${productionPaths.runbook}: cutover must hold the migration Lease until Hermes is restored`)
   }
   if (
-    cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service') >
-    cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')
+    credentialCaptureIndex < 0 ||
+    openClawGatewayStopIndex <= credentialCaptureIndex ||
+    finalReconciliationIndex <= openClawGatewayStopIndex ||
+    clusterAdminPruneIndex <= finalReconciliationIndex ||
+    clusterAdminAbsentIndex <= clusterAdminPruneIndex ||
+    cutoverOpenClawSyncIndex <= clusterAdminAbsentIndex ||
+    openClawVmiAbsentIndex <= cutoverOpenClawSyncIndex ||
+    credentialTransferIndex <= openClawVmiAbsentIndex ||
+    credentialCleanupIndex <= credentialTransferIndex ||
+    cutoverHermesSyncIndex <= credentialCleanupIndex ||
+    discordConnectedIndex <= cutoverHermesSyncIndex
   ) {
+    failures.push(`${productionPaths.runbook}: Discord cutover operations are out of order`)
+  }
+  if (openClawGatewayStopIndex > finalReconciliationIndex) {
     failures.push(`${productionPaths.runbook}: final reconciliation must happen after the OpenClaw gateway is stopped`)
   }
 

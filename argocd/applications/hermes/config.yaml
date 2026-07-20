@@ -75,7 +75,7 @@ platform_toolsets:
 
 platforms:
   discord:
-    enabled: false
+    enabled: true
     reply_to_mode: first
     gateway_restart_notification: false
     typing_indicator: true
