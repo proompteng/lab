@@ -74,7 +74,7 @@ The controlled input was `NVDA` on `2026-07-15` from feed `alpaca-iex`. The rece
 | Feature schema                | `378e31bba54f425b85a78d39aa67cfd9faaf0d5942157479783c0610a593e154`        |
 | Source query                  | `d931676c39f8079b20b3e57555e82539743f3198a87644bdeaf1e7a68fbb0fa2`        |
 | `torghut.ta_signals` schema   | `sha256:5dbd5bfe8a0b38a71a95b40815522356d27caa3c2bbd6d1d0469b82bd88a4f6c` |
-| `torghut.ta_microbars` schema | `sha256:22e6a26a379529e6506661429d88bb082e876bfca2df221bc4d65` |
+| `torghut.ta_microbars` schema | `sha256:22e6a26a379e6fa7fbdc7ffb5a8ad94dfb9b0b4c2444ebb3c2f9cf7a6710d32c` |
 
 The corporate-action input was an authenticated snapshot from Alpaca's
 [current corporate-actions endpoint](https://docs.alpaca.markets/us/reference/corporateactions-1), captured before the
