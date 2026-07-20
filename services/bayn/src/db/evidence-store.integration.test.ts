@@ -30,7 +30,7 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
     strategyBehaviorHash: 'c'.repeat(64),
     verification: 'embedded',
   },
-  runOnStartup: true,
+  healthIntervalMs: 30_000,
   operationTimeoutMs: 1_000,
   clickhouse: {
     url: 'http://clickhouse.invalid',

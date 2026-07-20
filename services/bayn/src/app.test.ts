@@ -4,9 +4,10 @@ import { createServer } from 'node:http'
 
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Redacted, Ref } from 'effect'
+import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
-import { initialize, makeHttpLayer, run, type RuntimeState } from './app'
+import { initialState, initialize, makeHttpLayer, monitor, probe, run, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
 import {
   DatabaseError,
@@ -63,7 +64,7 @@ const config: RuntimeConfig = {
     strategyBehaviorHash: provenance.strategy.behaviorHash,
     verification: 'embedded',
   },
-  runOnStartup: true,
+  healthIntervalMs: 100,
   operationTimeoutMs: 250,
   clickhouse: {
     url: 'http://clickhouse.test:8123',
@@ -91,6 +92,7 @@ const config: RuntimeConfig = {
 
 const successfulJournal: JournalService = {
   check: Effect.void,
+  checkRun: () => Effect.void,
   journalAndReconcile: (evaluation) =>
     Effect.succeed({
       runId: evaluation.runId,
@@ -99,6 +101,11 @@ const successfulJournal: JournalService = {
       exact: true,
     }),
 }
+
+const marketDataService = (load: MarketDataService['load']): MarketDataService => ({
+  check: Effect.sync(() => makeSnapshot().manifest.finalizedSnapshot),
+  load,
+})
 
 const successfulEvidenceStore: EvidenceStoreService = {
   check: Effect.void,
@@ -144,7 +151,8 @@ const waitForStatus = async (port: number, expectedStatus: string) => {
   while (Date.now() < deadline) {
     try {
       const response = await fetchJson(port, '/v1/status')
-      if (response.body.status === expectedStatus) return response
+      const operational = response.body.operational as { readonly status?: string } | undefined
+      if (operational?.status === expectedStatus) return response
     } catch (error) {
       lastError = error
     }
@@ -176,7 +184,33 @@ const readyState = (): RuntimeState => {
         gateCount: evaluation.verdict.gates.length,
       },
     },
+    health: {
+      sequence: 1,
+      checkedAt: '2026-07-20T00:00:00.000Z',
+      dependencies: {
+        postgresql: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
+        signal: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
+        tigerBeetle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
+        evidence: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
+      },
+    },
     error: null,
+  }
+}
+
+const recoveringStore = (state: RuntimeState): EvidenceStoreService => {
+  if (state.evidence === null) throw new Error('test state must contain evidence')
+  return {
+    ...successfulEvidenceStore,
+    recover: () =>
+      Effect.succeed(
+        Option.some({
+          evaluation: state.evidence!.evaluation,
+          reconciliation: state.evidence!.reconciliation,
+          persistence: { ...state.evidence!.persistence, deduplicated: true },
+        }),
+      ),
+    persist: () => Effect.die(new Error('health probes must not persist')),
   }
 }
 
@@ -186,7 +220,7 @@ describe('Bayn HTTP probes', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
+          const state = yield* Ref.make(initialState())
           const context = yield* Layer.build(
             makeHttpLayer(
               { host: '127.0.0.1', operationTimeoutMs: 250, port: 0 },
@@ -219,11 +253,13 @@ describe('Bayn HTTP probes', () => {
             status: 200,
             body: {
               service: 'bayn',
-              status: 'READY',
-              authority: { brokerOrders: false, capitalPromotion: false },
-              provenanceVerification: 'embedded',
-              provenance,
-              evidence: { provenance },
+              operational: { status: 'READY', ready: true, probeSequence: 1 },
+              authority: { maximum: 'observe', brokerOrders: false, capitalPromotion: false },
+              build: { sourceRevision: provenance.sourceRevision, verification: 'embedded' },
+              data: { status: 'CURRENT' },
+              evidence: { status: 'CURRENT' },
+              economic: { status: 'REJECTED' },
+              accounting: { status: 'EXACT' },
             },
           })
           expect(yield* Effect.promise(() => fetchJson(port, `/v1/evaluations/${historicalRunId}`))).toMatchObject({
@@ -238,14 +274,14 @@ describe('Bayn HTTP probes', () => {
             status: 404,
             body: { error: 'evaluation_not_found' },
           })
-          yield* Ref.set(state, { status: 'FAIL_CLOSED', evidence: null, error: 'test failure' })
+          yield* Ref.set(state, { ...initialState(), status: 'FAILED', error: 'test failure' })
           expect(yield* Effect.promise(() => fetchJson(port, '/readyz'))).toMatchObject({
             status: 503,
-            body: { ready: false, status: 'FAIL_CLOSED' },
+            body: { ready: false, status: 'FAILED' },
           })
           expect(yield* Effect.promise(() => fetchJson(port, '/v1/status'))).toMatchObject({
             status: 200,
-            body: { status: 'FAIL_CLOSED', error: 'test failure' },
+            body: { operational: { status: 'FAILED' }, error: 'test failure' },
           })
           expect(yield* Effect.promise(() => fetchJson(port, '/v1/evidence/latest'))).toMatchObject({
             status: 404,
@@ -285,7 +321,7 @@ describe('Bayn HTTP probes', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
+          const state = yield* Ref.make(initialState())
           const context = yield* Layer.build(
             makeHttpLayer(
               { host: '127.0.0.1', operationTimeoutMs: 250, port: 0 },
@@ -304,6 +340,119 @@ describe('Bayn HTTP probes', () => {
         }),
       ),
     )
+  })
+})
+
+describe('Bayn continuous health', () => {
+  test('degrades on a probe defect, preserves evidence, and recovers only after a complete success', async () => {
+    const initial = readyState()
+    const state = await Effect.runPromise(Ref.make(initial))
+    let signalAvailable = false
+    let accountingChecks = 0
+    const marketData: MarketDataService = {
+      check: Effect.suspend(() =>
+        signalAvailable
+          ? Effect.succeed(makeSnapshot().manifest.finalizedSnapshot)
+          : Effect.die(new Error('Signal connection defect')),
+      ),
+      load: Effect.die(new Error('health probes must not load bars')),
+    }
+    const journal: JournalService = {
+      check: Effect.die(new Error('a durable run must use checkRun')),
+      checkRun: () => Effect.sync(() => void (accountingChecks += 1)),
+      journalAndReconcile: () => Effect.die(new Error('health probes must not write TigerBeetle')),
+    }
+    const dependencies = (effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore>) =>
+      effect.pipe(
+        Effect.provideService(MarketData, marketData),
+        Effect.provideService(Journal, journal),
+        Effect.provideService(EvidenceStore, recoveringStore(initial)),
+      )
+
+    await Effect.runPromise(dependencies(probe(config, state)))
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'DEGRADED',
+      evidence: { evaluation: { runId: initial.evidence!.evaluation.runId } },
+      health: {
+        sequence: 2,
+        dependencies: {
+          postgresql: { status: 'AVAILABLE' },
+          signal: { status: 'UNAVAILABLE', error: 'Signal connection defect' },
+          tigerBeetle: { status: 'AVAILABLE' },
+          evidence: { status: 'AVAILABLE' },
+        },
+      },
+    })
+
+    signalAvailable = true
+    await Effect.runPromise(dependencies(probe(config, state)))
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'READY',
+      error: null,
+      health: {
+        sequence: 3,
+        dependencies: {
+          postgresql: { status: 'AVAILABLE' },
+          signal: { status: 'AVAILABLE' },
+          tigerBeetle: { status: 'AVAILABLE' },
+          evidence: { status: 'AVAILABLE' },
+        },
+      },
+    })
+    expect(accountingChecks).toBe(2)
+  })
+
+  test('runs immediately and then on the configured Effect schedule', async () => {
+    const initial = readyState()
+    const state = await Effect.runPromise(Ref.make(initial))
+    let checks = 0
+    const marketData: MarketDataService = {
+      check: Effect.sync(() => {
+        checks += 1
+        return makeSnapshot().manifest.finalizedSnapshot
+      }),
+      load: Effect.die(new Error('health monitor must not load bars')),
+    }
+    const journal: JournalService = { ...successfulJournal, checkRun: () => Effect.void }
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const fiber = yield* monitor({ ...config, healthIntervalMs: 100 }, state).pipe(
+          Effect.provideService(MarketData, marketData),
+          Effect.provideService(Journal, journal),
+          Effect.provideService(EvidenceStore, recoveringStore(initial)),
+          Effect.forkScoped({ startImmediately: true }),
+        )
+        yield* Effect.yieldNow
+        expect(checks).toBe(1)
+        yield* TestClock.adjust(99)
+        expect(checks).toBe(1)
+        yield* TestClock.adjust(1)
+        expect(checks).toBe(2)
+        yield* Fiber.interrupt(fiber)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
+  test('interrupts an in-flight probe when its scope closes', async () => {
+    const initial = readyState()
+    const state = await Effect.runPromise(Ref.make(initial))
+    let interrupted = false
+    const marketData: MarketDataService = {
+      check: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
+      load: Effect.die(new Error('health monitor must not load bars')),
+    }
+    const fiber = Effect.runFork(
+      monitor(config, state).pipe(
+        Effect.provideService(MarketData, marketData),
+        Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
+        Effect.provideService(EvidenceStore, recoveringStore(initial)),
+      ),
+    )
+    await Bun.sleep(10)
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    expect(interrupted).toBe(true)
   })
 })
 
@@ -327,6 +476,7 @@ describe('Bayn startup lifecycle', () => {
     }
     const journal: JournalService = {
       check: Effect.void,
+      checkRun: () => Effect.void,
       journalAndReconcile: () => {
         journalWrites += 1
         return Effect.die(new Error('recovered startup must not journal'))
@@ -353,11 +503,11 @@ describe('Bayn startup lifecycle', () => {
         return Effect.die(new Error('recovered startup must not persist'))
       },
     }
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
       initialize(config, state).pipe(
-        Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(snapshot))),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
         Effect.provideService(Strategy, strategy),
@@ -370,7 +520,7 @@ describe('Bayn startup lifecycle', () => {
       persistenceWrites: 0,
     })
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'READY',
+      status: 'STARTING',
       evidence: {
         startupMode: 'recovered',
         evaluation: { runId: evaluation.runId },
@@ -407,16 +557,17 @@ describe('Bayn startup lifecycle', () => {
     }
     const journal: JournalService = {
       check: Effect.void,
+      checkRun: () => Effect.void,
       journalAndReconcile: () => {
         journalWrites += 1
         return Effect.die(new Error('corrupt recovery must not journal'))
       },
     }
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
       initialize(config, state).pipe(
-        Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(snapshot))),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
         Effect.provideService(Strategy, strategy),
@@ -425,7 +576,7 @@ describe('Bayn startup lifecycle', () => {
 
     expect({ evaluations, journalWrites }).toEqual({ evaluations: 0, journalWrites: 0 })
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       evidence: null,
       error: expect.stringContaining('database.recover-evaluation'),
     })
@@ -434,7 +585,7 @@ describe('Bayn startup lifecycle', () => {
   test('evaluates through the provided strategy capability', async () => {
     let calls = 0
     const snapshot = makeSnapshot()
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const state = await Effect.runPromise(Ref.make(initialState()))
     const strategy: StrategyService = {
       name: 'test-strategy',
       universe: fixtureProtocol.universe,
@@ -449,7 +600,7 @@ describe('Bayn startup lifecycle', () => {
 
     await Effect.runPromise(
       initialize(config, state).pipe(
-        Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(snapshot))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(Strategy, strategy),
@@ -457,13 +608,13 @@ describe('Bayn startup lifecycle', () => {
     )
 
     expect(calls).toBe(1)
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'READY' })
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING' })
   })
 
-  test('transitions from STARTING to READY after evaluation and reconciliation', async () => {
+  test('records durable evaluation and reconciliation before health opens readiness', async () => {
     const snapshot = makeSnapshot()
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
-    const marketData: MarketDataService = { load: Effect.succeed(snapshot) }
+    const state = await Effect.runPromise(Ref.make(initialState()))
+    const marketData = marketDataService(Effect.succeed(snapshot))
 
     await Effect.runPromise(
       initialize(config, state).pipe(
@@ -475,16 +626,16 @@ describe('Bayn startup lifecycle', () => {
     )
 
     const current = await Effect.runPromise(Ref.get(state))
-    expect(current.status).toBe('READY')
-    if (current.status === 'READY') {
+    expect(current.status).toBe('STARTING')
+    if (current.evidence !== null) {
       expect(current.evidence.reconciliation.exact).toBe(true)
       expect(current.evidence.evaluation.eventCount).toBeGreaterThan(0)
     }
   })
 
-  test('turns strategy exceptions into an operational FAIL_CLOSED result', async () => {
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
-    const marketData: MarketDataService = { load: Effect.succeed(makeSnapshot(700)) }
+  test('turns strategy exceptions into an operational failure', async () => {
+    const state = await Effect.runPromise(Ref.make(initialState()))
+    const marketData = marketDataService(Effect.succeed(makeSnapshot(700)))
 
     await Effect.runPromise(
       initialize(config, state).pipe(
@@ -496,45 +647,17 @@ describe('Bayn startup lifecycle', () => {
     )
 
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       error: expect.stringContaining('strategy.evaluate'),
-    })
-  })
-
-  test('keeps readiness closed when startup evaluation is explicitly disabled', async () => {
-    let journaled = false
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
-    const marketData: MarketDataService = { load: Effect.succeed(makeSnapshot()) }
-    const journal: JournalService = {
-      check: Effect.void,
-      journalAndReconcile: () => {
-        journaled = true
-        return Effect.die(new Error('journal should not run'))
-      },
-    }
-
-    await Effect.runPromise(
-      initialize({ ...config, runOnStartup: false }, state).pipe(
-        Effect.provideService(MarketData, marketData),
-        Effect.provideService(Journal, journal),
-        Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
-      ),
-    )
-
-    expect(journaled).toBe(false)
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
-      error: expect.stringContaining('BAYN_RUN_ON_STARTUP=false'),
     })
   })
 
   test('interrupts a stalled dependency and fails closed within the configured deadline', async () => {
     let interrupted = false
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
-    const marketData: MarketDataService = {
-      load: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
-    }
+    const state = await Effect.runPromise(Ref.make(initialState()))
+    const marketData = marketDataService(
+      Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
+    )
 
     await Effect.runPromise(
       initialize({ ...config, operationTimeoutMs: 10 }, state).pipe(
@@ -547,13 +670,13 @@ describe('Bayn startup lifecycle', () => {
 
     expect(interrupted).toBe(true)
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       error: expect.stringContaining('market-data.load: load timed out'),
     })
   })
 
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
-    const marketData: MarketDataService = { load: Effect.die(new Error('unexpected startup defect')) }
+    const marketData = marketDataService(Effect.die(new Error('unexpected startup defect')))
     const exit = await Effect.runPromiseExit(
       run(config).pipe(
         Effect.provideService(MarketData, marketData),
@@ -576,7 +699,7 @@ describe('Bayn startup lifecycle', () => {
   })
 
   test('keeps readiness closed when durable evidence cannot be committed', async () => {
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const state = await Effect.runPromise(Ref.make(initialState()))
     const unavailable: EvidenceStoreService = {
       check: Effect.void,
       read: () => Effect.succeed(Option.none()),
@@ -593,7 +716,7 @@ describe('Bayn startup lifecycle', () => {
 
     await Effect.runPromise(
       initialize(config, state).pipe(
-        Effect.provideService(MarketData, { load: Effect.succeed(makeSnapshot()) }),
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, unavailable),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
@@ -601,7 +724,7 @@ describe('Bayn startup lifecycle', () => {
     )
 
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       evidence: null,
       error: expect.stringContaining('database.persist-evaluation'),
     })
@@ -619,7 +742,7 @@ describe('Bayn startup lifecycle', () => {
       },
     }
     const dependencies = Layer.mergeAll(
-      Layer.succeed(MarketData, { load: Effect.succeed(makeSnapshot()) }),
+      Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
       Layer.succeed(Journal, successfulJournal),
       EvidenceStoreRuntimeLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)),
       TsmomStrategyLayer(fixtureProtocol, provenance),
@@ -627,18 +750,18 @@ describe('Bayn startup lifecycle', () => {
     const fiber = Effect.runFork(run(unavailableDatabase).pipe(Effect.provide(dependencies)))
 
     try {
-      const status = await waitForStatus(port, 'FAIL_CLOSED')
+      const status = await waitForStatus(port, 'FAILED')
       expect(status).toMatchObject({
         status: 200,
         body: {
-          status: 'FAIL_CLOSED',
+          operational: { status: 'FAILED' },
           error: expect.stringContaining('database.health-check'),
         },
       })
       expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
       expect(await fetchJson(port, '/readyz')).toMatchObject({
         status: 503,
-        body: { ready: false, status: 'FAIL_CLOSED' },
+        body: { ready: false, status: 'FAILED' },
       })
     } finally {
       await Effect.runPromise(Fiber.interrupt(fiber))

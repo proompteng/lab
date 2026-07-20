@@ -54,6 +54,8 @@ spec:
               value: sha256:cb3508090afdc8f1cb1c5661266f79dc6a63e22f03e370b7d664eef4dd953036
             - name: BAYN_RUN_ON_STARTUP
               value: "true"
+            - name: BAYN_HEALTH_INTERVAL_MS
+              value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS
               value: "30000"
             - name: BAYN_CLICKHOUSE_URL

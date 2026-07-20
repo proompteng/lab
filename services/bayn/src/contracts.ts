@@ -208,104 +208,14 @@ export const makeStrategyProtocolHash = (strategy: RuntimeProvenance['strategy']
     parameterSchemaVersion: strategy.parameterSchemaVersion,
   })
 
-const EvidenceFreshnessBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.evidence-freshness.v1'),
-  observedAt: UtcInstant,
-  validThrough: UtcInstant,
-})
-
-export const EvidenceFreshnessSchema = EvidenceFreshnessBase.check(
-  Schema.makeFilter(
-    (freshness: typeof EvidenceFreshnessBase.Type) =>
-      freshness.observedAt <= freshness.validThrough ||
-      ({ path: ['validThrough'], issue: 'must not precede observedAt' } as const),
-  ),
-)
-export type EvidenceFreshness = typeof EvidenceFreshnessSchema.Type
-
-export const OperationalStateSchema = Schema.Literals(['STARTING', 'RUNNING', 'STOPPING', 'FAILED'])
-export const DependencyStateSchema = Schema.Literals(['UNKNOWN', 'AVAILABLE', 'UNAVAILABLE'])
-export const DataStateSchema = Schema.Literals(['UNKNOWN', 'FRESH', 'STALE', 'INVALID'])
-export const EvidenceStateSchema = Schema.Literals(['UNKNOWN', 'CURRENT', 'STALE', 'INVALID'])
-export const EconomicStateSchema = Schema.Literals(['UNKNOWN', 'QUALIFIED', 'REJECTED'])
-export const ReconciliationStateSchema = Schema.Literals(['UNKNOWN', 'EXACT', 'DISCREPANCY'])
-export const KillStateSchema = Schema.Literals(['UNKNOWN', 'CLEAR', 'ENGAGED'])
-export const MaximumAuthoritySchema = Schema.Literals(['observe', 'paper', 'live-bounded'])
-export const ExercisableAuthoritySchema = Schema.Literals(['none', 'observe', 'paper', 'live-bounded'])
-
-export type OperationalState = typeof OperationalStateSchema.Type
-export type DependencyState = typeof DependencyStateSchema.Type
-export type DataState = typeof DataStateSchema.Type
-export type EvidenceState = typeof EvidenceStateSchema.Type
-export type EconomicState = typeof EconomicStateSchema.Type
-export type ReconciliationState = typeof ReconciliationStateSchema.Type
-export type KillState = typeof KillStateSchema.Type
-export type MaximumAuthority = typeof MaximumAuthoritySchema.Type
-export type ExercisableAuthority = typeof ExercisableAuthoritySchema.Type
-
-export interface StatusAxes {
-  readonly operational: OperationalState
-  readonly dependency: DependencyState
-  readonly data: DataState
-  readonly evidence: EvidenceState
-  readonly economic: EconomicState
-  readonly reconciliation: ReconciliationState
-  readonly kill: KillState
-}
-
-const deriveExercisableAuthority = (
-  state: StatusAxes & { readonly maximumAuthority: MaximumAuthority },
-): ExercisableAuthority => {
-  const canObserve =
-    state.operational === 'RUNNING' &&
-    state.dependency === 'AVAILABLE' &&
-    state.data === 'FRESH' &&
-    state.evidence === 'CURRENT' &&
-    state.reconciliation === 'EXACT' &&
-    state.kill === 'CLEAR'
-  if (!canObserve) return 'none'
-  if (state.maximumAuthority === 'observe' || state.economic !== 'QUALIFIED') return 'observe'
-  return state.maximumAuthority
-}
-
-const StatusSnapshotBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.status.v1'),
-  observedAt: UtcInstant,
-  operational: OperationalStateSchema,
-  dependency: DependencyStateSchema,
-  data: DataStateSchema,
-  evidence: EvidenceStateSchema,
-  economic: EconomicStateSchema,
-  reconciliation: ReconciliationStateSchema,
-  kill: KillStateSchema,
-  maximumAuthority: MaximumAuthoritySchema,
-  exercisableAuthority: ExercisableAuthoritySchema,
-})
-
-export const StatusSnapshotSchema = StatusSnapshotBase.check(
-  Schema.makeFilter(
-    (state: typeof StatusSnapshotBase.Type) =>
-      state.exercisableAuthority === deriveExercisableAuthority(state) ||
-      ({
-        path: ['exercisableAuthority'],
-        issue: `must be ${deriveExercisableAuthority(state)} for the reported state`,
-      } as const),
-  ),
-)
-export type StatusSnapshot = typeof StatusSnapshotSchema.Type
-export type StatusSnapshotInput = Omit<StatusSnapshot, 'schemaVersion' | 'exercisableAuthority'>
-
 export const decodeFinalizedSnapshot = Schema.decodeUnknownEffect(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
 export const decodeEvaluationBounds = Schema.decodeUnknownEffect(EvaluationBoundsSchema, StrictParseOptions)
 export const decodeRunIdentity = Schema.decodeUnknownEffect(RunIdentitySchema, StrictParseOptions)
 export const decodeRuntimeProvenance = Schema.decodeUnknownEffect(RuntimeProvenanceSchema, StrictParseOptions)
-export const decodeEvidenceFreshness = Schema.decodeUnknownEffect(EvidenceFreshnessSchema, StrictParseOptions)
-export const decodeStatusSnapshot = Schema.decodeUnknownEffect(StatusSnapshotSchema, StrictParseOptions)
 
 const decodeRunIdentityMaterialSync = Schema.decodeUnknownSync(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentitySync = Schema.decodeUnknownSync(RunIdentitySchema, StrictParseOptions)
 const decodeRuntimeProvenanceSync = Schema.decodeUnknownSync(RuntimeProvenanceSchema, StrictParseOptions)
-const decodeStatusSnapshotSync = Schema.decodeUnknownSync(StatusSnapshotSchema, StrictParseOptions)
 
 export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
   const material = decodeRunIdentityMaterialSync(input)
@@ -321,17 +231,4 @@ export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimePro
       inputManifest: 'bayn.input-manifest.v2',
       evaluation: 'bayn.evaluation.v2',
     },
-  })
-
-export const classifyEvidenceFreshness = (freshness: EvidenceFreshness, now: string): EvidenceState => {
-  if (!isUtcInstant(now)) throw new TypeError('now must be a canonical UTC instant')
-  if (now < freshness.observedAt) return 'INVALID'
-  return now <= freshness.validThrough ? 'CURRENT' : 'STALE'
-}
-
-export const makeStatusSnapshot = (input: StatusSnapshotInput): StatusSnapshot =>
-  decodeStatusSnapshotSync({
-    schemaVersion: 'bayn.status.v1',
-    ...input,
-    exercisableAuthority: deriveExercisableAuthority(input),
   })

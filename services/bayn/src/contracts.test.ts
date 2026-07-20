@@ -5,17 +5,12 @@ import { Effect, Exit, Schema } from 'effect'
 import {
   FinalizedSnapshotProvenanceSchema,
   RunIdentitySchema,
-  StatusSnapshotSchema,
-  classifyEvidenceFreshness,
   decodeEvaluationBounds,
-  decodeEvidenceFreshness,
   decodeFinalizedSnapshot,
   decodeRunIdentity,
   decodeRuntimeProvenance,
-  decodeStatusSnapshot,
   makeRunIdentity,
   makeRuntimeProvenance,
-  makeStatusSnapshot,
 } from './contracts'
 
 const sha = (character: string): string => character.repeat(64)
@@ -85,19 +80,6 @@ describe('Bayn contract decoding', () => {
     expect(decodedSnapshot).toEqual(snapshot)
     expect(Schema.encodeSync(FinalizedSnapshotProvenanceSchema)(decodedSnapshot)).toEqual(snapshot)
     expect(await Effect.runPromise(decodeEvaluationBounds(bounds))).toEqual(bounds)
-
-    const freshness = {
-      schemaVersion: 'bayn.evidence-freshness.v1' as const,
-      observedAt: '2026-01-01T01:00:00.000Z',
-      validThrough: '2026-01-01T02:00:00.000Z',
-    }
-    expect(await Effect.runPromise(decodeEvidenceFreshness(freshness))).toEqual(freshness)
-    await expectFailure(
-      decodeEvidenceFreshness({
-        ...freshness,
-        observedAt: '2026-01-01T03:00:00.000Z',
-      }),
-    )
   })
 
   test('rejects malformed dates, duplicate symbols, and invalid bounds', async () => {
@@ -202,62 +184,5 @@ describe('Bayn runtime provenance', () => {
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
     await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
     await expectFailure(decodeRuntimeProvenance({ ...provenance, schemaVersion: 'bayn.runtime-provenance.v2' }))
-  })
-})
-
-describe('Bayn evidence and authority state', () => {
-  const healthy = {
-    observedAt: '2026-01-01T01:30:00.000Z',
-    operational: 'RUNNING' as const,
-    dependency: 'AVAILABLE' as const,
-    data: 'FRESH' as const,
-    evidence: 'CURRENT' as const,
-    economic: 'QUALIFIED' as const,
-    reconciliation: 'EXACT' as const,
-    kill: 'CLEAR' as const,
-  }
-
-  test('classifies freshness from an explicit clock value', () => {
-    const freshness = {
-      schemaVersion: 'bayn.evidence-freshness.v1' as const,
-      observedAt: '2026-01-01T01:00:00.000Z',
-      validThrough: '2026-01-01T02:00:00.000Z',
-    }
-
-    expect(classifyEvidenceFreshness(freshness, '2026-01-01T01:30:00.000Z')).toBe('CURRENT')
-    expect(classifyEvidenceFreshness(freshness, '2026-01-01T03:00:00.000Z')).toBe('STALE')
-    expect(classifyEvidenceFreshness(freshness, '2026-01-01T00:30:00.000Z')).toBe('INVALID')
-  })
-
-  test('derives exercisable authority and fails closed on stale or unknown facts', async () => {
-    const paper = makeStatusSnapshot({ ...healthy, maximumAuthority: 'paper' })
-    expect(paper.exercisableAuthority).toBe('paper')
-    expect(Schema.encodeSync(StatusSnapshotSchema)(paper)).toEqual(paper)
-
-    const stale = makeStatusSnapshot({ ...healthy, evidence: 'STALE', maximumAuthority: 'paper' })
-    const unknown = makeStatusSnapshot({ ...healthy, dependency: 'UNKNOWN', maximumAuthority: 'paper' })
-    const killed = makeStatusSnapshot({ ...healthy, kill: 'ENGAGED', maximumAuthority: 'paper' })
-    expect(stale.exercisableAuthority).toBe('none')
-    expect(unknown.exercisableAuthority).toBe('none')
-    expect(killed.exercisableAuthority).toBe('none')
-
-    await expectFailure(decodeStatusSnapshot({ ...stale, exercisableAuthority: 'paper' }))
-    await expectFailure(decodeStatusSnapshot({ ...paper, exercisableAuthority: 'live-bounded' }))
-    await expectFailure(decodeStatusSnapshot({ ...paper, dependency: 'PARTIAL' }))
-  })
-
-  test('keeps economic state separate from safe observation', () => {
-    const rejected = makeStatusSnapshot({
-      ...healthy,
-      economic: 'REJECTED',
-      maximumAuthority: 'paper',
-    })
-    expect(rejected.exercisableAuthority).toBe('observe')
-
-    const observeOnly = makeStatusSnapshot({
-      ...healthy,
-      maximumAuthority: 'observe',
-    })
-    expect(observeOnly.exercisableAuthority).toBe('observe')
   })
 })

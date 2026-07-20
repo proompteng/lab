@@ -116,6 +116,7 @@ export interface MarketDataSnapshot {
 }
 
 export interface MarketDataService {
+  readonly check: Effect.Effect<FinalizedSnapshotProvenance, OperationalError>
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
 
@@ -183,12 +184,18 @@ const assertBoundSessions = (sessions: ReadonlySet<string>, bounds: EvaluationBo
   }
 }
 
-export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
+interface VerifiedManifest {
+  readonly manifest: SignalManifestRow
+  readonly finalizedSnapshot: FinalizedSnapshotProvenance
+  readonly universe: readonly string[]
+}
+
+const verifyManifest = (manifests: readonly SignalManifestRow[], request: SnapshotRequest): VerifiedManifest => {
   const universe = canonicalUniverse(request.universe)
-  if (rows.manifests.length !== 1) {
-    throw new Error(`snapshot ${request.snapshotId} has ${rows.manifests.length} manifests; expected exactly one`)
+  if (manifests.length !== 1) {
+    throw new Error(`snapshot ${request.snapshotId} has ${manifests.length} manifests; expected exactly one`)
   }
-  const manifest = rows.manifests[0]
+  const manifest = manifests[0]
   if (manifest.snapshot_id !== request.snapshotId) throw new Error('manifest snapshot ID does not match request')
   if (manifest.calendar_version !== request.calendarVersion) throw new Error('manifest calendar version does not match')
   if (manifest.publication_asof !== request.publicationAsOf) {
@@ -201,6 +208,65 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   if (manifest.manifest_content_hash !== canonicalHashV1(withoutManifestHash(manifest))) {
     throw new Error('snapshot manifest content hash is invalid')
   }
+  if (manifest.symbol_count !== universe.length) throw new Error('manifest symbol count does not match request')
+  if (manifest.bar_count !== manifest.session_count * manifest.symbol_count) {
+    throw new Error('manifest does not describe a complete symbol-session product')
+  }
+  const expectedSnapshotId = canonicalHashV1({
+    schemaVersion: manifest.schema_version,
+    provider: manifest.provider,
+    feed: manifest.source_feed,
+    adjustment: manifest.adjustment,
+    calendarVersion: manifest.calendar_version,
+    requestedStart: manifest.requested_start,
+    publicationAsOf: manifest.publication_asof,
+    symbols: universe,
+    barsContentHash: manifest.bars_content_hash,
+    sessionsContentHash: manifest.sessions_content_hash,
+  })
+  if (manifest.snapshot_id !== expectedSnapshotId) throw new Error('snapshot ID does not match finalized content')
+  if (request.bounds.dataStart < manifest.first_session || request.bounds.dataEnd > manifest.last_session) {
+    throw new Error('evaluation data bounds are outside the finalized snapshot')
+  }
+
+  return {
+    manifest,
+    universe,
+    finalizedSnapshot: decodeFinalizedSnapshot({
+      schemaVersion: 'bayn.finalized-snapshot.v2',
+      snapshotId: manifest.snapshot_id,
+      publicationId: manifest.manifest_content_hash,
+      publicationSchemaVersion: manifest.schema_version,
+      source: manifest.provider,
+      sourceFeed: manifest.source_feed,
+      adjustment: manifest.adjustment,
+      calendarVersion: manifest.calendar_version,
+      publisherSourceRevision: manifest.publisher_source_revision,
+      publisherImage: {
+        repository: manifest.publisher_image_repository,
+        digest: manifest.publisher_image_digest,
+      },
+      finalizedAt,
+      requestedStart: manifest.requested_start,
+      firstSession: manifest.first_session,
+      lastSession: manifest.last_session,
+      asOfSession: manifest.publication_asof,
+      symbols: universe,
+      rowCount: manifest.bar_count,
+      sessionCount: manifest.session_count,
+      contentHash: manifest.bars_content_hash,
+      sessionsContentHash: manifest.sessions_content_hash,
+    }),
+  }
+}
+
+export const verifyFinalizedManifest = (
+  manifests: readonly SignalManifestRow[],
+  request: SnapshotRequest,
+): FinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
+
+export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
+  const { finalizedSnapshot, manifest, universe } = verifyManifest(rows.manifests, request)
 
   const orderedSessions = [...rows.sessions].sort((left, right) => left.session_date.localeCompare(right.session_date))
   const sessionDates = new Set<string>()
@@ -252,10 +318,6 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   if (orderedBars.length !== manifest.bar_count) throw new Error('adjusted-bar count does not match manifest')
   if ([...actualSymbols].sort().join(',') !== universe.join(','))
     throw new Error('snapshot universe does not match request')
-  if (manifest.symbol_count !== universe.length) throw new Error('manifest symbol count does not match request')
-  if (manifest.bar_count !== manifest.session_count * manifest.symbol_count) {
-    throw new Error('manifest does not describe a complete symbol-session product')
-  }
   for (const session of orderedSessions) {
     for (const symbol of universe) {
       if (!barKeys.has(`${symbol}\u001f${session.session_date}`)) {
@@ -265,23 +327,6 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   }
   if (canonicalHashV1(orderedBars.map(withoutSnapshot)) !== manifest.bars_content_hash) {
     throw new Error('adjusted-bar content hash is invalid')
-  }
-  const expectedSnapshotId = canonicalHashV1({
-    schemaVersion: manifest.schema_version,
-    provider: manifest.provider,
-    feed: manifest.source_feed,
-    adjustment: manifest.adjustment,
-    calendarVersion: manifest.calendar_version,
-    requestedStart: manifest.requested_start,
-    publicationAsOf: manifest.publication_asof,
-    symbols: universe,
-    barsContentHash: manifest.bars_content_hash,
-    sessionsContentHash: manifest.sessions_content_hash,
-  })
-  if (manifest.snapshot_id !== expectedSnapshotId) throw new Error('snapshot ID does not match finalized content')
-
-  if (request.bounds.dataStart < manifest.first_session || request.bounds.dataEnd > manifest.last_session) {
-    throw new Error('evaluation data bounds are outside the finalized snapshot')
   }
   assertBoundSessions(sessionDates, request.bounds)
   const boundedSessions = orderedSessions.filter(
@@ -301,31 +346,6 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
       firstSession: symbolRows[0].session_date as IsoDate,
       lastSession: symbolRows.at(-1)!.session_date as IsoDate,
     }
-  })
-  const finalizedSnapshot: FinalizedSnapshotProvenance = decodeFinalizedSnapshot({
-    schemaVersion: 'bayn.finalized-snapshot.v2',
-    snapshotId: manifest.snapshot_id,
-    publicationId: manifest.manifest_content_hash,
-    publicationSchemaVersion: manifest.schema_version,
-    source: manifest.provider,
-    sourceFeed: manifest.source_feed,
-    adjustment: manifest.adjustment,
-    calendarVersion: manifest.calendar_version,
-    publisherSourceRevision: manifest.publisher_source_revision,
-    publisherImage: {
-      repository: manifest.publisher_image_repository,
-      digest: manifest.publisher_image_digest,
-    },
-    finalizedAt,
-    requestedStart: manifest.requested_start,
-    firstSession: manifest.first_session,
-    lastSession: manifest.last_session,
-    asOfSession: manifest.publication_asof,
-    symbols: universe,
-    rowCount: manifest.bar_count,
-    sessionCount: manifest.session_count,
-    contentHash: manifest.bars_content_hash,
-    sessionsContentHash: manifest.sessions_content_hash,
   })
   const manifestMaterial: Omit<InputManifest, 'hash'> = {
     schemaVersion: 'bayn.input-manifest.v2',
@@ -368,8 +388,7 @@ const makeMarketData = (
     const sql = yield* ClickhouseClient.ClickhouseClient
     // The Bayn principal is readonly=1, so query-level setting changes are forbidden. Snapshot counts and content
     // hashes below make an incomplete or stale replica read fail closed.
-    const loadRows = Effect.gen(function* () {
-      const manifests = yield* sql`
+    const loadManifests = sql`
         SELECT
           snapshot_id,
           schema_version,
@@ -395,6 +414,8 @@ const makeMarketData = (
         WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
         ORDER BY finalized_at
       `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
+    const loadRows = Effect.gen(function* () {
+      const manifests = yield* loadManifests
       const [sessions, bars] = yield* Effect.all(
         [
           sql`
@@ -436,22 +457,40 @@ const makeMarketData = (
       return { bars, sessions, manifests }
     })
 
+    const request = (observedAt: string): SnapshotRequest => ({
+      snapshotId: config.clickhouse.snapshotId,
+      publicationAsOf: config.clickhouse.publicationAsOf,
+      calendarVersion: config.clickhouse.calendarVersion,
+      universe,
+      bounds: config.clickhouse.bounds,
+      observedAt,
+    })
+    const verify = <A>(operation: string, body: () => A): Effect.Effect<A, OperationalError> =>
+      Effect.try({
+        try: body,
+        catch: (cause) => operationalError('market-data', operation, 'Signal snapshot verification failed', cause),
+      })
+
     return {
+      check: Effect.gen(function* () {
+        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        const manifests = yield* loadManifests
+        return yield* verify('check', () =>
+          verifyFinalizedManifest(decodeSnapshotRows([], [], manifests).manifests, request(observedAt)),
+        )
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof OperationalError
+            ? cause
+            : operationalError('market-data', 'check', 'failed to check finalized Signal snapshot', cause),
+        ),
+      ),
       load: Effect.gen(function* () {
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const raw = yield* loadRows
-        return yield* Effect.try({
-          try: () =>
-            verifyFinalizedSnapshot(decodeSnapshotRows(raw.bars, raw.sessions, raw.manifests), {
-              snapshotId: config.clickhouse.snapshotId,
-              publicationAsOf: config.clickhouse.publicationAsOf,
-              calendarVersion: config.clickhouse.calendarVersion,
-              universe,
-              bounds: config.clickhouse.bounds,
-              observedAt,
-            }),
-          catch: (cause) => operationalError('market-data', 'verify', 'Signal snapshot verification failed', cause),
-        })
+        return yield* verify('verify', () =>
+          verifyFinalizedSnapshot(decodeSnapshotRows(raw.bars, raw.sessions, raw.manifests), request(observedAt)),
+        )
       }).pipe(
         Effect.mapError((cause) =>
           cause instanceof OperationalError

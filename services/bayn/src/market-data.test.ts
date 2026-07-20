@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { verifyFinalizedSnapshot, type SnapshotRequest, type SnapshotRows } from './market-data'
+import {
+  verifyFinalizedManifest,
+  verifyFinalizedSnapshot,
+  type SnapshotRequest,
+  type SnapshotRows,
+} from './market-data'
 
 const symbols = ['EEM', 'SPY'] as const
 const snapshotId = '2fb38a01471d5a6bb6c5aa08a49b6ff844a5a9ee1c6e7bb9ff7786ecdac01bba'
@@ -167,6 +172,22 @@ describe('finalized Signal snapshot reader', () => {
     })
     expect(snapshot.manifest.hash).toMatch(/^[a-f0-9]{64}$/)
     expect(snapshot.bars.every((bar) => bar.open > 0 && bar.close > 0)).toBe(true)
+  })
+
+  test('checks the finalized publication identity without loading sessions or bars', () => {
+    const fixture = makeFixture()
+    const publication = verifyFinalizedManifest(fixture.rows.manifests, fixture.request)
+
+    expect(publication).toMatchObject({
+      snapshotId,
+      publicationId: fixture.rows.manifests[0].manifest_content_hash,
+      calendarVersion: fixture.request.calendarVersion,
+      asOfSession: fixture.request.publicationAsOf,
+      symbols,
+      rowCount: 4,
+      sessionCount: 2,
+    })
+    expect(() => verifyFinalizedManifest([], fixture.request)).toThrow('0 manifests; expected exactly one')
   })
 
   test('rejects duplicate manifests, sessions, and bars', () => {

@@ -7,8 +7,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 ## Runtime contract
 
 - Node.js is the production runtime; Effect owns dependency acquisition, failure handling, and shutdown.
-- Effect Config validates environment input, and `BAYN_OPERATION_TIMEOUT_MS` bounds each ClickHouse or TigerBeetle
-  startup operation (30 seconds by default).
+- Effect Config validates environment input. `BAYN_OPERATION_TIMEOUT_MS` bounds dependency operations, and
+  `BAYN_HEALTH_INTERVAL_MS` controls the continuous health interval; both default to 30 seconds.
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
@@ -22,8 +22,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   and status exposes the promoted image digest, parameter hash, and contract versions.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
-  it also forces startup evaluation and journaling off. The Nix image starts in the default production mode and fails
-  closed if embedded facts are absent.
+  it does not change lifecycle or authority. The Nix image starts in the default production mode and fails closed if
+  embedded facts are absent.
 - The reader selects one configured finalized Signal snapshot by content-addressed ID. It verifies the publisher
   manifest, sessions, every bar, exact SIP/all provenance, the canonical universe, content hashes, and explicit data,
   lookback, and evaluation bounds before exposing numeric bars.
@@ -39,15 +39,19 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 - On restart, Bayn derives the expected run ID from the verified Signal manifest and current executable identity. It
   resumes only an exact, complete, runtime-decoded PostgreSQL record; missing evidence triggers one evaluation, while
   partial, altered, or incompatible evidence fails closed without another TigerBeetle mutation.
+- After startup, one scoped Effect loop continuously checks PostgreSQL, the configured Signal manifest, the active
+  TigerBeetle run, and the complete durable evidence record without loading bars or writing accounting state. Readiness
+  closes on any defect and reopens only after every check succeeds; the last valid evidence remains observable.
 - A run becomes ready only after ClickHouse validation, evaluation, TigerBeetle journal creation, exact reconciliation,
-  and the PostgreSQL commit. Strategy rejection is an auditable economic `FAIL_CLOSED`; dependency, accounting, or
-  persistence failure keeps the Kubernetes readiness probe closed.
+  the PostgreSQL commit, and one successful continuous check. Strategy rejection is an auditable economic
+  `FAIL_CLOSED`; it remains separate from operational health and never expands authority.
 
 ## Endpoints
 
 - `GET /livez`: process liveness.
-- `GET /readyz`: dependency/evaluation/accounting readiness.
-- `GET /v1/status`: bounded authority, provenance, metrics, verdict, and reconciliation summary.
+- `GET /readyz`: current dependency, evidence, and accounting readiness.
+- `GET /v1/status`: operational dependencies, data and evidence identity, economic verdict, accounting, build
+  provenance, and fixed observe-only authority.
 - `GET /v1/evaluations/:runId`: complete content-hashed evidence for one exact run ID. The service is ClusterIP-only
   and the Bayn network policy limits HTTP ingress to the namespace.
 

@@ -156,6 +156,7 @@ export interface LedgerPlan {
 export interface JournalService {
   readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, OperationalError>
   readonly check: Effect.Effect<void, OperationalError>
+  readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, OperationalError>
 }
 
 export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
@@ -495,6 +496,98 @@ const queryFilter = (ledger: number): QueryFilter => ({
   flags: 0,
 })
 
+const assertPersistedRun = (
+  result: ReconciliationResult,
+  ledger: number,
+  accounts: readonly Account[],
+  transfers: readonly Transfer[],
+): void => {
+  if (accounts.length !== result.accountCount) {
+    throw new Error(`run ${result.runId} has ${accounts.length} accounts; expected ${result.accountCount}`)
+  }
+  if (transfers.length !== result.transferCount) {
+    throw new Error(`run ${result.runId} has ${transfers.length} transfers; expected ${result.transferCount}`)
+  }
+
+  const runKey = stableU128('bayn-run-v1', result.runId)
+  const runTag = stableU64('bayn-run-v1', result.runId)
+  const accountIds = new Set<bigint>()
+  const balances = new Map<bigint, { debits: bigint; credits: bigint }>()
+  for (const value of accounts) {
+    if (accountIds.has(value.id)) throw new Error(`run ${result.runId} contains duplicate account ${value.id}`)
+    if (
+      value.user_data_128 !== runKey ||
+      value.user_data_64 !== runTag ||
+      value.user_data_32 !== SCHEMA_VERSION ||
+      value.ledger !== ledger
+    ) {
+      throw new Error(`run ${result.runId} account ${value.id} has invalid metadata`)
+    }
+    accountIds.add(value.id)
+    balances.set(value.id, { debits: 0n, credits: 0n })
+  }
+
+  const transferIds = new Set<bigint>()
+  for (const value of transfers) {
+    if (transferIds.has(value.id)) throw new Error(`run ${result.runId} contains duplicate transfer ${value.id}`)
+    if (
+      value.user_data_64 !== runTag ||
+      value.user_data_32 !== SCHEMA_VERSION ||
+      value.ledger !== ledger ||
+      value.amount <= 0n
+    ) {
+      throw new Error(`run ${result.runId} transfer ${value.id} has invalid metadata`)
+    }
+    const debit = balances.get(value.debit_account_id)
+    const credit = balances.get(value.credit_account_id)
+    if (debit === undefined || credit === undefined) {
+      throw new Error(`run ${result.runId} transfer ${value.id} references an account outside the run`)
+    }
+    transferIds.add(value.id)
+    debit.debits += value.amount
+    credit.credits += value.amount
+  }
+
+  for (const value of accounts) {
+    const balance = balances.get(value.id)!
+    if (
+      value.debits_pending !== 0n ||
+      value.credits_pending !== 0n ||
+      value.debits_posted !== balance.debits ||
+      value.credits_posted !== balance.credits
+    ) {
+      throw new Error(`run ${result.runId} account ${value.id} balance does not reconcile exactly`)
+    }
+  }
+}
+
+const checkRun = (
+  client: Client,
+  ledger: number,
+  result: ReconciliationResult,
+): Effect.Effect<void, OperationalError> =>
+  Effect.gen(function* () {
+    if (result.accountCount >= BATCH_MAX || result.transferCount >= BATCH_MAX) {
+      return yield* Effect.fail(
+        operationalError('journal', 'check-run', 'persisted TigerBeetle counts exceed the exact query limit'),
+      )
+    }
+    const runKey = stableU128('bayn-run-v1', result.runId)
+    const runTag = stableU64('bayn-run-v1', result.runId)
+    const [accounts, transfers] = yield* Effect.all(
+      [
+        request(client, 'check-run-accounts', () =>
+          client.queryAccounts({ ...queryFilter(ledger), user_data_128: runKey, limit: result.accountCount + 1 }),
+        ),
+        request(client, 'check-run-transfers', () =>
+          client.queryTransfers({ ...queryFilter(ledger), user_data_64: runTag, limit: result.transferCount + 1 }),
+        ),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    yield* validate('check-run', () => assertPersistedRun(result, ledger, accounts, transfers))
+  })
+
 const journalAndReconcile = (
   client: Client,
   ledger: number,
@@ -572,6 +665,7 @@ export const JournalLive = (
         check: request(client, 'connectivity-check', () =>
           client.lookupAccounts([stableU128('bayn-connectivity-probe')]),
         ).pipe(Effect.asVoid),
+        checkRun: (result) => checkRun(client, config.tigerBeetle.ledger, result),
         journalAndReconcile: (result) => journalAndReconcile(client, config.tigerBeetle.ledger, result),
       })),
     ),
