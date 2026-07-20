@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import { defaultProtocol } from './protocol'
 import { calculatePerformanceMetrics, evaluateTsmom } from './strategy'
-import { makeSnapshot } from './test-fixtures'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { FillEvent } from './types'
 
 describe('TSMOM economic evaluator', () => {
@@ -15,10 +14,13 @@ describe('TSMOM economic evaluator', () => {
 
   test('is deterministic, costed, and executes after the signal session', () => {
     const snapshot = makeSnapshot()
-    const first = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')
-    const second = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')
+    const provenance = makeTestProvenance()
+    const first = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const second = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     expect(first).toEqual(second)
-    expect(first.strategy.observations).toBeGreaterThanOrEqual(defaultProtocol.thresholds.minimumObservations)
+    expect(first.codeRevision).toBe(provenance.sourceRevision)
+    expect(first.protocolHash).toBe(provenance.strategy.parameterHash)
+    expect(first.strategy.observations).toBeGreaterThanOrEqual(fixtureProtocol.thresholds.minimumObservations)
     expect(BigInt(first.strategy.totalFeesMicros)).toBeGreaterThan(0n)
     expect(first.doubleCostStrategy.endingEquityMicros).not.toBe(first.strategy.endingEquityMicros)
     const firstDecision = first.events.find((event) => event.kind === 'decision')
@@ -33,23 +35,52 @@ describe('TSMOM economic evaluator', () => {
     }
   })
 
-  test('changes run identity when code, input, or protocol changes', () => {
+  test('changes run identity when source, image, behavior, input, or parameters change', () => {
     const snapshot = makeSnapshot()
-    const baseline = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'revision-a')
-    const codeChanged = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'revision-b')
+    const baseline = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const sourceChanged = evaluateTsmom(
+      snapshot.bars,
+      snapshot.manifest,
+      fixtureProtocol,
+      makeTestProvenance(fixtureProtocol, { sourceRevision: 'd'.repeat(40) }),
+    )
+    const imageChanged = evaluateTsmom(
+      snapshot.bars,
+      snapshot.manifest,
+      fixtureProtocol,
+      makeTestProvenance(fixtureProtocol, { imageDigest: `sha256:${'e'.repeat(64)}` }),
+    )
+    const behaviorChanged = evaluateTsmom(
+      snapshot.bars,
+      snapshot.manifest,
+      fixtureProtocol,
+      makeTestProvenance(fixtureProtocol, { behaviorHash: 'f'.repeat(64) }),
+    )
+    const changedProtocol = { ...fixtureProtocol, transactionCostBps: fixtureProtocol.transactionCostBps + 1 }
     const protocolChanged = evaluateTsmom(
       snapshot.bars,
       snapshot.manifest,
-      { ...defaultProtocol, transactionCostBps: defaultProtocol.transactionCostBps + 1 },
-      'revision-a',
+      changedProtocol,
+      makeTestProvenance(changedProtocol),
     )
-    expect(codeChanged.runId).not.toBe(baseline.runId)
+    expect(sourceChanged.runId).not.toBe(baseline.runId)
+    expect(imageChanged.runId).not.toBe(baseline.runId)
+    expect(behaviorChanged.runId).not.toBe(baseline.runId)
     expect(protocolChanged.runId).not.toBe(baseline.runId)
+  })
+
+  test('rejects a false parameter attribution before evaluation', () => {
+    const snapshot = makeSnapshot()
+    const changedProtocol = { ...fixtureProtocol, transactionCostBps: fixtureProtocol.transactionCostBps + 1 }
+
+    expect(() => evaluateTsmom(snapshot.bars, snapshot.manifest, changedProtocol, makeTestProvenance())).toThrow(
+      'parameter hash does not match',
+    )
   })
 
   test('fails before evaluation when comparable history is insufficient', () => {
     const snapshot = makeSnapshot(700)
-    expect(() => evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')).toThrow(
+    expect(() => evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())).toThrow(
       'comparable observations',
     )
   })

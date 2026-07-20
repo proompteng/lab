@@ -3,16 +3,33 @@ import { Cause, Effect, Layer, Logger } from 'effect'
 
 import { run } from './app'
 import { loadConfig } from './config'
+import { makeRuntimeProvenance } from './contracts'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
-import { TsmomStrategyLive, tsmomStrategy } from './strategy-service'
+import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
+import { makeTsmomStrategy, Strategy } from './strategy-service'
 
 const main = Effect.gen(function* () {
-  const config = yield* loadConfig
+  const config = yield* loadConfig()
+  const protocol = yield* loadDefaultProtocol
+  const provenance = makeRuntimeProvenance({
+    sourceRevision: config.build.sourceRevision,
+    image: {
+      repository: config.build.imageRepository,
+      digest: config.build.imageDigest,
+    },
+    strategy: {
+      name: 'tsmom',
+      behaviorHash: config.build.strategyBehaviorHash,
+      parameterHash: hashTsmomParameters(protocol),
+      parameterSchemaVersion: protocol.schemaVersion,
+    },
+  })
+  const strategy = makeTsmomStrategy(protocol, provenance)
   const dependencies = Layer.mergeAll(
-    MarketDataLive(config, tsmomStrategy.universe),
+    MarketDataLive(config, strategy.universe),
     JournalLive(config),
-    TsmomStrategyLive,
+    Layer.succeed(Strategy, strategy),
   )
   return yield* run(config).pipe(Effect.provide(dependencies))
 })

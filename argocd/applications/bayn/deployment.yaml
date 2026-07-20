@@ -48,6 +48,10 @@ spec:
           env:
             - name: BAYN_CODE_REVISION
               value: 43b4201272832a381ab50d87da9e1715d68f06a7
+            - name: BAYN_IMAGE_REPOSITORY
+              value: registry.ide-newton.ts.net/lab/bayn
+            - name: BAYN_IMAGE_DIGEST
+              value: sha256:3571b730a2f21e10a488c397b6718a9dd05ab3eba3568aa099a617d6d5c6c67e
             - name: BAYN_RUN_ON_STARTUP
               value: "true"
             - name: BAYN_OPERATION_TIMEOUT_MS

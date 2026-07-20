@@ -8,14 +8,20 @@ import { initialize, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
 import { Journal, JournalLive, type JournalService } from './ledger'
 import { MarketData, MarketDataLive, type MarketDataService } from './market-data'
-import { defaultProtocol } from './protocol'
-import { TsmomStrategyLive } from './strategy-service'
-import { makeSnapshot } from './test-fixtures'
+import { TsmomStrategyLayer } from './strategy-service'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+
+const provenance = makeTestProvenance()
 
 const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
-  codeRevision: 'test-revision',
+  build: {
+    sourceRevision: provenance.sourceRevision,
+    imageRepository: provenance.image.repository,
+    imageDigest: provenance.image.digest,
+    strategyBehaviorHash: provenance.strategy.behaviorHash,
+  },
   runOnStartup: true,
   operationTimeoutMs: 20,
   clickhouse: {
@@ -54,7 +60,7 @@ describe('Bayn resource lifecycle', () => {
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              MarketDataLive(config, defaultProtocol.universe, {
+              MarketDataLive(config, fixtureProtocol.universe, {
                 createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
               }),
               JournalLive(config, {
@@ -94,9 +100,9 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
-          Effect.provide(TsmomStrategyLive),
+          Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
-            MarketDataLive(config, defaultProtocol.universe, {
+            MarketDataLive(config, fixtureProtocol.universe, {
               createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
             }),
           ),
@@ -124,9 +130,9 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
-          Effect.provide(TsmomStrategyLive),
+          Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
-            MarketDataLive(config, defaultProtocol.universe, {
+            MarketDataLive(config, fixtureProtocol.universe, {
               createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
             }),
           ),
@@ -162,7 +168,7 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initialize(config, state).pipe(
           Effect.provideService(MarketData, marketData),
-          Effect.provide(TsmomStrategyLive),
+          Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
             JournalLive(config, {
               createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,

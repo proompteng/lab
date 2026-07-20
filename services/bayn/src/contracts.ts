@@ -168,6 +168,28 @@ export const RunIdentitySchema = RunIdentityBase.check(
 )
 export type RunIdentity = typeof RunIdentitySchema.Type
 
+export const RuntimeProvenanceSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.runtime-provenance.v1'),
+  sourceRevision: SourceRevision,
+  image: Schema.Struct({
+    repository: NonEmptyString,
+    digest: ImageDigest,
+  }),
+  strategy: Schema.Struct({
+    name: NonEmptyString,
+    behaviorHash: Sha256,
+    parameterHash: Sha256,
+    parameterSchemaVersion: NonEmptyString,
+  }),
+  contractVersions: Schema.Struct({
+    runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v1'),
+    inputManifest: Schema.Literal('bayn.input-manifest.v1'),
+    evaluation: Schema.Literal('bayn.evaluation.v1'),
+  }),
+})
+export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
+export type RuntimeProvenanceInput = Omit<RuntimeProvenance, 'schemaVersion' | 'contractVersions'>
+
 const EvidenceFreshnessBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.evidence-freshness.v1'),
   observedAt: UtcInstant,
@@ -258,17 +280,30 @@ export type StatusSnapshotInput = Omit<StatusSnapshot, 'schemaVersion' | 'exerci
 export const decodeFinalizedSnapshot = Schema.decodeUnknownEffect(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
 export const decodeEvaluationBounds = Schema.decodeUnknownEffect(EvaluationBoundsSchema, StrictParseOptions)
 export const decodeRunIdentity = Schema.decodeUnknownEffect(RunIdentitySchema, StrictParseOptions)
+export const decodeRuntimeProvenance = Schema.decodeUnknownEffect(RuntimeProvenanceSchema, StrictParseOptions)
 export const decodeEvidenceFreshness = Schema.decodeUnknownEffect(EvidenceFreshnessSchema, StrictParseOptions)
 export const decodeStatusSnapshot = Schema.decodeUnknownEffect(StatusSnapshotSchema, StrictParseOptions)
 
 const decodeRunIdentityMaterialSync = Schema.decodeUnknownSync(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentitySync = Schema.decodeUnknownSync(RunIdentitySchema, StrictParseOptions)
+const decodeRuntimeProvenanceSync = Schema.decodeUnknownSync(RuntimeProvenanceSchema, StrictParseOptions)
 const decodeStatusSnapshotSync = Schema.decodeUnknownSync(StatusSnapshotSchema, StrictParseOptions)
 
 export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
   const material = decodeRunIdentityMaterialSync(input)
   return decodeRunIdentitySync({ ...material, runId: canonicalHashV1(material) })
 }
+
+export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance =>
+  decodeRuntimeProvenanceSync({
+    schemaVersion: 'bayn.runtime-provenance.v1',
+    ...input,
+    contractVersions: {
+      runtimeProvenance: 'bayn.runtime-provenance.v1',
+      inputManifest: 'bayn.input-manifest.v1',
+      evaluation: 'bayn.evaluation.v1',
+    },
+  })
 
 export const classifyEvidenceFreshness = (freshness: EvidenceFreshness, now: string): EvidenceState => {
   if (!isUtcInstant(now)) throw new TypeError('now must be a canonical UTC instant')

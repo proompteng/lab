@@ -27,15 +27,24 @@ broker secret, or Kubernetes API token. `maxSurge: 0` prevents overlapping runti
 
 ## Reproducibility
 
-The run ID is the SHA-256 hash of:
+The executable embeds its full source revision, OCI repository, and a behavior hash derived from the reviewed strategy
+and hashing sources. Startup strictly decodes the committed TSMOM parameter JSON, hashes the decoded value with
+canonical JSON, and refuses to run when configured source/repository attribution differs from the embedded build.
+GitOps supplies the immutable image-index digest after publication. Status and the in-memory evidence envelope expose
+all of those facts and their contract versions.
 
-- the immutable image source revision;
-- the canonical protocol hash; and
+The current transitional run ID is the SHA-256 hash of:
+
+- the runtime-provenance envelope; and
 - the exact ClickHouse input-manifest hash, including an ordered content hash of all bars.
 
 Decision and fill IDs derive from canonical event payloads. TigerBeetle account and transfer IDs derive from the run ID,
 event ID, and journal leg. Repeating the same run is idempotent; a changed price, protocol, or source revision creates a
 different run namespace.
+
+This transitional identity is deliberately not `bayn.run-identity.v1`: the current ClickHouse table does not yet
+provide finalized publication provenance, an exchange-calendar version, or explicit evaluation bounds. The finalized
+snapshot and bounded-read roadmap slices must supply those facts before the target identity is used.
 
 ## Versioned contract boundary
 
@@ -45,8 +54,9 @@ authority. Unknown versions and excess fields fail closed. Run identity binds th
 digest, compiled strategy behavior hash, decoded strategy parameters, finalized snapshot, exchange-calendar version,
 and explicit bounds through canonical JSON and SHA-256.
 
-Contract availability does not mean the deployed runtime has adopted the target path. Adoption, persistence, continuous
-health, and removal of the legacy TigerBeetle dependency are separate roadmap tickets with their own rollout evidence.
+Runtime provenance and strict TSMOM parameter decoding are the first adopted contract slice. Finalized-snapshot
+identity, bounded reads, persistence, continuous health, and removal of the legacy TigerBeetle dependency remain
+separate roadmap tickets with their own rollout evidence.
 
 ## Economic test
 

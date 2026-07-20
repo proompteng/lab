@@ -3,10 +3,22 @@ import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Exit, Redacted } from 'effect'
 
 import { loadBackfillConfig } from './backfill-config'
+import type { EmbeddedBuildMetadata } from './build'
 import { loadConfig } from './config'
 
+const sourceRevision = 'a'.repeat(40)
+const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
+const imageDigest = `sha256:${'b'.repeat(64)}`
+const buildMetadata: EmbeddedBuildMetadata = {
+  sourceRevision,
+  imageRepository,
+  strategyBehaviorHash: 'c'.repeat(64),
+}
+
 const runtimeEnvironment = new Map([
-  ['BAYN_CODE_REVISION', 'test-revision'],
+  ['BAYN_CODE_REVISION', sourceRevision],
+  ['BAYN_IMAGE_REPOSITORY', imageRepository],
+  ['BAYN_IMAGE_DIGEST', imageDigest],
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
@@ -32,7 +44,7 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
 
 describe('Effect configuration', () => {
   test('loads runtime configuration with validated defaults', async () => {
-    const config = await Effect.runPromise(provideEnvironment(loadConfig, runtimeEnvironment))
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
 
     expect(config.host).toBe('0.0.0.0')
     expect(config.port).toBe(8080)
@@ -41,18 +53,36 @@ describe('Effect configuration', () => {
     expect(Redacted.isRedacted(config.clickhouse.password)).toBe(true)
     expect(config.tigerBeetle.clusterId).toBe(2001n)
     expect(config.tigerBeetle.replicaAddresses).toEqual(['tigerbeetle.test:3000'])
+    expect(config.build).toEqual({ ...buildMetadata, imageDigest })
   })
 
   test('returns a typed configuration failure for invalid values', async () => {
     const invalid = new Map(runtimeEnvironment)
     invalid.set('BAYN_OPERATION_TIMEOUT_MS', '0')
 
-    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig, invalid)))
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
     expect(error).toMatchObject({
       _tag: 'OperationalError',
       component: 'config',
       operation: 'load',
     })
+  })
+
+  test('fails closed when configured and embedded provenance diverge', async () => {
+    for (const [name, value] of [
+      ['BAYN_CODE_REVISION', 'd'.repeat(40)],
+      ['BAYN_IMAGE_REPOSITORY', 'registry.example.invalid/bayn'],
+    ] as const) {
+      const invalid = new Map(runtimeEnvironment)
+      invalid.set(name, value)
+
+      const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
+      expect(error).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'config',
+        operation: 'provenance',
+      })
+    }
   })
 
   test('loads and validates backfill configuration without reading process.env directly', async () => {
