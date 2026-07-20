@@ -288,7 +288,7 @@ export const buildPublication = (input: BuildPublicationInput): Publication => {
     barsContentHash,
     sessionsContentHash,
   } as const
-  const snapshotId = `signal-v1-${hashJson(snapshotIdentity)}`
+  const snapshotId = hashJson(snapshotIdentity)
   const bars = barsWithoutSnapshot.map((bar) => ({ snapshot_id: snapshotId, ...bar }))
   const sessions = sessionsWithoutSnapshot.map((session) => ({ snapshot_id: snapshotId, ...session }))
   const manifestWithoutHash: Omit<ManifestRow, 'manifest_content_hash'> = {
