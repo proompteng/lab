@@ -23,6 +23,11 @@ export interface RuntimeConfig {
     readonly table: string
     readonly datasetVersion: string
   }
+  readonly postgres: {
+    readonly url: Redacted.Redacted<string>
+    readonly tls: boolean
+    readonly caPath: string
+  }
   readonly tigerBeetle: {
     readonly clusterId: bigint
     readonly replicaAddresses: readonly string[]
@@ -77,6 +82,11 @@ const runtimeConfig = Config.all({
   clickhouseDatabase: clickhouseIdentifier('BAYN_CLICKHOUSE_DATABASE', 'signal'),
   clickhouseTable: clickhouseIdentifier('BAYN_CLICKHOUSE_TABLE', 'adjusted_daily_bars_v1'),
   datasetVersion: nonEmptyString('BAYN_DATASET_VERSION'),
+  postgresUrl: Config.redacted('BAYN_POSTGRES_URL'),
+  postgresTls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
+  postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
+    Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
+  ),
   tigerBeetleClusterId: Config.schema(Schema.BigIntFromString, 'BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
     Config.withDefault(2001n),
   ),
@@ -102,6 +112,11 @@ const runtimeConfig = Config.all({
       table: config.clickhouseTable,
       datasetVersion: config.datasetVersion,
     },
+    postgres: {
+      url: config.postgresUrl,
+      tls: config.postgresTls,
+      caPath: config.postgresCaPath,
+    },
     tigerBeetle: {
       clusterId: config.tigerBeetleClusterId,
       replicaAddresses: config.tigerBeetleReplicaAddresses,
@@ -126,6 +141,9 @@ export const loadConfig = (
           }
           if (embedded !== undefined && config.provenanceMode !== 'production') {
             throw new Error('development provenance cannot override embedded production metadata')
+          }
+          if (embedded !== undefined && !config.postgres.tls) {
+            throw new Error('production PostgreSQL connections require verified TLS')
           }
 
           const decodedBuild =

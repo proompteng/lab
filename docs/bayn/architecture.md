@@ -7,9 +7,9 @@ adjusted-ETF time-series momentum. The deployed runtime currently stops at evalu
 not call a broker, submit an order, or promote capital. Later authority is unlocked only by the roadmap's economic,
 recovery, reconciliation, and observation gates.
 
-The current TigerBeetle-backed startup path described below is legacy production state, not the target architecture.
-The active roadmap replaces it incrementally with finalized Signal publications and Bayn-owned PostgreSQL evidence
-before any paper mutation work begins.
+The current deployment retains TigerBeetle as the deterministic simulation journal while Bayn-owned PostgreSQL stores
+the durable evaluation evidence. The roadmap replaces the transitional Signal read and simulation accounting
+incrementally before any paper mutation work begins.
 
 ## Critical path
 
@@ -22,7 +22,11 @@ before any paper mutation work begins.
 5. One evaluator produces strategy, buy-and-hold, direct-volatility, and doubled-cost results on comparable dates.
 6. Deterministic events become double-entry transfers in a Bayn-owned TigerBeetle ledger. Existing IDs are accepted
    only after object lookup and field comparison; accounts, transfers, and posted balances must reconcile exactly.
-7. Kubernetes readiness opens only after data validation, evaluation, journaling, and reconciliation complete.
+7. After exact reconciliation, a single PostgreSQL transaction records the immutable protocol and snapshot references,
+   run identity, metrics, reconciliation receipt, ordered events, gate outcomes, and status history. The transaction
+   changes the run from `WRITING` to `COMPLETE` only after exact child-row counts match.
+8. Kubernetes readiness opens only after data validation, evaluation, journaling, reconciliation, and the durable
+   PostgreSQL commit complete.
 
 There is one `apps/v1 Deployment`, one replica, and one container. It has no scheduler, CronJob, Knative revision,
 broker secret, or Kubernetes API token. `maxSurge: 0` prevents overlapping runtime writers during rollout.
@@ -49,6 +53,12 @@ Decision and fill IDs derive from canonical event payloads. TigerBeetle account 
 event ID, and journal leg. Repeating the same run is idempotent; a changed price, protocol, or source revision creates a
 different run namespace.
 
+PostgreSQL uses the same run ID as its primary idempotency key. Exact replay returns the existing `COMPLETE` receipt
+only after verifying its protocol, snapshot, source revision, image, strategy, status sequence, child-row counts, and
+every stored payload against its content hash. A collision, partial run, altered payload, or divergent immutable
+reference fails closed. Protocol locks and snapshot references are inserted and read back inside the same transaction
+as the run, so no partial evidence survives a failed write.
+
 This transitional identity is deliberately not `bayn.run-identity.v1`: the current ClickHouse table does not yet
 provide finalized publication provenance, an exchange-calendar version, or explicit evaluation bounds. The finalized
 snapshot and bounded-read roadmap slices must supply those facts before the target identity is used.
@@ -61,9 +71,9 @@ authority. Unknown versions and excess fields fail closed. Run identity binds th
 digest, compiled strategy behavior hash, decoded strategy parameters, finalized snapshot, exchange-calendar version,
 and explicit bounds through canonical JSON and SHA-256.
 
-Runtime provenance and strict TSMOM parameter decoding are the first adopted contract slice. Finalized-snapshot
-identity, bounded reads, persistence, continuous health, and removal of the legacy TigerBeetle dependency remain
-separate roadmap tickets with their own rollout evidence.
+Runtime provenance, strict TSMOM parameter decoding, and transactional evaluation persistence are adopted contract
+slices. Finalized-snapshot identity, bounded reads, continuous health, and removal of the legacy TigerBeetle dependency
+remain separate roadmap tickets with their own rollout evidence.
 
 ## Economic test
 
@@ -83,7 +93,8 @@ separate realized gain or loss. Fees move cash to fee expense. Quantities and pr
 event payload hash.
 
 TigerBeetle is currently a single-replica shared dependency. Exact Bayn reconciliation is an accounting-integrity gate;
-it does not make that dependency highly available and does not grant trading authority.
+it does not make that dependency highly available and does not grant trading authority. PostgreSQL durably records the
+result and receipt, but does not replace the double-entry ledger in this slice.
 
 ## Deployment and recovery
 
@@ -92,6 +103,12 @@ CD owns the `bayn` namespace and Deployment. The ClickHouse credential is separa
 Bayn namespace, and granted table-level `SELECT`. Alpaca credentials and the insert/select-only Signal writer identity
 are mounted only into the Signal publisher CronJob and are never mounted into the Bayn runtime.
 
+Bayn connects to `bayn-db-rw` with the CNPG-generated `bayn-db-app` URI and a read-only mount containing only
+`bayn-db-ca/ca.crt`; the CA private key is not mounted. TLS hostname and certificate verification are mandatory in a
+production artifact. Effect SQL owns the scoped two-connection pool and additive migrations. CNPG backup, retention,
+and isolated restore evidence are defined in [`cnpg-backup-restore.md`](cnpg-backup-restore.md).
+
 On restart, Bayn recomputes the deterministic run, verifies any existing TigerBeetle objects, and reconciles the full
-run again before becoming ready. If ClickHouse, TigerBeetle, data validation, evaluation, or reconciliation fails, the
-process remains live for diagnosis but readiness stays closed.
+run again before reading or writing the matching PostgreSQL receipt. If ClickHouse, TigerBeetle, PostgreSQL, data
+validation, evaluation, reconciliation, migration, or persistence fails, the process remains live for diagnosis but
+readiness stays closed.

@@ -22,6 +22,7 @@ const runtimeEnvironment = new Map([
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
   ['BAYN_DATASET_VERSION', 'fixture-v1'],
+  ['BAYN_POSTGRES_URL', 'postgresql://bayn:secret@postgres.test:5432/bayn'],
   ['BAYN_TIGERBEETLE_ADDRESSES', 'tigerbeetle.test:3000'],
 ])
 
@@ -39,6 +40,11 @@ describe('Effect configuration', () => {
     expect(config.operationTimeoutMs).toBe(30_000)
     expect(config.clickhouse.database).toBe('signal')
     expect(Redacted.isRedacted(config.clickhouse.password)).toBe(true)
+    expect(Redacted.isRedacted(config.postgres.url)).toBe(true)
+    expect(config.postgres).toMatchObject({
+      tls: true,
+      caPath: '/var/run/secrets/bayn/postgres/ca.crt',
+    })
     expect(config.tigerBeetle.clusterId).toBe(2001n)
     expect(config.tigerBeetle.replicaAddresses).toEqual(['tigerbeetle.test:3000'])
     expect(config.build).toEqual({ ...buildMetadata, imageDigest, verification: 'embedded' })
@@ -87,6 +93,18 @@ describe('Effect configuration', () => {
       _tag: 'OperationalError',
       component: 'config',
       operation: 'load',
+    })
+  })
+
+  test('does not permit plaintext PostgreSQL in a production artifact', async () => {
+    const invalid = new Map(runtimeEnvironment)
+    invalid.set('BAYN_POSTGRES_TLS', 'false')
+
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'provenance',
     })
   })
 

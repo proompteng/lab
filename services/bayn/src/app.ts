@@ -6,6 +6,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
+import { EvidenceStore, type PersistenceReceipt } from './db/evidence-store'
 import { formatError, operationalError, type Component, type OperationalError } from './errors'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
@@ -16,6 +17,7 @@ interface RuntimeEvidence {
   readonly provenance: RuntimeProvenance
   readonly evaluation: Omit<EvaluationResult, 'events'> & { readonly eventCount: number }
   readonly reconciliation: ReconciliationResult
+  readonly persistence: PersistenceReceipt
 }
 
 export type RuntimeState =
@@ -108,14 +110,20 @@ const failClosed = (state: Ref.Ref<RuntimeState>, error: OperationalError): Effe
     ),
   )
 
+const databaseOperation = <A, R>(effect: Effect.Effect<A, { readonly message: string }, R>, operation: string) =>
+  effect.pipe(
+    Effect.mapError((cause) => operationalError('database', operation, `PostgreSQL ${operation} failed`, cause)),
+  )
+
 const evaluateAndJournal = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, OperationalError, MarketData | Journal | Strategy> =>
+): Effect.Effect<void, OperationalError, MarketData | Journal | Strategy | EvidenceStore> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
     const strategy = yield* Strategy
+    const evidenceStore = yield* EvidenceStore
     yield* Effect.logInfo('Bayn startup evaluation started').pipe(
       Effect.annotateLogs({
         service: 'bayn',
@@ -127,6 +135,12 @@ const evaluateAndJournal = (
       }),
     )
     yield* withinDeadline(journal.check, config.operationTimeoutMs, 'journal', 'connectivity-check')
+    yield* withinDeadline(
+      databaseOperation(evidenceStore.check, 'health-check'),
+      config.operationTimeoutMs,
+      'database',
+      'health-check',
+    )
     const snapshot = yield* withinDeadline(marketData.load, config.operationTimeoutMs, 'market-data', 'load')
     yield* Effect.logInfo('Bayn signal snapshot loaded').pipe(
       Effect.annotateLogs({
@@ -154,6 +168,20 @@ const evaluateAndJournal = (
       'journal',
       'journal-and-reconcile',
     )
+    const persistence = yield* withinDeadline(
+      databaseOperation(
+        evidenceStore.persist({
+          provenance: strategy.provenance,
+          parameters: strategy.parameters,
+          evaluation,
+          reconciliation,
+        }),
+        'persist-evaluation',
+      ),
+      config.operationTimeoutMs,
+      'database',
+      'persist-evaluation',
+    )
     const { events, ...evaluationWithoutEvents } = evaluation
     yield* Ref.set(state, {
       status: 'READY',
@@ -161,6 +189,7 @@ const evaluateAndJournal = (
         provenance: strategy.provenance,
         evaluation: { ...evaluationWithoutEvents, eventCount: events.length },
         reconciliation,
+        persistence,
       },
       error: null,
     })
@@ -170,6 +199,7 @@ const evaluateAndJournal = (
         runId: evaluation.runId,
         accountCount: reconciliation.accountCount,
         transferCount: reconciliation.transferCount,
+        persistenceDeduplicated: persistence.deduplicated,
       }),
     )
   }).pipe(Effect.withLogSpan('startup'))
@@ -177,11 +207,18 @@ const evaluateAndJournal = (
 const checkWithoutJournal = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, OperationalError, MarketData | Journal> =>
+): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
+    const evidenceStore = yield* EvidenceStore
     yield* withinDeadline(journal.check, config.operationTimeoutMs, 'journal', 'connectivity-check')
+    yield* withinDeadline(
+      databaseOperation(evidenceStore.check, 'health-check'),
+      config.operationTimeoutMs,
+      'database',
+      'health-check',
+    )
     yield* withinDeadline(marketData.load, config.operationTimeoutMs, 'market-data', 'load')
     yield* Ref.set(state, {
       status: 'FAIL_CLOSED',
@@ -193,12 +230,14 @@ const checkWithoutJournal = (
 export const initialize = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, never, MarketData | Journal | Strategy> =>
+): Effect.Effect<void, never, MarketData | Journal | Strategy | EvidenceStore> =>
   (config.runOnStartup ? evaluateAndJournal(config, state) : checkWithoutJournal(config, state)).pipe(
     Effect.catch((error) => failClosed(state, error)),
   )
 
-export const run = (config: RuntimeConfig): Effect.Effect<never, OperationalError, MarketData | Journal | Strategy> =>
+export const run = (
+  config: RuntimeConfig,
+): Effect.Effect<never, OperationalError, MarketData | Journal | Strategy | EvidenceStore> =>
   Effect.scoped(
     Effect.gen(function* () {
       const strategy = yield* Strategy

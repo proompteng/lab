@@ -1,6 +1,6 @@
 import { Data } from 'effect'
 
-export type Component = 'config' | 'http' | 'market-data' | 'strategy' | 'journal'
+export type Component = 'config' | 'database' | 'http' | 'market-data' | 'strategy' | 'journal'
 
 export class OperationalError extends Data.TaggedError('OperationalError')<{
   readonly component: Component

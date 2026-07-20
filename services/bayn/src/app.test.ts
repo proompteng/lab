@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test'
+import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 
-import { Cause, Context, Effect, Exit, Layer, Redacted, Ref } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { Cause, Context, Effect, Exit, Fiber, Layer, Redacted, Ref } from 'effect'
 import { HttpServer } from 'effect/unstable/http'
 
 import { initialize, makeHttpLayer, run, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
+import { DatabaseError, EvidenceStore, EvidenceStoreRuntimeLive, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
@@ -34,6 +38,11 @@ const config: RuntimeConfig = {
     table: 'adjusted_daily_bars_v1',
     datasetVersion: 'fixture-v1',
   },
+  postgres: {
+    url: Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'),
+    tls: false,
+    caPath: '/tmp/test-postgres-ca.crt',
+  },
   tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
 }
 
@@ -48,6 +57,18 @@ const successfulJournal: JournalService = {
     }),
 }
 
+const successfulEvidenceStore: EvidenceStoreService = {
+  check: Effect.void,
+  persist: ({ evaluation }) =>
+    Effect.succeed({
+      runId: evaluation.runId,
+      deduplicated: false,
+      artifactCount: 5,
+      eventCount: evaluation.events.length,
+      gateCount: evaluation.verdict.gates.length,
+    }),
+}
+
 const fetchJson = async (port: number, path: string, method = 'GET') => {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { method })
   return {
@@ -55,6 +76,36 @@ const fetchJson = async (port: number, path: string, method = 'GET') => {
     allow: response.headers.get('allow'),
     body: (await response.json()) as Record<string, unknown>,
   }
+}
+
+const unusedPort = () =>
+  new Promise<number>((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (address === null || typeof address === 'string') {
+        server.close()
+        reject(new Error('test server did not bind a TCP port'))
+        return
+      }
+      server.close((error) => (error === undefined ? resolve(address.port) : reject(error)))
+    })
+  })
+
+const waitForStatus = async (port: number, expectedStatus: string) => {
+  const deadline = Date.now() + 2_000
+  let lastError: unknown
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchJson(port, '/v1/status')
+      if (response.body.status === expectedStatus) return response
+    } catch (error) {
+      lastError = error
+    }
+    await Bun.sleep(20)
+  }
+  throw new Error(`Bayn did not reach ${expectedStatus}`, { cause: lastError })
 }
 
 const readyState = (): RuntimeState => {
@@ -67,6 +118,13 @@ const readyState = (): RuntimeState => {
       provenance,
       evaluation: { ...evaluationWithoutEvents, eventCount: events.length },
       reconciliation: { runId: evaluation.runId, accountCount: 13, transferCount: events.length, exact: true },
+      persistence: {
+        runId: evaluation.runId,
+        deduplicated: false,
+        artifactCount: 5,
+        eventCount: events.length,
+        gateCount: evaluation.verdict.gates.length,
+      },
     },
     error: null,
   }
@@ -152,6 +210,7 @@ describe('Bayn startup lifecycle', () => {
     const strategy: StrategyService = {
       name: 'test-strategy',
       universe: fixtureProtocol.universe,
+      parameters: fixtureProtocol,
       provenance,
       evaluate: (bars, manifest) => {
         calls += 1
@@ -163,6 +222,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(Strategy, strategy),
       ),
     )
@@ -180,6 +240,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -200,6 +261,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -226,6 +288,7 @@ describe('Bayn startup lifecycle', () => {
       initialize({ ...config, runOnStartup: false }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -248,6 +311,7 @@ describe('Bayn startup lifecycle', () => {
       initialize({ ...config, operationTimeoutMs: 10 }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -265,6 +329,7 @@ describe('Bayn startup lifecycle', () => {
       run(config).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
         Effect.timeoutOrElse({
           duration: 250,
@@ -278,6 +343,74 @@ describe('Bayn startup lifecycle', () => {
     if (Exit.isFailure(exit)) {
       expect(Cause.pretty(exit.cause)).toContain('unexpected startup defect')
       expect(Cause.pretty(exit.cause)).not.toContain('remained alive')
+    }
+  })
+
+  test('keeps readiness closed when durable evidence cannot be committed', async () => {
+    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const unavailable: EvidenceStoreService = {
+      check: Effect.void,
+      persist: () =>
+        Effect.fail(
+          new DatabaseError({
+            failure: 'unavailable',
+            operation: 'persist',
+            message: 'database unavailable',
+          }),
+        ),
+    }
+
+    await Effect.runPromise(
+      initialize(config, state).pipe(
+        Effect.provideService(MarketData, { load: Effect.succeed(makeSnapshot()) }),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, unavailable),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+      ),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAIL_CLOSED',
+      evidence: null,
+      error: expect.stringContaining('database.persist-evaluation'),
+    })
+  })
+
+  test('keeps HTTP live and readiness closed when database layer setup fails', async () => {
+    const port = await unusedPort()
+    const unavailableDatabase = {
+      ...config,
+      port,
+      postgres: {
+        ...config.postgres,
+        tls: true,
+        caPath: `/tmp/bayn-missing-ca-${randomUUID()}.crt`,
+      },
+    }
+    const dependencies = Layer.mergeAll(
+      Layer.succeed(MarketData, { load: Effect.succeed(makeSnapshot()) }),
+      Layer.succeed(Journal, successfulJournal),
+      EvidenceStoreRuntimeLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)),
+      TsmomStrategyLayer(fixtureProtocol, provenance),
+    )
+    const fiber = Effect.runFork(run(unavailableDatabase).pipe(Effect.provide(dependencies)))
+
+    try {
+      const status = await waitForStatus(port, 'FAIL_CLOSED')
+      expect(status).toMatchObject({
+        status: 200,
+        body: {
+          status: 'FAIL_CLOSED',
+          error: expect.stringContaining('database.health-check'),
+        },
+      })
+      expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
+      expect(await fetchJson(port, '/readyz')).toMatchObject({
+        status: 503,
+        body: { ready: false, status: 'FAIL_CLOSED' },
+      })
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(fiber))
     }
   })
 })
