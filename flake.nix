@@ -263,6 +263,11 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "signal-publisher-image" = import ./nix/images/signal-publisher.nix {
+              inherit pkgs lib nodejs repoRevision;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
             "sag-image" = import ./nix/images/sag.nix {
               inherit pkgs lib nodejs;
               repoRoot = ./.;

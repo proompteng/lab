@@ -1,0 +1,134 @@
+name: signal-publisher-release
+
+on:
+  workflow_run:
+    workflows:
+      - signal-publisher-build-push
+    types:
+      - completed
+
+concurrency:
+  group: signal-publisher-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        uses: actions/download-artifact@v4
+        with:
+          name: signal-publisher-release-contract
+          path: .artifacts/signal-publisher
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate release contract
+        id: release
+        shell: bash
+        env:
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          contract=.artifacts/signal-publisher/release-contract.json
+          test "$(jq -r '.service' "$contract")" = signal-publisher
+          test "$(jq -r '.image' "$contract")" = registry.ide-newton.ts.net/lab/signal-publisher
+          test "$(jq -r '.packageAttr' "$contract")" = signal-publisher-image
+          source_sha="$(jq -r '.sourceSha' "$contract")"
+          tag="$(jq -r '.tag' "$contract")"
+          digest="$(jq -r '.digest' "$contract")"
+          test "$source_sha" = "$WORKFLOW_SHA"
+          git merge-base --is-ancestor "$source_sha" HEAD
+          git diff --quiet "$source_sha..HEAD" -- \
+            services/signal-publisher \
+            nix/images/signal-publisher.nix \
+            nix/images/bun-workspace-service.nix \
+            flake.nix \
+            flake.lock \
+            package.json \
+            bun.lock
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            echo "source_sha=$source_sha"
+            echo "tag=$tag"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Verify and pin image
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          IMAGE_TAG: ${{ steps.release.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
+        run: |
+          set -euo pipefail
+          nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/signal-publisher@${IMAGE_DIGEST}" linux/amd64 linux/arm64
+          bun install --frozen-lockfile --ignore-scripts --filter @proompteng/signal-publisher
+          bun run services/signal-publisher/src/update-manifests.ts \
+            --source-sha "$SOURCE_SHA" \
+            --tag "$IMAGE_TAG" \
+            --digest "$IMAGE_DIGEST"
+
+      - name: Create deploy pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/signal-publisher-release-${{ steps.release.outputs.tag }}
+          base: main
+          title: 'chore(signal): promote publisher ${{ steps.release.outputs.tag }}'
+          commit-message: 'chore(signal): promote publisher ${{ steps.release.outputs.tag }}'
+          add-paths: |
+            argocd/applications/torghut/clickhouse/kustomization.yaml
+            argocd/applications/torghut/clickhouse/signal-publisher-cronjob.yaml
+          body: |
+            ## Summary
+
+            Promote the immutable Signal adjusted-daily publisher image and activate its GitOps CronJob.
+
+            - Source commit: `${{ steps.release.outputs.source_sha }}`
+            - Image tag: `${{ steps.release.outputs.tag }}`
+            - Image digest: `${{ steps.release.outputs.digest }}`
+
+            ## Related Issues
+
+            PROOMPT-357
+
+            ## Testing
+
+            - OCI index contains `linux/amd64` and `linux/arm64`.
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            Adds a bounded, idempotent daily publisher. It has no broker or capital authority.
+
+            ## Checklist
+
+            - [x] Testing section documents exact validation.
+            - [x] Runtime source revision and image digest are immutable.
+            - [x] No broker or capital-promotion authority is introduced.

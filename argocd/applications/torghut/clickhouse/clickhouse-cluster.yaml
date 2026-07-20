@@ -89,6 +89,15 @@ spec:
       bayn/result_overflow_mode: throw
       bayn/max_memory_usage: 2147483648
       bayn/max_threads: 4
+      signal_publisher/max_execution_time: 120
+      signal_publisher/max_result_rows: 1000000
+      signal_publisher/result_overflow_mode: throw
+      signal_publisher/max_memory_usage: 2147483648
+      signal_publisher/max_threads: 4
+      signal_publisher/insert_quorum: 2
+      signal_publisher/insert_quorum_parallel: 0
+      signal_publisher/insert_quorum_timeout: 60000
+      signal_publisher/select_sequential_consistency: 1
       notebook/readonly: 1
       notebook/max_execution_time: 30
       notebook/max_result_rows: 100000
@@ -113,6 +122,24 @@ spec:
         - 192.168.0.0/16
       bayn/grants/query:
         - GRANT SELECT ON signal.adjusted_daily_bars_v1
+        - GRANT SELECT ON signal.adjusted_daily_bars_v2
+        - GRANT SELECT ON signal.exchange_sessions_v1
+        - GRANT SELECT ON signal.snapshot_manifests_v1
+      signal_publisher/password_sha256_hex:
+        valueFrom:
+          secretKeyRef:
+            name: signal-publisher-clickhouse-auth
+            key: password_sha256_hex
+      signal_publisher/profile: signal_publisher
+      signal_publisher/quota: default
+      signal_publisher/networks/ip:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      signal_publisher/grants/query:
+        - GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2
+        - GRANT SELECT, INSERT ON signal.exchange_sessions_v1
+        - GRANT SELECT, INSERT ON signal.snapshot_manifests_v1
       default/password_sha256_hex:
         valueFrom:
           secretKeyRef:

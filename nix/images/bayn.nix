@@ -22,8 +22,8 @@ import ./bun-workspace-service.nix {
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
   depsHash = {
-    x86_64-linux = "sha256-ETTh/mPfj5MlszjVfMCQMDlrowBvKgbmoBTgSPLxeto=";
-    aarch64-linux = "sha256-3IQVR5Z/bsqZEnV6lxPwPeLrQTWhFx+doLGtWeci3uc=";
+    x86_64-linux = "sha256-Ws9+JspLkyoPOaodc/xvJdz/ERHSbf1Mo1KatGv/T7Y=";
+    aarch64-linux = "sha256-H9QzprjNct0lMHUp5O3avguvBSIwgjtRhLPJXhrARb4=";
   };
   installFilters = [
     "@proompteng/bayn"
@@ -34,7 +34,7 @@ import ./bun-workspace-service.nix {
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/backfill.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "

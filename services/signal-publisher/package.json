@@ -1,12 +1,10 @@
 {
-  "name": "@proompteng/bayn",
+  "name": "@proompteng/signal-publisher",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.ts --target=node --external tigerbeetle-node --outdir=dist",
-    "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
-    "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
+    "build": "bun build src/main.ts --target=node --outdir=dist",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
@@ -14,10 +12,9 @@
     "tsc": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@clickhouse/client": "1.23.1",
     "@effect/platform-node": "4.0.0-beta.99",
-    "effect": "4.0.0-beta.99",
-    "tigerbeetle-node": "0.17.9"
+    "@effect/sql-clickhouse": "4.0.0-beta.99",
+    "effect": "4.0.0-beta.99"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

@@ -1,0 +1,108 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: signal-adjusted-daily-publisher
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: signal-adjusted-daily-publisher
+    app.kubernetes.io/part-of: signal
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  schedule: "30 18 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  suspend: true
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: signal-adjusted-daily-publisher
+            app.kubernetes.io/part-of: signal
+        spec:
+          automountServiceAccountToken: false
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          restartPolicy: Never
+          serviceAccountName: torghut-runtime
+          securityContext:
+            fsGroup: 65532
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: publish
+              image: registry.ide-newton.ts.net/lab/signal-publisher:bootstrap
+              imagePullPolicy: IfNotPresent
+              args:
+                - daily
+              env:
+                - name: SIGNAL_CODE_REVISION
+                  value: "0000000000000000000000000000000000000000"
+                - name: SIGNAL_IMAGE_REPOSITORY
+                  value: registry.ide-newton.ts.net/lab/signal-publisher
+                - name: SIGNAL_IMAGE_DIGEST
+                  value: sha256:0000000000000000000000000000000000000000000000000000000000000000
+                - name: SIGNAL_CLICKHOUSE_URL
+                  value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+                - name: SIGNAL_CLICKHOUSE_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: signal-publisher-clickhouse-auth
+                      key: username
+                - name: SIGNAL_CLICKHOUSE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: signal-publisher-clickhouse-auth
+                      key: password
+                - name: APCA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_KEY_ID
+                - name: APCA_API_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_SECRET_KEY
+                - name: SIGNAL_SYMBOLS
+                  value: DBC,EEM,EFA,GLD,IEF,SPY,TLT,VNQ
+                - name: SIGNAL_START_DATE
+                  value: "2017-01-01"
+                - name: SIGNAL_ALPACA_FEED
+                  value: sip
+                - name: SIGNAL_CALENDAR_VERSION
+                  value: alpaca-us-equity-calendar-v1
+                - name: SIGNAL_FINALIZATION_LAG_MINUTES
+                  value: "90"
+                - name: SIGNAL_OPERATION_TIMEOUT_MS
+                  value: "60000"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                readOnlyRootFilesystem: true
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi
