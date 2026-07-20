@@ -47,7 +47,7 @@ production publication source.
 
 The `signal_publisher` ClickHouse principal has only `SELECT, INSERT` on the three publication tables. It cannot create,
 alter, truncate, or drop objects. Schema creation is an additive GitOps migration using the existing administrative
-identity. Bayn has only `SELECT` on the legacy table and all three publication tables.
+identity. Bayn has only `SELECT`; its runtime uses the three publication tables and cannot mutate Signal data.
 
 ## Operator invocation
 
@@ -69,5 +69,5 @@ cannot insert.
 
 Rollback is fail-closed: suspend the CronJob through GitOps, preserve finalized and partially staged rows for diagnosis,
 and revert the publisher/user manifests only after no Job is active. Do not delete either the legacy table or the
-additive snapshot tables. Bayn continues to read `adjusted_daily_bars_v1` until its separate finalized-snapshot reader
-ticket is deployed.
+additive snapshot tables. Bayn remains bound to its configured finalized snapshot until a separately reviewed GitOps
+change selects another one.

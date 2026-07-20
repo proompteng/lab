@@ -8,16 +8,18 @@ not call a broker, submit an order, or promote capital. Later authority is unloc
 recovery, reconciliation, and observation gates.
 
 The current deployment retains TigerBeetle as the deterministic simulation journal while Bayn-owned PostgreSQL stores
-the durable evaluation evidence. The roadmap replaces the transitional Signal read and simulation accounting
-incrementally before any paper mutation work begins.
+the durable evaluation evidence. Signal input is an exact finalized, content-addressed snapshot. Simulation accounting
+is replaced incrementally before any paper mutation work begins.
 
 ## Critical path
 
 1. A Signal-owned publisher captures adjusted daily bars and exchange sessions into an immutable snapshot and writes
    its manifest last. Historical and daily modes use the same validation and finalization path.
-2. The runtime's dedicated ClickHouse identity has `SELECT` only. It still reads the transitional
-   `signal.adjusted_daily_bars_v1` table until the bounded finalized-snapshot reader is adopted.
-3. Bayn validates every bar and hashes the ordered bar contents plus coverage into an immutable input manifest.
+2. The runtime's dedicated ClickHouse identity has `SELECT` only. The Effect ClickHouse client reads one configured
+   manifest and its rows from the fixed `snapshot_manifests_v1`, `exchange_sessions_v1`, and `adjusted_daily_bars_v2`
+   tables using typed parameters and sequentially consistent reads.
+3. Bayn reproduces the publisher's manifest, session, bar, and snapshot hashes; rejects mixed, duplicate, unexpected,
+   incomplete, future, or out-of-bound input; and emits a bounded immutable input manifest.
 4. The committed `tsmom-v1` protocol forms signals at month-end close and executes at the next common session open.
 5. One evaluator produces strategy, buy-and-hold, direct-volatility, and doubled-cost results on comparable dates.
 6. Deterministic events become double-entry transfers in a Bayn-owned TigerBeetle ledger. Existing IDs are accepted
@@ -44,10 +46,12 @@ in HTTP status with an unverified behavior marker, forces evaluation and journal
 build facts. The production Nix image does not enable that mode: absent, partial, or mismatched embedded attribution
 prevents startup.
 
-The current transitional run ID is the SHA-256 hash of:
+The run ID is the SHA-256 hash of:
 
-- the runtime-provenance envelope; and
-- the exact ClickHouse input-manifest hash, including an ordered content hash of all bars.
+- source revision and immutable OCI image identity;
+- compiled strategy behavior and the complete decoded protocol;
+- complete finalized Signal snapshot and exchange-calendar provenance; and
+- explicit data, lookback, and evaluation bounds.
 
 Decision and fill IDs derive from canonical event payloads. TigerBeetle account and transfer IDs derive from the run ID,
 event ID, and journal leg. Repeating the same run is idempotent; a changed price, protocol, or source revision creates a
@@ -59,10 +63,6 @@ every stored payload against its content hash. A collision, partial run, altered
 reference fails closed. Protocol locks and snapshot references are inserted and read back inside the same transaction
 as the run, so no partial evidence survives a failed write.
 
-This transitional identity is deliberately not `bayn.run-identity.v1`: the current ClickHouse table does not yet
-provide finalized publication provenance, an exchange-calendar version, or explicit evaluation bounds. The finalized
-snapshot and bounded-read roadmap slices must supply those facts before the target identity is used.
-
 ## Versioned contract boundary
 
 The target evaluation path uses the executable v1 contracts in [`contracts/v1.md`](contracts/v1.md). They strictly
@@ -71,9 +71,9 @@ authority. Unknown versions and excess fields fail closed. Run identity binds th
 digest, compiled strategy behavior hash, decoded strategy parameters, finalized snapshot, exchange-calendar version,
 and explicit bounds through canonical JSON and SHA-256.
 
-Runtime provenance, strict TSMOM parameter decoding, and transactional evaluation persistence are adopted contract
-slices. Finalized-snapshot identity, bounded reads, continuous health, and removal of the legacy TigerBeetle dependency
-remain separate roadmap tickets with their own rollout evidence.
+Runtime provenance, finalized-snapshot identity, bounded reads, strict TSMOM parameter decoding, run identity, and
+transactional evaluation persistence are adopted contract slices. Continuous health and removal of the legacy
+TigerBeetle dependency remain separate roadmap tickets with their own rollout evidence.
 
 ## Economic test
 

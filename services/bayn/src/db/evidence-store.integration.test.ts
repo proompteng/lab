@@ -36,9 +36,17 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
     url: 'http://clickhouse.invalid',
     username: 'bayn',
     password: Redacted.make('unused'),
-    database: 'signal',
-    table: 'adjusted_daily_bars_v1',
-    datasetVersion: 'fixture-v1',
+    snapshotId: '1'.repeat(64),
+    publicationAsOf: '2026-07-17',
+    calendarVersion: 'fixture-calendar-v1',
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: '2018-01-02',
+      dataEnd: '2026-07-17',
+      lookbackStart: '2018-01-02',
+      evaluationStart: '2019-01-02',
+      evaluationEnd: '2026-07-17',
+    },
   },
   postgres: { url: Redacted.make(url), tls: false, caPath: '/unused' },
   tigerBeetle: { clusterId: 2_001n, replicaAddresses: ['127.0.0.1:3000'], ledger: 7_001 },
@@ -168,6 +176,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
 
     expect(result.first).toMatchObject({ runId: input.evaluation.runId, deduplicated: false })
+    expect(result.first.artifactCount).toBe(6)
     expect(result.second).toEqual({ ...result.first, deduplicated: true })
     expect(result.runs).toEqual([
       {
@@ -233,7 +242,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         yield* sql`
           UPDATE bayn_snapshot_references
           SET first_session = first_session + 1
-          WHERE snapshot_id = ${input.evaluation.inputManifest.hash}
+          WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
         `
         return yield* store.persist(input).pipe(Effect.flip)
       }),

@@ -21,22 +21,29 @@ import {
 const sha = (character: string): string => character.repeat(64)
 
 const snapshot = {
-  schemaVersion: 'bayn.finalized-snapshot.v1' as const,
+  schemaVersion: 'bayn.finalized-snapshot.v2' as const,
   snapshotId: sha('a'),
-  publicationId: 'signal-adjusted-etf-2025-12-31',
-  datasetVersion: 'adjusted-etf-v1',
+  publicationId: sha('b'),
+  publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1',
   source: 'alpaca',
   sourceFeed: 'sip',
   adjustment: 'all',
   calendarVersion: 'XNYS-2025a',
-  publishedAt: '2026-01-01T01:05:00.000Z',
+  publisherSourceRevision: '1'.repeat(40),
+  publisherImage: {
+    repository: 'registry.ide-newton.ts.net/lab/signal-publisher',
+    digest: `sha256:${sha('2')}`,
+  },
   finalizedAt: '2026-01-01T01:00:00.000Z',
+  requestedStart: '2020-01-02',
   firstSession: '2020-01-02',
   lastSession: '2025-12-31',
   asOfSession: '2025-12-31',
   symbols: ['EEM', 'SPY'],
   rowCount: 3_020,
-  contentHash: sha('b'),
+  sessionCount: 1_510,
+  contentHash: sha('3'),
+  sessionsContentHash: sha('4'),
 }
 
 const bounds = {
@@ -97,13 +104,14 @@ describe('Bayn contract decoding', () => {
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, firstSession: '2025-02-30' }))
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, symbols: ['SPY', 'SPY'] }))
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, symbols: ['SPY', 'EEM'] }))
-    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, finalizedAt: '2026-01-01T01:10:00.000Z' }))
+    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, rowCount: snapshot.rowCount - 1 }))
+    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, requestedStart: '2020-01-03' }))
     await expectFailure(decodeEvaluationBounds({ ...bounds, evaluationStart: '2019-12-31' }))
     await expectFailure(decodeEvaluationBounds({ ...bounds, evaluationEnd: '2026-01-02' }))
   })
 
   test('rejects unknown versions and forward-incompatible fields', async () => {
-    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, schemaVersion: 'bayn.finalized-snapshot.v2' }))
+    await expectFailure(decodeFinalizedSnapshot({ ...snapshot, schemaVersion: 'bayn.finalized-snapshot.v1' }))
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, futureField: true }))
   })
 })
@@ -134,7 +142,7 @@ describe('Bayn run identity', () => {
       { ...material, image: { ...material.image, digest: `sha256:${sha('1')}` } },
       { ...material, strategy: { ...material.strategy, behaviorHash: sha('2') } },
       { ...material, strategy: { ...material.strategy, parameters: { lookbacks: [21], transactionCostBps: 5 } } },
-      { ...material, finalizedSnapshot: { ...snapshot, contentHash: sha('3') } },
+      { ...material, finalizedSnapshot: { ...snapshot, contentHash: sha('7') } },
       { ...material, bounds: { ...bounds, evaluationEnd: '2025-12-30' } },
       {
         ...material,
@@ -187,7 +195,7 @@ describe('Bayn runtime provenance', () => {
       schemaVersion: 'bayn.runtime-provenance.v1',
       contractVersions: {
         runtimeProvenance: 'bayn.runtime-provenance.v1',
-        inputManifest: 'bayn.input-manifest.v1',
+        inputManifest: 'bayn.input-manifest.v2',
         evaluation: 'bayn.evaluation.v1',
       },
     })

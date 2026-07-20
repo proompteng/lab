@@ -1,4 +1,4 @@
-import type { RuntimeProvenance } from './contracts'
+import { makeRunIdentity, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1, hashObject } from './hash'
 import { hashTsmomParameters } from './protocol'
 import type {
@@ -54,20 +54,39 @@ const sampleStandardDeviation = (values: readonly number[]): number => {
   return Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1))
 }
 
-const alignBars = (bars: readonly DailyBar[], universe: readonly string[]): readonly AlignedSession[] => {
+const alignBars = (
+  bars: readonly DailyBar[],
+  universe: readonly string[],
+  inputManifest: InputManifest,
+): readonly AlignedSession[] => {
+  if (bars.length !== inputManifest.rowCount) throw new Error('strategy input row count does not match manifest')
+  const requiredSymbols = new Set(universe)
   const byDate = new Map<IsoDate, Map<string, DailyBar>>()
   for (const bar of bars) {
+    if (!requiredSymbols.has(bar.symbol)) throw new Error(`strategy input contains unexpected symbol ${bar.symbol}`)
     const session = byDate.get(bar.sessionDate) ?? new Map<string, DailyBar>()
+    if (session.has(bar.symbol)) throw new Error(`strategy input contains duplicate ${bar.symbol} ${bar.sessionDate}`)
     session.set(bar.symbol, bar)
     byDate.set(bar.sessionDate, session)
   }
-  return [...byDate.entries()]
-    .filter(([, session]) => universe.every((symbol) => session.has(symbol)))
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([date, session]) => ({
+  const sessions = [...byDate.entries()].sort(([left], [right]) => left.localeCompare(right))
+  if (sessions.length !== inputManifest.sessionCount) {
+    throw new Error('strategy input session count does not match manifest')
+  }
+  const aligned = sessions.map(([date, session]) => {
+    const actualSymbols = [...session.keys()].sort()
+    if (actualSymbols.join(',') !== universe.join(',')) {
+      throw new Error(`strategy input session ${date} is incomplete`)
+    }
+    return {
       date,
       bars: Object.fromEntries(universe.map((symbol) => [symbol, session.get(symbol)!])),
-    }))
+    }
+  })
+  if (aligned[0]?.date !== inputManifest.firstSession || aligned.at(-1)?.date !== inputManifest.lastSession) {
+    throw new Error('strategy input bounds do not match manifest')
+  }
+  return aligned
 }
 
 const isMonthEnd = (sessions: readonly AlignedSession[], index: number): boolean => {
@@ -354,22 +373,43 @@ export const evaluateTsmom = (
   if (provenance.strategy.parameterHash !== protocolHash) {
     throw new Error('runtime provenance parameter hash does not match decoded TSMOM parameters')
   }
-  const runId = canonicalHashV1({
-    schemaVersion: 'bayn.transitional-run-identity.v1',
-    provenance,
-    inputManifestHash: inputManifest.hash,
-  })
-  const sessions = alignBars(bars, protocol.universe)
+  const { hash: inputManifestHash, ...inputManifestMaterial } = inputManifest
+  if (canonicalHashV1(inputManifestMaterial) !== inputManifestHash) {
+    throw new Error('input manifest hash does not match its content')
+  }
+  const runId = makeRunIdentity({
+    schemaVersion: 'bayn.run-identity.v1',
+    sourceRevision: provenance.sourceRevision,
+    image: provenance.image,
+    strategy: {
+      name: provenance.strategy.name,
+      behaviorHash: provenance.strategy.behaviorHash,
+      parameters: protocol,
+    },
+    finalizedSnapshot: inputManifest.finalizedSnapshot,
+    calendarVersion: inputManifest.finalizedSnapshot.calendarVersion,
+    bounds: inputManifest.bounds,
+  }).runId
+  const sessions = alignBars(bars, protocol.universe, inputManifest)
   const maximumLookback = Math.max(...protocol.lookbacks)
   const signalIndices = sessions
     .map((_, index) => index)
-    .filter((index) => index >= maximumLookback && index < sessions.length - 1 && isMonthEnd(sessions, index))
+    .filter(
+      (index) =>
+        index >= maximumLookback &&
+        index < sessions.length - 1 &&
+        isMonthEnd(sessions, index) &&
+        sessions[index - maximumLookback].date >= inputManifest.bounds.lookbackStart &&
+        sessions[index + 1].date >= inputManifest.bounds.evaluationStart &&
+        sessions[index + 1].date <= inputManifest.bounds.evaluationEnd,
+    )
   if (signalIndices.length === 0)
     throw new Error('dataset has no eligible month-end signal followed by an execution session')
   const startIndex = signalIndices[0] + 1
-  if (sessions.length - startIndex < protocol.thresholds.minimumObservations) {
+  const evaluationSessions = sessions.filter((session) => session.date <= inputManifest.bounds.evaluationEnd)
+  if (evaluationSessions.length - startIndex < protocol.thresholds.minimumObservations) {
     throw new Error(
-      `dataset has ${sessions.length - startIndex} comparable observations; ${protocol.thresholds.minimumObservations} required`,
+      `dataset has ${evaluationSessions.length - startIndex} comparable observations; ${protocol.thresholds.minimumObservations} required`,
     )
   }
 
@@ -394,7 +434,7 @@ export const evaluateTsmom = (
   const initialCapital = Number(BigInt(protocol.initialCapitalMicros)) / MICROS
 
   const strategy = simulate(
-    sessions,
+    evaluationSessions,
     strategyTargets,
     startIndex,
     initialCapital,
@@ -403,7 +443,7 @@ export const evaluateTsmom = (
     true,
   )
   const buyAndHold = simulate(
-    sessions,
+    evaluationSessions,
     buyAndHoldTargets,
     startIndex,
     initialCapital,
@@ -412,7 +452,7 @@ export const evaluateTsmom = (
     false,
   )
   const directVolTiming = simulate(
-    sessions,
+    evaluationSessions,
     directVolTargets,
     startIndex,
     initialCapital,
@@ -421,7 +461,7 @@ export const evaluateTsmom = (
     false,
   )
   const doubleCost = simulate(
-    sessions,
+    evaluationSessions,
     strategyTargets,
     startIndex,
     initialCapital,
