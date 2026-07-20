@@ -146,7 +146,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             (SELECT count(*)::integer FROM bayn_gate_outcomes WHERE run_id = run.run_id) AS gate_count
           FROM bayn_evaluation_runs AS run
         `
-        return { first, second, runs }
+        const gates = yield* sql<{
+          gate_name: string
+          actual: unknown
+          required: unknown
+          actual_type: string
+          required_type: string
+        }>`
+          SELECT
+            gate_name,
+            actual,
+            required,
+            jsonb_typeof(actual) AS actual_type,
+            jsonb_typeof(required) AS required_type
+          FROM bayn_gate_outcomes
+          WHERE run_id = ${input.evaluation.runId}
+          ORDER BY ordinal
+        `
+        return { first, second, runs, gates }
       }),
     )
 
@@ -160,6 +177,15 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         gate_count: result.first.gateCount,
       },
     ])
+    expect(result.gates).toEqual(
+      input.evaluation.verdict.gates.map((gate) => ({
+        gate_name: gate.name,
+        actual: gate.actual,
+        required: gate.required,
+        actual_type: typeof gate.actual,
+        required_type: typeof gate.required,
+      })),
+    )
   })
 
   test('creates distinct runs when bound runtime provenance changes', async () => {
@@ -195,6 +221,28 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(error).toBeInstanceOf(DatabaseError)
     expect(error.failure).toBe('invariant')
     expect(error.operation).toBe('read-receipt')
+  })
+
+  test('rejects a replay whose normalized snapshot bounds were altered', async () => {
+    const input = makeInput()
+    const error = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`
+          UPDATE bayn_snapshot_references
+          SET first_session = first_session + 1
+          WHERE snapshot_id = ${input.evaluation.inputManifest.hash}
+        `
+        return yield* store.persist(input).pipe(Effect.flip)
+      }),
+    )
+
+    expect(error).toBeInstanceOf(DatabaseError)
+    expect(error.failure).toBe('invariant')
+    expect(error.operation).toBe('snapshot-reference')
+    expect(error.message).toContain('stored snapshot reference diverged')
   })
 
   test('rolls back every table when an event constraint fails', async () => {

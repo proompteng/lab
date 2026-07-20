@@ -100,6 +100,8 @@ const SnapshotRow = Schema.Struct({
   adjustment: Schema.String,
   content_hash: Sha256,
   row_count: PositiveInteger,
+  first_session: Schema.String,
+  last_session: Schema.String,
   manifest: Schema.Unknown,
 })
 const ReceiptRow = Schema.Struct({
@@ -241,6 +243,8 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
 
 const makeEvidenceStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
+  const jsonScalar = (value: number | boolean | string) =>
+    sql.json(typeof value === 'string' ? JSON.stringify(value) : value)
 
   const health = SqlSchema.findOne({
     Request: Schema.Void,
@@ -267,6 +271,8 @@ const makeEvidenceStore = Effect.gen(function* () {
         adjustment,
         content_hash,
         row_count::integer AS row_count,
+        first_session::text,
+        last_session::text,
         manifest
       FROM bayn_snapshot_references
       WHERE snapshot_id = ${snapshotId}
@@ -585,6 +591,8 @@ const makeEvidenceStore = Effect.gen(function* () {
                 snapshot.adjustment === manifest.adjustment &&
                 snapshot.content_hash === manifest.contentHash &&
                 snapshot.row_count === manifest.rowCount &&
+                snapshot.first_session === manifest.firstSession &&
+                snapshot.last_session === manifest.lastSession &&
                 canonicalHashV1(snapshot.manifest) === canonicalHashV1(manifest),
               'snapshot-reference',
               'stored snapshot reference diverged from the evaluated input manifest',
@@ -674,8 +682,8 @@ const makeEvidenceStore = Effect.gen(function* () {
                 ${gate.ordinal},
                 ${gate.name},
                 ${gate.passed},
-                ${sql.json(JSON.stringify(gate.actual))},
-                ${sql.json(JSON.stringify(gate.required))},
+                ${jsonScalar(gate.actual)},
+                ${jsonScalar(gate.required)},
                 ${gate.contentHash}
               )
             `,
