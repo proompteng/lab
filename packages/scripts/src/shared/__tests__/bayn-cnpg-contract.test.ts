@@ -77,6 +77,7 @@ test('Bayn backups use an isolated protected plugin object store and bounded sch
   const cluster = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
   const schedule = readManifest('argocd/applications/bayn/postgres-scheduled-backup.yaml')
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
+  const restoreRunbook = readRepoFile('docs/bayn/cnpg-backup-restore.md')
 
   expect(bucket.metadata.name).toBe('cnpg-bayn-db')
   expect(bucket.metadata.annotations['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
@@ -131,6 +132,7 @@ test('Bayn backups use an isolated protected plugin object store and bounded sch
       'postgres-scheduled-backup.yaml',
     ]),
   )
+  expect(restoreRunbook).toContain('name: bayn-db-proof-UTC_SUFFIX')
 })
 
 test('Bayn and its database have explicit network paths and existing CNPG telemetry', () => {

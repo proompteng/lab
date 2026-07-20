@@ -66,6 +66,8 @@ the recovery Cluster has no backup stanza and only reads that archive.
    bootstrap:
      recovery:
        source: bayn-db-source
+       backup:
+         name: bayn-db-proof-UTC_SUFFIX
        database: bayn
        owner: bayn_app
    externalClusters:
