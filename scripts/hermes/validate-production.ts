@@ -336,7 +336,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n hermes delete "$migration_job" --wait=true',
     'kubectl -n hermes delete "$restore_job" --wait=true',
     'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; do test -r "$path"; done',
-    'The CronJob must remain suspended until every prior backup and the one-off Job have terminated',
+    'The CronJob must remain suspended until every prior backup',
     'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
     'direct public egress unexpectedly succeeded',
     "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
@@ -407,23 +407,42 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const maintenanceOwnershipAssertion =
     'test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath=\'{.spec.holderIdentity}\')" = "$maintenance_holder"'
   const restoreStageCleanupCommand = `${maintenanceWaitCommand} --cleanup-restore-stage`
+  const phaseOneSection = files.runbook.match(/## Phase 1:[\s\S]*?## API key rotation/)?.[0] ?? ''
   const restoreSection = files.runbook.match(/### Restore Hermes data[\s\S]*?## Completion evidence/)?.[0] ?? ''
   if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 3) {
     failures.push(`${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`)
   }
   if (
+    count(phaseOneSection, maintenanceAcquireCommand) !== 1 ||
     count(migrationSection, maintenanceAcquireCommand) !== 1 ||
     count(restoreSection, maintenanceAcquireCommand) !== 1
   ) {
     failures.push(`${productionPaths.runbook}: every maintenance operation must acquire the atomic Lease`)
   }
   if (
+    count(phaseOneSection, 'trap release_maintenance_lock EXIT') !== 1 ||
     count(migrationSection, 'trap release_maintenance_lock EXIT') !== 1 ||
     count(restoreSection, 'trap release_maintenance_lock EXIT') !== 1 ||
+    count(phaseOneSection, 'abort_maintenance()') !== 1 ||
     count(migrationSection, 'abort_maintenance()') !== 1 ||
     count(restoreSection, 'abort_maintenance()') !== 1
   ) {
     failures.push(`${productionPaths.runbook}: every maintenance Lease must release on exit and signals`)
+  }
+  const initialBackupCreateIndex = phaseOneSection.indexOf(
+    'kubectl -n hermes create job --from=cronjob/hermes-backup "$initial_backup_job"',
+  )
+  const initialBackupAcquireIndex = phaseOneSection.indexOf(maintenanceAcquireCommand)
+  const initialBackupWaitIndex = phaseOneSection.indexOf(maintenanceWaitCommand)
+  const initialBackupReleaseIndex = phaseOneSection.lastIndexOf('\n   release_maintenance_lock\n')
+  if (
+    count(phaseOneSection, '\n   release_maintenance_lock\n') !== 1 ||
+    initialBackupAcquireIndex < 0 ||
+    initialBackupWaitIndex <= initialBackupAcquireIndex ||
+    initialBackupCreateIndex <= initialBackupWaitIndex ||
+    initialBackupReleaseIndex <= initialBackupCreateIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: the one-off canary backup must hold the maintenance Lease`)
   }
   const migrationAcquireIndex = migrationSection.indexOf(maintenanceAcquireCommand)
   const migrationDryRunIndex = migrationSection.indexOf('migration-dry-run-job.yaml')

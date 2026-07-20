@@ -97,6 +97,13 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes get pod hermes-0 -o jsonpath='{range .spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}'
    kubectl -n hermes get pod hermes-0 -o jsonpath='{.spec.securityContext.runAsUser}{" "}{.spec.automountServiceAccountToken}{"\n"}'
    kubectl -n hermes get pvc data-hermes-0 backups-hermes-0
+   maintenance_holder="backup-canary-$(openssl rand -hex 8)"
+   release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
+   abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
+   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
+   trap release_maintenance_lock EXIT
+   trap abort_maintenance HUP INT TERM
+   bash scripts/hermes/wait-for-maintenance.sh
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
    backup_wait_deadline=$(( $(date +%s) + 3900 ))
    while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
@@ -135,14 +142,17 @@ The expected mirrored amd64 manifest digest is
    ' || backup_verified=false
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":false}}'
    test "$backup_verified" = true
+   release_maintenance_lock
+   trap - EXIT HUP INT TERM
+   unset maintenance_holder
    unset backup_verified
    ```
 
-   The CronJob must remain suspended until every prior backup and the one-off Job have terminated; `concurrencyPolicy` does
-   not prevent a manually created Job from overlapping the schedule. The one-off Job must complete and its log and checksum
-   verification must succeed. A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new
-   CronJob 26 hours for its first scheduled success, then monitors its last successful completion. A missing CronJob still
-   alerts, and backup failure never changes the gateway Pod's readiness.
+   The maintenance Lease must remain held. The CronJob must remain suspended until every prior backup and the one-off Job
+   have terminated; `concurrencyPolicy` does not prevent a manually created Job from overlapping the schedule. The one-off
+   Job must complete and its log and checksum verification must succeed. A standalone Job does not update the CronJob's
+   status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success, then monitors its last
+   successful completion. A missing CronJob still alerts, and backup failure never changes the gateway Pod's readiness.
 
 2. Port-forward the cluster-local API and keep the key out of command output:
 

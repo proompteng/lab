@@ -247,6 +247,18 @@ test('rejects maintenance operations without an atomic Lease', async () => {
   )
 })
 
+test('rejects creating the one-off backup outside the maintenance Lease', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   initial_backup_job="hermes-backup-initial-$(date -u +%Y%m%d%H%M%S)"\n',
+    '   release_maintenance_lock\n   initial_backup_job="hermes-backup-initial-$(date -u +%Y%m%d%H%M%S)"\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: the one-off canary backup must hold the maintenance Lease`,
+  )
+})
+
 test('rejects releasing the migration Lease before apply completes', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
