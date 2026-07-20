@@ -168,6 +168,7 @@ jobs:
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
+          install-ci-toolchain: 'true'
           require-preinstalled: 'true'
 
       - name: Verify Torghut Alloy config rollout digest
