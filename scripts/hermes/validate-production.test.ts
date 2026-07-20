@@ -231,6 +231,29 @@ test('rejects API key rotation without restart proof', async () => {
   )
 })
 
+test('rejects API key rotation that does not fail closed', async () => {
+  const files = await loadProductionFiles()
+  const rotationStart = files.runbook.indexOf('## API key rotation')
+  files.runbook =
+    files.runbook.slice(0, rotationStart) + files.runbook.slice(rotationStart).replace('set -euo pipefail', 'set +e')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "set -euo pipefail"`,
+  )
+})
+
+test('rejects API key rotation that reuses the terminated port-forward', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'kubectl -n hermes port-forward service/hermes 18642:8642 >"$rotation_port_forward_log" 2>&1 &',
+    '',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "kubectl -n hermes port-forward service/hermes 18642:8642"`,
+  )
+})
+
 test('rejects removing Hermes surfaces from production validation routing', async () => {
   const files = await loadProductionFiles()
   files.impactMap = files.impactMap.replace('      - docs/runbooks/hermes-production-rollout.md\n', '')

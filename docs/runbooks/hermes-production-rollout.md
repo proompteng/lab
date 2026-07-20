@@ -174,9 +174,26 @@ The expected mirrored amd64 manifest digest is
 
 External Secrets updates the Kubernetes Secret but cannot change environment variables in an existing container. Every API
 key rotation therefore includes a bounded Secret refresh, a gateway Pod restart, and old-key/new-key authentication proof.
-Run this in a private shell while the Phase 1 port-forward is active; record only HTTP status and health results:
+Stop the Phase 1 port-forward first. Run this in a dedicated private Bash process; it starts a new forwarder after the
+replacement Pod is ready, fails on every unmet gate, and records only HTTP status and health results:
 
 ```bash
+set -euo pipefail
+rotation_port_forward_pid=
+rotation_port_forward_log=
+cleanup_rotation() {
+  if [ -n "${rotation_port_forward_pid:-}" ]; then
+    kill "$rotation_port_forward_pid" 2>/dev/null || true
+    wait "$rotation_port_forward_pid" 2>/dev/null || true
+  fi
+  if [ -n "${rotation_port_forward_log:-}" ]; then
+    rm -f -- "$rotation_port_forward_log"
+  fi
+  unset old_api_key new_api_key previous_secret_version current_secret_version
+  unset rotation_port_forward_pid rotation_port_forward_log rotation_listener_ready rotation_http_code
+}
+trap cleanup_rotation EXIT
+trap 'exit 1' HUP INT TERM
 previous_secret_version=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.metadata.resourceVersion}')
 old_api_key=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d)
 new_api_key=$(openssl rand -hex 32)
@@ -191,16 +208,32 @@ done
 test "$current_secret_version" != "$previous_secret_version"
 kubectl -n hermes delete pod hermes-0
 kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+rotation_port_forward_log=$(mktemp)
+kubectl -n hermes port-forward service/hermes 18642:8642 >"$rotation_port_forward_log" 2>&1 &
+rotation_port_forward_pid=$!
+rotation_listener_ready=false
+for _ in $(seq 1 60); do
+  kill -0 "$rotation_port_forward_pid"
+  rotation_http_code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18642/health/detailed || true)
+  if [ "$rotation_http_code" = 401 ]; then
+    rotation_listener_ready=true
+    break
+  fi
+  sleep 1
+done
+test "$rotation_listener_ready" = true
 test "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $old_api_key" \
   http://127.0.0.1:18642/health/detailed)" = 401
 curl -fsS -H "Authorization: Bearer $new_api_key" http://127.0.0.1:18642/health/detailed | jq -e \
   '.status == "ok" and .gateway_state == "running"'
 argocd app sync hermes --prune=false
-unset old_api_key new_api_key previous_secret_version current_secret_version
+cleanup_rotation
+trap - EXIT HUP INT TERM
 ```
 
 Stop and roll back the 1Password value if the Secret does not refresh, the replacement Pod does not become ready, the old
-key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not rotation proof.
+key remains accepted, the replacement port-forward does not become ready, or the new key fails. Use 1Password item history
+from a new private shell if the fail-fast process has already exited. ExternalSecret `Ready` alone is not rotation proof.
 
 ## Phase 2: non-secret user-data migration
 

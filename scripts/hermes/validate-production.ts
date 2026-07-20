@@ -272,6 +272,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'printf "%s  %s\\n" "$expected_digest" "$archive_path" | sha256sum -c -',
     'printf "%s  %s\\n" "$expected_digest" "$archive" | sha256sum -c -',
   ])
+  const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Phase 2:/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, rotationSection, [
+    'set -euo pipefail',
+    'trap cleanup_rotation EXIT',
+    'kubectl -n hermes delete pod hermes-0',
+    'kubectl -n hermes rollout status statefulset/hermes --timeout=15m',
+    'rotation_port_forward_log=$(mktemp)',
+    'kubectl -n hermes port-forward service/hermes 18642:8642',
+    'test "$rotation_listener_ready" = true',
+    'test "$(curl -sS -o /dev/null -w \'%{http_code}\' -H "Authorization: Bearer $old_api_key"',
+    'curl -fsS -H "Authorization: Bearer $new_api_key"',
+    'cleanup_rotation',
+  ])
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
     '--ignore-failed-read',
     'kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw',
