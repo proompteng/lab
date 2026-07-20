@@ -47,11 +47,11 @@ spec:
                 - daily
               env:
                 - name: SIGNAL_CODE_REVISION
-                  value: "01ac72aafca390609885c2093236f4a10dd14a32"
+                  value: "948a8bb8f4a635ca7612319ca950e3b9b5930eba"
                 - name: SIGNAL_IMAGE_REPOSITORY
                   value: registry.ide-newton.ts.net/lab/signal-publisher
                 - name: SIGNAL_IMAGE_DIGEST
-                  value: sha256:8f573122837bdc97ee90c3054b266606fcb2a269ea4edee0ff1e81bb641bebda
+                  value: sha256:3e9b6acf05c02735fe07744899cf38392f4ea91bc67cf993d2fc931f8e487f53
                 - name: SIGNAL_CLICKHOUSE_URL
                   value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
                 - name: SIGNAL_CLICKHOUSE_USERNAME
