@@ -381,6 +381,7 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "7"
+                  argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
                 managedNamespaceMetadata:
                   labels:
                     # The TigerBeetle client requires an explicit io_uring seccomp exception.

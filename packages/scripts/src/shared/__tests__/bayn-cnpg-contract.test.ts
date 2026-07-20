@@ -56,6 +56,14 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   )
 })
 
+test('Bayn compares CNPG resources after admission defaulting', () => {
+  const applicationSet = readManifest('argocd/applicationsets/product.yaml')
+  const elements = applicationSet.spec.generators[0].matrix.generators[1].list.elements
+  const bayn = elements.find((element: { name: string }) => element.name === 'bayn')
+
+  expect(bayn.annotations['argocd.argoproj.io/compare-options']).toBe('ServerSideDiff=true,IncludeMutationWebhook=true')
+})
+
 test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
   const platform = readManifest('argocd/applications/cloudnative-pg/kustomization.yaml')
   const patches = platform.patches.map((patch: { patch: string }) => patch.patch).join('\n')
