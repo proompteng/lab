@@ -1,0 +1,76 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: bayn-db
+  labels:
+    app.kubernetes.io/name: bayn-db
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  description: Bayn control and evaluation evidence
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219
+  imagePullPolicy: IfNotPresent
+  enablePDB: true
+  enableSuperuserAccess: false
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                  - amd64
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  storage:
+    storageClass: rook-ceph-block
+    size: 10Gi
+    resizeInUseVolumes: true
+  bootstrap:
+    initdb:
+      database: bayn
+      owner: bayn_app
+      encoding: UTF8
+      dataChecksums: true
+  postgresql:
+    parameters:
+      password_encryption: scram-sha-256
+      ssl_min_protocol_version: TLSv1.3
+  backup:
+    target: prefer-standby
+    barmanObjectStore:
+      destinationPath: s3://cnpg-bayn
+      serverName: bayn-db-live
+      endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-bayn-db
+          key: AWS_ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-bayn-db
+          key: AWS_SECRET_ACCESS_KEY
+      data:
+        compression: snappy
+        jobs: 1
+        additionalCommandArgs:
+          - --max-bandwidth
+          - 8MB
+      wal:
+        compression: snappy
+        maxParallel: 2
+    retentionPolicy: 14d

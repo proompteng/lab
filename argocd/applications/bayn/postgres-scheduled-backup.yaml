@@ -1,0 +1,16 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: bayn-db-daily
+  labels:
+    app.kubernetes.io/name: bayn-db
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  schedule: "0 0 3 * * *"
+  immediate: true
+  backupOwnerReference: cluster
+  method: barmanObjectStore
+  cluster:
+    name: bayn-db
