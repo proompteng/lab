@@ -5,6 +5,8 @@ metadata:
   labels:
     app.kubernetes.io/name: bayn-db-restore-proof
     app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
 spec:
   podSelector:
     matchLabels:
