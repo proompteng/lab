@@ -443,11 +443,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ) {
     failures.push(`${productionPaths.runbook}: restore staging must clean up a stale staging Pod before create`)
   }
+  const idempotentHermesStop = 'hermes_pod_name=$(kubectl -n hermes get pod hermes-0 --ignore-not-found -o name)'
   if (
-    !restoreSection.includes('hermes_pod_name=$(kubectl -n hermes get pod hermes-0 --ignore-not-found -o name)') ||
-    restoreSection.includes('kubectl -n hermes wait pod/hermes-0 --for=delete')
+    count(migrationSection, idempotentHermesStop) !== 1 ||
+    count(restoreSection, idempotentHermesStop) !== 1 ||
+    files.runbook.includes('kubectl -n hermes wait pod/hermes-0 --for=delete')
   ) {
-    failures.push(`${productionPaths.runbook}: restore must treat an already-absent Hermes gateway as stopped`)
+    failures.push(
+      `${productionPaths.runbook}: migration and restore must treat an already-absent Hermes gateway as stopped`,
+    )
   }
   const cutoverSection = files.runbook.match(/## Phase 3:[\s\S]*?## Rollback/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, cutoverSection, [
@@ -456,9 +460,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Do not reuse the earlier archive.',
     'do not run Phase 2 step 5 because merged `main` now enables',
     'argocd app sync openclaw --prune=false',
-    'kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete --timeout=10m',
+    'openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)',
     'Sync Hermes from merged `main` only after the OpenClaw VMI is gone',
   ])
+  if (cutoverSection.includes('kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete')) {
+    failures.push(`${productionPaths.runbook}: cutover must treat an already-absent OpenClaw VMI as stopped`)
+  }
   if (
     cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service') >
     cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')

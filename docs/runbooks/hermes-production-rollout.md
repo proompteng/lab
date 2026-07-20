@@ -340,7 +340,20 @@ unset stale_maintenance_holder
    rm -rf -- "$hermes_stage_dir"
    unset hermes_stage_dir
    kubectl -n hermes scale statefulset/hermes --replicas=0
-   kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
+   hermes_stop_deadline=$(( $(date +%s) + 600 ))
+   while :; do
+     hermes_pod_name=$(kubectl -n hermes get pod hermes-0 --ignore-not-found -o name)
+     if [ -z "$hermes_pod_name" ]; then
+       break
+     fi
+     if [ "$(date +%s)" -ge "$hermes_stop_deadline" ]; then
+       kubectl -n hermes get pod hermes-0 -o wide >&2
+       echo 'Hermes gateway did not stop for migration; backups remain suspended' >&2
+       exit 1
+     fi
+     sleep 5
+   done
+   unset hermes_pod_name hermes_stop_deadline
    release_maintenance_lock
    trap - EXIT HUP INT TERM
    unset maintenance_holder
@@ -442,7 +455,20 @@ Cutover sequence:
    ```bash
    set -euo pipefail
    argocd app sync openclaw --prune=false
-   kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete --timeout=10m
+   openclaw_stop_deadline=$(( $(date +%s) + 600 ))
+   while :; do
+     openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)
+     if [ -z "$openclaw_vmi_name" ]; then
+       break
+     fi
+     if [ "$(date +%s)" -ge "$openclaw_stop_deadline" ]; then
+       kubectl -n openclaw get virtualmachineinstance openclaw -o wide >&2
+       echo 'OpenClaw VMI did not stop; do not provision Hermes with the Discord token' >&2
+       exit 1
+     fi
+     sleep 5
+   done
+   unset openclaw_vmi_name openclaw_stop_deadline
    ```
 
 4. In a private shell, transfer the existing bot token and numeric allowlist directly into the `hermes-runtime` 1Password

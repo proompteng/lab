@@ -271,12 +271,24 @@ test('rejects restore staging without stale Pod cleanup', async () => {
   )
 })
 
-test('rejects restore instructions that fail when the gateway is already absent', async () => {
+test('rejects maintenance instructions that fail when the gateway is already absent', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace('get pod hermes-0 --ignore-not-found -o name', 'get pod hermes-0 -o name')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: restore must treat an already-absent Hermes gateway as stopped`,
+    `${productionPaths.runbook}: migration and restore must treat an already-absent Hermes gateway as stopped`,
+  )
+})
+
+test('rejects cutover instructions that fail when the OpenClaw VMI is already absent', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'get virtualmachineinstance openclaw --ignore-not-found -o name',
+    'wait virtualmachineinstance/openclaw --for=delete',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)"`,
   )
 })
 
