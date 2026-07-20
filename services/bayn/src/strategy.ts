@@ -1,4 +1,4 @@
-import { makeRunIdentity, type RuntimeProvenance } from './contracts'
+import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1, hashObject } from './hash'
 import { hashTsmomParameters } from './protocol'
 import type {
@@ -365,14 +365,15 @@ export const evaluateTsmom = (
   protocol: TsmomProtocol,
   provenance: RuntimeProvenance,
 ): EvaluationResult => {
-  const protocolHash = hashTsmomParameters(protocol)
+  const parameterHash = hashTsmomParameters(protocol)
   if (provenance.strategy.name !== 'tsmom') throw new Error('runtime provenance strategy must be tsmom')
   if (provenance.strategy.parameterSchemaVersion !== protocol.schemaVersion) {
     throw new Error('runtime provenance parameter schema does not match decoded TSMOM parameters')
   }
-  if (provenance.strategy.parameterHash !== protocolHash) {
+  if (provenance.strategy.parameterHash !== parameterHash) {
     throw new Error('runtime provenance parameter hash does not match decoded TSMOM parameters')
   }
+  const protocolHash = makeStrategyProtocolHash(provenance.strategy)
   const { hash: inputManifestHash, ...inputManifestMaterial } = inputManifest
   if (canonicalHashV1(inputManifestMaterial) !== inputManifestHash) {
     throw new Error('input manifest hash does not match its content')

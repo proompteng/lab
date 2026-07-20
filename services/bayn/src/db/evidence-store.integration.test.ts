@@ -60,8 +60,8 @@ const makeClientRuntime = (config = makeConfig()) =>
 
 const snapshot = makeSnapshot(800)
 
-const makeInput = (sourceRevision = 'a'.repeat(40)): PersistEvaluationInput => {
-  const provenance = makeTestProvenance(fixtureProtocol, { sourceRevision })
+const makeInput = (sourceRevision = 'a'.repeat(40), behaviorHash = 'c'.repeat(64)): PersistEvaluationInput => {
+  const provenance = makeTestProvenance(fixtureProtocol, { sourceRevision, behaviorHash })
   const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
   const ledger = buildLedgerPlan(evaluation, 7_001)
   return {
@@ -209,6 +209,38 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     expect(first.evaluation.runId).not.toBe(second.evaluation.runId)
     expect(receipts.map((receipt) => receipt.runId)).toEqual([first.evaluation.runId, second.evaluation.runId])
+  })
+
+  test('locks strategy behavior and parameters under a composite protocol identity', async () => {
+    const first = makeInput('a'.repeat(40), 'c'.repeat(64))
+    const second = makeInput('a'.repeat(40), 'd'.repeat(64))
+    const protocols = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(first)
+        yield* store.persist(second)
+        return yield* sql<{ protocol_hash: string; behavior_hash: string; parameter_hash: string }>`
+          SELECT protocol_hash, behavior_hash, parameter_hash
+          FROM bayn_protocol_locks
+          ORDER BY behavior_hash
+        `
+      }),
+    )
+
+    expect(first.evaluation.protocolHash).not.toBe(second.evaluation.protocolHash)
+    expect(protocols).toEqual([
+      {
+        protocol_hash: first.evaluation.protocolHash,
+        behavior_hash: first.provenance.strategy.behaviorHash,
+        parameter_hash: first.provenance.strategy.parameterHash,
+      },
+      {
+        protocol_hash: second.evaluation.protocolHash,
+        behavior_hash: second.provenance.strategy.behaviorHash,
+        parameter_hash: second.provenance.strategy.parameterHash,
+      },
+    ])
   })
 
   test('rejects a complete receipt whose stored evidence was altered', async () => {
