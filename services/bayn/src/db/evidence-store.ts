@@ -20,7 +20,7 @@ import {
 import { canonicalHashV1 } from '../hash'
 import { reconcileMarkedEquity } from '../simulation-reconciliation'
 import { summarizeEvaluation } from '../strategy'
-import type { EvaluationResult, EvaluationSummary, ReconciliationResult } from '../types'
+import type { EvaluationResult, EvaluationSummary, InputManifest, ReconciliationResult } from '../types'
 import { migrationLoader } from './migrations'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
@@ -264,6 +264,25 @@ const runDatabase = <A, E, R>(operation: string, effect: Effect.Effect<A, E, R>)
 
 const ensure = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
   condition ? Effect.void : Effect.fail(databaseError('invariant', operation, message))
+
+const snapshotReferenceMatches = (row: typeof SnapshotRow.Type, inputManifest: InputManifest): boolean => {
+  const snapshot = inputManifest.finalizedSnapshot
+  return (
+    row.snapshot_id === snapshot.snapshotId &&
+    row.schema_version === snapshot.schemaVersion &&
+    row.database_name === inputManifest.database &&
+    row.table_name === inputManifest.tables.bars &&
+    row.dataset_version === snapshot.publicationSchemaVersion &&
+    row.source === snapshot.source &&
+    row.source_feed === snapshot.sourceFeed &&
+    row.adjustment === snapshot.adjustment &&
+    row.content_hash === snapshot.contentHash &&
+    row.row_count === snapshot.rowCount &&
+    row.first_session === snapshot.firstSession &&
+    row.last_session === snapshot.lastSession &&
+    canonicalHashV1(row.manifest) === canonicalHashV1(snapshot)
+  )
+}
 
 const protocolTransactionCostBpsMicros = (parameters: unknown): string => {
   if (
@@ -876,6 +895,12 @@ const makeEvidenceStore = Effect.gen(function* () {
         const cashChanges = yield* decodeCashChangesArtifact(artifacts.get('cash-changes')!.payload)
         const dailyMarks = yield* decodeDailyPositionMarksArtifact(artifacts.get('daily-position-marks')!.payload)
         const inputManifest = yield* decodeInputManifestArtifact(artifacts.get('input-manifest')!.payload)
+        const storedSnapshot = yield* getSnapshot({ snapshotId: stored.run.snapshotId })
+        yield* ensure(
+          snapshotReferenceMatches(storedSnapshot, inputManifest),
+          'recover-evidence',
+          'stored snapshot reference diverged from the recovered input manifest',
+        )
         const equityProof = yield* Effect.try({
           try: () =>
             reconcileMarkedEquity({
@@ -1043,18 +1068,7 @@ const makeEvidenceStore = Effect.gen(function* () {
           `
             const storedSnapshot = yield* getSnapshot({ snapshotId: plan.snapshotId })
             yield* ensure(
-              storedSnapshot.schema_version === finalizedSnapshot.schemaVersion &&
-                storedSnapshot.database_name === inputManifest.database &&
-                storedSnapshot.table_name === inputManifest.tables.bars &&
-                storedSnapshot.dataset_version === finalizedSnapshot.publicationSchemaVersion &&
-                storedSnapshot.source === finalizedSnapshot.source &&
-                storedSnapshot.source_feed === finalizedSnapshot.sourceFeed &&
-                storedSnapshot.adjustment === finalizedSnapshot.adjustment &&
-                storedSnapshot.content_hash === finalizedSnapshot.contentHash &&
-                storedSnapshot.row_count === finalizedSnapshot.rowCount &&
-                storedSnapshot.first_session === finalizedSnapshot.firstSession &&
-                storedSnapshot.last_session === finalizedSnapshot.lastSession &&
-                canonicalHashV1(storedSnapshot.manifest) === canonicalHashV1(finalizedSnapshot),
+              snapshotReferenceMatches(storedSnapshot, inputManifest),
               'snapshot-reference',
               'stored snapshot reference diverged from the evaluated input manifest',
             )

@@ -375,6 +375,28 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(error.message).toContain('stored snapshot reference diverged')
   })
 
+  test('fails recovery when the stored snapshot manifest was altered', async () => {
+    const input = makeInput()
+    const error = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`
+          UPDATE bayn_snapshot_references
+          SET manifest = ${sql.json({ corrupted: true })}
+          WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
+        `
+        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
+      }),
+    )
+
+    expect(error).toBeInstanceOf(DatabaseError)
+    expect(error.failure).toBe('invariant')
+    expect(error.operation).toBe('recover-evidence')
+    expect(error.message).toContain('stored snapshot reference diverged')
+  })
+
   test('rejects a replay whose initial capital was altered', async () => {
     const input = makeInput()
     const error = await runtime.runPromise(
