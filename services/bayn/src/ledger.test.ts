@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { Effect } from 'effect'
 import type { Account, Transfer } from 'tigerbeetle-node'
 
 import { assertReconciled, buildLedgerPlan, resolveReplicaAddresses } from './ledger'
@@ -57,12 +58,15 @@ describe('TigerBeetle simulation journal', () => {
 describe('TigerBeetle replica addresses', () => {
   test('resolves service hostnames once at startup and preserves numeric addresses', async () => {
     const lookups: string[] = []
-    const addresses = await resolveReplicaAddresses(
-      ['torghut-tigerbeetle.torghut.svc.cluster.local:3000', '10.244.5.234:3000', '3001'],
-      async (hostname) => {
-        lookups.push(hostname)
-        return ['10.244.5.234', '10.244.5.235']
-      },
+    const addresses = await Effect.runPromise(
+      resolveReplicaAddresses(
+        ['torghut-tigerbeetle.torghut.svc.cluster.local:3000', '10.244.5.234:3000', '3001'],
+        (hostname) =>
+          Effect.sync(() => {
+            lookups.push(hostname)
+            return ['10.244.5.234', '10.244.5.235']
+          }),
+      ),
     )
 
     expect(lookups).toEqual(['torghut-tigerbeetle.torghut.svc.cluster.local'])
@@ -70,12 +74,14 @@ describe('TigerBeetle replica addresses', () => {
   })
 
   test('rejects malformed, out-of-range, and IPv6-only endpoints', async () => {
-    expect(resolveReplicaAddresses(['missing-port'], async () => ['10.0.0.1'])).rejects.toThrow(
-      'invalid TigerBeetle replica address',
+    expect(
+      Effect.runPromise(resolveReplicaAddresses(['missing-port'], () => Effect.succeed(['10.0.0.1']))),
+    ).rejects.toThrow('invalid TigerBeetle replica address')
+    expect(
+      Effect.runPromise(resolveReplicaAddresses(['replica:70000'], () => Effect.succeed(['10.0.0.1']))),
+    ).rejects.toThrow('invalid TigerBeetle replica port')
+    expect(Effect.runPromise(resolveReplicaAddresses(['replica:3000'], () => Effect.succeed(['::1'])))).rejects.toThrow(
+      'has no IPv4 address',
     )
-    expect(resolveReplicaAddresses(['replica:70000'], async () => ['10.0.0.1'])).rejects.toThrow(
-      'invalid TigerBeetle replica port',
-    )
-    expect(resolveReplicaAddresses(['replica:3000'], async () => ['::1'])).rejects.toThrow('has no IPv4 address')
   })
 })

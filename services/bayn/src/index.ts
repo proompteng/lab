@@ -1,7 +1,7 @@
 import { NodeRuntime } from '@effect/platform-node'
 import { Cause, Effect, Layer, Logger } from 'effect'
 
-import { runBayn } from './app'
+import { run } from './app'
 import { loadConfig } from './config'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
@@ -14,7 +14,7 @@ const main = Effect.gen(function* () {
     JournalLive(config),
     TsmomStrategyLive,
   )
-  return yield* runBayn(config).pipe(Effect.provide(dependencies))
+  return yield* run(config).pipe(Effect.provide(dependencies))
 })
 
 const program = main.pipe(

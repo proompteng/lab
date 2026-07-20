@@ -49,7 +49,7 @@ describe('Effect configuration', () => {
 
     const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig, invalid)))
     expect(error).toMatchObject({
-      _tag: 'BaynError',
+      _tag: 'OperationalError',
       component: 'config',
       operation: 'load',
     })

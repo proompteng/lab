@@ -1,9 +1,9 @@
 import { Data } from 'effect'
 
-export type BaynComponent = 'config' | 'http' | 'market-data' | 'strategy' | 'journal'
+export type Component = 'config' | 'http' | 'market-data' | 'strategy' | 'journal'
 
-export class BaynError extends Data.TaggedError('BaynError')<{
-  readonly component: BaynComponent
+export class OperationalError extends Data.TaggedError('OperationalError')<{
+  readonly component: Component
   readonly operation: string
   readonly message: string
   readonly cause?: unknown
@@ -11,12 +11,18 @@ export class BaynError extends Data.TaggedError('BaynError')<{
 
 const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
-export const baynError = (component: BaynComponent, operation: string, message: string, cause?: unknown): BaynError =>
-  new BaynError({
+export const operationalError = (
+  component: Component,
+  operation: string,
+  message: string,
+  cause?: unknown,
+): OperationalError =>
+  new OperationalError({
     component,
     operation,
     message: cause === undefined ? message : `${message}: ${causeMessage(cause)}`,
     cause,
   })
 
-export const formatBaynError = (error: BaynError): string => `${error.component}.${error.operation}: ${error.message}`
+export const formatError = (error: OperationalError): string =>
+  `${error.component}.${error.operation}: ${error.message}`

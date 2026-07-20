@@ -1,4 +1,4 @@
-import { lookup } from 'node:dns/promises'
+import { Resolver } from 'node:dns/promises'
 import { isIP } from 'node:net'
 
 import {
@@ -13,60 +13,109 @@ import {
 } from 'tigerbeetle-node'
 import { Context, Effect, Layer } from 'effect'
 
-import type { BaynConfig } from './config'
-import { baynError, type BaynError } from './errors'
+import type { RuntimeConfig } from './config'
+import { operationalError, type OperationalError } from './errors'
 import { hashObject, stableU128, stableU64 } from './hash'
 import type { EvaluationResult, FillEvent, ReconciliationResult } from './types'
 
 const SCHEMA_VERSION = 1
 const BATCH_MAX = 8_189
 
-type ResolveHostname = (hostname: string) => Promise<readonly string[]>
+type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
 
-const lookupIpv4: ResolveHostname = async (hostname) =>
-  (await lookup(hostname, { all: true, family: 4, verbatim: true })).map(({ address }) => address)
+const lookupIpv4: ResolveHostname = (hostname) =>
+  Effect.suspend(() => {
+    const resolver = new Resolver()
+    return Effect.tryPromise({
+      try: () => resolver.resolve4(hostname),
+      catch: (cause) =>
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `failed to resolve TigerBeetle hostname ${hostname}`,
+          cause,
+        ),
+    }).pipe(Effect.onInterrupt(() => Effect.sync(() => resolver.cancel())))
+  })
 
-const parsePort = (value: string, address: string): number => {
-  if (!/^\d+$/.test(value)) throw new Error(`invalid TigerBeetle replica address: ${address}`)
+const parsePort = (value: string, address: string): Effect.Effect<number, OperationalError> => {
+  if (!/^\d+$/.test(value)) {
+    return Effect.fail(
+      operationalError('journal', 'resolve-replica-addresses', `invalid TigerBeetle replica address: ${address}`),
+    )
+  }
   const port = Number(value)
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`invalid TigerBeetle replica port: ${address}`)
+    return Effect.fail(
+      operationalError('journal', 'resolve-replica-addresses', `invalid TigerBeetle replica port: ${address}`),
+    )
   }
-  return port
+  return Effect.succeed(port)
 }
 
-export const resolveReplicaAddresses = async (
+const resolveReplicaAddress = (
+  configuredAddress: string,
+  resolveHostname: ResolveHostname,
+): Effect.Effect<readonly string[], OperationalError> =>
+  Effect.gen(function* () {
+    const address = configuredAddress.trim()
+    if (/^\d+$/.test(address)) {
+      yield* parsePort(address, address)
+      return [address]
+    }
+
+    const separator = address.lastIndexOf(':')
+    if (separator <= 0 || separator !== address.indexOf(':')) {
+      return yield* Effect.fail(
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `invalid TigerBeetle replica address: ${configuredAddress}`,
+        ),
+      )
+    }
+    const hostname = address.slice(0, separator)
+    const port = yield* parsePort(address.slice(separator + 1), address)
+    const addressFamily = isIP(hostname)
+    if (addressFamily === 4) return [`${hostname}:${port}`]
+    if (addressFamily === 6) {
+      return yield* Effect.fail(
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `IPv6 TigerBeetle replica addresses are not supported: ${address}`,
+        ),
+      )
+    }
+
+    const ipv4Addresses = (yield* resolveHostname(hostname)).filter((value) => isIP(value) === 4)
+    if (ipv4Addresses.length === 0) {
+      return yield* Effect.fail(
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `TigerBeetle replica hostname has no IPv4 address: ${hostname}`,
+        ),
+      )
+    }
+    return ipv4Addresses.map((ipv4Address) => `${ipv4Address}:${port}`)
+  })
+
+export const resolveReplicaAddresses = (
   configuredAddresses: readonly string[],
   resolveHostname: ResolveHostname = lookupIpv4,
-): Promise<string[]> => {
-  if (configuredAddresses.length === 0) throw new Error('at least one TigerBeetle replica address is required')
-
-  const resolved = await Promise.all(
-    configuredAddresses.map(async (configuredAddress) => {
-      const address = configuredAddress.trim()
-      if (/^\d+$/.test(address)) {
-        parsePort(address, address)
-        return [address]
-      }
-
-      const separator = address.lastIndexOf(':')
-      if (separator <= 0 || separator !== address.indexOf(':')) {
-        throw new Error(`invalid TigerBeetle replica address: ${configuredAddress}`)
-      }
-      const hostname = address.slice(0, separator)
-      const port = parsePort(address.slice(separator + 1), address)
-      const addressFamily = isIP(hostname)
-      if (addressFamily === 4) return [`${hostname}:${port}`]
-      if (addressFamily === 6) throw new Error(`IPv6 TigerBeetle replica addresses are not supported: ${address}`)
-
-      const ipv4Addresses = (await resolveHostname(hostname)).filter((value) => isIP(value) === 4)
-      if (ipv4Addresses.length === 0) throw new Error(`TigerBeetle replica hostname has no IPv4 address: ${hostname}`)
-      return ipv4Addresses.map((ipv4Address) => `${ipv4Address}:${port}`)
-    }),
-  )
-
-  return [...new Set(resolved.flat())]
-}
+): Effect.Effect<string[], OperationalError> =>
+  configuredAddresses.length === 0
+    ? Effect.fail(
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          'at least one TigerBeetle replica address is required',
+        ),
+      )
+    : Effect.forEach(configuredAddresses, (address) => resolveReplicaAddress(address, resolveHostname), {
+        concurrency: 'unbounded',
+      }).pipe(Effect.map((resolved) => [...new Set(resolved.flat())]))
 
 const AccountCode = {
   cash: 110,
@@ -94,8 +143,8 @@ export interface LedgerPlan {
 }
 
 export interface JournalService {
-  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, BaynError>
-  readonly check: Effect.Effect<void, BaynError>
+  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, OperationalError>
+  readonly check: Effect.Effect<void, OperationalError>
 }
 
 export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
@@ -352,45 +401,76 @@ export const assertReconciled = (
   }
 }
 
-const createAndVerifyAccounts = async (client: Client, accounts: readonly Account[]): Promise<void> => {
-  const results = await client.createAccounts([...accounts])
-  if (results.length !== accounts.length) throw new Error('TigerBeetle returned an incomplete account result batch')
-  const existingIds: bigint[] = []
-  for (let index = 0; index < results.length; index += 1) {
-    const status = results[index].status
-    if (status === CreateAccountStatus.created) continue
-    if (status === CreateAccountStatus.exists) {
-      existingIds.push(accounts[index].id)
-      continue
-    }
-    throw new Error(`TigerBeetle rejected account ${accounts[index].id} with status ${status}`)
-  }
-  if (existingIds.length > 0) {
-    const existing = await client.lookupAccounts(existingIds)
-    const expected = accounts.filter((value) => existingIds.includes(value.id))
-    assertUniqueExact('existing account', existing, expected, accountMetadataMatches)
-  }
-}
+const request = <A>(client: Client, operation: string, execute: () => Promise<A>): Effect.Effect<A, OperationalError> =>
+  Effect.tryPromise({
+    try: execute,
+    catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+  }).pipe(Effect.onInterrupt(() => Effect.sync(() => client.destroy())))
 
-const createAndVerifyTransfers = async (client: Client, transfers: readonly Transfer[]): Promise<void> => {
-  const results = await client.createTransfers([...transfers])
-  if (results.length !== transfers.length) throw new Error('TigerBeetle returned an incomplete transfer result batch')
-  const existingIds: bigint[] = []
-  for (let index = 0; index < results.length; index += 1) {
-    const status = results[index].status
-    if (status === CreateTransferStatus.created) continue
-    if (status === CreateTransferStatus.exists) {
-      existingIds.push(transfers[index].id)
-      continue
-    }
-    throw new Error(`TigerBeetle rejected transfer ${transfers[index].id} with status ${status}`)
-  }
-  if (existingIds.length > 0) {
-    const existing = await client.lookupTransfers(existingIds)
+const validate = <A>(operation: string, evaluate: () => A): Effect.Effect<A, OperationalError> =>
+  Effect.try({
+    try: evaluate,
+    catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+  })
+
+const createAndVerifyAccounts = (client: Client, accounts: readonly Account[]): Effect.Effect<void, OperationalError> =>
+  Effect.gen(function* () {
+    const results = yield* request(client, 'create-accounts', () => client.createAccounts([...accounts]))
+    const existingIds = yield* validate('verify-account-results', () => {
+      if (results.length !== accounts.length) {
+        throw new Error('TigerBeetle returned an incomplete account result batch')
+      }
+      const ids: bigint[] = []
+      for (let index = 0; index < results.length; index += 1) {
+        const status = results[index].status
+        if (status === CreateAccountStatus.created) continue
+        if (status === CreateAccountStatus.exists) {
+          ids.push(accounts[index].id)
+          continue
+        }
+        throw new Error(`TigerBeetle rejected account ${accounts[index].id} with status ${status}`)
+      }
+      return ids
+    })
+    if (existingIds.length === 0) return
+
+    const existing = yield* request(client, 'lookup-existing-accounts', () => client.lookupAccounts(existingIds))
+    const expected = accounts.filter((value) => existingIds.includes(value.id))
+    yield* validate('verify-existing-accounts', () =>
+      assertUniqueExact('existing account', existing, expected, accountMetadataMatches),
+    )
+  })
+
+const createAndVerifyTransfers = (
+  client: Client,
+  transfers: readonly Transfer[],
+): Effect.Effect<void, OperationalError> =>
+  Effect.gen(function* () {
+    const results = yield* request(client, 'create-transfers', () => client.createTransfers([...transfers]))
+    const existingIds = yield* validate('verify-transfer-results', () => {
+      if (results.length !== transfers.length) {
+        throw new Error('TigerBeetle returned an incomplete transfer result batch')
+      }
+      const ids: bigint[] = []
+      for (let index = 0; index < results.length; index += 1) {
+        const status = results[index].status
+        if (status === CreateTransferStatus.created) continue
+        if (status === CreateTransferStatus.exists) {
+          ids.push(transfers[index].id)
+          continue
+        }
+        throw new Error(`TigerBeetle rejected transfer ${transfers[index].id} with status ${status}`)
+      }
+      return ids
+    })
+    if (existingIds.length === 0) return
+
+    const existing = yield* request(client, 'lookup-existing-transfers', () => client.lookupTransfers(existingIds))
     const expected = transfers.filter((value) => existingIds.includes(value.id))
-    assertUniqueExact('existing transfer', existing, expected, transferMatches)
-  }
-}
+    yield* validate('verify-existing-transfers', () =>
+      assertUniqueExact('existing transfer', existing, expected, transferMatches),
+    )
+  })
 
 const queryFilter = (ledger: number): QueryFilter => ({
   user_data_128: 0n,
@@ -408,70 +488,56 @@ const journalAndReconcile = (
   client: Client,
   ledger: number,
   result: EvaluationResult,
-): Effect.Effect<ReconciliationResult, BaynError> =>
-  tigerBeetleRequest(client, 'journal-and-reconcile', async () => {
-    const plan = buildLedgerPlan(result, ledger)
-    await createAndVerifyAccounts(client, plan.accounts)
-    await createAndVerifyTransfers(client, plan.transfers)
+): Effect.Effect<ReconciliationResult, OperationalError> =>
+  Effect.gen(function* () {
+    const plan = yield* validate('build-plan', () => buildLedgerPlan(result, ledger))
+    yield* createAndVerifyAccounts(client, plan.accounts)
+    yield* createAndVerifyTransfers(client, plan.transfers)
     const accountQuery = { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 }
     const transferQuery = { ...queryFilter(ledger), user_data_64: plan.runTag, limit: plan.transfers.length + 1 }
-    const [accounts, transfers] = await Promise.all([
-      client.queryAccounts(accountQuery),
-      client.queryTransfers(transferQuery),
-    ])
-    assertReconciled(plan, accounts, transfers)
+    const [accounts, transfers] = yield* Effect.all(
+      [
+        request(client, 'query-accounts', () => client.queryAccounts(accountQuery)),
+        request(client, 'query-transfers', () => client.queryTransfers(transferQuery)),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    yield* validate('reconcile', () => assertReconciled(plan, accounts, transfers))
     return { runId: result.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
-  })
-
-const tigerBeetleRequest = <A>(
-  client: Client,
-  operation: string,
-  request: () => Promise<A>,
-): Effect.Effect<A, BaynError> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const cancel = () => client.destroy()
-      signal.addEventListener('abort', cancel, { once: true })
-      if (signal.aborted) cancel()
-      try {
-        return await request()
-      } finally {
-        signal.removeEventListener('abort', cancel)
-      }
-    },
-    catch: (cause) => baynError('journal', operation, `TigerBeetle ${operation} failed`, cause),
   })
 
 export interface JournalDependencies {
   readonly createClient: typeof createClient
-  readonly resolveReplicaAddresses: (configuredAddresses: readonly string[]) => Promise<string[]>
+  readonly resolveReplicaAddresses: (
+    configuredAddresses: readonly string[],
+  ) => Effect.Effect<string[], OperationalError>
 }
 
 const defaultDependencies: JournalDependencies = { createClient, resolveReplicaAddresses }
 
 export const JournalLive = (
-  config: BaynConfig,
+  config: RuntimeConfig,
   dependencies: JournalDependencies = defaultDependencies,
-): Layer.Layer<Journal, BaynError> =>
+): Layer.Layer<Journal, OperationalError> =>
   Layer.effect(
     Journal,
     Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async (signal) => {
-          const replicaAddresses = await dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses)
-          signal.throwIfAborted()
-          return dependencies.createClient({
-            cluster_id: config.tigerBeetle.clusterId,
-            replica_addresses: replicaAddresses,
-          })
-        },
-        catch: (cause) => baynError('journal', 'connect', 'failed to create TigerBeetle client', cause),
-      }).pipe(
+      dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses).pipe(
+        Effect.flatMap((replicaAddresses) =>
+          Effect.try({
+            try: () =>
+              dependencies.createClient({
+                cluster_id: config.tigerBeetle.clusterId,
+                replica_addresses: replicaAddresses,
+              }),
+            catch: (cause) => operationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+          }),
+        ),
         Effect.timeoutOrElse({
           duration: config.operationTimeoutMs,
           orElse: () =>
             Effect.fail(
-              baynError(
+              operationalError(
                 'journal',
                 'connect',
                 `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
@@ -482,7 +548,7 @@ export const JournalLive = (
       (client) =>
         Effect.try({
           try: () => client.destroy(),
-          catch: (cause) => baynError('journal', 'close', 'failed to close TigerBeetle client', cause),
+          catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
         }).pipe(
           Effect.catch((error) =>
             Effect.logWarning('TigerBeetle client close failed').pipe(
@@ -492,9 +558,9 @@ export const JournalLive = (
         ),
     ).pipe(
       Effect.map((client) => ({
-        check: tigerBeetleRequest(client, 'connectivity-check', async () => {
-          await client.lookupAccounts([stableU128('bayn-connectivity-probe')])
-        }),
+        check: request(client, 'connectivity-check', () =>
+          client.lookupAccounts([stableU128('bayn-connectivity-probe')]),
+        ).pipe(Effect.asVoid),
         journalAndReconcile: (result) => journalAndReconcile(client, config.tigerBeetle.ledger, result),
       })),
     ),
