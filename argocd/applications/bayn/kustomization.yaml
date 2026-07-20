@@ -8,6 +8,8 @@ resources:
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
+  - postgres-restore-proof.yaml
+  - postgres-restore-proof-networkpolicy.yaml
   - deployment.yaml
   - service.yaml
   - networkpolicy.yaml
