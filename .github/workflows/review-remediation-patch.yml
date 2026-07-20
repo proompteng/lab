@@ -1,0 +1,56 @@
+name: Review remediation patch
+
+on:
+  push:
+    branches:
+      - codex/review-remediation-*
+    paths:
+      - .github/review-remediation.patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: review-remediation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor == 'gregkonush'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Validate patch-only trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff-tree --no-commit-id --name-only -r HEAD)
+          if [ "${#changed[@]}" -ne 1 ] || [ "${changed[0]}" != '.github/review-remediation.patch' ]; then
+            printf 'Trigger commit must change only .github/review-remediation.patch\n' >&2
+            printf 'Changed: %s\n' "${changed[*]}" >&2
+            exit 1
+          fi
+
+      - name: Apply committed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check .github/review-remediation.patch
+          git apply .github/review-remediation.patch
+          rm .github/review-remediation.patch
+          git diff --check
+
+      - name: Commit applied patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix: apply bounded review remediation'
+          git push origin HEAD:${GITHUB_REF_NAME}
