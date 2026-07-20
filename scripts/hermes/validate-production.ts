@@ -1,0 +1,211 @@
+import { readFile } from 'node:fs/promises'
+
+const hermesImage =
+  'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
+const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
+
+export const productionPaths = {
+  kustomization: 'argocd/applications/hermes/kustomization.yaml',
+  statefulSet: 'argocd/applications/hermes/statefulset.yaml',
+  config: 'argocd/applications/hermes/config.yaml',
+  externalSecret: 'argocd/applications/hermes/external-secret.yaml',
+  networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
+  egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
+  serviceAccount: 'argocd/applications/hermes/serviceaccount.yaml',
+  migrationDryRun: 'argocd/applications/hermes/operations/migration-dry-run-job.yaml',
+  migrationApply: 'argocd/applications/hermes/operations/migration-apply-job.yaml',
+  restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
+  restore: 'argocd/applications/hermes/operations/restore-job.yaml',
+  platform: 'argocd/applicationsets/platform.yaml',
+  runbook: 'docs/runbooks/hermes-production-rollout.md',
+} as const
+
+export type ProductionPath = keyof typeof productionPaths
+export type ProductionFiles = Record<ProductionPath, string>
+
+function count(content: string, term: string): number {
+  return content.split(term).length - 1
+}
+
+function requireTerms(failures: string[], path: string, content: string, terms: string[]): void {
+  for (const term of terms) {
+    if (!content.includes(term)) {
+      failures.push(`${path}: missing production invariant ${JSON.stringify(term)}`)
+    }
+  }
+}
+
+function forbidTerms(failures: string[], path: string, content: string, terms: string[]): void {
+  for (const term of terms) {
+    if (content.includes(term)) {
+      failures.push(`${path}: contains forbidden production term ${JSON.stringify(term)}`)
+    }
+  }
+}
+
+export async function loadProductionFiles(): Promise<ProductionFiles> {
+  const entries = await Promise.all(
+    Object.entries(productionPaths).map(async ([name, path]) => [name, await readFile(path, 'utf8')] as const),
+  )
+  return Object.fromEntries(entries) as ProductionFiles
+}
+
+export function validateProductionContent(files: ProductionFiles): string[] {
+  const failures: string[] = []
+
+  requireTerms(failures, productionPaths.kustomization, files.kustomization, [
+    'namespace: hermes',
+    '- statefulset.yaml',
+    '- network-policy.yaml',
+    '- external-secret.yaml',
+  ])
+  forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
+    'kind: Namespace',
+    'operations/',
+    'migration-apply-job.yaml',
+    'restore-job.yaml',
+  ])
+
+  if (count(files.statefulSet, `image: ${hermesImage}`) !== 3) {
+    failures.push(
+      `${productionPaths.statefulSet}: all three Hermes containers must use the mirrored immutable amd64 digest`,
+    )
+  }
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    'persistentVolumeClaimRetentionPolicy:',
+    'whenDeleted: Retain',
+    'whenScaled: Retain',
+    'automountServiceAccountToken: false',
+    'runAsUser: 10000',
+    'runAsGroup: 10000',
+    'readOnlyRootFilesystem: true',
+    'capabilities:\n              drop:\n                - ALL',
+    'seccompProfile:\n              type: RuntimeDefault',
+    'API_SERVER_KEY',
+    'name: data',
+    'name: backups',
+    'storageClassName: rook-ceph-block',
+  ])
+  forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    ':latest',
+    'privileged: true',
+    'hostPath:',
+    'hostNetwork: true',
+    'hostPID: true',
+  ])
+
+  requireTerms(failures, productionPaths.config, files.config, [
+    '_config_version: 33',
+    'base_url: http://flamingo.flamingo.svc.cluster.local/v1',
+    'discord:\n    enabled: false',
+    'api_server:\n    enabled: true',
+    'cron_mode: deny',
+    'orchestrator_enabled: false',
+    'inherit_mcp_toolsets: false',
+    'mcp_servers: {}',
+    'hooks_auto_accept: false',
+  ])
+  forbidTerms(failures, productionPaths.config, files.config, ['api_key:', 'token:', 'allow_all_users: true'])
+
+  requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
+    'name: onepassword-infra',
+    'deletionPolicy: Retain',
+    'key: hermes-runtime/API_SERVER_KEY',
+  ])
+  forbidTerms(failures, productionPaths.externalSecret, files.externalSecret, ['dataFrom:', 'kind: Secret'])
+
+  requireTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
+    'name: hermes-default-deny',
+    'podSelector: {}',
+    'namespace: hermes',
+    'cidr: 0.0.0.0/0',
+    '- 10.0.0.0/8',
+    '- 100.64.0.0/10',
+    '- 169.254.0.0/16',
+    '- 192.168.0.0/16',
+  ])
+  forbidTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
+    '          port: 80\n',
+    '          port: 22\n',
+  ])
+
+  if (count(files.egressProxy, `image: ${squidImage}`) !== 1) {
+    failures.push(`${productionPaths.egressProxy}: Squid must use its immutable reviewed digest`)
+  }
+  requireTerms(failures, productionPaths.egressProxy, files.egressProxy, [
+    'automountServiceAccountToken: false',
+    'runAsUser: 13',
+    'readOnlyRootFilesystem: true',
+    'allowPrivilegeEscalation: false',
+  ])
+
+  requireTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
+    'kind: ServiceAccount',
+    'automountServiceAccountToken: false',
+  ])
+  forbidTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
+    'kind: Role',
+    'kind: ClusterRole',
+    'kind: RoleBinding',
+    'kind: ClusterRoleBinding',
+  ])
+
+  for (const path of ['migrationDryRun', 'migrationApply', 'restore'] as const) {
+    const content = files[path]
+    if (count(content, `image: ${hermesImage}`) !== 1) {
+      failures.push(`${productionPaths[path]}: operation must use the immutable mirrored Hermes digest`)
+    }
+    requireTerms(failures, productionPaths[path], content, [
+      'automountServiceAccountToken: false',
+      'runAsUser: 10000',
+      'readOnlyRootFilesystem: true',
+      'backoffLimit: 0',
+    ])
+    forbidTerms(failures, productionPaths[path], content, ['--migrate-secrets', 'kind: Secret', ':latest'])
+  }
+  if (count(files.restoreStage, `image: ${hermesImage}`) !== 1) {
+    failures.push(`${productionPaths.restoreStage}: restore staging must use the immutable mirrored Hermes digest`)
+  }
+  requireTerms(failures, productionPaths.restoreStage, files.restoreStage, [
+    'automountServiceAccountToken: false',
+    'runAsUser: 10000',
+    'readOnlyRootFilesystem: true',
+    'claimName: backups-hermes-0',
+  ])
+  forbidTerms(failures, productionPaths.restoreStage, files.restoreStage, ['kind: Secret', ':latest'])
+  requireTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--preset', 'user-data', '--dry-run'])
+  requireTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--preset', 'user-data', '--yes'])
+
+  const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.platform, hermesApplication, [
+    'path: argocd/applications/hermes',
+    'namespace: hermes',
+    'automation: manual',
+    'external-secrets.proompteng.ai/enabled: "true"',
+    'pod-security.kubernetes.io/enforce: restricted',
+    'argocd.argoproj.io/sync-options: Prune=false',
+  ])
+
+  requireTerms(failures, productionPaths.runbook, files.runbook, [
+    'Never run OpenClaw and Hermes with the same Discord token at the same time.',
+    'Never pass `--migrate-secrets`',
+    'Never run `hermes claw cleanup`',
+    'OpenClaw VM/PVC identities',
+    'single-writer Discord message lifecycle IDs',
+  ])
+
+  return failures
+}
+
+async function main(): Promise<void> {
+  const failures = validateProductionContent(await loadProductionFiles())
+  if (failures.length > 0) {
+    console.error(failures.join('\n'))
+    process.exit(1)
+  }
+  console.log(`validated ${Object.keys(productionPaths).length} Hermes production surfaces`)
+}
+
+if (import.meta.main) {
+  await main()
+}

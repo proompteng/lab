@@ -1,0 +1,153 @@
+_config_version: 33
+
+model:
+  default: qwen36-flamingo
+  provider: custom
+  base_url: http://flamingo.flamingo.svc.cluster.local/v1
+  api_mode: chat_completions
+  context_length: 262144
+
+terminal:
+  backend: local
+  cwd: /opt/data/workspace/tuslagch
+  timeout: 180
+  lifetime_seconds: 900
+  home_mode: profile
+
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: true
+  warn_after:
+    exact_failure: 2
+    same_tool_failure: 3
+    idempotent_no_progress: 2
+  hard_stop_after:
+    exact_failure: 4
+    same_tool_failure: 6
+    idempotent_no_progress: 4
+
+compression:
+  enabled: true
+  threshold: 0.65
+  target_ratio: 0.25
+  protect_last_n: 20
+  protect_first_n: 1
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 4400
+  user_char_limit: 2200
+  nudge_interval: 10
+  flush_min_turns: 4
+
+session_reset:
+  mode: both
+  idle_minutes: 1440
+  at_hour: 4
+
+max_concurrent_sessions: 4
+group_sessions_per_user: true
+
+streaming:
+  enabled: false
+
+skills:
+  creation_nudge_interval: 0
+
+agent:
+  max_turns: 40
+  gateway_timeout: 1800
+  gateway_timeout_warning: 1200
+  restart_drain_timeout: 90
+  api_max_retries: 2
+  verify_on_stop: true
+  verbose: false
+  reasoning_effort: medium
+  coding_instructions:
+    - Keep all mutable work inside /opt/data/workspace/tuslagch.
+    - Never claim an external action completed without a fresh readback.
+
+platform_toolsets:
+  cli: [file, memory, todo]
+  api_server: [file, memory, todo]
+  discord: [terminal, file, memory, todo]
+
+platforms:
+  discord:
+    enabled: false
+    reply_to_mode: first
+    gateway_restart_notification: false
+    typing_indicator: true
+  api_server:
+    enabled: true
+    extra:
+      host: 0.0.0.0
+      port: 8642
+      model_name: tuslagch
+
+gateway:
+  write_sessions_json: false
+  api_server:
+    max_concurrent_runs: 2
+
+approvals:
+  mode: manual
+  timeout: 90
+  cron_mode: deny
+  mcp_reload_confirm: true
+  destructive_slash_confirm: true
+  deny:
+    - "*kubectl*"
+    - "*docker*"
+    - "*podman*"
+    - "*printenv*"
+    - "* /proc/*/environ*"
+    - "*curl*"
+    - "*wget*"
+    - "*nc *"
+    - "*ncat*"
+    - "*socat*"
+    - "*dig *"
+    - "*nslookup*"
+    - "*ssh *"
+    - "*scp *"
+    - "*git push --force*"
+
+command_allowlist: []
+
+checkpoints:
+  enabled: true
+  max_snapshots: 20
+
+plugins:
+  enabled: []
+  disabled: []
+
+mcp_servers: {}
+
+delegation:
+  max_iterations: 20
+  max_concurrent_children: 1
+  max_spawn_depth: 1
+  orchestrator_enabled: false
+  subagent_auto_approve: false
+  inherit_mcp_toolsets: false
+
+code_execution:
+  timeout: 120
+  max_tool_calls: 10
+
+stt:
+  enabled: false
+
+privacy:
+  redact_pii: true
+
+hooks_auto_accept: false
+timezone: America/Los_Angeles
+
+updates:
+  pre_update_backup: false
+  backup_keep: 5
+  non_interactive_local_changes: discard

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hermes-restore-stage
+  namespace: hermes
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: restore
+spec:
+  serviceAccountName: hermes
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10000
+    runAsGroup: 10000
+    fsGroup: 10000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: stage
+      image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - sleep 3600
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+          ephemeral-storage: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+          ephemeral-storage: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      volumeMounts:
+        - name: backups
+          mountPath: /opt/backups
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: backups
+      persistentVolumeClaim:
+        claimName: backups-hermes-0
+    - name: tmp
+      emptyDir:
+        sizeLimit: 128Mi

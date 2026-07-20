@@ -109,6 +109,7 @@
     "atlas:rebuild": "bun run packages/scripts/src/atlas/rebuild.ts",
     "atlas:verify": "bun run packages/scripts/src/atlas/verify.ts",
     "lint:flamingo-hard-migration": "bun run scripts/jangar/validate-flamingo-hard-migration.ts",
+    "lint:hermes-production": "bun run scripts/hermes/validate-production.ts",
     "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {
