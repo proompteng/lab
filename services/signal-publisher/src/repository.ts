@@ -98,6 +98,16 @@ const asCount = (value: string | number, name: string): number => {
 const storage = <A>(message: string) =>
   Effect.mapError<A, PublicationError>((cause: A) => publicationError('storage', message, cause))
 
+export const insertBatchSize = 5_000
+
+export const partitionInsertRows = <A>(rows: readonly A[]): readonly (readonly A[])[] => {
+  const batches: A[][] = []
+  for (let offset = 0; offset < rows.length; offset += insertBatchSize) {
+    batches.push(rows.slice(offset, offset + insertBatchSize))
+  }
+  return batches
+}
+
 const decodeReadback = <A>(name: string, parse: () => A): Effect.Effect<A, PublicationError> =>
   Effect.try({ try: parse, catch: (cause) => publicationError('storage', `invalid ${name} readback`, cause) })
 
@@ -193,19 +203,22 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
       )
 
     const insert = <A>(table: string, snapshotId: string, kind: string, values: readonly A[]) =>
-      values.length === 0
-        ? Effect.void
-        : sql.insertQuery({ table, values: [...values], format: 'JSONEachRow' }).pipe(
-            sql.withQueryId(`signal-${kind}-${snapshotId.slice(-32)}`),
+      Effect.forEach(
+        partitionInsertRows(values),
+        (batch, index) =>
+          sql.insertQuery({ table, values: [...batch], format: 'JSONEachRow' }).pipe(
+            sql.withQueryId(`signal-${kind}-${snapshotId.slice(-32)}-${index}`),
             sql.withClickhouseSettings({
               insert_deduplicate: 1,
-              insert_deduplication_token: `${kind}-${snapshotId}-${createHash('sha256')
-                .update(JSON.stringify(values))
+              insert_deduplication_token: `${kind}-${snapshotId}-${index}-${createHash('sha256')
+                .update(JSON.stringify(batch))
                 .digest('hex')}`,
             }),
-            storage(`failed to insert ${kind}`),
+            storage(`failed to insert ${kind} batch ${index + 1}`),
             Effect.asVoid,
-          )
+          ),
+        { concurrency: 1, discard: true },
+      )
 
     return {
       loadBars,
