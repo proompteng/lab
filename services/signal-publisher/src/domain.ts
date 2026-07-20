@@ -255,8 +255,10 @@ export const buildPublication = (input: BuildPublicationInput): Publication => {
       const { snapshot_id: _, ...withoutSnapshot } = row
       barsWithoutSnapshot.push(withoutSnapshot)
     }
-    if (!barKeys.has(`${symbol}\u001f${input.publicationAsOf}`)) {
-      reject(`final session ${input.publicationAsOf} is incomplete: missing ${symbol}`)
+    for (const session of calendar) {
+      if (!barKeys.has(`${symbol}\u001f${session.date}`)) {
+        reject(`incomplete snapshot: missing ${symbol} ${session.date}`)
+      }
     }
   }
   if (barsWithoutSnapshot.length === 0) reject('provider returned no adjusted bars')

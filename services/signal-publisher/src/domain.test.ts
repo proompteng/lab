@@ -89,7 +89,7 @@ describe('Adjusted-daily snapshot domain', () => {
     verifyPublication(first, first.bars, first.sessions, [first.manifest])
   })
 
-  test('rejects malformed, duplicate, non-session, and incomplete final bars', () => {
+  test('rejects malformed, duplicate, non-session, and incomplete sessions', () => {
     expect(() =>
       buildPublication(
         input({ barsBySymbol: { ...input().barsBySymbol, SPY: [{ ...bar('2026-07-17', 621), l: 700 }] } }),
@@ -110,7 +110,10 @@ describe('Adjusted-daily snapshot domain', () => {
     ).toThrow('not an exchange session')
     expect(() =>
       buildPublication(input({ barsBySymbol: { ...input().barsBySymbol, TLT: [bar('2026-07-16', 89)] } })),
-    ).toThrow('final session 2026-07-17 is incomplete')
+    ).toThrow('incomplete snapshot: missing TLT 2026-07-17')
+    expect(() =>
+      buildPublication(input({ barsBySymbol: { ...input().barsBySymbol, TLT: [bar('2026-07-17', 90)] } })),
+    ).toThrow('incomplete snapshot: missing TLT 2026-07-16')
     expect(() =>
       buildPublication(input({ calendar: [{ date: '2026-07-17', open: '16:00', close: '09:30' }] })),
     ).toThrow('invalid market hours')
