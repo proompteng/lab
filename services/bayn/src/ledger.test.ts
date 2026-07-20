@@ -60,7 +60,7 @@ describe('TigerBeetle replica addresses', () => {
     const lookups: string[] = []
     const addresses = await Effect.runPromise(
       resolveReplicaAddresses(
-        ['torghut-tigerbeetle.torghut.svc.cluster.local:3000', '10.244.5.234:3000', '3001'],
+        ['torghut-tigerbeetle.torghut.svc.cluster.local:3000', '10.244.5.234:3000', '127.0.0.1', '3001'],
         (hostname) =>
           Effect.sync(() => {
             lookups.push(hostname)
@@ -70,7 +70,7 @@ describe('TigerBeetle replica addresses', () => {
     )
 
     expect(lookups).toEqual(['torghut-tigerbeetle.torghut.svc.cluster.local'])
-    expect(addresses).toEqual(['10.244.5.234:3000', '10.244.5.235:3000', '3001'])
+    expect(addresses).toEqual(['10.244.5.234:3000', '10.244.5.235:3000', '127.0.0.1', '3001'])
   })
 
   test('rejects malformed, out-of-range, and IPv6-only endpoints', async () => {
@@ -82,6 +82,9 @@ describe('TigerBeetle replica addresses', () => {
     ).rejects.toThrow('invalid TigerBeetle replica port')
     expect(Effect.runPromise(resolveReplicaAddresses(['replica:3000'], () => Effect.succeed(['::1'])))).rejects.toThrow(
       'has no IPv4 address',
+    )
+    expect(Effect.runPromise(resolveReplicaAddresses(['::1']))).rejects.toThrow(
+      'IPv6 TigerBeetle replica addresses are not supported',
     )
   })
 })
