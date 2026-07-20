@@ -11,6 +11,9 @@ spec:
   schedule: "0 0 3 * * *"
   immediate: true
   backupOwnerReference: cluster
-  method: barmanObjectStore
+  target: prefer-standby
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
   cluster:
     name: bayn-db

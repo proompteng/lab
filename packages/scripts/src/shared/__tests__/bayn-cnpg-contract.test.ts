@@ -56,8 +56,24 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   )
 })
 
-test('Bayn backups use an isolated protected bucket and bounded schedule', () => {
+test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
+  const platform = readManifest('argocd/applications/cloudnative-pg/kustomization.yaml')
+  const patches = platform.patches.map((patch: { patch: string }) => patch.patch).join('\n')
+
+  expect(platform.resources).toContain(
+    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.13.0/manifest.yaml',
+  )
+  expect(patches).toContain(
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud@sha256:71589dbac582333442812b07b31f7ea4d00324a8358aac7ca507dabf9f4b6c96',
+  )
+  expect(patches).toContain(
+    'Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXJAc2hhMjU2Ojk5MDM2MWFmMzMxOWY5ZTIzYWFmYTBmNmQ3OTgxZjk5YmYxZjY5YjRlNmE4NWNmMWJjN2Q3MWQ2ZjA5YmIyODg=',
+  )
+})
+
+test('Bayn backups use an isolated protected plugin object store and bounded schedule', () => {
   const bucket = readManifest('argocd/applications/bayn/objectbucketclaim.yaml')
+  const objectStore = readManifest('argocd/applications/bayn/postgres-objectstore.yaml')
   const cluster = readManifest('argocd/applications/bayn/postgres-cluster.yaml')
   const schedule = readManifest('argocd/applications/bayn/postgres-scheduled-backup.yaml')
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
@@ -65,11 +81,22 @@ test('Bayn backups use an isolated protected bucket and bounded schedule', () =>
   expect(bucket.metadata.name).toBe('cnpg-bayn-db')
   expect(bucket.metadata.annotations['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
   expect(bucket.spec).toEqual({ bucketName: 'cnpg-bayn', storageClassName: 'rook-ceph-bucket' })
-  expect(cluster.spec.backup).toMatchObject({
-    target: 'prefer-standby',
-    barmanObjectStore: {
-      destinationPath: 's3://cnpg-bayn',
-      serverName: 'bayn-db-live',
+  expect(objectStore.metadata.name).toBe('bayn-db')
+  expect(objectStore.metadata.annotations['argocd.argoproj.io/sync-options']).toBe(
+    'Prune=false,Delete=false,SkipDryRunOnMissingResource=true',
+  )
+  expect(objectStore.spec).toMatchObject({
+    retentionPolicy: '14d',
+    instanceSidecarConfiguration: {
+      logLevel: 'info',
+      retentionPolicyIntervalSeconds: 1800,
+      resources: {
+        requests: { cpu: '100m', memory: '128Mi' },
+        limits: { cpu: '500m', memory: '512Mi' },
+      },
+    },
+    configuration: {
+      destinationPath: 's3://cnpg-bayn/',
       endpointURL: 'http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80',
       s3Credentials: {
         accessKeyId: { name: 'cnpg-bayn-db', key: 'AWS_ACCESS_KEY_ID' },
@@ -78,17 +105,31 @@ test('Bayn backups use an isolated protected bucket and bounded schedule', () =>
       data: { compression: 'snappy', jobs: 1, additionalCommandArgs: ['--max-bandwidth', '8MB'] },
       wal: { compression: 'snappy', maxParallel: 2 },
     },
-    retentionPolicy: '14d',
   })
+  expect(cluster.spec.backup).toBeUndefined()
+  expect(cluster.spec.plugins).toEqual([
+    {
+      name: 'barman-cloud.cloudnative-pg.io',
+      isWALArchiver: true,
+      parameters: { barmanObjectName: 'bayn-db', serverName: 'bayn-db-live' },
+    },
+  ])
   expect(schedule.spec).toEqual({
     schedule: '0 0 3 * * *',
     immediate: true,
     backupOwnerReference: 'cluster',
-    method: 'barmanObjectStore',
+    target: 'prefer-standby',
+    method: 'plugin',
+    pluginConfiguration: { name: 'barman-cloud.cloudnative-pg.io' },
     cluster: { name: 'bayn-db' },
   })
   expect(kustomization.resources).toEqual(
-    expect.arrayContaining(['objectbucketclaim.yaml', 'postgres-cluster.yaml', 'postgres-scheduled-backup.yaml']),
+    expect.arrayContaining([
+      'objectbucketclaim.yaml',
+      'postgres-objectstore.yaml',
+      'postgres-cluster.yaml',
+      'postgres-scheduled-backup.yaml',
+    ]),
   )
 })
 

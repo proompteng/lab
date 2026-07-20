@@ -51,26 +51,9 @@ spec:
     parameters:
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
-  backup:
-    target: prefer-standby
-    barmanObjectStore:
-      destinationPath: s3://cnpg-bayn
-      serverName: bayn-db-live
-      endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
-      s3Credentials:
-        accessKeyId:
-          name: cnpg-bayn-db
-          key: AWS_ACCESS_KEY_ID
-        secretAccessKey:
-          name: cnpg-bayn-db
-          key: AWS_SECRET_ACCESS_KEY
-      data:
-        compression: snappy
-        jobs: 1
-        additionalCommandArgs:
-          - --max-bandwidth
-          - 8MB
-      wal:
-        compression: snappy
-        maxParallel: 2
-    retentionPolicy: 14d
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: bayn-db
+        serverName: bayn-db-live
