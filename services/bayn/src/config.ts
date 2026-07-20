@@ -1,8 +1,8 @@
 import { Config, Effect, Redacted, Schema, SchemaTransformation } from 'effect'
 
-import { baynError, type BaynError } from './errors'
+import { operationalError, type OperationalError } from './errors'
 
-export interface BaynConfig {
+export interface RuntimeConfig {
   readonly host: string
   readonly port: number
   readonly codeRevision: string
@@ -50,7 +50,7 @@ const positiveInteger = (name: string, fallback: number) =>
 const clickhouseIdentifier = (name: string, fallback: string) =>
   Config.schema(ClickHouseIdentifier, name).pipe(Config.withDefault(fallback))
 
-const baynConfig = Config.all({
+const runtimeConfig = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
   codeRevision: nonEmptyString('BAYN_CODE_REVISION'),
@@ -69,7 +69,7 @@ const baynConfig = Config.all({
   tigerBeetleLedger: positiveInteger('BAYN_TIGERBEETLE_LEDGER', 7001),
 }).pipe(
   Config.map(
-    (config): BaynConfig => ({
+    (config): RuntimeConfig => ({
       host: config.host,
       port: config.port,
       codeRevision: config.codeRevision,
@@ -92,6 +92,6 @@ const baynConfig = Config.all({
   ),
 )
 
-export const loadConfig: Effect.Effect<BaynConfig, BaynError> = baynConfig.pipe(
-  Effect.mapError((cause) => baynError('config', 'load', 'invalid Bayn configuration', cause)),
+export const loadConfig: Effect.Effect<RuntimeConfig, OperationalError> = runtimeConfig.pipe(
+  Effect.mapError((cause) => operationalError('config', 'load', 'invalid runtime configuration', cause)),
 )

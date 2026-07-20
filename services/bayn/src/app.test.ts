@@ -3,9 +3,9 @@ import { describe, expect, test } from 'bun:test'
 import { Cause, Context, Effect, Exit, Layer, Redacted, Ref } from 'effect'
 import { HttpServer } from 'effect/unstable/http'
 
-import { initializeBayn, makeHttpLayer, runBayn, type RuntimeState } from './app'
-import type { BaynConfig } from './config'
-import { baynError } from './errors'
+import { initialize, makeHttpLayer, run, type RuntimeState } from './app'
+import type { RuntimeConfig } from './config'
+import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { defaultProtocol } from './protocol'
@@ -13,7 +13,7 @@ import { evaluateTsmom } from './strategy'
 import { Strategy, TsmomStrategyLive, type StrategyService } from './strategy-service'
 import { makeSnapshot } from './test-fixtures'
 
-const config: BaynConfig = {
+const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
   codeRevision: 'test-revision',
@@ -146,7 +146,7 @@ describe('Bayn startup lifecycle', () => {
     }
 
     await Effect.runPromise(
-      initializeBayn(config, state).pipe(
+      initialize(config, state).pipe(
         Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(Strategy, strategy),
@@ -163,7 +163,7 @@ describe('Bayn startup lifecycle', () => {
     const marketData: MarketDataService = { load: Effect.succeed(snapshot) }
 
     await Effect.runPromise(
-      initializeBayn(config, state).pipe(
+      initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provide(TsmomStrategyLive),
@@ -183,7 +183,7 @@ describe('Bayn startup lifecycle', () => {
     const marketData: MarketDataService = { load: Effect.succeed(makeSnapshot(700)) }
 
     await Effect.runPromise(
-      initializeBayn(config, state).pipe(
+      initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provide(TsmomStrategyLive),
@@ -209,7 +209,7 @@ describe('Bayn startup lifecycle', () => {
     }
 
     await Effect.runPromise(
-      initializeBayn({ ...config, runOnStartup: false }, state).pipe(
+      initialize({ ...config, runOnStartup: false }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
         Effect.provide(TsmomStrategyLive),
@@ -231,7 +231,7 @@ describe('Bayn startup lifecycle', () => {
     }
 
     await Effect.runPromise(
-      initializeBayn({ ...config, operationTimeoutMs: 10 }, state).pipe(
+      initialize({ ...config, operationTimeoutMs: 10 }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provide(TsmomStrategyLive),
@@ -248,13 +248,14 @@ describe('Bayn startup lifecycle', () => {
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
     const marketData: MarketDataService = { load: Effect.die(new Error('unexpected startup defect')) }
     const exit = await Effect.runPromiseExit(
-      runBayn(config).pipe(
+      run(config).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provide(TsmomStrategyLive),
         Effect.timeoutOrElse({
           duration: 250,
-          orElse: () => Effect.fail(baynError('http', 'test', 'runBayn remained alive after its startup worker died')),
+          orElse: () =>
+            Effect.fail(operationalError('http', 'test', 'run remained alive after its startup worker died')),
         }),
       ),
     )

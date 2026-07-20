@@ -13,8 +13,8 @@ import {
 } from 'tigerbeetle-node'
 import { Context, Effect, Layer } from 'effect'
 
-import type { BaynConfig } from './config'
-import { baynError, type BaynError } from './errors'
+import type { RuntimeConfig } from './config'
+import { operationalError, type OperationalError } from './errors'
 import { hashObject, stableU128, stableU64 } from './hash'
 import type { EvaluationResult, FillEvent, ReconciliationResult } from './types'
 
@@ -94,8 +94,8 @@ export interface LedgerPlan {
 }
 
 export interface JournalService {
-  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, BaynError>
-  readonly check: Effect.Effect<void, BaynError>
+  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, OperationalError>
+  readonly check: Effect.Effect<void, OperationalError>
 }
 
 export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
@@ -408,7 +408,7 @@ const journalAndReconcile = (
   client: Client,
   ledger: number,
   result: EvaluationResult,
-): Effect.Effect<ReconciliationResult, BaynError> =>
+): Effect.Effect<ReconciliationResult, OperationalError> =>
   tigerBeetleRequest(client, 'journal-and-reconcile', async () => {
     const plan = buildLedgerPlan(result, ledger)
     await createAndVerifyAccounts(client, plan.accounts)
@@ -427,7 +427,7 @@ const tigerBeetleRequest = <A>(
   client: Client,
   operation: string,
   request: () => Promise<A>,
-): Effect.Effect<A, BaynError> =>
+): Effect.Effect<A, OperationalError> =>
   Effect.tryPromise({
     try: async (signal) => {
       const cancel = () => client.destroy()
@@ -439,7 +439,7 @@ const tigerBeetleRequest = <A>(
         signal.removeEventListener('abort', cancel)
       }
     },
-    catch: (cause) => baynError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+    catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
   })
 
 export interface JournalDependencies {
@@ -450,9 +450,9 @@ export interface JournalDependencies {
 const defaultDependencies: JournalDependencies = { createClient, resolveReplicaAddresses }
 
 export const JournalLive = (
-  config: BaynConfig,
+  config: RuntimeConfig,
   dependencies: JournalDependencies = defaultDependencies,
-): Layer.Layer<Journal, BaynError> =>
+): Layer.Layer<Journal, OperationalError> =>
   Layer.effect(
     Journal,
     Effect.acquireRelease(
@@ -465,13 +465,13 @@ export const JournalLive = (
             replica_addresses: replicaAddresses,
           })
         },
-        catch: (cause) => baynError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+        catch: (cause) => operationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
       }).pipe(
         Effect.timeoutOrElse({
           duration: config.operationTimeoutMs,
           orElse: () =>
             Effect.fail(
-              baynError(
+              operationalError(
                 'journal',
                 'connect',
                 `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
@@ -482,7 +482,7 @@ export const JournalLive = (
       (client) =>
         Effect.try({
           try: () => client.destroy(),
-          catch: (cause) => baynError('journal', 'close', 'failed to close TigerBeetle client', cause),
+          catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
         }).pipe(
           Effect.catch((error) =>
             Effect.logWarning('TigerBeetle client close failed').pipe(

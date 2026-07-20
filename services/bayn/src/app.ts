@@ -4,8 +4,8 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { Effect, Layer, Ref } from 'effect'
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
-import type { BaynConfig } from './config'
-import { baynError, formatBaynError, type BaynComponent, type BaynError } from './errors'
+import type { RuntimeConfig } from './config'
+import { formatError, operationalError, type Component, type OperationalError } from './errors'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { Strategy } from './strategy-service'
@@ -36,7 +36,7 @@ const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<str
   HttpServerResponse.text(json(body), { status, contentType: 'application/json', headers })
 
 export const makeHttpLayer = (
-  config: Pick<BaynConfig, 'host' | 'port'>,
+  config: Pick<RuntimeConfig, 'host' | 'port'>,
   state: Ref.Ref<RuntimeState>,
 ): ReturnType<typeof NodeHttpServer.layer> => {
   const ready = Ref.get(state).pipe(
@@ -67,19 +67,19 @@ export const makeHttpLayer = (
 }
 
 const withinDeadline = <A, R>(
-  effect: Effect.Effect<A, BaynError, R>,
+  effect: Effect.Effect<A, OperationalError, R>,
   timeoutMs: number,
-  component: BaynComponent,
+  component: Component,
   operation: string,
-): Effect.Effect<A, BaynError, R> =>
+): Effect.Effect<A, OperationalError, R> =>
   effect.pipe(
     Effect.timeoutOrElse({
       duration: timeoutMs,
-      orElse: () => Effect.fail(baynError(component, operation, `${operation} timed out after ${timeoutMs}ms`)),
+      orElse: () => Effect.fail(operationalError(component, operation, `${operation} timed out after ${timeoutMs}ms`)),
     }),
   )
 
-const failClosed = (state: Ref.Ref<RuntimeState>, error: BaynError): Effect.Effect<void> =>
+const failClosed = (state: Ref.Ref<RuntimeState>, error: OperationalError): Effect.Effect<void> =>
   Effect.logError('Bayn startup failed closed').pipe(
     Effect.annotateLogs({
       service: 'bayn',
@@ -91,15 +91,15 @@ const failClosed = (state: Ref.Ref<RuntimeState>, error: BaynError): Effect.Effe
       Ref.set(state, {
         status: 'FAIL_CLOSED',
         evidence: null,
-        error: formatBaynError(error),
+        error: formatError(error),
       }),
     ),
   )
 
 const evaluateAndJournal = (
-  config: BaynConfig,
+  config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, BaynError, MarketData | Journal | Strategy> =>
+): Effect.Effect<void, OperationalError, MarketData | Journal | Strategy> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
@@ -122,7 +122,7 @@ const evaluateAndJournal = (
     )
     const evaluation = yield* Effect.try({
       try: () => strategy.evaluate(snapshot.bars, snapshot.manifest, config.codeRevision),
-      catch: (cause) => baynError('strategy', 'evaluate', `${strategy.name} evaluation failed`, cause),
+      catch: (cause) => operationalError('strategy', 'evaluate', `${strategy.name} evaluation failed`, cause),
     })
     yield* Effect.logInfo('Bayn strategy evaluation completed').pipe(
       Effect.annotateLogs({
@@ -156,9 +156,9 @@ const evaluateAndJournal = (
   }).pipe(Effect.withLogSpan('startup'))
 
 const checkWithoutJournal = (
-  config: BaynConfig,
+  config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, BaynError, MarketData | Journal> =>
+): Effect.Effect<void, OperationalError, MarketData | Journal> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
@@ -171,22 +171,22 @@ const checkWithoutJournal = (
     })
   })
 
-export const initializeBayn = (
-  config: BaynConfig,
+export const initialize = (
+  config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
 ): Effect.Effect<void, never, MarketData | Journal | Strategy> =>
   (config.runOnStartup ? evaluateAndJournal(config, state) : checkWithoutJournal(config, state)).pipe(
     Effect.catch((error) => failClosed(state, error)),
   )
 
-export const runBayn = (config: BaynConfig): Effect.Effect<never, BaynError, MarketData | Journal | Strategy> =>
+export const run = (config: RuntimeConfig): Effect.Effect<never, OperationalError, MarketData | Journal | Strategy> =>
   Effect.scoped(
     Effect.gen(function* () {
       const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
       yield* Layer.build(makeHttpLayer(config, state)).pipe(
-        Effect.mapError((cause) => baynError('http', 'listen', 'Bayn HTTP server failed to listen', cause)),
+        Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)),
       )
-      yield* initializeBayn(config, state)
+      yield* initialize(config, state)
       return yield* Effect.never
     }),
   )

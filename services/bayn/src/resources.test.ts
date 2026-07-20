@@ -4,15 +4,15 @@ import { createClient as createClickHouseClient, type ClickHouseClient } from '@
 import { Effect, Layer, Redacted, Ref } from 'effect'
 import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
-import { initializeBayn, type RuntimeState } from './app'
-import type { BaynConfig } from './config'
+import { initialize, type RuntimeState } from './app'
+import type { RuntimeConfig } from './config'
 import { Journal, JournalLive, type JournalService } from './ledger'
 import { MarketData, MarketDataLive, type MarketDataService } from './market-data'
 import { defaultProtocol } from './protocol'
 import { TsmomStrategyLive } from './strategy-service'
 import { makeSnapshot } from './test-fixtures'
 
-const config: BaynConfig = {
+const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
   codeRevision: 'test-revision',
@@ -92,7 +92,7 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initializeBayn(config, state).pipe(
+        initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provide(TsmomStrategyLive),
           Effect.provide(
@@ -122,7 +122,7 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initializeBayn(config, state).pipe(
+        initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provide(TsmomStrategyLive),
           Effect.provide(
@@ -160,7 +160,7 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initializeBayn(config, state).pipe(
+        initialize(config, state).pipe(
           Effect.provideService(MarketData, marketData),
           Effect.provide(TsmomStrategyLive),
           Effect.provide(
