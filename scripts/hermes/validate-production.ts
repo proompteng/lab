@@ -556,11 +556,18 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
     'bash scripts/hermes/verify-network-policy-enforcement.sh',
     '`NetworkPolicy is not enforced` is a hard rollout blocker.',
-    'cleanup_api_key() { unset hermes_api_key; }',
+    'unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes',
     'trap cleanup_api_key EXIT',
+    'hermes_item_count=$(op item list --vault infra --format json',
+    '[.[] | select(.title == "hermes-runtime")] | length',
+    'multiple hermes-runtime items found; reconcile them before continuing',
     "op item template get 'Secure Note'",
     'jq --rawfile api_server_key <(printf \'%s\' "$hermes_api_key")',
     'op item create --vault infra -',
+    'hermes_item_id=$(op item list --vault infra --format json',
+    'if length == 1 then .[0] else error("exactly one hermes-runtime item is required") end',
+    'op item get --vault infra "$hermes_item_id" --format json',
+    'else error("exactly one concealed API_SERVER_KEY field is required")',
     'test "$api_key_bytes" -ge 32',
     'printf \'%s\\n\' "$api_key_bytes"',
     "hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')",
@@ -573,6 +580,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   if (count(phaseZeroSection, 'set -euo pipefail') !== 2) {
     failures.push(`${productionPaths.runbook}: secret creation and bridge verification must both fail closed`)
+  }
+  if (count(phaseZeroSection, 'test "$api_key_bytes" -ge 32') !== 2) {
+    failures.push(`${productionPaths.runbook}: 1Password and bridged API keys must both enforce the minimum length`)
   }
   const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Maintenance lock recovery/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, rotationSection, [

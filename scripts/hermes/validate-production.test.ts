@@ -155,10 +155,13 @@ test('rejects a Discord credential transfer without exact-value verification', a
 
 test('rejects secret bridge verification that does not enforce key length', async () => {
   const files = await loadProductionFiles()
-  files.runbook = files.runbook.replace('test "$api_key_bytes" -ge 32', 'echo "$api_key_bytes"')
+  files.runbook = files.runbook.replace(
+    'test "$api_key_bytes" -ge 32\n   printf \'%s\\n\' "$api_key_bytes"',
+    'echo "$api_key_bytes"',
+  )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$api_key_bytes\\" -ge 32"`,
+    `${productionPaths.runbook}: 1Password and bridged API keys must both enforce the minimum length`,
   )
 })
 
@@ -592,6 +595,30 @@ test('rejects cutover instructions that fail when the OpenClaw VMI is already ab
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant "openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)"`,
+  )
+})
+
+test('rejects non-idempotent initial 1Password provisioning', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'hermes_item_count=$(op item list --vault infra --format json',
+    'hermes_item_count=0 # skip existing-item discovery',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "hermes_item_count=$(op item list --vault infra --format json"`,
+  )
+})
+
+test('rejects initial 1Password provisioning that does not fail on duplicate items', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'multiple hermes-runtime items found; reconcile them before continuing',
+    'continuing with an arbitrary hermes-runtime item',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "multiple hermes-runtime items found; reconcile them before continuing"`,
   )
 })
 

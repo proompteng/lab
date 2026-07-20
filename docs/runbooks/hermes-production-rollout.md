@@ -66,26 +66,50 @@ The expected mirrored amd64 manifest digest is
    `NetworkPolicy is not enforced` is a hard rollout blocker. Do not sync Hermes or weaken the containment test; install
    and validate a compatible policy engine first.
 
-3. Create a minimum 32-byte API key in the `infra` 1Password vault. Do this from a private shell with 1Password unlocked;
-   do not echo the generated value:
+3. Ensure the `infra` 1Password vault contains exactly one `hermes-runtime` item with a minimum 32-byte API key. The
+   command is safe to rerun: it reuses and validates an existing item, and creates one only when none exists. Do this from
+   a private shell with 1Password unlocked; do not echo the generated value:
 
    ```bash
    set -euo pipefail
-   cleanup_api_key() { unset hermes_api_key; }
+   cleanup_api_key() {
+     unset hermes_api_key hermes_item_count hermes_item_id api_key_bytes
+   }
    abort_api_key() { trap - EXIT HUP INT TERM; cleanup_api_key; exit 130; }
    trap cleanup_api_key EXIT
    trap abort_api_key HUP INT TERM
-   hermes_api_key=$(openssl rand -hex 32)
-   op item template get 'Secure Note' | \
-     jq --rawfile api_server_key <(printf '%s' "$hermes_api_key") '
-       .title = "hermes-runtime"
-       | .fields += [{
-           id: "API_SERVER_KEY",
-           type: "CONCEALED",
-           label: "API_SERVER_KEY",
-           value: $api_server_key
-         }]
-     ' | op item create --vault infra - >/dev/null
+   hermes_item_count=$(op item list --vault infra --format json | \
+     jq -er '[.[] | select(.title == "hermes-runtime")] | length')
+   case "$hermes_item_count" in
+     0)
+       hermes_api_key=$(openssl rand -hex 32)
+       op item template get 'Secure Note' | \
+         jq --rawfile api_server_key <(printf '%s' "$hermes_api_key") '
+           .title = "hermes-runtime"
+           | .fields += [{
+               id: "API_SERVER_KEY",
+               type: "CONCEALED",
+               label: "API_SERVER_KEY",
+               value: $api_server_key
+             }]
+         ' | op item create --vault infra - >/dev/null
+       ;;
+     1) ;;
+     *)
+       echo 'multiple hermes-runtime items found; reconcile them before continuing' >&2
+       exit 1
+       ;;
+   esac
+   hermes_item_id=$(op item list --vault infra --format json | \
+     jq -er '[.[] | select(.title == "hermes-runtime") | .id] |
+       if length == 1 then .[0] else error("exactly one hermes-runtime item is required") end')
+   api_key_bytes=$(op item get --vault infra "$hermes_item_id" --format json | \
+     jq -er '[.fields[] | select(.label == "API_SERVER_KEY")] as $fields |
+       if ($fields | length) == 1 and $fields[0].type == "CONCEALED" and ($fields[0].value | type) == "string"
+       then ($fields[0].value | length)
+       else error("exactly one concealed API_SERVER_KEY field is required")
+       end')
+   test "$api_key_bytes" -ge 32
    cleanup_api_key
    trap - EXIT HUP INT TERM
    ```
