@@ -99,11 +99,6 @@ describe('Bayn HTTP probes', () => {
               authority: { brokerOrders: false, capitalPromotion: false },
             },
           })
-          expect(yield* Effect.promise(() => fetchJson(port, '/v1/evidence/latest'))).toMatchObject({
-            status: 200,
-            body: { service: 'bayn', status: 'READY' },
-          })
-
           yield* Ref.set(state, { status: 'FAIL_CLOSED', evidence: null, error: 'test failure' })
           expect(yield* Effect.promise(() => fetchJson(port, '/readyz'))).toMatchObject({
             status: 503,
@@ -113,7 +108,7 @@ describe('Bayn HTTP probes', () => {
             status: 200,
             body: { status: 'FAIL_CLOSED', error: 'test failure' },
           })
-          expect(yield* Effect.promise(() => fetchJson(port, '/missing'))).toMatchObject({
+          expect(yield* Effect.promise(() => fetchJson(port, '/v1/evidence/latest'))).toMatchObject({
             status: 404,
             body: { error: 'not_found' },
           })

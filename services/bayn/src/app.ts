@@ -58,7 +58,6 @@ export const makeHttpLayer = (
     HttpRouter.route<never, never>('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
     HttpRouter.route<never, never>('GET', '/readyz', ready),
     HttpRouter.route<never, never>('GET', '/v1/status', status),
-    HttpRouter.route<never, never>('GET', '/v1/evidence/latest', status),
     HttpRouter.route<never, never>('*', '*', fallback),
   ] as const)
 
