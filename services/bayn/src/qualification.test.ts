@@ -1,0 +1,108 @@
+import { describe, expect, test } from 'bun:test'
+
+import { Schema } from 'effect'
+
+import {
+  makeQualificationLock,
+  makeQualificationPolicyDocument,
+  QualificationLockSchema,
+  type QualificationLockMaterial,
+} from './qualification'
+
+const policy = (name: string) => makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true })
+
+const material: QualificationLockMaterial = {
+  schemaVersion: 'bayn.qualification-lock.v1' as const,
+  protocolHash: '1'.repeat(64),
+  sourceRevision: '2'.repeat(40),
+  image: {
+    repository: 'registry.example.test/lab/bayn',
+    digest: `sha256:${'3'.repeat(64)}`,
+  },
+  universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
+  universeRationale: 'Liquid cross-asset ETFs with complete point-in-time coverage.',
+  data: {
+    snapshotId: '4'.repeat(64),
+    publicationId: '5'.repeat(64),
+    contentHash: '6'.repeat(64),
+    sessionsContentHash: '7'.repeat(64),
+    provider: 'alpaca',
+    sourceFeed: 'sip',
+    adjustment: 'all',
+    calendarVersion: 'alpaca-us-equity-calendar-v1',
+    firstSession: '2007-01-03',
+    lastSession: '2016-12-30',
+    selectedSessionCount: 2266,
+    selectedRebalanceCount: 108,
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1' as const,
+      dataStart: '2007-01-03',
+      dataEnd: '2016-12-30',
+      lookbackStart: '2007-01-03',
+      evaluationStart: '2008-01-03',
+      evaluationEnd: '2016-12-30',
+    },
+  },
+  policies: {
+    benchmark: policy('benchmark-policy'),
+    thresholds: policy('threshold-policy'),
+    uncertainty: policy('uncertainty-policy'),
+    execution: policy('execution-policy'),
+  },
+  priorTrialRunIds: ['8'.repeat(64), '9'.repeat(64)],
+}
+
+describe('qualification lock', () => {
+  test('builds a deterministic identity from the complete precommit', () => {
+    const first = makeQualificationLock(material)
+    const second = makeQualificationLock(structuredClone(material))
+
+    expect(second).toEqual(first)
+    expect(first.lockId).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  test('changes identity for every authority-bearing input group', () => {
+    const baseline = makeQualificationLock(material).lockId
+    const variants = [
+      { ...material, sourceRevision: 'a'.repeat(40) },
+      { ...material, protocolHash: 'b'.repeat(64) },
+      { ...material, image: { ...material.image, digest: `sha256:${'c'.repeat(64)}` } },
+      { ...material, universeRationale: `${material.universeRationale} No substitutions.` },
+      {
+        ...material,
+        data: { ...material.data, selectedSessionCount: material.data.selectedSessionCount + 1 },
+      },
+      {
+        ...material,
+        policies: { ...material.policies, execution: policy('execution-policy-v2') },
+      },
+      { ...material, priorTrialRunIds: [...material.priorTrialRunIds, 'a'.repeat(64)].sort() },
+    ]
+
+    for (const variant of variants) expect(makeQualificationLock(variant).lockId).not.toBe(baseline)
+  })
+
+  test('rejects weak windows, unordered lineage, divergent policy hashes, and forged lock ids', () => {
+    expect(() =>
+      makeQualificationLock({
+        ...material,
+        data: { ...material.data, selectedSessionCount: 503 },
+      }),
+    ).toThrow()
+    expect(() =>
+      makeQualificationLock({ ...material, priorTrialRunIds: [...material.priorTrialRunIds].reverse() }),
+    ).toThrow()
+    expect(() =>
+      makeQualificationLock({
+        ...material,
+        policies: {
+          ...material.policies,
+          benchmark: { ...material.policies.benchmark, contentHash: 'f'.repeat(64) },
+        },
+      }),
+    ).toThrow()
+
+    const lock = makeQualificationLock(material)
+    expect(() => Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, lockId: '0'.repeat(64) })).toThrow()
+  })
+})

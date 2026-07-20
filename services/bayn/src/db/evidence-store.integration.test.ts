@@ -6,6 +6,7 @@ import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } f
 
 import type { RuntimeConfig } from '../config'
 import { buildLedgerPlan } from '../ledger'
+import { makeQualificationLock, makeQualificationPolicyDocument } from '../qualification'
 import { evaluateTsmom } from '../strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../test-fixtures'
 import {
@@ -127,6 +128,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'bayn_evaluation_runs',
       'bayn_gate_outcomes',
       'bayn_protocol_locks',
+      'bayn_qualification_locks',
+      'bayn_qualification_trials',
       'bayn_schema_migrations',
       'bayn_snapshot_references',
       'bayn_status_history',
@@ -195,6 +198,140 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         required_type: typeof gate.required,
       })),
     )
+  })
+
+  test('burns observed runs and preserves qualification state as append-only', async () => {
+    const input = makeInput()
+    const policy = (name: string) => makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true })
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+
+        const manifest = input.evaluation.inputManifest
+        const decisionCount = input.evaluation.events.filter((event) => event.kind === 'decision').length
+        const lock = makeQualificationLock({
+          schemaVersion: 'bayn.qualification-lock.v1',
+          protocolHash: input.evaluation.protocolHash,
+          sourceRevision: input.provenance.sourceRevision,
+          image: input.provenance.image,
+          universe: [...fixtureProtocol.universe],
+          universeRationale: 'Liquid cross-asset ETFs with complete fixture coverage.',
+          data: {
+            snapshotId: manifest.finalizedSnapshot.snapshotId,
+            publicationId: manifest.finalizedSnapshot.publicationId,
+            contentHash: manifest.finalizedSnapshot.contentHash,
+            sessionsContentHash: manifest.finalizedSnapshot.sessionsContentHash,
+            provider: manifest.finalizedSnapshot.source,
+            sourceFeed: manifest.finalizedSnapshot.sourceFeed,
+            adjustment: manifest.finalizedSnapshot.adjustment,
+            calendarVersion: manifest.finalizedSnapshot.calendarVersion,
+            firstSession: manifest.finalizedSnapshot.firstSession,
+            lastSession: manifest.finalizedSnapshot.lastSession,
+            selectedSessionCount: input.evaluation.strategy.observations,
+            selectedRebalanceCount: decisionCount,
+            bounds: manifest.bounds,
+          },
+          policies: {
+            benchmark: policy('benchmark-policy'),
+            thresholds: policy('threshold-policy'),
+            uncertainty: policy('uncertainty-policy'),
+            execution: policy('execution-policy'),
+          },
+          priorTrialRunIds: [input.evaluation.runId],
+        })
+
+        yield* sql`
+          INSERT INTO bayn_qualification_locks (
+            lock_id,
+            schema_version,
+            protocol_hash,
+            snapshot_id,
+            source_revision,
+            image_repository,
+            image_digest,
+            payload
+          ) VALUES (
+            ${lock.lockId},
+            ${lock.schemaVersion},
+            ${lock.protocolHash},
+            ${lock.data.snapshotId},
+            ${lock.sourceRevision},
+            ${lock.image.repository},
+            ${lock.image.digest},
+            ${sql.json(lock)}
+          )
+        `
+
+        const trials = yield* sql<{
+          run_id: string
+          disposition: string
+          prelock_observed: boolean
+          failed_benchmark: boolean
+        }>`
+          SELECT
+            run_id,
+            disposition,
+            'PRE_LOCK_RESULT_OBSERVED' = ANY(reason_codes) AS prelock_observed,
+            'FAILED_BENCHMARK_GATE' = ANY(reason_codes) AS failed_benchmark
+          FROM bayn_qualification_trials
+        `
+        const locks = yield* sql<{ lock_id: string; payload: unknown }>`
+          SELECT lock_id, payload FROM bayn_qualification_locks
+        `
+        const trialUpdate = yield* Effect.exit(sql`
+          UPDATE bayn_qualification_trials SET disposition = 'BURNED' WHERE run_id = ${input.evaluation.runId}
+        `)
+        const trialDelete = yield* Effect.exit(sql`
+          DELETE FROM bayn_qualification_trials WHERE run_id = ${input.evaluation.runId}
+        `)
+        const lockUpdate = yield* Effect.exit(sql`
+          UPDATE bayn_qualification_locks SET payload = payload WHERE lock_id = ${lock.lockId}
+        `)
+        const lockDelete = yield* Effect.exit(sql`
+          DELETE FROM bayn_qualification_locks WHERE lock_id = ${lock.lockId}
+        `)
+        const divergentLock = yield* Effect.exit(sql`
+          INSERT INTO bayn_qualification_locks (
+            lock_id,
+            schema_version,
+            protocol_hash,
+            snapshot_id,
+            source_revision,
+            image_repository,
+            image_digest,
+            payload
+          ) VALUES (
+            ${'f'.repeat(64)},
+            ${lock.schemaVersion},
+            ${lock.protocolHash},
+            ${lock.data.snapshotId},
+            ${lock.sourceRevision},
+            ${lock.image.repository},
+            ${lock.image.digest},
+            ${sql.json(lock)}
+          )
+        `)
+        return { lock, locks, trials, trialUpdate, trialDelete, lockUpdate, lockDelete, divergentLock }
+      }),
+    )
+
+    expect(result.trials).toEqual([
+      {
+        run_id: input.evaluation.runId,
+        disposition: 'BURNED',
+        prelock_observed: true,
+        failed_benchmark: !input.evaluation.verdict.gates.find((gate) => gate.name === 'benchmark_sharpe_improvement')!
+          .passed,
+      },
+    ])
+    expect(result.locks).toEqual([{ lock_id: result.lock.lockId, payload: result.lock }])
+    expect(Exit.isFailure(result.trialUpdate)).toBe(true)
+    expect(Exit.isFailure(result.trialDelete)).toBe(true)
+    expect(Exit.isFailure(result.lockUpdate)).toBe(true)
+    expect(Exit.isFailure(result.lockDelete)).toBe(true)
+    expect(Exit.isFailure(result.divergentLock)).toBe(true)
   })
 
   test('reads and recovers the complete v2 evidence contract without evaluating it again', async () => {
