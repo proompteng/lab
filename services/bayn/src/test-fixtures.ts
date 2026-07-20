@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 
 import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
-import { buildInputManifest } from './market-data'
+import { canonicalHashV1 } from './hash'
 import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
 import type { DailyBar, InputManifest, IsoDate, TsmomProtocol } from './types'
 
@@ -50,10 +50,10 @@ export const makeBars = (sessionCount = 900): readonly DailyBar[] => {
           low: Math.min(open, close) * 0.997,
           close,
           volume: 1_000_000 + session * 10 + symbolIndex,
-          source: 'fixture',
-          sourceFeed: 'test',
+          source: 'alpaca',
+          sourceFeed: 'sip',
           adjustment: 'all',
-          datasetVersion: 'fixture-v1',
+          publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1',
         })
       }
       session += 1
@@ -67,8 +67,64 @@ export const makeSnapshot = (
   sessionCount = 900,
 ): { readonly bars: readonly DailyBar[]; readonly manifest: InputManifest } => {
   const bars = makeBars(sessionCount)
+  const sessionDates = [...new Set(bars.map((bar) => bar.sessionDate))].sort()
+  const firstSession = sessionDates[0]
+  const lastSession = sessionDates.at(-1)!
+  const evaluationStart = sessionDates[Math.max(...fixtureProtocol.lookbacks)]
+  const material: Omit<InputManifest, 'hash'> = {
+    schemaVersion: 'bayn.input-manifest.v2',
+    database: 'signal',
+    tables: {
+      bars: 'adjusted_daily_bars_v2',
+      sessions: 'exchange_sessions_v1',
+      manifests: 'snapshot_manifests_v1',
+    },
+    finalizedSnapshot: {
+      schemaVersion: 'bayn.finalized-snapshot.v2',
+      snapshotId: '1'.repeat(64),
+      publicationId: '2'.repeat(64),
+      publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1',
+      source: 'alpaca',
+      sourceFeed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'fixture-calendar-v1',
+      publisherSourceRevision: '3'.repeat(40),
+      publisherImage: {
+        repository: 'registry.ide-newton.ts.net/lab/signal-publisher',
+        digest: `sha256:${'4'.repeat(64)}`,
+      },
+      finalizedAt: '2026-07-20T00:00:00.000Z',
+      requestedStart: firstSession,
+      firstSession,
+      lastSession,
+      asOfSession: lastSession,
+      symbols: fixtureProtocol.universe,
+      rowCount: bars.length,
+      sessionCount: sessionDates.length,
+      contentHash: '5'.repeat(64),
+      sessionsContentHash: '6'.repeat(64),
+    },
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: firstSession,
+      dataEnd: lastSession,
+      lookbackStart: firstSession,
+      evaluationStart,
+      evaluationEnd: lastSession,
+    },
+    rowCount: bars.length,
+    sessionCount: sessionDates.length,
+    firstSession,
+    lastSession,
+    symbols: fixtureProtocol.universe.map((symbol) => ({
+      symbol,
+      rows: sessionDates.length,
+      firstSession,
+      lastSession,
+    })),
+  }
   return {
     bars,
-    manifest: buildInputManifest(bars, 'signal', 'adjusted_daily_bars_v1', fixtureProtocol.universe, 'fixture-v1'),
+    manifest: { ...material, hash: canonicalHashV1(material) },
   }
 }

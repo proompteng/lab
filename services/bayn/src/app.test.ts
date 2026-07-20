@@ -34,9 +34,17 @@ const config: RuntimeConfig = {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
     password: Redacted.make('secret'),
-    database: 'signal',
-    table: 'adjusted_daily_bars_v1',
-    datasetVersion: 'fixture-v1',
+    snapshotId: '1'.repeat(64),
+    publicationAsOf: '2026-07-17',
+    calendarVersion: 'fixture-calendar-v1',
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: '2018-01-02',
+      dataEnd: '2026-07-17',
+      lookbackStart: '2018-01-02',
+      evaluationStart: '2019-01-02',
+      evaluationEnd: '2026-07-17',
+    },
   },
   postgres: {
     url: Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'),
@@ -63,7 +71,7 @@ const successfulEvidenceStore: EvidenceStoreService = {
     Effect.succeed({
       runId: evaluation.runId,
       deduplicated: false,
-      artifactCount: 5,
+      artifactCount: 6,
       eventCount: evaluation.events.length,
       gateCount: evaluation.verdict.gates.length,
     }),
@@ -121,7 +129,7 @@ const readyState = (): RuntimeState => {
       persistence: {
         runId: evaluation.runId,
         deduplicated: false,
-        artifactCount: 5,
+        artifactCount: 6,
         eventCount: events.length,
         gateCount: evaluation.verdict.gates.length,
       },

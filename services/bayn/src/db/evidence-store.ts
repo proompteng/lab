@@ -4,8 +4,8 @@ import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
-import type { RuntimeProvenance } from '../contracts'
-import { canonicalHashV1, hashObject } from '../hash'
+import { makeRunIdentity, type RuntimeProvenance } from '../contracts'
+import { canonicalHashV1 } from '../hash'
 import type { EvaluationResult, ReconciliationResult } from '../types'
 import { migrationLoader } from './migrations'
 
@@ -203,16 +203,28 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   if (reconciliation.runId !== evaluation.runId || reconciliation.exact !== true) {
     throw new TypeError('reconciliation does not exactly match the evaluation run')
   }
-  const { hash: snapshotId, ...manifestMaterial } = evaluation.inputManifest
-  if (hashObject(manifestMaterial) !== snapshotId) throw new TypeError('input manifest hash does not match its content')
-  const expectedRunId = canonicalHashV1({
-    schemaVersion: 'bayn.transitional-run-identity.v1',
-    provenance,
-    inputManifestHash: snapshotId,
-  })
+  const { hash: inputManifestHash, ...manifestMaterial } = evaluation.inputManifest
+  if (canonicalHashV1(manifestMaterial) !== inputManifestHash) {
+    throw new TypeError('input manifest hash does not match its content')
+  }
+  const snapshotId = evaluation.inputManifest.finalizedSnapshot.snapshotId
+  const expectedRunId = makeRunIdentity({
+    schemaVersion: 'bayn.run-identity.v1',
+    sourceRevision: provenance.sourceRevision,
+    image: provenance.image,
+    strategy: {
+      name: strategyName,
+      behaviorHash: provenance.strategy.behaviorHash,
+      parameters,
+    },
+    finalizedSnapshot: evaluation.inputManifest.finalizedSnapshot,
+    calendarVersion: evaluation.inputManifest.finalizedSnapshot.calendarVersion,
+    bounds: evaluation.inputManifest.bounds,
+  }).runId
   if (evaluation.runId !== expectedRunId) throw new TypeError('run ID does not match runtime and input provenance')
 
   const artifacts = [
+    ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
     ['strategy', 'bayn.performance-metrics.v1', evaluation.strategy],
     ['buy-and-hold', 'bayn.performance-metrics.v1', evaluation.buyAndHold],
     ['direct-volatility-timing', 'bayn.performance-metrics.v1', evaluation.directVolTiming],
@@ -563,7 +575,8 @@ const makeEvidenceStore = Effect.gen(function* () {
               'stored protocol lock diverged from the evaluated protocol',
             )
 
-            const manifest = plan.evaluation.inputManifest
+            const inputManifest = plan.evaluation.inputManifest
+            const finalizedSnapshot = inputManifest.finalizedSnapshot
             yield* sql`
             INSERT INTO bayn_snapshot_references (
               snapshot_id,
@@ -581,35 +594,35 @@ const makeEvidenceStore = Effect.gen(function* () {
               manifest
             ) VALUES (
               ${plan.snapshotId},
-              ${manifest.schemaVersion},
-              ${manifest.database},
-              ${manifest.table},
-              ${manifest.datasetVersion},
-              ${manifest.source},
-              ${manifest.sourceFeed},
-              ${manifest.adjustment},
-              ${manifest.contentHash},
-              ${manifest.rowCount},
-              ${manifest.firstSession},
-              ${manifest.lastSession},
-              ${sql.json(manifest)}
+              ${finalizedSnapshot.schemaVersion},
+              ${inputManifest.database},
+              ${inputManifest.tables.bars},
+              ${finalizedSnapshot.publicationSchemaVersion},
+              ${finalizedSnapshot.source},
+              ${finalizedSnapshot.sourceFeed},
+              ${finalizedSnapshot.adjustment},
+              ${finalizedSnapshot.contentHash},
+              ${finalizedSnapshot.rowCount},
+              ${finalizedSnapshot.firstSession},
+              ${finalizedSnapshot.lastSession},
+              ${sql.json(finalizedSnapshot)}
             )
             ON CONFLICT (snapshot_id) DO NOTHING
           `
-            const snapshot = yield* getSnapshot({ snapshotId: plan.snapshotId })
+            const storedSnapshot = yield* getSnapshot({ snapshotId: plan.snapshotId })
             yield* ensure(
-              snapshot.schema_version === manifest.schemaVersion &&
-                snapshot.database_name === manifest.database &&
-                snapshot.table_name === manifest.table &&
-                snapshot.dataset_version === manifest.datasetVersion &&
-                snapshot.source === manifest.source &&
-                snapshot.source_feed === manifest.sourceFeed &&
-                snapshot.adjustment === manifest.adjustment &&
-                snapshot.content_hash === manifest.contentHash &&
-                snapshot.row_count === manifest.rowCount &&
-                snapshot.first_session === manifest.firstSession &&
-                snapshot.last_session === manifest.lastSession &&
-                canonicalHashV1(snapshot.manifest) === canonicalHashV1(manifest),
+              storedSnapshot.schema_version === finalizedSnapshot.schemaVersion &&
+                storedSnapshot.database_name === inputManifest.database &&
+                storedSnapshot.table_name === inputManifest.tables.bars &&
+                storedSnapshot.dataset_version === finalizedSnapshot.publicationSchemaVersion &&
+                storedSnapshot.source === finalizedSnapshot.source &&
+                storedSnapshot.source_feed === finalizedSnapshot.sourceFeed &&
+                storedSnapshot.adjustment === finalizedSnapshot.adjustment &&
+                storedSnapshot.content_hash === finalizedSnapshot.contentHash &&
+                storedSnapshot.row_count === finalizedSnapshot.rowCount &&
+                storedSnapshot.first_session === finalizedSnapshot.firstSession &&
+                storedSnapshot.last_session === finalizedSnapshot.lastSession &&
+                canonicalHashV1(storedSnapshot.manifest) === canonicalHashV1(finalizedSnapshot),
               'snapshot-reference',
               'stored snapshot reference diverged from the evaluated input manifest',
             )

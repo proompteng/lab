@@ -24,9 +24,12 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
   it also forces startup evaluation and journaling off. The Nix image starts in the default production mode and fails
   closed if embedded facts are absent.
-- The transitional run ID binds runtime provenance and the exact ClickHouse input-manifest hash. It remains distinct
-  from the target finalized-snapshot run identity until bounded Signal publications are adopted.
-- Signals are formed at a month-end close and may execute only at the next common session open.
+- The reader selects one configured finalized Signal snapshot by content-addressed ID. It verifies the publisher
+  manifest, sessions, every bar, exact SIP/all provenance, the canonical universe, content hashes, and explicit data,
+  lookback, and evaluation bounds before exposing numeric bars.
+- The run ID binds source and image identity, compiled strategy behavior and decoded parameters, complete finalized
+  snapshot provenance, calendar version, and explicit bounds.
+- Signals are formed at a month-end close and may execute only at the next exchange session open.
 - After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
   snapshot reference, run identity, metrics, reconciliation receipt, ordered events, gate outcomes, and status
   history. An exact replay returns the existing complete receipt only after every stored payload and content hash is
@@ -57,5 +60,5 @@ BAYN_TEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:5432/bayn_test \
   bun test services/bayn/src/db/evidence-store.integration.test.ts
 ```
 
-The legacy `adjusted_daily_bars_v1` read remains transitional until the bounded finalized-snapshot reader is adopted.
-Bayn already has read-only grants for the v2 bars, manifests, and exchange sessions; it has no Signal write grant.
+Bayn reads the fixed `adjusted_daily_bars_v2`, `exchange_sessions_v1`, and `snapshot_manifests_v1` tables through the
+official Effect ClickHouse client. Its Signal identity is read-only and has no DDL, insert, or mutation authority.

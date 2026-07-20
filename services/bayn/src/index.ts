@@ -1,12 +1,14 @@
-import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Cause, Effect, Layer, Logger } from 'effect'
+import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
+import { ClickhouseClient } from '@effect/sql-clickhouse'
+import { Cause, Effect, Layer, Logger, Redacted } from 'effect'
 
 import { run } from './app'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreRuntimeLive } from './db/evidence-store'
+import { operationalError } from './errors'
 import { JournalLive } from './ledger'
-import { MarketDataLive } from './market-data'
+import { MarketData, MarketDataLive } from './market-data'
 import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
 import { makeTsmomStrategy, Strategy } from './strategy-service'
 
@@ -27,8 +29,28 @@ const main = Effect.gen(function* () {
     },
   })
   const strategy = makeTsmomStrategy(protocol, provenance)
+  const marketData = MarketDataLive(config, strategy.universe).pipe(
+    Layer.provide(
+      ClickhouseClient.layer({
+        url: config.clickhouse.url,
+        username: config.clickhouse.username,
+        password: Redacted.value(config.clickhouse.password),
+        database: 'signal',
+        application: 'bayn',
+        request_timeout: config.operationTimeoutMs,
+      }),
+    ),
+    Layer.provide(NodeHttpClient.layerNodeHttp),
+    Layer.catch((cause) =>
+      Layer.succeed(MarketData, {
+        load: Effect.fail(
+          operationalError('market-data', 'connect', 'failed to initialize Signal ClickHouse client', cause),
+        ),
+      }),
+    ),
+  )
   const dependencies = Layer.mergeAll(
-    MarketDataLive(config, strategy.universe),
+    marketData,
     JournalLive(config),
     EvidenceStoreRuntimeLive(config).pipe(Layer.provide(NodeServices.layer)),
     Layer.succeed(Strategy, strategy),

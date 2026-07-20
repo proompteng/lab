@@ -1,28 +1,114 @@
-import { createClient, type ClickHouseClient } from '@clickhouse/client'
-import { Context, Effect, Layer, Redacted, Schema } from 'effect'
+import { ClickhouseClient } from '@effect/sql-clickhouse'
+import { Clock, Context, Effect, Layer, Schema } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { operationalError, type OperationalError } from './errors'
-import { hashObject } from './hash'
+import { FinalizedSnapshotProvenanceSchema, type EvaluationBounds, type FinalizedSnapshotProvenance } from './contracts'
+import { OperationalError, operationalError } from './errors'
+import { canonicalHashV1 } from './hash'
 import type { DailyBar, InputManifest, IsoDate, SymbolCoverage } from './types'
 
-const ClickHouseNumber = Schema.Union([Schema.Number, Schema.String])
-const ClickHouseBarRow = Schema.Struct({
-  symbol: Schema.String,
-  session_date: Schema.String,
-  adjusted_open: ClickHouseNumber,
-  adjusted_high: ClickHouseNumber,
-  adjusted_low: ClickHouseNumber,
-  adjusted_close: ClickHouseNumber,
-  adjusted_volume: ClickHouseNumber,
-  source: Schema.String,
-  source_feed: Schema.String,
-  adjustment: Schema.String,
-  dataset_version: Schema.String,
-})
-type ClickHouseBarRow = typeof ClickHouseBarRow.Type
+const database = 'signal' as const
+const tables = {
+  bars: 'adjusted_daily_bars_v2',
+  sessions: 'exchange_sessions_v1',
+  manifests: 'snapshot_manifests_v1',
+} as const
+const signalSchemaVersion = 'signal.adjusted-daily-snapshot.v1' as const
+const calendarTimeZone = 'America/New_York' as const
+const StrictParseOptions = { onExcessProperty: 'error' } as const
 
-const decodeClickHouseBarRows = Schema.decodeUnknownSync(Schema.Array(ClickHouseBarRow))
+const IsoDateSchema = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/),
+  Schema.makeFilter((value: string) => {
+    const parsed = new Date(`${value}T00:00:00.000Z`)
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+  }),
+)
+const SnapshotIdSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
+const HashSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
+const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
+const ImageRepositorySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
+const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
+const SymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,14}$/))
+const FixedDecimalSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)\.\d{8}$/))
+const DigitsSchema = Schema.String.check(Schema.isPattern(/^\d+$/))
+const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:0\d|1\d|2[0-3]):[0-5]\d$/))
+const CountSchema = Schema.Union([Schema.Number, DigitsSchema])
+const FinalizedAtSchema = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2} (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}$/),
+)
+
+const SignalBarRowSchema = Schema.Struct({
+  snapshot_id: SnapshotIdSchema,
+  symbol: SymbolSchema,
+  session_date: IsoDateSchema,
+  adjusted_open: FixedDecimalSchema,
+  adjusted_high: FixedDecimalSchema,
+  adjusted_low: FixedDecimalSchema,
+  adjusted_close: FixedDecimalSchema,
+  adjusted_volume: FixedDecimalSchema,
+  trade_count: DigitsSchema,
+  vwap: Schema.NullOr(FixedDecimalSchema),
+  provider: Schema.Literal('alpaca'),
+  source_feed: Schema.Literal('sip'),
+  adjustment: Schema.Literal('all'),
+  publication_asof: IsoDateSchema,
+})
+const SignalSessionRowSchema = Schema.Struct({
+  snapshot_id: SnapshotIdSchema,
+  calendar_version: Schema.Trim.check(Schema.isMinLength(1)),
+  session_date: IsoDateSchema,
+  open_time: MarketTimeSchema,
+  close_time: MarketTimeSchema,
+  timezone: Schema.Literal(calendarTimeZone),
+  provider: Schema.Literal('alpaca'),
+})
+const SignalManifestRowSchema = Schema.Struct({
+  snapshot_id: SnapshotIdSchema,
+  schema_version: Schema.Literal(signalSchemaVersion),
+  publisher_source_revision: SourceRevisionSchema,
+  publisher_image_repository: ImageRepositorySchema,
+  publisher_image_digest: ImageDigestSchema,
+  provider: Schema.Literal('alpaca'),
+  source_feed: Schema.Literal('sip'),
+  adjustment: Schema.Literal('all'),
+  calendar_version: Schema.Trim.check(Schema.isMinLength(1)),
+  requested_start: IsoDateSchema,
+  publication_asof: IsoDateSchema,
+  first_session: IsoDateSchema,
+  last_session: IsoDateSchema,
+  symbol_count: CountSchema,
+  session_count: CountSchema,
+  bar_count: CountSchema,
+  bars_content_hash: HashSchema,
+  sessions_content_hash: HashSchema,
+  manifest_content_hash: HashSchema,
+  finalized_at: FinalizedAtSchema,
+})
+
+export type SignalBarRow = typeof SignalBarRowSchema.Type
+export type SignalSessionRow = typeof SignalSessionRowSchema.Type
+type DecodedSignalManifestRow = typeof SignalManifestRowSchema.Type
+export type SignalManifestRow = Omit<DecodedSignalManifestRow, 'symbol_count' | 'session_count' | 'bar_count'> & {
+  readonly symbol_count: number
+  readonly session_count: number
+  readonly bar_count: number
+}
+
+export interface SnapshotRows {
+  readonly bars: readonly SignalBarRow[]
+  readonly sessions: readonly SignalSessionRow[]
+  readonly manifests: readonly SignalManifestRow[]
+}
+
+export interface SnapshotRequest {
+  readonly snapshotId: string
+  readonly publicationAsOf: string
+  readonly calendarVersion: string
+  readonly universe: readonly string[]
+  readonly bounds: EvaluationBounds
+  readonly observedAt: string
+}
 
 export interface MarketDataSnapshot {
   readonly bars: readonly DailyBar[]
@@ -35,44 +121,54 @@ export interface MarketDataService {
 
 export class MarketData extends Context.Service<MarketData, MarketDataService>()('bayn/MarketData') {}
 
-const identifier = (value: string, name: string): string => {
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
-    throw new Error(`${name} is not a valid ClickHouse identifier`)
-  }
-  return value
+const asCount = (value: string | number, name: string): number => {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} is not a safe non-negative integer`)
+  return parsed
 }
 
-const numberField = (value: number | string, name: string): number => {
-  const parsed = typeof value === 'number' ? value : Number.parseFloat(value)
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${name} must be a finite non-negative number`)
+const decodeBars = Schema.decodeUnknownSync(Schema.Array(SignalBarRowSchema), StrictParseOptions)
+const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SignalSessionRowSchema), StrictParseOptions)
+const decodeManifests = Schema.decodeUnknownSync(Schema.Array(SignalManifestRowSchema), StrictParseOptions)
+const decodeFinalizedSnapshot = Schema.decodeUnknownSync(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
+
+const canonicalUniverse = (universe: readonly string[]): readonly string[] => {
+  const canonical = [...new Set(universe)].sort()
+  if (canonical.length === 0 || canonical.length !== universe.length) {
+    throw new Error('evaluation universe must be non-empty and unique')
+  }
+  if (canonical.some((symbol, index) => symbol !== universe[index])) {
+    throw new Error('evaluation universe must use canonical sorted order')
+  }
+  return canonical
+}
+
+const withoutSnapshot = <A extends { readonly snapshot_id: string }>({ snapshot_id: _, ...row }: A) => row
+const withoutManifestHash = ({ manifest_content_hash: _, ...manifest }: SignalManifestRow) => manifest
+
+const toUtcInstant = (value: string): string => `${value.replace(' ', 'T')}Z`
+
+const toNumber = (value: string, name: string, positive: boolean): number => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || (positive ? parsed <= 0 : parsed < 0)) {
+    throw new Error(`${name} must be a finite ${positive ? 'positive' : 'non-negative'} number`)
   }
   return parsed
 }
 
-const isoDate = (value: string): IsoDate => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
-    throw new Error(`invalid session date: ${value}`)
-  }
-  return value as IsoDate
-}
-
-const toBar = (row: ClickHouseBarRow): DailyBar => {
+const toDailyBar = (row: SignalBarRow, publicationSchemaVersion: string): DailyBar => {
   const bar: DailyBar = {
     symbol: row.symbol,
-    sessionDate: isoDate(row.session_date),
-    open: numberField(row.adjusted_open, 'adjusted_open'),
-    high: numberField(row.adjusted_high, 'adjusted_high'),
-    low: numberField(row.adjusted_low, 'adjusted_low'),
-    close: numberField(row.adjusted_close, 'adjusted_close'),
-    volume: numberField(row.adjusted_volume, 'adjusted_volume'),
-    source: row.source,
+    sessionDate: row.session_date as IsoDate,
+    open: toNumber(row.adjusted_open, 'adjusted_open', true),
+    high: toNumber(row.adjusted_high, 'adjusted_high', true),
+    low: toNumber(row.adjusted_low, 'adjusted_low', true),
+    close: toNumber(row.adjusted_close, 'adjusted_close', true),
+    volume: toNumber(row.adjusted_volume, 'adjusted_volume', false),
+    source: row.provider,
     sourceFeed: row.source_feed,
     adjustment: row.adjustment,
-    datasetVersion: row.dataset_version,
-  }
-  if (bar.open <= 0 || bar.high <= 0 || bar.low <= 0 || bar.close <= 0) {
-    throw new Error(`${bar.symbol} ${bar.sessionDate} contains a non-positive price`)
+    publicationSchemaVersion,
   }
   if (bar.low > Math.min(bar.open, bar.close) || bar.high < Math.max(bar.open, bar.close) || bar.low > bar.high) {
     throw new Error(`${bar.symbol} ${bar.sessionDate} contains inconsistent OHLC prices`)
@@ -80,172 +176,292 @@ const toBar = (row: ClickHouseBarRow): DailyBar => {
   return bar
 }
 
-export const buildInputManifest = (
-  bars: readonly DailyBar[],
-  database: string,
-  table: string,
-  expectedUniverse: readonly string[],
-  expectedDatasetVersion: string,
-): InputManifest => {
-  if (bars.length === 0) throw new Error('Signal ClickHouse returned no adjusted bars')
+const assertBoundSessions = (sessions: ReadonlySet<string>, bounds: EvaluationBounds): void => {
+  for (const [name, value] of Object.entries(bounds)) {
+    if (name === 'schemaVersion') continue
+    if (!sessions.has(value)) throw new Error(`${name} ${value} is not an exchange session in the snapshot`)
+  }
+}
 
-  const bySymbol = new Map<string, DailyBar[]>()
-  const uniqueRows = new Set<string>()
-  for (const bar of bars) {
-    if (bar.datasetVersion !== expectedDatasetVersion) {
-      throw new Error(`unexpected dataset version ${bar.datasetVersion}`)
+export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
+  const universe = canonicalUniverse(request.universe)
+  if (rows.manifests.length !== 1) {
+    throw new Error(`snapshot ${request.snapshotId} has ${rows.manifests.length} manifests; expected exactly one`)
+  }
+  const manifest = rows.manifests[0]
+  if (manifest.snapshot_id !== request.snapshotId) throw new Error('manifest snapshot ID does not match request')
+  if (manifest.calendar_version !== request.calendarVersion) throw new Error('manifest calendar version does not match')
+  if (manifest.publication_asof !== request.publicationAsOf) {
+    throw new Error(
+      `snapshot publication ${manifest.publication_asof} does not match expected session ${request.publicationAsOf}`,
+    )
+  }
+  const finalizedAt = toUtcInstant(manifest.finalized_at)
+  if (finalizedAt > request.observedAt) throw new Error('snapshot finalization is in the future')
+  if (manifest.manifest_content_hash !== canonicalHashV1(withoutManifestHash(manifest))) {
+    throw new Error('snapshot manifest content hash is invalid')
+  }
+
+  const orderedSessions = [...rows.sessions].sort((left, right) => left.session_date.localeCompare(right.session_date))
+  const sessionDates = new Set<string>()
+  for (const session of orderedSessions) {
+    if (session.snapshot_id !== request.snapshotId) throw new Error('exchange session has a mixed snapshot ID')
+    if (session.calendar_version !== manifest.calendar_version)
+      throw new Error('exchange session mixes calendar versions')
+    if (session.provider !== manifest.provider) throw new Error('exchange session mixes providers')
+    if (session.open_time >= session.close_time)
+      throw new Error(`exchange session ${session.session_date} has invalid hours`)
+    if (sessionDates.has(session.session_date)) throw new Error(`duplicate exchange session: ${session.session_date}`)
+    sessionDates.add(session.session_date)
+  }
+  if (orderedSessions.length !== manifest.session_count)
+    throw new Error('exchange-session count does not match manifest')
+  if (orderedSessions.length === 0) throw new Error('snapshot has no exchange sessions')
+  if (orderedSessions[0].session_date !== manifest.first_session)
+    throw new Error('first exchange session does not match')
+  if (orderedSessions.at(-1)!.session_date !== manifest.last_session)
+    throw new Error('last exchange session does not match')
+  if (canonicalHashV1(orderedSessions.map(withoutSnapshot)) !== manifest.sessions_content_hash) {
+    throw new Error('exchange-session content hash is invalid')
+  }
+
+  const orderedBars = [...rows.bars].sort((left, right) =>
+    left.session_date === right.session_date
+      ? left.symbol.localeCompare(right.symbol)
+      : left.session_date.localeCompare(right.session_date),
+  )
+  const barKeys = new Set<string>()
+  const actualSymbols = new Set<string>()
+  for (const bar of orderedBars) {
+    if (bar.snapshot_id !== request.snapshotId) throw new Error('adjusted bar has a mixed snapshot ID')
+    if (
+      bar.provider !== manifest.provider ||
+      bar.source_feed !== manifest.source_feed ||
+      bar.adjustment !== manifest.adjustment
+    ) {
+      throw new Error('adjusted bars mix provider, feed, or adjustment provenance')
     }
-    const key = `${bar.symbol}\u001f${bar.sessionDate}`
-    if (uniqueRows.has(key)) throw new Error(`duplicate adjusted bar: ${bar.symbol} ${bar.sessionDate}`)
-    uniqueRows.add(key)
-    const symbolBars = bySymbol.get(bar.symbol) ?? []
-    symbolBars.push(bar)
-    bySymbol.set(bar.symbol, symbolBars)
+    if (bar.publication_asof !== manifest.publication_asof) throw new Error('adjusted bar mixes publication as-of')
+    if (!sessionDates.has(bar.session_date))
+      throw new Error(`${bar.symbol} ${bar.session_date} is not an exchange session`)
+    const key = `${bar.symbol}\u001f${bar.session_date}`
+    if (barKeys.has(key)) throw new Error(`duplicate adjusted bar: ${bar.symbol} ${bar.session_date}`)
+    barKeys.add(key)
+    actualSymbols.add(bar.symbol)
+  }
+  if (orderedBars.length !== manifest.bar_count) throw new Error('adjusted-bar count does not match manifest')
+  if ([...actualSymbols].sort().join(',') !== universe.join(','))
+    throw new Error('snapshot universe does not match request')
+  if (manifest.symbol_count !== universe.length) throw new Error('manifest symbol count does not match request')
+  if (manifest.bar_count !== manifest.session_count * manifest.symbol_count) {
+    throw new Error('manifest does not describe a complete symbol-session product')
+  }
+  for (const session of orderedSessions) {
+    for (const symbol of universe) {
+      if (!barKeys.has(`${symbol}\u001f${session.session_date}`)) {
+        throw new Error(`incomplete snapshot: missing ${symbol} ${session.session_date}`)
+      }
+    }
+  }
+  if (canonicalHashV1(orderedBars.map(withoutSnapshot)) !== manifest.bars_content_hash) {
+    throw new Error('adjusted-bar content hash is invalid')
+  }
+  const expectedSnapshotId = canonicalHashV1({
+    schemaVersion: manifest.schema_version,
+    provider: manifest.provider,
+    feed: manifest.source_feed,
+    adjustment: manifest.adjustment,
+    calendarVersion: manifest.calendar_version,
+    requestedStart: manifest.requested_start,
+    publicationAsOf: manifest.publication_asof,
+    symbols: universe,
+    barsContentHash: manifest.bars_content_hash,
+    sessionsContentHash: manifest.sessions_content_hash,
+  })
+  if (manifest.snapshot_id !== expectedSnapshotId) throw new Error('snapshot ID does not match finalized content')
+
+  if (request.bounds.dataStart < manifest.first_session || request.bounds.dataEnd > manifest.last_session) {
+    throw new Error('evaluation data bounds are outside the finalized snapshot')
+  }
+  assertBoundSessions(sessionDates, request.bounds)
+  const boundedSessions = orderedSessions.filter(
+    (session) => session.session_date >= request.bounds.dataStart && session.session_date <= request.bounds.dataEnd,
+  )
+  const boundedSessionDates = new Set(boundedSessions.map((session) => session.session_date))
+  const boundedRows = orderedBars.filter((bar) => boundedSessionDates.has(bar.session_date))
+  if (boundedRows.length !== boundedSessions.length * universe.length) {
+    throw new Error('bounded snapshot is not a complete symbol-session product')
   }
 
-  const actualSymbols = [...bySymbol.keys()].sort()
-  const requiredSymbols = [...expectedUniverse].sort()
-  if (actualSymbols.join(',') !== requiredSymbols.join(',')) {
-    throw new Error(`universe mismatch: expected ${requiredSymbols.join(',')}; received ${actualSymbols.join(',')}`)
-  }
-
-  const sourceValues = new Set(bars.map((bar) => bar.source))
-  const feedValues = new Set(bars.map((bar) => bar.sourceFeed))
-  const adjustmentValues = new Set(bars.map((bar) => bar.adjustment))
-  if (sourceValues.size !== 1 || feedValues.size !== 1 || adjustmentValues.size !== 1) {
-    throw new Error('dataset mixes source, feed, or adjustment contracts')
-  }
-
-  const symbols: SymbolCoverage[] = requiredSymbols.map((symbol) => {
-    const symbolBars = bySymbol.get(symbol)
-    if (!symbolBars || symbolBars.length === 0) throw new Error(`missing adjusted bars for ${symbol}`)
-    symbolBars.sort((left, right) => left.sessionDate.localeCompare(right.sessionDate))
+  const symbols: SymbolCoverage[] = universe.map((symbol) => {
+    const symbolRows = boundedRows.filter((bar) => bar.symbol === symbol)
     return {
       symbol,
-      rows: symbolBars.length,
-      firstSession: symbolBars[0].sessionDate,
-      lastSession: symbolBars.at(-1)!.sessionDate,
+      rows: symbolRows.length,
+      firstSession: symbolRows[0].session_date as IsoDate,
+      lastSession: symbolRows.at(-1)!.session_date as IsoDate,
     }
   })
-
-  const contentHash = hashObject(
-    [...bars]
-      .sort((left, right) =>
-        left.sessionDate === right.sessionDate
-          ? left.symbol.localeCompare(right.symbol)
-          : left.sessionDate.localeCompare(right.sessionDate),
-      )
-      .map((bar) => ({
-        symbol: bar.symbol,
-        sessionDate: bar.sessionDate,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: bar.volume,
-        source: bar.source,
-        sourceFeed: bar.sourceFeed,
-        adjustment: bar.adjustment,
-        datasetVersion: bar.datasetVersion,
-      })),
-  )
-
-  const manifestWithoutHash = {
-    schemaVersion: 'bayn.input-manifest.v1' as const,
-    contentHash,
+  const finalizedSnapshot: FinalizedSnapshotProvenance = decodeFinalizedSnapshot({
+    schemaVersion: 'bayn.finalized-snapshot.v2',
+    snapshotId: manifest.snapshot_id,
+    publicationId: manifest.manifest_content_hash,
+    publicationSchemaVersion: manifest.schema_version,
+    source: manifest.provider,
+    sourceFeed: manifest.source_feed,
+    adjustment: manifest.adjustment,
+    calendarVersion: manifest.calendar_version,
+    publisherSourceRevision: manifest.publisher_source_revision,
+    publisherImage: {
+      repository: manifest.publisher_image_repository,
+      digest: manifest.publisher_image_digest,
+    },
+    finalizedAt,
+    requestedStart: manifest.requested_start,
+    firstSession: manifest.first_session,
+    lastSession: manifest.last_session,
+    asOfSession: manifest.publication_asof,
+    symbols: universe,
+    rowCount: manifest.bar_count,
+    sessionCount: manifest.session_count,
+    contentHash: manifest.bars_content_hash,
+    sessionsContentHash: manifest.sessions_content_hash,
+  })
+  const manifestMaterial: Omit<InputManifest, 'hash'> = {
+    schemaVersion: 'bayn.input-manifest.v2',
     database,
-    table,
-    datasetVersion: expectedDatasetVersion,
-    source: [...sourceValues][0],
-    sourceFeed: [...feedValues][0],
-    adjustment: [...adjustmentValues][0],
-    rowCount: bars.length,
-    firstSession: symbols.map((coverage) => coverage.firstSession).sort()[0],
-    lastSession: symbols
-      .map((coverage) => coverage.lastSession)
-      .sort()
-      .at(-1)!,
+    tables,
+    finalizedSnapshot,
+    bounds: request.bounds,
+    rowCount: boundedRows.length,
+    sessionCount: boundedSessions.length,
+    firstSession: boundedSessions[0].session_date as IsoDate,
+    lastSession: boundedSessions.at(-1)!.session_date as IsoDate,
     symbols,
   }
-  return { ...manifestWithoutHash, hash: hashObject(manifestWithoutHash) }
+  return {
+    bars: boundedRows.map((row) => toDailyBar(row, manifest.schema_version)),
+    manifest: { ...manifestMaterial, hash: canonicalHashV1(manifestMaterial) },
+  }
 }
 
-const loadSnapshot = (
-  client: ClickHouseClient,
-  config: RuntimeConfig['clickhouse'],
+const decodeSnapshotRows = (
+  bars: readonly unknown[],
+  sessions: readonly unknown[],
+  manifests: readonly unknown[],
+): SnapshotRows => ({
+  bars: decodeBars(bars) as readonly SignalBarRow[],
+  sessions: decodeSessions(sessions) as readonly SignalSessionRow[],
+  manifests: decodeManifests(manifests).map((manifest) => ({
+    ...manifest,
+    symbol_count: asCount(manifest.symbol_count, 'symbol_count'),
+    session_count: asCount(manifest.session_count, 'session_count'),
+    bar_count: asCount(manifest.bar_count, 'bar_count'),
+  })) as readonly SignalManifestRow[],
+})
+
+const makeMarketData = (
+  config: RuntimeConfig,
   universe: readonly string[],
-): Effect.Effect<MarketDataSnapshot, OperationalError> =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const database = identifier(config.database, 'database')
-      const table = identifier(config.table, 'table')
-      const result = await client.query({
-        query: `
-          SELECT
-            symbol,
-            toString(session_date) AS session_date,
-            adjusted_open,
-            adjusted_high,
-            adjusted_low,
-            adjusted_close,
-            adjusted_volume,
-            source,
-            source_feed,
-            adjustment,
-            dataset_version
-          FROM ${database}.${table} FINAL
-          WHERE dataset_version = {datasetVersion:String}
-            AND symbol IN {universe:Array(String)}
-          ORDER BY session_date, symbol
-        `,
-        query_params: { datasetVersion: config.datasetVersion, universe: [...universe] },
-        format: 'JSONEachRow',
-        abort_signal: signal,
-      })
-      const rows = decodeClickHouseBarRows(await result.json<unknown>())
-      const bars = rows.map(toBar)
-      const manifest = buildInputManifest(bars, database, table, universe, config.datasetVersion)
-      return { bars, manifest }
-    },
-    catch: (cause) => operationalError('market-data', 'load', 'failed to load Signal ClickHouse input', cause),
+): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
+  Effect.gen(function* () {
+    const sql = yield* ClickhouseClient.ClickhouseClient
+    const loadRows = Effect.gen(function* () {
+      const manifests = yield* sql`
+        SELECT
+          snapshot_id,
+          schema_version,
+          publisher_source_revision,
+          publisher_image_repository,
+          publisher_image_digest,
+          provider,
+          source_feed,
+          adjustment,
+          calendar_version,
+          toString(requested_start) AS requested_start,
+          toString(publication_asof) AS publication_asof,
+          toString(first_session) AS first_session,
+          toString(last_session) AS last_session,
+          symbol_count,
+          session_count,
+          bar_count,
+          bars_content_hash,
+          sessions_content_hash,
+          manifest_content_hash,
+          toString(finalized_at) AS finalized_at
+        FROM signal.snapshot_manifests_v1
+        WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+        ORDER BY finalized_at
+      `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
+      const [sessions, bars] = yield* Effect.all(
+        [
+          sql`
+            SELECT
+              snapshot_id,
+              calendar_version,
+              toString(session_date) AS session_date,
+              open_time,
+              close_time,
+              timezone,
+              provider
+            FROM signal.exchange_sessions_v1
+            WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+            ORDER BY session_date
+          `.pipe(sql.withQueryId(`bayn-sessions-${config.clickhouse.snapshotId.slice(-32)}`)),
+          sql`
+            SELECT
+              snapshot_id,
+              symbol,
+              toString(session_date) AS session_date,
+              toDecimalString(adjusted_open, 8) AS adjusted_open,
+              toDecimalString(adjusted_high, 8) AS adjusted_high,
+              toDecimalString(adjusted_low, 8) AS adjusted_low,
+              toDecimalString(adjusted_close, 8) AS adjusted_close,
+              toDecimalString(adjusted_volume, 8) AS adjusted_volume,
+              toString(trade_count) AS trade_count,
+              if(isNull(vwap), NULL, toDecimalString(vwap, 8)) AS vwap,
+              provider,
+              source_feed,
+              adjustment,
+              toString(publication_asof) AS publication_asof
+            FROM signal.adjusted_daily_bars_v2
+            WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+            ORDER BY session_date, symbol
+          `.pipe(sql.withQueryId(`bayn-bars-${config.clickhouse.snapshotId.slice(-32)}`)),
+        ],
+        { concurrency: 2 },
+      )
+      return { bars, sessions, manifests }
+    }).pipe(sql.withClickhouseSettings({ select_sequential_consistency: '1' }))
+
+    return {
+      load: Effect.gen(function* () {
+        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        const raw = yield* loadRows
+        return yield* Effect.try({
+          try: () =>
+            verifyFinalizedSnapshot(decodeSnapshotRows(raw.bars, raw.sessions, raw.manifests), {
+              snapshotId: config.clickhouse.snapshotId,
+              publicationAsOf: config.clickhouse.publicationAsOf,
+              calendarVersion: config.clickhouse.calendarVersion,
+              universe,
+              bounds: config.clickhouse.bounds,
+              observedAt,
+            }),
+          catch: (cause) => operationalError('market-data', 'verify', 'Signal snapshot verification failed', cause),
+        })
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof OperationalError
+            ? cause
+            : operationalError('market-data', 'load', 'failed to load finalized Signal snapshot', cause),
+        ),
+      ),
+    }
   })
-
-export interface MarketDataDependencies {
-  readonly createClient: typeof createClient
-}
-
-const defaultDependencies: MarketDataDependencies = { createClient }
 
 export const MarketDataLive = (
   config: RuntimeConfig,
   universe: readonly string[],
-  dependencies: MarketDataDependencies = defaultDependencies,
-): Layer.Layer<MarketData, OperationalError> =>
-  Layer.effect(
-    MarketData,
-    Effect.acquireRelease(
-      Effect.try({
-        try: () =>
-          dependencies.createClient({
-            url: config.clickhouse.url,
-            username: config.clickhouse.username,
-            password: Redacted.value(config.clickhouse.password),
-            database: config.clickhouse.database,
-            application: 'bayn',
-            request_timeout: config.operationTimeoutMs,
-          }),
-        catch: (cause) => operationalError('market-data', 'connect', 'failed to create ClickHouse client', cause),
-      }),
-      (client) =>
-        Effect.tryPromise({
-          try: () => client.close(),
-          catch: (cause) => operationalError('market-data', 'close', 'failed to close ClickHouse client', cause),
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning('ClickHouse client close failed').pipe(
-              Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
-            ),
-          ),
-        ),
-    ).pipe(Effect.map((client) => ({ load: loadSnapshot(client, config.clickhouse, universe) }))),
-  )
+): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
+  Layer.effect(MarketData, makeMarketData(config, universe))

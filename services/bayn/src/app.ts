@@ -131,7 +131,9 @@ const evaluateAndJournal = (
         imageDigest: config.build.imageDigest,
         strategyBehaviorHash: strategy.provenance.strategy.behaviorHash,
         parameterHash: strategy.provenance.strategy.parameterHash,
-        datasetVersion: config.clickhouse.datasetVersion,
+        snapshotId: config.clickhouse.snapshotId,
+        evaluationStart: config.clickhouse.bounds.evaluationStart,
+        evaluationEnd: config.clickhouse.bounds.evaluationEnd,
       }),
     )
     yield* withinDeadline(journal.check, config.operationTimeoutMs, 'journal', 'connectivity-check')

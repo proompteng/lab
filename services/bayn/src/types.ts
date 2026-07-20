@@ -1,3 +1,5 @@
+import type { EvaluationBounds, FinalizedSnapshotProvenance } from './contracts'
+
 export type IsoDate = `${number}-${number}-${number}`
 
 export interface DailyBar {
@@ -11,7 +13,7 @@ export interface DailyBar {
   readonly source: string
   readonly sourceFeed: string
   readonly adjustment: string
-  readonly datasetVersion: string
+  readonly publicationSchemaVersion: string
 }
 
 export interface SymbolCoverage {
@@ -22,16 +24,18 @@ export interface SymbolCoverage {
 }
 
 export interface InputManifest {
-  readonly schemaVersion: 'bayn.input-manifest.v1'
+  readonly schemaVersion: 'bayn.input-manifest.v2'
   readonly hash: string
-  readonly contentHash: string
-  readonly database: string
-  readonly table: string
-  readonly datasetVersion: string
-  readonly source: string
-  readonly sourceFeed: string
-  readonly adjustment: string
+  readonly database: 'signal'
+  readonly tables: {
+    readonly bars: 'adjusted_daily_bars_v2'
+    readonly sessions: 'exchange_sessions_v1'
+    readonly manifests: 'snapshot_manifests_v1'
+  }
+  readonly finalizedSnapshot: FinalizedSnapshotProvenance
+  readonly bounds: EvaluationBounds
   readonly rowCount: number
+  readonly sessionCount: number
   readonly firstSession: IsoDate
   readonly lastSession: IsoDate
   readonly symbols: readonly SymbolCoverage[]

@@ -1,6 +1,7 @@
 import { Config, Effect, Redacted, Schema, SchemaTransformation } from 'effect'
 
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
+import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { sha256 } from './hash'
 
@@ -19,9 +20,10 @@ export interface RuntimeConfig {
     readonly url: string
     readonly username: string
     readonly password: Redacted.Redacted<string>
-    readonly database: string
-    readonly table: string
-    readonly datasetVersion: string
+    readonly snapshotId: string
+    readonly publicationAsOf: string
+    readonly calendarVersion: string
+    readonly bounds: EvaluationBounds
   }
   readonly postgres: {
     readonly url: Redacted.Redacted<string>
@@ -37,7 +39,6 @@ export interface RuntimeConfig {
 
 const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-const ClickHouseIdentifier = NonEmptyString.check(Schema.isPattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/))
 const SourceRevision = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
 const ImageRepository = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
@@ -64,9 +65,6 @@ const secretString = (name: string) => nonEmptyString(name).pipe(Config.map((val
 const positiveInteger = (name: string, fallback: number) =>
   Config.schema(PositiveInteger, name).pipe(Config.withDefault(fallback))
 
-const clickhouseIdentifier = (name: string, fallback: string) =>
-  Config.schema(ClickHouseIdentifier, name).pipe(Config.withDefault(fallback))
-
 const runtimeConfig = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
@@ -79,9 +77,14 @@ const runtimeConfig = Config.all({
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
   clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
   clickhousePassword: secretString('BAYN_CLICKHOUSE_PASSWORD'),
-  clickhouseDatabase: clickhouseIdentifier('BAYN_CLICKHOUSE_DATABASE', 'signal'),
-  clickhouseTable: clickhouseIdentifier('BAYN_CLICKHOUSE_TABLE', 'adjusted_daily_bars_v1'),
-  datasetVersion: nonEmptyString('BAYN_DATASET_VERSION'),
+  snapshotId: Config.schema(Sha256Schema, 'BAYN_SIGNAL_SNAPSHOT_ID'),
+  publicationAsOf: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_PUBLICATION_ASOF'),
+  calendarVersion: nonEmptyString('BAYN_SIGNAL_CALENDAR_VERSION'),
+  dataStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_DATA_START'),
+  dataEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_DATA_END'),
+  lookbackStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_LOOKBACK_START'),
+  evaluationStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_START'),
+  evaluationEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_END'),
   postgresUrl: Config.redacted('BAYN_POSTGRES_URL'),
   postgresTls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
@@ -108,9 +111,17 @@ const runtimeConfig = Config.all({
       url: config.clickhouseUrl,
       username: config.clickhouseUsername,
       password: config.clickhousePassword,
-      database: config.clickhouseDatabase,
-      table: config.clickhouseTable,
-      datasetVersion: config.datasetVersion,
+      snapshotId: config.snapshotId,
+      publicationAsOf: config.publicationAsOf,
+      calendarVersion: config.calendarVersion,
+      bounds: {
+        schemaVersion: 'bayn.evaluation-bounds.v1',
+        dataStart: config.dataStart,
+        dataEnd: config.dataEnd,
+        lookbackStart: config.lookbackStart,
+        evaluationStart: config.evaluationStart,
+        evaluationEnd: config.evaluationEnd,
+      },
     },
     postgres: {
       url: config.postgresUrl,
@@ -135,6 +146,18 @@ export const loadConfig = (
     Effect.mapError((cause) => operationalError('config', 'load', 'invalid runtime configuration', cause)),
     Effect.flatMap((config) =>
       Effect.try({
+        try: () => ({
+          ...config,
+          clickhouse: {
+            ...config.clickhouse,
+            bounds: Schema.decodeUnknownSync(EvaluationBoundsSchema)(config.clickhouse.bounds),
+          },
+        }),
+        catch: (cause) => operationalError('config', 'load', 'invalid Signal evaluation bounds', cause),
+      }),
+    ),
+    Effect.flatMap((config) =>
+      Effect.try({
         try: (): RuntimeConfig => {
           if (embedded === undefined && config.provenanceMode !== 'development') {
             throw new Error('production provenance requires compile-time build metadata')
@@ -145,7 +168,6 @@ export const loadConfig = (
           if (embedded !== undefined && !config.postgres.tls) {
             throw new Error('production PostgreSQL connections require verified TLS')
           }
-
           const decodedBuild =
             embedded === undefined
               ? {
@@ -169,6 +191,7 @@ export const loadConfig = (
           const { configuredBuild, provenanceMode, ...runtime } = config
           return {
             ...runtime,
+            clickhouse: runtime.clickhouse,
             runOnStartup: provenanceMode === 'production' ? runtime.runOnStartup : false,
             build: {
               ...decodedBuild,

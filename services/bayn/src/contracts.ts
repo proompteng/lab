@@ -30,11 +30,13 @@ const NonEmptyString = Schema.String.check(
     expected: 'a non-empty string without surrounding whitespace',
   }),
 )
-const IsoDate = Schema.String.check(Schema.makeFilter(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }))
+export const IsoDateSchema = Schema.String.check(
+  Schema.makeFilter(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }),
+)
 const UtcInstant = Schema.String.check(
   Schema.makeFilter(isUtcInstant, { expected: 'a canonical UTC instant (YYYY-MM-DDTHH:mm:ss.sssZ)' }),
 )
-const Sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
+export const Sha256Schema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
 const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
@@ -42,22 +44,29 @@ const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$
 const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(canCanonicalize, { expected: 'a canonical JSON value' }))
 
 const FinalizedSnapshotBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.finalized-snapshot.v1'),
-  snapshotId: Sha256,
-  publicationId: NonEmptyString,
-  datasetVersion: NonEmptyString,
+  schemaVersion: Schema.Literal('bayn.finalized-snapshot.v2'),
+  snapshotId: Sha256Schema,
+  publicationId: Sha256Schema,
+  publicationSchemaVersion: NonEmptyString,
   source: NonEmptyString,
   sourceFeed: NonEmptyString,
   adjustment: NonEmptyString,
   calendarVersion: NonEmptyString,
-  publishedAt: UtcInstant,
+  publisherSourceRevision: SourceRevision,
+  publisherImage: Schema.Struct({
+    repository: NonEmptyString,
+    digest: ImageDigest,
+  }),
   finalizedAt: UtcInstant,
-  firstSession: IsoDate,
-  lastSession: IsoDate,
-  asOfSession: IsoDate,
+  requestedStart: IsoDateSchema,
+  firstSession: IsoDateSchema,
+  lastSession: IsoDateSchema,
+  asOfSession: IsoDateSchema,
   symbols: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
   rowCount: PositiveInteger,
-  contentHash: Sha256,
+  sessionCount: PositiveInteger,
+  contentHash: Sha256Schema,
+  sessionsContentHash: Sha256Schema,
 })
 
 export const FinalizedSnapshotProvenanceSchema = FinalizedSnapshotBase.check(
@@ -66,20 +75,20 @@ export const FinalizedSnapshotProvenanceSchema = FinalizedSnapshotBase.check(
     if (snapshot.firstSession > snapshot.lastSession) {
       issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
     }
+    if (snapshot.requestedStart > snapshot.firstSession) {
+      issues.push({ path: ['requestedStart'], issue: 'must not be after firstSession' })
+    }
     if (snapshot.asOfSession !== snapshot.lastSession) {
       issues.push({ path: ['asOfSession'], issue: 'must equal lastSession for a finalized snapshot' })
-    }
-    if (snapshot.finalizedAt > snapshot.publishedAt) {
-      issues.push({ path: ['finalizedAt'], issue: 'must not be after publishedAt' })
-    }
-    if (snapshot.rowCount < snapshot.symbols.length) {
-      issues.push({ path: ['rowCount'], issue: 'must contain at least one row per symbol' })
     }
     const canonicalSymbols = [...new Set(snapshot.symbols)].sort()
     if (canonicalSymbols.length !== snapshot.symbols.length) {
       issues.push({ path: ['symbols'], issue: 'must not contain duplicate symbols' })
     } else if (canonicalSymbols.some((symbol, index) => symbol !== snapshot.symbols[index])) {
       issues.push({ path: ['symbols'], issue: 'must be sorted in canonical order' })
+    }
+    if (snapshot.rowCount !== snapshot.sessionCount * snapshot.symbols.length) {
+      issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by the symbol count' })
     }
     return issues
   }),
@@ -88,11 +97,11 @@ export type FinalizedSnapshotProvenance = typeof FinalizedSnapshotProvenanceSche
 
 const EvaluationBoundsBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.evaluation-bounds.v1'),
-  dataStart: IsoDate,
-  dataEnd: IsoDate,
-  lookbackStart: IsoDate,
-  evaluationStart: IsoDate,
-  evaluationEnd: IsoDate,
+  dataStart: IsoDateSchema,
+  dataEnd: IsoDateSchema,
+  lookbackStart: IsoDateSchema,
+  evaluationStart: IsoDateSchema,
+  evaluationEnd: IsoDateSchema,
 })
 
 export const EvaluationBoundsSchema = EvaluationBoundsBase.check(
@@ -127,7 +136,7 @@ const RunIdentityFields = {
   }),
   strategy: Schema.Struct({
     name: NonEmptyString,
-    behaviorHash: Sha256,
+    behaviorHash: Sha256Schema,
     parameters: CanonicalJson,
   }),
   finalizedSnapshot: FinalizedSnapshotProvenanceSchema,
@@ -154,7 +163,7 @@ const runIdentityMaterialIssues = (material: typeof RunIdentityMaterialBase.Type
 export const RunIdentityMaterialSchema = RunIdentityMaterialBase.check(Schema.makeFilter(runIdentityMaterialIssues))
 export type RunIdentityMaterial = typeof RunIdentityMaterialSchema.Type
 
-const RunIdentityBase = Schema.Struct({ ...RunIdentityFields, runId: Sha256 })
+const RunIdentityBase = Schema.Struct({ ...RunIdentityFields, runId: Sha256Schema })
 
 export const RunIdentitySchema = RunIdentityBase.check(
   Schema.makeFilter((identity: typeof RunIdentityBase.Type) => {
@@ -177,13 +186,13 @@ export const RuntimeProvenanceSchema = Schema.Struct({
   }),
   strategy: Schema.Struct({
     name: NonEmptyString,
-    behaviorHash: Sha256,
-    parameterHash: Sha256,
+    behaviorHash: Sha256Schema,
+    parameterHash: Sha256Schema,
     parameterSchemaVersion: NonEmptyString,
   }),
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v1'),
-    inputManifest: Schema.Literal('bayn.input-manifest.v1'),
+    inputManifest: Schema.Literal('bayn.input-manifest.v2'),
     evaluation: Schema.Literal('bayn.evaluation.v1'),
   }),
 })
@@ -300,7 +309,7 @@ export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimePro
     ...input,
     contractVersions: {
       runtimeProvenance: 'bayn.runtime-provenance.v1',
-      inputManifest: 'bayn.input-manifest.v1',
+      inputManifest: 'bayn.input-manifest.v2',
       evaluation: 'bayn.evaluation.v1',
     },
   })

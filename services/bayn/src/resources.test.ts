@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createClient as createClickHouseClient, type ClickHouseClient } from '@clickhouse/client'
-import { Effect, Layer, Redacted, Ref } from 'effect'
+import { Effect, Redacted, Ref } from 'effect'
 import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
 import { initialize, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
+import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService } from './ledger'
-import { MarketData, MarketDataLive, type MarketDataService } from './market-data'
+import { MarketData, type MarketDataService } from './market-data'
 import { TsmomStrategyLayer } from './strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -30,9 +30,17 @@ const config: RuntimeConfig = {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
     password: Redacted.make('secret'),
-    database: 'signal',
-    table: 'adjusted_daily_bars_v1',
-    datasetVersion: 'fixture-v1',
+    snapshotId: '1'.repeat(64),
+    publicationAsOf: '2026-07-17',
+    calendarVersion: 'fixture-calendar-v1',
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: '2018-01-02',
+      dataEnd: '2026-07-17',
+      lookbackStart: '2018-01-02',
+      evaluationStart: '2019-01-02',
+      evaluationEnd: '2026-07-17',
+    },
   },
   postgres: {
     url: Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'),
@@ -54,19 +62,15 @@ const successfulEvidenceStore: EvidenceStoreService = {
     Effect.succeed({
       runId: evaluation.runId,
       deduplicated: false,
-      artifactCount: 5,
+      artifactCount: 6,
       eventCount: evaluation.events.length,
       gateCount: evaluation.verdict.gates.length,
     }),
 }
 
 describe('Bayn resource lifecycle', () => {
-  test('closes ClickHouse and TigerBeetle clients exactly once when their scope exits', async () => {
-    let clickHouseCloseCount = 0
+  test('closes the TigerBeetle client exactly once when its scope exits', async () => {
     let tigerBeetleCloseCount = 0
-    const clickHouseClient = {
-      close: async () => void (clickHouseCloseCount += 1),
-    } as unknown as ClickHouseClient
     const tigerBeetleClient = {
       destroy: () => void (tigerBeetleCloseCount += 1),
     } as unknown as Client
@@ -74,45 +78,26 @@ describe('Bayn resource lifecycle', () => {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* MarketData
           yield* Journal
         }).pipe(
           Effect.provide(
-            Layer.mergeAll(
-              MarketDataLive(config, fixtureProtocol.universe, {
-                createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
-              }),
-              JournalLive(config, {
-                createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
-                resolveReplicaAddresses: () => Effect.succeed(['3000']),
-              }),
-            ),
+            JournalLive(config, {
+              createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
+              resolveReplicaAddresses: () => Effect.succeed(['3000']),
+            }),
           ),
         ),
       ),
     )
 
-    expect(clickHouseCloseCount).toBe(1)
     expect(tigerBeetleCloseCount).toBe(1)
   })
 
-  test('aborts an in-flight ClickHouse query when the startup deadline expires', async () => {
-    let aborted = false
-    let closed = false
-    const clickHouseClient = {
-      query: ({ abort_signal: signal }: { abort_signal?: AbortSignal }) =>
-        new Promise<never>((_, reject) => {
-          signal?.addEventListener(
-            'abort',
-            () => {
-              aborted = true
-              reject(new Error('query aborted'))
-            },
-            { once: true },
-          )
-        }),
-      close: async () => void (closed = true),
-    } as unknown as ClickHouseClient
+  test('interrupts an in-flight market-data read when the startup deadline expires', async () => {
+    let interrupted = false
+    const marketData: MarketDataService = {
+      load: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
+    }
     const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
 
     await Effect.runPromise(
@@ -120,18 +105,13 @@ describe('Bayn resource lifecycle', () => {
         initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
+          Effect.provideService(MarketData, marketData),
           Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
-          Effect.provide(
-            MarketDataLive(config, fixtureProtocol.universe, {
-              createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
-            }),
-          ),
         ),
       ),
     )
 
-    expect(aborted).toBe(true)
-    expect(closed).toBe(true)
+    expect(interrupted).toBe(true)
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAIL_CLOSED',
       error: expect.stringContaining('market-data.load: load timed out'),
@@ -139,11 +119,11 @@ describe('Bayn resource lifecycle', () => {
   })
 
   test('fails closed when ClickHouse returns a malformed row', async () => {
-    let closed = false
-    const clickHouseClient = {
-      query: async () => ({ json: async () => [{ symbol: 42 }] }),
-      close: async () => void (closed = true),
-    } as unknown as ClickHouseClient
+    const marketData: MarketDataService = {
+      load: Effect.fail(
+        operationalError('market-data', 'verify', 'Signal snapshot verification failed', new Error('malformed row')),
+      ),
+    }
     const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
 
     await Effect.runPromise(
@@ -151,20 +131,15 @@ describe('Bayn resource lifecycle', () => {
         initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
+          Effect.provideService(MarketData, marketData),
           Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
-          Effect.provide(
-            MarketDataLive(config, fixtureProtocol.universe, {
-              createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
-            }),
-          ),
         ),
       ),
     )
 
-    expect(closed).toBe(true)
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAIL_CLOSED',
-      error: expect.stringContaining('market-data.load'),
+      error: expect.stringContaining('market-data.verify'),
     })
   })
 

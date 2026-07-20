@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { calculatePerformanceMetrics, evaluateTsmom } from './strategy'
+import { canonicalHashV1 } from './hash'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { FillEvent } from './types'
 
@@ -63,10 +64,24 @@ describe('TSMOM economic evaluator', () => {
       changedProtocol,
       makeTestProvenance(changedProtocol),
     )
+    const { hash: _, ...changedInputMaterial } = {
+      ...snapshot.manifest,
+      finalizedSnapshot: {
+        ...snapshot.manifest.finalizedSnapshot,
+        contentHash: '9'.repeat(64),
+      },
+    }
+    const inputChanged = evaluateTsmom(
+      snapshot.bars,
+      { ...changedInputMaterial, hash: canonicalHashV1(changedInputMaterial) },
+      fixtureProtocol,
+      makeTestProvenance(),
+    )
     expect(sourceChanged.runId).not.toBe(baseline.runId)
     expect(imageChanged.runId).not.toBe(baseline.runId)
     expect(behaviorChanged.runId).not.toBe(baseline.runId)
     expect(protocolChanged.runId).not.toBe(baseline.runId)
+    expect(inputChanged.runId).not.toBe(baseline.runId)
   })
 
   test('rejects a false parameter attribution before evaluation', () => {
@@ -82,6 +97,16 @@ describe('TSMOM economic evaluator', () => {
     const snapshot = makeSnapshot(700)
     expect(() => evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())).toThrow(
       'comparable observations',
+    )
+  })
+
+  test('rejects an incomplete session instead of silently filtering it out', () => {
+    const snapshot = makeSnapshot()
+    const incomplete = snapshot.bars.filter(
+      (bar) => !(bar.symbol === fixtureProtocol.universe[0] && bar.sessionDate === snapshot.manifest.firstSession),
+    )
+    expect(() => evaluateTsmom(incomplete, snapshot.manifest, fixtureProtocol, makeTestProvenance())).toThrow(
+      'row count does not match manifest',
     )
   })
 })
