@@ -59,6 +59,17 @@ const resolveReplicaAddress = (
 ): Effect.Effect<readonly string[], OperationalError> =>
   Effect.gen(function* () {
     const address = configuredAddress.trim()
+    const addressFamily = isIP(address)
+    if (addressFamily === 4) return [address]
+    if (addressFamily === 6) {
+      return yield* Effect.fail(
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `IPv6 TigerBeetle replica addresses are not supported: ${address}`,
+        ),
+      )
+    }
     if (/^\d+$/.test(address)) {
       yield* parsePort(address, address)
       return [address]
@@ -76,9 +87,9 @@ const resolveReplicaAddress = (
     }
     const hostname = address.slice(0, separator)
     const port = yield* parsePort(address.slice(separator + 1), address)
-    const addressFamily = isIP(hostname)
-    if (addressFamily === 4) return [`${hostname}:${port}`]
-    if (addressFamily === 6) {
+    const hostnameFamily = isIP(hostname)
+    if (hostnameFamily === 4) return [`${hostname}:${port}`]
+    if (hostnameFamily === 6) {
       return yield* Effect.fail(
         operationalError(
           'journal',
