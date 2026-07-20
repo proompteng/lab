@@ -68,13 +68,6 @@ spec:
                 secretKeyRef:
                   name: bayn-clickhouse-auth
                   key: password
-            # Remove these legacy values atomically with the bounded-reader image promotion.
-            - name: BAYN_CLICKHOUSE_DATABASE
-              value: signal
-            - name: BAYN_CLICKHOUSE_TABLE
-              value: adjusted_daily_bars_v1
-            - name: BAYN_DATASET_VERSION
-              value: alpaca-all-iex-2017-01-01-2026-07-18-v1
             - name: BAYN_SIGNAL_SNAPSHOT_ID
               value: e6ff31d2b08ec246876c4b45937838f0e3b4f5167c682afd6c2f10c46acaab20
             - name: BAYN_SIGNAL_PUBLICATION_ASOF
