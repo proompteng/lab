@@ -21,9 +21,12 @@ trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$backup_dir" "${HOME:-/tmp/home}"
 /opt/hermes/.venv/bin/hermes backup --output "$pending_archive"
-mv -- "$pending_archive" "$archive"
-(cd "$backup_dir" && sha256sum "$archive_name") >"$pending_checksum"
+pending_digest=$(sha256sum "$pending_archive")
+expected_digest=${pending_digest%% *}
+printf '%s  %s\n' "$expected_digest" "$archive_name" >"$pending_checksum"
+printf '%s  %s\n' "$expected_digest" "$pending_archive" | sha256sum -c -
 mv -- "$pending_checksum" "$archive.sha256"
+mv -- "$pending_archive" "$archive"
 (cd "$backup_dir" && sha256sum -c "$archive_name.sha256")
 
 find "$backup_dir" -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print \

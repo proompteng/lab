@@ -9,6 +9,7 @@ export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
   statefulSet: 'argocd/applications/hermes/statefulset.yaml',
   backupCronJob: 'argocd/applications/hermes/backup-cronjob.yaml',
+  backupScript: 'argocd/applications/hermes/backup-once.sh',
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
@@ -138,6 +139,26 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'claimName: backups-hermes-0',
   ])
   forbidTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [':latest', 'restartPolicy: Never'])
+
+  const backupPublicationSteps = [
+    'pending_digest=$(sha256sum "$pending_archive")',
+    'printf \'%s  %s\\n\' "$expected_digest" "$pending_archive" | sha256sum -c -',
+    'mv -- "$pending_checksum" "$archive.sha256"',
+    'mv -- "$pending_archive" "$archive"',
+    '(cd "$backup_dir" && sha256sum -c "$archive_name.sha256")',
+  ]
+  requireTerms(failures, productionPaths.backupScript, files.backupScript, backupPublicationSteps)
+  const backupPublicationPositions = backupPublicationSteps.map((step) => files.backupScript.indexOf(step))
+  if (
+    backupPublicationPositions.some((position) => position < 0) ||
+    backupPublicationPositions.some(
+      (position, index) => index > 0 && position <= backupPublicationPositions[index - 1]!,
+    )
+  ) {
+    failures.push(
+      `${productionPaths.backupScript}: backup must verify the hidden archive before publishing its checksum and archive`,
+    )
+  }
 
   requireTerms(failures, productionPaths.config, files.config, [
     '_config_version: 33',

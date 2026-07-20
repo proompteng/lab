@@ -123,6 +123,18 @@ test('rejects a backup CronJob that cannot be suspended deterministically', asyn
   )
 })
 
+test('rejects publishing a backup archive before its verified checksum', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace(
+    'mv -- "$pending_checksum" "$archive.sha256"\nmv -- "$pending_archive" "$archive"',
+    'mv -- "$pending_archive" "$archive"\nmv -- "$pending_checksum" "$archive.sha256"',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupScript}: backup must verify the hidden archive before publishing its checksum and archive`,
+  )
+})
+
 test('rejects availability alerts that ignore missing metrics', async () => {
   const files = await loadProductionFiles()
   files.mimirRules = files.mimirRules.replace(
