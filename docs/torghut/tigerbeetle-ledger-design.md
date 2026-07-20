@@ -119,4 +119,4 @@ The single-replica topology is not HA. Full production HA requires at least six 
 
 ## Version Contract
 
-TigerBeetle server and client versions are pinned together. The first rollout pins both to `0.17.4`, matching the latest verified upstream release at implementation start.
+TigerBeetle server and client versions are pinned together at `0.17.9`. A version change must update the cluster manifest, Python dependency and lockfile, manifest contract, and operational documentation in the same rollout.

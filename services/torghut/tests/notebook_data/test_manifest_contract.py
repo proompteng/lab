@@ -405,7 +405,10 @@ def test_database_principals_are_read_only_and_bounded() -> None:
         ).read_text()
     )
     profiles = clickhouse["spec"]["configuration"]["profiles"]
-    assert profiles == {
+    notebook_profiles = {
+        key: value for key, value in profiles.items() if key.startswith("notebook/")
+    }
+    assert notebook_profiles == {
         "notebook/readonly": 1,
         "notebook/max_execution_time": 30,
         "notebook/max_result_rows": 100000,

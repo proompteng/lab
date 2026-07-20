@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import tomllib
+
 from tests.live_config_manifest_contract.support import (
     Decimal,
     Mapping,
@@ -582,6 +584,14 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/tigerbeetle-cluster.yaml"
         )
+        pyproject = tomllib.loads(
+            (_repo_root() / "services/torghut/pyproject.toml").read_text()
+        )
+        client_pin = next(
+            dependency.split("==", maxsplit=1)[1]
+            for dependency in pyproject["project"]["dependencies"]
+            if dependency.startswith("tigerbeetle==")
+        )
 
         self.assertEqual(manifest["apiVersion"], "tigerbeetle.proompteng.ai/v1alpha1")
         self.assertEqual(manifest["kind"], "TigerBeetleCluster")
@@ -605,10 +615,11 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             spec_mapping["image"],
             {
                 "repository": "ghcr.io/tigerbeetle/tigerbeetle",
-                "tag": "0.17.4",
+                "tag": client_pin,
                 "pullPolicy": "IfNotPresent",
             },
         )
+        self.assertEqual(client_pin, "0.17.9")
         self.assertEqual(
             spec_mapping["storage"], {"className": "rook-ceph-block", "size": "100Gi"}
         )

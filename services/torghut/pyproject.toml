@@ -26,7 +26,7 @@ dependencies = [
   "inngest>=0.5.15,<1.0",
   "pypdf>=5.4.0,<6.0",
   "hyperliquid-python-sdk==0.24.0",
-  "tigerbeetle==0.17.4",
+  "tigerbeetle==0.17.9",
   "mlx>=0.29.2,<1.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 
