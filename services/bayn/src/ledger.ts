@@ -24,22 +24,18 @@ const BATCH_MAX = 8_189
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
 
 const lookupIpv4: ResolveHostname = (hostname) =>
-  Effect.tryPromise({
-    try: (signal) => {
-      const resolver = new Resolver()
-      const cancel = () => resolver.cancel()
-      signal.addEventListener('abort', cancel, { once: true })
-      const request = resolver.resolve4(hostname)
-      if (signal.aborted) cancel()
-      return request.finally(() => signal.removeEventListener('abort', cancel))
-    },
-    catch: (cause) =>
-      operationalError(
-        'journal',
-        'resolve-replica-addresses',
-        `failed to resolve TigerBeetle hostname ${hostname}`,
-        cause,
-      ),
+  Effect.suspend(() => {
+    const resolver = new Resolver()
+    return Effect.tryPromise({
+      try: () => resolver.resolve4(hostname),
+      catch: (cause) =>
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `failed to resolve TigerBeetle hostname ${hostname}`,
+          cause,
+        ),
+    }).pipe(Effect.onInterrupt(() => Effect.sync(() => resolver.cancel())))
   })
 
 const parsePort = (value: string, address: string): Effect.Effect<number, OperationalError> => {
@@ -407,15 +403,9 @@ export const assertReconciled = (
 
 const request = <A>(client: Client, operation: string, execute: () => Promise<A>): Effect.Effect<A, OperationalError> =>
   Effect.tryPromise({
-    try: (signal) => {
-      const cancel = () => client.destroy()
-      signal.addEventListener('abort', cancel, { once: true })
-      const pending = execute()
-      if (signal.aborted) cancel()
-      return pending.finally(() => signal.removeEventListener('abort', cancel))
-    },
+    try: execute,
     catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
-  })
+  }).pipe(Effect.onInterrupt(() => Effect.sync(() => client.destroy())))
 
 const validate = <A>(operation: string, evaluate: () => A): Effect.Effect<A, OperationalError> =>
   Effect.try({
