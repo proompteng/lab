@@ -91,6 +91,7 @@ proxy:
         memory: 512Mi
 
 singleuser:
+  cmd: null
   image:
     name: registry.ide-newton.ts.net/lab/torghut-notebook@sha256
     tag: '30e85c4d868f8206cd5b3087c31e00dd5c19d282c940b4594753ace5fffe0d9f'
