@@ -1,6 +1,7 @@
 import { isCelError, run as runCel, type CelInput } from '@bufbuild/cel'
 import { Effect } from 'effect'
 import { asRecord, asString, readNested } from '../primitives'
+import { extractAllowedImplementationSourceProviders, extractImplementationSourceProvider } from '../primitives-policy'
 import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 
 import { type Condition, upsertCondition } from './conditions'
@@ -37,7 +38,10 @@ type WorkflowContractCheck =
   | { ok: false; reason: string; message: string; requiredKeys: string[]; missing?: string[] }
 
 type WorkflowReconcilerDependencies = {
-  resolveRunnerServiceAccount: (runtimeConfig: Record<string, unknown>) => string | null | undefined
+  resolveRunnerServiceAccount: (
+    runtimeConfig: Record<string, unknown>,
+    provider?: Record<string, unknown> | null,
+  ) => string | null | undefined
   resolveJobImage: (workload: Record<string, unknown>, provider?: Record<string, unknown> | null) => string | null
   validateImplementationContract: (
     implementation: Record<string, unknown>,
@@ -312,6 +316,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     const security = asRecord(readNested(agent, ['spec', 'security'])) ?? {}
     const allowedSecrets = parseStringList(security.allowedSecrets)
     const allowedServiceAccounts = parseStringList(security.allowedServiceAccounts)
+    const allowedSourceProviders = extractAllowedImplementationSourceProviders(asRecord(agent.spec) ?? {})
     const runSecrets = parseStringList(spec.secrets)
     const authSecret = resolveAuthSecretConfig()
     if (allowedSecrets.length > 0) {
@@ -361,13 +366,24 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
     }
 
     if (allowedServiceAccounts.length > 0) {
-      const rawServiceAccount = deps.resolveRunnerServiceAccount(runtimeConfig)
+      const rawServiceAccount = deps.resolveRunnerServiceAccount(runtimeConfig, provider)
       const effectiveServiceAccount = rawServiceAccount || 'default'
       if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
         return {
           ok: false as const,
           reason: 'ServiceAccountNotAllowed',
           message: `serviceAccount ${effectiveServiceAccount} is not allowlisted`,
+        }
+      }
+    }
+
+    if (allowedSourceProviders.length > 0) {
+      const sourceProvider = extractImplementationSourceProvider(implResource)
+      if (!sourceProvider || !allowedSourceProviders.includes(sourceProvider)) {
+        return {
+          ok: false as const,
+          reason: 'ImplementationSourceProviderNotAllowed',
+          message: `implementation source provider ${sourceProvider ?? '<missing>'} is not allowlisted`,
         }
       }
     }
@@ -379,6 +395,7 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
       implementation: implResource,
       memory,
       allowedSecrets,
+      allowedSourceProviders,
     }
   }
 
@@ -614,6 +631,20 @@ export const createWorkflowReconciler = (deps: WorkflowReconcilerDependencies) =
             message: `workflow step ${stepSpec.name} implementation not found`,
           }
           break
+        }
+
+        if (dependencies.allowedSourceProviders.length > 0) {
+          const sourceProvider = extractImplementationSourceProvider(implementation)
+          if (!sourceProvider || !dependencies.allowedSourceProviders.includes(sourceProvider)) {
+            const message = `implementation source provider ${sourceProvider ?? '<missing>'} is not allowlisted`
+            setWorkflowStepPhase(stepStatus, 'Failed', message)
+            stepStatus.finishedAt = deps.nowIso()
+            workflowFailure = {
+              reason: 'ImplementationSourceProviderNotAllowed',
+              message: `workflow step ${stepSpec.name} ${message}`,
+            }
+            break
+          }
         }
 
         const stepWorkload = stepSpec.workload ?? baseWorkload

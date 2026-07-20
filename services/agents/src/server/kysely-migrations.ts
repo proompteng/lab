@@ -15,6 +15,7 @@ import * as agentsCodexRunProjectionMigration from './migrations/20260520_agents
 import * as agentsCodexLegacyBackfillMigration from './migrations/20260521_agents_codex_legacy_backfill'
 import * as agentsMemoryNotesMigration from './migrations/20260521_agents_memory_notes'
 import * as agentsMemoryProviderTablesMigration from './migrations/20260705_agents_memory_provider_tables'
+import * as agentsLinearMcpMutationReceiptsMigration from './migrations/20260720_agents_linear_mcp_mutation_receipts'
 
 type MigrationMap = Record<string, Migration>
 
@@ -40,6 +41,7 @@ const migrations: MigrationMap = {
   '20260521_agents_codex_legacy_backfill': agentsCodexLegacyBackfillMigration,
   '20260521_agents_memory_notes': agentsMemoryNotesMigration,
   '20260705_agents_memory_provider_tables': agentsMemoryProviderTablesMigration,
+  '20260720_agents_linear_mcp_mutation_receipts': agentsLinearMcpMutationReceiptsMigration,
   '20260520_agents_comms_agent_run_identity': agentsCommsAgentRunIdentityMigration,
   '20260520_agents_comms_agent_run_name_lookup': agentsCommsAgentRunNameLookupMigration,
 }

@@ -1,0 +1,62 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex-linear
+spec:
+  binary: /usr/local/bin/agent-runner
+  workload:
+    serviceAccountName: codex-linear-runner
+    serviceAccountToken:
+      audience: agents.proompteng.ai/linear-mcp
+      expirationSeconds: 600
+      mountPath: /var/run/secrets/agents-linear-mcp
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.6-sol
+      effort: high
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      threadConfig:
+        mcp_servers:
+          linear:
+            command: /usr/local/bin/linear-mcp-bridge
+            env:
+              LINEAR_MCP_GATEWAY_URL: http://agents-linear-mcp-gateway.agents.svc.cluster.local:8080/mcp
+        web_search: live
+  argsTemplate: []
+  envTemplate:
+    CODEX_LOG_LEVEL: info
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.6-sol"
+        model_reasoning_summary = "detailed"
+        model_reasoning_effort = "high"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        enable_request_compression = true
+        unified_exec = true
+        shell_snapshot = true
+        multi_agent = true
+        goals = true
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+  outputArtifacts:
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

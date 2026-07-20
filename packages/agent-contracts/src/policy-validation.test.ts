@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  extractAllowedImplementationSourceProviders,
+  extractImplementationSourceProvider,
+  extractProviderServiceAccount,
   extractRuntimeServiceAccount,
+  resolveEffectiveServiceAccount,
   validateApprovalPolicies,
   validateBudget,
   validatePolicies,
@@ -130,5 +134,31 @@ describe('policy validation', () => {
     expect(extractRuntimeServiceAccount({ runtime: { config: { serviceAccountName: 'canonical-sa' } } })).toBe(
       'canonical-sa',
     )
+  })
+
+  it('resolves effective service accounts with runtime, provider, and controller precedence', () => {
+    const provider = { spec: { workload: { serviceAccountName: 'provider-sa' } } }
+
+    expect(
+      resolveEffectiveServiceAccount(
+        { runtime: { config: { serviceAccountName: 'runtime-sa' } } },
+        provider,
+        'default-sa',
+      ),
+    ).toBe('runtime-sa')
+    expect(resolveEffectiveServiceAccount({ runtime: { config: {} } }, provider, 'default-sa')).toBe('provider-sa')
+    expect(resolveEffectiveServiceAccount({ runtime: { config: {} } }, null, 'default-sa')).toBe('default-sa')
+    expect(resolveEffectiveServiceAccount({ runtime: { config: {} } }, null, null)).toBe('default')
+    expect(extractProviderServiceAccount(provider)).toBe('provider-sa')
+  })
+
+  it('normalizes implementation source provider policy inputs', () => {
+    expect(
+      extractAllowedImplementationSourceProviders({
+        security: { allowedImplementationSourceProviders: [' Linear ', 'GITHUB'] },
+      }),
+    ).toEqual(['linear', 'github'])
+    expect(extractImplementationSourceProvider({ source: { provider: ' Linear ' } })).toBe('linear')
+    expect(extractImplementationSourceProvider({})).toBeNull()
   })
 })

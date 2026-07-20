@@ -34,6 +34,24 @@ runner:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
     tag: sha-3614bb427ed51506a10d6856dffd1bb6a0f84e8a
     digest: sha256:f9ced51ffbc5edc8d49855689e273d04f2a099f4a703d17f211d255a33f5452f
+linearMcpGateway:
+  enabled: false
+  replicaCount: 2
+  oauthSecretName: linear-mcp-oauth
+  databaseSecret:
+    name: agents-db-app
+    key: uri
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
 agentsShell:
   enabled: true
   image:

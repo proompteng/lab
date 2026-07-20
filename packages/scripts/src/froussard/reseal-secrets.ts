@@ -5,6 +5,20 @@ import { dirname, resolve } from 'node:path'
 import { $ } from 'bun'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 
+const redactCommand = (cmd: string[]) =>
+  cmd.map((argument) => (argument.startsWith('--from-literal=') ? '--from-literal=<redacted>' : argument)).join(' ')
+
+const redactCommandOutput = (output: string, cmd: string[]) => {
+  let redacted = output
+  for (const argument of cmd) {
+    if (!argument.startsWith('--from-literal=')) continue
+    const valueSeparator = argument.indexOf('=', '--from-literal='.length)
+    const value = valueSeparator >= 0 ? argument.slice(valueSeparator + 1) : ''
+    if (value) redacted = redacted.replaceAll(value, '<redacted>')
+  }
+  return redacted
+}
+
 const capture = async (cmd: string[], input?: string): Promise<string> => {
   const proc = Bun.spawn(cmd, {
     stdin: 'pipe',
@@ -24,7 +38,7 @@ const capture = async (cmd: string[], input?: string): Promise<string> => {
   ])
 
   if (exitCode !== 0) {
-    fatal(`Command failed (${exitCode}): ${cmd.join(' ')}`, stderr)
+    fatal(`Command failed (${exitCode}): ${redactCommand(cmd)}`, redactCommandOutput(stderr, cmd))
   }
 
   return stdout
@@ -39,7 +53,7 @@ const readOpSecret = async (path: string): Promise<string> => {
     }
     return trimmed
   } catch (error) {
-    fatal(`Failed to read 1Password secret: ${path}`, error)
+    return fatal(`Failed to read 1Password secret: ${path}`, error)
   }
 }
 
@@ -51,23 +65,16 @@ type SecretOptions = {
   controllerNamespace: string
 }
 
+const buildSecretManifest = (options: SecretOptions) =>
+  JSON.stringify({
+    apiVersion: 'v1',
+    kind: 'Secret',
+    metadata: { name: options.name, namespace: options.namespace },
+    type: 'Opaque',
+    data: Object.fromEntries(options.literals.map(([key, value]) => [key, Buffer.from(value).toString('base64')])),
+  })
+
 const sealSecret = async (options: SecretOptions): Promise<string> => {
-  const command = [
-    'kubectl',
-    'create',
-    'secret',
-    'generic',
-    options.name,
-    '--namespace',
-    options.namespace,
-    '--dry-run=client',
-    '-o',
-    'json',
-    ...options.literals.map(([key, value]) => `--from-literal=${key}=${value}`),
-  ]
-
-  const manifest = await capture(command)
-
   return await capture(
     [
       'kubeseal',
@@ -82,7 +89,7 @@ const sealSecret = async (options: SecretOptions): Promise<string> => {
       '--format',
       'yaml',
     ],
-    manifest,
+    buildSecretManifest(options),
   )
 }
 
@@ -101,7 +108,6 @@ const writeDocuments = async (outputPath: string, documents: string[]) => {
 
 export const main = async () => {
   ensureCli('op')
-  ensureCli('kubectl')
   ensureCli('kubeseal')
 
   const githubOutputPath = resolve(
@@ -111,6 +117,10 @@ export const main = async () => {
   const discordOutputPath = resolve(
     process.env.FROUSSARD_DISCORD_SEALED_SECRETS_OUTPUT ??
       resolve(repoRoot, 'argocd/applications/froussard/discord-secrets.yaml'),
+  )
+  const linearOutputPath = resolve(
+    process.env.FROUSSARD_LINEAR_SEALED_SECRETS_OUTPUT ??
+      resolve(repoRoot, 'argocd/applications/froussard/linear-secrets.yaml'),
   )
 
   const controllerName = process.env.SEALED_SECRETS_CONTROLLER_NAME ?? 'sealed-secrets'
@@ -125,6 +135,8 @@ export const main = async () => {
   const discordGuildIdPath = process.env.FROUSSARD_CODEX_DISCORD_GUILD_ID_OP_PATH ?? 'op://infra/discord/guild-id'
   const discordCategoryIdPath =
     process.env.FROUSSARD_CODEX_DISCORD_CATEGORY_ID_OP_PATH ?? 'op://infra/discord/category-id'
+  const linearWebhookSecretPath =
+    process.env.FROUSSARD_LINEAR_WEBHOOK_SECRET_OP_PATH ?? 'op://infra/linear/webhook-secret'
 
   const githubWebhookSecret = await readOpSecret(githubWebhookSecretPath)
   const githubToken = await readOpSecret(githubTokenPath)
@@ -132,6 +144,7 @@ export const main = async () => {
   const discordPublicKey = await readOpSecret(discordPublicKeyPath)
   const discordBotToken = await readOpSecret(discordBotTokenPath)
   const discordGuildId = await readOpSecret(discordGuildIdPath)
+  const linearWebhookSecret = await readOpSecret(linearWebhookSecretPath)
 
   let discordCategoryId: string | undefined
   if (discordCategoryIdPath) {
@@ -197,11 +210,22 @@ export const main = async () => {
     }),
   ])
 
+  const linearSecret = await sealSecret({
+    name: 'linear-webhook-secret',
+    namespace: 'froussard',
+    literals: [['webhook-secret', linearWebhookSecret]],
+    controllerName,
+    controllerNamespace,
+  })
+
   await writeDocuments(githubOutputPath, githubSecrets)
   console.log(`GitHub SealedSecrets written to ${githubOutputPath}`)
 
   await writeDocuments(discordOutputPath, discordSecrets)
   console.log(`Discord SealedSecrets written to ${discordOutputPath}`)
+
+  await writeDocuments(linearOutputPath, [linearSecret])
+  console.log(`Linear SealedSecrets written to ${linearOutputPath}`)
   console.log(
     'Kafka credentials are sourced from the Strimzi-managed froussard KafkaUser secret; no sealed secret required.',
   )
@@ -212,8 +236,11 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  buildSecretManifest,
   capture,
   readOpSecret,
+  redactCommand,
+  redactCommandOutput,
   sealSecret,
   writeDocuments,
 }

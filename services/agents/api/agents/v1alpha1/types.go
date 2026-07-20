@@ -37,8 +37,9 @@ type AgentEnvVar struct {
 }
 
 type AgentSecurity struct {
-	AllowedServiceAccounts []string `json:"allowedServiceAccounts,omitempty"`
-	AllowedSecrets         []string `json:"allowedSecrets,omitempty"`
+	AllowedServiceAccounts               []string `json:"allowedServiceAccounts,omitempty"`
+	AllowedSecrets                       []string `json:"allowedSecrets,omitempty"`
+	AllowedImplementationSourceProviders []string `json:"allowedImplementationSourceProviders,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!(has(self.systemPrompt) && has(self.systemPromptRef))",message="Only one of systemPrompt or systemPromptRef may be set"
@@ -331,6 +332,23 @@ type AgentProviderWorkloadSpec struct {
 	Image string `json:"image,omitempty"`
 	// Resources are provider-owned default resource requirements for AgentRun Jobs.
 	Resources *WorkloadResources `json:"resources,omitempty"`
+	// ServiceAccountName is the provider-owned default service account for AgentRun Jobs.
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// ServiceAccountToken projects a short-lived, audience-bound token into runner Jobs.
+	ServiceAccountToken *AgentProviderServiceAccountTokenSpec `json:"serviceAccountToken,omitempty"`
+}
+
+type AgentProviderServiceAccountTokenSpec struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Audience string `json:"audience"`
+	// +kubebuilder:validation:Minimum=600
+	// +kubebuilder:validation:Maximum=3600
+	ExpirationSeconds int64 `json:"expirationSeconds"`
+	// +kubebuilder:validation:MinLength=2
+	// +kubebuilder:validation:MaxLength=1024
+	// +kubebuilder:validation:Pattern=`^/`
+	MountPath string `json:"mountPath"`
 }
 
 type AgentProviderHealthSpec struct {

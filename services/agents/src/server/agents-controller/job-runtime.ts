@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { asRecord, asString, readNested } from '../primitives'
+import { resolveEffectiveServiceAccount } from '../primitives-policy'
 import type { createKubernetesClient } from '../kube-types'
 
 import { parseEnvArray, parseEnvRecord, parseOptionalNumber, parseStringList } from './env-config'
@@ -98,10 +99,36 @@ export const buildRunSpecContext = (
   }
 }
 
-export const resolveRunnerServiceAccount = (runtimeConfig: Record<string, unknown>) =>
-  asString(runtimeConfig.serviceAccount) ??
-  asString(runtimeConfig.serviceAccountName) ??
-  resolveAgentRunnerDefaultsConfig(process.env).serviceAccount
+export const resolveRunnerServiceAccount = (
+  runtimeConfig: Record<string, unknown>,
+  provider: Record<string, unknown> | null = null,
+) =>
+  resolveEffectiveServiceAccount(
+    { runtime: { config: runtimeConfig } },
+    provider,
+    resolveAgentRunnerDefaultsConfig(process.env).serviceAccount,
+  )
+
+const resolveProviderServiceAccountToken = (provider: Record<string, unknown>) => {
+  const raw = asRecord(readNested(provider, ['spec', 'workload', 'serviceAccountToken']))
+  if (!raw) return null
+  const audience = asString(raw.audience)?.trim()
+  const expirationSeconds = parseOptionalNumber(raw.expirationSeconds)
+  const mountPath = asString(raw.mountPath)?.trim()
+  if (!audience || audience.length > 253)
+    throw new Error('AgentProvider workload serviceAccountToken.audience is invalid')
+  if (!expirationSeconds || expirationSeconds < 600 || expirationSeconds > 3600) {
+    throw new Error('AgentProvider workload serviceAccountToken.expirationSeconds must be between 600 and 3600')
+  }
+  if (!mountPath || !mountPath.startsWith('/') || mountPath === '/' || mountPath.split('/').includes('..')) {
+    throw new Error('AgentProvider workload serviceAccountToken.mountPath must be an absolute non-root path')
+  }
+  return {
+    audience,
+    expirationSeconds: Math.trunc(expirationSeconds),
+    mountPath: mountPath.replace(/\/+$/, ''),
+  }
+}
 
 const normalizeResourceQuantityMap = (value: unknown) => {
   const resourceMap = asRecord(value)
@@ -727,7 +754,8 @@ export const submitJobRun = async (
         systemPromptExpectedHash: options.systemPromptHash,
       })
     : null
-  const serviceAccount = resolveRunnerServiceAccount(runtimeConfig)
+  const serviceAccount = resolveRunnerServiceAccount(runtimeConfig, provider)
+  const serviceAccountToken = resolveProviderServiceAccountToken(provider)
   const runnerDefaultsConfig = resolveAgentRunnerDefaultsConfig(process.env)
   const nodeSelector =
     asRecord(runtimeConfig.nodeSelector) ??
@@ -919,8 +947,45 @@ export const submitJobRun = async (
     configVolumeMounts.push(...vcsRuntime.volumeMounts)
   }
 
+  if (serviceAccountToken) {
+    if (
+      hasVolumeMountAtPath(volumeMounts, serviceAccountToken.mountPath) ||
+      hasVolumeMountAtPath(configVolumeMounts, serviceAccountToken.mountPath)
+    ) {
+      throw new Error(`projected service account token mountPath ${serviceAccountToken.mountPath} is already in use`)
+    }
+    const identityVolumeName = makeName(providerName || runName, 'mcp-identity')
+    volumes.push({
+      name: identityVolumeName,
+      spec: {
+        projected: {
+          defaultMode: 420,
+          sources: [
+            {
+              serviceAccountToken: {
+                audience: serviceAccountToken.audience,
+                expirationSeconds: serviceAccountToken.expirationSeconds,
+                path: 'token',
+              },
+            },
+          ],
+        },
+      },
+    })
+    configVolumeMounts.push({
+      name: identityVolumeName,
+      mountPath: serviceAccountToken.mountPath,
+      readOnly: true,
+    })
+    env.push({
+      name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
+      value: `${serviceAccountToken.mountPath}/token`,
+    })
+  }
+
   const jobPodSpec: Record<string, unknown> = {
-    serviceAccountName: serviceAccount ?? undefined,
+    serviceAccountName: serviceAccount,
+    ...(serviceAccountToken ? { automountServiceAccountToken: false } : {}),
     restartPolicy: 'Never',
     containers: [
       {

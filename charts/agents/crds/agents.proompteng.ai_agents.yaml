@@ -111,6 +111,10 @@ spec:
                 type: object
               security:
                 properties:
+                  allowedImplementationSourceProviders:
+                    items:
+                      type: string
+                    type: array
                   allowedSecrets:
                     items:
                       type: string

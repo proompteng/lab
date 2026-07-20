@@ -34,6 +34,54 @@ data:
             annotations:
               summary: Graf has not processed any requests
               description: The Graf HTTP counter has not incremented in the last 10 minutes.
+      - name: froussard-linear-webhook.rules
+        rules:
+          - alert: FroussardLinearWebhookVerificationFailures
+            expr: sum(increase(froussard_linear_webhook_verification_failures_total[10m])) > 5
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: froussard
+            annotations:
+              summary: Froussard is repeatedly rejecting Linear webhook verification
+              description: More than five Linear deliveries failed bounded verification in ten minutes.
+          - alert: FroussardLinearWebhookDeliveryLatency
+            expr: |
+              histogram_quantile(
+                0.95,
+                sum by (le) (rate(froussard_linear_webhook_delivery_latency_ms_bucket[10m]))
+              ) > 4000
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: froussard
+            annotations:
+              summary: Linear webhook p95 latency is approaching its five-second deadline
+              description: Froussard Linear webhook p95 response latency exceeded four seconds for ten minutes.
+          - alert: FroussardLinearAgentRunSubmissionFailures
+            expr: sum(increase(froussard_linear_webhook_downstream_failures_total{dependency="agents"}[15m])) > 2
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: froussard
+              notify: email
+            annotations:
+              summary: Froussard cannot submit Linear AgentRuns
+              description: More than two verified Linear deliveries failed Agents submission in fifteen minutes.
+          - alert: FroussardLinearWebhookKafkaFailures
+            expr: sum(increase(froussard_linear_webhook_downstream_failures_total{dependency="kafka"}[15m])) > 2
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: froussard
+              notify: email
+            annotations:
+              summary: Froussard cannot audit Linear webhook deliveries
+              description: More than two verified Linear deliveries failed Kafka audit publication in fifteen minutes.
       - name: codex-pipeline-observability.rules
         rules:
           - alert: CodexNatsAgentCommsLagHigh

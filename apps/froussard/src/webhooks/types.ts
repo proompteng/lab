@@ -10,6 +10,7 @@ export interface WebhookConfig {
     serviceClientName: string
     namespace: string
     agentName: string
+    linearAgentName: string
     vcsProviderName: string
     serviceAccountName: string
     secrets: string[]
@@ -33,6 +34,7 @@ export interface WebhookConfig {
   topics: {
     raw: string
     discordCommands: string
+    linearRaw: string
   }
   discord: {
     publicKey: string
@@ -41,5 +43,16 @@ export interface WebhookConfig {
   idempotency: {
     ttlMs: number
     maxEntries: number
+  }
+  linear: {
+    enabled?: boolean
+    webhookSecret: string
+    triggerLabel: string
+    repository: string
+    baseBranch: string
+    branchPrefix: string
+    maxBodyBytes: number
+    webhookToleranceMs: number
+    agentsTimeoutMs: number
   }
 }

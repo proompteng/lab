@@ -76,6 +76,15 @@ Docs index: [README](README.md)
   - AgentRun: `spec.ttlSecondsAfterFinished` (integer seconds, >= 0) to override controller retention (0 disables).
   - AgentRun: `spec.goal.objective` (string) and optional `spec.goal.tokenBudget` (integer, >= 1) to expose a
     first-class Codex goal in generated run payloads.
+  - Agent: `spec.security.allowedImplementationSourceProviders[]` restricts inline and referenced
+    implementation provenance providers.
+  - AgentProvider: `spec.workload.serviceAccountName` supplies the provider workload identity.
+  - AgentProvider: `spec.workload.serviceAccountToken` configures a projected token with required
+    `audience`, 600-3600 second `expirationSeconds`, and absolute `mountPath`.
+
+The effective runtime service account is resolved consistently for Jobs and Workflows and, when the
+allowlist is configured, must be present in `Agent.spec.security.allowedServiceAccounts`. When a projected provider token is used,
+the default Kubernetes API token is disabled and only that rotating audience-bound token is mounted.
 
 ## Status Conditions (standard)
 

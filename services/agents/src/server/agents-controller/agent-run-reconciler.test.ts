@@ -224,6 +224,80 @@ describe('agents controller agent-run reconciler', () => {
     )
   })
 
+  it('rejects a direct AgentRun whose implementation source is not allowed by the Agent', async () => {
+    const setStatus = vi.fn(async () => undefined)
+    const submitJobRun = vi.fn()
+    const kube = {
+      patch: vi.fn(async () => ({})),
+      get: vi.fn(async (kind: string) => {
+        if (kind === RESOURCE_MAP.Agent) {
+          return {
+            metadata: { name: 'codex-linear-agent' },
+            spec: {
+              providerRef: { name: 'codex-linear' },
+              security: { allowedImplementationSourceProviders: ['linear'] },
+            },
+          }
+        }
+        if (kind === RESOURCE_MAP.AgentProvider) {
+          return { metadata: { name: 'codex-linear' }, spec: {} }
+        }
+        return null
+      }),
+    }
+    const reconciler = createAgentRunReconciler(
+      createBaseDependencies({
+        setStatus,
+        submitJobRun,
+      }),
+    )
+
+    await reconciler.reconcileAgentRun(
+      kube as never,
+      {
+        metadata: { name: 'run-1', namespace: 'agents', generation: 1 },
+        spec: {
+          agentRef: { name: 'codex-linear-agent' },
+          runtime: { type: 'job' },
+          implementation: {
+            inline: {
+              source: { provider: 'github', externalId: '123' },
+              text: 'Implement the issue.',
+            },
+          },
+          parameters: {},
+          workload: {},
+        },
+      },
+      'agents',
+      [],
+      [],
+      {
+        perNamespace: 10,
+        perAgent: 10,
+        cluster: 10,
+        repoConcurrency: { enabled: false, defaultLimit: 0, overrides: new Map() },
+      },
+      { total: 0, perAgent: new Map(), perRepository: new Map() },
+      0,
+    )
+
+    expect(submitJobRun).not.toHaveBeenCalled()
+    expect(setStatus).toHaveBeenLastCalledWith(
+      kube,
+      expect.any(Object),
+      expect.objectContaining({
+        phase: 'Failed',
+        conditions: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'InvalidSpec',
+            reason: 'ImplementationSourceProviderNotAllowed',
+          }),
+        ]),
+      }),
+    )
+  })
+
   it('finalizes a running job AgentRun from stored terminal runner status when the Job was already pruned', async () => {
     const setStatus = vi.fn(async () => undefined)
     const kube = {

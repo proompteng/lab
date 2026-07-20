@@ -301,6 +301,87 @@
       },
       "additionalProperties": false
     },
+    "linearMcpGateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 2 },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "imagePullSecrets": { "type": "array", "items": { "type": "string" } },
+        "oauthSecretName": { "type": "string", "minLength": 1 },
+        "databaseSecret": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "key": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "serviceAccount": {
+          "type": "object",
+          "properties": { "name": { "type": "string", "minLength": 1 } },
+          "additionalProperties": false
+        },
+        "runnerServiceAccount": {
+          "type": "object",
+          "properties": { "name": { "type": "string", "minLength": 1 } },
+          "additionalProperties": false
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "namespace": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "runnerServiceAccount": { "type": "string", "minLength": 1 },
+            "agentName": { "type": "string", "minLength": 1 },
+            "providerName": { "type": "string", "minLength": 1 },
+            "triggerLabel": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": { "type": "object", "additionalProperties": { "type": "string" } },
+            "limits": { "type": "object", "additionalProperties": { "type": "string" } }
+          },
+          "additionalProperties": false
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minAvailable": { "type": ["integer", "string"] }
+          },
+          "additionalProperties": false
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "networkPolicy": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "agentsShell": {
       "type": "object",
       "properties": {

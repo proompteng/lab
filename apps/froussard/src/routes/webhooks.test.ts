@@ -187,6 +187,7 @@ describe('createWebhookHandler', () => {
       serviceClientName: 'froussard',
       namespace: 'agents',
       agentName: 'codex-agent',
+      linearAgentName: 'codex-linear-agent',
       vcsProviderName: 'github',
       serviceAccountName: 'agents-sa',
       secrets: ['github-token', 'codex-auth'],
@@ -210,6 +211,7 @@ describe('createWebhookHandler', () => {
     topics: {
       raw: 'raw-topic',
       discordCommands: 'discord-topic',
+      linearRaw: 'linear.webhook.events',
     },
     discord: {
       publicKey: 'public-key',
@@ -217,6 +219,17 @@ describe('createWebhookHandler', () => {
         deferType: 'channel-message',
         ephemeral: true,
       },
+    },
+    linear: {
+      enabled: true,
+      webhookSecret: 'linear-secret',
+      triggerLabel: 'agentrun',
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      branchPrefix: 'codex/linear-',
+      maxBodyBytes: 1024 * 1024,
+      webhookToleranceMs: 60_000,
+      agentsTimeoutMs: 3_000,
     },
   }
 
@@ -227,6 +240,7 @@ describe('createWebhookHandler', () => {
         maxEntries: baseConfig.idempotency.maxEntries,
       },
       githubWebhookSecret: 'secret',
+      linearWebhookSecret: 'linear-secret',
       atlas: {
         baseUrl: baseConfig.atlas.baseUrl,
         apiKey: baseConfig.atlas.apiKey,
@@ -240,6 +254,7 @@ describe('createWebhookHandler', () => {
         topics: {
           raw: baseConfig.topics.raw,
           discordCommands: baseConfig.topics.discordCommands,
+          linearRaw: baseConfig.topics.linearRaw,
         },
       },
       codebase: {
@@ -263,6 +278,16 @@ describe('createWebhookHandler', () => {
         ackReaction: baseConfig.github.ackReaction,
         apiBaseUrl: baseConfig.github.apiBaseUrl,
         userAgent: baseConfig.github.userAgent,
+      },
+      linear: {
+        enabled: baseConfig.linear.enabled ?? true,
+        triggerLabel: baseConfig.linear.triggerLabel,
+        repository: baseConfig.linear.repository,
+        baseBranch: baseConfig.linear.baseBranch,
+        branchPrefix: baseConfig.linear.branchPrefix,
+        maxBodyBytes: baseConfig.linear.maxBodyBytes,
+        webhookToleranceMs: baseConfig.linear.webhookToleranceMs,
+        agentsTimeoutMs: baseConfig.linear.agentsTimeoutMs,
       },
     }
     const configLayer = Layer.succeed(AppConfigService, appConfig)
@@ -651,6 +676,30 @@ describe('createWebhookHandler', () => {
     )
     expect(response.status).toBe(400)
     expect(webhooks.verify).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does not read or process Linear deliveries while intake is dormant', async () => {
+    const handler = createWebhookHandler({
+      runtime,
+      webhooks: webhooks as never,
+      config: { ...baseConfig, linear: { ...baseConfig.linear, enabled: false } },
+    })
+    const request = new Request('http://localhost/webhooks/linear', {
+      method: 'POST',
+      body: new ReadableStream({
+        pull() {
+          throw new Error('body must not be read while Linear intake is dormant')
+        },
+      }),
+      duplex: 'half',
+    } as RequestInit)
+
+    const response = await handler(request, 'linear')
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe('no-store')
     expect(publishedMessages).toHaveLength(0)
     expect(fetchMock).not.toHaveBeenCalled()
   })

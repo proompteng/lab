@@ -1,0 +1,22 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: codex-linear-agent
+spec:
+  providerRef:
+    name: codex-linear
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: codex-agent-system-prompt
+      key: system-prompt.md
+  vcsRef:
+    name: github
+  security:
+    allowedServiceAccounts:
+      - codex-linear-runner
+    allowedSecrets:
+      - github-token
+      - codex-auth
+    allowedImplementationSourceProviders:
+      - linear

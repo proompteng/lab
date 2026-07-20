@@ -229,8 +229,36 @@ export const extractAllowedServiceAccounts = (spec: Record<string, unknown>) => 
   return asArray(security.allowedServiceAccounts)
 }
 
+export const extractAllowedImplementationSourceProviders = (spec: Record<string, unknown>) => {
+  const security = asRecord(spec.security) ?? {}
+  return asArray(security.allowedImplementationSourceProviders).map((provider) => provider.trim().toLowerCase())
+}
+
+export const extractImplementationSourceProvider = (implementation: Record<string, unknown> | null | undefined) => {
+  if (!implementation) return null
+  return asString(readNested(implementation, ['source', 'provider']))?.toLowerCase() ?? null
+}
+
+export const extractProviderServiceAccount = (provider: Record<string, unknown> | null | undefined) => {
+  if (!provider) return null
+  return (
+    asString(readNested(provider, ['spec', 'workload', 'serviceAccountName'])) ??
+    asString(readNested(provider, ['workload', 'serviceAccountName']))
+  )
+}
+
 export const extractRuntimeServiceAccount = (spec: Record<string, unknown>) => {
   const runtime = asRecord(spec.runtime) ?? {}
   const config = asRecord(runtime.config) ?? {}
   return asString(config.serviceAccount) ?? asString(config.serviceAccountName)
 }
+
+export const resolveEffectiveServiceAccount = (
+  runtimeSpec: Record<string, unknown>,
+  provider: Record<string, unknown> | null | undefined,
+  fallback: string | null | undefined,
+) =>
+  extractRuntimeServiceAccount(runtimeSpec) ??
+  extractProviderServiceAccount(provider) ??
+  asString(fallback) ??
+  'default'

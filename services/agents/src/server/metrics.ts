@@ -18,6 +18,12 @@ export type AgentsMetricsSink = {
   recordReconcileDurationMs?: (durationMs: number, attributes?: MetricsAttributes) => void
   recordSseConnection?: (stream: string, state: string, attributes?: MetricsAttributes) => void
   recordSseError?: (stream: string, phase: string, attributes?: MetricsAttributes) => void
+  recordLinearMcpPolicyDenial?: (code: string, tool: string, attributes?: MetricsAttributes) => void
+  recordLinearMcpUpstreamError?: (operation: string, attributes?: MetricsAttributes) => void
+  recordLinearMcpOAuthRefresh?: (outcome: string, attributes?: MetricsAttributes) => void
+  recordLinearMcpContractDrift?: (attributes?: MetricsAttributes) => void
+  recordLinearMcpIndeterminateWrite?: (tool: string, attributes?: MetricsAttributes) => void
+  recordLinearMcpRequestDurationMs?: (durationMs: number, attributes?: MetricsAttributes) => void
 }
 
 type MetricRecord = {
@@ -117,6 +123,30 @@ const METRICS = {
   sseErrors: {
     name: 'agents_sse_errors_total',
     help: 'Count of SSE errors emitted to clients.',
+  },
+  linearMcpPolicyDenials: {
+    name: 'agents_linear_mcp_policy_denials_total',
+    help: 'Count of Linear MCP calls denied by source-bound policy.',
+  },
+  linearMcpUpstreamErrors: {
+    name: 'agents_linear_mcp_upstream_errors_total',
+    help: 'Count of Linear MCP upstream request failures.',
+  },
+  linearMcpOAuthRefreshes: {
+    name: 'agents_linear_mcp_oauth_refresh_total',
+    help: 'Count of Linear MCP OAuth client credential refresh outcomes.',
+  },
+  linearMcpContractDrift: {
+    name: 'agents_linear_mcp_contract_drift_total',
+    help: 'Count of incompatible Linear MCP upstream tool contracts.',
+  },
+  linearMcpIndeterminateWrites: {
+    name: 'agents_linear_mcp_indeterminate_writes_total',
+    help: 'Count of Linear MCP mutations whose result could not be proven.',
+  },
+  linearMcpRequestDurationMs: {
+    name: 'agents_linear_mcp_request_duration_ms',
+    help: 'Linear MCP gateway request duration in milliseconds.',
   },
 } satisfies Record<string, MetricDefinition>
 
@@ -275,6 +305,36 @@ export const recordSseConnection = (stream: string, state: string, attributes?: 
 export const recordSseError = (stream: string, phase: string, attributes?: MetricsAttributes) => {
   recordCounter(METRICS.sseErrors, 1, { stream, phase, ...attributes })
   externalMetricsSink.recordSseError?.(stream, phase, attributes)
+}
+
+export const recordLinearMcpPolicyDenial = (code: string, tool: string, attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.linearMcpPolicyDenials, 1, { code, tool, ...attributes })
+  externalMetricsSink.recordLinearMcpPolicyDenial?.(code, tool, attributes)
+}
+
+export const recordLinearMcpUpstreamError = (operation: string, attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.linearMcpUpstreamErrors, 1, { operation, ...attributes })
+  externalMetricsSink.recordLinearMcpUpstreamError?.(operation, attributes)
+}
+
+export const recordLinearMcpOAuthRefresh = (outcome: string, attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.linearMcpOAuthRefreshes, 1, { outcome, ...attributes })
+  externalMetricsSink.recordLinearMcpOAuthRefresh?.(outcome, attributes)
+}
+
+export const recordLinearMcpContractDrift = (attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.linearMcpContractDrift, 1, attributes)
+  externalMetricsSink.recordLinearMcpContractDrift?.(attributes)
+}
+
+export const recordLinearMcpIndeterminateWrite = (tool: string, attributes?: MetricsAttributes) => {
+  recordCounter(METRICS.linearMcpIndeterminateWrites, 1, { tool, ...attributes })
+  externalMetricsSink.recordLinearMcpIndeterminateWrite?.(tool, attributes)
+}
+
+export const recordLinearMcpRequestDurationMs = (durationMs: number, attributes?: MetricsAttributes) => {
+  recordHistogram(METRICS.linearMcpRequestDurationMs, durationMs, attributes)
+  externalMetricsSink.recordLinearMcpRequestDurationMs?.(durationMs, attributes)
 }
 
 export const renderAgentsPrometheusMetrics = () => {

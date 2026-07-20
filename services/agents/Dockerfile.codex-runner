@@ -49,13 +49,17 @@ COPY --from=codex-package-build /opt/proompteng/packages/codex/package.json pack
 COPY --from=codex-package-build /opt/proompteng/packages/codex/dist packages/codex/dist
 COPY services/agents/package.json services/agents/package.json
 COPY services/agents/src/runner services/agents/src/runner
+COPY services/agents/src/linear-mcp/bridge-auth.ts services/agents/src/linear-mcp/bridge-auth.ts
+COPY services/agents/src/linear-mcp/config.ts services/agents/src/linear-mcp/config.ts
+COPY services/agents/src/linear-mcp/contract.ts services/agents/src/linear-mcp/contract.ts
 COPY services/agents/scripts/codex services/agents/scripts/codex
 
-RUN printf '%s\n' '{"type":"module","dependencies":{"effect":"3.21.2"}}' > package.json \
+RUN printf '%s\n' '{"type":"module","dependencies":{"@modelcontextprotocol/sdk":"1.29.0","effect":"3.21.2"}}' > package.json \
     && bun install --production --no-save \
     && mkdir -p node_modules/@proompteng \
     && ln -s /opt/proompteng/packages/codex node_modules/@proompteng/codex \
     && bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile /opt/agents-runner/agent-runner.js \
+    && bun build services/agents/scripts/codex/linear-mcp-bridge.ts --target bun --outfile /opt/agents-runner/linear-mcp-bridge.js \
     && bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile /opt/agents-runner/fake-app-server.js
 
 FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim
@@ -123,16 +127,20 @@ RUN --mount=type=secret,id=codexauth,target=/tmp/codex_auth.json \
 COPY services/agents/scripts/codex-config-container.toml /root/.codex/config.toml
 RUN mkdir -p /app/services/agents/scripts/codex /app/node_modules/@proompteng/codex
 COPY --from=agents-runner-build /opt/agents-runner/agent-runner.js /app/services/agents/scripts/codex/agent-runner.js
+COPY --from=agents-runner-build /opt/agents-runner/linear-mcp-bridge.js /app/services/agents/scripts/codex/linear-mcp-bridge.js
 COPY --from=agents-runner-build /opt/agents-runner/fake-app-server.js /app/services/agents/scripts/codex/fake-app-server.js
 COPY --from=codex-package-build /opt/proompteng/packages/codex/package.json /app/node_modules/@proompteng/codex/package.json
 COPY --from=codex-package-build /opt/proompteng/packages/codex/dist /app/node_modules/@proompteng/codex/dist
 
 RUN printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/agent-runner.js "$@"' > /usr/local/bin/agent-runner \
+    && printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/linear-mcp-bridge.js "$@"' > /usr/local/bin/linear-mcp-bridge \
     && printf '%s\n' '#!/bin/sh' 'exec bun /app/services/agents/scripts/codex/fake-app-server.js "$@"' > /usr/local/bin/agents-fake-codex-app-server \
     && chmod +x \
       /usr/local/bin/agent-runner \
+      /usr/local/bin/linear-mcp-bridge \
       /usr/local/bin/agents-fake-codex-app-server \
       /app/services/agents/scripts/codex/agent-runner.js \
+      /app/services/agents/scripts/codex/linear-mcp-bridge.js \
       /app/services/agents/scripts/codex/fake-app-server.js
 
 RUN printf '%s\n' \
