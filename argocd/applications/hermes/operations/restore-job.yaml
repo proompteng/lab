@@ -19,6 +19,8 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/arch: amd64
       securityContext:
         runAsNonRoot: true
         runAsUser: 10000

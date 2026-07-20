@@ -10,10 +10,19 @@ data:
         rules:
           - alert: HermesGatewayUnavailable
             expr: |
-              kube_statefulset_status_replicas_ready{
-                namespace="hermes",
-                statefulset="hermes"
-              } < 1
+              (
+                kube_statefulset_status_replicas_ready{
+                  namespace="hermes",
+                  statefulset="hermes"
+                } < 1
+              )
+              or
+              absent(
+                kube_statefulset_status_replicas_ready{
+                  namespace="hermes",
+                  statefulset="hermes"
+                }
+              )
             for: 5m
             labels:
               severity: critical
@@ -25,10 +34,19 @@ data:
               runbook_url: docs/runbooks/hermes-production-rollout.md
           - alert: HermesEgressProxyUnavailable
             expr: |
-              kube_deployment_status_replicas_available{
-                namespace="hermes",
-                deployment="hermes-egress-proxy"
-              } < 1
+              (
+                kube_deployment_status_replicas_available{
+                  namespace="hermes",
+                  deployment="hermes-egress-proxy"
+                } < 1
+              )
+              or
+              absent(
+                kube_deployment_status_replicas_available{
+                  namespace="hermes",
+                  deployment="hermes-egress-proxy"
+                }
+              )
             for: 5m
             labels:
               severity: critical
@@ -59,11 +77,21 @@ data:
               runbook_url: docs/runbooks/hermes-production-rollout.md
           - alert: HermesBackupStale
             expr: |
-              kube_pod_container_status_ready{
-                namespace="hermes",
-                pod=~"hermes-[0-9]+",
-                container="backup"
-              } < 1
+              (
+                kube_pod_container_status_ready{
+                  namespace="hermes",
+                  pod=~"hermes-[0-9]+",
+                  container="backup"
+                } < 1
+              )
+              or
+              absent(
+                kube_pod_container_status_ready{
+                  namespace="hermes",
+                  pod=~"hermes-[0-9]+",
+                  container="backup"
+                }
+              )
             for: 30m
             labels:
               severity: critical

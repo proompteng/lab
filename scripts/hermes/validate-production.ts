@@ -17,6 +17,7 @@ export const productionPaths = {
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
   platform: 'argocd/applicationsets/platform.yaml',
+  mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
   runbook: 'docs/runbooks/hermes-production-rollout.md',
 } as const
 
@@ -93,6 +94,11 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hostNetwork: true',
     'hostPID: true',
   ])
+  if (count(files.statefulSet, 'find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .') !== 3) {
+    failures.push(
+      `${productionPaths.statefulSet}: backup startup, readiness, and liveness probes must all enforce freshness`,
+    )
+  }
 
   requireTerms(failures, productionPaths.config, files.config, [
     '_config_version: 33',
@@ -157,6 +163,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     }
     requireTerms(failures, productionPaths[path], content, [
       'automountServiceAccountToken: false',
+      'kubernetes.io/arch: amd64',
       'runAsUser: 10000',
       'readOnlyRootFilesystem: true',
       'backoffLimit: 0',
@@ -168,6 +175,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.restoreStage, files.restoreStage, [
     'automountServiceAccountToken: false',
+    'kubernetes.io/arch: amd64',
     'runAsUser: 10000',
     'readOnlyRootFilesystem: true',
     'claimName: backups-hermes-0',
@@ -192,6 +200,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never run `hermes claw cleanup`',
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
+  ])
+
+  requireTerms(failures, productionPaths.mimirRules, files.mimirRules, [
+    'alert: HermesGatewayUnavailable',
+    'alert: HermesEgressProxyUnavailable',
+    'alert: HermesBackupStale',
+    'absent(\n                kube_statefulset_status_replicas_ready{',
+    'absent(\n                kube_deployment_status_replicas_available{',
+    'absent(\n                kube_pod_container_status_ready{',
   ])
 
   return failures

@@ -47,3 +47,36 @@ test('rejects secret migration in the apply Job', async () => {
     `${productionPaths.migrationApply}: contains forbidden production term "--migrate-secrets"`,
   )
 })
+
+test('rejects an operation that can schedule on arm64', async () => {
+  const files = await loadProductionFiles()
+  files.restore = files.restore.replace('      nodeSelector:\n        kubernetes.io/arch: amd64\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.restore}: missing production invariant "kubernetes.io/arch: amd64"`,
+  )
+})
+
+test('rejects a backup readiness probe without freshness enforcement', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .',
+    'test -s /opt/backups/last-success',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: backup startup, readiness, and liveness probes must all enforce freshness`,
+  )
+})
+
+test('rejects availability alerts that ignore missing metrics', async () => {
+  const files = await loadProductionFiles()
+  files.mimirRules = files.mimirRules.replace(
+    'absent(\n                kube_statefulset_status_replicas_ready{',
+    'vector(0) or (',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mimirRules}: missing production invariant "absent(\\n                kube_statefulset_status_replicas_ready{"`,
+  )
+})

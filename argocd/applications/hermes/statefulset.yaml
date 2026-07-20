@@ -263,9 +263,18 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - test -s /opt/backups/last-success
+                - find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .
             periodSeconds: 10
             failureThreshold: 180
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 1
           livenessProbe:
             exec:
               command:
