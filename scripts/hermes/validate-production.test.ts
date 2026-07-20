@@ -57,6 +57,15 @@ test('rejects an operation that can schedule on arm64', async () => {
   )
 })
 
+test('rejects an operation without a controller-enforced deadline', async () => {
+  const files = await loadProductionFiles()
+  files.migrationApply = files.migrationApply.replace('  activeDeadlineSeconds: 600\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.migrationApply}: missing production invariant "activeDeadlineSeconds: 600"`,
+  )
+})
+
 test('rejects coupling backup health to gateway pod readiness', async () => {
   const files = await loadProductionFiles()
   files.statefulSet += '\n        - name: backup\n          readinessProbe: {}\n'
@@ -87,12 +96,12 @@ test('rejects a backup CronJob that cannot be suspended deterministically', asyn
 test('rejects availability alerts that ignore missing metrics', async () => {
   const files = await loadProductionFiles()
   files.mimirRules = files.mimirRules.replace(
-    'absent(\n                kube_statefulset_status_replicas_ready{',
+    'absent(\n                  kube_statefulset_status_replicas_ready{',
     'vector(0) or (',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.mimirRules}: missing production invariant "absent(\\n                kube_statefulset_status_replicas_ready{"`,
+    `${productionPaths.mimirRules}: missing production invariant "absent(\\n                  kube_statefulset_status_replicas_ready{"`,
   )
 })
 
@@ -126,6 +135,27 @@ test('rejects alerting before the first scheduled backup window expires', async 
   )
 })
 
+test('rejects absent-series alerts that fire before rollout enablement', async () => {
+  const files = await loadProductionFiles()
+  files.mimirRules = files.mimirRules.replace('(hermes_rollout_enabled == 1)', 'vector(1)')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mimirRules}: all absent-series alerts must be gated on rollout enablement`,
+  )
+})
+
+test('rejects migration instructions that skip the content audit', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
+    'false',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "bun run scripts/hermes/audit-migration-source.ts \\"$hermes_stage_dir/openclaw\\""`,
+  )
+})
+
 test('rejects migration or restore without backup quiescence', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
@@ -153,5 +183,17 @@ test('rejects removing Hermes surfaces from production validation routing', asyn
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.impactMap}: missing production invariant "- docs/runbooks/hermes-production-rollout.md"`,
+  )
+})
+
+test('rejects a PR workflow that omits migration audit tests', async () => {
+  const files = await loadProductionFiles()
+  files.pullRequestWorkflow = files.pullRequestWorkflow.replace(
+    'bun test scripts/hermes/*.test.ts',
+    'bun test scripts/hermes/validate-production.test.ts',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.pullRequestWorkflow}: missing production invariant "bun test scripts/hermes/*.test.ts"`,
   )
 })

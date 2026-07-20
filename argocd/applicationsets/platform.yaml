@@ -227,6 +227,7 @@ spec:
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
+                    observability.proompteng.ai/hermes-rollout-enabled: "true"
                     pod-security.kubernetes.io/enforce: restricted
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted

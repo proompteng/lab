@@ -18,6 +18,7 @@ export const productionPaths = {
   migrationApply: 'argocd/applications/hermes/operations/migration-apply-job.yaml',
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
+  migrationAudit: 'scripts/hermes/audit-migration-source.ts',
   platform: 'argocd/applicationsets/platform.yaml',
   mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
   clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
@@ -25,6 +26,7 @@ export const productionPaths = {
   kubeStateMetrics: 'argocd/applications/observability/kube-state-metrics-values.yaml',
   runbook: 'docs/runbooks/hermes-production-rollout.md',
   impactMap: '.github/ci/impact-map.yml',
+  pullRequestWorkflow: '.github/workflows/pull-request.yml',
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -182,7 +184,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kind: ClusterRoleBinding',
   ])
 
-  for (const path of ['migrationDryRun', 'migrationApply', 'restore'] as const) {
+  const operationDeadlines = {
+    migrationDryRun: 600,
+    migrationApply: 600,
+    restore: 900,
+  } as const
+  for (const path of Object.keys(operationDeadlines) as (keyof typeof operationDeadlines)[]) {
     const content = files[path]
     if (count(content, `image: ${hermesImage}`) !== 1) {
       failures.push(`${productionPaths[path]}: operation must use the immutable mirrored Hermes digest`)
@@ -193,6 +200,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       'runAsUser: 10000',
       'readOnlyRootFilesystem: true',
       'backoffLimit: 0',
+      `activeDeadlineSeconds: ${operationDeadlines[path]}`,
     ])
     forbidTerms(failures, productionPaths[path], content, ['--migrate-secrets', 'kind: Secret', ':latest'])
   }
@@ -205,10 +213,23 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'runAsUser: 10000',
     'readOnlyRootFilesystem: true',
     'claimName: backups-hermes-0',
+    'activeDeadlineSeconds: 3900',
   ])
   forbidTerms(failures, productionPaths.restoreStage, files.restoreStage, ['kind: Secret', ':latest'])
   requireTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--preset', 'user-data', '--dry-run'])
   requireTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--preset', 'user-data', '--yes'])
+  requireTerms(failures, productionPaths.migrationAudit, files.migrationAudit, [
+    "allowedWorkspaceDirectories = new Set(['memory', 'skills'])",
+    'source root must be a real directory',
+    'source contains no approved files',
+    'symbolic links are forbidden',
+    'only regular files and directories are allowed',
+    "new TextDecoder('utf-8', { fatal: true })",
+    'binary content is forbidden',
+    'credentialPatterns',
+    'migration source audit failed',
+    '${issue.path}: ${issue.reason}',
+  ])
 
   const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
   requireTerms(failures, productionPaths.platform, hermesApplication, [
@@ -216,6 +237,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'namespace: hermes',
     'automation: manual',
     'external-secrets.proompteng.ai/enabled: "true"',
+    'observability.proompteng.ai/hermes-rollout-enabled: "true"',
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
@@ -232,6 +254,11 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Authorization: Bearer $new_api_key',
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
+    'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
+    'observability.proompteng.ai/hermes-rollout-enabled=true',
+    'kubectl -n hermes delete "$dry_run_job" --wait=true',
+    'kubectl -n hermes delete "$migration_job" --wait=true',
+    'kubectl -n hermes delete "$restore_job" --wait=true',
   ])
   const suspendBackupCommand =
     'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\''
@@ -240,7 +267,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   const activeBackupSelector =
     'kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup'
-  if (count(files.runbook, activeBackupSelector) !== 2) {
+  if (count(files.runbook, `while [ "$(${activeBackupSelector}`) !== 2) {
     failures.push(`${productionPaths.runbook}: migration and restore must both wait for active backup Jobs`)
   }
 
@@ -248,24 +275,35 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'alert: HermesGatewayUnavailable',
     'alert: HermesEgressProxyUnavailable',
     'alert: HermesBackupStale',
-    'absent(\n                kube_statefulset_status_replicas_ready{',
-    'absent(\n                kube_deployment_status_replicas_available{',
+    'record: hermes_rollout_enabled',
+    'label_observability_proompteng_ai_hermes_rollout_enabled="true"',
+    'absent(\n                  kube_statefulset_status_replicas_ready{',
+    'absent(\n                  kube_deployment_status_replicas_available{',
     'time() - kube_cronjob_status_last_successful_time{',
     'time() - kube_cronjob_created{',
     'unless on (namespace, cronjob)',
-    'absent(\n                kube_cronjob_created{',
+    'absent(\n                  kube_cronjob_created{',
   ])
+  if (count(files.mimirRules, '(hermes_rollout_enabled == 1)') !== 3) {
+    failures.push(`${productionPaths.mimirRules}: all absent-series alerts must be gated on rollout enablement`)
+  }
 
   requireTerms(failures, productionPaths.clusterMetrics, files.clusterMetrics, [
     'kube_cronjob_created',
     'kube_cronjob_status_last_successful_time',
+    'kube_namespace_labels',
     'kube_statefulset_status_replicas_ready',
   ])
   const clusterMetricsHash = createHash('sha256').update(files.clusterMetrics).digest('hex')
   requireTerms(failures, productionPaths.clusterMetricsDeployment, files.clusterMetricsDeployment, [
     `observability.proompteng.ai/config-sha256: ${clusterMetricsHash}`,
   ])
-  requireTerms(failures, productionPaths.kubeStateMetrics, files.kubeStateMetrics, ['  - cronjobs', '  - statefulsets'])
+  requireTerms(failures, productionPaths.kubeStateMetrics, files.kubeStateMetrics, [
+    '  - cronjobs',
+    '  - namespaces',
+    '  - statefulsets',
+    '  - namespaces=[observability.proompteng.ai/hermes-rollout-enabled]',
+  ])
 
   requireTerms(failures, productionPaths.impactMap, files.impactMap, [
     '- .github/ci/impact-map.yml',
@@ -278,6 +316,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- argocd/applicationsets/platform.yaml',
     '- docs/runbooks/hermes-production-rollout.md',
     '- scripts/**',
+  ])
+  requireTerms(failures, productionPaths.pullRequestWorkflow, files.pullRequestWorkflow, [
+    'bun run scripts/hermes/validate-production.ts',
+    'bun test scripts/hermes/*.test.ts',
   ])
 
   return failures

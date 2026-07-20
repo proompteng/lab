@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: hermes
     app.kubernetes.io/component: restore
 spec:
+  activeDeadlineSeconds: 900
   backoffLimit: 0
   ttlSecondsAfterFinished: 86400
   template:

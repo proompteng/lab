@@ -5,11 +5,14 @@ replicas: 1
 collectors:
   - cronjobs
   - deployments
+  - namespaces
   - nodes
   - pods
   - services
   - statefulsets
 
+metricLabelsAllowlist:
+  - namespaces=[observability.proompteng.ai/hermes-rollout-enabled]
 
 resources:
   requests:

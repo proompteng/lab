@@ -8,21 +8,35 @@ data:
     groups:
       - name: hermes-production.rules
         rules:
+          - record: hermes_rollout_enabled
+            expr: |
+              max(
+                max_over_time(
+                  kube_namespace_labels{
+                    namespace="hermes",
+                    label_observability_proompteng_ai_hermes_rollout_enabled="true"
+                  }[30d]
+                )
+              )
           - alert: HermesGatewayUnavailable
             expr: |
               (
-                kube_statefulset_status_replicas_ready{
-                  namespace="hermes",
-                  statefulset="hermes"
-                } < 1
+                (
+                  kube_statefulset_status_replicas_ready{
+                    namespace="hermes",
+                    statefulset="hermes"
+                  } < 1
+                )
+                or
+                absent(
+                  kube_statefulset_status_replicas_ready{
+                    namespace="hermes",
+                    statefulset="hermes"
+                  }
+                )
               )
-              or
-              absent(
-                kube_statefulset_status_replicas_ready{
-                  namespace="hermes",
-                  statefulset="hermes"
-                }
-              )
+              and on()
+              (hermes_rollout_enabled == 1)
             for: 5m
             labels:
               severity: critical
@@ -35,18 +49,22 @@ data:
           - alert: HermesEgressProxyUnavailable
             expr: |
               (
-                kube_deployment_status_replicas_available{
-                  namespace="hermes",
-                  deployment="hermes-egress-proxy"
-                } < 1
+                (
+                  kube_deployment_status_replicas_available{
+                    namespace="hermes",
+                    deployment="hermes-egress-proxy"
+                  } < 1
+                )
+                or
+                absent(
+                  kube_deployment_status_replicas_available{
+                    namespace="hermes",
+                    deployment="hermes-egress-proxy"
+                  }
+                )
               )
-              or
-              absent(
-                kube_deployment_status_replicas_available{
-                  namespace="hermes",
-                  deployment="hermes-egress-proxy"
-                }
-              )
+              and on()
+              (hermes_rollout_enabled == 1)
             for: 5m
             labels:
               severity: critical
@@ -78,32 +96,36 @@ data:
           - alert: HermesBackupStale
             expr: |
               (
-                time() - kube_cronjob_status_last_successful_time{
-                  namespace="hermes",
-                  cronjob="hermes-backup"
-                } > 93600
-              )
-              or
-              (
                 (
-                  time() - kube_cronjob_created{
+                  time() - kube_cronjob_status_last_successful_time{
                     namespace="hermes",
                     cronjob="hermes-backup"
                   } > 93600
                 )
-                unless on (namespace, cronjob)
-                kube_cronjob_status_last_successful_time{
-                  namespace="hermes",
-                  cronjob="hermes-backup"
-                }
+                or
+                (
+                  (
+                    time() - kube_cronjob_created{
+                      namespace="hermes",
+                      cronjob="hermes-backup"
+                    } > 93600
+                  )
+                  unless on (namespace, cronjob)
+                  kube_cronjob_status_last_successful_time{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  }
+                )
+                or
+                absent(
+                  kube_cronjob_created{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  }
+                )
               )
-              or
-              absent(
-                kube_cronjob_created{
-                  namespace="hermes",
-                  cronjob="hermes-backup"
-                }
-              )
+              and on()
+              (hermes_rollout_enabled == 1)
             for: 30m
             labels:
               severity: critical

@@ -56,6 +56,8 @@ The expected mirrored amd64 manifest digest is
    ```bash
    argocd app get hermes --refresh
    argocd app sync hermes --prune=false
+   kubectl -n hermes get namespace hermes \
+     -l observability.proompteng.ai/hermes-rollout-enabled=true -o name | grep -qx namespace/hermes
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
    kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | wc -c
    ```
@@ -75,7 +77,11 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes get pvc data-hermes-0 backups-hermes-0
    initial_backup_job="hermes-backup-initial-$(date -u +%Y%m%d%H%M%S)"
    kubectl -n hermes create job --from=cronjob/hermes-backup "$initial_backup_job"
-   kubectl -n hermes wait "job/$initial_backup_job" --for=condition=Complete --timeout=15m
+   if ! kubectl -n hermes wait "job/$initial_backup_job" --for=condition=Complete --timeout=15m; then
+     kubectl -n hermes logs "job/$initial_backup_job" -c backup || true
+     kubectl -n hermes delete "job/$initial_backup_job" --wait=true
+     exit 1
+   fi
    kubectl -n hermes logs "job/$initial_backup_job" -c backup
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/backups/last-success
    kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
@@ -170,14 +176,28 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
    ```bash
    hermes_stage_dir=$(mktemp -d)
    mkdir -p "$hermes_stage_dir/openclaw/workspace"
-   virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
-     --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
-     --command='tar --ignore-failed-read -C /home/ubuntu/github.com/lab/services/tuslagch -czf - AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md MEMORY.md memory skills' \
-     vm/openclaw | tar -xzf - -C "$hermes_stage_dir/openclaw/workspace"
+   if ! (
+     set -o pipefail
+     virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
+       --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
+       --command='tar --ignore-failed-read -C /home/ubuntu/github.com/lab/services/tuslagch -czf - AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md MEMORY.md memory skills' \
+       vm/openclaw | tar -xzf - -C "$hermes_stage_dir/openclaw/workspace"
+   ); then
+     rm -rf -- "$hermes_stage_dir"
+     unset hermes_stage_dir
+     exit 1
+   fi
+   if ! bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"; then
+     rm -rf -- "$hermes_stage_dir"
+     unset hermes_stage_dir
+     exit 1
+   fi
    find "$hermes_stage_dir/openclaw" -type f -print
    ```
 
-   Review the file-name-only inventory. Stop if it contains config, credential, token, session, or log files.
+   The content audit must pass before any data is copied. It rejects paths outside the explicit user-data allowlist,
+   symlinks, non-text content, credential-like values, and bounded-size violations without printing detected values. Also
+   review the file-name-only inventory and stop if it contains config, credential, token, session, or log files.
 
 2. Stage the sanitized directory on the Hermes data PVC. Suspend new backups and wait up to 65 minutes for every active
    backup Job to finish before stopping the gateway; only then does the migration have exclusive RBD access:
@@ -190,7 +210,11 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
    backup_wait_deadline=$(( $(date +%s) + 3900 ))
    while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
-     test "$(date +%s)" -lt "$backup_wait_deadline"
+     if [ "$(date +%s)" -ge "$backup_wait_deadline" ]; then
+       kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o name >&2
+       echo 'active Hermes backup did not terminate; backups remain suspended' >&2
+       exit 1
+     fi
      sleep 10
    done
    unset backup_wait_deadline
@@ -202,7 +226,12 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
 
    ```bash
    dry_run_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-dry-run-job.yaml -o name)
-   kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m
+   if ! kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m; then
+     kubectl -n hermes logs "$dry_run_job" || true
+     kubectl -n hermes delete "$dry_run_job" --wait=true
+     echo 'migration dry-run failed or timed out; gateway and backups remain stopped' >&2
+     exit 1
+   fi
    kubectl -n hermes logs "$dry_run_job"
    ```
 
@@ -211,7 +240,12 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
 
    ```bash
    migration_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-apply-job.yaml -o name)
-   kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m
+   if ! kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m; then
+     kubectl -n hermes logs "$migration_job" || true
+     kubectl -n hermes delete "$migration_job" --wait=true
+     echo 'migration apply failed or timed out; gateway and backups remain stopped' >&2
+     exit 1
+   fi
    kubectl -n hermes logs "$migration_job"
    ```
 
@@ -280,21 +314,37 @@ the archive name below with the reviewed recovery point; never select it only by
 kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
 backup_wait_deadline=$(( $(date +%s) + 3900 ))
 while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
-  test "$(date +%s)" -lt "$backup_wait_deadline"
+  if [ "$(date +%s)" -ge "$backup_wait_deadline" ]; then
+    kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o name >&2
+    echo 'active Hermes backup did not terminate; backups remain suspended' >&2
+    exit 1
+  fi
   sleep 10
 done
 unset backup_wait_deadline
 kubectl -n hermes scale statefulset/hermes --replicas=0
 kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
 kubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml
-kubectl -n hermes wait pod/hermes-restore-stage --for=condition=Ready --timeout=5m
+if ! kubectl -n hermes wait pod/hermes-restore-stage --for=condition=Ready --timeout=5m; then
+  kubectl -n hermes describe pod/hermes-restore-stage || true
+  kubectl -n hermes delete pod/hermes-restore-stage --wait=true
+  exit 1
+fi
 kubectl -n hermes exec hermes-restore-stage -c stage -- ls -1 /opt/backups/hermes-backup-*.zip
 restore_archive=hermes-backup-YYYYMMDDTHHMMSSZ.zip
-kubectl -n hermes exec hermes-restore-stage -c stage -- sh -c \
-  "cd /opt/backups && sha256sum -c '$restore_archive.sha256' && cp '$restore_archive' restore.zip"
+if ! kubectl -n hermes exec hermes-restore-stage -c stage -- sh -c \
+  "cd /opt/backups && sha256sum -c '$restore_archive.sha256' && cp '$restore_archive' restore.zip"; then
+  kubectl -n hermes delete pod/hermes-restore-stage --wait=true
+  exit 1
+fi
 kubectl -n hermes delete pod hermes-restore-stage --wait=true
 restore_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/restore-job.yaml -o name)
-kubectl -n hermes wait "$restore_job" --for=condition=Complete --timeout=15m
+if ! kubectl -n hermes wait "$restore_job" --for=condition=Complete --timeout=15m; then
+  kubectl -n hermes logs "$restore_job" || true
+  kubectl -n hermes delete "$restore_job" --wait=true
+  echo 'restore failed or timed out; gateway and backups remain stopped' >&2
+  exit 1
+fi
 kubectl -n hermes logs "$restore_job"
 argocd app sync hermes --prune=false
 kubectl -n hermes rollout status statefulset/hermes --timeout=15m
