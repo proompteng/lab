@@ -1,6 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: cloudnative-pg
+resources:
+  - https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.13.0/manifest.yaml
 helmCharts:
   - name: cloudnative-pg
     repo: https://cloudnative-pg.io/charts
@@ -8,3 +10,40 @@ helmCharts:
     releaseName: cloudnative-pg
     namespace: cloudnative-pg
     includeCRDs: true
+patches:
+  - target:
+      kind: Deployment
+      name: barman-cloud
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: barman-cloud
+      spec:
+        template:
+          spec:
+            containers:
+              - name: barman-cloud
+                image: ghcr.io/cloudnative-pg/plugin-barman-cloud@sha256:71589dbac582333442812b07b31f7ea4d00324a8358aac7ca507dabf9f4b6c96
+                args:
+                  - operator
+                  - --server-cert=/server/tls.crt
+                  - --server-key=/server/tls.key
+                  - --client-cert=/client/tls.crt
+                  - --server-address=:9090
+                  - --leader-elect
+                  - --log-level=info
+                resources:
+                  requests:
+                    cpu: 100m
+                    memory: 128Mi
+                  limits:
+                    cpu: 500m
+                    memory: 512Mi
+  - target:
+      kind: Secret
+      name: plugin-barman-cloud-m5m67kfh8f
+    patch: |-
+      - op: replace
+        path: /data/SIDECAR_IMAGE
+        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXJAc2hhMjU2Ojk5MDM2MWFmMzMxOWY5ZTIzYWFmYTBmNmQ3OTgxZjk5YmYxZjY5YjRlNmE4NWNmMWJjN2Q3MWQ2ZjA5YmIyODg=

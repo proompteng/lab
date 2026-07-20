@@ -51,3 +51,61 @@ spec:
       ports:
         - port: 3000
           protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: bayn-db
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-db
+  labels:
+    app.kubernetes.io/name: bayn-db
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: bayn-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: bayn-db
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudnative-pg
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 9187
+          protocol: TCP
