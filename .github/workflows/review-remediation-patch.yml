@@ -1,9 +1,14 @@
 name: Review remediation patch
 
 on:
-  push:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
     branches:
-      - codex/review-remediation-*
+      - main
     paths:
       - .github/review-remediation.patch
 
@@ -11,23 +16,26 @@ permissions:
   contents: write
 
 concurrency:
-  group: review-remediation-${{ github.ref }}
+  group: review-remediation-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: false
 
 jobs:
   apply:
     if: >-
       github.actor == 'gregkonush' &&
-      github.event.head_commit.message != 'fix: apply bounded review remediation'
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'codex/review-remediation-')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      AUTHORIZED_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      AUTHORIZED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       REMEDIATION_PUSH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           token: ${{ secrets.AGENTS_SPLIT_TOKEN }}
 
       - name: Require workflow-triggering token
@@ -39,18 +47,25 @@ jobs:
             exit 1
           fi
 
-      - name: Validate patch-only trigger
+      - name: Validate authorized patch head
+        id: gate
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$(git log -1 --format=%s)" = 'fix: apply bounded review remediation' ]; then
+            echo 'apply=false' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           mapfile -t changed < <(git diff-tree --no-commit-id --name-only -r HEAD)
           if [ "${#changed[@]}" -ne 1 ] || [ "${changed[0]}" != '.github/review-remediation.patch' ]; then
             printf 'Trigger commit must change only .github/review-remediation.patch\n' >&2
             printf 'Changed: %s\n' "${changed[*]}" >&2
             exit 1
           fi
+          echo 'apply=true' >> "${GITHUB_OUTPUT}"
 
       - name: Apply committed patch
+        if: steps.gate.outputs.apply == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -60,6 +75,7 @@ jobs:
           git diff --check
 
       - name: Commit applied patch
+        if: steps.gate.outputs.apply == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -68,5 +84,5 @@ jobs:
           git add -A
           git commit -m 'fix: apply bounded review remediation'
           git push \
-            --force-with-lease="refs/heads/${GITHUB_REF_NAME}:${GITHUB_SHA}" \
-            origin HEAD:"refs/heads/${GITHUB_REF_NAME}"
+            --force-with-lease="refs/heads/${AUTHORIZED_HEAD_REF}:${AUTHORIZED_HEAD_SHA}" \
+            origin HEAD:"refs/heads/${AUTHORIZED_HEAD_REF}"
