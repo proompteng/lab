@@ -30,6 +30,15 @@ test('rejects release evidence that does not enforce the mirrored digest', async
   )
 })
 
+test('rejects rollout evidence that permits an Argo revision mismatch', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('test "$hermes_revision" = "$main_revision"', 'true')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "test \\"$hermes_revision\\" = \\"$main_revision\\""`,
+  )
+})
+
 test('rejects enabling Discord inside the API-only canary', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace('discord:\n    enabled: false', 'discord:\n    enabled: true')

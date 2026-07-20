@@ -21,12 +21,16 @@ Before each rollout, verify and record:
 
 ```bash
 set -euo pipefail
+git fetch --quiet origin main
 main_revision=$(git rev-parse origin/main)
+test "$(git rev-parse HEAD)" = "$main_revision"
 upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
 mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
 test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
 test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+argocd app get hermes --refresh >/dev/null
 hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')
+test "$hermes_revision" = "$main_revision"
 printf 'main=%s upstream=%s mirror=%s argo=%s\n' \
   "$main_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
 unset main_revision upstream_digest mirror_digest hermes_revision
@@ -66,12 +70,13 @@ The expected mirrored amd64 manifest digest is
    argocd app sync hermes --prune=false
    kubectl -n hermes get namespace hermes \
      -l observability.proompteng.ai/hermes-rollout-enabled=true -o name | grep -qx namespace/hermes
-   kubectl -n argocd get application hermes -o json | jq -e '.status.history | length > 0'
+   hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')
+   test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
    api_key_bytes=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | wc -c | tr -d '[:space:]')
    test "$api_key_bytes" -ge 32
    printf '%s\n' "$api_key_bytes"
-   unset api_key_bytes
+   unset api_key_bytes hermes_deployed_revision
    ```
 
    The Argo deployment history is the durable alert-enablement source and must contain a successful deployment. It remains

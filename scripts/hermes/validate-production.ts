@@ -275,15 +275,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const releaseEvidenceSection = files.runbook.match(/## Release evidence[\s\S]*?## Phase 0:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, releaseEvidenceSection, [
     'set -euo pipefail',
+    'git fetch --quiet origin main',
     'main_revision=$(git rev-parse origin/main)',
+    'test "$(git rev-parse HEAD)" = "$main_revision"',
     'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
     'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    'argocd app get hermes --refresh >/dev/null',
     "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
+    'test "$hermes_revision" = "$main_revision"',
   ])
   const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
     'test "$api_key_bytes" -ge 32',
     'printf \'%s\\n\' "$api_key_bytes"',
+    "hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')",
+    'test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"',
   ])
   if (count(phaseZeroSection, 'set -euo pipefail') !== 2) {
     failures.push(`${productionPaths.runbook}: secret creation and bridge verification must both fail closed`)
