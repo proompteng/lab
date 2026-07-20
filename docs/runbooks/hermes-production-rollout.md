@@ -98,8 +98,20 @@ The expected mirrored amd64 manifest digest is
    backup_verified=true
    kubectl -n hermes logs "job/$initial_backup_job" -c backup || backup_verified=false
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/backups/last-success || backup_verified=false
-   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
-     'cd /opt/backups; archive=$(find . -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1); test -n "$archive" && sha256sum -c "$archive.sha256"' || backup_verified=false
+   kubectl -n hermes exec hermes-0 -c hermes -- sh -c '
+     set -eu
+     cd /opt/backups
+     archive_path=$(find . -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1)
+     test -n "$archive_path"
+     archive_name=$(basename "$archive_path")
+     test "$(wc -l < "$archive_name.sha256")" -eq 1
+     read -r expected_digest sidecar_archive extra < "$archive_name.sha256"
+     test "${#expected_digest}" -eq 64
+     case "$expected_digest" in *[!0-9a-f]*) exit 1 ;; esac
+     test "$sidecar_archive" = "$archive_name"
+     test -z "${extra:-}"
+     printf "%s  %s\n" "$expected_digest" "$archive_path" | sha256sum -c -
+   ' || backup_verified=false
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":false}}'
    test "$backup_verified" = true
    unset backup_verified
@@ -364,7 +376,20 @@ kubectl -n hermes exec hermes-restore-stage -c stage -- \
   find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print
 restore_archive=hermes-backup-YYYYMMDDTHHMMSSZ.zip
 if ! kubectl -n hermes exec hermes-restore-stage -c stage -- sh -c \
-  "cd /opt/backups && sha256sum -c '$restore_archive.sha256' && cp '$restore_archive' restore.zip"; then
+  '
+    set -eu
+    cd /opt/backups
+    archive=$1
+    case "$archive" in */*|"") exit 1 ;; hermes-backup-*.zip) ;; *) exit 1 ;; esac
+    test "$(wc -l < "$archive.sha256")" -eq 1
+    read -r expected_digest sidecar_archive extra < "$archive.sha256"
+    test "${#expected_digest}" -eq 64
+    case "$expected_digest" in *[!0-9a-f]*) exit 1 ;; esac
+    test "$sidecar_archive" = "$archive"
+    test -z "${extra:-}"
+    printf "%s  %s\n" "$expected_digest" "$archive" | sha256sum -c -
+    cp "$archive" restore.zip
+  ' sh "$restore_archive"; then
   kubectl -n hermes delete pod/hermes-restore-stage --wait=true
   exit 1
 fi

@@ -213,6 +213,15 @@ test('rejects restore archive selection that expands the glob on the operator ho
   )
 })
 
+test('rejects restore verification that is not bound to the selected archive', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('test "$sidecar_archive" = "$archive"', 'test -n "$sidecar_archive"')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "test \\"$sidecar_archive\\" = \\"$archive\\""`,
+  )
+})
+
 test('rejects API key rotation without restart proof', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace('## API key rotation', '## API credential maintenance')

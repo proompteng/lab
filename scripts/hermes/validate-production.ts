@@ -267,6 +267,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'direct public egress unexpectedly succeeded',
     "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
     "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",
+    'test "$sidecar_archive" = "$archive_name"',
+    'test "$sidecar_archive" = "$archive"',
+    'printf "%s  %s\\n" "$expected_digest" "$archive_path" | sha256sum -c -',
+    'printf "%s  %s\\n" "$expected_digest" "$archive" | sha256sum -c -',
   ])
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
     '--ignore-failed-read',
