@@ -11,12 +11,10 @@ data:
           - record: hermes_rollout_enabled
             expr: |
               max(
-                kube_namespace_labels{
-                  namespace="hermes",
-                  label_observability_proompteng_ai_hermes_rollout_enabled="true"
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="hermes"
                 }
-                or
-                hermes_rollout_enabled
               )
           - alert: HermesGatewayUnavailable
             expr: |

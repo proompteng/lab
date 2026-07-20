@@ -328,8 +328,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'alert: HermesEgressProxyUnavailable',
     'alert: HermesBackupStale',
     'record: hermes_rollout_enabled',
-    'label_observability_proompteng_ai_hermes_rollout_enabled="true"',
-    'or\n                hermes_rollout_enabled',
+    'kube_argocd_application_deployment_history_info{',
+    'namespace="argocd"',
+    'application="hermes"',
     'absent(\n                  kube_statefulset_status_replicas_ready{',
     'absent(\n                  kube_deployment_status_replicas_available{',
     'time() - kube_cronjob_status_last_successful_time{',
@@ -342,12 +343,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   const hermesRuleGroup =
     files.mimirRules.match(/- name: hermes-production\.rules[\s\S]*?- name: graf-telemetry\.rules/)?.[0] ?? ''
-  forbidTerms(failures, productionPaths.mimirRules, hermesRuleGroup, ['[30d]'])
+  forbidTerms(failures, productionPaths.mimirRules, hermesRuleGroup, [
+    '[30d]',
+    'or\n                hermes_rollout_enabled',
+    'kube_namespace_labels',
+  ])
 
   requireTerms(failures, productionPaths.clusterMetrics, files.clusterMetrics, [
+    'kube_argocd_application_deployment_history_info',
     'kube_cronjob_created',
     'kube_cronjob_status_last_successful_time',
-    'kube_namespace_labels',
     'kube_statefulset_status_replicas_ready',
   ])
   const clusterMetricsHash = createHash('sha256').update(files.clusterMetrics).digest('hex')
@@ -358,7 +363,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '  - cronjobs',
     '  - namespaces',
     '  - statefulsets',
-    '  - namespaces=[observability.proompteng.ai/hermes-rollout-enabled]',
+    'customResourceState:\n  enabled: true',
+    'group: argoproj.io',
+    'kind: Application',
+    'metricNamePrefix: kube_argocd',
+    'name: application_deployment_history_info',
+    '                    - history\n                    - "0"',
+    '        - applications',
+    '        - list\n        - watch',
   ])
 
   requireTerms(failures, productionPaths.impactMap, files.impactMap, [

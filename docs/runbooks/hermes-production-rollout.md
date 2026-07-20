@@ -66,6 +66,7 @@ The expected mirrored amd64 manifest digest is
    argocd app sync hermes --prune=false
    kubectl -n hermes get namespace hermes \
      -l observability.proompteng.ai/hermes-rollout-enabled=true -o name | grep -qx namespace/hermes
+   kubectl -n argocd get application hermes -o json | jq -e '.status.history | length > 0'
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
    api_key_bytes=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | wc -c | tr -d '[:space:]')
    test "$api_key_bytes" -ge 32
@@ -73,7 +74,9 @@ The expected mirrored amd64 manifest digest is
    unset api_key_bytes
    ```
 
-   The reported key length must be at least 32. Do not include the value in rollout evidence.
+   The Argo deployment history is the durable alert-enablement source and must contain a successful deployment. It remains
+   outside the Hermes namespace and is re-exported after monitoring restarts. The reported key length must be at least 32.
+   Do not include the value in rollout evidence.
 
 ## Phase 1: API-only canary
 
