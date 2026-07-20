@@ -176,7 +176,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
 
     expect(result.first).toMatchObject({ runId: input.evaluation.runId, deduplicated: false })
-    expect(result.first.artifactCount).toBe(6)
+    expect(result.first.artifactCount).toBe(12)
     expect(result.second).toEqual({ ...result.first, deduplicated: true })
     expect(result.runs).toEqual([
       {
@@ -195,6 +195,90 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         required_type: typeof gate.required,
       })),
     )
+  })
+
+  test('reads and recovers the complete v2 evidence contract without evaluating it again', async () => {
+    const input = makeInput()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        yield* store.persist(input)
+        const stored = yield* store.read(input.evaluation.runId)
+        const recovered = yield* store.recover(input.evaluation.runId, input.provenance)
+        const missing = yield* store.read('f'.repeat(64))
+        return { stored, recovered, missing }
+      }),
+    )
+
+    expect(Option.isSome(result.stored)).toBe(true)
+    if (Option.isSome(result.stored)) {
+      expect(result.stored.value.protocol).toMatchObject({
+        protocolHash: input.evaluation.protocolHash,
+        schemaVersion: fixtureProtocol.schemaVersion,
+        strategyName: 'tsmom',
+        behaviorHash: input.provenance.strategy.behaviorHash,
+        parameterHash: input.provenance.strategy.parameterHash,
+        parameters: fixtureProtocol,
+      })
+      expect(result.stored.value.run).toMatchObject({
+        runId: input.evaluation.runId,
+        evaluationSchemaVersion: 'bayn.evaluation.v2',
+        artifactCount: 12,
+        eventCount: input.evaluation.events.length,
+      })
+      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toEqual([
+        'buy-and-hold',
+        'cash-changes',
+        'daily-position-marks',
+        'direct-volatility-timing',
+        'double-cost-strategy',
+        'equity-series',
+        'evaluation-summary',
+        'input-manifest',
+        'marked-equity-reconciliation',
+        'reconciliation',
+        'simulated-orders',
+        'strategy',
+      ])
+    }
+    expect(Option.isSome(result.recovered)).toBe(true)
+    if (Option.isSome(result.recovered)) {
+      expect(result.recovered.value).toMatchObject({
+        evaluation: {
+          runId: input.evaluation.runId,
+          markedEquityReconciliation: { withinTolerance: true },
+        },
+        reconciliation: { runId: input.evaluation.runId, exact: true },
+        persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 12 },
+      })
+    }
+    expect(Option.isNone(result.missing)).toBe(true)
+  })
+
+  test('rejects a simulation whose declared costs diverge from its locked protocol', async () => {
+    const input = makeInput()
+    const error = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        return yield* store
+          .persist({
+            ...input,
+            evaluation: {
+              ...input.evaluation,
+              simulation: {
+                ...input.evaluation.simulation,
+                transactionCostBpsMicros: '6000000',
+              },
+            },
+          })
+          .pipe(Effect.flip)
+      }),
+    )
+
+    expect(error).toBeInstanceOf(DatabaseError)
+    expect(error.failure).toBe('invariant')
+    expect(error.operation).toBe('plan')
+    expect(error.message).toContain('simulation transaction costs do not match')
   })
 
   test('creates distinct runs when bound runtime provenance changes', async () => {
@@ -245,7 +329,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
   test('rejects a complete receipt whose stored evidence was altered', async () => {
     const input = makeInput()
-    const error = await runtime.runPromise(
+    const errors = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
         const sql = yield* PgClient.PgClient
@@ -255,13 +339,18 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           SET payload = ${sql.json({ corrupted: true })}
           WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'strategy'
         `
-        return yield* store.persist(input).pipe(Effect.flip)
+        const read = yield* store.read(input.evaluation.runId).pipe(Effect.flip)
+        const replay = yield* store.persist(input).pipe(Effect.flip)
+        return { read, replay }
       }),
     )
 
-    expect(error).toBeInstanceOf(DatabaseError)
-    expect(error.failure).toBe('invariant')
-    expect(error.operation).toBe('read-receipt')
+    expect(errors.read).toBeInstanceOf(DatabaseError)
+    expect(errors.read.failure).toBe('invariant')
+    expect(errors.read.operation).toBe('read-evidence')
+    expect(errors.replay).toBeInstanceOf(DatabaseError)
+    expect(errors.replay.failure).toBe('invariant')
+    expect(errors.replay.operation).toBe('read-receipt')
   })
 
   test('rejects a replay whose normalized snapshot bounds were altered', async () => {
@@ -283,6 +372,28 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(error).toBeInstanceOf(DatabaseError)
     expect(error.failure).toBe('invariant')
     expect(error.operation).toBe('snapshot-reference')
+    expect(error.message).toContain('stored snapshot reference diverged')
+  })
+
+  test('fails recovery when the stored snapshot manifest was altered', async () => {
+    const input = makeInput()
+    const error = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`
+          UPDATE bayn_snapshot_references
+          SET manifest = ${sql.json({ corrupted: true })}
+          WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
+        `
+        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
+      }),
+    )
+
+    expect(error).toBeInstanceOf(DatabaseError)
+    expect(error.failure).toBe('invariant')
+    expect(error.operation).toBe('recover-evidence')
     expect(error.message).toContain('stored snapshot reference diverged')
   })
 
@@ -330,14 +441,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(error.message).toContain('stored status history diverged')
   })
 
-  test('rolls back every table when an event constraint fails', async () => {
+  test('rolls back every table when a terminal evidence constraint fails', async () => {
     const input = makeInput()
-    const duplicateId = input.evaluation.events[0].id
     const invalid: PersistEvaluationInput = {
       ...input,
       evaluation: {
         ...input.evaluation,
-        events: input.evaluation.events.map((event, index) => (index === 1 ? { ...event, id: duplicateId } : event)),
+        verdict: {
+          ...input.evaluation.verdict,
+          gates: input.evaluation.verdict.gates.map((gate, index) => (index === 0 ? { ...gate, name: '' } : gate)),
+        },
       },
     }
     const result = await runtime.runPromise(

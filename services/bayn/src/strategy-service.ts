@@ -1,7 +1,7 @@
 import { Context, Layer } from 'effect'
 
 import type { RuntimeProvenance } from './contracts'
-import { evaluateTsmom } from './strategy'
+import { evaluateTsmom, identifyTsmomRun } from './strategy'
 import type { DailyBar, EvaluationResult, InputManifest, TsmomProtocol } from './types'
 
 export interface StrategyService {
@@ -9,6 +9,7 @@ export interface StrategyService {
   readonly universe: readonly string[]
   readonly parameters: unknown
   readonly provenance: RuntimeProvenance
+  readonly identify: (manifest: InputManifest) => string
   readonly evaluate: (bars: readonly DailyBar[], manifest: InputManifest) => EvaluationResult
 }
 
@@ -19,6 +20,7 @@ export const makeTsmomStrategy = (protocol: TsmomProtocol, provenance: RuntimePr
   universe: protocol.universe,
   parameters: protocol,
   provenance,
+  identify: (manifest) => identifyTsmomRun(manifest, protocol, provenance),
   evaluate: (bars, manifest) => evaluateTsmom(bars, manifest, protocol, provenance),
 })
 

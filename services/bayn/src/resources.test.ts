@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Redacted, Ref } from 'effect'
+import { Effect, Option, Redacted, Ref } from 'effect'
 import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
 import { initialize, type RuntimeState } from './app'
@@ -58,11 +58,13 @@ const successfulJournal: JournalService = {
 
 const successfulEvidenceStore: EvidenceStoreService = {
   check: Effect.void,
+  read: () => Effect.succeed(Option.none()),
+  recover: () => Effect.succeed(Option.none()),
   persist: ({ evaluation }) =>
     Effect.succeed({
       runId: evaluation.runId,
       deduplicated: false,
-      artifactCount: 6,
+      artifactCount: 12,
       eventCount: evaluation.events.length,
       gateCount: evaluation.verdict.gates.length,
     }),

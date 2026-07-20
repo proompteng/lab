@@ -1,17 +1,23 @@
 import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1, hashObject } from './hash'
 import { hashTsmomParameters } from './protocol'
+import { reconcileMarkedEquity } from './simulation-reconciliation'
 import type {
+  CashChange,
   DailyBar,
+  DailyPositionMark,
   DecisionEvent,
   EconomicVerdict,
   EvaluationEvent,
   EvaluationResult,
+  EvaluationSummary,
   FillEvent,
   GateResult,
   InputManifest,
   IsoDate,
   PerformanceMetrics,
+  SimulatedOrder,
+  SimulationTrace,
   TsmomProtocol,
 } from './types'
 
@@ -34,6 +40,7 @@ interface Target {
 interface SimulationResult {
   readonly metrics: PerformanceMetrics
   readonly events: readonly EvaluationEvent[]
+  readonly simulation: SimulationTrace | null
 }
 
 const MICROS = 1_000_000
@@ -170,22 +177,41 @@ export const calculatePerformanceMetrics = (
   }
 }
 
-const makeFill = (
+const makeOrder = (
   runId: string,
   decision: DecisionEvent,
   sessionDate: IsoDate,
   symbol: string,
   side: 'buy' | 'sell',
-  quantity: number,
-  price: number,
-  fee: number,
-  costBasis: number,
-): FillEvent => {
+  requestedQuantity: number,
+  filledQuantity: number,
+): SimulatedOrder => {
   const payload = {
     decisionId: decision.id,
     sessionDate,
     symbol,
     side,
+    requestedQuantityMicros: toMicros(requestedQuantity),
+    filledQuantityMicros: toMicros(filledQuantity),
+  }
+  return { id: hashObject({ runId, kind: 'order', ...payload }), ...payload }
+}
+
+const makeFill = (
+  runId: string,
+  decision: DecisionEvent,
+  order: SimulatedOrder,
+  price: number,
+  fee: number,
+  costBasis: number,
+): FillEvent => {
+  const quantity = Number(BigInt(order.filledQuantityMicros)) / MICROS
+  const payload = {
+    orderId: order.id,
+    decisionId: decision.id,
+    sessionDate: order.sessionDate,
+    symbol: order.symbol,
+    side: order.side,
     quantityMicros: toMicros(quantity),
     priceMicros: toMicros(price),
     notionalMicros: toMicros(quantity * price),
@@ -193,6 +219,19 @@ const makeFill = (
     costBasisMicros: toMicros(costBasis),
   }
   return { kind: 'fill', id: hashObject({ runId, kind: 'fill', ...payload }), ...payload }
+}
+
+const makeCashChange = (runId: string, fill: FillEvent, cashAfterMicros: bigint): CashChange => {
+  const notional = BigInt(fill.notionalMicros)
+  const fee = BigInt(fill.feeMicros)
+  const amount = fill.side === 'buy' ? -(notional + fee) : notional - fee
+  const payload = {
+    fillId: fill.id,
+    sessionDate: fill.sessionDate,
+    amountMicros: amount.toString(),
+    cashAfterMicros: cashAfterMicros.toString(),
+  }
+  return { id: hashObject({ runId, kind: 'cash-change', ...payload }), ...payload }
 }
 
 const simulate = (
@@ -211,6 +250,10 @@ const simulate = (
   let totalFees = 0
   const equity: number[] = []
   const events: EvaluationEvent[] = []
+  const orders: SimulatedOrder[] = []
+  const cashChanges: CashChange[] = []
+  const dailyMarks: DailyPositionMark[] = []
+  let reconstructedCashMicros = BigInt(toMicros(initialCapital))
   const feeRate = costBps / 10_000
 
   for (let index = startIndex; index < sessions.length; index += 1) {
@@ -258,8 +301,14 @@ const simulate = (
         position.quantity = Math.max(0, desired)
         position.costBasis = Math.max(0, position.costBasis - costBasis)
         positions.set(symbol, position)
-        if (recordEvents)
-          events.push(makeFill(runId, decision, session.date, symbol, 'sell', quantity, price, fee, costBasis))
+        if (recordEvents) {
+          const order = makeOrder(runId, decision, session.date, symbol, 'sell', quantity, quantity)
+          const fill = makeFill(runId, decision, order, price, fee, costBasis)
+          orders.push(order)
+          events.push(fill)
+          reconstructedCashMicros += BigInt(fill.notionalMicros) - BigInt(fill.feeMicros)
+          cashChanges.push(makeCashChange(runId, fill, reconstructedCashMicros))
+        }
       }
 
       const proposedBuys = Object.keys(target.weights)
@@ -274,6 +323,7 @@ const simulate = (
       const scale = proposedNotional === 0 ? 0 : Math.min(1, cash / (proposedNotional * (1 + feeRate)))
       for (const buy of proposedBuys) {
         const quantity = buy.quantity * scale
+        if (quantity <= 1e-9) continue
         const notional = quantity * buy.price
         const fee = notional * feeRate
         cash -= notional + fee
@@ -283,7 +333,12 @@ const simulate = (
         buy.position.costBasis += notional
         positions.set(buy.symbol, buy.position)
         if (recordEvents) {
-          events.push(makeFill(runId, decision, session.date, buy.symbol, 'buy', quantity, buy.price, fee, notional))
+          const order = makeOrder(runId, decision, session.date, buy.symbol, 'buy', buy.quantity, quantity)
+          const fill = makeFill(runId, decision, order, buy.price, fee, notional)
+          orders.push(order)
+          events.push(fill)
+          reconstructedCashMicros -= BigInt(fill.notionalMicros) + BigInt(fill.feeMicros)
+          cashChanges.push(makeCashChange(runId, fill, reconstructedCashMicros))
         }
       }
       if (cash < -0.01) throw new Error(`simulation spent unavailable cash: ${cash}`)
@@ -296,9 +351,40 @@ const simulate = (
         0,
       )
     equity.push(closingEquity)
+    if (recordEvents) {
+      dailyMarks.push({
+        sessionDate: session.date,
+        cashMicros: toMicros(Math.max(0, cash)),
+        positions: Object.entries(session.bars)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([symbol, bar]) => {
+            const position = positions.get(symbol) ?? { quantity: 0, costBasis: 0 }
+            return {
+              symbol,
+              quantityMicros: toMicros(position.quantity),
+              costBasisMicros: toMicros(position.costBasis),
+              priceMicros: toMicros(bar.close),
+              marketValueMicros: toMicros(position.quantity * bar.close),
+            }
+          }),
+        equityMicros: toMicros(closingEquity),
+      })
+    }
   }
 
-  return { metrics: calculatePerformanceMetrics(equity, turnover, totalFees, initialCapital), events }
+  return {
+    metrics: calculatePerformanceMetrics(equity, turnover, totalFees, initialCapital),
+    events,
+    simulation: recordEvents
+      ? {
+          schemaVersion: 'bayn.simulation-trace.v1',
+          transactionCostBpsMicros: toMicros(costBps),
+          orders,
+          cashChanges,
+          dailyMarks,
+        }
+      : null,
+  }
 }
 
 const buildVerdict = (
@@ -359,12 +445,11 @@ const buildVerdict = (
   return { status: gates.every((gate) => gate.passed) ? 'PASS' : 'FAIL_CLOSED', gates }
 }
 
-export const evaluateTsmom = (
-  bars: readonly DailyBar[],
+const makeTsmomEvaluationIdentity = (
   inputManifest: InputManifest,
   protocol: TsmomProtocol,
   provenance: RuntimeProvenance,
-): EvaluationResult => {
+): { readonly runId: string; readonly protocolHash: string } => {
   const parameterHash = hashTsmomParameters(protocol)
   if (provenance.strategy.name !== 'tsmom') throw new Error('runtime provenance strategy must be tsmom')
   if (provenance.strategy.parameterSchemaVersion !== protocol.schemaVersion) {
@@ -391,6 +476,22 @@ export const evaluateTsmom = (
     calendarVersion: inputManifest.finalizedSnapshot.calendarVersion,
     bounds: inputManifest.bounds,
   }).runId
+  return { runId, protocolHash }
+}
+
+export const identifyTsmomRun = (
+  inputManifest: InputManifest,
+  protocol: TsmomProtocol,
+  provenance: RuntimeProvenance,
+): string => makeTsmomEvaluationIdentity(inputManifest, protocol, provenance).runId
+
+export const evaluateTsmom = (
+  bars: readonly DailyBar[],
+  inputManifest: InputManifest,
+  protocol: TsmomProtocol,
+  provenance: RuntimeProvenance,
+): EvaluationResult => {
+  const { runId, protocolHash } = makeTsmomEvaluationIdentity(inputManifest, protocol, provenance)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const maximumLookback = Math.max(...protocol.lookbacks)
   const signalIndices = sessions
@@ -470,9 +571,18 @@ export const evaluateTsmom = (
     runId,
     false,
   )
+  if (strategy.simulation === null) throw new Error('candidate simulation did not retain its evidence trace')
+  const markedEquity = reconcileMarkedEquity({
+    runId,
+    initialCapitalMicros: protocol.initialCapitalMicros,
+    evaluatorTotalFeesMicros: strategy.metrics.totalFeesMicros,
+    evaluatorEndingEquityMicros: strategy.metrics.endingEquityMicros,
+    events: strategy.events,
+    simulation: strategy.simulation,
+  })
 
   return {
-    schemaVersion: 'bayn.evaluation.v1',
+    schemaVersion: 'bayn.evaluation.v2',
     runId,
     codeRevision: provenance.sourceRevision,
     protocolHash,
@@ -484,5 +594,36 @@ export const evaluateTsmom = (
     doubleCostStrategy: doubleCost.metrics,
     verdict: buildVerdict(strategy.metrics, buyAndHold.metrics, directVolTiming.metrics, doubleCost.metrics, protocol),
     events: strategy.events,
+    simulation: strategy.simulation,
+    equitySeries: markedEquity.equitySeries,
+    markedEquityReconciliation: markedEquity.reconciliation,
   }
 }
+
+export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({
+  schemaVersion: 'bayn.evaluation-summary.v1',
+  runId: evaluation.runId,
+  evaluationSchemaVersion: evaluation.schemaVersion,
+  codeRevision: evaluation.codeRevision,
+  protocolHash: evaluation.protocolHash,
+  initialCapitalMicros: evaluation.initialCapitalMicros,
+  input: {
+    snapshotId: evaluation.inputManifest.finalizedSnapshot.snapshotId,
+    publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
+    manifestHash: evaluation.inputManifest.hash,
+    bounds: evaluation.inputManifest.bounds,
+    rowCount: evaluation.inputManifest.rowCount,
+    sessionCount: evaluation.inputManifest.sessionCount,
+    symbols: evaluation.inputManifest.symbols.map((coverage) => coverage.symbol),
+  },
+  strategy: evaluation.strategy,
+  buyAndHold: evaluation.buyAndHold,
+  directVolTiming: evaluation.directVolTiming,
+  doubleCostStrategy: evaluation.doubleCostStrategy,
+  verdict: evaluation.verdict,
+  eventCount: evaluation.events.length,
+  orderCount: evaluation.simulation.orders.length,
+  cashChangeCount: evaluation.simulation.cashChanges.length,
+  dailyMarkCount: evaluation.simulation.dailyMarks.length,
+  markedEquityReconciliation: evaluation.markedEquityReconciliation,
+})
