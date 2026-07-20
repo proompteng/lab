@@ -59,7 +59,7 @@ describe('Bayn resource lifecycle', () => {
               }),
               JournalLive(config, {
                 createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
-                resolveReplicaAddresses: async () => ['3000'],
+                resolveReplicaAddresses: () => Effect.succeed(['3000']),
               }),
             ),
           ),
@@ -166,7 +166,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provide(
             JournalLive(config, {
               createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
-              resolveReplicaAddresses: async () => ['3000'],
+              resolveReplicaAddresses: () => Effect.succeed(['3000']),
             }),
           ),
         ),
