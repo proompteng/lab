@@ -21,6 +21,7 @@ export const productionPaths = {
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
   migrationAudit: 'scripts/hermes/audit-migration-source.ts',
+  networkPolicyProbe: 'scripts/hermes/verify-network-policy-enforcement.sh',
   maintenanceWait: 'scripts/hermes/wait-for-maintenance.sh',
   maintenanceLock: 'scripts/hermes/maintenance-lock.sh',
   platform: 'argocd/applicationsets/platform.yaml',
@@ -270,6 +271,52 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'migration source audit failed',
     '${issue.path}: ${issue.reason}',
   ])
+  requireTerms(failures, productionPaths.networkPolicyProbe, files.networkPolicyProbe, [
+    'set -euo pipefail',
+    `readonly hermes_image='${hermesImage}'`,
+    'probe_namespace="hermes-network-policy-probe-$(openssl rand -hex 4)"',
+    'readonly probe_namespace',
+    'probe_namespace_created=false',
+    'cleanup_probe() {',
+    'if [[ "$probe_namespace_created" == true ]]',
+    'trap cleanup_probe EXIT',
+    'trap abort_probe HUP INT TERM',
+    'kubectl -n default create namespace "$probe_namespace"',
+    'kubectl -n default delete namespace "$probe_namespace" --ignore-not-found --wait=true --timeout=5m',
+    'pod-security.kubernetes.io/enforce=restricted',
+    'kind: NetworkPolicy',
+    'name: deny-client-egress',
+    'egress: []',
+    'baseline_reachable=false',
+    'policy_enforced=false',
+    "echo 'NetworkPolicy is not enforced; do not sync Hermes' >&2",
+    "printf 'network_policy_enforced=true\\n'",
+  ])
+  for (const term of [
+    'activeDeadlineSeconds: 600',
+    'automountServiceAccountToken: false',
+    'kubernetes.io/arch: amd64',
+    'readOnlyRootFilesystem: true',
+    'requiredDuringSchedulingIgnoredDuringExecution:',
+  ]) {
+    if (count(files.networkPolicyProbe, term) !== 2) {
+      failures.push(`${productionPaths.networkPolicyProbe}: both probe Pods must enforce ${JSON.stringify(term)}`)
+    }
+  }
+  forbidTerms(failures, productionPaths.networkPolicyProbe, files.networkPolicyProbe, [
+    ':latest',
+    'privileged: true',
+    'hostNetwork: true',
+    'serviceAccountName:',
+  ])
+  const probeBaselineIndex = files.networkPolicyProbe.indexOf('if [[ "$baseline_reachable" != true ]]')
+  const probePolicyIndex = files.networkPolicyProbe.indexOf('name: deny-client-egress')
+  const probeEnforcementIndex = files.networkPolicyProbe.indexOf('if [[ "$policy_enforced" != true ]]')
+  if (probeBaselineIndex < 0 || probePolicyIndex <= probeBaselineIndex || probeEnforcementIndex <= probePolicyIndex) {
+    failures.push(
+      `${productionPaths.networkPolicyProbe}: baseline connectivity must pass before the deny policy is tested`,
+    )
+  }
   requireTerms(failures, productionPaths.maintenanceWait, files.maintenanceWait, [
     'set -euo pipefail',
     'readonly namespace=hermes',
@@ -316,6 +363,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never run `hermes claw cleanup`',
     'Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.',
     'Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.',
+    'Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.',
     "stale_maintenance_holder=$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')",
     'maintenance-lock.sh recover "$stale_maintenance_holder"',
     'A standalone Job does not update the CronJob',
@@ -360,11 +408,18 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
+    'bash scripts/hermes/verify-network-policy-enforcement.sh',
+    '`NetworkPolicy is not enforced` is a hard rollout blocker.',
     'test "$api_key_bytes" -ge 32',
     'printf \'%s\\n\' "$api_key_bytes"',
     "hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')",
     'test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"',
   ])
+  const networkPolicyProbeIndex = phaseZeroSection.indexOf('bash scripts/hermes/verify-network-policy-enforcement.sh')
+  const initialHermesSyncIndex = phaseZeroSection.indexOf('argocd app sync hermes --prune=false')
+  if (networkPolicyProbeIndex < 0 || initialHermesSyncIndex <= networkPolicyProbeIndex) {
+    failures.push(`${productionPaths.runbook}: NetworkPolicy enforcement must be proven before the first Hermes sync`)
+  }
   if (count(phaseZeroSection, 'set -euo pipefail') !== 2) {
     failures.push(`${productionPaths.runbook}: secret creation and bridge verification must both fail closed`)
   }

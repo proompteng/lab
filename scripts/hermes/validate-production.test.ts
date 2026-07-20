@@ -57,6 +57,38 @@ test('rejects secret bridge verification that does not enforce key length', asyn
   )
 })
 
+test('rejects a network-policy probe without a deny rule', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicyProbe = files.networkPolicyProbe.replace('  egress: []\n', '  egress:\n    - {}\n')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicyProbe}: missing production invariant "egress: []"`,
+  )
+})
+
+test('rejects a network-policy probe without bounded Pods', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicyProbe = files.networkPolicyProbe.replace('  activeDeadlineSeconds: 600\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicyProbe}: both probe Pods must enforce "activeDeadlineSeconds: 600"`,
+  )
+})
+
+test('rejects syncing Hermes before network-policy enforcement proof', async () => {
+  const files = await loadProductionFiles()
+  const probeCommand = '   bash scripts/hermes/verify-network-policy-enforcement.sh\n'
+  files.runbook = files.runbook.replace(probeCommand, '')
+  files.runbook = files.runbook.replace(
+    '   argocd app sync hermes --prune=false\n',
+    `   argocd app sync hermes --prune=false\n${probeCommand}`,
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: NetworkPolicy enforcement must be proven before the first Hermes sync`,
+  )
+})
+
 test('rejects automatic Argo reconciliation during the staged migration', async () => {
   const files = await loadProductionFiles()
   files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) manual/, '$1 auto')
