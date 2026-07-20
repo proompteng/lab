@@ -1450,11 +1450,14 @@ describe('native OCI build workflows', () => {
   })
 
   it('keeps Bumba image content independent from GitOps-only release commits', () => {
+    const bumbaFlakeBlock = flake.match(
+      /"bumba-image"\s*=\s*import \.\/nix\/images\/bumba\.nix \{([\s\S]*?)\n\s*\};/m,
+    )?.[1]
+
     expect(bumbaImageModule).not.toContain('repoRevision')
     expect(bumbaImageModule).not.toContain('TEMPORAL_WORKER_BUILD_ID')
-    expect(flake).not.toContain(
-      'inherit pkgs lib nodejs repoRevision;\n              repoRoot = ./.;\n              bun = exact.bun;',
-    )
+    expect(bumbaFlakeBlock).toBeDefined()
+    expect(bumbaFlakeBlock).not.toContain('repoRevision')
     expect(readRepoFile('argocd/applications/bumba/deployment.yaml')).toContain('TEMPORAL_WORKER_BUILD_ID')
   })
 
