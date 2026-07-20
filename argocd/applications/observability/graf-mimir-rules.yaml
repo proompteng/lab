@@ -11,12 +11,12 @@ data:
           - record: hermes_rollout_enabled
             expr: |
               max(
-                max_over_time(
-                  kube_namespace_labels{
-                    namespace="hermes",
-                    label_observability_proompteng_ai_hermes_rollout_enabled="true"
-                  }[30d]
-                )
+                kube_namespace_labels{
+                  namespace="hermes",
+                  label_observability_proompteng_ai_hermes_rollout_enabled="true"
+                }
+                or
+                hermes_rollout_enabled
               )
           - alert: HermesGatewayUnavailable
             expr: |

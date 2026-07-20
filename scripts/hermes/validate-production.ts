@@ -329,6 +329,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'alert: HermesBackupStale',
     'record: hermes_rollout_enabled',
     'label_observability_proompteng_ai_hermes_rollout_enabled="true"',
+    'or\n                hermes_rollout_enabled',
     'absent(\n                  kube_statefulset_status_replicas_ready{',
     'absent(\n                  kube_deployment_status_replicas_available{',
     'time() - kube_cronjob_status_last_successful_time{',
@@ -339,6 +340,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   if (count(files.mimirRules, '(hermes_rollout_enabled == 1)') !== 3) {
     failures.push(`${productionPaths.mimirRules}: all absent-series alerts must be gated on rollout enablement`)
   }
+  const hermesRuleGroup =
+    files.mimirRules.match(/- name: hermes-production\.rules[\s\S]*?- name: graf-telemetry\.rules/)?.[0] ?? ''
+  forbidTerms(failures, productionPaths.mimirRules, hermesRuleGroup, ['[30d]'])
 
   requireTerms(failures, productionPaths.clusterMetrics, files.clusterMetrics, [
     'kube_cronjob_created',

@@ -165,6 +165,18 @@ test('rejects absent-series alerts that fire before rollout enablement', async (
   )
 })
 
+test('rejects rollout enablement that expires after namespace loss', async () => {
+  const files = await loadProductionFiles()
+  files.mimirRules = files.mimirRules.replace(
+    'or\n                hermes_rollout_enabled',
+    'or\n                vector(0)',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mimirRules}: missing production invariant "or\\n                hermes_rollout_enabled"`,
+  )
+})
+
 test('rejects migration instructions that skip the content audit', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
