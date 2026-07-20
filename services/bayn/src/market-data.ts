@@ -366,6 +366,8 @@ const makeMarketData = (
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
   Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
+    // The Bayn principal is readonly=1, so query-level setting changes are forbidden. Snapshot counts and content
+    // hashes below make an incomplete or stale replica read fail closed.
     const loadRows = Effect.gen(function* () {
       const manifests = yield* sql`
         SELECT
@@ -432,7 +434,7 @@ const makeMarketData = (
         { concurrency: 2 },
       )
       return { bars, sessions, manifests }
-    }).pipe(sql.withClickhouseSettings({ select_sequential_consistency: '1' }))
+    })
 
     return {
       load: Effect.gen(function* () {
