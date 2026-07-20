@@ -3,11 +3,57 @@ prometheusScrape: false
 replicas: 1
 
 collectors:
+  - cronjobs
   - deployments
+  - namespaces
   - nodes
   - pods
   - services
+  - statefulsets
 
+rbac:
+  extraRules:
+    - apiGroups:
+        - argoproj.io
+      resources:
+        - applications
+      verbs:
+        - list
+        - watch
+
+customResourceState:
+  enabled: true
+  config:
+    kind: CustomResourceStateMetrics
+    spec:
+      resources:
+        - groupVersionKind:
+            group: argoproj.io
+            version: v1alpha1
+            kind: Application
+          metricNamePrefix: kube_argocd
+          labelsFromPath:
+            application:
+              - metadata
+              - name
+            namespace:
+              - metadata
+              - namespace
+          metrics:
+            - name: application_deployment_history_info
+              help: Argo CD application has at least one persisted successful deployment.
+              each:
+                type: Info
+                info:
+                  path:
+                    - status
+                    - history
+                    - "0"
+                  labelsFromPath:
+                    deployed_at:
+                      - deployedAt
+                    revision:
+                      - revision
 
 resources:
   requests:

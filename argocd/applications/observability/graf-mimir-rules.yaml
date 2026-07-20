@@ -6,6 +6,133 @@ metadata:
 data:
   graf-rules.yaml: |
     groups:
+      - name: hermes-production.rules
+        rules:
+          - record: hermes_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="hermes"
+                }
+              )
+          - alert: HermesGatewayUnavailable
+            expr: |
+              (
+                (
+                  kube_statefulset_status_replicas_ready{
+                    namespace="hermes",
+                    statefulset="hermes"
+                  } < 1
+                )
+                or
+                absent(
+                  kube_statefulset_status_replicas_ready{
+                    namespace="hermes",
+                    statefulset="hermes"
+                  }
+                )
+              )
+              and on()
+              (hermes_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes production gateway is unavailable
+              description: The Hermes StatefulSet has no ready replica for five minutes.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+          - alert: HermesEgressProxyUnavailable
+            expr: |
+              (
+                (
+                  kube_deployment_status_replicas_available{
+                    namespace="hermes",
+                    deployment="hermes-egress-proxy"
+                  } < 1
+                )
+                or
+                absent(
+                  kube_deployment_status_replicas_available{
+                    namespace="hermes",
+                    deployment="hermes-egress-proxy"
+                  }
+                )
+              )
+              and on()
+              (hermes_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes allowlisted egress proxy is unavailable
+              description: The Hermes egress proxy has no available replica for five minutes.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+          - alert: HermesContainerRestarting
+            expr: |
+              sum by (container) (
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="hermes",
+                    pod=~"hermes-.*"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes container restarted
+              description: Hermes container {{ $labels.container }} restarted during the last 15 minutes.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
+          - alert: HermesBackupStale
+            expr: |
+              (
+                (
+                  time() - kube_cronjob_status_last_successful_time{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  } > 93600
+                )
+                or
+                (
+                  (
+                    time() - kube_cronjob_created{
+                      namespace="hermes",
+                      cronjob="hermes-backup"
+                    } > 93600
+                  )
+                  unless on (namespace, cronjob)
+                  kube_cronjob_status_last_successful_time{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  }
+                )
+                or
+                absent(
+                  kube_cronjob_created{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  }
+                )
+              )
+              and on()
+              (hermes_rollout_enabled == 1)
+            for: 30m
+            labels:
+              severity: critical
+              team: platform
+              service: hermes
+            annotations:
+              summary: Hermes backup is stale
+              description: The Hermes backup CronJob is missing or has no successful completion within its 26-hour freshness window; inspect its Job logs and verified archives.
+              runbook_url: docs/runbooks/hermes-production-rollout.md
       - name: graf-telemetry.rules
         rules:
           - alert: GrafHigh5xxRate

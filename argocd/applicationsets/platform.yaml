@@ -217,6 +217,29 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: hermes
+                path: argocd/applications/hermes
+                namespace: hermes
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: manual
+                enabled: "true"
+                ignoreDifferences:
+                  - group: coordination.k8s.io
+                    kind: Lease
+                    name: hermes-maintenance
+                    jsonPointers:
+                      - /spec/holderIdentity
+                      - /spec/renewTime
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                    observability.proompteng.ai/hermes-rollout-enabled: "true"
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
               - name: workers
                 path: argocd/applications/workers
                 namespace: workers

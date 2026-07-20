@@ -1,0 +1,267 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: hermes
+  namespace: hermes
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/version: v2026.7.7.2
+spec:
+  serviceName: hermes
+  replicas: 1
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hermes
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hermes
+        app.kubernetes.io/component: gateway
+        app.kubernetes.io/version: v2026.7.7.2
+    spec:
+      serviceAccountName: hermes
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - talos-192-168-1-194
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: bootstrap
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - /opt/bootstrap/bootstrap.sh
+          env:
+            - name: HERMES_HOME
+              value: /opt/data
+            - name: HOME
+              value: /opt/data/home
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+            - name: config
+              mountPath: /opt/data/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/bootstrap
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: hermes
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+          imagePullPolicy: IfNotPresent
+          command:
+            - /opt/hermes/.venv/bin/hermes
+          args:
+            - gateway
+            - run
+            - --no-supervise
+          env:
+            - name: HERMES_HOME
+              value: /opt/data
+            - name: HERMES_WRITE_SAFE_ROOT
+              value: /opt/data/workspace/tuslagch:/opt/data/memories:/opt/data/skills
+            - name: HERMES_DISABLE_LAZY_INSTALLS
+              value: "1"
+            - name: HOME
+              value: /opt/data/home
+            - name: XDG_CACHE_HOME
+              value: /opt/data/home/.cache
+            - name: API_SERVER_ENABLED
+              value: "true"
+            - name: API_SERVER_HOST
+              value: 0.0.0.0
+            - name: API_SERVER_PORT
+              value: "8642"
+            - name: API_SERVER_MODEL_NAME
+              value: tuslagch
+            - name: API_SERVER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-api-auth
+                  key: API_SERVER_KEY
+            - name: DISCORD_PROXY
+              value: http://hermes-egress-proxy.hermes.svc.cluster.local:3128
+            - name: HTTP_PROXY
+              value: http://hermes-egress-proxy.hermes.svc.cluster.local:3128
+            - name: HTTPS_PROXY
+              value: http://hermes-egress-proxy.hermes.svc.cluster.local:3128
+            - name: NO_PROXY
+              value: localhost,127.0.0.1,.svc,.svc.cluster.local,flamingo.flamingo.svc.cluster.local
+            - name: TZ
+              value: America/Los_Angeles
+          ports:
+            - name: api
+              containerPort: 8642
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+              ephemeral-storage: 512Mi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+              ephemeral-storage: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            httpGet:
+              path: /health
+              port: api
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 90
+          readinessProbe:
+            exec:
+              command:
+                - /opt/hermes/.venv/bin/python
+                - -c
+                - >-
+                  import json, os, urllib.request;
+                  r=urllib.request.Request('http://127.0.0.1:8642/health/detailed',headers={'Authorization':'Bearer '+os.environ['API_SERVER_KEY']});
+                  d=json.load(urllib.request.urlopen(r,timeout=3));
+                  raise SystemExit(0 if d.get('status') == 'ok' else 1)
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: api
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /opt/data
+            - name: config
+              mountPath: /opt/data/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/SOUL.md
+              subPath: SOUL.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/IDENTITY.md
+              subPath: IDENTITY.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/TOOLS.md
+              subPath: TOOLS.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/HEARTBEAT.md
+              subPath: HEARTBEAT.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/workspace/tuslagch/AGENTS.md
+              subPath: AGENTS.md
+              readOnly: true
+            - name: backups
+              mountPath: /opt/backups
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: config
+          configMap:
+            name: hermes-config
+            defaultMode: 0444
+        - name: bootstrap
+          configMap:
+            name: hermes-bootstrap
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: hermes
+          app.kubernetes.io/component: state
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: rook-ceph-block
+        resources:
+          requests:
+            storage: 50Gi
+    - metadata:
+        name: backups
+        labels:
+          app.kubernetes.io/name: hermes
+          app.kubernetes.io/component: backup
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: rook-ceph-block
+        resources:
+          requests:
+            storage: 100Gi
