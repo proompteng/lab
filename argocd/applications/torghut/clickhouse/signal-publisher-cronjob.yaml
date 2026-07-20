@@ -79,7 +79,7 @@ spec:
                 - name: SIGNAL_START_DATE
                   value: "2017-01-01"
                 - name: SIGNAL_ALPACA_FEED
-                  value: iex
+                  value: sip
                 - name: SIGNAL_CALENDAR_VERSION
                   value: alpaca-us-equity-calendar-v1
                 - name: SIGNAL_FINALIZATION_LAG_MINUTES

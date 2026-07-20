@@ -3,7 +3,13 @@ import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
 import { buildPublication, type BarRow, type ManifestRow, type SessionRow } from './domain'
-import { isFinalizable, latestFinalizableSession, parsePublicationArguments, persistPublication } from './publish'
+import {
+  historicalBarsQueryEnd,
+  isFinalizable,
+  latestFinalizableSession,
+  parsePublicationArguments,
+  persistPublication,
+} from './publish'
 import type { SnapshotRepository } from './repository'
 
 const publication = (
@@ -78,6 +84,11 @@ describe('Publication orchestration', () => {
         90,
       ),
     ).toBe('2026-07-17')
+  })
+
+  test('keeps the SIP historical query outside the provider delay window', () => {
+    expect(historicalBarsQueryEnd('2026-07-17', Date.parse('2026-07-17T22:30:00Z'))).toBe('2026-07-17T22:15:00.000Z')
+    expect(historicalBarsQueryEnd('2026-07-16', Date.parse('2026-07-17T22:30:00Z'))).toBe('2026-07-16T23:59:59.999Z')
   })
 
   test('stages rows before manifest, verifies readback, and reuses an exact retry', async () => {

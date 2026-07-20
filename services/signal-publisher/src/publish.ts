@@ -107,6 +107,13 @@ export const latestFinalizableSession = (
 const clickhouseTimestamp = (epochMillis: number): string =>
   new Date(epochMillis).toISOString().replace('T', ' ').replace('Z', '')
 
+const basicHistoricalDataDelayMs = 15 * 60 * 1_000
+
+export const historicalBarsQueryEnd = (publicationAsOf: IsoDate, epochMillis: number): string => {
+  const sessionDateEnd = Date.parse(`${publicationAsOf}T23:59:59.999Z`)
+  return new Date(Math.min(sessionDateEnd, epochMillis - basicHistoricalDataDelayMs)).toISOString()
+}
+
 const loadPublication = (
   config: PublisherConfig,
   args: PublicationArguments,
@@ -138,7 +145,12 @@ const loadPublication = (
       )
     }
     const boundedCalendar = calendar.filter((session) => session.date <= publicationAsOf)
-    const barsBySymbol = yield* fetchBars(config, requestedStart, publicationAsOf)
+    const barsBySymbol = yield* fetchBars(
+      config,
+      requestedStart,
+      publicationAsOf,
+      historicalBarsQueryEnd(publicationAsOf, epochMillis),
+    )
     return yield* Effect.try({
       try: () =>
         buildPublication({

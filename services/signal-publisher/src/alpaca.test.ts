@@ -17,7 +17,7 @@ const config: PublisherConfig = {
     tradingUrl: 'https://trading.alpaca.test',
     key: Redacted.make('key'),
     secret: Redacted.make('secret'),
-    feed: 'iex',
+    feed: 'sip',
   },
   symbols: ['SPY', 'TLT'],
   startDate: '2026-07-16',
@@ -65,14 +65,17 @@ describe('Alpaca HTTP client', () => {
     })
 
     const bars = await Effect.runPromise(
-      fetchBars(config, '2026-07-16', '2026-07-17').pipe(Effect.provideService(HttpClient.HttpClient, client)),
+      fetchBars(config, '2026-07-16', '2026-07-17', '2026-07-17T22:15:00.000Z').pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      ),
     )
 
     expect(Object.keys(bars)).toEqual(['SPY', 'TLT'])
     expect(requests).toHaveLength(2)
     expect(requests[0].searchParams.get('adjustment')).toBe('all')
-    expect(requests[0].searchParams.get('feed')).toBe('iex')
+    expect(requests[0].searchParams.get('feed')).toBe('sip')
     expect(requests[0].searchParams.get('asof')).toBe('2026-07-17')
+    expect(requests[0].searchParams.get('end')).toBe('2026-07-17T22:15:00.000Z')
     expect(requests[1].searchParams.get('page_token')).toBe('page-2')
   })
 

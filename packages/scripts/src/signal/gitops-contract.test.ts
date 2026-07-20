@@ -28,6 +28,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(environment.get('SIGNAL_CLICKHOUSE_PASSWORD')).toMatchObject({
       valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'password' } },
     })
+    expect(environment.get('SIGNAL_ALPACA_FEED')).toMatchObject({ value: 'sip' })
     expect([...environment.keys()].filter((name) => /BROKER|TIGERBEETLE|CAPITAL/.test(name))).toEqual([])
   })
 

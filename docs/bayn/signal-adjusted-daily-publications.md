@@ -6,11 +6,12 @@ program, not a long-running service. Its immutable image supports two commands:
 - `daily`: select the latest Alpaca exchange session whose close is at least the configured lag in the past.
 - `backfill --start YYYY-MM-DD --end YYYY-MM-DD`: publish one explicitly bounded historical capture.
 
-Both commands fetch the Alpaca calendar and paginated bars, runtime-decode every response, and apply the same domain
-validation. The daily GitOps CronJob runs at 18:30 `America/New_York`, forbids overlap, and uses deterministic insert
-deduplication. Publisher writes require both ClickHouse replicas to acknowledge each insert, and readback uses
-sequential consistency before the manifest is appended. It has no broker, TigerBeetle, PostgreSQL, or capital
-authority.
+Both commands fetch the Alpaca calendar and paginated consolidated SIP bars, runtime-decode every response, and apply
+the same domain validation. The daily GitOps CronJob runs at 18:30 `America/New_York`, forbids overlap, and uses
+deterministic insert deduplication. Its historical query ends at the earlier of the session-date boundary or 15 minutes
+before invocation, satisfying Alpaca's Basic-plan delay without admitting an unfinished session. Publisher writes
+require both ClickHouse replicas to acknowledge each insert, and readback uses sequential consistency before the
+manifest is appended. It has no broker, TigerBeetle, PostgreSQL, or capital authority.
 
 ## Finalization contract
 
@@ -38,8 +39,9 @@ parameter is supplied explicitly for symbol mapping.
 The provider contract follows Alpaca's [historical bars](https://docs.alpaca.markets/us/v1.4.2/reference/stockbars),
 [trading calendar](https://docs.alpaca.markets/us/v1.1/reference/getcalendar-1), and
 [market-data feed](https://docs.alpaca.markets/us/docs/market-data-faq) documentation. The publisher requests
-`adjustment=all`, names the feed, exhausts pagination, and uses the returned session close so early-close days are not
-treated as ordinary 16:00 sessions.
+`adjustment=all`, explicitly selects the consolidated `sip` feed, exhausts pagination, and uses the returned session
+close so early-close days are not treated as ordinary 16:00 sessions. IEX remains a development override, not the
+production publication source.
 
 ## Authority
 

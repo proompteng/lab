@@ -28,7 +28,7 @@ describe('Signal publisher config', () => {
   test('loads typed secrets, deterministic symbols, and pinned provenance', async () => {
     const config = await Effect.runPromise(provide(environment))
     expect(config.symbols).toEqual(['SPY', 'TLT'])
-    expect(config.alpaca.feed).toBe('iex')
+    expect(config.alpaca.feed).toBe('sip')
     expect(config.finalizationLagMinutes).toBe(90)
     expect(Redacted.isRedacted(config.alpaca.key)).toBe(true)
     expect(config.provenance).toEqual({

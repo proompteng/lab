@@ -81,7 +81,7 @@ const rawConfig = Config.all({
   ),
   alpacaKey: secretString('APCA_API_KEY_ID'),
   alpacaSecret: secretString('APCA_API_SECRET_KEY'),
-  feed: Config.literals(['iex', 'sip'], 'SIGNAL_ALPACA_FEED').pipe(Config.withDefault('iex')),
+  feed: Config.literals(['iex', 'sip'], 'SIGNAL_ALPACA_FEED').pipe(Config.withDefault('sip')),
   symbols: Config.schema(SymbolList, 'SIGNAL_SYMBOLS'),
   startDate: Config.schema(IsoDateSchema, 'SIGNAL_START_DATE'),
   calendarVersion: nonEmptyString('SIGNAL_CALENDAR_VERSION').pipe(Config.withDefault('alpaca-us-equity-calendar-v1')),

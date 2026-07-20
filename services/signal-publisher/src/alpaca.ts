@@ -83,7 +83,8 @@ export const fetchCalendar = (
 export const fetchBars = (
   config: PublisherConfig,
   start: IsoDate,
-  end: IsoDate,
+  publicationAsOf: IsoDate,
+  queryEnd: string,
 ): Effect.Effect<Readonly<Record<string, readonly AlpacaBar[]>>, PublicationError, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const bars = new Map<string, AlpacaBar[]>()
@@ -98,9 +99,9 @@ export const fetchBars = (
       url.searchParams.set('symbols', config.symbols.join(','))
       url.searchParams.set('timeframe', '1Day')
       url.searchParams.set('start', `${start}T00:00:00Z`)
-      url.searchParams.set('end', `${end}T23:59:59Z`)
+      url.searchParams.set('end', queryEnd)
       url.searchParams.set('adjustment', 'all')
-      url.searchParams.set('asof', end)
+      url.searchParams.set('asof', publicationAsOf)
       url.searchParams.set('feed', config.alpaca.feed)
       url.searchParams.set('sort', 'asc')
       url.searchParams.set('limit', '10000')
