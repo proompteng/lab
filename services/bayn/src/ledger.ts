@@ -14,6 +14,7 @@ import {
 import { Context, Effect, Layer } from 'effect'
 
 import type { BaynConfig } from './config'
+import { baynError, type BaynError } from './errors'
 import { hashObject, stableU128, stableU64 } from './hash'
 import type { EvaluationResult, FillEvent, ReconciliationResult } from './types'
 
@@ -93,11 +94,11 @@ export interface LedgerPlan {
 }
 
 export interface JournalService {
-  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, Error>
-  readonly check: Effect.Effect<void, Error>
+  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, BaynError>
+  readonly check: Effect.Effect<void, BaynError>
 }
 
-export const Journal = Context.GenericTag<JournalService>('bayn/Journal')
+export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
 
 const account = (
   runId: string,
@@ -407,44 +408,92 @@ const journalAndReconcile = (
   client: Client,
   ledger: number,
   result: EvaluationResult,
-): Effect.Effect<ReconciliationResult, Error> =>
-  Effect.tryPromise({
-    try: async () => {
-      const plan = buildLedgerPlan(result, ledger)
-      await createAndVerifyAccounts(client, plan.accounts)
-      await createAndVerifyTransfers(client, plan.transfers)
-      const accountQuery = { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 }
-      const transferQuery = { ...queryFilter(ledger), user_data_64: plan.runTag, limit: plan.transfers.length + 1 }
-      const [accounts, transfers] = await Promise.all([
-        client.queryAccounts(accountQuery),
-        client.queryTransfers(transferQuery),
-      ])
-      assertReconciled(plan, accounts, transfers)
-      return { runId: result.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
-    },
-    catch: (cause) => new Error(`TigerBeetle journal or reconciliation failed: ${String(cause)}`),
+): Effect.Effect<ReconciliationResult, BaynError> =>
+  tigerBeetleRequest(client, 'journal-and-reconcile', async () => {
+    const plan = buildLedgerPlan(result, ledger)
+    await createAndVerifyAccounts(client, plan.accounts)
+    await createAndVerifyTransfers(client, plan.transfers)
+    const accountQuery = { ...queryFilter(ledger), user_data_128: plan.runKey, limit: plan.accounts.length + 1 }
+    const transferQuery = { ...queryFilter(ledger), user_data_64: plan.runTag, limit: plan.transfers.length + 1 }
+    const [accounts, transfers] = await Promise.all([
+      client.queryAccounts(accountQuery),
+      client.queryTransfers(transferQuery),
+    ])
+    assertReconciled(plan, accounts, transfers)
+    return { runId: result.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
   })
 
-export const JournalLive = (config: BaynConfig): Layer.Layer<JournalService, Error> =>
-  Layer.scoped(
+const tigerBeetleRequest = <A>(
+  client: Client,
+  operation: string,
+  request: () => Promise<A>,
+): Effect.Effect<A, BaynError> =>
+  Effect.tryPromise({
+    try: async (signal) => {
+      const cancel = () => client.destroy()
+      signal.addEventListener('abort', cancel, { once: true })
+      if (signal.aborted) cancel()
+      try {
+        return await request()
+      } finally {
+        signal.removeEventListener('abort', cancel)
+      }
+    },
+    catch: (cause) => baynError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+  })
+
+export interface JournalDependencies {
+  readonly createClient: typeof createClient
+  readonly resolveReplicaAddresses: (configuredAddresses: readonly string[]) => Promise<string[]>
+}
+
+const defaultDependencies: JournalDependencies = { createClient, resolveReplicaAddresses }
+
+export const JournalLive = (
+  config: BaynConfig,
+  dependencies: JournalDependencies = defaultDependencies,
+): Layer.Layer<Journal, BaynError> =>
+  Layer.effect(
     Journal,
     Effect.acquireRelease(
       Effect.tryPromise({
-        try: async () =>
-          createClient({
+        try: async (signal) => {
+          const replicaAddresses = await dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses)
+          signal.throwIfAborted()
+          return dependencies.createClient({
             cluster_id: config.tigerBeetle.clusterId,
-            replica_addresses: await resolveReplicaAddresses(config.tigerBeetle.replicaAddresses),
-          }),
-        catch: (cause) => new Error(`failed to create TigerBeetle client: ${String(cause)}`),
-      }),
-      (client) => Effect.sync(() => client.destroy()),
+            replica_addresses: replicaAddresses,
+          })
+        },
+        catch: (cause) => baynError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: config.operationTimeoutMs,
+          orElse: () =>
+            Effect.fail(
+              baynError(
+                'journal',
+                'connect',
+                `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
+              ),
+            ),
+        }),
+      ),
+      (client) =>
+        Effect.try({
+          try: () => client.destroy(),
+          catch: (cause) => baynError('journal', 'close', 'failed to close TigerBeetle client', cause),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning('TigerBeetle client close failed').pipe(
+              Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
+            ),
+          ),
+        ),
     ).pipe(
       Effect.map((client) => ({
-        check: Effect.tryPromise({
-          try: async () => {
-            await client.lookupAccounts([stableU128('bayn-connectivity-probe')])
-          },
-          catch: (cause) => new Error(`TigerBeetle connectivity check failed: ${String(cause)}`),
+        check: tigerBeetleRequest(client, 'connectivity-check', async () => {
+          await client.lookupAccounts([stableU128('bayn-connectivity-probe')])
         }),
         journalAndReconcile: (result) => journalAndReconcile(client, config.tigerBeetle.ledger, result),
       })),

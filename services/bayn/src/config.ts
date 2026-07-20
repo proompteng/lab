@@ -1,19 +1,17 @@
-import process from 'node:process'
+import { Config, Effect, Redacted, Schema, SchemaTransformation } from 'effect'
 
-import { Effect } from 'effect'
-
-import { defaultProtocol } from './protocol'
-import type { TsmomProtocol } from './types'
+import { baynError, type BaynError } from './errors'
 
 export interface BaynConfig {
   readonly host: string
   readonly port: number
   readonly codeRevision: string
   readonly runOnStartup: boolean
+  readonly operationTimeoutMs: number
   readonly clickhouse: {
     readonly url: string
     readonly username: string
-    readonly password: string
+    readonly password: Redacted.Redacted<string>
     readonly database: string
     readonly table: string
     readonly datasetVersion: string
@@ -23,57 +21,77 @@ export interface BaynConfig {
     readonly replicaAddresses: readonly string[]
     readonly ledger: number
   }
-  readonly protocol: TsmomProtocol
 }
 
-const required = (environment: NodeJS.ProcessEnv, name: string): string => {
-  const value = environment[name]?.trim()
-  if (!value) {
-    throw new Error(`${name} is required`)
-  }
-  return value
-}
+const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
+const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
+const ClickHouseIdentifier = NonEmptyString.check(Schema.isPattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/))
+const ReplicaAddresses = Schema.Trim.pipe(
+  Schema.decodeTo(
+    Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
+    SchemaTransformation.transform<readonly string[], string>({
+      decode: (value) =>
+        value
+          .split(',')
+          .map((address) => address.trim())
+          .filter(Boolean),
+      encode: (addresses) => addresses.join(','),
+    }),
+  ),
+)
 
-const positiveInteger = (value: string, name: string): number => {
-  const parsed = Number.parseInt(value, 10)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer`)
-  }
-  return parsed
-}
+const nonEmptyString = (name: string) => Config.schema(NonEmptyString, name)
 
-const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
-  if (value === undefined) return fallback
-  if (value === 'true') return true
-  if (value === 'false') return false
-  throw new Error(`invalid boolean: ${value}`)
-}
+const secretString = (name: string) => nonEmptyString(name).pipe(Config.map((value) => Redacted.make(value)))
 
-export const parseConfig = (environment: NodeJS.ProcessEnv): BaynConfig => ({
-  host: environment.BAYN_HTTP_HOST?.trim() || '0.0.0.0',
-  port: positiveInteger(environment.BAYN_HTTP_PORT || '8080', 'BAYN_HTTP_PORT'),
-  codeRevision: required(environment, 'BAYN_CODE_REVISION'),
-  runOnStartup: parseBoolean(environment.BAYN_RUN_ON_STARTUP, true),
-  clickhouse: {
-    url: required(environment, 'BAYN_CLICKHOUSE_URL'),
-    username: required(environment, 'BAYN_CLICKHOUSE_USERNAME'),
-    password: required(environment, 'BAYN_CLICKHOUSE_PASSWORD'),
-    database: environment.BAYN_CLICKHOUSE_DATABASE?.trim() || 'signal',
-    table: environment.BAYN_CLICKHOUSE_TABLE?.trim() || 'adjusted_daily_bars_v1',
-    datasetVersion: required(environment, 'BAYN_DATASET_VERSION'),
-  },
-  tigerBeetle: {
-    clusterId: BigInt(environment.BAYN_TIGERBEETLE_CLUSTER_ID || '2001'),
-    replicaAddresses: required(environment, 'BAYN_TIGERBEETLE_ADDRESSES')
-      .split(',')
-      .map((address) => address.trim())
-      .filter(Boolean),
-    ledger: positiveInteger(environment.BAYN_TIGERBEETLE_LEDGER || '7001', 'BAYN_TIGERBEETLE_LEDGER'),
-  },
-  protocol: defaultProtocol,
-})
+const positiveInteger = (name: string, fallback: number) =>
+  Config.schema(PositiveInteger, name).pipe(Config.withDefault(fallback))
 
-export const loadConfig = Effect.try({
-  try: () => parseConfig(process.env),
-  catch: (cause) => new Error(`invalid Bayn configuration: ${String(cause)}`),
-})
+const clickhouseIdentifier = (name: string, fallback: string) =>
+  Config.schema(ClickHouseIdentifier, name).pipe(Config.withDefault(fallback))
+
+const baynConfig = Config.all({
+  host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
+  port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
+  codeRevision: nonEmptyString('BAYN_CODE_REVISION'),
+  runOnStartup: Config.boolean('BAYN_RUN_ON_STARTUP').pipe(Config.withDefault(true)),
+  operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
+  clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
+  clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
+  clickhousePassword: secretString('BAYN_CLICKHOUSE_PASSWORD'),
+  clickhouseDatabase: clickhouseIdentifier('BAYN_CLICKHOUSE_DATABASE', 'signal'),
+  clickhouseTable: clickhouseIdentifier('BAYN_CLICKHOUSE_TABLE', 'adjusted_daily_bars_v1'),
+  datasetVersion: nonEmptyString('BAYN_DATASET_VERSION'),
+  tigerBeetleClusterId: Config.schema(Schema.BigIntFromString, 'BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
+    Config.withDefault(2001n),
+  ),
+  tigerBeetleReplicaAddresses: Config.schema(ReplicaAddresses, 'BAYN_TIGERBEETLE_ADDRESSES'),
+  tigerBeetleLedger: positiveInteger('BAYN_TIGERBEETLE_LEDGER', 7001),
+}).pipe(
+  Config.map(
+    (config): BaynConfig => ({
+      host: config.host,
+      port: config.port,
+      codeRevision: config.codeRevision,
+      runOnStartup: config.runOnStartup,
+      operationTimeoutMs: config.operationTimeoutMs,
+      clickhouse: {
+        url: config.clickhouseUrl,
+        username: config.clickhouseUsername,
+        password: config.clickhousePassword,
+        database: config.clickhouseDatabase,
+        table: config.clickhouseTable,
+        datasetVersion: config.datasetVersion,
+      },
+      tigerBeetle: {
+        clusterId: config.tigerBeetleClusterId,
+        replicaAddresses: config.tigerBeetleReplicaAddresses,
+        ledger: config.tigerBeetleLedger,
+      },
+    }),
+  ),
+)
+
+export const loadConfig: Effect.Effect<BaynConfig, BaynError> = baynConfig.pipe(
+  Effect.mapError((cause) => baynError('config', 'load', 'invalid Bayn configuration', cause)),
+)
