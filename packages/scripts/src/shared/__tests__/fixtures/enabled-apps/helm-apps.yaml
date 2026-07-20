@@ -1,0 +1,80 @@
+# this template is created to use OCI helm charts
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: appset-helm
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements: &clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &helm_elements []
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}{{ .suffix }}"
+      namespace: argocd
+    spec:
+      project: default
+      destination:
+        namespace: "{{.namespace}}"
+      syncPolicy:
+        automated:
+          enabled: true
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
+      source:
+        repoURL: "{{.repoUrl}}"
+        chart: "{{.chart}}"
+        targetRevision: "{{.version}}"
+        helm:
+          releaseName: "{{.releaseName}}"
+          skipCrds: false
+  templatePatch: |
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
+    {{- $hasValuesObject := hasKey . "valuesObject" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $hasValuesObject -}}
+        {{- if $needsSpec }}
+        spec:
+          {{- if or $hasDestServer $hasDestName }}
+          destination:
+            namespace: "{{.namespace}}"
+            {{- if $hasDestServer }}
+            server: '{{ .destinationServer }}'
+            {{- end }}
+            {{- if $hasDestName }}
+            name: '{{ .destinationName }}'
+        {{- end }}
+      {{- end }}
+      {{- if $hasValuesObject }}
+      source:
+        helm:
+          valuesObject: {{- .valuesObject | toYaml | nindent 12 }}
+      {{- end }}
+    {{- end }}
