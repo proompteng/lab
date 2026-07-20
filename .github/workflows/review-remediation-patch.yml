@@ -19,11 +19,23 @@ jobs:
     if: github.actor == 'gregkonush'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      REMEDIATION_PUSH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN }}
+
+      - name: Require workflow-triggering token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${REMEDIATION_PUSH_TOKEN}" ]; then
+            echo 'AGENTS_SPLIT_TOKEN is required so the applied commit triggers normal pull-request workflows.' >&2
+            exit 1
+          fi
 
       - name: Validate patch-only trigger
         shell: bash
