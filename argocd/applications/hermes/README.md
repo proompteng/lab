@@ -46,6 +46,6 @@ Operational gates, migration commands, cutover, rollback, and evidence requireme
 ```bash
 kustomize build argocd/applications/hermes >/tmp/hermes.yaml
 nix develop -c scripts/kubeconform.sh argocd/applications/hermes /tmp/hermes.yaml
-bun run lint:hermes-production
+bun run scripts/hermes/validate-production.ts
 shellcheck argocd/applications/hermes/*.sh
 ```

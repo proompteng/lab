@@ -201,7 +201,7 @@ jobs:
             root-scripts)
               bun install --frozen-lockfile
               bun run lint:flamingo-hard-migration
-              bun run lint:hermes-production
+              bun run scripts/hermes/validate-production.ts
               bun test scripts/hermes/validate-production.test.ts
               ;;
             sag)
