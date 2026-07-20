@@ -10,13 +10,13 @@ const manifests = {
 
 describe('Signal publisher manifest promotion', () => {
   test('pins the immutable image, binds provenance, and activates the CronJob', () => {
-    const sourceSha = 'a'.repeat(40)
+    const sourceSha = '1'.repeat(40)
     const digest = `sha256:${'b'.repeat(64)}`
     const updated = updateSignalPublisherManifests({ sourceSha, tag: `sha-${sourceSha}`, digest }, manifests)
 
     expect(updated.kustomization).toContain(`newTag: "sha-${sourceSha}"\n    digest: ${digest}`)
     expect(updated.cronJob).toContain('suspend: false')
-    expect(updated.cronJob).toContain(`- name: SIGNAL_CODE_REVISION\n                  value: ${sourceSha}`)
+    expect(updated.cronJob).toContain(`- name: SIGNAL_CODE_REVISION\n                  value: "${sourceSha}"`)
     expect(updated.cronJob).toContain(`- name: SIGNAL_IMAGE_DIGEST\n                  value: ${digest}`)
   })
 

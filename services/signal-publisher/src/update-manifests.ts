@@ -60,7 +60,7 @@ export const updateSignalPublisherManifests = (
   cronJob = replaceExactlyOnce(
     cronJob,
     /(                - name: SIGNAL_CODE_REVISION\n                  value: )[^\n]+/,
-    `$1${release.sourceSha}`,
+    `$1${JSON.stringify(release.sourceSha)}`,
     'SIGNAL_CODE_REVISION value',
   )
   cronJob = replaceExactlyOnce(
