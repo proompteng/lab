@@ -4,7 +4,8 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { Effect, Layer, Ref } from 'effect'
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
-import type { RuntimeConfig } from './config'
+import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
+import type { RuntimeProvenance } from './contracts'
 import { formatError, operationalError, type Component, type OperationalError } from './errors'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
@@ -12,6 +13,7 @@ import { Strategy } from './strategy-service'
 import type { EvaluationResult, ReconciliationResult } from './types'
 
 interface RuntimeEvidence {
+  readonly provenance: RuntimeProvenance
   readonly evaluation: Omit<EvaluationResult, 'events'> & { readonly eventCount: number }
   readonly reconciliation: ReconciliationResult
 }
@@ -24,10 +26,16 @@ export type RuntimeState =
 const json = (value: unknown): string =>
   JSON.stringify(value, (_, nested) => (typeof nested === 'bigint' ? nested.toString() : nested))
 
-const publicState = (state: RuntimeState) => ({
+const publicState = (
+  state: RuntimeState,
+  provenance: RuntimeProvenance,
+  provenanceVerification: RuntimeBuildMetadata['verification'],
+) => ({
   service: 'bayn',
   status: state.status,
   authority: { brokerOrders: false, capitalPromotion: false },
+  provenanceVerification,
+  provenance,
   evidence: state.evidence,
   error: state.error,
 })
@@ -38,6 +46,8 @@ const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<str
 export const makeHttpLayer = (
   config: Pick<RuntimeConfig, 'host' | 'port'>,
   state: Ref.Ref<RuntimeState>,
+  provenance: RuntimeProvenance,
+  provenanceVerification: RuntimeBuildMetadata['verification'],
 ): ReturnType<typeof NodeHttpServer.layer> => {
   const ready = Ref.get(state).pipe(
     Effect.map((current) => {
@@ -45,7 +55,9 @@ export const makeHttpLayer = (
       return jsonResponse({ ready: isReady, status: current.status }, isReady ? 200 : 503)
     }),
   )
-  const status = Ref.get(state).pipe(Effect.map((current) => jsonResponse(publicState(current))))
+  const status = Ref.get(state).pipe(
+    Effect.map((current) => jsonResponse(publicState(current, provenance, provenanceVerification))),
+  )
   const fallback = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
@@ -107,7 +119,10 @@ const evaluateAndJournal = (
     yield* Effect.logInfo('Bayn startup evaluation started').pipe(
       Effect.annotateLogs({
         service: 'bayn',
-        codeRevision: config.codeRevision,
+        sourceRevision: config.build.sourceRevision,
+        imageDigest: config.build.imageDigest,
+        strategyBehaviorHash: strategy.provenance.strategy.behaviorHash,
+        parameterHash: strategy.provenance.strategy.parameterHash,
         datasetVersion: config.clickhouse.datasetVersion,
       }),
     )
@@ -121,7 +136,7 @@ const evaluateAndJournal = (
       }),
     )
     const evaluation = yield* Effect.try({
-      try: () => strategy.evaluate(snapshot.bars, snapshot.manifest, config.codeRevision),
+      try: () => strategy.evaluate(snapshot.bars, snapshot.manifest),
       catch: (cause) => operationalError('strategy', 'evaluate', `${strategy.name} evaluation failed`, cause),
     })
     yield* Effect.logInfo('Bayn strategy evaluation completed').pipe(
@@ -142,7 +157,11 @@ const evaluateAndJournal = (
     const { events, ...evaluationWithoutEvents } = evaluation
     yield* Ref.set(state, {
       status: 'READY',
-      evidence: { evaluation: { ...evaluationWithoutEvents, eventCount: events.length }, reconciliation },
+      evidence: {
+        provenance: strategy.provenance,
+        evaluation: { ...evaluationWithoutEvents, eventCount: events.length },
+        reconciliation,
+      },
       error: null,
     })
     yield* Effect.logInfo('Bayn startup proof is ready').pipe(
@@ -182,8 +201,9 @@ export const initialize = (
 export const run = (config: RuntimeConfig): Effect.Effect<never, OperationalError, MarketData | Journal | Strategy> =>
   Effect.scoped(
     Effect.gen(function* () {
+      const strategy = yield* Strategy
       const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
-      yield* Layer.build(makeHttpLayer(config, state)).pipe(
+      yield* Layer.build(makeHttpLayer(config, state, strategy.provenance, config.build.verification)).pipe(
         Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)),
       )
       yield* initialize(config, state)

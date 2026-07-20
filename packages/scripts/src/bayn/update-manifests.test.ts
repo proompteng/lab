@@ -24,7 +24,7 @@ describe('Bayn manifest promotion', () => {
     )
     writeFileSync(
       deploymentPath,
-      `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n            - name: BAYN_CODE_REVISION\n              value: bootstrap\n`,
+      `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n            - name: BAYN_CODE_REVISION\n              value: bootstrap\n            - name: BAYN_IMAGE_REPOSITORY\n              value: registry.ide-newton.ts.net/lab/bayn\n            - name: BAYN_IMAGE_DIGEST\n              value: sha256:old\n`,
     )
     writeFileSync(
       applicationSetPath,
@@ -43,6 +43,10 @@ describe('Bayn manifest promotion', () => {
     })
     expect(readFileSync(kustomizationPath, 'utf8')).toContain(`newTag: "sha-${sourceSha}"\n    digest: ${digest}`)
     expect(readFileSync(deploymentPath, 'utf8')).toContain(`value: ${sourceSha}`)
+    expect(readFileSync(deploymentPath, 'utf8')).toContain(
+      `- name: BAYN_IMAGE_REPOSITORY\n              value: registry.ide-newton.ts.net/lab/bayn`,
+    )
+    expect(readFileSync(deploymentPath, 'utf8')).toContain(`- name: BAYN_IMAGE_DIGEST\n              value: ${digest}`)
     expect(readFileSync(deploymentPath, 'utf8')).toContain('restartedAt: "2026-07-19T10:00:00Z"')
     expect(readFileSync(applicationSetPath, 'utf8')).toContain(
       '- name: bayn\n                path: argocd/applications/bayn\n                enabled: "true"',

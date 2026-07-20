@@ -3,9 +3,8 @@ import { Effect } from 'effect'
 import type { Account, Transfer } from 'tigerbeetle-node'
 
 import { assertReconciled, buildLedgerPlan, resolveReplicaAddresses } from './ledger'
-import { defaultProtocol } from './protocol'
 import { evaluateTsmom } from './strategy'
-import { makeSnapshot } from './test-fixtures'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const materializeAccounts = (plan: ReturnType<typeof buildLedgerPlan>): Account[] => {
   const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
@@ -27,18 +26,18 @@ const materializeTransfers = (plan: ReturnType<typeof buildLedgerPlan>): Transfe
 describe('TigerBeetle simulation journal', () => {
   test('plans deterministic double-entry transfers and reconciles exact sets and balances', () => {
     const snapshot = makeSnapshot()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')
+    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const first = buildLedgerPlan(result, 7001)
     const second = buildLedgerPlan(result, 7001)
     expect(first).toEqual(second)
-    expect(first.accounts).toHaveLength(defaultProtocol.universe.length + 5)
+    expect(first.accounts).toHaveLength(fixtureProtocol.universe.length + 5)
     expect(first.transfers.length).toBeGreaterThan(1)
     expect(() => assertReconciled(first, materializeAccounts(first), materializeTransfers(first))).not.toThrow()
   })
 
   test('fails closed on extra transfers or mismatched balances', () => {
     const snapshot = makeSnapshot()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')
+    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const plan = buildLedgerPlan(result, 7001)
     const accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)

@@ -8,15 +8,22 @@ import type { RuntimeConfig } from './config'
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { defaultProtocol } from './protocol'
 import { evaluateTsmom } from './strategy'
-import { Strategy, TsmomStrategyLive, type StrategyService } from './strategy-service'
-import { makeSnapshot } from './test-fixtures'
+import { Strategy, TsmomStrategyLayer, type StrategyService } from './strategy-service'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+
+const provenance = makeTestProvenance()
 
 const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
-  codeRevision: 'test-revision',
+  build: {
+    sourceRevision: provenance.sourceRevision,
+    imageRepository: provenance.image.repository,
+    imageDigest: provenance.image.digest,
+    strategyBehaviorHash: provenance.strategy.behaviorHash,
+    verification: 'embedded',
+  },
   runOnStartup: true,
   operationTimeoutMs: 250,
   clickhouse: {
@@ -52,11 +59,12 @@ const fetchJson = async (port: number, path: string, method = 'GET') => {
 
 const readyState = (): RuntimeState => {
   const snapshot = makeSnapshot()
-  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')
+  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
   const { events, ...evaluationWithoutEvents } = evaluation
   return {
     status: 'READY',
     evidence: {
+      provenance,
       evaluation: { ...evaluationWithoutEvents, eventCount: events.length },
       reconciliation: { runId: evaluation.runId, accountCount: 13, transferCount: events.length, exact: true },
     },
@@ -71,7 +79,9 @@ describe('Bayn HTTP probes', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
-          const context = yield* Layer.build(makeHttpLayer({ host: '127.0.0.1', port: 0 }, state))
+          const context = yield* Layer.build(
+            makeHttpLayer({ host: '127.0.0.1', port: 0 }, state, provenance, 'embedded'),
+          )
           const address = Context.get(context, HttpServer.HttpServer).address
           if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
           port = address.port
@@ -97,6 +107,9 @@ describe('Bayn HTTP probes', () => {
               service: 'bayn',
               status: 'READY',
               authority: { brokerOrders: false, capitalPromotion: false },
+              provenanceVerification: 'embedded',
+              provenance,
+              evidence: { provenance },
             },
           })
           yield* Ref.set(state, { status: 'FAIL_CLOSED', evidence: null, error: 'test failure' })
@@ -138,10 +151,11 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
     const strategy: StrategyService = {
       name: 'test-strategy',
-      universe: defaultProtocol.universe,
-      evaluate: (bars, manifest, codeRevision) => {
+      universe: fixtureProtocol.universe,
+      provenance,
+      evaluate: (bars, manifest) => {
         calls += 1
-        return evaluateTsmom(bars, manifest, defaultProtocol, codeRevision)
+        return evaluateTsmom(bars, manifest, fixtureProtocol, provenance)
       },
     }
 
@@ -166,7 +180,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
-        Effect.provide(TsmomStrategyLive),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -186,7 +200,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
-        Effect.provide(TsmomStrategyLive),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -212,7 +226,7 @@ describe('Bayn startup lifecycle', () => {
       initialize({ ...config, runOnStartup: false }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
-        Effect.provide(TsmomStrategyLive),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -234,7 +248,7 @@ describe('Bayn startup lifecycle', () => {
       initialize({ ...config, operationTimeoutMs: 10 }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
-        Effect.provide(TsmomStrategyLive),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -251,7 +265,7 @@ describe('Bayn startup lifecycle', () => {
       run(config).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
-        Effect.provide(TsmomStrategyLive),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>

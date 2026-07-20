@@ -11,8 +11,10 @@ import {
   decodeEvidenceFreshness,
   decodeFinalizedSnapshot,
   decodeRunIdentity,
+  decodeRuntimeProvenance,
   decodeStatusSnapshot,
   makeRunIdentity,
+  makeRuntimeProvenance,
   makeStatusSnapshot,
 } from './contracts'
 
@@ -162,6 +164,36 @@ describe('Bayn run identity', () => {
         strategy: { ...material.strategy, parameters: { unsupported: undefined } },
       }),
     ).toThrow()
+  })
+})
+
+describe('Bayn runtime provenance', () => {
+  test('binds deploy identity, compiled behavior, parameters, and contract versions', async () => {
+    const provenance = makeRuntimeProvenance({
+      sourceRevision: 'c'.repeat(40),
+      image: {
+        repository: 'registry.ide-newton.ts.net/lab/bayn',
+        digest: `sha256:${sha('d')}`,
+      },
+      strategy: {
+        name: 'tsmom',
+        behaviorHash: sha('e'),
+        parameterHash: sha('f'),
+        parameterSchemaVersion: 'bayn.tsmom.protocol.v1',
+      },
+    })
+
+    expect(provenance).toMatchObject({
+      schemaVersion: 'bayn.runtime-provenance.v1',
+      contractVersions: {
+        runtimeProvenance: 'bayn.runtime-provenance.v1',
+        inputManifest: 'bayn.input-manifest.v1',
+        evaluation: 'bayn.evaluation.v1',
+      },
+    })
+    expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
+    await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
+    await expectFailure(decodeRuntimeProvenance({ ...provenance, schemaVersion: 'bayn.runtime-provenance.v2' }))
   })
 })
 

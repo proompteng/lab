@@ -17,6 +17,7 @@
   dependencyClosure ? "nodeModules",
   command,
   env ? [ ],
+  labels ? { },
   extraContents ? [ ],
   exposedPorts ? { },
   workingDir ? "/app",
@@ -283,6 +284,6 @@ if returnRuntimeRoot then builtRuntimeRoot else pkgs.dockerTools.buildLayeredIma
       "org.opencontainers.image.title" = packageName;
       "org.opencontainers.image.source" = "https://github.com/proompteng/lab";
       "proompteng.ai/nix-package-attr" = "${serviceName}-image";
-    };
+    } // labels;
   };
 }

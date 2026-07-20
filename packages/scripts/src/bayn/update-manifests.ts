@@ -51,6 +51,12 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
   )
   updatedDeployment = replaceExactlyOnce(
     updatedDeployment,
+    /(            - name: BAYN_IMAGE_DIGEST\n              value: )[^\n]+/,
+    `$1${options.digest}`,
+    'BAYN_IMAGE_DIGEST value',
+  )
+  updatedDeployment = replaceExactlyOnce(
+    updatedDeployment,
     /(        kubectl\.kubernetes\.io\/restartedAt: )[^\n]+/,
     `$1${JSON.stringify(options.rolloutTimestamp)}`,
     'Bayn rollout annotation',

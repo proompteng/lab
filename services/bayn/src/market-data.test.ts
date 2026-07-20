@@ -1,18 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 
 import { buildInputManifest } from './market-data'
-import { defaultProtocol } from './protocol'
-import { makeBars } from './test-fixtures'
+import { fixtureProtocol, makeBars } from './test-fixtures'
 
 describe('Signal input manifest', () => {
   test('is deterministic and records exact coverage', () => {
     const bars = makeBars(10)
-    const first = buildInputManifest(bars, 'signal', 'adjusted_daily_bars_v1', defaultProtocol.universe, 'fixture-v1')
+    const first = buildInputManifest(bars, 'signal', 'adjusted_daily_bars_v1', fixtureProtocol.universe, 'fixture-v1')
     const second = buildInputManifest(
       [...bars].reverse(),
       'signal',
       'adjusted_daily_bars_v1',
-      defaultProtocol.universe,
+      fixtureProtocol.universe,
       'fixture-v1',
     )
     expect(first.hash).toBe(second.hash)
@@ -24,7 +23,7 @@ describe('Signal input manifest', () => {
       changedBars,
       'signal',
       'adjusted_daily_bars_v1',
-      defaultProtocol.universe,
+      fixtureProtocol.universe,
       'fixture-v1',
     )
     expect(changed.contentHash).not.toBe(first.contentHash)
@@ -38,7 +37,7 @@ describe('Signal input manifest', () => {
         [...bars, bars[0]],
         'signal',
         'adjusted_daily_bars_v1',
-        defaultProtocol.universe,
+        fixtureProtocol.universe,
         'fixture-v1',
       ),
     ).toThrow('duplicate adjusted bar')
@@ -47,7 +46,7 @@ describe('Signal input manifest', () => {
         bars.filter((bar) => bar.symbol !== 'SPY'),
         'signal',
         'adjusted_daily_bars_v1',
-        defaultProtocol.universe,
+        fixtureProtocol.universe,
         'fixture-v1',
       ),
     ).toThrow('universe mismatch')

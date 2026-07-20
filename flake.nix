@@ -259,7 +259,7 @@
               bun = exact.bun;
             };
             "bayn-image" = import ./nix/images/bayn.nix {
-              inherit pkgs lib nodejs;
+              inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;
               bun = exact.bun;
             };

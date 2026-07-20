@@ -4,7 +4,7 @@ import { createClient } from '@clickhouse/client'
 import { Effect, Redacted } from 'effect'
 
 import { loadBackfillConfig } from './backfill-config'
-import { defaultProtocol } from './protocol'
+import { loadDefaultProtocol } from './protocol'
 
 interface AlpacaBar {
   readonly t: string
@@ -55,7 +55,8 @@ const main = async (): Promise<void> => {
     feed,
     datasetVersion,
   } = await Effect.runPromise(loadBackfillConfig)
-  const universe = [...defaultProtocol.universe]
+  const protocol = await Effect.runPromise(loadDefaultProtocol)
+  const universe = [...protocol.universe]
   const client = createClient({
     url: clickhouseUrl,
     username: clickhouseUsername,

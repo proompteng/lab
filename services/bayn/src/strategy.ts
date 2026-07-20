@@ -1,4 +1,6 @@
-import { hashObject } from './hash'
+import type { RuntimeProvenance } from './contracts'
+import { canonicalHashV1, hashObject } from './hash'
+import { hashTsmomParameters } from './protocol'
 import type {
   DailyBar,
   DecisionEvent,
@@ -342,10 +344,21 @@ export const evaluateTsmom = (
   bars: readonly DailyBar[],
   inputManifest: InputManifest,
   protocol: TsmomProtocol,
-  codeRevision: string,
+  provenance: RuntimeProvenance,
 ): EvaluationResult => {
-  const protocolHash = hashObject(protocol)
-  const runId = hashObject({ codeRevision, inputManifestHash: inputManifest.hash, protocolHash })
+  const protocolHash = hashTsmomParameters(protocol)
+  if (provenance.strategy.name !== 'tsmom') throw new Error('runtime provenance strategy must be tsmom')
+  if (provenance.strategy.parameterSchemaVersion !== protocol.schemaVersion) {
+    throw new Error('runtime provenance parameter schema does not match decoded TSMOM parameters')
+  }
+  if (provenance.strategy.parameterHash !== protocolHash) {
+    throw new Error('runtime provenance parameter hash does not match decoded TSMOM parameters')
+  }
+  const runId = canonicalHashV1({
+    schemaVersion: 'bayn.transitional-run-identity.v1',
+    provenance,
+    inputManifestHash: inputManifest.hash,
+  })
   const sessions = alignBars(bars, protocol.universe)
   const maximumLookback = Math.max(...protocol.lookbacks)
   const signalIndices = sessions
@@ -420,7 +433,7 @@ export const evaluateTsmom = (
   return {
     schemaVersion: 'bayn.evaluation.v1',
     runId,
-    codeRevision,
+    codeRevision: provenance.sourceRevision,
     protocolHash,
     initialCapitalMicros: protocol.initialCapitalMicros,
     inputManifest,

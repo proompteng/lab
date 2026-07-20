@@ -2,17 +2,28 @@
   pkgs,
   lib,
   repoRoot,
+  repoRevision ? "dirty",
   bun,
   nodejs,
 }:
 
+let
+  imageRepository = "registry.ide-newton.ts.net/lab/bayn";
+  strategyBehaviorHash = builtins.hashString "sha256" (
+    "services/bayn/src/hash.ts\n"
+    + builtins.readFile ../../services/bayn/src/hash.ts
+    + "\nservices/bayn/src/strategy.ts\n"
+    + builtins.readFile ../../services/bayn/src/strategy.ts
+  );
+  buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
+in
 import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
   depsHash = {
-    x86_64-linux = "sha256-ahQym6RTy0Kx+7kJC1C2sI/BuOuu3TYE9ko5Ma1b8QA=";
-    aarch64-linux = "sha256-sJEUf14J+py5SXOhwRcFnng2+SPwyH0lxRdMYD1Gbvk=";
+    x86_64-linux = "sha256-ETTh/mPfj5MlszjVfMCQMDlrowBvKgbmoBTgSPLxeto=";
+    aarch64-linux = "sha256-3IQVR5Z/bsqZEnV6lxPwPeLrQTWhFx+doLGtWeci3uc=";
   };
   installFilters = [
     "@proompteng/bayn"
@@ -22,7 +33,17 @@ import ./bun-workspace-service.nix {
   ];
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
-    "bun --cwd=services/bayn run build"
+    (
+      "bun --cwd=services/bayn build src/index.ts src/backfill.ts --target=node "
+      + "--external tigerbeetle-node --outdir=dist "
+      + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
+      + " "
+      + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
+      + " "
+      + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
+    )
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
+    "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
@@ -42,5 +63,9 @@ import ./bun-workspace-service.nix {
   ];
   exposedPorts = {
     "8080/tcp" = { };
+  };
+  labels = {
+    "org.opencontainers.image.revision" = repoRevision;
+    "proompteng.ai/bayn.strategy-behavior-hash" = strategyBehaviorHash;
   };
 }

@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/index.ts src/backfill.ts --target=node --external tigerbeetle-node --outdir=dist",
-    "dev": "bun --watch src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
+    "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
     "backfill": "bun src/backfill.ts",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
