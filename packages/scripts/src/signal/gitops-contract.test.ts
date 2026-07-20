@@ -10,18 +10,27 @@ const clickhouseDirectory = resolve(root, 'argocd/applications/torghut/clickhous
 const read = (path: string) => readFileSync(resolve(clickhouseDirectory, path), 'utf8')
 
 describe('Signal publisher GitOps authority contract', () => {
-  test('keeps the publisher suspended until immutable image promotion', () => {
+  test('activates only an immutable image with matching runtime provenance', () => {
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
+    const kustomization = parse(read('kustomization.yaml'))
     const container = cronJob.spec.jobTemplate.spec.template.spec.containers[0]
     const environment = new Map(container.env.map((entry: { name: string; value?: string }) => [entry.name, entry]))
+    const image = kustomization.images.find(
+      (entry: { name: string }) => entry.name === 'registry.ide-newton.ts.net/lab/signal-publisher',
+    )
 
     expect(cronJob.spec).toMatchObject({
       schedule: '30 18 * * 1-5',
       timeZone: 'America/New_York',
       concurrencyPolicy: 'Forbid',
-      suspend: true,
+      suspend: false,
     })
+    expect(image.newTag).toMatch(/^sha-[0-9a-f]{40}$/)
+    expect(image.digest).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(container.args).toEqual(['daily'])
+    expect(environment.get('SIGNAL_CODE_REVISION')).toMatchObject({ value: image.newTag.slice(4) })
+    expect(environment.get('SIGNAL_IMAGE_REPOSITORY')).toMatchObject({ value: image.newName })
+    expect(environment.get('SIGNAL_IMAGE_DIGEST')).toMatchObject({ value: image.digest })
     expect(environment.get('SIGNAL_CLICKHOUSE_USERNAME')).toMatchObject({
       valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'username' } },
     })
