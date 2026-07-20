@@ -1,14 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Ref } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, Redacted, Ref } from 'effect'
+import { HttpServer } from 'effect/unstable/http'
 
-import { initializeBayn, makeHttpServer, runBayn, type RuntimeState } from './app'
+import { initializeBayn, makeHttpLayer, runBayn, type RuntimeState } from './app'
 import type { BaynConfig } from './config'
 import { baynError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { defaultProtocol } from './protocol'
 import { evaluateTsmom } from './strategy'
+import { Strategy, TsmomStrategyLive, type StrategyService } from './strategy-service'
 import { makeSnapshot } from './test-fixtures'
 
 const config: BaynConfig = {
@@ -20,13 +22,12 @@ const config: BaynConfig = {
   clickhouse: {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
-    password: 'secret',
+    password: Redacted.make('secret'),
     database: 'signal',
     table: 'adjusted_daily_bars_v1',
     datasetVersion: 'fixture-v1',
   },
   tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
-  protocol: defaultProtocol,
 }
 
 const successfulJournal: JournalService = {
@@ -70,9 +71,9 @@ describe('Bayn HTTP probes', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
-          const server = yield* makeHttpServer({ host: '127.0.0.1', port: 0 }, state)
-          const address = server.address()
-          if (!address || typeof address === 'string') throw new Error('test server did not bind a TCP port')
+          const context = yield* Layer.build(makeHttpLayer({ host: '127.0.0.1', port: 0 }, state))
+          const address = Context.get(context, HttpServer.HttpServer).address
+          if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
           port = address.port
 
           expect(yield* Effect.promise(() => fetchJson(port, '/livez'))).toEqual({
@@ -136,6 +137,31 @@ describe('Bayn HTTP probes', () => {
 })
 
 describe('Bayn startup lifecycle', () => {
+  test('evaluates through the provided strategy capability', async () => {
+    let calls = 0
+    const snapshot = makeSnapshot()
+    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const strategy: StrategyService = {
+      name: 'test-strategy',
+      universe: defaultProtocol.universe,
+      evaluate: (bars, manifest, codeRevision) => {
+        calls += 1
+        return evaluateTsmom(bars, manifest, defaultProtocol, codeRevision)
+      },
+    }
+
+    await Effect.runPromise(
+      initializeBayn(config, state).pipe(
+        Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(Strategy, strategy),
+      ),
+    )
+
+    expect(calls).toBe(1)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'READY' })
+  })
+
   test('transitions from STARTING to READY after evaluation and reconciliation', async () => {
     const snapshot = makeSnapshot()
     const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
@@ -145,6 +171,7 @@ describe('Bayn startup lifecycle', () => {
       initializeBayn(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provide(TsmomStrategyLive),
       ),
     )
 
@@ -164,6 +191,7 @@ describe('Bayn startup lifecycle', () => {
       initializeBayn(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provide(TsmomStrategyLive),
       ),
     )
 
@@ -181,7 +209,7 @@ describe('Bayn startup lifecycle', () => {
       check: Effect.void,
       journalAndReconcile: () => {
         journaled = true
-        return Effect.dieMessage('journal should not run')
+        return Effect.die(new Error('journal should not run'))
       },
     }
 
@@ -189,6 +217,7 @@ describe('Bayn startup lifecycle', () => {
       initializeBayn({ ...config, runOnStartup: false }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
+        Effect.provide(TsmomStrategyLive),
       ),
     )
 
@@ -210,6 +239,7 @@ describe('Bayn startup lifecycle', () => {
       initializeBayn({ ...config, operationTimeoutMs: 10 }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provide(TsmomStrategyLive),
       ),
     )
 
@@ -221,14 +251,15 @@ describe('Bayn startup lifecycle', () => {
   })
 
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
-    const marketData: MarketDataService = { load: Effect.dieMessage('unexpected startup defect') }
+    const marketData: MarketDataService = { load: Effect.die(new Error('unexpected startup defect')) }
     const exit = await Effect.runPromiseExit(
       runBayn(config).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
-        Effect.timeoutFail({
+        Effect.provide(TsmomStrategyLive),
+        Effect.timeoutOrElse({
           duration: 250,
-          onTimeout: () => baynError('http', 'test', 'runBayn remained alive after its startup worker died'),
+          orElse: () => Effect.fail(baynError('http', 'test', 'runBayn remained alive after its startup worker died')),
         }),
       ),
     )

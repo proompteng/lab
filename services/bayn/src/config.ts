@@ -1,8 +1,6 @@
-import { Config, Effect, Redacted } from 'effect'
+import { Config, Effect, Redacted, Schema, SchemaTransformation } from 'effect'
 
 import { baynError, type BaynError } from './errors'
-import { defaultProtocol } from './protocol'
-import type { TsmomProtocol } from './types'
 
 export interface BaynConfig {
   readonly host: string
@@ -13,7 +11,7 @@ export interface BaynConfig {
   readonly clickhouse: {
     readonly url: string
     readonly username: string
-    readonly password: string
+    readonly password: Redacted.Redacted<string>
     readonly database: string
     readonly table: string
     readonly datasetVersion: string
@@ -23,29 +21,34 @@ export interface BaynConfig {
     readonly replicaAddresses: readonly string[]
     readonly ledger: number
   }
-  readonly protocol: TsmomProtocol
 }
 
-const nonEmptyString = (name: string) =>
-  Config.string(name).pipe(
-    Config.map((value) => value.trim()),
-    Config.validate({ message: `${name} is required`, validation: (value) => value.length > 0 }),
-  )
+const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
+const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
+const ClickHouseIdentifier = NonEmptyString.check(Schema.isPattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/))
+const ReplicaAddresses = Schema.Trim.pipe(
+  Schema.decodeTo(
+    Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
+    SchemaTransformation.transform<readonly string[], string>({
+      decode: (value) =>
+        value
+          .split(',')
+          .map((address) => address.trim())
+          .filter(Boolean),
+      encode: (addresses) => addresses.join(','),
+    }),
+  ),
+)
+
+const nonEmptyString = (name: string) => Config.schema(NonEmptyString, name)
+
+const secretString = (name: string) => nonEmptyString(name).pipe(Config.map((value) => Redacted.make(value)))
 
 const positiveInteger = (name: string, fallback: number) =>
-  Config.integer(name).pipe(
-    Config.withDefault(fallback),
-    Config.validate({ message: `${name} must be a positive integer`, validation: (value) => value > 0 }),
-  )
+  Config.schema(PositiveInteger, name).pipe(Config.withDefault(fallback))
 
 const clickhouseIdentifier = (name: string, fallback: string) =>
-  nonEmptyString(name).pipe(
-    Config.withDefault(fallback),
-    Config.validate({
-      message: `${name} must be a ClickHouse identifier`,
-      validation: (value) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value),
-    }),
-  )
+  Config.schema(ClickHouseIdentifier, name).pipe(Config.withDefault(fallback))
 
 const baynConfig = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
@@ -55,26 +58,14 @@ const baynConfig = Config.all({
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
   clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
-  clickhousePassword: Config.redacted(nonEmptyString('BAYN_CLICKHOUSE_PASSWORD')),
+  clickhousePassword: secretString('BAYN_CLICKHOUSE_PASSWORD'),
   clickhouseDatabase: clickhouseIdentifier('BAYN_CLICKHOUSE_DATABASE', 'signal'),
   clickhouseTable: clickhouseIdentifier('BAYN_CLICKHOUSE_TABLE', 'adjusted_daily_bars_v1'),
   datasetVersion: nonEmptyString('BAYN_DATASET_VERSION'),
-  tigerBeetleClusterId: nonEmptyString('BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
-    Config.withDefault('2001'),
-    Config.mapAttempt((value) => BigInt(value)),
+  tigerBeetleClusterId: Config.schema(Schema.BigIntFromString, 'BAYN_TIGERBEETLE_CLUSTER_ID').pipe(
+    Config.withDefault(2001n),
   ),
-  tigerBeetleReplicaAddresses: nonEmptyString('BAYN_TIGERBEETLE_ADDRESSES').pipe(
-    Config.map((value) =>
-      value
-        .split(',')
-        .map((address) => address.trim())
-        .filter(Boolean),
-    ),
-    Config.validate({
-      message: 'BAYN_TIGERBEETLE_ADDRESSES must contain at least one address',
-      validation: (addresses) => addresses.length > 0,
-    }),
-  ),
+  tigerBeetleReplicaAddresses: Config.schema(ReplicaAddresses, 'BAYN_TIGERBEETLE_ADDRESSES'),
   tigerBeetleLedger: positiveInteger('BAYN_TIGERBEETLE_LEDGER', 7001),
 }).pipe(
   Config.map(
@@ -87,7 +78,7 @@ const baynConfig = Config.all({
       clickhouse: {
         url: config.clickhouseUrl,
         username: config.clickhouseUsername,
-        password: Redacted.value(config.clickhousePassword),
+        password: config.clickhousePassword,
         database: config.clickhouseDatabase,
         table: config.clickhouseTable,
         datasetVersion: config.datasetVersion,
@@ -97,7 +88,6 @@ const baynConfig = Config.all({
         replicaAddresses: config.tigerBeetleReplicaAddresses,
         ledger: config.tigerBeetleLedger,
       },
-      protocol: defaultProtocol,
     }),
   ),
 )

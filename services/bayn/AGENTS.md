@@ -11,8 +11,9 @@
 
 ## Effect baseline
 
-- `package.json` is authoritative for the Effect version. Bayn currently uses Effect 3; verify APIs against installed
-  sources or `~/github.com/effect` at `origin/v3`. That checkout's `main` is Effect 4 beta—do not copy v4-only APIs.
+- `package.json` is authoritative for the Effect version. Bayn uses the exact Effect 4 beta cohort; keep `effect` and
+  `@effect/platform-node` on the same version. Verify APIs against installed sources and `~/github.com/effect` only when
+  its package versions match. APIs under `effect/unstable/**` may change between betas, so never use floating ranges.
 - Use Effect at I/O and application boundaries, not as a wrapper around pure functions or constants.
 - Prefer official Effect integrations when they remove hand-written lifecycle, interruption, or decoding code. Add them
   as direct, peer-compatible dependencies; never rely on another workspace's transitive dependency.
@@ -21,9 +22,9 @@
 
 - Use `NodeRuntime.runMain` at the entry point. Do not build a second runtime with `runPromise(...).catch(...)`, manual
   exit codes, or process signal handlers. Let interruption unwind scopes and finalizers.
-- Define a `Context.Tag` or `Context.GenericTag` only for a real replaceable capability. Build live implementations with
-  `Layer`; assemble them once at the composition root. Do not create tags for pure helpers or single-use values.
-- Own every long-lived client, server, or background fiber with `Layer.scoped`, `Effect.acquireRelease`, or
+- Define a `Context.Service` only for a real replaceable capability. Build live implementations with `Layer`; assemble
+  them once at the composition root. Do not create services for pure helpers or single-use values.
+- Own every long-lived client, server, or background fiber with a scoped `Layer`, `Effect.acquireRelease`, or
   `Effect.forkScoped`. Acquisition, interruption, and release must have tests. Never detach a Promise or fiber.
 - Use `Effect.gen` for readable orchestration. Use `Effect.fn` for a meaningful traced operation and `Effect.fnUntraced`
   only for a reusable or measured hot helper; do not mechanically wrap one-line effects.
@@ -45,11 +46,12 @@
   service modules. Validate once at startup and keep secrets `Redacted` until the third-party client boundary.
 - Decode every external payload with `Schema` or `SqlSchema`. A TypeScript assertion such as `json<Row>()` is not
   runtime validation. Pure domain code accepts decoded values only.
-- Use `Effect.log*`, `Effect.annotateLogs`, and log spans. Production logs use `Logger.json`. Do not call `console.*`
+- Use `Effect.log*`, `Effect.annotateLogs`, and log spans. Production logs use `Logger.consoleJson`. Do not call `console.*`
   inside an Effect; direct console output is only an emergency before the runtime exists. Never log credentials.
-- For HTTP and ClickHouse, prefer `@effect/platform-node` and `@effect/sql-clickhouse` over local lifecycle wrappers.
-  Keep SQL explicit and parameterized; Effect SQL replaces plumbing, not SQL. Use a thin scoped adapter only when no
-  official integration exists, as with TigerBeetle.
+- Effect 4 HTTP lives under `effect/unstable/http`; use it with `@effect/platform-node` instead of hand-written Node
+  request, signal, or shutdown plumbing. For ClickHouse, prefer `@effect/sql-clickhouse` when its exact Effect cohort is
+  compatible. Keep SQL explicit and parameterized; Effect SQL replaces plumbing, not SQL. Use a thin scoped adapter
+  only when no official integration exists, as with TigerBeetle.
 
 ## Trading and accounting invariants
 
@@ -57,8 +59,8 @@
   evaluation. Missing, stale, malformed, or mixed-contract data fails closed.
 - TigerBeetle writes remain deterministic and idempotent. Existing IDs must be verified against the complete expected
   record, and readiness requires exact account, transfer, and balance reconciliation.
-- Do not introduce a scheduler, event bus, repository layer, generic retry framework, or abstraction for hypothetical
-  strategies. Add a boundary only when current code needs independent lifecycle, substitution, or validation.
+- Select one `Strategy` capability at the composition root; the strategy owns its protocol and universe. Do not add a
+  runtime registry, scheduler, event bus, repository layer, or generic retry framework without a current requirement.
 
 ## Tests and validation
 

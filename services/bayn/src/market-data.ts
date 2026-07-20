@@ -1,24 +1,28 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, Redacted, Schema } from 'effect'
 
 import type { BaynConfig } from './config'
 import { baynError, type BaynError } from './errors'
 import { hashObject } from './hash'
 import type { DailyBar, InputManifest, IsoDate, SymbolCoverage } from './types'
 
-interface ClickHouseBarRow {
-  readonly symbol: string
-  readonly session_date: string
-  readonly adjusted_open: number | string
-  readonly adjusted_high: number | string
-  readonly adjusted_low: number | string
-  readonly adjusted_close: number | string
-  readonly adjusted_volume: number | string
-  readonly source: string
-  readonly source_feed: string
-  readonly adjustment: string
-  readonly dataset_version: string
-}
+const ClickHouseNumber = Schema.Union([Schema.Number, Schema.String])
+const ClickHouseBarRow = Schema.Struct({
+  symbol: Schema.String,
+  session_date: Schema.String,
+  adjusted_open: ClickHouseNumber,
+  adjusted_high: ClickHouseNumber,
+  adjusted_low: ClickHouseNumber,
+  adjusted_close: ClickHouseNumber,
+  adjusted_volume: ClickHouseNumber,
+  source: Schema.String,
+  source_feed: Schema.String,
+  adjustment: Schema.String,
+  dataset_version: Schema.String,
+})
+type ClickHouseBarRow = typeof ClickHouseBarRow.Type
+
+const decodeClickHouseBarRows = Schema.decodeUnknownSync(Schema.Array(ClickHouseBarRow))
 
 export interface MarketDataSnapshot {
   readonly bars: readonly DailyBar[]
@@ -29,7 +33,7 @@ export interface MarketDataService {
   readonly load: Effect.Effect<MarketDataSnapshot, BaynError>
 }
 
-export const MarketData = Context.GenericTag<MarketDataService>('bayn/MarketData')
+export class MarketData extends Context.Service<MarketData, MarketDataService>()('bayn/MarketData') {}
 
 const identifier = (value: string, name: string): string => {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
@@ -198,7 +202,7 @@ const loadSnapshot = (
         format: 'JSONEachRow',
         abort_signal: signal,
       })
-      const rows = await result.json<ClickHouseBarRow>()
+      const rows = decodeClickHouseBarRows(await result.json<unknown>())
       const bars = rows.map(toBar)
       const manifest = buildInputManifest(bars, database, table, universe, config.datasetVersion)
       return { bars, manifest }
@@ -214,9 +218,10 @@ const defaultDependencies: MarketDataDependencies = { createClient }
 
 export const MarketDataLive = (
   config: BaynConfig,
+  universe: readonly string[],
   dependencies: MarketDataDependencies = defaultDependencies,
-): Layer.Layer<MarketDataService, BaynError> =>
-  Layer.scoped(
+): Layer.Layer<MarketData, BaynError> =>
+  Layer.effect(
     MarketData,
     Effect.acquireRelease(
       Effect.try({
@@ -224,7 +229,7 @@ export const MarketDataLive = (
           dependencies.createClient({
             url: config.clickhouse.url,
             username: config.clickhouse.username,
-            password: config.clickhouse.password,
+            password: Redacted.value(config.clickhouse.password),
             database: config.clickhouse.database,
             application: 'bayn',
             request_timeout: config.operationTimeoutMs,
@@ -236,11 +241,11 @@ export const MarketDataLive = (
           try: () => client.close(),
           catch: (cause) => baynError('market-data', 'close', 'failed to close ClickHouse client', cause),
         }).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning('ClickHouse client close failed').pipe(
               Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
             ),
           ),
         ),
-    ).pipe(Effect.map((client) => ({ load: loadSnapshot(client, config.clickhouse, config.protocol.universe) }))),
+    ).pipe(Effect.map((client) => ({ load: loadSnapshot(client, config.clickhouse, universe) }))),
   )

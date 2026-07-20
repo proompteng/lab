@@ -98,7 +98,7 @@ export interface JournalService {
   readonly check: Effect.Effect<void, BaynError>
 }
 
-export const Journal = Context.GenericTag<JournalService>('bayn/Journal')
+export class Journal extends Context.Service<Journal, JournalService>()('bayn/Journal') {}
 
 const account = (
   runId: string,
@@ -452,8 +452,8 @@ const defaultDependencies: JournalDependencies = { createClient, resolveReplicaA
 export const JournalLive = (
   config: BaynConfig,
   dependencies: JournalDependencies = defaultDependencies,
-): Layer.Layer<JournalService, BaynError> =>
-  Layer.scoped(
+): Layer.Layer<Journal, BaynError> =>
+  Layer.effect(
     Journal,
     Effect.acquireRelease(
       Effect.tryPromise({
@@ -467,13 +467,15 @@ export const JournalLive = (
         },
         catch: (cause) => baynError('journal', 'connect', 'failed to create TigerBeetle client', cause),
       }).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: config.operationTimeoutMs,
-          onTimeout: () =>
-            baynError(
-              'journal',
-              'connect',
-              `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
+          orElse: () =>
+            Effect.fail(
+              baynError(
+                'journal',
+                'connect',
+                `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
+              ),
             ),
         }),
       ),
@@ -482,7 +484,7 @@ export const JournalLive = (
           try: () => client.destroy(),
           catch: (cause) => baynError('journal', 'close', 'failed to close TigerBeetle client', cause),
         }).pipe(
-          Effect.catchAll((error) =>
+          Effect.catch((error) =>
             Effect.logWarning('TigerBeetle client close failed').pipe(
               Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
             ),

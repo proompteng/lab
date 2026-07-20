@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createClient as createClickHouseClient, type ClickHouseClient } from '@clickhouse/client'
-import { Effect, Layer, Ref } from 'effect'
+import { Effect, Layer, Redacted, Ref } from 'effect'
 import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
 import { initializeBayn, type RuntimeState } from './app'
@@ -9,6 +9,7 @@ import type { BaynConfig } from './config'
 import { Journal, JournalLive, type JournalService } from './ledger'
 import { MarketData, MarketDataLive, type MarketDataService } from './market-data'
 import { defaultProtocol } from './protocol'
+import { TsmomStrategyLive } from './strategy-service'
 import { makeSnapshot } from './test-fixtures'
 
 const config: BaynConfig = {
@@ -20,13 +21,12 @@ const config: BaynConfig = {
   clickhouse: {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
-    password: 'secret',
+    password: Redacted.make('secret'),
     database: 'signal',
     table: 'adjusted_daily_bars_v1',
     datasetVersion: 'fixture-v1',
   },
   tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
-  protocol: defaultProtocol,
 }
 
 const successfulJournal: JournalService = {
@@ -54,7 +54,7 @@ describe('Bayn resource lifecycle', () => {
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              MarketDataLive(config, {
+              MarketDataLive(config, defaultProtocol.universe, {
                 createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
               }),
               JournalLive(config, {
@@ -94,8 +94,9 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initializeBayn(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
+          Effect.provide(TsmomStrategyLive),
           Effect.provide(
-            MarketDataLive(config, {
+            MarketDataLive(config, defaultProtocol.universe, {
               createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
             }),
           ),
@@ -108,6 +109,35 @@ describe('Bayn resource lifecycle', () => {
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAIL_CLOSED',
       error: expect.stringContaining('market-data.load: load timed out'),
+    })
+  })
+
+  test('fails closed when ClickHouse returns a malformed row', async () => {
+    let closed = false
+    const clickHouseClient = {
+      query: async () => ({ json: async () => [{ symbol: 42 }] }),
+      close: async () => void (closed = true),
+    } as unknown as ClickHouseClient
+    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+
+    await Effect.runPromise(
+      Effect.scoped(
+        initializeBayn(config, state).pipe(
+          Effect.provideService(Journal, successfulJournal),
+          Effect.provide(TsmomStrategyLive),
+          Effect.provide(
+            MarketDataLive(config, defaultProtocol.universe, {
+              createClient: (() => clickHouseClient) as unknown as typeof createClickHouseClient,
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(closed).toBe(true)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAIL_CLOSED',
+      error: expect.stringContaining('market-data.load'),
     })
   })
 
@@ -132,6 +162,7 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initializeBayn(config, state).pipe(
           Effect.provideService(MarketData, marketData),
+          Effect.provide(TsmomStrategyLive),
           Effect.provide(
             JournalLive(config, {
               createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,

@@ -1,13 +1,14 @@
-import { createServer, type Server } from 'node:http'
-import process from 'node:process'
+import { createServer } from 'node:http'
 
-import { Deferred, Effect, Ref, Runtime } from 'effect'
+import { NodeHttpServer } from '@effect/platform-node'
+import { Effect, Layer, Ref } from 'effect'
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { BaynConfig } from './config'
 import { baynError, formatBaynError, type BaynComponent, type BaynError } from './errors'
-import { Journal, type JournalService } from './ledger'
-import { MarketData, type MarketDataService } from './market-data'
-import { evaluateTsmom } from './strategy'
+import { Journal } from './ledger'
+import { MarketData } from './market-data'
+import { Strategy } from './strategy-service'
 import type { EvaluationResult, ReconciliationResult } from './types'
 
 interface RuntimeEvidence {
@@ -20,12 +21,6 @@ export type RuntimeState =
   | { readonly status: 'READY'; readonly evidence: RuntimeEvidence; readonly error: null }
   | { readonly status: 'FAIL_CLOSED'; readonly evidence: null; readonly error: string }
 
-interface HttpResult {
-  readonly status: number
-  readonly headers?: Readonly<Record<string, string>>
-  readonly body: unknown
-}
-
 const json = (value: unknown): string =>
   JSON.stringify(value, (_, nested) => (typeof nested === 'bigint' ? nested.toString() : nested))
 
@@ -37,73 +32,40 @@ const publicState = (state: RuntimeState) => ({
   error: state.error,
 })
 
-const routeRequest = (method: string | undefined, url: string | undefined, state: RuntimeState): HttpResult => {
-  const path = url?.split('?')[0] ?? '/'
-  if (method !== 'GET') {
-    return { status: 405, headers: { allow: 'GET' }, body: { error: 'method_not_allowed' } }
-  }
-  if (path === '/livez') {
-    return { status: 200, body: { service: 'bayn', live: true } }
-  }
-  if (path === '/readyz') {
-    const ready = state.status === 'READY'
-    return { status: ready ? 200 : 503, body: { ready, status: state.status } }
-  }
-  if (path === '/v1/status' || path === '/v1/evidence/latest') {
-    return { status: 200, body: publicState(state) }
-  }
-  return { status: 404, body: { error: 'not_found' } }
-}
+const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<string, string>>) =>
+  HttpServerResponse.text(json(body), { status, contentType: 'application/json', headers })
 
-export const makeHttpServer = (config: Pick<BaynConfig, 'host' | 'port'>, state: Ref.Ref<RuntimeState>) =>
-  Effect.gen(function* () {
-    const runtime = yield* Effect.runtime<never>()
-    const runSync = Runtime.runSync(runtime)
-    const logCloseFailure = (cause: unknown) =>
-      runSync(
-        Effect.logWarning('Bayn HTTP server close failed').pipe(
-          Effect.annotateLogs({ service: 'bayn', component: 'http', operation: 'close', error: String(cause) }),
-        ),
-      )
-
-    return yield* Effect.acquireRelease(
-      Effect.async<Server, BaynError>((resume) => {
-        const server = createServer((request, response) => {
-          let result: HttpResult
-          try {
-            result = routeRequest(request.method, request.url, runSync(Ref.get(state)))
-          } catch {
-            result = { status: 500, body: { error: 'internal_server_error' } }
-          }
-          response.writeHead(result.status, { 'content-type': 'application/json', ...result.headers })
-          response.end(json(result.body))
-        })
-        const onError = (cause: Error) =>
-          resume(Effect.fail(baynError('http', 'listen', 'Bayn HTTP server failed to listen', cause)))
-        server.once('error', onError)
-        server.listen(config.port, config.host, () => {
-          server.off('error', onError)
-          resume(Effect.succeed(server))
-        })
-      }),
-      (server) =>
-        Effect.async<void>((resume) => {
-          if (!server.listening) {
-            resume(Effect.void)
-            return
-          }
-          try {
-            server.close((cause) => {
-              if (cause) logCloseFailure(cause)
-              resume(Effect.void)
-            })
-          } catch (cause) {
-            logCloseFailure(cause)
-            resume(Effect.void)
-          }
-        }),
+export const makeHttpLayer = (
+  config: Pick<BaynConfig, 'host' | 'port'>,
+  state: Ref.Ref<RuntimeState>,
+): ReturnType<typeof NodeHttpServer.layer> => {
+  const ready = Ref.get(state).pipe(
+    Effect.map((current) => {
+      const isReady = current.status === 'READY'
+      return jsonResponse({ ready: isReady, status: current.status }, isReady ? 200 : 503)
+    }),
+  )
+  const status = Ref.get(state).pipe(Effect.map((current) => jsonResponse(publicState(current))))
+  const fallback = (
+    request: HttpServerRequest.HttpServerRequest,
+  ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+    Effect.succeed(
+      request.method === 'GET'
+        ? jsonResponse({ error: 'not_found' }, 404)
+        : jsonResponse({ error: 'method_not_allowed' }, 405, { allow: 'GET' }),
     )
-  })
+  const routes: Layer.Layer<never, never, HttpRouter.HttpRouter> = HttpRouter.addAll([
+    HttpRouter.route<never, never>('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
+    HttpRouter.route<never, never>('GET', '/readyz', ready),
+    HttpRouter.route<never, never>('GET', '/v1/status', status),
+    HttpRouter.route<never, never>('GET', '/v1/evidence/latest', status),
+    HttpRouter.route<never, never>('*', '*', fallback),
+  ] as const)
+
+  return HttpRouter.serve(routes, { disableLogger: true }).pipe(
+    Layer.provideMerge(NodeHttpServer.layer(() => createServer(), { host: config.host, port: config.port })),
+  )
+}
 
 const withinDeadline = <A, R>(
   effect: Effect.Effect<A, BaynError, R>,
@@ -112,9 +74,9 @@ const withinDeadline = <A, R>(
   operation: string,
 ): Effect.Effect<A, BaynError, R> =>
   effect.pipe(
-    Effect.timeoutFail({
+    Effect.timeoutOrElse({
       duration: timeoutMs,
-      onTimeout: () => baynError(component, operation, `${operation} timed out after ${timeoutMs}ms`),
+      orElse: () => Effect.fail(baynError(component, operation, `${operation} timed out after ${timeoutMs}ms`)),
     }),
   )
 
@@ -126,7 +88,7 @@ const failClosed = (state: Ref.Ref<RuntimeState>, error: BaynError): Effect.Effe
       operation: error.operation,
       error: error.message,
     }),
-    Effect.zipRight(
+    Effect.andThen(
       Ref.set(state, {
         status: 'FAIL_CLOSED',
         evidence: null,
@@ -138,10 +100,11 @@ const failClosed = (state: Ref.Ref<RuntimeState>, error: BaynError): Effect.Effe
 const evaluateAndJournal = (
   config: BaynConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, BaynError, MarketDataService | JournalService> =>
+): Effect.Effect<void, BaynError, MarketData | Journal | Strategy> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
+    const strategy = yield* Strategy
     yield* Effect.logInfo('Bayn startup evaluation started').pipe(
       Effect.annotateLogs({
         service: 'bayn',
@@ -159,13 +122,14 @@ const evaluateAndJournal = (
       }),
     )
     const evaluation = yield* Effect.try({
-      try: () => evaluateTsmom(snapshot.bars, snapshot.manifest, config.protocol, config.codeRevision),
-      catch: (cause) => baynError('strategy', 'evaluate', 'TSMOM evaluation failed', cause),
+      try: () => strategy.evaluate(snapshot.bars, snapshot.manifest, config.codeRevision),
+      catch: (cause) => baynError('strategy', 'evaluate', `${strategy.name} evaluation failed`, cause),
     })
-    yield* Effect.logInfo('Bayn TSMOM evaluation completed').pipe(
+    yield* Effect.logInfo('Bayn strategy evaluation completed').pipe(
       Effect.annotateLogs({
         service: 'bayn',
         runId: evaluation.runId,
+        strategy: strategy.name,
         verdict: evaluation.verdict.status,
         eventCount: evaluation.events.length,
       }),
@@ -195,7 +159,7 @@ const evaluateAndJournal = (
 const checkWithoutJournal = (
   config: BaynConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, BaynError, MarketDataService | JournalService> =>
+): Effect.Effect<void, BaynError, MarketData | Journal> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
@@ -211,35 +175,19 @@ const checkWithoutJournal = (
 export const initializeBayn = (
   config: BaynConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, never, MarketDataService | JournalService> =>
+): Effect.Effect<void, never, MarketData | Journal | Strategy> =>
   (config.runOnStartup ? evaluateAndJournal(config, state) : checkWithoutJournal(config, state)).pipe(
-    Effect.catchAll((error) => failClosed(state, error)),
+    Effect.catch((error) => failClosed(state, error)),
   )
 
-export const runBayn = (config: BaynConfig): Effect.Effect<void, BaynError, MarketDataService | JournalService> =>
+export const runBayn = (config: BaynConfig): Effect.Effect<never, BaynError, MarketData | Journal | Strategy> =>
   Effect.scoped(
     Effect.gen(function* () {
       const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
-      yield* makeHttpServer(config, state)
-
-      const shutdown = yield* Deferred.make<void>()
-      const runtime = yield* Effect.runtime<never>()
-      const signalShutdown = Runtime.runSync(runtime)
-      const onSignal = () => {
-        signalShutdown(Deferred.succeed(shutdown, undefined))
-      }
-      process.once('SIGINT', onSignal)
-      process.once('SIGTERM', onSignal)
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          process.off('SIGINT', onSignal)
-          process.off('SIGTERM', onSignal)
-        }),
+      yield* Layer.build(makeHttpLayer(config, state)).pipe(
+        Effect.mapError((cause) => baynError('http', 'listen', 'Bayn HTTP server failed to listen', cause)),
       )
-
-      yield* Effect.raceFirst(
-        initializeBayn(config, state).pipe(Effect.zipRight(Deferred.await(shutdown))),
-        Deferred.await(shutdown),
-      )
+      yield* initializeBayn(config, state)
+      return yield* Effect.never
     }),
   )

@@ -1,7 +1,7 @@
 import process from 'node:process'
 
 import { createClient } from '@clickhouse/client'
-import { Effect } from 'effect'
+import { Effect, Redacted } from 'effect'
 
 import { loadBackfillConfig } from './backfill-config'
 import { defaultProtocol } from './protocol'
@@ -59,7 +59,7 @@ const main = async (): Promise<void> => {
   const client = createClient({
     url: clickhouseUrl,
     username: clickhouseUsername,
-    password: clickhousePassword,
+    password: Redacted.value(clickhousePassword),
     application: 'bayn-backfill',
   })
 
@@ -111,8 +111,8 @@ const main = async (): Promise<void> => {
       if (pageToken) parameters.set('page_token', pageToken)
       const response = await fetch(`https://data.alpaca.markets/v2/stocks/bars?${parameters.toString()}`, {
         headers: {
-          'APCA-API-KEY-ID': alpacaKey,
-          'APCA-API-SECRET-KEY': alpacaSecret,
+          'APCA-API-KEY-ID': Redacted.value(alpacaKey),
+          'APCA-API-SECRET-KEY': Redacted.value(alpacaSecret),
           accept: 'application/json',
         },
       })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { ConfigProvider, Effect, Exit } from 'effect'
+import { ConfigProvider, Effect, Exit, Redacted } from 'effect'
 
 import { loadBackfillConfig } from './backfill-config'
 import { loadConfig } from './config'
@@ -26,7 +26,9 @@ const backfillEnvironment = new Map([
 ])
 
 const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<string, string>) =>
-  effect.pipe(Effect.withConfigProvider(ConfigProvider.fromMap(environment)))
+  effect.pipe(
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(Object.fromEntries(environment))),
+  )
 
 describe('Effect configuration', () => {
   test('loads runtime configuration with validated defaults', async () => {
@@ -36,6 +38,7 @@ describe('Effect configuration', () => {
     expect(config.port).toBe(8080)
     expect(config.operationTimeoutMs).toBe(30_000)
     expect(config.clickhouse.database).toBe('signal')
+    expect(Redacted.isRedacted(config.clickhouse.password)).toBe(true)
     expect(config.tigerBeetle.clusterId).toBe(2001n)
     expect(config.tigerBeetle.replicaAddresses).toEqual(['tigerbeetle.test:3000'])
   })
@@ -59,6 +62,9 @@ describe('Effect configuration', () => {
     expect(config.table).toBe('adjusted_daily_bars_v1')
     expect(config.cluster).toBe('default')
     expect(config.feed).toBe('iex')
+    expect(Redacted.isRedacted(config.clickhousePassword)).toBe(true)
+    expect(Redacted.isRedacted(config.alpacaKey)).toBe(true)
+    expect(Redacted.isRedacted(config.alpacaSecret)).toBe(true)
 
     const invalid = new Map(backfillEnvironment)
     invalid.set('BAYN_ALPACA_FEED', 'invalid')

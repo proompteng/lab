@@ -6,6 +6,7 @@ export class BaynError extends Data.TaggedError('BaynError')<{
   readonly component: BaynComponent
   readonly operation: string
   readonly message: string
+  readonly cause?: unknown
 }> {}
 
 const causeMessage = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
@@ -15,6 +16,7 @@ export const baynError = (component: BaynComponent, operation: string, message: 
     component,
     operation,
     message: cause === undefined ? message : `${message}: ${causeMessage(cause)}`,
+    cause,
   })
 
 export const formatBaynError = (error: BaynError): string => `${error.component}.${error.operation}: ${error.message}`
