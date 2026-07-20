@@ -188,8 +188,14 @@ describe('finalized Signal snapshot reader', () => {
     ).toThrow('duplicate adjusted bar')
   })
 
-  test('rejects a missing symbol-session row instead of silently shrinking history', () => {
+  test('rejects incomplete replica reads instead of silently shrinking history', () => {
     const fixture = makeFixture()
+    expect(() => verifyFinalizedSnapshot({ ...fixture.rows, manifests: [] }, fixture.request)).toThrow(
+      '0 manifests; expected exactly one',
+    )
+    expect(() =>
+      verifyFinalizedSnapshot({ ...fixture.rows, sessions: fixture.rows.sessions.slice(1) }, fixture.request),
+    ).toThrow('exchange-session count does not match manifest')
     expect(() =>
       verifyFinalizedSnapshot({ ...fixture.rows, bars: fixture.rows.bars.slice(1) }, fixture.request),
     ).toThrow('adjusted-bar count does not match manifest')
