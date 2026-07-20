@@ -56,7 +56,7 @@ let
   depsSource = lib.cleanSourceWith {
     src = repoRoot;
     filter = path: type:
-      type == "directory" || isPackageManifest (relativePath path);
+      type == "directory" || isPackageManifest (relativePath path) || isUnder "patches" (relativePath path);
   };
 
   runtimeSource = lib.cleanSourceWith {
