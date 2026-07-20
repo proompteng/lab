@@ -19,7 +19,7 @@ export const productionPaths = {
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
   migrationAudit: 'scripts/hermes/audit-migration-source.ts',
-  maintenanceWait: 'scripts/hermes/wait-for-maintenance-jobs.sh',
+  maintenanceWait: 'scripts/hermes/wait-for-maintenance.sh',
   platform: 'argocd/applicationsets/platform.yaml',
   mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
   clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
@@ -240,10 +240,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'set -euo pipefail',
     'readonly namespace=hermes',
     'app.kubernetes.io/component in (migration,restore)',
+    'readonly restore_stage_pod=hermes-restore-stage',
+    '--cleanup-restore-stage',
     'HERMES_MAINTENANCE_WAIT_TIMEOUT_SECONDS',
     'kubectl -n "$namespace" get jobs -l "$selector" -o json',
     '.type == "Complete" or .type == "Failed"',
     'active Hermes migration or restore Job did not terminate',
+    'Hermes restore staging Pod exists; retry restore with --cleanup-restore-stage',
+    'delete pod "$restore_stage_pod" --wait=true --timeout=10m',
   ])
 
   const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
@@ -347,9 +351,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ) {
     failures.push(`${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`)
   }
-  const maintenanceWaitCommand = 'bash scripts/hermes/wait-for-maintenance-jobs.sh'
+  const maintenanceWaitCommand = 'bash scripts/hermes/wait-for-maintenance.sh'
+  const restoreStageCleanupCommand = `${maintenanceWaitCommand} --cleanup-restore-stage`
   const restoreSection = files.runbook.match(/### Restore Hermes data[\s\S]*?## Completion evidence/)?.[0] ?? ''
-  if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 2) {
+  if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 3) {
     failures.push(`${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`)
   }
   for (const [section, createCommand] of [
@@ -361,6 +366,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     if (createIndex < 0 || section.lastIndexOf(maintenanceWaitCommand, createIndex) < 0) {
       failures.push(`${productionPaths.runbook}: ${createCommand} must be preceded by the maintenance Job wait`)
     }
+  }
+  const restoreStageCreateIndex = restoreSection.indexOf('restore-stage-pod.yaml')
+  if (
+    restoreStageCreateIndex < 0 ||
+    restoreSection.lastIndexOf(restoreStageCleanupCommand, restoreStageCreateIndex) < 0 ||
+    !restoreSection.includes(
+      `${restoreStageCleanupCommand}\nkubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml`,
+    )
+  ) {
+    failures.push(`${productionPaths.runbook}: restore staging must clean up a stale staging Pod before create`)
   }
   const cutoverSection = files.runbook.match(/## Phase 3:[\s\S]*?## Rollback/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, cutoverSection, [

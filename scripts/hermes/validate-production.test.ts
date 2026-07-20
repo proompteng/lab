@@ -214,12 +214,24 @@ test('rejects Discord cutover without a final stopped-source reconciliation', as
 test('rejects migration or restore creation without maintenance serialization', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    '   bash scripts/hermes/wait-for-maintenance-jobs.sh\n   migration_job=',
+    '   bash scripts/hermes/wait-for-maintenance.sh\n   migration_job=',
     '   migration_job=',
   )
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`,
+  )
+})
+
+test('rejects restore staging without stale Pod cleanup', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'bash scripts/hermes/wait-for-maintenance.sh --cleanup-restore-stage\nkubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml',
+    'kubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: restore staging must clean up a stale staging Pod before create`,
   )
 })
 

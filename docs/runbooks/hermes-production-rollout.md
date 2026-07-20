@@ -300,7 +300,7 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
-   bash scripts/hermes/wait-for-maintenance-jobs.sh
+   bash scripts/hermes/wait-for-maintenance.sh
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
    backup_wait_deadline=$(( $(date +%s) + 3900 ))
    while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
@@ -325,7 +325,7 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
-   bash scripts/hermes/wait-for-maintenance-jobs.sh
+   bash scripts/hermes/wait-for-maintenance.sh
    dry_run_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-dry-run-job.yaml -o name)
    if ! kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m; then
      kubectl -n hermes logs "$dry_run_job" || true
@@ -341,7 +341,7 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
-   bash scripts/hermes/wait-for-maintenance-jobs.sh
+   bash scripts/hermes/wait-for-maintenance.sh
    migration_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-apply-job.yaml -o name)
    if ! kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m; then
      kubectl -n hermes logs "$migration_job" || true
@@ -441,7 +441,7 @@ the archive name below with the reviewed recovery point; never select it only by
 
 ```bash
 set -euo pipefail
-bash scripts/hermes/wait-for-maintenance-jobs.sh
+bash scripts/hermes/wait-for-maintenance.sh --cleanup-restore-stage
 kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
 backup_wait_deadline=$(( $(date +%s) + 3900 ))
 while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
@@ -455,6 +455,7 @@ done
 unset backup_wait_deadline
 kubectl -n hermes scale statefulset/hermes --replicas=0
 kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
+bash scripts/hermes/wait-for-maintenance.sh --cleanup-restore-stage
 kubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml
 if ! kubectl -n hermes wait pod/hermes-restore-stage --for=condition=Ready --timeout=5m; then
   kubectl -n hermes describe pod/hermes-restore-stage || true
@@ -483,7 +484,7 @@ if ! kubectl -n hermes exec hermes-restore-stage -c stage -- sh -c \
   exit 1
 fi
 kubectl -n hermes delete pod hermes-restore-stage --wait=true
-bash scripts/hermes/wait-for-maintenance-jobs.sh
+bash scripts/hermes/wait-for-maintenance.sh
 restore_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/restore-job.yaml -o name)
 if ! kubectl -n hermes wait "$restore_job" --for=condition=Complete --timeout=15m; then
   kubectl -n hermes logs "$restore_job" || true
