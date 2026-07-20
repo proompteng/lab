@@ -1,0 +1,223 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: signal-adjusted-daily-schema-v1
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: signal-adjusted-daily-schema
+    app.kubernetes.io/part-of: signal
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: signal-adjusted-daily-schema
+        app.kubernetes.io/part-of: signal
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Never
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: migrate
+          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+              client=(
+                clickhouse-client
+                --host torghut-clickhouse.torghut.svc.cluster.local
+                --port 9000
+                --user "${CLICKHOUSE_USERNAME}"
+                --password "${CLICKHOUSE_PASSWORD}"
+                --connect_timeout 5
+                --send_timeout 120
+                --receive_timeout 120
+              )
+
+              until "${client[@]}" --query "SELECT 1" >/dev/null; do sleep 3; done
+              "${client[@]}" --multiquery --query "
+                CREATE DATABASE IF NOT EXISTS signal ON CLUSTER default;
+
+                CREATE TABLE IF NOT EXISTS signal.adjusted_daily_bars_v2 ON CLUSTER default
+                (
+                  snapshot_id String,
+                  symbol LowCardinality(String),
+                  session_date Date,
+                  adjusted_open Decimal64(8),
+                  adjusted_high Decimal64(8),
+                  adjusted_low Decimal64(8),
+                  adjusted_close Decimal64(8),
+                  adjusted_volume Decimal64(8),
+                  trade_count UInt64,
+                  vwap Nullable(Decimal64(8)),
+                  provider LowCardinality(String),
+                  source_feed LowCardinality(String),
+                  adjustment LowCardinality(String),
+                  publication_asof Date
+                )
+                ENGINE = ReplicatedMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_adjusted_daily_bars_v2',
+                  '{replica}'
+                )
+                PARTITION BY toYear(session_date)
+                ORDER BY (snapshot_id, symbol, session_date);
+
+                CREATE TABLE IF NOT EXISTS signal.exchange_sessions_v1 ON CLUSTER default
+                (
+                  snapshot_id String,
+                  calendar_version LowCardinality(String),
+                  session_date Date,
+                  open_time FixedString(5),
+                  close_time FixedString(5),
+                  timezone LowCardinality(String),
+                  provider LowCardinality(String)
+                )
+                ENGINE = ReplicatedMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_exchange_sessions_v1',
+                  '{replica}'
+                )
+                PARTITION BY toYear(session_date)
+                ORDER BY (snapshot_id, session_date);
+
+                CREATE TABLE IF NOT EXISTS signal.snapshot_manifests_v1 ON CLUSTER default
+                (
+                  snapshot_id String,
+                  schema_version LowCardinality(String),
+                  publisher_source_revision FixedString(40),
+                  publisher_image_repository String,
+                  publisher_image_digest FixedString(71),
+                  provider LowCardinality(String),
+                  source_feed LowCardinality(String),
+                  adjustment LowCardinality(String),
+                  calendar_version LowCardinality(String),
+                  requested_start Date,
+                  publication_asof Date,
+                  first_session Date,
+                  last_session Date,
+                  symbol_count UInt32,
+                  session_count UInt32,
+                  bar_count UInt64,
+                  bars_content_hash FixedString(64),
+                  sessions_content_hash FixedString(64),
+                  manifest_content_hash FixedString(64),
+                  finalized_at DateTime64(3, 'UTC')
+                )
+                ENGINE = ReplicatedMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_snapshot_manifests_v1',
+                  '{replica}'
+                )
+                ORDER BY snapshot_id;
+              "
+
+              "${client[@]}" --query "
+                SELECT throwIf(
+                  count() != 3
+                    OR countIf(engine = 'ReplicatedMergeTree') != 3
+                    OR countIf(
+                      name = 'adjusted_daily_bars_v2'
+                      AND sorting_key = 'snapshot_id, symbol, session_date'
+                      AND partition_key = 'toYear(session_date)'
+                    ) != 1
+                    OR countIf(
+                      name = 'exchange_sessions_v1'
+                      AND sorting_key = 'snapshot_id, session_date'
+                      AND partition_key = 'toYear(session_date)'
+                    ) != 1
+                    OR countIf(
+                      name = 'snapshot_manifests_v1'
+                      AND sorting_key = 'snapshot_id'
+                      AND partition_key = ''
+                    ) != 1,
+                  'Signal snapshot schema is incomplete or has the wrong engine'
+                )
+                FROM system.tables
+                WHERE database = 'signal'
+                  AND name IN ('adjusted_daily_bars_v2', 'exchange_sessions_v1', 'snapshot_manifests_v1')
+              "
+
+              "${client[@]}" --query "
+                SELECT throwIf(
+                  arraySort(groupArray(signature)) != arraySort([
+                    'adjusted_daily_bars_v2.snapshot_id:String',
+                    'adjusted_daily_bars_v2.symbol:LowCardinality(String)',
+                    'adjusted_daily_bars_v2.session_date:Date',
+                    'adjusted_daily_bars_v2.adjusted_open:Decimal(18, 8)',
+                    'adjusted_daily_bars_v2.adjusted_high:Decimal(18, 8)',
+                    'adjusted_daily_bars_v2.adjusted_low:Decimal(18, 8)',
+                    'adjusted_daily_bars_v2.adjusted_close:Decimal(18, 8)',
+                    'adjusted_daily_bars_v2.adjusted_volume:Decimal(18, 8)',
+                    'adjusted_daily_bars_v2.trade_count:UInt64',
+                    'adjusted_daily_bars_v2.vwap:Nullable(Decimal(18, 8))',
+                    'adjusted_daily_bars_v2.provider:LowCardinality(String)',
+                    'adjusted_daily_bars_v2.source_feed:LowCardinality(String)',
+                    'adjusted_daily_bars_v2.adjustment:LowCardinality(String)',
+                    'adjusted_daily_bars_v2.publication_asof:Date',
+                    'exchange_sessions_v1.snapshot_id:String',
+                    'exchange_sessions_v1.calendar_version:LowCardinality(String)',
+                    'exchange_sessions_v1.session_date:Date',
+                    'exchange_sessions_v1.open_time:FixedString(5)',
+                    'exchange_sessions_v1.close_time:FixedString(5)',
+                    'exchange_sessions_v1.timezone:LowCardinality(String)',
+                    'exchange_sessions_v1.provider:LowCardinality(String)',
+                    'snapshot_manifests_v1.snapshot_id:String',
+                    'snapshot_manifests_v1.schema_version:LowCardinality(String)',
+                    'snapshot_manifests_v1.publisher_source_revision:FixedString(40)',
+                    'snapshot_manifests_v1.publisher_image_repository:String',
+                    'snapshot_manifests_v1.publisher_image_digest:FixedString(71)',
+                    'snapshot_manifests_v1.provider:LowCardinality(String)',
+                    'snapshot_manifests_v1.source_feed:LowCardinality(String)',
+                    'snapshot_manifests_v1.adjustment:LowCardinality(String)',
+                    'snapshot_manifests_v1.calendar_version:LowCardinality(String)',
+                    'snapshot_manifests_v1.requested_start:Date',
+                    'snapshot_manifests_v1.publication_asof:Date',
+                    'snapshot_manifests_v1.first_session:Date',
+                    'snapshot_manifests_v1.last_session:Date',
+                    'snapshot_manifests_v1.symbol_count:UInt32',
+                    'snapshot_manifests_v1.session_count:UInt32',
+                    'snapshot_manifests_v1.bar_count:UInt64',
+                    'snapshot_manifests_v1.bars_content_hash:FixedString(64)',
+                    'snapshot_manifests_v1.sessions_content_hash:FixedString(64)',
+                    'snapshot_manifests_v1.manifest_content_hash:FixedString(64)',
+                    'snapshot_manifests_v1.finalized_at:DateTime64(3, \'UTC\')'
+                  ]),
+                  'Signal snapshot columns do not match the v1 contract'
+                )
+                FROM (
+                  SELECT concat(table, '.', name, ':', type) AS signature
+                  FROM system.columns
+                  WHERE database = 'signal'
+                    AND table IN ('adjusted_daily_bars_v2', 'exchange_sessions_v1', 'snapshot_manifests_v1')
+                )
+              "
+          env:
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

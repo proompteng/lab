@@ -34,7 +34,7 @@ import ./bun-workspace-service.nix {
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/backfill.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "

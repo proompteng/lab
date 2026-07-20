@@ -6,8 +6,15 @@ resources:
   - keeper-pdb.yaml
   - sealed-secret.yaml
   - bayn-sealed-secret.yaml
+  - signal-publisher-sealed-secret.yaml
   - clickhouse-guardrails-exporter-configmap.yaml
   - clickhouse-guardrails-exporter.yaml
   - clickhouse-cluster.yaml
   - clickhouse-service.yaml
   - ta-replicated-table-migration-job.yaml
+  - signal-schema-job.yaml
+  - signal-publisher-cronjob.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/signal-publisher
+    newName: registry.ide-newton.ts.net/lab/signal-publisher
+    newTag: bootstrap

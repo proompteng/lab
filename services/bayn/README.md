@@ -9,8 +9,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 - Node.js is the production runtime; Effect owns dependency acquisition, failure handling, and shutdown.
 - Effect Config validates environment input, and `BAYN_OPERATION_TIMEOUT_MS` bounds each ClickHouse or TigerBeetle
   startup operation (30 seconds by default).
-- Signal ClickHouse is read-only at runtime. `backfill.ts` is an operator-only data preparation command and is not part
-  of the Deployment.
+- Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
+  adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - The composition root selects one strategy capability. TSMOM is the first implementation and owns its protocol and
   universe; the HTTP and startup lifecycle do not depend on TSMOM directly.
 - The protocol is committed at `protocols/tsmom-v1.json` and runtime-decoded with Effect Schema before use. JSON holds
@@ -43,5 +43,5 @@ bun run --filter @proompteng/bayn build
 bun run --filter @proompteng/bayn lint:oxlint
 ```
 
-The backfill requires an explicit start, end, feed, and dataset version plus an administrative ClickHouse identity and
-Alpaca market-data credentials. Those credentials are never mounted into the Bayn runtime.
+The legacy `adjusted_daily_bars_v1` read remains transitional until the bounded finalized-snapshot reader is adopted.
+Bayn already has read-only grants for the v2 bars, manifests, and exchange sessions; it has no Signal write grant.

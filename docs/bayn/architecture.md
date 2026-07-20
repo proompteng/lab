@@ -13,8 +13,10 @@ before any paper mutation work begins.
 
 ## Critical path
 
-1. A one-time operator command loads explicitly versioned, split/dividend-adjusted daily bars into Signal ClickHouse.
-2. The runtime's dedicated ClickHouse identity can select only `signal.adjusted_daily_bars_v1`.
+1. A Signal-owned publisher captures adjusted daily bars and exchange sessions into an immutable snapshot and writes
+   its manifest last. Historical and daily modes use the same validation and finalization path.
+2. The runtime's dedicated ClickHouse identity has `SELECT` only. It still reads the transitional
+   `signal.adjusted_daily_bars_v1` table until the bounded finalized-snapshot reader is adopted.
 3. Bayn validates every bar and hashes the ordered bar contents plus coverage into an immutable input manifest.
 4. The committed `tsmom-v1` protocol forms signals at month-end close and executes at the next common session open.
 5. One evaluator produces strategy, buy-and-hold, direct-volatility, and doubled-cost results on comparable dates.
@@ -87,8 +89,8 @@ it does not make that dependency highly available and does not grant trading aut
 
 The image is built for AMD64 and ARM64 with Nix, published under a source-SHA tag, and pinned in GitOps by digest. Argo
 CD owns the `bayn` namespace and Deployment. The ClickHouse credential is separately sealed, reflected only into the
-Bayn namespace, and granted table-level `SELECT`. Market-data credentials belong only to the operator backfill command
-and are never mounted into the runtime.
+Bayn namespace, and granted table-level `SELECT`. Alpaca credentials and the insert/select-only Signal writer identity
+are mounted only into the Signal publisher CronJob and are never mounted into the Bayn runtime.
 
 On restart, Bayn recomputes the deterministic run, verifies any existing TigerBeetle objects, and reconciles the full
 run again before becoming ready. If ClickHouse, TigerBeetle, data validation, evaluation, or reconciliation fails, the
