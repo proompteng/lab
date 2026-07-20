@@ -40,6 +40,7 @@ export type AgentsResourceListInput = {
 type AgentsJsonRequestOptions = {
   env?: EnvSource
   idempotencyKey?: string | null
+  signal?: AbortSignal | null
 }
 
 export type AgentsHttpMethod = 'GET' | 'POST' | 'PATCH'
@@ -52,6 +53,7 @@ export type AgentsJsonEffectRequest = {
   env?: EnvSource
   payload?: unknown
   idempotencyKey?: string | null
+  signal?: AbortSignal | null
 }
 
 export type AgentsServiceJsonSuccess<T> = Extract<AgentsServiceJsonResult<T>, { ok: true }>
@@ -178,6 +180,7 @@ const makeAgentsHttpClientService = (fetchImpl: AgentsFetch = defaultAgentsFetch
               idempotencyKey: request.idempotencyKey,
             }),
             method,
+            signal: request.signal,
           }),
         catch: (cause) =>
           new AgentsTransportError({
@@ -243,6 +246,7 @@ const makeAgentsHttpClientService = (fetchImpl: AgentsFetch = defaultAgentsFetch
         payload,
         env: options.env,
         idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
         method: 'POST',
       }),
     patchJson: (path, payload, options = {}) =>
@@ -251,6 +255,7 @@ const makeAgentsHttpClientService = (fetchImpl: AgentsFetch = defaultAgentsFetch
         payload,
         env: options.env,
         idempotencyKey: options.idempotencyKey,
+        signal: options.signal,
         method: 'PATCH',
       }),
   }

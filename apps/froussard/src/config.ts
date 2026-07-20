@@ -22,12 +22,22 @@ const DEFAULT_AGENTS_SERVICE_BASE_URL = 'http://agents.agents.svc.cluster.local'
 const DEFAULT_AGENTS_SERVICE_CLIENT_NAME = 'froussard'
 const DEFAULT_AGENTS_NAMESPACE = 'agents'
 const DEFAULT_AGENTS_AGENT_NAME = 'codex-agent'
+const DEFAULT_AGENTS_LINEAR_AGENT_NAME = 'codex-linear-agent'
 const DEFAULT_AGENTS_VCS_PROVIDER = 'github'
 const DEFAULT_AGENTS_SERVICE_ACCOUNT = 'agents-sa'
 const DEFAULT_AGENTS_SECRETS = ['github-token', 'codex-auth']
 const DEFAULT_AGENTS_SECRET_BINDING_REF = 'codex-github-token'
 const DEFAULT_AGENTS_TTL_SECONDS_AFTER_FINISHED = 86_400
 const DEFAULT_AGENTS_GOAL_TOKEN_BUDGET = 250_000
+const DEFAULT_LINEAR_TRIGGER_LABEL = 'agentrun'
+const DEFAULT_LINEAR_REPOSITORY = 'proompteng/lab'
+const DEFAULT_LINEAR_BASE_BRANCH = 'main'
+const DEFAULT_LINEAR_BRANCH_PREFIX = 'codex/linear-'
+const DEFAULT_LINEAR_MAX_BODY_BYTES = 1024 * 1024
+const DEFAULT_LINEAR_WEBHOOK_TOLERANCE_MS = 60_000
+const DEFAULT_LINEAR_AGENTS_TIMEOUT_MS = 3_000
+const MAX_LINEAR_BODY_BYTES = 1024 * 1024
+const MAX_LINEAR_WEBHOOK_TOLERANCE_MS = 60_000
 
 export interface AppConfig {
   idempotency: {
@@ -35,6 +45,7 @@ export interface AppConfig {
     maxEntries: number
   }
   githubWebhookSecret: string
+  linearWebhookSecret: string
   atlas: {
     baseUrl: string
     apiKey: string | null
@@ -44,6 +55,7 @@ export interface AppConfig {
     serviceClientName: string
     namespace: string
     agentName: string
+    linearAgentName: string
     vcsProviderName: string
     serviceAccountName: string
     secrets: string[]
@@ -59,6 +71,7 @@ export interface AppConfig {
     topics: {
       raw: string
       discordCommands: string
+      linearRaw: string
     }
   }
   codebase: {
@@ -82,6 +95,16 @@ export interface AppConfig {
     ackReaction: string
     apiBaseUrl: string
     userAgent: string
+  }
+  linear: {
+    enabled: boolean
+    triggerLabel: string
+    repository: string
+    baseBranch: string
+    branchPrefix: string
+    maxBodyBytes: number
+    webhookToleranceMs: number
+    agentsTimeoutMs: number
   }
 }
 
@@ -107,12 +130,40 @@ const parsePositiveInt = (value: string | undefined, fallback: number): number =
   return parsed
 }
 
+const parseBoundedPositiveInt = (
+  value: string | undefined,
+  fallback: number,
+  name: string,
+  maximum: number,
+): number => {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+  const normalized = value.trim()
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}`)
+  }
+  const parsed = Number(normalized)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}`)
+  }
+  return parsed
+}
+
 const parseCsv = (raw: string | undefined, fallback: string[]) => {
   const values = raw
     ?.split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0)
   return values && values.length > 0 ? values : fallback
+}
+
+const parseBoolean = (value: string | undefined, fallback: boolean, name: string): boolean => {
+  if (value === undefined || value.trim() === '') return fallback
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'true' || normalized === '1') return true
+  if (normalized === 'false' || normalized === '0') return false
+  throw new Error(`${name} must be true or false`)
 }
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '')
@@ -138,6 +189,13 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     env.FROUSSARD_WEBHOOK_IDEMPOTENCY_MAX_ENTRIES,
     DEFAULT_IDEMPOTENCY_MAX_ENTRIES,
   )
+  const linearAgentsTimeoutMs = parseBoundedPositiveInt(
+    env.LINEAR_AGENTS_TIMEOUT_MS,
+    DEFAULT_LINEAR_AGENTS_TIMEOUT_MS,
+    'LINEAR_AGENTS_TIMEOUT_MS',
+    4_999,
+  )
+  const linearWebhookEnabled = parseBoolean(env.LINEAR_WEBHOOK_ENABLED, false, 'LINEAR_WEBHOOK_ENABLED')
 
   return {
     idempotency: {
@@ -145,6 +203,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       maxEntries: idempotencyMaxEntries,
     },
     githubWebhookSecret: requireEnv(env, 'GITHUB_WEBHOOK_SECRET'),
+    linearWebhookSecret: linearWebhookEnabled
+      ? requireEnv(env, 'LINEAR_WEBHOOK_SECRET')
+      : (env.LINEAR_WEBHOOK_SECRET?.trim() ?? ''),
     atlas: {
       baseUrl: atlasBaseUrl,
       apiKey: env.JANGAR_API_KEY?.trim() || null,
@@ -156,6 +217,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       serviceClientName: readOptionalEnv(env, 'AGENTS_SERVICE_CLIENT_NAME', DEFAULT_AGENTS_SERVICE_CLIENT_NAME),
       namespace: readOptionalEnv(env, 'AGENTS_NAMESPACE', DEFAULT_AGENTS_NAMESPACE),
       agentName: readOptionalEnv(env, 'AGENTS_CODEX_AGENT_NAME', DEFAULT_AGENTS_AGENT_NAME),
+      linearAgentName: readOptionalEnv(env, 'AGENTS_LINEAR_AGENT_NAME', DEFAULT_AGENTS_LINEAR_AGENT_NAME),
       vcsProviderName: readOptionalEnv(env, 'AGENTS_VCS_PROVIDER_NAME', DEFAULT_AGENTS_VCS_PROVIDER),
       serviceAccountName: readOptionalEnv(env, 'AGENTS_SERVICE_ACCOUNT_NAME', DEFAULT_AGENTS_SERVICE_ACCOUNT),
       secrets: parseCsv(env.AGENTS_CODEX_SECRETS, DEFAULT_AGENTS_SECRETS),
@@ -174,6 +236,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       topics: {
         raw: requireEnv(env, 'KAFKA_TOPIC'),
         discordCommands: requireEnv(env, 'KAFKA_DISCORD_COMMAND_TOPIC'),
+        linearRaw: linearWebhookEnabled
+          ? requireEnv(env, 'KAFKA_LINEAR_WEBHOOK_TOPIC')
+          : (env.KAFKA_LINEAR_WEBHOOK_TOPIC?.trim() ?? ''),
       },
     },
     codebase: {
@@ -200,6 +265,26 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       ackReaction: env.GITHUB_ACK_REACTION ?? '+1',
       apiBaseUrl: env.GITHUB_API_BASE_URL ?? 'https://api.github.com',
       userAgent: env.GITHUB_USER_AGENT ?? 'froussard-webhook',
+    },
+    linear: {
+      enabled: linearWebhookEnabled,
+      triggerLabel: readOptionalEnv(env, 'LINEAR_TRIGGER_LABEL', DEFAULT_LINEAR_TRIGGER_LABEL).toLowerCase(),
+      repository: readOptionalEnv(env, 'LINEAR_REPOSITORY', DEFAULT_LINEAR_REPOSITORY),
+      baseBranch: readOptionalEnv(env, 'LINEAR_BASE_BRANCH', DEFAULT_LINEAR_BASE_BRANCH),
+      branchPrefix: readOptionalEnv(env, 'LINEAR_BRANCH_PREFIX', DEFAULT_LINEAR_BRANCH_PREFIX),
+      maxBodyBytes: parseBoundedPositiveInt(
+        env.LINEAR_MAX_BODY_BYTES,
+        DEFAULT_LINEAR_MAX_BODY_BYTES,
+        'LINEAR_MAX_BODY_BYTES',
+        MAX_LINEAR_BODY_BYTES,
+      ),
+      webhookToleranceMs: parseBoundedPositiveInt(
+        env.LINEAR_WEBHOOK_TOLERANCE_MS,
+        DEFAULT_LINEAR_WEBHOOK_TOLERANCE_MS,
+        'LINEAR_WEBHOOK_TOLERANCE_MS',
+        MAX_LINEAR_WEBHOOK_TOLERANCE_MS,
+      ),
+      agentsTimeoutMs: linearAgentsTimeoutMs,
     },
   }
 }

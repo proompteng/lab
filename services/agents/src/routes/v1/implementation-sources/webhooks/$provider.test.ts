@@ -19,34 +19,59 @@ const postHandler = Route.options.server?.handlers?.POST
 
 describe('implementation source webhook route', () => {
   afterEach(() => {
+    delete process.env.AGENTS_IMPLEMENTATION_SOURCE_WEBHOOKS_GONE
     vi.clearAllMocks()
   })
 
-  it('requires leadership before mutating implementation sources', async () => {
+  it('returns Gone and directs public webhook senders to Froussard', async () => {
+    process.env.AGENTS_IMPLEMENTATION_SOURCE_WEBHOOKS_GONE = 'true'
+    expect(postHandler).toBeDefined()
+    const request = new Request('http://agents.test/v1/implementation-sources/webhooks/linear', {
+      body: '{}',
+      method: 'POST',
+    })
+
+    const response = await postHandler!({ params: { provider: 'linear' }, request } as never)
+
+    expect(response.status).toBe(410)
+    expect(response.headers.get('deprecation')).toBe('true')
+    expect(response.headers.get('link')).toBe(
+      '<https://froussard.proompteng.ai/webhooks/linear>; rel="successor-version"',
+    )
+    await expect(response.json()).resolves.toEqual({
+      error: 'gone',
+      message: 'Public webhook ingestion is owned by Froussard.',
+      successor: 'https://froussard.proompteng.ai/webhooks/linear',
+    })
+    expect(leaderElectionMocks.requireLeaderForMutationHttp).not.toHaveBeenCalled()
+    expect(webhookMocks.postImplementationSourceWebhookHandler).not.toHaveBeenCalled()
+  })
+
+  it('requires leadership while the Froussard cutover is dormant', async () => {
     expect(postHandler).toBeDefined()
     leaderElectionMocks.requireLeaderForMutationHttp.mockReturnValueOnce(
       new Response('not leader', { status: 503 }) as never,
     )
 
     const response = await postHandler!({
-      params: { provider: 'github' },
-      request: new Request('http://agents.test/v1/implementation-sources/webhooks/github', { method: 'POST' }),
+      params: { provider: 'linear' },
+      request: new Request('http://agents.test/v1/implementation-sources/webhooks/linear', { method: 'POST' }),
     } as never)
 
     expect(response.status).toBe(503)
     expect(webhookMocks.postImplementationSourceWebhookHandler).not.toHaveBeenCalled()
   })
 
-  it('delegates provider webhook ingestion to the Agents handler', async () => {
+  it('keeps the legacy handler live until the Froussard cutover is enabled', async () => {
     expect(postHandler).toBeDefined()
-    const request = new Request('http://agents.test/v1/implementation-sources/webhooks/github', {
+    const request = new Request('http://agents.test/v1/implementation-sources/webhooks/linear', {
       body: '{}',
       method: 'POST',
     })
 
-    const response = await postHandler!({ params: { provider: 'github' }, request } as never)
+    const response = await postHandler!({ params: { provider: 'linear' }, request } as never)
 
     expect(response.status).toBe(200)
-    expect(webhookMocks.postImplementationSourceWebhookHandler).toHaveBeenCalledWith('github', request)
+    expect(webhookMocks.postImplementationSourceWebhookHandler).toHaveBeenCalledWith('linear', request)
   })
 })

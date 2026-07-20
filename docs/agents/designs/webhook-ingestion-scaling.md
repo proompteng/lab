@@ -1,6 +1,10 @@
 # Webhook Ingestion Scaling
 
-Status: Draft (2026-02-07)
+Status: Superseded (2026-07-20)
+
+Froussard owns public webhook ingress, Kafka audit/replay, and AgentRun submission after its canary.
+The Agents webhook endpoint then returns `410 Gone` behind
+`AGENTS_IMPLEMENTATION_SOURCE_WEBHOOKS_GONE=true`; this document is retained as historical context.
 
 Docs index: [README](../README.md)
 

@@ -336,6 +336,30 @@ describe('agents typed service clients', () => {
     })
   })
 
+  it('propagates an AgentRun submission abort signal to fetch', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          headers: { 'content-type': 'application/json' },
+          status: 201,
+        }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    const controller = new AbortController()
+
+    await submitAgentRunToAgentsService(
+      {
+        deliveryId: 'delivery-with-signal',
+        payload: { agentRef: { name: 'demo-agent' } },
+        signal: controller.signal,
+      },
+      { AGENTS_SERVICE_BASE_URL: 'http://agents.test' },
+    )
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(init.signal).toBe(controller.signal)
+  })
+
   it('lists AgentRun projections through the Agents service boundary', async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(

@@ -1,4 +1,5 @@
 import { asRecord, asString, readNested } from '../primitives'
+import { extractAllowedImplementationSourceProviders, extractImplementationSourceProvider } from '../primitives-policy'
 import { type createKubernetesClient, RESOURCE_MAP } from '../kube-types'
 
 import { type Condition, upsertCondition } from './conditions'
@@ -130,7 +131,10 @@ type AgentRunReconcilerDependencies = {
     parameters: Record<string, string>,
   ) => ContractCheck
   buildContractStatus: (result: ContractCheck) => Record<string, unknown> | undefined
-  resolveRunnerServiceAccount: (runtimeConfig: Record<string, unknown>) => string | null | undefined
+  resolveRunnerServiceAccount: (
+    runtimeConfig: Record<string, unknown>,
+    provider?: Record<string, unknown> | null,
+  ) => string | null | undefined
   applyJobTtlAfterStatus: (
     kube: KubeClient,
     job: Record<string, unknown>,
@@ -853,7 +857,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       }
 
       if (allowedServiceAccounts.length > 0 && (runtimeType === 'job' || runtimeType === 'workflow')) {
-        const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig)
+        const rawServiceAccount = resolveRunnerServiceAccount(runtimeConfig, resolvedProvider)
         const effectiveServiceAccount = rawServiceAccount || 'default'
         if (!allowedServiceAccounts.includes(effectiveServiceAccount)) {
           const message = `serviceAccount ${effectiveServiceAccount} is not allowlisted`
@@ -890,6 +894,23 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         logInvalidSpec('MissingImplementation', message)
         await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
         return
+      }
+
+      const allowedSourceProviders = extractAllowedImplementationSourceProviders(asRecord(resolvedAgent.spec) ?? {})
+      if (allowedSourceProviders.length > 0) {
+        const sourceProvider = extractImplementationSourceProvider(implResource)
+        if (!sourceProvider || !allowedSourceProviders.includes(sourceProvider)) {
+          const message = `implementation source provider ${sourceProvider ?? '<missing>'} is not allowlisted`
+          const updated = upsertCondition(conditions, {
+            type: 'InvalidSpec',
+            status: 'True',
+            reason: 'ImplementationSourceProviderNotAllowed',
+            message,
+          })
+          logInvalidSpec('ImplementationSourceProviderNotAllowed', message)
+          await setStatus(kube, agentRun, { observedGeneration, conditions: updated, phase: 'Failed' })
+          return
+        }
       }
 
       const contractCheck = validateImplementationContract(implResource, parameters)

@@ -38,4 +38,18 @@ describe('Codex Argo manifests', () => {
     expect(service).not.toContain('KAFKA_CODEX_JUDGE_TOPIC')
     expect(service).not.toContain('github.webhook.codex.judge')
   })
+
+  it('stages Linear intake independently without activating credentials before rollout', async () => {
+    const kustomization = await readRepoFile('argocd/applications/froussard/kustomization.yaml')
+    const service = await readRepoFile('argocd/applications/froussard/knative-service.yaml')
+    const topic = await readRepoFile('argocd/applications/froussard/linear-webhook-topic.yaml')
+
+    expect(kustomization).toContain('linear-webhook-topic.yaml')
+    expect(kustomization).not.toContain('linear-secrets.yaml')
+    expect(service).toContain('name: LINEAR_WEBHOOK_ENABLED')
+    expect(service).toContain('value: "false"')
+    expect(service).not.toContain('name: LINEAR_WEBHOOK_SECRET')
+    expect(service).not.toContain('name: linear-webhook-secret')
+    expect(topic).toContain('topicName: linear.webhook.events')
+  })
 })

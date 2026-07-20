@@ -11,6 +11,12 @@ import {
   verifyJobConfigMaps,
 } from '~/server/agents-controller/job-runtime'
 
+const readJobPodSpec = (job: Record<string, unknown> | undefined) => {
+  const jobSpec = (job?.spec as Record<string, unknown> | undefined) ?? {}
+  const template = (jobSpec.template as Record<string, unknown> | undefined) ?? {}
+  return (template.spec as Record<string, unknown> | undefined) ?? {}
+}
+
 describe('agents controller job-runtime module', () => {
   afterEach(() => {
     delete process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT
@@ -31,11 +37,91 @@ describe('agents controller job-runtime module', () => {
     expect(normalizeLabelValue('___')).toBe('unknown')
   })
 
-  it('resolves runner service account from runtime config aliases or env default', () => {
+  it('resolves runner service account from runtime, provider, then env default', () => {
     process.env.AGENTS_AGENT_RUNNER_SERVICE_ACCOUNT = 'runner-default'
     expect(resolveRunnerServiceAccount({ serviceAccount: 'runtime-sa' })).toBe('runtime-sa')
     expect(resolveRunnerServiceAccount({ serviceAccountName: 'runtime-sa-name' })).toBe('runtime-sa-name')
+    expect(resolveRunnerServiceAccount({}, { spec: { workload: { serviceAccountName: 'provider-sa' } } })).toBe(
+      'provider-sa',
+    )
+    expect(
+      resolveRunnerServiceAccount(
+        { serviceAccountName: 'runtime-sa-name' },
+        { spec: { workload: { serviceAccountName: 'provider-sa' } } },
+      ),
+    ).toBe('runtime-sa-name')
     expect(resolveRunnerServiceAccount({})).toBe('runner-default')
+  })
+
+  it('mounts a rotating provider identity token without the default Kubernetes token', async () => {
+    const applied: Record<string, unknown>[] = []
+    const kube = {
+      get: vi.fn(async () => null),
+      apply: vi.fn(async (resource: Record<string, unknown>) => {
+        applied.push(resource)
+        return resource
+      }),
+    }
+
+    await submitJobRun(
+      kube as never,
+      { metadata: { name: 'linear-run', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
+      { metadata: { name: 'codex-linear-agent' }, spec: {} },
+      {
+        metadata: { name: 'codex-linear' },
+        spec: {
+          workload: {
+            serviceAccountName: 'codex-linear-runner',
+            serviceAccountToken: {
+              audience: 'agents.proompteng.ai/linear-mcp',
+              expirationSeconds: 600,
+              mountPath: '/var/run/secrets/agents-linear-mcp',
+            },
+          },
+        },
+      },
+      { source: { provider: 'linear', externalId: 'PROOMPT-123' }, summary: 'Run summary' },
+      null,
+      'agents',
+      'registry.example/agents-codex-runner:tag',
+      'job',
+    )
+
+    const job = applied.find((resource) => resource.kind === 'Job')
+    const podSpec = readJobPodSpec(job)
+    const container = (podSpec.containers as Record<string, unknown>[])[0] ?? {}
+    const env = (container.env as Record<string, unknown>[]) ?? []
+    const volumes = (podSpec.volumes as Record<string, unknown>[]) ?? []
+    const mounts = (container.volumeMounts as Record<string, unknown>[]) ?? []
+
+    expect(podSpec.serviceAccountName).toBe('codex-linear-runner')
+    expect(podSpec.automountServiceAccountToken).toBe(false)
+    expect(env).toContainEqual({
+      name: 'AGENTS_MCP_IDENTITY_TOKEN_PATH',
+      value: '/var/run/secrets/agents-linear-mcp/token',
+    })
+    expect(volumes).toContainEqual(
+      expect.objectContaining({
+        projected: {
+          defaultMode: 420,
+          sources: [
+            {
+              serviceAccountToken: {
+                audience: 'agents.proompteng.ai/linear-mcp',
+                expirationSeconds: 600,
+                path: 'token',
+              },
+            },
+          ],
+        },
+      }),
+    )
+    expect(mounts).toContainEqual(
+      expect.objectContaining({
+        mountPath: '/var/run/secrets/agents-linear-mcp',
+        readOnly: true,
+      }),
+    )
   })
 
   it('builds run spec with rendered event payload and optional vcs/system prompt', () => {

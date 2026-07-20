@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GithubIssueAgentRunRequest } from '@/codex'
-import { buildGithubIssueAgentRunPayload, makeAgentsServiceSubmitter, type FroussardAgentsConfig } from './agents'
+import {
+  buildGithubIssueAgentRunPayload,
+  buildLinearIssueAgentRunPayload,
+  makeAgentsServiceSubmitter,
+  type FroussardAgentsConfig,
+  type LinearIssueAgentRunRequest,
+} from './agents'
 
 const { submitAgentRunToAgentsServiceMock } = vi.hoisted(() => ({
   submitAgentRunToAgentsServiceMock: vi.fn(),
@@ -16,6 +22,7 @@ const config: FroussardAgentsConfig = {
   serviceClientName: 'froussard-test',
   namespace: 'agents',
   agentName: 'codex-agent',
+  linearAgentName: 'codex-linear-agent',
   vcsProviderName: 'github',
   serviceAccountName: 'agents-sa',
   secrets: ['github-token', 'codex-auth'],
@@ -38,6 +45,18 @@ const request: GithubIssueAgentRunRequest = {
   issuedAt: '2026-05-20T10:00:00.000Z',
   metadataVersion: 2,
   iterations: { mode: 'fixed', count: 1 },
+}
+
+const linearRequest: LinearIssueAgentRunRequest = {
+  issueId: '2174add1-f7c8-44e3-bbf3-2d60b5ea8bc9',
+  identifier: 'PROOMPT-123',
+  title: 'Ship Linear intake',
+  description: 'Implement the issue exactly as described.',
+  url: 'https://linear.app/proompteng/issue/PROOMPT-123/ship-linear-intake',
+  action: 'update',
+  repository: 'proompteng/lab',
+  base: 'main',
+  head: 'codex/linear-proompt-123-delivery',
 }
 
 describe('agents service submissions', () => {
@@ -156,5 +175,61 @@ describe('agents service submissions', () => {
       AGENTS_SERVICE_BASE_URL: 'http://agents.test',
       AGENTS_SERVICE_CLIENT_NAME: 'froussard-test',
     })
+  })
+
+  it('maps a Linear issue into an issue-only implementation source', () => {
+    const payload = buildLinearIssueAgentRunPayload(config, linearRequest, 'linear-delivery-123')
+
+    expect(payload).toEqual({
+      namespace: 'agents',
+      agentRef: { name: 'codex-linear-agent' },
+      idempotencyKey: 'linear-delivery-123',
+      implementation: {
+        summary: 'Ship Linear intake',
+        text: 'Implement the issue exactly as described.',
+        source: {
+          provider: 'linear',
+          externalId: 'PROOMPT-123',
+          url: 'https://linear.app/proompteng/issue/PROOMPT-123/ship-linear-intake',
+        },
+        contract: {
+          requiredKeys: ['repository', 'base', 'head', 'stage'],
+        },
+        metadata: {
+          issueId: '2174add1-f7c8-44e3-bbf3-2d60b5ea8bc9',
+          deliveryId: 'linear-delivery-123',
+          action: 'update',
+          sourceVersion: 1,
+        },
+      },
+      goal: {
+        objective: [
+          'Implement Linear issue PROOMPT-123: Ship Linear intake.',
+          'Issue URL: https://linear.app/proompteng/issue/PROOMPT-123/ship-linear-intake.',
+          'Base branch: main.',
+          'Head branch: codex/linear-proompt-123-delivery.',
+          'Use implementation.text for the full issue requirements and acceptance criteria.',
+        ].join('\n'),
+      },
+      runtime: { type: 'job', config: {} },
+      parameters: {
+        repository: 'proompteng/lab',
+        base: 'main',
+        head: 'codex/linear-proompt-123-delivery',
+        stage: 'implementation',
+      },
+      secrets: ['github-token', 'codex-auth'],
+      policy: { secretBindingRef: 'codex-github-token' },
+      vcsRef: { name: 'github' },
+      vcsPolicy: { required: true, mode: 'read-write' },
+      ttlSecondsAfterFinished: 86_400,
+    })
+
+    const serialized = JSON.stringify(payload)
+    expect(serialized).not.toContain('team')
+    expect(serialized).not.toContain('project')
+    expect((payload.goal as Record<string, unknown>).tokenBudget).toBeUndefined()
+    expect((payload.parameters as Record<string, unknown>).prompt).toBeUndefined()
+    expect((payload.parameters as Record<string, unknown>).deliveryId).toBeUndefined()
   })
 })

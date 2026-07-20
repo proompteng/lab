@@ -1,6 +1,11 @@
 # Webhook Signature Verification: ImplementationSource
 
-Status: Draft (2026-02-07)
+Status: Superseded (2026-07-20)
+
+Public webhook verification is moving to Froussard. After the canary, setting
+`AGENTS_IMPLEMENTATION_SOURCE_WEBHOOKS_GONE=true` makes the Agents endpoint return `410 Gone`; the
+handler described below then remains only as cleanup history. Linear's current contract is
+documented in [`../linear-mcp.md`](../linear-mcp.md).
 
 Docs index: [README](../README.md)
 

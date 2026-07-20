@@ -47,6 +47,16 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['services/agents/scripts/codex/agent-runner.ts'])
   })
 
+  it('rebuilds every image that embeds the shared Linear MCP bridge contract', () => {
+    for (const path of [
+      'services/agents/src/linear-mcp/bridge-auth.ts',
+      'services/agents/src/linear-mcp/config.ts',
+      'services/agents/src/linear-mcp/contract.ts',
+    ]) {
+      expect(classifyAgentsImageMode([path]).imageTargets).toEqual(['control-plane', 'controller', 'runner'])
+    }
+  })
+
   it('builds every image that embeds the Codex workspace package', () => {
     expect(classifyAgentsImageMode(['packages/codex/src/app-server.ts']).imageTargets).toEqual([
       'control-plane',

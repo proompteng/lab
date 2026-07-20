@@ -13,6 +13,18 @@ export type AgentRunSubmission = AgentsAgentRunSubmitInput
 
 export type AgentRunSubmitter = (input: AgentRunSubmission) => Promise<AgentsServiceJsonResult<Record<string, unknown>>>
 
+export interface LinearIssueAgentRunRequest {
+  issueId: string
+  identifier: string
+  title: string
+  description: string
+  url: string
+  action: 'create' | 'update'
+  repository: string
+  base: string
+  head: string
+}
+
 const optionalString = (value: string | undefined | null) => {
   const normalized = value?.trim()
   return normalized && normalized.length > 0 ? normalized : undefined
@@ -87,6 +99,65 @@ export const buildGithubIssueAgentRunPayload = (
     issueTitle: request.issueTitle,
     ...(optionalString(request.issueUrl) ? { issueUrl: request.issueUrl } : {}),
     ...(request.metadataVersion != null ? { metadataVersion: String(request.metadataVersion) } : {}),
+  },
+  secrets: config.secrets,
+  policy: {
+    secretBindingRef: config.secretBindingRef,
+  },
+  vcsRef: { name: config.vcsProviderName },
+  vcsPolicy: { required: true, mode: 'read-write' },
+  ttlSecondsAfterFinished: config.ttlSecondsAfterFinished,
+})
+
+export const buildLinearIssueGoalObjective = (request: LinearIssueAgentRunRequest): string =>
+  truncateGoalObjective(
+    [
+      `Implement Linear issue ${request.identifier}: ${request.title}.`,
+      `Issue URL: ${request.url}.`,
+      `Base branch: ${request.base}.`,
+      `Head branch: ${request.head}.`,
+      'Use implementation.text for the full issue requirements and acceptance criteria.',
+    ].join('\n'),
+  )
+
+export const buildLinearIssueAgentRunPayload = (
+  config: FroussardAgentsConfig,
+  request: LinearIssueAgentRunRequest,
+  deliveryId: string,
+): Record<string, unknown> => ({
+  namespace: config.namespace,
+  agentRef: { name: config.linearAgentName },
+  idempotencyKey: deliveryId,
+  implementation: {
+    summary: request.title || `Implement ${request.identifier}`,
+    text: request.description,
+    source: {
+      provider: 'linear',
+      externalId: request.identifier,
+      url: request.url,
+    },
+    contract: {
+      requiredKeys: ['repository', 'base', 'head', 'stage'],
+    },
+    metadata: {
+      issueId: request.issueId,
+      deliveryId,
+      action: request.action,
+      sourceVersion: 1,
+    },
+  },
+  goal: {
+    objective: buildLinearIssueGoalObjective(request),
+  },
+  runtime: {
+    type: 'job',
+    config: {},
+  },
+  parameters: {
+    repository: request.repository,
+    base: request.base,
+    head: request.head,
+    stage: 'implementation',
   },
   secrets: config.secrets,
   policy: {

@@ -16,6 +16,7 @@ vi.mock('@/effect/config', () => {
       maxEntries: 200,
     },
     githubWebhookSecret: 'secret',
+    linearWebhookSecret: 'linear-secret',
     atlas: {
       baseUrl: 'http://jangar',
       apiKey: null,
@@ -25,6 +26,7 @@ vi.mock('@/effect/config', () => {
       serviceClientName: 'froussard',
       namespace: 'agents',
       agentName: 'codex-agent',
+      linearAgentName: 'codex-linear-agent',
       vcsProviderName: 'github',
       serviceAccountName: 'agents-sa',
       secrets: ['github-token', 'codex-auth'],
@@ -40,6 +42,7 @@ vi.mock('@/effect/config', () => {
       topics: {
         raw: 'raw',
         discordCommands: 'discord',
+        linearRaw: 'linear.webhook.events',
       },
     },
     codebase: {
@@ -60,6 +63,16 @@ vi.mock('@/effect/config', () => {
       ackReaction: '+1',
       apiBaseUrl: 'https://api.github.com',
       userAgent: 'agent',
+    },
+    linear: {
+      enabled: true,
+      triggerLabel: 'agentrun',
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      branchPrefix: 'codex/linear-',
+      maxBodyBytes: 1024 * 1024,
+      webhookToleranceMs: 60_000,
+      agentsTimeoutMs: 3_000,
     },
   }
 

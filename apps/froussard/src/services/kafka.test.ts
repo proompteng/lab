@@ -36,6 +36,7 @@ describe('KafkaProducerLayer', () => {
       maxEntries: 200,
     },
     githubWebhookSecret: 'secret',
+    linearWebhookSecret: 'linear-secret',
     atlas: {
       baseUrl: 'http://jangar',
       apiKey: null,
@@ -45,6 +46,7 @@ describe('KafkaProducerLayer', () => {
       serviceClientName: 'froussard',
       namespace: 'agents',
       agentName: 'codex-agent',
+      linearAgentName: 'codex-linear-agent',
       vcsProviderName: 'github',
       serviceAccountName: 'agents-sa',
       secrets: ['github-token', 'codex-auth'],
@@ -60,6 +62,7 @@ describe('KafkaProducerLayer', () => {
       topics: {
         raw: 'raw-topic',
         discordCommands: 'discord-topic',
+        linearRaw: 'linear.webhook.events',
       },
     },
     codebase: {
@@ -83,6 +86,16 @@ describe('KafkaProducerLayer', () => {
       ackReaction: '+1',
       apiBaseUrl: 'https://api.github.com',
       userAgent: 'froussard',
+    },
+    linear: {
+      enabled: true,
+      triggerLabel: 'agentrun',
+      repository: 'proompteng/lab',
+      baseBranch: 'main',
+      branchPrefix: 'codex/linear-',
+      maxBodyBytes: 1024 * 1024,
+      webhookToleranceMs: 60_000,
+      agentsTimeoutMs: 3_000,
     },
   }
 

@@ -35,6 +35,8 @@ spec:
                 secretKeyRef:
                   key: webhook-secret
                   name: github-secret
+            - name: LINEAR_WEBHOOK_ENABLED
+              value: "false"
             - name: KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka:9092
             - name: KAFKA_TOPIC

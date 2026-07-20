@@ -17,6 +17,7 @@ export type AgentsAgentRunSubmitInput = {
   deliveryId: string
   payload: Record<string, unknown>
   dryRun?: string | null
+  signal?: AbortSignal | null
 }
 
 export type AgentsAgentRunListItem = {
@@ -78,6 +79,7 @@ export const submitAgentRunToAgentsServiceEffect = (input: AgentsAgentRunSubmitI
   return postAgentsJsonEffect<Record<string, unknown>>(servicePath(targetUrl), input.payload, {
     env,
     idempotencyKey: input.deliveryId,
+    signal: input.signal,
   })
 }
 

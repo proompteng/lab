@@ -4,6 +4,7 @@ resources:
   - github-secrets.yaml
   - discord-secrets.yaml
   - github-webhook-topic.yaml
+  - linear-webhook-topic.yaml
   - coder-workspace-access.yaml
   - knative-service.yaml
   - knative-host-middleware.yaml

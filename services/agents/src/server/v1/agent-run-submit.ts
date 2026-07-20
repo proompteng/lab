@@ -9,9 +9,11 @@ import { parseJsonBody, requireIdempotencyKey } from '../http'
 import { createKubernetesClient, type KubernetesClient, RESOURCE_MAP } from '../kube-types'
 import { asRecord, asString, normalizeNamespace, readNested } from '../primitives'
 import {
+  extractAllowedImplementationSourceProviders,
   extractAllowedServiceAccounts,
+  extractImplementationSourceProvider,
   extractRequiredSecrets,
-  extractRuntimeServiceAccount,
+  resolveEffectiveServiceAccount,
   type PolicyChecks,
   validatePolicies,
 } from '../primitives-policy'
@@ -118,6 +120,7 @@ export type AgentRunSubmissionConfig = {
   readonly idempotencyEnabled: boolean
   readonly idempotencyReservationTtlSeconds: number
   readonly vcsProvidersEnabled: boolean
+  readonly defaultRunnerServiceAccount: string | null
   readonly admissionNamespaces: {
     readonly namespaces: string[]
     readonly includeCluster: boolean
@@ -265,10 +268,12 @@ export const makeAgentRunRuntimeConfigService = (
     resolveSubmissionConfig: (namespace) =>
       Effect.sync(() => {
         const config = resolveAgentRunAdmissionConfig(namespace, env)
+        const runnerDefaults = resolveAgentRunnerDefaultsConfig(env)
         return {
           idempotencyEnabled: config.idempotencyEnabled,
           idempotencyReservationTtlSeconds: config.idempotencyReservationTtlSeconds,
           vcsProvidersEnabled: config.vcsProvidersEnabled,
+          defaultRunnerServiceAccount: runnerDefaults.serviceAccount,
           admissionNamespaces: config.admissionNamespaces,
           concurrency: config.concurrency,
           queue: config.queue,
@@ -1049,17 +1054,75 @@ export const submitAgentRunWithServicesEffect = (
             )
           }
           const allowedServiceAccounts = extractAllowedServiceAccounts(agentSpec)
-          const runtimeServiceAccount = extractRuntimeServiceAccount({ runtime: parsed.runtime })
-          const effectiveServiceAccount = runtimeServiceAccount
+          const effectiveServiceAccount = resolveEffectiveServiceAccount(
+            { runtime: parsed.runtime },
+            provider,
+            submissionConfig.defaultRunnerServiceAccount,
+          )
 
-          if (
-            effectiveServiceAccount &&
-            allowedServiceAccounts.length > 0 &&
-            !allowedServiceAccounts.includes(effectiveServiceAccount)
-          ) {
+          if (allowedServiceAccounts.length > 0 && !allowedServiceAccounts.includes(effectiveServiceAccount)) {
             return yield* Effect.fail(
               new AgentRunForbiddenError({ message: `service account ${effectiveServiceAccount} is not allowed` }),
             )
+          }
+
+          const allowedSourceProviders = extractAllowedImplementationSourceProviders(agentSpec)
+          if (allowedSourceProviders.length > 0) {
+            const implementations: Array<Record<string, unknown>> = []
+            if (parsed.implementation) {
+              implementations.push(parsed.implementation)
+            } else if (parsed.implementationSpecRef?.name) {
+              const implementationSpec = yield* kubernetes.getImplementationSpec(
+                kube,
+                parsed.implementationSpecRef.name,
+                parsed.namespace,
+              )
+              const implementation = asRecord(implementationSpec?.spec)
+              if (!implementation) {
+                return yield* Effect.fail(
+                  new AgentRunNotFoundError({
+                    resource: 'implementation spec',
+                    name: parsed.implementationSpecRef.name,
+                    namespace: parsed.namespace,
+                  }),
+                )
+              }
+              implementations.push(implementation)
+            }
+
+            for (const step of parsed.workflow?.steps ?? []) {
+              if (step.implementation) {
+                implementations.push(step.implementation)
+              } else if (step.implementationSpecRef?.name) {
+                const implementationSpec = yield* kubernetes.getImplementationSpec(
+                  kube,
+                  step.implementationSpecRef.name,
+                  parsed.namespace,
+                )
+                const implementation = asRecord(implementationSpec?.spec)
+                if (!implementation) {
+                  return yield* Effect.fail(
+                    new AgentRunNotFoundError({
+                      resource: 'implementation spec',
+                      name: step.implementationSpecRef.name,
+                      namespace: parsed.namespace,
+                    }),
+                  )
+                }
+                implementations.push(implementation)
+              }
+            }
+
+            for (const implementation of implementations) {
+              const sourceProvider = extractImplementationSourceProvider(implementation)
+              if (!sourceProvider || !allowedSourceProviders.includes(sourceProvider)) {
+                return yield* Effect.fail(
+                  new AgentRunForbiddenError({
+                    message: `implementation source provider ${sourceProvider ?? '<missing>'} is not allowed`,
+                  }),
+                )
+              }
+            }
           }
 
           const requiredSecrets = parsed.secrets ?? extractRequiredSecrets(agentSpec)

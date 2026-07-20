@@ -5,6 +5,7 @@ export interface IdempotencyConfig {
 
 export interface IdempotencyStore {
   isDuplicate: (key: string) => boolean
+  release: (key: string) => void
 }
 
 export const createIdempotencyStore = ({ ttlMs, maxEntries }: IdempotencyConfig): IdempotencyStore => {
@@ -14,6 +15,7 @@ export const createIdempotencyStore = ({ ttlMs, maxEntries }: IdempotencyConfig)
   if (boundedTtlMs === 0 || boundedMaxEntries === 0) {
     return {
       isDuplicate: () => false,
+      release: () => undefined,
     }
   }
 
@@ -52,6 +54,9 @@ export const createIdempotencyStore = ({ ttlMs, maxEntries }: IdempotencyConfig)
       }
 
       return false
+    },
+    release: (key: string) => {
+      entries.delete(key)
     },
   }
 }

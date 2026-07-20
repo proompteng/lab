@@ -127,6 +127,12 @@ export const controlPlanePrimitiveRegistry = [
             },
             security: {
               properties: {
+                allowedImplementationSourceProviders: {
+                  items: {
+                    type: 'string',
+                  },
+                  type: 'array',
+                },
                 allowedSecrets: {
                   items: {
                     type: 'string',
@@ -369,6 +375,34 @@ export const controlPlanePrimitiveRegistry = [
                       type: 'object',
                     },
                   },
+                  type: 'object',
+                },
+                serviceAccountName: {
+                  description: 'ServiceAccountName is the provider-owned default service account for AgentRun Jobs.',
+                  type: 'string',
+                },
+                serviceAccountToken: {
+                  description: 'ServiceAccountToken projects a short-lived, audience-bound token into runner Jobs.',
+                  properties: {
+                    audience: {
+                      maxLength: 253,
+                      minLength: 1,
+                      type: 'string',
+                    },
+                    expirationSeconds: {
+                      format: 'int64',
+                      maximum: 3600,
+                      minimum: 600,
+                      type: 'integer',
+                    },
+                    mountPath: {
+                      maxLength: 1024,
+                      minLength: 2,
+                      pattern: '^/',
+                      type: 'string',
+                    },
+                  },
+                  required: ['audience', 'expirationSeconds', 'mountPath'],
                   type: 'object',
                 },
               },

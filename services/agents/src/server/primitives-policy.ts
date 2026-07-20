@@ -1,8 +1,12 @@
 import {
+  extractAllowedImplementationSourceProviders,
   extractAllowedServiceAccounts,
   extractApprovalPolicies,
   extractRequiredSecrets,
+  extractImplementationSourceProvider,
+  extractProviderServiceAccount,
   extractRuntimeServiceAccount,
+  resolveEffectiveServiceAccount,
   validateApprovalPolicies as validateApprovalPoliciesWithGetter,
   validateBudget as validateBudgetWithGetter,
   validatePolicies as validatePoliciesWithGetter,
@@ -16,7 +20,16 @@ import {
 import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 
 export type { PolicyChecks, PolicyResourceGetter, PolicyResourceKind, PolicySubject }
-export { extractAllowedServiceAccounts, extractApprovalPolicies, extractRequiredSecrets, extractRuntimeServiceAccount }
+export {
+  extractAllowedImplementationSourceProviders,
+  extractAllowedServiceAccounts,
+  extractApprovalPolicies,
+  extractImplementationSourceProvider,
+  extractProviderServiceAccount,
+  extractRequiredSecrets,
+  extractRuntimeServiceAccount,
+  resolveEffectiveServiceAccount,
+}
 
 const POLICY_RESOURCE_MAP = {
   ApprovalPolicy: RESOURCE_MAP.ApprovalPolicy,

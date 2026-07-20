@@ -281,6 +281,9 @@ let
     "services/agents/package.json"
     "services/agents/scripts/codex"
     "services/agents/scripts/codex-config-container.toml"
+    "services/agents/src/linear-mcp/bridge-auth.ts"
+    "services/agents/src/linear-mcp/config.ts"
+    "services/agents/src/linear-mcp/contract.ts"
     "services/agents/src/runner"
     "services/agents/tsconfig.json"
   ];
@@ -320,6 +323,7 @@ let
     "bun --cwd=packages/codex run build"
     ''mkdir -p "$TMPDIR/agents-runner"''
     ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
+    ''bun build services/agents/scripts/codex/linear-mcp-bridge.ts --target bun --outfile "$TMPDIR/agents-runner/linear-mcp-bridge.js"''
     ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
   ];
 
@@ -502,6 +506,7 @@ let
     cp "$TMPDIR/work/packages/codex/package.json" "$out/app/node_modules/@proompteng/codex/package.json"
     cp -R "$TMPDIR/work/packages/codex/dist" "$out/app/node_modules/@proompteng/codex/dist"
     cp "$TMPDIR/agents-runner/agent-runner.js" "$out/app/services/agents/scripts/codex/agent-runner.js"
+    cp "$TMPDIR/agents-runner/linear-mcp-bridge.js" "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js"
     cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
     cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
     printf '{}\n' > "$out/root/.codex/auth.json"
@@ -515,13 +520,19 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${bun}/bin/bun /app/services/agents/scripts/codex/fake-app-server.js "$@"
     EOF
+    cat > "$out/usr/local/bin/linear-mcp-bridge" <<'EOF'
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/linear-mcp-bridge.js "$@"
+    EOF
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
     ln -s ${runnerPython}/bin/alpaca-mcp-server "$out/usr/local/bin/alpaca-mcp-server"
     chmod +x \
       "$out/usr/local/bin/agent-runner" \
+      "$out/usr/local/bin/linear-mcp-bridge" \
       "$out/usr/local/bin/agents-fake-codex-app-server" \
       "$out/app/services/agents/scripts/codex/agent-runner.js" \
+      "$out/app/services/agents/scripts/codex/linear-mcp-bridge.js" \
       "$out/app/services/agents/scripts/codex/fake-app-server.js"
 
     fake_server="$TMPDIR/agents-fake-codex-app-server"

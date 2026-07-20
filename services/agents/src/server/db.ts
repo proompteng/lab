@@ -58,6 +58,25 @@ type AgentRunRerunSubmissions = {
   submitted_at: Timestamp | null
 }
 
+export type LinearMcpMutationReceipts = {
+  id: Generated<string>
+  agent_run_uid: string
+  agent_run_name: string
+  agent_run_namespace: string
+  issue_uuid: string
+  issue_identifier: string
+  tool: string
+  canonical_argument_hash: string
+  state: string
+  attempt_count: Generated<number>
+  sanitized_result_id: string | null
+  last_error_code: string | null
+  requested_at: Generated<Timestamp>
+  started_at: Timestamp | null
+  completed_at: Timestamp | null
+  updated_at: Generated<Timestamp>
+}
+
 type MemoryResources = {
   id: Generated<string>
   memory_name: string
@@ -225,6 +244,7 @@ export type AgentsDatabase = {
   agent_runs: AgentRuns
   agent_run_idempotency_keys: AgentRunIdempotencyKeys
   agent_run_rerun_submissions: AgentRunRerunSubmissions
+  linear_mcp_mutation_receipts: LinearMcpMutationReceipts
   memory_resources: MemoryResources
   'memories.entries': MemoryEntries
   orchestration_runs: OrchestrationRuns

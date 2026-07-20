@@ -11,6 +11,27 @@ turning a “ship code + chart” task into a docs-only PR).
 
 This guide focuses on prompt precedence and the minimum fields needed for reliable runs.
 
+## Implementation Source Is Provenance
+
+`implementation.inline.source` records the task's external identity. It does not configure a
+webhook, authorize a workspace, or select a team/project. Keep it to the generic contract:
+
+```yaml
+source:
+  provider: linear
+  externalId: PROOMPT-123
+  url: https://linear.app/proompteng/issue/PROOMPT-123/example
+```
+
+Agents enforce `Agent.spec.security.allowedImplementationSourceProviders` at API admission and
+again in direct Job and Workflow reconciliation. Public provider webhooks belong to Froussard after
+cutover; `/v1/implementation-sources/webhooks/{provider}` returns `410 Gone` only when
+`AGENTS_IMPLEMENTATION_SOURCE_WEBHOOKS_GONE=true` after the Froussard canary succeeds.
+
+The opt-in `codex-linear-agent` additionally binds the source issue to a restricted Linear MCP
+surface. Its projected workload-identity token contains no Linear credential. See
+[`linear-mcp.md`](linear-mcp.md) for the policy and canary contract.
+
 ## Prompt Source Rules (No Run-Level Overrides)
 
 The Codex runner ultimately receives a single “user prompt” string in the generated run payload (`run.json.prompt`).

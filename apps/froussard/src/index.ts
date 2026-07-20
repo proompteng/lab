@@ -15,6 +15,8 @@ import { KafkaProducer } from '@/services/kafka'
 
 const buildVersion = process.env.FROUSSARD_VERSION ?? 'dev'
 const buildCommit = process.env.FROUSSARD_COMMIT ?? 'unknown'
+const isLinearWebhookRequest = (request: Request | undefined) =>
+  request ? new URL(request.url).pathname === '/webhooks/linear' : false
 
 const runtime = makeAppRuntime()
 const config = runtime.runSync(
@@ -67,6 +69,10 @@ export const createApp = () => {
     codexWorkflowLogin: config.codex.workflowLogin,
     codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
     topics: config.kafka.topics,
+    linear: {
+      webhookSecret: config.linearWebhookSecret,
+      ...config.linear,
+    },
     discord: {
       publicKey: config.discord.publicKey,
       response: config.discord.defaultResponse,
@@ -92,14 +98,15 @@ export const createApp = () => {
     .get('/health/readiness', health.readiness)
     .onRequest((context) => {
       const { request } = context
+      if (isLinearWebhookRequest(request)) return
       const url = new URL(request.url)
       logger.info({ method: request.method, path: url.pathname }, 'request received')
       recordRequestSpan(request)
     })
     .onError((context) => {
       const { error, request } = context
-      logger.error({ err: error }, 'server error')
-      if (request) {
+      logger.error(isLinearWebhookRequest(request) ? { provider: 'linear' } : { err: error }, 'server error')
+      if (request && !isLinearWebhookRequest(request)) {
         recordRequestSpan(request, 500, error instanceof Error ? error : undefined)
       }
       return new Response('Internal Server Error', { status: 500 })

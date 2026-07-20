@@ -298,6 +298,124 @@ describe('AgentRun v1 API', () => {
     expect(store.createAgentRun).not.toHaveBeenCalled()
   })
 
+  it('admits a provider service account and source that are allowlisted by the Agent', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(kube.get as unknown as MockResolvedValueOnce)
+      .mockResolvedValueOnce({
+        metadata: { name: 'codex-linear-agent' },
+        spec: {
+          providerRef: { name: 'codex-linear' },
+          security: {
+            allowedServiceAccounts: ['codex-linear-runner'],
+            allowedImplementationSourceProviders: ['linear'],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        metadata: { name: 'codex-linear' },
+        spec: { workload: { serviceAccountName: 'codex-linear-runner' } },
+      })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'codex-linear-agent' },
+        namespace: 'agents',
+        implementation: {
+          text: 'Implement the issue.',
+          source: { provider: 'linear', externalId: 'PROOMPT-123' },
+        },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(201)
+    expect(kube.apply).toHaveBeenCalled()
+  })
+
+  it('rejects a source provider outside the Agent allowlist before creating an AgentRun', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(kube.get as unknown as MockResolvedValueOnce).mockResolvedValueOnce({
+      metadata: { name: 'codex-linear-agent' },
+      spec: {
+        security: { allowedImplementationSourceProviders: ['linear'] },
+      },
+    })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'codex-linear-agent' },
+        namespace: 'agents',
+        implementation: {
+          text: 'Implement the issue.',
+          source: { provider: 'github', externalId: '123' },
+        },
+        runtime: { type: 'job', config: {} },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining('implementation source provider github is not allowed'),
+    })
+    expect(kube.apply).not.toHaveBeenCalled()
+    expect(store.createAgentRun).not.toHaveBeenCalled()
+  })
+
+  it('rejects a workflow step source outside the Agent allowlist', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    ;(kube.get as unknown as MockResolvedValueOnce).mockResolvedValueOnce({
+      metadata: { name: 'codex-linear-agent' },
+      spec: { security: { allowedImplementationSourceProviders: ['linear'] } },
+    })
+
+    const response = await postAgentRunsHandler(
+      buildRequest({
+        agentRef: { name: 'codex-linear-agent' },
+        namespace: 'agents',
+        implementation: {
+          text: 'Implement the Linear issue.',
+          source: { provider: 'linear', externalId: 'PROOMPT-123' },
+        },
+        runtime: { type: 'workflow', config: {} },
+        workflow: {
+          steps: [
+            {
+              name: 'implement',
+              implementation: {
+                text: 'Attempt to replace the source.',
+                source: { provider: 'github', externalId: 'proompteng/lab#123' },
+              },
+            },
+          ],
+        },
+      }),
+      {
+        storeFactory: () => store,
+        kubeClient: kube,
+        validatePolicies: vi.fn(async () => {}),
+      },
+    )
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({
+      error: expect.stringContaining('implementation source provider github is not allowed'),
+    })
+    expect(kube.apply).not.toHaveBeenCalled()
+  })
+
   it('rejects invalid AgentRun dry-run values before mutating state', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()

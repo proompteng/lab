@@ -79,6 +79,44 @@ runner:
     pullPolicy: IfNotPresent
     pullSecrets: []
 
+linearMcpGateway:
+  enabled: false
+  replicaCount: 2
+  image: {}
+  imagePullSecrets: []
+  oauthSecretName: linear-mcp-oauth
+  databaseSecret:
+    name: ''
+    key: uri
+  serviceAccount:
+    name: agents-linear-mcp-gateway
+  runnerServiceAccount:
+    name: codex-linear-runner
+  config:
+    port: 8080
+    namespace: agents
+    audience: agents.proompteng.ai/linear-mcp
+    runnerServiceAccount: codex-linear-runner
+    agentName: codex-linear-agent
+    providerName: codex-linear
+    triggerLabel: agentrun
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+  networkPolicy:
+    enabled: true
+
 agentsShell:
   enabled: false
   replicaCount: 1

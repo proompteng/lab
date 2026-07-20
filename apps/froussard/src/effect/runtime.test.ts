@@ -24,11 +24,14 @@ describe('makeAppRuntime', () => {
   const originalEnv = process.env
   const requiredEnv = {
     GITHUB_WEBHOOK_SECRET: 'secret',
+    LINEAR_WEBHOOK_ENABLED: 'true',
+    LINEAR_WEBHOOK_SECRET: 'linear-secret',
     KAFKA_BROKERS: 'broker:9092',
     KAFKA_USERNAME: 'user',
     KAFKA_PASSWORD: 'pass',
     KAFKA_TOPIC: 'raw-topic',
     KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
+    KAFKA_LINEAR_WEBHOOK_TOPIC: 'linear.webhook.events',
     DISCORD_PUBLIC_KEY: 'public-key',
     ATLAS_BASE_URL: 'http://jangar',
   }
