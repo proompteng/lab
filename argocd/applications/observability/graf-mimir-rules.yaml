@@ -84,8 +84,22 @@ data:
                 } > 93600
               )
               or
-              absent(
+              (
+                (
+                  time() - kube_cronjob_created{
+                    namespace="hermes",
+                    cronjob="hermes-backup"
+                  } > 93600
+                )
+                unless on (namespace, cronjob)
                 kube_cronjob_status_last_successful_time{
+                  namespace="hermes",
+                  cronjob="hermes-backup"
+                }
+              )
+              or
+              absent(
+                kube_cronjob_created{
                   namespace="hermes",
                   cronjob="hermes-backup"
                 }
@@ -97,7 +111,7 @@ data:
               service: hermes
             annotations:
               summary: Hermes backup is stale
-              description: The Hermes backup CronJob has no successful completion in the last 26 hours; inspect its Job logs and verified archives.
+              description: The Hermes backup CronJob is missing or has no successful completion within its 26-hour freshness window; inspect its Job logs and verified archives.
               runbook_url: docs/runbooks/hermes-production-rollout.md
       - name: graf-telemetry.rules
         rules:

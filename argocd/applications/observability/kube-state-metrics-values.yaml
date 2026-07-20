@@ -3,10 +3,12 @@ prometheusScrape: false
 replicas: 1
 
 collectors:
+  - cronjobs
   - deployments
   - nodes
   - pods
   - services
+  - statefulsets
 
 
 resources:

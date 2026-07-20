@@ -80,8 +80,9 @@ The expected mirrored amd64 manifest digest is
      'cd /opt/backups; archive=$(find . -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1); test -n "$archive" && sha256sum -c "$archive.sha256"'
    ```
 
-   The Job must complete and its log and checksum verification must succeed. `HermesBackupStale` uses the CronJob's last
-   successful completion metric; backup failure never changes the gateway Pod's readiness.
+   The Job must complete and its log and checksum verification must succeed. A standalone Job does not update the CronJob's
+   status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success, then monitors its last
+   successful completion. A missing CronJob still alerts, and backup failure never changes the gateway Pod's readiness.
 
 2. Port-forward the cluster-local API and keep the key out of command output:
 

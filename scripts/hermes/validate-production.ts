@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 const hermesImage =
@@ -19,6 +20,9 @@ export const productionPaths = {
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
   platform: 'argocd/applicationsets/platform.yaml',
   mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
+  clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
+  clusterMetricsDeployment: 'argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
+  kubeStateMetrics: 'argocd/applications/observability/kube-state-metrics-values.yaml',
   runbook: 'docs/runbooks/hermes-production-rollout.md',
   impactMap: '.github/ci/impact-map.yml',
 } as const
@@ -218,6 +222,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never run OpenClaw and Hermes with the same Discord token at the same time.',
     'Never pass `--migrate-secrets`',
     'Never run `hermes claw cleanup`',
+    'A standalone Job does not update the CronJob',
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
   ])
@@ -229,14 +234,30 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'absent(\n                kube_statefulset_status_replicas_ready{',
     'absent(\n                kube_deployment_status_replicas_available{',
     'time() - kube_cronjob_status_last_successful_time{',
-    'absent(\n                kube_cronjob_status_last_successful_time{',
+    'time() - kube_cronjob_created{',
+    'unless on (namespace, cronjob)',
+    'absent(\n                kube_cronjob_created{',
   ])
+
+  requireTerms(failures, productionPaths.clusterMetrics, files.clusterMetrics, [
+    'kube_cronjob_created',
+    'kube_cronjob_status_last_successful_time',
+    'kube_statefulset_status_replicas_ready',
+  ])
+  const clusterMetricsHash = createHash('sha256').update(files.clusterMetrics).digest('hex')
+  requireTerms(failures, productionPaths.clusterMetricsDeployment, files.clusterMetricsDeployment, [
+    `observability.proompteng.ai/config-sha256: ${clusterMetricsHash}`,
+  ])
+  requireTerms(failures, productionPaths.kubeStateMetrics, files.kubeStateMetrics, ['  - cronjobs', '  - statefulsets'])
 
   requireTerms(failures, productionPaths.impactMap, files.impactMap, [
     '- .github/ci/impact-map.yml',
     '- .github/workflows/pull-request.yml',
     '- argocd/applications/hermes/**',
+    '- argocd/applications/observability/cluster-metrics-alloy-config.river',
+    '- argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
     '- argocd/applications/observability/graf-mimir-rules.yaml',
+    '- argocd/applications/observability/kube-state-metrics-values.yaml',
     '- argocd/applicationsets/platform.yaml',
     '- docs/runbooks/hermes-production-rollout.md',
     '- scripts/**',

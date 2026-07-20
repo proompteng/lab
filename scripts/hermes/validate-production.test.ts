@@ -87,6 +87,36 @@ test('rejects availability alerts that ignore missing metrics', async () => {
   )
 })
 
+test('rejects a telemetry pipeline that drops Hermes workload metrics', async () => {
+  const files = await loadProductionFiles()
+  files.kubeStateMetrics = files.kubeStateMetrics.replace('  - cronjobs\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kubeStateMetrics}: missing production invariant "  - cronjobs"`,
+  )
+})
+
+test('rejects changing the telemetry allowlist without rolling Alloy', async () => {
+  const files = await loadProductionFiles()
+  files.clusterMetricsDeployment = files.clusterMetricsDeployment.replace(
+    /observability\.proompteng\.ai\/config-sha256: [a-f0-9]+/,
+    'observability.proompteng.ai/config-sha256: stale',
+  )
+
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining(`${productionPaths.clusterMetricsDeployment}: missing production invariant`),
+  )
+})
+
+test('rejects alerting before the first scheduled backup window expires', async () => {
+  const files = await loadProductionFiles()
+  files.mimirRules = files.mimirRules.replace('time() - kube_cronjob_created{', 'vector(1) + kube_cronjob_created{')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.mimirRules}: missing production invariant "time() - kube_cronjob_created{"`,
+  )
+})
+
 test('rejects removing Hermes surfaces from production validation routing', async () => {
   const files = await loadProductionFiles()
   files.impactMap = files.impactMap.replace('      - docs/runbooks/hermes-production-rollout.md\n', '')

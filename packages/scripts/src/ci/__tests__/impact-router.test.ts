@@ -152,7 +152,7 @@ describe('impact router', () => {
       ['argocd/applications/observability/cluster-metrics-alloy-config.river', 'docs/torghut/ceph-migration.md'],
       map,
     )
-    expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])
+    expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform', 'root-scripts'])
     expect(plan.delegatedWorkflows).toEqual(['scripts-ci'])
   })
 
@@ -177,6 +177,18 @@ describe('impact router', () => {
     const cases = [
       ['argocd/applications/hermes/statefulset.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       ['argocd/applications/observability/graf-mimir-rules.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
+      [
+        'argocd/applications/observability/cluster-metrics-alloy-config.river',
+        ['argo-lint', 'kubeconform', 'root-scripts'],
+      ],
+      [
+        'argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
+        ['argo-lint', 'kubeconform', 'root-scripts'],
+      ],
+      [
+        'argocd/applications/observability/kube-state-metrics-values.yaml',
+        ['argo-lint', 'kubeconform', 'root-scripts'],
+      ],
       ['argocd/applicationsets/platform.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       ['docs/runbooks/hermes-production-rollout.md', ['root-scripts']],
       ['.github/ci/impact-map.yml', ['root-scripts', 'workflow-lint']],

@@ -34,7 +34,8 @@ smoke test, manifest change, and normal CI/Codex review.
 - `backups-hermes-0`: 100 Gi RBD PVC for daily WAL-safe Hermes backup archives and SHA-256 sidecars.
 - StatefulSet PVC retention is `Retain` on delete and scale-down.
 - The daily backup CronJob retains the latest 14 verified archives and retries failures independently from the gateway. Its
-  last successful Job timestamp alerts after 26 hours without removing a healthy API endpoint.
+  first scheduled success and subsequent last-success timestamp are monitored on a 26-hour window without removing a
+  healthy API endpoint.
 - OpenClaw's VM and PVC remain intact and stopped for at least 14 days after cutover. Do not run `hermes claw cleanup` during
   the rollback window.
 
