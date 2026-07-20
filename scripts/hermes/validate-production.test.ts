@@ -156,7 +156,7 @@ test('rejects migration instructions that skip the content audit', async () => {
   )
 })
 
-test('rejects migration or restore without backup quiescence', async () => {
+test('rejects canary, migration, or restore without backup quiescence', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
     'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\'\n',
@@ -164,7 +164,16 @@ test('rejects migration or restore without backup quiescence', async () => {
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: migration and restore must both suspend the backup CronJob`,
+    `${productionPaths.runbook}: canary, migration, and restore must suspend the backup CronJob`,
+  )
+})
+
+test('rejects a partial archive that ignores unreadable migration inputs', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('tar -czf - "$@"', 'tar --ignore-failed-read -czf - "$@"')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "--ignore-failed-read"`,
   )
 })
 

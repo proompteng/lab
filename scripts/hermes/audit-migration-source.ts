@@ -15,6 +15,15 @@ const allowedWorkspaceFiles = new Set([
   'USER.md',
 ])
 const allowedWorkspaceDirectories = new Set(['memory', 'skills'])
+const requiredMigrationPaths = new Set([
+  'workspace/AGENTS.md',
+  'workspace/HEARTBEAT.md',
+  'workspace/IDENTITY.md',
+  'workspace/SOUL.md',
+  'workspace/TOOLS.md',
+  'workspace/USER.md',
+  'workspace/memory',
+])
 const forbiddenPathComponents = new Set([
   '.aws',
   '.env',
@@ -106,6 +115,7 @@ const validatePathComponents = (path: string): string | undefined => {
 export async function auditMigrationSource(sourceRoot: string): Promise<MigrationAuditResult> {
   const root = resolve(sourceRoot)
   const result: MigrationAuditResult = { files: 0, totalBytes: 0, issues: [] }
+  const seenPaths = new Set<string>()
   const rootStat = await lstat(root)
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     return { ...result, issues: [{ path: '.', reason: 'source root must be a real directory' }] }
@@ -117,11 +127,26 @@ export async function auditMigrationSource(sourceRoot: string): Promise<Migratio
       const path = resolve(directory, entry.name)
       const displayPath = portablePath(root, path)
       const stat = await lstat(path)
+      seenPaths.add(displayPath)
 
       const layoutIssue = validateLayout(displayPath)
       if (layoutIssue) result.issues.push({ path: displayPath, reason: layoutIssue })
       const componentIssue = validatePathComponents(displayPath)
       if (componentIssue) result.issues.push({ path: displayPath, reason: componentIssue })
+
+      const components = displayPath.split('/')
+      if (!stat.isSymbolicLink() && displayPath === 'workspace' && !stat.isDirectory()) {
+        result.issues.push({ path: displayPath, reason: 'workspace must be a directory' })
+      }
+      if (!stat.isSymbolicLink() && components.length === 2) {
+        const workspaceEntry = components[1]
+        if (allowedWorkspaceFiles.has(workspaceEntry) && !stat.isFile()) {
+          result.issues.push({ path: displayPath, reason: 'allowlisted identity path must be a regular file' })
+        }
+        if (allowedWorkspaceDirectories.has(workspaceEntry) && !stat.isDirectory()) {
+          result.issues.push({ path: displayPath, reason: 'allowlisted collection path must be a directory' })
+        }
+      }
 
       if (stat.isSymbolicLink()) {
         result.issues.push({ path: displayPath, reason: 'symbolic links are forbidden' })
@@ -172,6 +197,11 @@ export async function auditMigrationSource(sourceRoot: string): Promise<Migratio
   }
 
   await visit(root)
+  for (const requiredPath of requiredMigrationPaths) {
+    if (!seenPaths.has(requiredPath)) {
+      result.issues.push({ path: requiredPath, reason: 'required migration path is missing' })
+    }
+  }
   if (result.files === 0) result.issues.push({ path: '.', reason: 'source contains no approved files' })
   return result
 }

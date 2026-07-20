@@ -12,6 +12,9 @@ async function makeFixture(): Promise<string> {
   temporaryRoots.push(root)
   await mkdir(join(root, 'workspace', 'memory'), { recursive: true })
   await mkdir(join(root, 'workspace', 'skills'), { recursive: true })
+  for (const name of ['AGENTS.md', 'HEARTBEAT.md', 'IDENTITY.md', 'SOUL.md', 'TOOLS.md', 'USER.md']) {
+    await writeFile(join(root, 'workspace', name), `Safe ${name} content.\n`)
+  }
   await writeFile(join(root, 'workspace', 'MEMORY.md'), 'Safe memory note. API tokens are never stored here.\n')
   return root
 }
@@ -36,7 +39,20 @@ describe('OpenClaw migration source audit', () => {
     const root = await makeFixture()
     await writeFile(join(root, 'workspace', 'skills', 'example.md'), 'A safe skill with no credentials.\n')
 
-    expect(await auditMigrationSource(root)).toEqual({ files: 2, totalBytes: 86, issues: [] })
+    const result = await auditMigrationSource(root)
+    expect(result.files).toBe(8)
+    expect(result.totalBytes).toBeGreaterThan(0)
+    expect(result.issues).toEqual([])
+  })
+
+  test('rejects a missing required identity path', async () => {
+    const root = await makeFixture()
+    await rm(join(root, 'workspace', 'IDENTITY.md'))
+
+    expect((await auditMigrationSource(root)).issues).toContainEqual({
+      path: 'workspace/IDENTITY.md',
+      reason: 'required migration path is missing',
+    })
   })
 
   test('rejects credentials without returning their value', async () => {

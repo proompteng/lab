@@ -222,6 +222,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     "allowedWorkspaceDirectories = new Set(['memory', 'skills'])",
     'source root must be a real directory',
     'source contains no approved files',
+    'requiredMigrationPaths',
+    'required migration path is missing',
     'symbolic links are forbidden',
     'only regular files and directories are allowed',
     "new TextDecoder('utf-8', { fatal: true })",
@@ -259,16 +261,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n hermes delete "$dry_run_job" --wait=true',
     'kubectl -n hermes delete "$migration_job" --wait=true',
     'kubectl -n hermes delete "$restore_job" --wait=true',
+    'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; do test -r "$path"; done',
+    'The CronJob must remain suspended until every prior backup and the one-off Job have terminated',
   ])
+  forbidTerms(failures, productionPaths.runbook, files.runbook, ['--ignore-failed-read'])
   const suspendBackupCommand =
     'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\''
-  if (count(files.runbook, suspendBackupCommand) !== 2) {
-    failures.push(`${productionPaths.runbook}: migration and restore must both suspend the backup CronJob`)
+  if (count(files.runbook, suspendBackupCommand) !== 3) {
+    failures.push(`${productionPaths.runbook}: canary, migration, and restore must suspend the backup CronJob`)
   }
   const activeBackupSelector =
     'kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup'
-  if (count(files.runbook, `while [ "$(${activeBackupSelector}`) !== 2) {
-    failures.push(`${productionPaths.runbook}: migration and restore must both wait for active backup Jobs`)
+  if (count(files.runbook, `while [ "$(${activeBackupSelector}`) !== 3) {
+    failures.push(`${productionPaths.runbook}: canary, migration, and restore must wait for active backup Jobs`)
   }
 
   requireTerms(failures, productionPaths.mimirRules, files.mimirRules, [

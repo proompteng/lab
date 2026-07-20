@@ -70,27 +70,46 @@ The expected mirrored amd64 manifest digest is
    rollout evidence does not depend on the next schedule:
 
    ```bash
+   set -euo pipefail
    kubectl -n hermes rollout status deployment/hermes-egress-proxy --timeout=5m
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
    kubectl -n hermes get pod hermes-0 -o jsonpath='{range .spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}'
    kubectl -n hermes get pod hermes-0 -o jsonpath='{.spec.securityContext.runAsUser}{" "}{.spec.automountServiceAccountToken}{"\n"}'
    kubectl -n hermes get pvc data-hermes-0 backups-hermes-0
+   kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
+   backup_wait_deadline=$(( $(date +%s) + 3900 ))
+   while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
+     if [ "$(date +%s)" -ge "$backup_wait_deadline" ]; then
+       kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o name >&2
+       echo 'active Hermes backup did not terminate; backups remain suspended' >&2
+       exit 1
+     fi
+     sleep 10
+   done
+   unset backup_wait_deadline
    initial_backup_job="hermes-backup-initial-$(date -u +%Y%m%d%H%M%S)"
    kubectl -n hermes create job --from=cronjob/hermes-backup "$initial_backup_job"
    if ! kubectl -n hermes wait "job/$initial_backup_job" --for=condition=Complete --timeout=15m; then
      kubectl -n hermes logs "job/$initial_backup_job" -c backup || true
      kubectl -n hermes delete "job/$initial_backup_job" --wait=true
+     kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":false}}'
      exit 1
    fi
-   kubectl -n hermes logs "job/$initial_backup_job" -c backup
-   kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/backups/last-success
+   backup_verified=true
+   kubectl -n hermes logs "job/$initial_backup_job" -c backup || backup_verified=false
+   kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/backups/last-success || backup_verified=false
    kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
-     'cd /opt/backups; archive=$(find . -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1); test -n "$archive" && sha256sum -c "$archive.sha256"'
+     'cd /opt/backups; archive=$(find . -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1); test -n "$archive" && sha256sum -c "$archive.sha256"' || backup_verified=false
+   kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":false}}'
+   test "$backup_verified" = true
+   unset backup_verified
    ```
 
-   The Job must complete and its log and checksum verification must succeed. A standalone Job does not update the CronJob's
-   status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success, then monitors its last
-   successful completion. A missing CronJob still alerts, and backup failure never changes the gateway Pod's readiness.
+   The CronJob must remain suspended until every prior backup and the one-off Job have terminated; `concurrencyPolicy` does
+   not prevent a manually created Job from overlapping the schedule. The one-off Job must complete and its log and checksum
+   verification must succeed. A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new
+   CronJob 26 hours for its first scheduled success, then monitors its last successful completion. A missing CronJob still
+   alerts, and backup failure never changes the gateway Pod's readiness.
 
 2. Port-forward the cluster-local API and keep the key out of command output:
 
@@ -174,13 +193,14 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
    `.openclaw/openclaw.json`, credentials, tokens, sessions, and logs never enter the archive:
 
    ```bash
+   set -euo pipefail
    hermes_stage_dir=$(mktemp -d)
    mkdir -p "$hermes_stage_dir/openclaw/workspace"
    if ! (
      set -o pipefail
      virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
        --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
-       --command='tar --ignore-failed-read -C /home/ubuntu/github.com/lab/services/tuslagch -czf - AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md MEMORY.md memory skills' \
+       --command='set -eu; cd /home/ubuntu/github.com/lab/services/tuslagch; for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; do test -r "$path"; done; set -- AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; for path in MEMORY.md skills; do if test -e "$path" || test -L "$path"; then test -r "$path"; set -- "$@" "$path"; fi; done; tar -czf - "$@"' \
        vm/openclaw | tar -xzf - -C "$hermes_stage_dir/openclaw/workspace"
    ); then
      rm -rf -- "$hermes_stage_dir"
@@ -197,12 +217,15 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
 
    The content audit must pass before any data is copied. It rejects paths outside the explicit user-data allowlist,
    symlinks, non-text content, credential-like values, and bounded-size violations without printing detected values. Also
-   review the file-name-only inventory and stop if it contains config, credential, token, session, or log files.
+   review the file-name-only inventory and stop if it contains config, credential, token, session, or log files. The six
+   identity files and `memory/` are required; `MEMORY.md` and `skills/` are included only when present, and any unreadable
+   selected path or descendant fails the pipe.
 
 2. Stage the sanitized directory on the Hermes data PVC. Suspend new backups and wait up to 65 minutes for every active
    backup Job to finish before stopping the gateway; only then does the migration have exclusive RBD access:
 
    ```bash
+   set -euo pipefail
    kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw
    kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/openclaw -c hermes
    rm -rf -- "$hermes_stage_dir"
@@ -225,6 +248,7 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
 3. Run the merged dry-run Job and review its complete log. It must contain no secret migration and no unresolved conflict:
 
    ```bash
+   set -euo pipefail
    dry_run_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-dry-run-job.yaml -o name)
    if ! kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m; then
      kubectl -n hermes logs "$dry_run_job" || true
@@ -239,6 +263,7 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
    archive as migration evidence:
 
    ```bash
+   set -euo pipefail
    migration_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-apply-job.yaml -o name)
    if ! kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m; then
      kubectl -n hermes logs "$migration_job" || true
@@ -311,6 +336,7 @@ Scale Hermes to zero, select a known-good archive, verify its SHA-256 sidecar, a
 the archive name below with the reviewed recovery point; never select it only by recency:
 
 ```bash
+set -euo pipefail
 kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
 backup_wait_deadline=$(( $(date +%s) + 3900 ))
 while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
