@@ -177,6 +177,42 @@ test('rejects a partial archive that ignores unreadable migration inputs', async
   )
 })
 
+test('rejects a containment check that aborts on expected direct-egress denial', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
+    'kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c"`,
+  )
+})
+
+test('rejects migration staging that overlays a previous source tree', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
+    "'mkdir -p /opt/data/migration/openclaw'",
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'"`,
+  )
+})
+
+test('rejects restore archive selection that expands the glob on the operator host', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",
+    'ls -1 /opt/backups/hermes-backup-*.zip',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print"`,
+  )
+})
+
 test('rejects API key rotation without restart proof', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace('## API key rotation', '## API credential maintenance')

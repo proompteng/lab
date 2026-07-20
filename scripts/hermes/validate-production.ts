@@ -263,8 +263,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n hermes delete "$restore_job" --wait=true',
     'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; do test -r "$path"; done',
     'The CronJob must remain suspended until every prior backup and the one-off Job have terminated',
+    'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
+    'direct public egress unexpectedly succeeded',
+    "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
+    "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",
   ])
-  forbidTerms(failures, productionPaths.runbook, files.runbook, ['--ignore-failed-read'])
+  forbidTerms(failures, productionPaths.runbook, files.runbook, [
+    '--ignore-failed-read',
+    'kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw',
+    'kubectl -n hermes exec hermes-restore-stage -c stage -- ls -1 /opt/backups/hermes-backup-*.zip',
+  ])
   const suspendBackupCommand =
     'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\''
   if (count(files.runbook, suspendBackupCommand) !== 3) {

@@ -145,8 +145,11 @@ The expected mirrored amd64 manifest digest is
 4. Prove network containment from the gateway and domain filtering through Squid:
 
    ```bash
-   kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
-     'import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open("https://example.com", timeout=5)'
+   if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
+     'import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open("https://example.com", timeout=5)'; then
+     echo 'direct public egress unexpectedly succeeded' >&2
+     exit 1
+   fi
    kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
      'import urllib.request; urllib.request.urlopen("https://discord.com/robots.txt", timeout=10).read(1)'
    kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -c \
@@ -226,7 +229,8 @@ key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not 
 
    ```bash
    set -euo pipefail
-   kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw
+   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
+     'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'
    kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/openclaw -c hermes
    rm -rf -- "$hermes_stage_dir"
    unset hermes_stage_dir
@@ -356,7 +360,8 @@ if ! kubectl -n hermes wait pod/hermes-restore-stage --for=condition=Ready --tim
   kubectl -n hermes delete pod/hermes-restore-stage --wait=true
   exit 1
 fi
-kubectl -n hermes exec hermes-restore-stage -c stage -- ls -1 /opt/backups/hermes-backup-*.zip
+kubectl -n hermes exec hermes-restore-stage -c stage -- \
+  find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print
 restore_archive=hermes-backup-YYYYMMDDTHHMMSSZ.zip
 if ! kubectl -n hermes exec hermes-restore-stage -c stage -- sh -c \
   "cd /opt/backups && sha256sum -c '$restore_archive.sha256' && cp '$restore_archive' restore.zip"; then
