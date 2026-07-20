@@ -200,7 +200,7 @@ def test_chart_and_digest_contracts_are_pinned() -> None:
     values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
     assert values["hub"]["image"]["tag"] == "4.4.0"
     assert values["proxy"]["chp"]["image"]["tag"] == "5.2.0"
-    assert "cmd" not in values["singleuser"]
+    assert values["singleuser"]["cmd"] is None
     assert values["singleuser"]["image"]["name"].endswith("@sha256")
     assert re.fullmatch(r"[0-9a-f]{64}", values["singleuser"]["image"]["tag"])
 
