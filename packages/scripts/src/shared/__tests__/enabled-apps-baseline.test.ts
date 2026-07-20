@@ -6,10 +6,10 @@ import YAML from 'yaml'
 import { loadEnabledAppInventory } from '../enabled-apps'
 
 const baselineFiles = [
-  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/bootstrap.yaml',
-  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/helm-apps.yaml',
-  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/platform.yaml',
-  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/product.yaml',
+  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/bootstrap.fixture',
+  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/helm-apps.fixture',
+  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/platform.fixture',
+  'packages/scripts/src/shared/__tests__/fixtures/enabled-apps/product.fixture',
 ]
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
