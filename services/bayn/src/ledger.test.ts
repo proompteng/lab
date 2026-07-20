@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect } from 'effect'
-import type { Account, Transfer } from 'tigerbeetle-node'
+import { Effect, Redacted } from 'effect'
+import { createClient as createTigerBeetleClient, type Account, type Client, type Transfer } from 'tigerbeetle-node'
 
-import { assertReconciled, buildLedgerPlan, resolveReplicaAddresses } from './ledger'
+import type { RuntimeConfig } from './config'
+import {
+  assertReconciled,
+  buildLedgerPlan,
+  Journal,
+  JournalLive,
+  resolveReplicaAddresses,
+  type JournalService,
+} from './ledger'
 import { evaluateTsmom } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
@@ -51,6 +59,81 @@ describe('TigerBeetle simulation journal', () => {
         transfers,
       ),
     ).toThrow('balance does not reconcile exactly')
+  })
+
+  test('checks the persisted run read-only and rejects changed TigerBeetle balances', async () => {
+    const snapshot = makeSnapshot()
+    const provenance = makeTestProvenance()
+    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const plan = buildLedgerPlan(result, 7001)
+    let accounts = materializeAccounts(plan)
+    const transfers = materializeTransfers(plan)
+    let writes = 0
+    const client = {
+      queryAccounts: async () => accounts,
+      queryTransfers: async () => transfers,
+      createAccounts: async () => {
+        writes += 1
+        return []
+      },
+      createTransfers: async () => {
+        writes += 1
+        return []
+      },
+      destroy: () => undefined,
+    } as unknown as Client
+    const config: RuntimeConfig = {
+      host: '127.0.0.1',
+      port: 0,
+      build: {
+        sourceRevision: provenance.sourceRevision,
+        imageRepository: provenance.image.repository,
+        imageDigest: provenance.image.digest,
+        strategyBehaviorHash: provenance.strategy.behaviorHash,
+        verification: 'embedded',
+      },
+      healthIntervalMs: 30_000,
+      operationTimeoutMs: 1_000,
+      clickhouse: {
+        url: 'http://clickhouse.test',
+        username: 'bayn',
+        password: Redacted.make('unused'),
+        snapshotId: snapshot.manifest.finalizedSnapshot.snapshotId,
+        publicationAsOf: snapshot.manifest.finalizedSnapshot.asOfSession,
+        calendarVersion: snapshot.manifest.finalizedSnapshot.calendarVersion,
+        bounds: snapshot.manifest.bounds,
+      },
+      postgres: { url: Redacted.make('postgresql://unused'), tls: false, caPath: '/unused' },
+      tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
+    }
+    const check = (journal: JournalService) =>
+      journal.checkRun({
+        runId: result.runId,
+        accountCount: accounts.length,
+        transferCount: transfers.length,
+        exact: true,
+      })
+    const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          return yield* body(yield* Journal)
+        }).pipe(
+          Effect.provide(
+            JournalLive(config, {
+              createClient: (() => client) as unknown as typeof createTigerBeetleClient,
+              resolveReplicaAddresses: () => Effect.succeed(['3000']),
+            }),
+          ),
+        ),
+      )
+
+    await Effect.runPromise(useJournal(check))
+    expect(writes).toBe(0)
+
+    accounts = [{ ...accounts[0], debits_posted: accounts[0].debits_posted + 1n }, ...accounts.slice(1)]
+    const error = await Effect.runPromise(Effect.flip(useJournal(check)))
+    expect(error.message).toContain('balance does not reconcile exactly')
+    expect(writes).toBe(0)
   })
 })
 

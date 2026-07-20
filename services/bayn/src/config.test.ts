@@ -44,6 +44,7 @@ describe('Effect configuration', () => {
 
     expect(config.host).toBe('0.0.0.0')
     expect(config.port).toBe(8080)
+    expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -82,7 +83,6 @@ describe('Effect configuration', () => {
       verification: 'development-configured',
     })
     expect(config.build.strategyBehaviorHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(config.runOnStartup).toBe(false)
   })
 
   test('does not let missing build facts or development mode bypass production verification', async () => {

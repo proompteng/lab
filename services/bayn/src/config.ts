@@ -14,7 +14,7 @@ export interface RuntimeConfig {
   readonly host: string
   readonly port: number
   readonly build: RuntimeBuildMetadata
-  readonly runOnStartup: boolean
+  readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
   readonly clickhouse: {
     readonly url: string
@@ -72,7 +72,7 @@ const runtimeConfig = Config.all({
   imageRepository: Config.schema(ImageRepository, 'BAYN_IMAGE_REPOSITORY'),
   imageDigest: Config.schema(ImageDigest, 'BAYN_IMAGE_DIGEST'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
-  runOnStartup: Config.boolean('BAYN_RUN_ON_STARTUP').pipe(Config.withDefault(true)),
+  healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
   clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
@@ -105,7 +105,7 @@ const runtimeConfig = Config.all({
       imageDigest: config.imageDigest,
     },
     provenanceMode: config.provenanceMode,
-    runOnStartup: config.runOnStartup,
+    healthIntervalMs: config.healthIntervalMs,
     operationTimeoutMs: config.operationTimeoutMs,
     clickhouse: {
       url: config.clickhouseUrl,
@@ -192,7 +192,6 @@ export const loadConfig = (
           return {
             ...runtime,
             clickhouse: runtime.clickhouse,
-            runOnStartup: provenanceMode === 'production' ? runtime.runOnStartup : false,
             build: {
               ...decodedBuild,
               imageDigest: configuredBuild.imageDigest,

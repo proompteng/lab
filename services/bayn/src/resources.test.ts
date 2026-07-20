@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Option, Redacted, Ref } from 'effect'
 import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
-import { initialize, type RuntimeState } from './app'
+import { initialState, initialize } from './app'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
@@ -24,7 +24,7 @@ const config: RuntimeConfig = {
     strategyBehaviorHash: provenance.strategy.behaviorHash,
     verification: 'embedded',
   },
-  runOnStartup: true,
+  healthIntervalMs: 100,
   operationTimeoutMs: 20,
   clickhouse: {
     url: 'http://clickhouse.test:8123',
@@ -52,9 +52,15 @@ const config: RuntimeConfig = {
 
 const successfulJournal: JournalService = {
   check: Effect.void,
+  checkRun: () => Effect.void,
   journalAndReconcile: (evaluation) =>
     Effect.succeed({ runId: evaluation.runId, accountCount: 1, transferCount: 1, exact: true }),
 }
+
+const marketDataService = (load: MarketDataService['load']): MarketDataService => ({
+  check: Effect.sync(() => makeSnapshot().manifest.finalizedSnapshot),
+  load,
+})
 
 const successfulEvidenceStore: EvidenceStoreService = {
   check: Effect.void,
@@ -97,10 +103,10 @@ describe('Bayn resource lifecycle', () => {
 
   test('interrupts an in-flight market-data read when the startup deadline expires', async () => {
     let interrupted = false
-    const marketData: MarketDataService = {
-      load: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
-    }
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const marketData = marketDataService(
+      Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
+    )
+    const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
       Effect.scoped(
@@ -115,18 +121,18 @@ describe('Bayn resource lifecycle', () => {
 
     expect(interrupted).toBe(true)
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       error: expect.stringContaining('market-data.load: load timed out'),
     })
   })
 
   test('fails closed when ClickHouse returns a malformed row', async () => {
-    const marketData: MarketDataService = {
-      load: Effect.fail(
+    const marketData = marketDataService(
+      Effect.fail(
         operationalError('market-data', 'verify', 'Signal snapshot verification failed', new Error('malformed row')),
       ),
-    }
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    )
+    const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
       Effect.scoped(
@@ -140,7 +146,7 @@ describe('Bayn resource lifecycle', () => {
     )
 
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       error: expect.stringContaining('market-data.verify'),
     })
   })
@@ -159,8 +165,8 @@ describe('Bayn resource lifecycle', () => {
         rejectLookup?.(new Error('client closed'))
       },
     } as unknown as Client
-    const marketData: MarketDataService = { load: Effect.succeed(makeSnapshot()) }
-    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const marketData = marketDataService(Effect.succeed(makeSnapshot()))
+    const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
       Effect.scoped(
@@ -180,7 +186,7 @@ describe('Bayn resource lifecycle', () => {
 
     expect(destroyed).toBe(true)
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAIL_CLOSED',
+      status: 'FAILED',
       error: expect.stringContaining('journal.connectivity-check: connectivity-check timed out'),
     })
   })

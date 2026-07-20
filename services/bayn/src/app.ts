@@ -1,20 +1,26 @@
 import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
-import { Effect, Layer, Option, Ref } from 'effect'
+import { Cause, Clock, Duration, Effect, Exit, Layer, Option, Ref, Schedule } from 'effect'
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
-import type { RuntimeProvenance } from './contracts'
-import { EvidenceStore, type EvidenceStoreService, type PersistenceReceipt } from './db/evidence-store'
+import type { FinalizedSnapshotProvenance, RuntimeProvenance } from './contracts'
+import {
+  EvidenceStore,
+  type EvidenceStoreService,
+  type PersistenceReceipt,
+  type RecoveredEvaluationEvidence,
+} from './db/evidence-store'
 import { formatError, operationalError, type Component, type OperationalError } from './errors'
+import { canonicalHashV1 } from './hash'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { summarizeEvaluation } from './strategy'
 import { Strategy } from './strategy-service'
 import type { EvaluationSummary, ReconciliationResult } from './types'
 
-interface RuntimeEvidence {
+export interface RuntimeEvidence {
   readonly startupMode: 'evaluated' | 'recovered'
   readonly provenance: RuntimeProvenance
   readonly evaluation: EvaluationSummary
@@ -22,27 +28,115 @@ interface RuntimeEvidence {
   readonly persistence: PersistenceReceipt
 }
 
-export type RuntimeState =
-  | { readonly status: 'STARTING'; readonly evidence: null; readonly error: null }
-  | { readonly status: 'READY'; readonly evidence: RuntimeEvidence; readonly error: null }
-  | { readonly status: 'FAIL_CLOSED'; readonly evidence: null; readonly error: string }
+export interface DependencyHealth {
+  readonly status: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE'
+  readonly checkedAt: string | null
+  readonly error: string | null
+}
+
+export interface RuntimeHealth {
+  readonly sequence: number
+  readonly checkedAt: string | null
+  readonly dependencies: {
+    readonly postgresql: DependencyHealth
+    readonly signal: DependencyHealth
+    readonly tigerBeetle: DependencyHealth
+    readonly evidence: DependencyHealth
+  }
+}
+
+export interface RuntimeState {
+  readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
+  readonly evidence: RuntimeEvidence | null
+  readonly health: RuntimeHealth
+  readonly error: string | null
+}
+
+const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
+
+export const initialState = (): RuntimeState => ({
+  status: 'STARTING',
+  evidence: null,
+  health: {
+    sequence: 0,
+    checkedAt: null,
+    dependencies: {
+      postgresql: unknownDependency(),
+      signal: unknownDependency(),
+      tigerBeetle: unknownDependency(),
+      evidence: unknownDependency(),
+    },
+  },
+  error: null,
+})
+
+const allAvailable = (health: RuntimeHealth): boolean =>
+  Object.values(health.dependencies).every((dependency) => dependency.status === 'AVAILABLE')
+
+const isReady = (state: RuntimeState): boolean =>
+  state.status === 'READY' && state.evidence !== null && allAvailable(state.health)
 
 const json = (value: unknown): string =>
   JSON.stringify(value, (_, nested) => (typeof nested === 'bigint' ? nested.toString() : nested))
+
+const verifiedState = (evidence: RuntimeEvidence | null, dependency: DependencyHealth) => {
+  if (evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
+  return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
+}
 
 const publicState = (
   state: RuntimeState,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
-) => ({
-  service: 'bayn',
-  status: state.status,
-  authority: { brokerOrders: false, capitalPromotion: false },
-  provenanceVerification,
-  provenance,
-  evidence: state.evidence,
-  error: state.error,
-})
+) => {
+  let economic = 'UNKNOWN'
+  let accounting = 'UNKNOWN'
+  if (state.evidence !== null) {
+    economic = state.evidence.evaluation.verdict.status === 'PASS' ? 'QUALIFIED' : 'REJECTED'
+    if (state.health.dependencies.tigerBeetle.status === 'AVAILABLE') accounting = 'EXACT'
+    if (state.health.dependencies.tigerBeetle.status === 'UNAVAILABLE') accounting = 'UNAVAILABLE'
+  }
+
+  return {
+    service: 'bayn',
+    operational: {
+      status: state.status,
+      ready: isReady(state),
+      probeSequence: state.health.sequence,
+      checkedAt: state.health.checkedAt,
+    },
+    dependencies: state.health.dependencies,
+    data: {
+      status: verifiedState(state.evidence, state.health.dependencies.signal),
+      input: state.evidence?.evaluation.input ?? null,
+    },
+    evidence: {
+      status: verifiedState(state.evidence, state.health.dependencies.evidence),
+      runId: state.evidence?.evaluation.runId ?? null,
+      startupMode: state.evidence?.startupMode ?? null,
+      persistence: state.evidence?.persistence ?? null,
+    },
+    economic: {
+      status: economic,
+      verdict: state.evidence?.evaluation.verdict ?? null,
+    },
+    accounting: {
+      status: accounting,
+      reconciliation: state.evidence?.reconciliation ?? null,
+    },
+    authority: {
+      maximum: 'observe',
+      brokerOrders: false,
+      capitalPromotion: false,
+    },
+    build: {
+      sourceRevision: provenance.sourceRevision,
+      image: provenance.image,
+      verification: provenanceVerification,
+    },
+    error: state.error,
+  }
+}
 
 const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<string, string>>) =>
   HttpServerResponse.text(json(body), { status, contentType: 'application/json', headers })
@@ -56,8 +150,20 @@ export const makeHttpLayer = (
 ): ReturnType<typeof NodeHttpServer.layer> => {
   const ready = Ref.get(state).pipe(
     Effect.map((current) => {
-      const isReady = current.status === 'READY'
-      return jsonResponse({ ready: isReady, status: current.status }, isReady ? 200 : 503)
+      const ready = isReady(current)
+      const failedDependencies = Object.entries(current.health.dependencies)
+        .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
+        .map(([name]) => name)
+      return jsonResponse(
+        {
+          ready,
+          status: current.status,
+          checkedAt: current.health.checkedAt,
+          probeSequence: current.health.sequence,
+          failedDependencies,
+        },
+        ready ? 200 : 503,
+      )
     }),
   )
   const status = Ref.get(state).pipe(
@@ -122,8 +228,8 @@ const withinDeadline = <A, R>(
     }),
   )
 
-const failClosed = (state: Ref.Ref<RuntimeState>, error: OperationalError): Effect.Effect<void> =>
-  Effect.logError('Bayn startup failed closed').pipe(
+const failStartup = (state: Ref.Ref<RuntimeState>, error: OperationalError): Effect.Effect<void> =>
+  Effect.logError('Bayn startup failed').pipe(
     Effect.annotateLogs({
       service: 'bayn',
       component: error.component,
@@ -131,11 +237,15 @@ const failClosed = (state: Ref.Ref<RuntimeState>, error: OperationalError): Effe
       error: error.message,
     }),
     Effect.andThen(
-      Ref.set(state, {
-        status: 'FAIL_CLOSED',
-        evidence: null,
-        error: formatError(error),
-      }),
+      Ref.update(
+        state,
+        (current): RuntimeState => ({
+          ...current,
+          status: 'FAILED',
+          evidence: null,
+          error: formatError(error),
+        }),
+      ),
     ),
   )
 
@@ -191,17 +301,20 @@ const evaluateAndJournal = (
       'recover-evaluation',
     )
     if (Option.isSome(recovered)) {
-      yield* Ref.set(state, {
-        status: 'READY',
-        evidence: {
-          startupMode: 'recovered',
-          provenance: strategy.provenance,
-          evaluation: recovered.value.evaluation,
-          reconciliation: recovered.value.reconciliation,
-          persistence: recovered.value.persistence,
-        },
-        error: null,
-      })
+      yield* Ref.update(
+        state,
+        (current): RuntimeState => ({
+          ...current,
+          evidence: {
+            startupMode: 'recovered',
+            provenance: strategy.provenance,
+            evaluation: recovered.value.evaluation,
+            reconciliation: recovered.value.reconciliation,
+            persistence: recovered.value.persistence,
+          },
+          error: null,
+        }),
+      )
       yield* Effect.logInfo('Bayn startup proof recovered').pipe(
         Effect.annotateLogs({
           service: 'bayn',
@@ -246,18 +359,21 @@ const evaluateAndJournal = (
       'database',
       'persist-evaluation',
     )
-    yield* Ref.set(state, {
-      status: 'READY',
-      evidence: {
-        startupMode: 'evaluated',
-        provenance: strategy.provenance,
-        evaluation: summarizeEvaluation(evaluation),
-        reconciliation,
-        persistence,
-      },
-      error: null,
-    })
-    yield* Effect.logInfo('Bayn startup proof is ready').pipe(
+    yield* Ref.update(
+      state,
+      (current): RuntimeState => ({
+        ...current,
+        evidence: {
+          startupMode: 'evaluated',
+          provenance: strategy.provenance,
+          evaluation: summarizeEvaluation(evaluation),
+          reconciliation,
+          persistence,
+        },
+        error: null,
+      }),
+    )
+    yield* Effect.logInfo('Bayn startup proof is durable').pipe(
       Effect.annotateLogs({
         service: 'bayn',
         runId: evaluation.runId,
@@ -269,36 +385,167 @@ const evaluateAndJournal = (
     )
   }).pipe(Effect.withLogSpan('startup'))
 
-const checkWithoutJournal = (
-  config: RuntimeConfig,
-  state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
-  Effect.gen(function* () {
-    const marketData = yield* MarketData
-    const journal = yield* Journal
-    const evidenceStore = yield* EvidenceStore
-    yield* withinDeadline(journal.check, config.operationTimeoutMs, 'journal', 'connectivity-check')
-    yield* withinDeadline(
-      databaseOperation(evidenceStore.check, 'health-check'),
-      config.operationTimeoutMs,
-      'database',
-      'health-check',
-    )
-    yield* withinDeadline(marketData.load, config.operationTimeoutMs, 'market-data', 'load')
-    yield* Ref.set(state, {
-      status: 'FAIL_CLOSED',
-      evidence: null,
-      error: 'BAYN_RUN_ON_STARTUP=false; evaluation and accounting proof were not executed',
-    })
-  })
-
 export const initialize = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
 ): Effect.Effect<void, never, MarketData | Journal | Strategy | EvidenceStore> =>
-  (config.runOnStartup ? evaluateAndJournal(config, state) : checkWithoutJournal(config, state)).pipe(
-    Effect.catch((error) => failClosed(state, error)),
-  )
+  evaluateAndJournal(config, state).pipe(Effect.catch((error) => failStartup(state, error)))
+
+interface ProbeResult<A> {
+  readonly value: A | null
+  readonly error: string | null
+}
+
+const observe = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<ProbeResult<A>, never, R> =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect)
+    if (Exit.isSuccess(exit)) return { value: exit.value, error: null }
+    if (Cause.hasInterrupts(exit.cause)) return yield* Effect.interrupt
+    const errors = Cause.prettyErrors(exit.cause).map((error) => error.message)
+    return { value: null, error: errors.join('; ') || 'unknown probe failure' }
+  })
+
+const ensureSignalIdentity = (
+  snapshot: FinalizedSnapshotProvenance,
+  evidence: RuntimeEvidence | null,
+): Effect.Effect<void, OperationalError> =>
+  Effect.try({
+    try: () => {
+      if (evidence === null) throw new Error('startup evidence is unavailable')
+      if (snapshot.snapshotId !== evidence.evaluation.input.snapshotId) {
+        throw new Error('configured Signal snapshot differs from the active run')
+      }
+      if (snapshot.publicationId !== evidence.evaluation.input.publicationId) {
+        throw new Error('configured Signal publication differs from the active run')
+      }
+    },
+    catch: (cause) => operationalError('market-data', 'check-identity', 'Signal identity check failed', cause),
+  })
+
+const durableMaterial = (evidence: RuntimeEvidence | RecoveredEvaluationEvidence) => ({
+  evaluation: evidence.evaluation,
+  reconciliation: evidence.reconciliation,
+  persistence: {
+    runId: evidence.persistence.runId,
+    artifactCount: evidence.persistence.artifactCount,
+    eventCount: evidence.persistence.eventCount,
+    gateCount: evidence.persistence.gateCount,
+  },
+})
+
+const ensureDurableEvidence = (
+  recovered: Option.Option<RecoveredEvaluationEvidence>,
+  evidence: RuntimeEvidence | null,
+): Effect.Effect<void, OperationalError> =>
+  Effect.try({
+    try: () => {
+      if (evidence === null) throw new Error('startup evidence is unavailable')
+      if (Option.isNone(recovered)) throw new Error(`durable run ${evidence.evaluation.runId} is missing`)
+      if (canonicalHashV1(durableMaterial(recovered.value)) !== canonicalHashV1(durableMaterial(evidence))) {
+        throw new Error(`durable run ${evidence.evaluation.runId} differs from the active proof`)
+      }
+    },
+    catch: (cause) => operationalError('database', 'verify-evidence', 'durable evidence verification failed', cause),
+  })
+
+const dependencyHealth = (result: ProbeResult<unknown>, checkedAt: string): DependencyHealth => ({
+  status: result.error === null ? 'AVAILABLE' : 'UNAVAILABLE',
+  checkedAt,
+  error: result.error,
+})
+
+export const probe = (
+  config: RuntimeConfig,
+  state: Ref.Ref<RuntimeState>,
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
+  Effect.gen(function* () {
+    const marketData = yield* MarketData
+    const journal = yield* Journal
+    const evidenceStore = yield* EvidenceStore
+    const current = yield* Ref.get(state)
+    const evidence = current.evidence
+    const [postgresql, signal, tigerBeetle, durableEvidence] = yield* Effect.all(
+      [
+        observe(
+          withinDeadline(
+            databaseOperation(evidenceStore.check, 'continuous-health'),
+            config.operationTimeoutMs,
+            'database',
+            'continuous-health',
+          ),
+        ),
+        observe(
+          withinDeadline(marketData.check, config.operationTimeoutMs, 'market-data', 'continuous-health').pipe(
+            Effect.flatMap((snapshot) => ensureSignalIdentity(snapshot, evidence)),
+          ),
+        ),
+        observe(
+          withinDeadline(
+            evidence === null ? journal.check : journal.checkRun(evidence.reconciliation),
+            config.operationTimeoutMs,
+            'journal',
+            'continuous-health',
+          ),
+        ),
+        observe(
+          evidence === null
+            ? Effect.fail(operationalError('database', 'verify-evidence', 'startup evidence is unavailable'))
+            : withinDeadline(
+                databaseOperation(
+                  evidenceStore.recover(evidence.evaluation.runId, evidence.provenance),
+                  'continuous-recovery',
+                ),
+                config.operationTimeoutMs,
+                'database',
+                'continuous-recovery',
+              ).pipe(Effect.flatMap((recovered) => ensureDurableEvidence(recovered, evidence))),
+        ),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    const checkedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const health: RuntimeHealth = {
+      sequence: current.health.sequence + 1,
+      checkedAt,
+      dependencies: {
+        postgresql: dependencyHealth(postgresql, checkedAt),
+        signal: dependencyHealth(signal, checkedAt),
+        tigerBeetle: dependencyHealth(tigerBeetle, checkedAt),
+        evidence: dependencyHealth(durableEvidence, checkedAt),
+      },
+    }
+    const failures = Object.entries(health.dependencies).filter(([, dependency]) => dependency.error !== null)
+    let next: RuntimeState = { ...current, health }
+    if (evidence !== null && failures.length === 0) {
+      next = { ...current, status: 'READY', health, error: null }
+    } else if (evidence !== null) {
+      next = {
+        ...current,
+        status: 'DEGRADED',
+        health,
+        error: failures.map(([name, dependency]) => `${name}: ${dependency.error}`).join('; '),
+      }
+    }
+    yield* Ref.set(state, next)
+
+    if (next.status !== current.status) {
+      const log = next.status === 'READY' ? Effect.logInfo : Effect.logWarning
+      yield* log(`Bayn health changed to ${next.status}`).pipe(
+        Effect.annotateLogs({
+          service: 'bayn',
+          checkedAt,
+          probeSequence: health.sequence,
+          failedDependencies: failures.map(([name]) => name).join(','),
+        }),
+      )
+    }
+  }).pipe(Effect.withLogSpan('health'))
+
+export const monitor = (
+  config: RuntimeConfig,
+  state: Ref.Ref<RuntimeState>,
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
+  probe(config, state).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)
 
 export const run = (
   config: RuntimeConfig,
@@ -307,11 +554,12 @@ export const run = (
     Effect.gen(function* () {
       const strategy = yield* Strategy
       const evidenceStore = yield* EvidenceStore
-      const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
+      const state = yield* Ref.make(initialState())
       yield* Layer.build(
         makeHttpLayer(config, state, strategy.provenance, config.build.verification, evidenceStore),
       ).pipe(Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)))
       yield* initialize(config, state)
+      yield* monitor(config, state).pipe(Effect.forkScoped({ startImmediately: true }))
       return yield* Effect.never
     }),
   )
