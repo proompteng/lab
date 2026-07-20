@@ -261,9 +261,10 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
 ## Maintenance lock recovery
 
-Every migration and restore shell acquires the fixed `hermes-maintenance` Lease before inspecting or mutating a PVC. If an
-operator shell disconnects, do not clear the Lease while a maintenance Job is active. After every Job is terminal, recover
-the exact observed holder with compare-and-swap semantics, then restart the interrupted step:
+Every migration and restore shell acquires the fixed `hermes-maintenance` Lease before inspecting or mutating a PVC. Its
+four-hour duration exceeds the bounded backup wait, staging Pod, maintenance Job, and rollout windows. If an operator shell
+disconnects, do not clear the Lease while a maintenance Job is active. After every Job is terminal, recover the exact
+observed holder with compare-and-swap semantics, then restart the interrupted step:
 
 ```bash
 set -euo pipefail

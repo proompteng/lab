@@ -84,7 +84,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kind: Lease',
     'name: hermes-maintenance',
     'holderIdentity: ""',
-    'leaseDurationSeconds: 1800',
+    'leaseDurationSeconds: 14400',
   ])
 
   if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
