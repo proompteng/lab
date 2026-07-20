@@ -16,7 +16,9 @@ concurrency:
 
 jobs:
   apply:
-    if: github.actor == 'gregkonush'
+    if: >-
+      github.actor == 'gregkonush' &&
+      github.event.head_commit.message != 'fix: apply bounded review remediation'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
