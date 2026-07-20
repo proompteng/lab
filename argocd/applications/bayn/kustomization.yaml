@@ -10,6 +10,8 @@ resources:
   - postgres-scheduled-backup.yaml
   - postgres-restore-proof.yaml
   - postgres-restore-proof-networkpolicy.yaml
+  - postgres-m1-restore-proof.yaml
+  - postgres-m1-restore-proof-networkpolicy.yaml
   - deployment.yaml
   - service.yaml
   - networkpolicy.yaml
