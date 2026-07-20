@@ -35,8 +35,8 @@ const baselineNames = new Set(
 
 it('preserves every established enabled ApplicationSet entry', () => {
   const currentNames = new Set(
-    loadEnabledAppInventory().entries
-      .filter((entry) => entry.sourceKind === 'applicationset-element')
+    loadEnabledAppInventory()
+      .entries.filter((entry) => entry.sourceKind === 'applicationset-element')
       .map((entry) => entry.name),
   )
 
