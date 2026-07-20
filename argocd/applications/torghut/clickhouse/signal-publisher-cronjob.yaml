@@ -13,7 +13,7 @@ spec:
   timeZone: America/New_York
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
-  suspend: true
+  suspend: false
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -47,11 +47,11 @@ spec:
                 - daily
               env:
                 - name: SIGNAL_CODE_REVISION
-                  value: "ed782f302385ee143f46490ce69159bf70ece547"
+                  value: "ad796a1b66c3cf92fea060ceb3750570831ac80b"
                 - name: SIGNAL_IMAGE_REPOSITORY
                   value: registry.ide-newton.ts.net/lab/signal-publisher
                 - name: SIGNAL_IMAGE_DIGEST
-                  value: sha256:4c02c9cd33a04da68b4d1b62cc222f4d037dc3fbb8c4cb32d78bbade23673d55
+                  value: sha256:7f848d36e34c5cb2c9a74053db29bab65a5e3c9ec19e5ce997c72955b0fc01c6
                 - name: SIGNAL_CLICKHOUSE_URL
                   value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
                 - name: SIGNAL_CLICKHOUSE_USERNAME
