@@ -259,6 +259,18 @@ test('rejects releasing the migration Lease before apply completes', async () =>
   )
 })
 
+test('rejects releasing the cutover Lease before Hermes is restored', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   argocd app sync openclaw --prune=false\n',
+    '   release_maintenance_lock\n   argocd app sync openclaw --prune=false\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: cutover must hold the migration Lease until Hermes is restored`,
+  )
+})
+
 test('rejects a maintenance lock without compare-and-swap acquisition', async () => {
   const files = await loadProductionFiles()
   files.maintenanceLock = files.maintenanceLock.replace(

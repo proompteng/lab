@@ -428,14 +428,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const migrationAcquireIndex = migrationSection.indexOf(maintenanceAcquireCommand)
   const migrationDryRunIndex = migrationSection.indexOf('migration-dry-run-job.yaml')
   const migrationApplyIndex = migrationSection.indexOf('migration-apply-job.yaml')
+  const migrationSyncIndex = migrationSection.indexOf('argocd app sync hermes --prune=false')
   const migrationReleaseIndex = migrationSection.lastIndexOf('\n   release_maintenance_lock\n')
   if (
-    count(migrationSection, maintenanceOwnershipAssertion) !== 2 ||
+    count(migrationSection, maintenanceOwnershipAssertion) !== 3 ||
     count(migrationSection, '\n   release_maintenance_lock\n') !== 1 ||
     migrationAcquireIndex < 0 ||
     migrationDryRunIndex <= migrationAcquireIndex ||
     migrationApplyIndex <= migrationDryRunIndex ||
-    migrationReleaseIndex <= migrationApplyIndex
+    migrationSyncIndex <= migrationApplyIndex ||
+    migrationReleaseIndex <= migrationSyncIndex
   ) {
     failures.push(`${productionPaths.runbook}: migration must hold one Lease from staging through apply`)
   }
@@ -475,12 +477,25 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`',
     'Do not reuse the earlier archive.',
     'do not run Phase 2 step 5 because merged `main` now enables',
+    'Keep the same Phase 2 shell and Lease open through cutover step 5.',
     'argocd app sync openclaw --prune=false',
     'openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)',
     'Sync Hermes from merged `main` only after the OpenClaw VMI is gone',
   ])
   if (cutoverSection.includes('kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete')) {
     failures.push(`${productionPaths.runbook}: cutover must treat an already-absent OpenClaw VMI as stopped`)
+  }
+  const cutoverOpenClawSyncIndex = cutoverSection.indexOf('argocd app sync openclaw --prune=false')
+  const cutoverHermesSyncIndex = cutoverSection.indexOf('argocd app sync hermes --prune=false')
+  const cutoverReleaseIndex = cutoverSection.lastIndexOf('\n   release_maintenance_lock\n')
+  if (
+    count(cutoverSection, maintenanceOwnershipAssertion) !== 2 ||
+    count(cutoverSection, '\n   release_maintenance_lock\n') !== 1 ||
+    cutoverOpenClawSyncIndex < 0 ||
+    cutoverHermesSyncIndex <= cutoverOpenClawSyncIndex ||
+    cutoverReleaseIndex <= cutoverHermesSyncIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: cutover must hold the migration Lease until Hermes is restored`)
   }
   if (
     cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service') >

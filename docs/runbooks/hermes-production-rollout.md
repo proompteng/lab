@@ -312,7 +312,7 @@ unset stale_maintenance_holder
    path or descendant fails the pipe.
 
 2. In one dedicated private Bash process, acquire the maintenance Lease for the entire staging, dry-run, and apply
-   transaction. Keep this same shell open through step 4. Suspend new backups and wait up to 65 minutes for every active
+   transaction. Keep this same shell open through step 5. Suspend new backups and wait up to 65 minutes for every active
    backup Job to finish before replacing the staging tree or stopping the gateway; only then does the migration have
    exclusive RBD access:
 
@@ -378,7 +378,7 @@ unset stale_maintenance_holder
    ```
 
 4. If the preview is correct, use the same shell and Lease to run the apply Job. Preserve its Job name, log, report summary,
-   and generated restore-point archive as migration evidence. Release the Lease only after the apply evidence is captured:
+   and generated restore-point archive as migration evidence. Keep the Lease held for the final resync:
 
    ```bash
    set -euo pipefail
@@ -393,18 +393,21 @@ unset stale_maintenance_holder
      exit 1
    fi
    kubectl -n hermes logs "$migration_job"
-   release_maintenance_lock
-   trap - EXIT HUP INT TERM
-   unset maintenance_holder
    ```
 
-5. Restore desired replicas through Argo and repeat authenticated inference, persistence, and backup checks:
+5. In the same shell, restore desired replicas through Argo, verify backups are enabled, then release the Lease. Repeat the
+   authenticated inference, persistence, and backup checks from Phase 1 after releasing it:
 
    ```bash
    set -euo pipefail
+   test -n "${maintenance_holder:-}"
+   test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
    argocd app sync hermes --prune=false
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
    test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
+   release_maintenance_lock
+   trap - EXIT HUP INT TERM
+   unset maintenance_holder
    ```
 
    If migration is aborted before the final sync, sync the Hermes app before leaving the maintenance window so backups are
@@ -437,13 +440,16 @@ Cutover sequence:
 2. With the source quiesced, repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`. Preserve the new audit output,
    dry-run Job, apply Job, and restore-point archive as the final reconciliation evidence. Do not reuse the earlier archive.
    Leave the Hermes StatefulSet at zero and backups suspended; do not run Phase 2 step 5 because merged `main` now enables
-   Discord. If this final migration fails, keep Hermes Discord disabled. If cutover is abandoned before the VMI is stopped,
-   restart `openclaw-gateway.service`, resync the last API-only Hermes revision, and repeat this final reconciliation before
-   any later attempt.
-3. Sync the merged OpenClaw GitOps change and prove its VMI is gone before provisioning Hermes with the shared token:
+   Discord. Keep the same Phase 2 shell and Lease open through cutover step 5. If this final migration fails, keep Hermes
+   Discord disabled. If cutover is abandoned before the VMI is stopped, restart `openclaw-gateway.service`, resync the last
+   API-only Hermes revision, release the Lease, and repeat this final reconciliation before any later attempt.
+3. In the same shell, assert continued Lease ownership, sync the merged OpenClaw GitOps change, and prove its VMI is gone
+   before provisioning Hermes with the shared token:
 
    ```bash
    set -euo pipefail
+   test -n "${maintenance_holder:-}"
+   test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
    argocd app sync openclaw --prune=false
    openclaw_stop_deadline=$(( $(date +%s) + 600 ))
    while :; do
@@ -461,10 +467,25 @@ Cutover sequence:
    unset openclaw_vmi_name openclaw_stop_deadline
    ```
 
-4. In a private shell, transfer the existing bot token and numeric allowlist directly into the `hermes-runtime` 1Password
-   item, then unset local variables.
-5. Sync Hermes from merged `main` only after the OpenClaw VMI is gone, wait for the updated ExternalSecret and rollout to
-   become ready, and prove only one Discord bot session is active. This sync restores the Hermes replicas and backups.
+4. In a second private shell, transfer the existing bot token and numeric allowlist directly into the `hermes-runtime`
+   1Password item, then unset local variables. Keep the Lease-owning shell open.
+5. Keep the Lease-owning shell open. Sync Hermes from merged `main` only after the OpenClaw VMI is gone. Wait for the
+   updated ExternalSecret and rollout, verify backups are enabled, then release the Lease. Prove only one Discord bot
+   session is active. This sync restores the Hermes replicas and backups:
+
+   ```bash
+   set -euo pipefail
+   test -n "${maintenance_holder:-}"
+   test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
+   argocd app sync hermes --prune=false
+   kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
+   kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+   test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
+   release_maintenance_lock
+   trap - EXIT HUP INT TERM
+   unset maintenance_holder
+   ```
+
 6. From the allowlisted account, send a unique canary message and capture the inbound message ID, Hermes session ID, response
    message ID, and timestamp. Verify a non-allowlisted account is rejected or ignored.
 7. Restart `hermes-0`, send a second canary, and verify session/memory continuity plus a current successful backup.
