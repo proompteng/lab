@@ -20,9 +20,6 @@ export const sha256 = (value: string): string => createHash('sha256').update(val
 
 export const hashObject = (value: unknown): string => sha256(canonicalJson(value))
 
-type JsonPrimitive = null | boolean | number | string
-type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue }
-
 const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
 const hasLoneSurrogate = (value: string): boolean => {
@@ -39,15 +36,16 @@ const hasLoneSurrogate = (value: string): boolean => {
   return false
 }
 
-const canonicalizeValue = (value: unknown, ancestors: Set<object>, path: string): JsonValue => {
-  if (value === null || typeof value === 'boolean') return value
+const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: string): string => {
+  if (value === null) return 'null'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') {
     if (hasLoneSurrogate(value)) throw new TypeError(`${path} contains an invalid Unicode surrogate`)
-    return value
+    return JSON.stringify(value)
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new TypeError(`${path} contains a non-finite number`)
-    return Object.is(value, -0) ? 0 : value
+    return JSON.stringify(Object.is(value, -0) ? 0 : value)
   }
   if (Array.isArray(value)) {
     if (ancestors.has(value)) throw new TypeError(`${path} contains a cycle`)
@@ -63,16 +61,21 @@ const canonicalizeValue = (value: unknown, ancestors: Set<object>, path: string)
     ) {
       throw new TypeError(`${path} must be a dense array without custom properties`)
     }
-    for (const key of keys) {
+    const values = keys.map((key) => {
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError(`${path}[${key}] must be an enumerable data property`)
       }
-    }
+      return descriptor.value
+    })
     ancestors.add(value)
-    const canonical = value.map((nested, index) => canonicalizeValue(nested, ancestors, `${path}[${index}]`))
-    ancestors.delete(value)
-    return canonical
+    try {
+      return `[${values
+        .map((nested, index) => serializeCanonicalValue(nested, ancestors, `${path}[${index}]`))
+        .join(',')}]`
+    } finally {
+      ancestors.delete(value)
+    }
   }
   if (typeof value === 'object') {
     if (ancestors.has(value)) throw new TypeError(`${path} contains a cycle`)
@@ -82,26 +85,30 @@ const canonicalizeValue = (value: unknown, ancestors: Set<object>, path: string)
     }
     const keys = Reflect.ownKeys(value)
     if (keys.some((key) => typeof key !== 'string')) throw new TypeError(`${path} contains a symbol key`)
-    for (const key of keys as string[]) {
+    const entries = (keys as string[]).map((key) => {
       if (hasLoneSurrogate(key)) throw new TypeError(`${path} contains an invalid Unicode key`)
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError(`${path}.${key} must be an enumerable data property`)
       }
-    }
+      return [key, descriptor.value] as const
+    })
     ancestors.add(value)
-    const canonical = Object.fromEntries(
-      (keys as string[])
-        .sort(compareUtf16)
-        .map((key) => [key, canonicalizeValue((value as Record<string, unknown>)[key], ancestors, `${path}.${key}`)]),
-    )
-    ancestors.delete(value)
-    return canonical
+    try {
+      return `{${entries
+        .sort(([left], [right]) => compareUtf16(left, right))
+        .map(
+          ([key, nested]) => `${JSON.stringify(key)}:${serializeCanonicalValue(nested, ancestors, `${path}.${key}`)}`,
+        )
+        .join(',')}}`
+    } finally {
+      ancestors.delete(value)
+    }
   }
   throw new TypeError(`${path} contains a non-JSON ${typeof value} value`)
 }
 
-export const canonicalJsonV1 = (value: unknown): string => JSON.stringify(canonicalizeValue(value, new Set(), '$'))
+export const canonicalJsonV1 = (value: unknown): string => serializeCanonicalValue(value, new Set(), '$')
 
 export const canonicalHashV1 = (value: unknown): string => sha256(canonicalJsonV1(value))
 

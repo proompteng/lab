@@ -10,6 +10,7 @@ describe('canonical hashing', () => {
 
   test('uses deterministic UTF-16 key order and normalizes negative zero', () => {
     expect(canonicalJsonV1({ '\u20ac': 1, '\r': 2, a: -0, '\ud83d\ude00': 3 })).toBe('{"\\r":2,"a":0,"€":1,"😀":3}')
+    expect(canonicalJsonV1({ nested: { '2': 2, '10': 1 } })).toBe('{"nested":{"10":1,"2":2}}')
     expect(canonicalHashV1({ b: 2, a: 1 })).toBe(canonicalHashV1({ a: 1, b: 2 }))
   })
 
