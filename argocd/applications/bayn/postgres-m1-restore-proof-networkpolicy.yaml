@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-db-restore-m1-20260720t232623z
+  labels:
+    app.kubernetes.io/name: bayn-db-restore-proof
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: bayn-db-restore-m1-20260720t232623z
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: bayn-db-restore-m1-20260720t232623z
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudnative-pg
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: 9187
+          protocol: TCP
