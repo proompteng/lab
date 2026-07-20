@@ -247,6 +247,18 @@ test('rejects maintenance operations without an atomic Lease', async () => {
   )
 })
 
+test('rejects releasing the migration Lease before apply completes', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   unset hermes_pod_name hermes_stop_deadline\n',
+    '   unset hermes_pod_name hermes_stop_deadline\n   release_maintenance_lock\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: migration must hold one Lease from staging through apply`,
+  )
+})
+
 test('rejects a maintenance lock without compare-and-swap acquisition', async () => {
   const files = await loadProductionFiles()
   files.maintenanceLock = files.maintenanceLock.replace(

@@ -311,12 +311,14 @@ unset stale_maintenance_holder
    files and `memory/` are required; `MEMORY.md` and `skills/` are included only when present, and any unreadable selected
    path or descendant fails the pipe.
 
-2. Suspend new backups and wait up to 65 minutes for every active backup Job to finish before replacing the staging tree or
-   stopping the gateway; only then does the migration have exclusive RBD access:
+2. In one dedicated private Bash process, acquire the maintenance Lease for the entire staging, dry-run, and apply
+   transaction. Keep this same shell open through step 4. Suspend new backups and wait up to 65 minutes for every active
+   backup Job to finish before replacing the staging tree or stopping the gateway; only then does the migration have
+   exclusive RBD access:
 
    ```bash
    set -euo pipefail
-   maintenance_holder="migration-stage-$(openssl rand -hex 8)"
+   maintenance_holder="migration-$(openssl rand -hex 8)"
    release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
    abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
    bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
@@ -354,21 +356,16 @@ unset stale_maintenance_holder
      sleep 5
    done
    unset hermes_pod_name hermes_stop_deadline
-   release_maintenance_lock
-   trap - EXIT HUP INT TERM
-   unset maintenance_holder
    ```
 
-3. Run the merged dry-run Job and review its complete log. It must contain no secret migration and no unresolved conflict:
+3. In the same shell, assert continued Lease ownership, run the merged dry-run Job, and review its complete log. It must
+   contain no secret migration and no unresolved conflict. Exit the shell to release the Lease if the preview is not
+   accepted:
 
    ```bash
    set -euo pipefail
-   maintenance_holder="migration-dry-run-$(openssl rand -hex 8)"
-   release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
-   abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
-   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
-   trap release_maintenance_lock EXIT
-   trap abort_maintenance HUP INT TERM
+   test -n "${maintenance_holder:-}"
+   test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
    bash scripts/hermes/wait-for-maintenance.sh
    dry_run_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-dry-run-job.yaml -o name)
    if ! kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m; then
@@ -378,22 +375,15 @@ unset stale_maintenance_holder
      exit 1
    fi
    kubectl -n hermes logs "$dry_run_job"
-   release_maintenance_lock
-   trap - EXIT HUP INT TERM
-   unset maintenance_holder
    ```
 
-4. If the preview is correct, run the apply Job. Preserve its Job name, log, report summary, and generated restore-point
-   archive as migration evidence:
+4. If the preview is correct, use the same shell and Lease to run the apply Job. Preserve its Job name, log, report summary,
+   and generated restore-point archive as migration evidence. Release the Lease only after the apply evidence is captured:
 
    ```bash
    set -euo pipefail
-   maintenance_holder="migration-apply-$(openssl rand -hex 8)"
-   release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
-   abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
-   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
-   trap release_maintenance_lock EXIT
-   trap abort_maintenance HUP INT TERM
+   test -n "${maintenance_holder:-}"
+   test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
    bash scripts/hermes/wait-for-maintenance.sh
    migration_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-apply-job.yaml -o name)
    if ! kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m; then

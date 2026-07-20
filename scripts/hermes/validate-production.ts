@@ -404,24 +404,40 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   const maintenanceWaitCommand = 'bash scripts/hermes/wait-for-maintenance.sh'
   const maintenanceAcquireCommand = 'bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"'
+  const maintenanceOwnershipAssertion =
+    'test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath=\'{.spec.holderIdentity}\')" = "$maintenance_holder"'
   const restoreStageCleanupCommand = `${maintenanceWaitCommand} --cleanup-restore-stage`
   const restoreSection = files.runbook.match(/### Restore Hermes data[\s\S]*?## Completion evidence/)?.[0] ?? ''
   if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 3) {
     failures.push(`${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`)
   }
   if (
-    count(migrationSection, maintenanceAcquireCommand) !== 3 ||
+    count(migrationSection, maintenanceAcquireCommand) !== 1 ||
     count(restoreSection, maintenanceAcquireCommand) !== 1
   ) {
     failures.push(`${productionPaths.runbook}: every maintenance operation must acquire the atomic Lease`)
   }
   if (
-    count(migrationSection, 'trap release_maintenance_lock EXIT') !== 3 ||
+    count(migrationSection, 'trap release_maintenance_lock EXIT') !== 1 ||
     count(restoreSection, 'trap release_maintenance_lock EXIT') !== 1 ||
-    count(migrationSection, 'abort_maintenance()') !== 3 ||
+    count(migrationSection, 'abort_maintenance()') !== 1 ||
     count(restoreSection, 'abort_maintenance()') !== 1
   ) {
     failures.push(`${productionPaths.runbook}: every maintenance Lease must release on exit and signals`)
+  }
+  const migrationAcquireIndex = migrationSection.indexOf(maintenanceAcquireCommand)
+  const migrationDryRunIndex = migrationSection.indexOf('migration-dry-run-job.yaml')
+  const migrationApplyIndex = migrationSection.indexOf('migration-apply-job.yaml')
+  const migrationReleaseIndex = migrationSection.lastIndexOf('\n   release_maintenance_lock\n')
+  if (
+    count(migrationSection, maintenanceOwnershipAssertion) !== 2 ||
+    count(migrationSection, '\n   release_maintenance_lock\n') !== 1 ||
+    migrationAcquireIndex < 0 ||
+    migrationDryRunIndex <= migrationAcquireIndex ||
+    migrationApplyIndex <= migrationDryRunIndex ||
+    migrationReleaseIndex <= migrationApplyIndex
+  ) {
+    failures.push(`${productionPaths.runbook}: migration must hold one Lease from staging through apply`)
   }
   for (const [section, createCommand] of [
     [migrationSection, 'migration-dry-run-job.yaml'],
