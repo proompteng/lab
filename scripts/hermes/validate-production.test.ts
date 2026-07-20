@@ -18,12 +18,33 @@ test('rejects a mutable Hermes runtime image', async () => {
   )
 })
 
+test('rejects release evidence that does not enforce the mirrored digest', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    'printf \'%s\\n\' "$mirror_digest"',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a"`,
+  )
+})
+
 test('rejects enabling Discord inside the API-only canary', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace('discord:\n    enabled: false', 'discord:\n    enabled: true')
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.config}: missing production invariant "discord:\\n    enabled: false"`,
+  )
+})
+
+test('rejects secret bridge verification that does not enforce key length', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('test "$api_key_bytes" -ge 32', 'echo "$api_key_bytes"')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "test \\"$api_key_bytes\\" -ge 32"`,
   )
 })
 
@@ -198,6 +219,25 @@ test('rejects migration staging that overlays a previous source tree', async () 
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'"`,
+  )
+})
+
+test('rejects migration staging that races an active backup', async () => {
+  const files = await loadProductionFiles()
+  const stagingCommand =
+    "   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \\\n     'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'\n"
+  files.runbook = files.runbook.replace(stagingCommand, '')
+  const phaseTwoStart = files.runbook.indexOf('## Phase 2:')
+  const phaseTwo = files.runbook
+    .slice(phaseTwoStart)
+    .replace(
+      '   kubectl -n hermes patch cronjob hermes-backup',
+      `${stagingCommand}   kubectl -n hermes patch cronjob hermes-backup`,
+    )
+  files.runbook = files.runbook.slice(0, phaseTwoStart) + phaseTwo
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`,
   )
 })
 

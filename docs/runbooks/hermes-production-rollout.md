@@ -20,10 +20,16 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 Before each rollout, verify and record:
 
 ```bash
-git rev-parse origin/main
-crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2
-crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64
-kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}{"\n"}'
+set -euo pipefail
+main_revision=$(git rev-parse origin/main)
+upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
+mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
+test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
+test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')
+printf 'main=%s upstream=%s mirror=%s argo=%s\n' \
+  "$main_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
+unset main_revision upstream_digest mirror_digest hermes_revision
 ```
 
 The expected upstream index digest is `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
@@ -44,6 +50,7 @@ The expected mirrored amd64 manifest digest is
    do not echo the generated value:
 
    ```bash
+   set -euo pipefail
    hermes_api_key=$(openssl rand -hex 32)
    op item create --vault infra --category login --title hermes-runtime \
      "API_SERVER_KEY[password]=$hermes_api_key" >/dev/null
@@ -54,12 +61,16 @@ The expected mirrored amd64 manifest digest is
    value:
 
    ```bash
+   set -euo pipefail
    argocd app get hermes --refresh
    argocd app sync hermes --prune=false
    kubectl -n hermes get namespace hermes \
      -l observability.proompteng.ai/hermes-rollout-enabled=true -o name | grep -qx namespace/hermes
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
-   kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | wc -c
+   api_key_bytes=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | wc -c | tr -d '[:space:]')
+   test "$api_key_bytes" -ge 32
+   printf '%s\n' "$api_key_bytes"
+   unset api_key_bytes
    ```
 
    The reported key length must be at least 32. Do not include the value in rollout evidence.
@@ -132,6 +143,7 @@ The expected mirrored amd64 manifest digest is
    In a second private shell:
 
    ```bash
+   set -euo pipefail
    hermes_api_key=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d)
    test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18642/health/detailed)" = 401
    curl -fsS -H "Authorization: Bearer $hermes_api_key" http://127.0.0.1:18642/health/detailed | jq -e \
@@ -148,6 +160,7 @@ The expected mirrored amd64 manifest digest is
 3. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
 
    ```bash
+   set -euo pipefail
    kubectl -n hermes exec hermes-0 -c hermes -- sh -c 'date -u > /opt/data/workspace/tuslagch/.rollout-canary'
    kubectl -n hermes delete pod hermes-0
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
@@ -157,6 +170,7 @@ The expected mirrored amd64 manifest digest is
 4. Prove network containment from the gateway and domain filtering through Squid:
 
    ```bash
+   set -euo pipefail
    if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
      'import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open("https://example.com", timeout=5)'; then
      echo 'direct public egress unexpectedly succeeded' >&2
@@ -269,16 +283,11 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
    identity files and `memory/` are required; `MEMORY.md` and `skills/` are included only when present, and any unreadable
    selected path or descendant fails the pipe.
 
-2. Stage the sanitized directory on the Hermes data PVC. Suspend new backups and wait up to 65 minutes for every active
-   backup Job to finish before stopping the gateway; only then does the migration have exclusive RBD access:
+2. Suspend new backups and wait up to 65 minutes for every active backup Job to finish before replacing the staging tree or
+   stopping the gateway; only then does the migration have exclusive RBD access:
 
    ```bash
    set -euo pipefail
-   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
-     'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'
-   kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/openclaw -c hermes
-   rm -rf -- "$hermes_stage_dir"
-   unset hermes_stage_dir
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
    backup_wait_deadline=$(( $(date +%s) + 3900 ))
    while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
@@ -290,6 +299,11 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
      sleep 10
    done
    unset backup_wait_deadline
+   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
+     'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'
+   kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/openclaw -c hermes
+   rm -rf -- "$hermes_stage_dir"
+   unset hermes_stage_dir
    kubectl -n hermes scale statefulset/hermes --replicas=0
    kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
    ```
@@ -326,6 +340,7 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 5. Restore desired replicas through Argo and repeat authenticated inference, persistence, and backup checks:
 
    ```bash
+   set -euo pipefail
    argocd app sync hermes --prune=false
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
    test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
@@ -366,6 +381,7 @@ minutes, loss/corruption of migrated state, backup verification failure, or repe
 ### Before Discord cutover
 
 ```bash
+set -euo pipefail
 argocd app sync hermes --revision '<last-known-good-main-sha>' --prune=false
 kubectl -n hermes rollout status statefulset/hermes --timeout=15m
 ```

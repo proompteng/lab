@@ -272,6 +272,22 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'printf "%s  %s\\n" "$expected_digest" "$archive_path" | sha256sum -c -',
     'printf "%s  %s\\n" "$expected_digest" "$archive" | sha256sum -c -',
   ])
+  const releaseEvidenceSection = files.runbook.match(/## Release evidence[\s\S]*?## Phase 0:/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, releaseEvidenceSection, [
+    'set -euo pipefail',
+    'main_revision=$(git rev-parse origin/main)',
+    'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
+    'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
+  ])
+  const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
+    'test "$api_key_bytes" -ge 32',
+    'printf \'%s\\n\' "$api_key_bytes"',
+  ])
+  if (count(phaseZeroSection, 'set -euo pipefail') !== 2) {
+    failures.push(`${productionPaths.runbook}: secret creation and bridge verification must both fail closed`)
+  }
   const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Phase 2:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, rotationSection, [
     'set -euo pipefail',
@@ -299,6 +315,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup'
   if (count(files.runbook, `while [ "$(${activeBackupSelector}`) !== 3) {
     failures.push(`${productionPaths.runbook}: canary, migration, and restore must wait for active backup Jobs`)
+  }
+  const migrationSection = files.runbook.match(/## Phase 2:[\s\S]*?## Phase 3:/)?.[0] ?? ''
+  if (
+    migrationSection.indexOf(suspendBackupCommand) > migrationSection.indexOf('rm -rf -- /opt/data/migration/openclaw')
+  ) {
+    failures.push(`${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`)
   }
 
   requireTerms(failures, productionPaths.mimirRules, files.mimirRules, [
