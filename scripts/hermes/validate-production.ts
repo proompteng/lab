@@ -14,12 +14,14 @@ export const productionPaths = {
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   serviceAccount: 'argocd/applications/hermes/serviceaccount.yaml',
+  maintenanceLease: 'argocd/applications/hermes/maintenance-lease.yaml',
   migrationDryRun: 'argocd/applications/hermes/operations/migration-dry-run-job.yaml',
   migrationApply: 'argocd/applications/hermes/operations/migration-apply-job.yaml',
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
   migrationAudit: 'scripts/hermes/audit-migration-source.ts',
   maintenanceWait: 'scripts/hermes/wait-for-maintenance.sh',
+  maintenanceLock: 'scripts/hermes/maintenance-lock.sh',
   platform: 'argocd/applicationsets/platform.yaml',
   mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
   clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
@@ -69,12 +71,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- backup-cronjob.yaml',
     '- network-policy.yaml',
     '- external-secret.yaml',
+    '- maintenance-lease.yaml',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
     'operations/',
     'migration-apply-job.yaml',
     'restore-job.yaml',
+  ])
+  requireTerms(failures, productionPaths.maintenanceLease, files.maintenanceLease, [
+    'apiVersion: coordination.k8s.io/v1',
+    'kind: Lease',
+    'name: hermes-maintenance',
+    'holderIdentity: ""',
+    'leaseDurationSeconds: 1800',
   ])
 
   if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
@@ -233,6 +243,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'opaqueTokenPattern',
     'shannonEntropy(candidate) >= 3.5',
     "reason: 'opaque high-entropy value'",
+    'isCredentialLikePathComponent',
+    "'[redacted-credential-component]'",
+    "return 'credential-like path component is forbidden'",
     'migration source audit failed',
     '${issue.path}: ${issue.reason}',
   ])
@@ -249,12 +262,27 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Hermes restore staging Pod exists; retry restore with --cleanup-restore-stage',
     'delete pod "$restore_stage_pod" --wait=true --timeout=10m',
   ])
+  requireTerms(failures, productionPaths.maintenanceLock, files.maintenanceLock, [
+    'set -euo pipefail',
+    'readonly lease=hermes-maintenance',
+    '^(acquire|release|recover)$',
+    '{op: "test", path: "/spec/holderIdentity", value: $expected}',
+    '{op: "replace", path: "/spec/holderIdentity", value: $replacement}',
+    'patch lease "$lease" --type=json',
+    'refusing to release a Hermes maintenance Lease held by another operator',
+    'wait-for-maintenance.sh',
+  ])
 
   const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
   requireTerms(failures, productionPaths.platform, hermesApplication, [
     'path: argocd/applications/hermes',
     'namespace: hermes',
     'automation: manual',
+    'group: coordination.k8s.io',
+    'kind: Lease',
+    'name: hermes-maintenance',
+    '- /spec/holderIdentity',
+    '- /spec/renewTime',
     'external-secrets.proompteng.ai/enabled: "true"',
     'observability.proompteng.ai/hermes-rollout-enabled: "true"',
     'pod-security.kubernetes.io/enforce: restricted',
@@ -267,6 +295,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never run `hermes claw cleanup`',
     'Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.',
     'Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.',
+    "stale_maintenance_holder=$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')",
+    'maintenance-lock.sh recover "$stale_maintenance_holder"',
     'A standalone Job does not update the CronJob',
     '## API key rotation',
     'Every API key rotation must restart `hermes-0`',
@@ -317,7 +347,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   if (count(phaseZeroSection, 'set -euo pipefail') !== 2) {
     failures.push(`${productionPaths.runbook}: secret creation and bridge verification must both fail closed`)
   }
-  const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Phase 2:/)?.[0] ?? ''
+  const rotationSection = files.runbook.match(/## API key rotation[\s\S]*?## Maintenance lock recovery/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, rotationSection, [
     'set -euo pipefail',
     'trap cleanup_rotation EXIT',
@@ -352,10 +382,25 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`)
   }
   const maintenanceWaitCommand = 'bash scripts/hermes/wait-for-maintenance.sh'
+  const maintenanceAcquireCommand = 'bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"'
   const restoreStageCleanupCommand = `${maintenanceWaitCommand} --cleanup-restore-stage`
   const restoreSection = files.runbook.match(/### Restore Hermes data[\s\S]*?## Completion evidence/)?.[0] ?? ''
   if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 3) {
     failures.push(`${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`)
+  }
+  if (
+    count(migrationSection, maintenanceAcquireCommand) !== 3 ||
+    count(restoreSection, maintenanceAcquireCommand) !== 1
+  ) {
+    failures.push(`${productionPaths.runbook}: every maintenance operation must acquire the atomic Lease`)
+  }
+  if (
+    count(migrationSection, 'trap release_maintenance_lock EXIT') !== 3 ||
+    count(restoreSection, 'trap release_maintenance_lock EXIT') !== 1 ||
+    count(migrationSection, 'abort_maintenance()') !== 3 ||
+    count(restoreSection, 'abort_maintenance()') !== 1
+  ) {
+    failures.push(`${productionPaths.runbook}: every maintenance Lease must release on exit and signals`)
   }
   for (const [section, createCommand] of [
     [migrationSection, 'migration-dry-run-job.yaml'],

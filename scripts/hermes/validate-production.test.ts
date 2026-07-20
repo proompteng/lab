@@ -223,6 +223,30 @@ test('rejects migration or restore creation without maintenance serialization', 
   )
 })
 
+test('rejects maintenance operations without an atomic Lease', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"\n',
+    '',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: every maintenance operation must acquire the atomic Lease`,
+  )
+})
+
+test('rejects a maintenance lock without compare-and-swap acquisition', async () => {
+  const files = await loadProductionFiles()
+  files.maintenanceLock = files.maintenanceLock.replace(
+    '{op: "test", path: "/spec/holderIdentity", value: $expected}',
+    '{op: "replace", path: "/spec/holderIdentity", value: $expected}',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.maintenanceLock}: missing production invariant "{op: \\"test\\", path: \\"/spec/holderIdentity\\", value: $expected}"`,
+  )
+})
+
 test('rejects restore staging without stale Pod cleanup', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(

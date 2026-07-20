@@ -259,6 +259,21 @@ Stop and roll back the 1Password value if the Secret does not refresh, the repla
 key remains accepted, the replacement port-forward does not become ready, or the new key fails. Use 1Password item history
 from a new private shell if the fail-fast process has already exited. ExternalSecret `Ready` alone is not rotation proof.
 
+## Maintenance lock recovery
+
+Every migration and restore shell acquires the fixed `hermes-maintenance` Lease before inspecting or mutating a PVC. If an
+operator shell disconnects, do not clear the Lease while a maintenance Job is active. After every Job is terminal, recover
+the exact observed holder with compare-and-swap semantics, then restart the interrupted step:
+
+```bash
+set -euo pipefail
+stale_maintenance_holder=$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')
+test -n "$stale_maintenance_holder"
+bash scripts/hermes/wait-for-maintenance.sh --cleanup-restore-stage
+bash scripts/hermes/maintenance-lock.sh recover "$stale_maintenance_holder"
+unset stale_maintenance_holder
+```
+
 ## Phase 2: non-secret user-data migration
 
 1. Build a sanitized source archive from the OpenClaw workspace. Only the listed identity and memory paths are exported;
@@ -300,6 +315,12 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
+   maintenance_holder="migration-stage-$(openssl rand -hex 8)"
+   release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
+   abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
+   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
+   trap release_maintenance_lock EXIT
+   trap abort_maintenance HUP INT TERM
    bash scripts/hermes/wait-for-maintenance.sh
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
    backup_wait_deadline=$(( $(date +%s) + 3900 ))
@@ -319,12 +340,21 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
    unset hermes_stage_dir
    kubectl -n hermes scale statefulset/hermes --replicas=0
    kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
+   release_maintenance_lock
+   trap - EXIT HUP INT TERM
+   unset maintenance_holder
    ```
 
 3. Run the merged dry-run Job and review its complete log. It must contain no secret migration and no unresolved conflict:
 
    ```bash
    set -euo pipefail
+   maintenance_holder="migration-dry-run-$(openssl rand -hex 8)"
+   release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
+   abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
+   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
+   trap release_maintenance_lock EXIT
+   trap abort_maintenance HUP INT TERM
    bash scripts/hermes/wait-for-maintenance.sh
    dry_run_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-dry-run-job.yaml -o name)
    if ! kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m; then
@@ -334,6 +364,9 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
      exit 1
    fi
    kubectl -n hermes logs "$dry_run_job"
+   release_maintenance_lock
+   trap - EXIT HUP INT TERM
+   unset maintenance_holder
    ```
 
 4. If the preview is correct, run the apply Job. Preserve its Job name, log, report summary, and generated restore-point
@@ -341,6 +374,12 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
+   maintenance_holder="migration-apply-$(openssl rand -hex 8)"
+   release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
+   abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
+   bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
+   trap release_maintenance_lock EXIT
+   trap abort_maintenance HUP INT TERM
    bash scripts/hermes/wait-for-maintenance.sh
    migration_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-apply-job.yaml -o name)
    if ! kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m; then
@@ -350,6 +389,9 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
      exit 1
    fi
    kubectl -n hermes logs "$migration_job"
+   release_maintenance_lock
+   trap - EXIT HUP INT TERM
+   unset maintenance_holder
    ```
 
 5. Restore desired replicas through Argo and repeat authenticated inference, persistence, and backup checks:
@@ -441,6 +483,12 @@ the archive name below with the reviewed recovery point; never select it only by
 
 ```bash
 set -euo pipefail
+maintenance_holder="restore-$(openssl rand -hex 8)"
+release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
+abort_maintenance() { trap - EXIT HUP INT TERM; release_maintenance_lock; exit 130; }
+bash scripts/hermes/maintenance-lock.sh acquire "$maintenance_holder"
+trap release_maintenance_lock EXIT
+trap abort_maintenance HUP INT TERM
 bash scripts/hermes/wait-for-maintenance.sh --cleanup-restore-stage
 kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
 backup_wait_deadline=$(( $(date +%s) + 3900 ))
@@ -496,6 +544,9 @@ kubectl -n hermes logs "$restore_job"
 argocd app sync hermes --prune=false
 kubectl -n hermes rollout status statefulset/hermes --timeout=15m
 test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
+release_maintenance_lock
+trap - EXIT HUP INT TERM
+unset maintenance_holder
 ```
 
 Run all Phase 1 checks again after restore. Never overwrite or delete the source archive during the restore. If restore is

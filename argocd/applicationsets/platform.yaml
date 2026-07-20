@@ -224,6 +224,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: manual
                 enabled: "true"
+                ignoreDifferences:
+                  - group: coordination.k8s.io
+                    kind: Lease
+                    name: hermes-maintenance
+                    jsonPointers:
+                      - /spec/holderIdentity
+                      - /spec/renewTime
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"

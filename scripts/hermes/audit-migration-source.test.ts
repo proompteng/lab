@@ -91,6 +91,19 @@ describe('OpenClaw migration source audit', () => {
     expect(JSON.stringify(result)).not.toContain(credential)
   })
 
+  test('rejects high-entropy filenames without returning them', async () => {
+    const root = await makeFixture()
+    const credential = 'fedcba9876543210'.repeat(4)
+    await writeFile(join(root, 'workspace', 'memory', credential), 'Benign content.\n')
+
+    const result = await auditMigrationSource(root)
+    expect(result.issues).toContainEqual({
+      path: 'workspace/memory/[redacted-credential-component]',
+      reason: 'credential-like path component is forbidden',
+    })
+    expect(JSON.stringify(result)).not.toContain(credential)
+  })
+
   test('rejects symlinks without following them', async () => {
     const root = await makeFixture()
     await symlink('/etc/passwd', join(root, 'workspace', 'memory', 'profile.md'))

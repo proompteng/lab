@@ -23,6 +23,7 @@ configMapGenerator:
 
 resources:
   - serviceaccount.yaml
+  - maintenance-lease.yaml
   - external-secret.yaml
   - service.yaml
   - egress-proxy.yaml

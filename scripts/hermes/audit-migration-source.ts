@@ -99,6 +99,15 @@ const containsOpaqueHighEntropyValue = (text: string): boolean => {
   return false
 }
 
+const isCredentialLikePathComponent = (component: string): boolean =>
+  containsOpaqueHighEntropyValue(component) || credentialPatterns.some(({ pattern }) => pattern.test(component))
+
+const redactCredentialLikePath = (path: string): string =>
+  path
+    .split('/')
+    .map((component) => (isCredentialLikePathComponent(component) ? '[redacted-credential-component]' : component))
+    .join('/')
+
 export type MigrationAuditIssue = {
   path: string
   reason: string
@@ -130,6 +139,7 @@ const validatePathComponents = (path: string): string | undefined => {
     const normalized = component.toLowerCase()
     if (forbiddenPathComponents.has(normalized)) return 'credential, session, or log path is forbidden'
     if (/\.(?:key|p12|pfx|pem)$/i.test(component)) return 'credential file extension is forbidden'
+    if (isCredentialLikePathComponent(component)) return 'credential-like path component is forbidden'
   }
   return undefined
 }
@@ -148,30 +158,31 @@ export async function auditMigrationSource(sourceRoot: string): Promise<Migratio
     for (const entry of entries) {
       const path = resolve(directory, entry.name)
       const displayPath = portablePath(root, path)
+      const safeDisplayPath = redactCredentialLikePath(displayPath)
       const stat = await lstat(path)
       seenPaths.add(displayPath)
 
       const layoutIssue = validateLayout(displayPath)
-      if (layoutIssue) result.issues.push({ path: displayPath, reason: layoutIssue })
+      if (layoutIssue) result.issues.push({ path: safeDisplayPath, reason: layoutIssue })
       const componentIssue = validatePathComponents(displayPath)
-      if (componentIssue) result.issues.push({ path: displayPath, reason: componentIssue })
+      if (componentIssue) result.issues.push({ path: safeDisplayPath, reason: componentIssue })
 
       const components = displayPath.split('/')
       if (!stat.isSymbolicLink() && displayPath === 'workspace' && !stat.isDirectory()) {
-        result.issues.push({ path: displayPath, reason: 'workspace must be a directory' })
+        result.issues.push({ path: safeDisplayPath, reason: 'workspace must be a directory' })
       }
       if (!stat.isSymbolicLink() && components.length === 2) {
         const workspaceEntry = components[1]
         if (allowedWorkspaceFiles.has(workspaceEntry) && !stat.isFile()) {
-          result.issues.push({ path: displayPath, reason: 'allowlisted identity path must be a regular file' })
+          result.issues.push({ path: safeDisplayPath, reason: 'allowlisted identity path must be a regular file' })
         }
         if (allowedWorkspaceDirectories.has(workspaceEntry) && !stat.isDirectory()) {
-          result.issues.push({ path: displayPath, reason: 'allowlisted collection path must be a directory' })
+          result.issues.push({ path: safeDisplayPath, reason: 'allowlisted collection path must be a directory' })
         }
       }
 
       if (stat.isSymbolicLink()) {
-        result.issues.push({ path: displayPath, reason: 'symbolic links are forbidden' })
+        result.issues.push({ path: safeDisplayPath, reason: 'symbolic links are forbidden' })
         continue
       }
       if (stat.isDirectory()) {
@@ -179,28 +190,28 @@ export async function auditMigrationSource(sourceRoot: string): Promise<Migratio
         continue
       }
       if (!stat.isFile()) {
-        result.issues.push({ path: displayPath, reason: 'only regular files and directories are allowed' })
+        result.issues.push({ path: safeDisplayPath, reason: 'only regular files and directories are allowed' })
         continue
       }
 
       result.files += 1
       result.totalBytes += stat.size
       if (result.files > maxFiles) {
-        result.issues.push({ path: displayPath, reason: `file count exceeds ${maxFiles}` })
+        result.issues.push({ path: safeDisplayPath, reason: `file count exceeds ${maxFiles}` })
         continue
       }
       if (stat.size > maxFileBytes) {
-        result.issues.push({ path: displayPath, reason: `file exceeds ${maxFileBytes} bytes` })
+        result.issues.push({ path: safeDisplayPath, reason: `file exceeds ${maxFileBytes} bytes` })
         continue
       }
       if (result.totalBytes > maxTotalBytes) {
-        result.issues.push({ path: displayPath, reason: `total content exceeds ${maxTotalBytes} bytes` })
+        result.issues.push({ path: safeDisplayPath, reason: `total content exceeds ${maxTotalBytes} bytes` })
         continue
       }
 
       const content = await readFile(path)
       if (content.includes(0)) {
-        result.issues.push({ path: displayPath, reason: 'binary content is forbidden' })
+        result.issues.push({ path: safeDisplayPath, reason: 'binary content is forbidden' })
         continue
       }
 
@@ -208,15 +219,15 @@ export async function auditMigrationSource(sourceRoot: string): Promise<Migratio
       try {
         text = new TextDecoder('utf-8', { fatal: true }).decode(content)
       } catch {
-        result.issues.push({ path: displayPath, reason: 'content is not valid UTF-8 text' })
+        result.issues.push({ path: safeDisplayPath, reason: 'content is not valid UTF-8 text' })
         continue
       }
 
       for (const { pattern, reason } of credentialPatterns) {
-        if (pattern.test(text)) result.issues.push({ path: displayPath, reason })
+        if (pattern.test(text)) result.issues.push({ path: safeDisplayPath, reason })
       }
       if (containsOpaqueHighEntropyValue(text)) {
-        result.issues.push({ path: displayPath, reason: 'opaque high-entropy value' })
+        result.issues.push({ path: safeDisplayPath, reason: 'opaque high-entropy value' })
       }
     }
   }
