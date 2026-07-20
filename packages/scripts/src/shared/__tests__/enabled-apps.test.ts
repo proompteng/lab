@@ -258,7 +258,7 @@ describe('enabled app inventory', () => {
   })
 
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
-    for (const name of ['analysis', 'bilig', 'tigresse']) {
+    for (const name of ['analysis', 'bilig', 'hermes', 'tigresse']) {
       expect(entry(name).class).toBe('vendor-manifest')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
       expect(entry(name).buildScriptPath).toBeUndefined()
@@ -266,6 +266,17 @@ describe('enabled app inventory', () => {
       expect(entry(name).nixImageAttr).toBeUndefined()
       expect(entry(name).deferredReason).toBeTruthy()
     }
+  })
+
+  it('tracks Hermes as a reviewed upstream mirror, not an in-repo image build gap', () => {
+    expect(entry('hermes')).toMatchObject({
+      class: 'vendor-manifest',
+      hasHelmChart: false,
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+      ],
+    })
+    expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')
   })
 
   it('tracks Tigresse as a vendored external-operator chart, not an in-repo image build gap', () => {

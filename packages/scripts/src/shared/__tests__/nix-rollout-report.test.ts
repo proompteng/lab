@@ -47,13 +47,15 @@ const validContract = (overrides: Partial<NixRolloutReleaseContract> = {}): NixR
 })
 
 describe('Nix rollout report', () => {
-  it('audits live enabled-app inventory without counting manifest-only Tigresse as deferred', () => {
+  it('audits live enabled-app inventory without counting reviewed upstream mirrors as deferred', () => {
     const report = buildNixRolloutReport({})
+    const hermes = report.manifestOnlyImageApps.find((candidate) => candidate.name === 'hermes')
     const tigresse = report.manifestOnlyImageApps.find((candidate) => candidate.name === 'tigresse')
 
     expect(report.nixImages.length).toBeGreaterThan(0)
     expect(report.deferredApps).toEqual([])
     expect(report.missingBuildContracts).toEqual([])
+    expect(hermes?.deferredReason).toContain('NousResearch/hermes-agent')
     expect(tigresse?.deferredReason).toContain('proompteng/tigresse')
   })
 

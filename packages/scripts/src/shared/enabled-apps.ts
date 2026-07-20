@@ -128,6 +128,10 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
   ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
   ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
   [
+    'hermes',
+    'agent source lives in the upstream NousResearch/hermes-agent repository; lab mirrors a reviewed release and pins its image digest',
+  ],
+  [
     'tigresse',
     'operator source lives in the private proompteng/tigresse repository; lab only vendors the chart and pins its image digest',
   ],
