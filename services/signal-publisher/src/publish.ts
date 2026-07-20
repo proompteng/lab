@@ -1,12 +1,13 @@
 import { parseArgs } from 'node:util'
 
-import { Clock, Effect } from 'effect'
+import { Clock, DateTime, Effect } from 'effect'
 import { HttpClient } from 'effect/unstable/http'
 
 import { fetchBars, fetchCalendar } from './alpaca'
 import type { PublisherConfig } from './config'
 import {
   buildPublication,
+  calendarTimeZone,
   isIsoDate,
   missingRows,
   verifyPublication,
@@ -79,16 +80,22 @@ const newYorkParts = (epochMillis: number): { readonly date: IsoDate; readonly m
   }
 }
 
-const minutes = (time: string): number => {
-  const [hour, minute] = time.split(':').map(Number)
-  return hour * 60 + minute
+const sessionCloseEpochMillis = (session: AlpacaCalendarSession): number => {
+  const [year, month, day] = session.date.split('-').map(Number)
+  const [hour, minute] = session.close.split(':').map(Number)
+  return DateTime.makeZonedUnsafe(
+    { year, month, day, hour, minute },
+    {
+      timeZone: calendarTimeZone,
+      adjustForTimeZone: true,
+      disambiguation: 'reject',
+    },
+  ).pipe(DateTime.toEpochMillis)
 }
 
 export const isFinalizable = (session: AlpacaCalendarSession, epochMillis: number, lagMinutes: number): boolean => {
-  const now = newYorkParts(epochMillis)
-  if (session.date < now.date) return true
-  if (session.date > now.date) return false
-  return now.minuteOfDay >= minutes(session.close) + lagMinutes
+  const finalizationEpochMillis = sessionCloseEpochMillis(session) + lagMinutes * 60_000
+  return epochMillis >= finalizationEpochMillis
 }
 
 export const latestFinalizableSession = (

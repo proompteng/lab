@@ -77,6 +77,8 @@ describe('Publication orchestration', () => {
     expect(isFinalizable(session, Date.parse('2026-07-17T21:29:00Z'), 90)).toBe(false)
     expect(isFinalizable(session, Date.parse('2026-07-17T21:30:00Z'), 90)).toBe(true)
     expect(isFinalizable(session, Date.parse('2026-07-18T12:00:00Z'), 90)).toBe(true)
+    expect(isFinalizable(session, Date.parse('2026-07-18T04:01:00Z'), 600)).toBe(false)
+    expect(isFinalizable(session, Date.parse('2026-07-18T06:00:00Z'), 600)).toBe(true)
     expect(
       latestFinalizableSession(
         [session, { date: '2026-07-16', open: '09:30', close: '16:00' }],
