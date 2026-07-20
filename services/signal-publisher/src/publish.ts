@@ -91,11 +91,18 @@ export const isFinalizable = (session: AlpacaCalendarSession, epochMillis: numbe
   return now.minuteOfDay >= minutes(session.close) + lagMinutes
 }
 
-const latestFinalizableSession = (
+export const latestFinalizableSession = (
   calendar: readonly AlpacaCalendarSession[],
   epochMillis: number,
   lagMinutes: number,
-): IsoDate | undefined => calendar.filter((session) => isFinalizable(session, epochMillis, lagMinutes)).at(-1)?.date
+): IsoDate | undefined =>
+  calendar.reduce<IsoDate | undefined>(
+    (latest, session) =>
+      isFinalizable(session, epochMillis, lagMinutes) && (latest === undefined || session.date > latest)
+        ? session.date
+        : latest,
+    undefined,
+  )
 
 const clickhouseTimestamp = (epochMillis: number): string =>
   new Date(epochMillis).toISOString().replace('T', ' ').replace('Z', '')
@@ -171,6 +178,9 @@ export const persistPublication = (
         ...publication,
         manifest: {
           ...publication.manifest,
+          publisher_source_revision: storedManifest.publisher_source_revision,
+          publisher_image_repository: storedManifest.publisher_image_repository,
+          publisher_image_digest: storedManifest.publisher_image_digest,
           finalized_at: storedManifest.finalized_at,
           manifest_content_hash: storedManifest.manifest_content_hash,
         },

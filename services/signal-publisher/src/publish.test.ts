@@ -3,10 +3,14 @@ import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 
 import { buildPublication, type BarRow, type ManifestRow, type SessionRow } from './domain'
-import { isFinalizable, parsePublicationArguments, persistPublication } from './publish'
+import { isFinalizable, latestFinalizableSession, parsePublicationArguments, persistPublication } from './publish'
 import type { SnapshotRepository } from './repository'
 
-const publication = (finalizedAt = '2026-07-17 22:30:00.000') =>
+const publication = (
+  finalizedAt = '2026-07-17 22:30:00.000',
+  sourceRevision = 'a'.repeat(40),
+  imageDigest = `sha256:${'b'.repeat(64)}`,
+) =>
   buildPublication({
     barsBySymbol: {
       SPY: [{ t: '2026-07-17T04:00:00Z', o: 620, h: 622, l: 619, c: 621, v: 1_000, n: 10, vw: 621 }],
@@ -19,9 +23,9 @@ const publication = (finalizedAt = '2026-07-17 22:30:00.000') =>
     publicationAsOf: '2026-07-17',
     finalizedAt,
     provenance: {
-      sourceRevision: 'a'.repeat(40),
+      sourceRevision,
       imageRepository: 'registry.ide-newton.ts.net/lab/signal-publisher',
-      imageDigest: `sha256:${'b'.repeat(64)}`,
+      imageDigest,
     },
   })
 
@@ -67,6 +71,13 @@ describe('Publication orchestration', () => {
     expect(isFinalizable(session, Date.parse('2026-07-17T21:29:00Z'), 90)).toBe(false)
     expect(isFinalizable(session, Date.parse('2026-07-17T21:30:00Z'), 90)).toBe(true)
     expect(isFinalizable(session, Date.parse('2026-07-18T12:00:00Z'), 90)).toBe(true)
+    expect(
+      latestFinalizableSession(
+        [session, { date: '2026-07-16', open: '09:30', close: '16:00' }],
+        Date.parse('2026-07-17T21:30:00Z'),
+        90,
+      ),
+    ).toBe('2026-07-17')
   })
 
   test('stages rows before manifest, verifies readback, and reuses an exact retry', async () => {
@@ -77,8 +88,14 @@ describe('Publication orchestration', () => {
     expect(result.reused).toBe(false)
     expect(state.calls).toEqual(['bars', 'sessions', 'manifest'])
 
-    const retry = await Effect.runPromise(persistPublication(state.repository, publication('2026-07-17 22:35:00.000')))
+    const retry = await Effect.runPromise(
+      persistPublication(
+        state.repository,
+        publication('2026-07-17 22:35:00.000', 'c'.repeat(40), `sha256:${'d'.repeat(64)}`),
+      ),
+    )
     expect(retry.reused).toBe(true)
+    expect(state.manifests[0].publisher_source_revision).toBe('a'.repeat(40))
     expect(state.calls).toEqual(['bars', 'sessions', 'manifest'])
   })
 
