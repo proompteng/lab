@@ -78,6 +78,19 @@ describe('OpenClaw migration source audit', () => {
     expect(JSON.stringify(result)).not.toContain(credential)
   })
 
+  test('rejects bare high-entropy values without returning them', async () => {
+    const root = await makeFixture()
+    const credential = '0123456789abcdef'.repeat(4)
+    await writeFile(join(root, 'workspace', 'memory', 'key.txt'), `${credential}\n`)
+
+    const result = await auditMigrationSource(root)
+    expect(result.issues).toContainEqual({
+      path: 'workspace/memory/key.txt',
+      reason: 'opaque high-entropy value',
+    })
+    expect(JSON.stringify(result)).not.toContain(credential)
+  })
+
   test('rejects symlinks without following them', async () => {
     const root = await makeFixture()
     await symlink('/etc/passwd', join(root, 'workspace', 'memory', 'profile.md'))

@@ -198,6 +198,31 @@ test('rejects migration instructions that skip the content audit', async () => {
   )
 })
 
+test('rejects Discord cutover without a final stopped-source reconciliation', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`',
+    'reuse the earlier migration archive',
+  )
+
+  const invariant = 'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`'
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant ${JSON.stringify(invariant)}`,
+  )
+})
+
+test('rejects migration or restore creation without maintenance serialization', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   bash scripts/hermes/wait-for-maintenance-jobs.sh\n   migration_job=',
+    '   migration_job=',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`,
+  )
+})
+
 test('rejects canary, migration, or restore without backup quiescence', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(

@@ -19,6 +19,7 @@ export const productionPaths = {
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
   restore: 'argocd/applications/hermes/operations/restore-job.yaml',
   migrationAudit: 'scripts/hermes/audit-migration-source.ts',
+  maintenanceWait: 'scripts/hermes/wait-for-maintenance-jobs.sh',
   platform: 'argocd/applicationsets/platform.yaml',
   mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
   clusterMetrics: 'argocd/applications/observability/cluster-metrics-alloy-config.river',
@@ -229,8 +230,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     "new TextDecoder('utf-8', { fatal: true })",
     'binary content is forbidden',
     'credentialPatterns',
+    'opaqueTokenPattern',
+    'shannonEntropy(candidate) >= 3.5',
+    "reason: 'opaque high-entropy value'",
     'migration source audit failed',
     '${issue.path}: ${issue.reason}',
+  ])
+  requireTerms(failures, productionPaths.maintenanceWait, files.maintenanceWait, [
+    'set -euo pipefail',
+    'readonly namespace=hermes',
+    'app.kubernetes.io/component in (migration,restore)',
+    'HERMES_MAINTENANCE_WAIT_TIMEOUT_SECONDS',
+    'kubectl -n "$namespace" get jobs -l "$selector" -o json',
+    '.type == "Complete" or .type == "Failed"',
+    'active Hermes migration or restore Job did not terminate',
   ])
 
   const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
@@ -248,6 +261,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never run OpenClaw and Hermes with the same Discord token at the same time.',
     'Never pass `--migrate-secrets`',
     'Never run `hermes claw cleanup`',
+    'Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.',
+    'Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.',
     'A standalone Job does not update the CronJob',
     '## API key rotation',
     'Every API key rotation must restart `hermes-0`',
@@ -257,6 +272,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
     'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
+    'An audit failure blocks migration:',
+    'redact or remove only the',
+    'flagged material in `$hermes_stage_dir`',
+    'Never weaken or bypass the patterns.',
     'observability.proompteng.ai/hermes-rollout-enabled=true',
     'kubectl -n hermes delete "$dry_run_job" --wait=true',
     'kubectl -n hermes delete "$migration_job" --wait=true',
@@ -327,6 +346,37 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     migrationSection.indexOf(suspendBackupCommand) > migrationSection.indexOf('rm -rf -- /opt/data/migration/openclaw')
   ) {
     failures.push(`${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`)
+  }
+  const maintenanceWaitCommand = 'bash scripts/hermes/wait-for-maintenance-jobs.sh'
+  const restoreSection = files.runbook.match(/### Restore Hermes data[\s\S]*?## Completion evidence/)?.[0] ?? ''
+  if (count(migrationSection, maintenanceWaitCommand) !== 3 || count(restoreSection, maintenanceWaitCommand) !== 2) {
+    failures.push(`${productionPaths.runbook}: every migration and restore operation must wait for maintenance Jobs`)
+  }
+  for (const [section, createCommand] of [
+    [migrationSection, 'migration-dry-run-job.yaml'],
+    [migrationSection, 'migration-apply-job.yaml'],
+    [restoreSection, 'restore-job.yaml'],
+  ] as const) {
+    const createIndex = section.indexOf(createCommand)
+    if (createIndex < 0 || section.lastIndexOf(maintenanceWaitCommand, createIndex) < 0) {
+      failures.push(`${productionPaths.runbook}: ${createCommand} must be preceded by the maintenance Job wait`)
+    }
+  }
+  const cutoverSection = files.runbook.match(/## Phase 3:[\s\S]*?## Rollback/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.runbook, cutoverSection, [
+    'systemctl --user stop openclaw-gateway.service',
+    'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`',
+    'Do not reuse the earlier archive.',
+    'do not run Phase 2 step 5 because merged `main` now enables',
+    'argocd app sync openclaw --prune=false',
+    'kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete --timeout=10m',
+    'Sync Hermes from merged `main` only after the OpenClaw VMI is gone',
+  ])
+  if (
+    cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service') >
+    cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')
+  ) {
+    failures.push(`${productionPaths.runbook}: final reconciliation must happen after the OpenClaw gateway is stopped`)
   }
 
   requireTerms(failures, productionPaths.mimirRules, files.mimirRules, [

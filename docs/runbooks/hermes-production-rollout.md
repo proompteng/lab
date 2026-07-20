@@ -10,6 +10,8 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 - Never store or print the API key or Discord token in Git, shell history, logs, Job specs, or evidence artifacts.
 - Never run `hermes claw cleanup`, delete the OpenClaw VM/PVC, or delete Hermes PVCs during the 14-day rollback window.
 - Never start migration or restore until the backup CronJob is suspended and every active backup Job has finished.
+- Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.
+- Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.
 - Every API key rotation must restart `hermes-0` and prove the old key is rejected and the new key is accepted.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
@@ -286,16 +288,19 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
    ```
 
    The content audit must pass before any data is copied. It rejects paths outside the explicit user-data allowlist,
-   symlinks, non-text content, credential-like values, and bounded-size violations without printing detected values. Also
-   review the file-name-only inventory and stop if it contains config, credential, token, session, or log files. The six
-   identity files and `memory/` are required; `MEMORY.md` and `skills/` are included only when present, and any unreadable
-   selected path or descendant fails the pipe.
+   symlinks, non-text content, credential-like or opaque high-entropy values, and bounded-size violations without printing
+   detected values. An audit failure blocks migration: inspect the reported file privately, redact or remove only the
+   flagged material in `$hermes_stage_dir`, and rerun the unchanged auditor. Never weaken or bypass the patterns. Also review
+   the file-name-only inventory and stop if it contains config, credential, token, session, or log files. The six identity
+   files and `memory/` are required; `MEMORY.md` and `skills/` are included only when present, and any unreadable selected
+   path or descendant fails the pipe.
 
 2. Suspend new backups and wait up to 65 minutes for every active backup Job to finish before replacing the staging tree or
    stopping the gateway; only then does the migration have exclusive RBD access:
 
    ```bash
    set -euo pipefail
+   bash scripts/hermes/wait-for-maintenance-jobs.sh
    kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
    backup_wait_deadline=$(( $(date +%s) + 3900 ))
    while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
@@ -320,6 +325,7 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
+   bash scripts/hermes/wait-for-maintenance-jobs.sh
    dry_run_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-dry-run-job.yaml -o name)
    if ! kubectl -n hermes wait "$dry_run_job" --for=condition=Complete --timeout=10m; then
      kubectl -n hermes logs "$dry_run_job" || true
@@ -335,6 +341,7 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
    ```bash
    set -euo pipefail
+   bash scripts/hermes/wait-for-maintenance-jobs.sh
    migration_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/migration-apply-job.yaml -o name)
    if ! kubectl -n hermes wait "$migration_job" --for=condition=Complete --timeout=10m; then
      kubectl -n hermes logs "$migration_job" || true
@@ -370,14 +377,38 @@ Discord activation requires a second PR. That PR must:
 
 Cutover sequence:
 
-1. Record the current OpenClaw Discord allowlist count, stop OpenClaw through the merged GitOps change, and verify its VMI is
-   gone before provisioning Hermes. Do not log the token.
-2. In a private shell, transfer the existing bot token and numeric allowlist directly into the `hermes-runtime` 1Password
+1. Record the current OpenClaw Discord allowlist count. Quiesce its Discord writer while the VM remains reachable, and prove
+   the gateway process is inactive:
+
+   ```bash
+   set -euo pipefail
+   virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
+     --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
+     --command='set -eu; systemctl --user stop openclaw-gateway.service; test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive; if pgrep -f "[o]penclaw.*gateway" >/dev/null; then exit 1; fi; sync' \
+     vm/openclaw
+   ```
+
+2. With the source quiesced, repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`. Preserve the new audit output,
+   dry-run Job, apply Job, and restore-point archive as the final reconciliation evidence. Do not reuse the earlier archive.
+   Leave the Hermes StatefulSet at zero and backups suspended; do not run Phase 2 step 5 because merged `main` now enables
+   Discord. If this final migration fails, keep Hermes Discord disabled. If cutover is abandoned before the VMI is stopped,
+   restart `openclaw-gateway.service`, resync the last API-only Hermes revision, and repeat this final reconciliation before
+   any later attempt.
+3. Sync the merged OpenClaw GitOps change and prove its VMI is gone before provisioning Hermes with the shared token:
+
+   ```bash
+   set -euo pipefail
+   argocd app sync openclaw --prune=false
+   kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete --timeout=10m
+   ```
+
+4. In a private shell, transfer the existing bot token and numeric allowlist directly into the `hermes-runtime` 1Password
    item, then unset local variables.
-3. Wait for the ExternalSecret to be Ready, sync Hermes, and prove only one Discord bot session is active.
-4. From the allowlisted account, send a unique canary message and capture the inbound message ID, Hermes session ID, response
+5. Sync Hermes from merged `main` only after the OpenClaw VMI is gone, wait for the updated ExternalSecret and rollout to
+   become ready, and prove only one Discord bot session is active. This sync restores the Hermes replicas and backups.
+6. From the allowlisted account, send a unique canary message and capture the inbound message ID, Hermes session ID, response
    message ID, and timestamp. Verify a non-allowlisted account is rejected or ignored.
-5. Restart `hermes-0`, send a second canary, and verify session/memory continuity plus a current successful backup.
+7. Restart `hermes-0`, send a second canary, and verify session/memory continuity plus a current successful backup.
 
 Do not declare cutover complete from pod readiness alone.
 
@@ -410,6 +441,7 @@ the archive name below with the reviewed recovery point; never select it only by
 
 ```bash
 set -euo pipefail
+bash scripts/hermes/wait-for-maintenance-jobs.sh
 kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
 backup_wait_deadline=$(( $(date +%s) + 3900 ))
 while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
@@ -451,6 +483,7 @@ if ! kubectl -n hermes exec hermes-restore-stage -c stage -- sh -c \
   exit 1
 fi
 kubectl -n hermes delete pod hermes-restore-stage --wait=true
+bash scripts/hermes/wait-for-maintenance-jobs.sh
 restore_job=$(kubectl -n hermes create -f argocd/applications/hermes/operations/restore-job.yaml -o name)
 if ! kubectl -n hermes wait "$restore_job" --for=condition=Complete --timeout=15m; then
   kubectl -n hermes logs "$restore_job" || true

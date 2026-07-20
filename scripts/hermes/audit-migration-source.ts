@@ -77,6 +77,28 @@ const credentialPatterns = [
   },
 ] as const
 
+const opaqueTokenPattern = /[A-Za-z0-9+/_=-]{32,}/g
+
+const shannonEntropy = (value: string): number => {
+  const frequencies = new Map<string, number>()
+  for (const character of value) frequencies.set(character, (frequencies.get(character) ?? 0) + 1)
+
+  let entropy = 0
+  for (const frequency of frequencies.values()) {
+    const probability = frequency / value.length
+    entropy -= probability * Math.log2(probability)
+  }
+  return entropy
+}
+
+const containsOpaqueHighEntropyValue = (text: string): boolean => {
+  for (const match of text.matchAll(opaqueTokenPattern)) {
+    const candidate = match[0].replace(/=+$/, '')
+    if (candidate.length >= 32 && shannonEntropy(candidate) >= 3.5) return true
+  }
+  return false
+}
+
 export type MigrationAuditIssue = {
   path: string
   reason: string
@@ -192,6 +214,9 @@ export async function auditMigrationSource(sourceRoot: string): Promise<Migratio
 
       for (const { pattern, reason } of credentialPatterns) {
         if (pattern.test(text)) result.issues.push({ path: displayPath, reason })
+      }
+      if (containsOpaqueHighEntropyValue(text)) {
+        result.issues.push({ path: displayPath, reason: 'opaque high-entropy value' })
       }
     }
   }
