@@ -14,7 +14,7 @@ test('rejects a mutable Hermes runtime image', async () => {
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: all three Hermes containers must use the mirrored immutable amd64 digest`,
+    `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
   )
 })
 
@@ -57,15 +57,21 @@ test('rejects an operation that can schedule on arm64', async () => {
   )
 })
 
-test('rejects a backup readiness probe without freshness enforcement', async () => {
+test('rejects coupling backup health to gateway pod readiness', async () => {
   const files = await loadProductionFiles()
-  files.statefulSet = files.statefulSet.replace(
-    'find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .',
-    'test -s /opt/backups/last-success',
-  )
+  files.statefulSet += '\n        - name: backup\n          readinessProbe: {}\n'
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: backup startup, readiness, and liveness probes must all enforce freshness`,
+    `${productionPaths.statefulSet}: contains forbidden production term "        - name: backup\\n"`,
+  )
+})
+
+test('rejects a backup CronJob without independent retry behavior', async () => {
+  const files = await loadProductionFiles()
+  files.backupCronJob = files.backupCronJob.replace('restartPolicy: OnFailure', 'restartPolicy: Never')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupCronJob}: missing production invariant "restartPolicy: OnFailure"`,
   )
 })
 
@@ -78,5 +84,14 @@ test('rejects availability alerts that ignore missing metrics', async () => {
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.mimirRules}: missing production invariant "absent(\\n                kube_statefulset_status_replicas_ready{"`,
+  )
+})
+
+test('rejects removing Hermes surfaces from production validation routing', async () => {
+  const files = await loadProductionFiles()
+  files.impactMap = files.impactMap.replace('      - docs/runbooks/hermes-production-rollout.md\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- docs/runbooks/hermes-production-rollout.md"`,
   )
 })

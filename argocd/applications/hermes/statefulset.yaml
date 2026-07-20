@@ -217,84 +217,13 @@ spec:
               mountPath: /opt/data/workspace/tuslagch/AGENTS.md
               subPath: AGENTS.md
               readOnly: true
+            - name: backups
+              mountPath: /opt/backups
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: shm
               mountPath: /dev/shm
-        - name: backup
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
-          imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - /opt/bootstrap/backup-loop.sh
-          env:
-            - name: HERMES_HOME
-              value: /opt/data
-            - name: HOME
-              value: /opt/data/home
-            - name: HERMES_BACKUP_DIR
-              value: /opt/backups
-            - name: HERMES_BACKUP_INTERVAL_SECONDS
-              value: "86400"
-            - name: HERMES_BACKUP_RETENTION_COUNT
-              value: "14"
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-              ephemeral-storage: 64Mi
-            limits:
-              cpu: "1"
-              memory: 1Gi
-              ephemeral-storage: 1Gi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 10000
-            runAsGroup: 10000
-            seccompProfile:
-              type: RuntimeDefault
-          startupProbe:
-            exec:
-              command:
-                - /bin/sh
-                - -c
-                - find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .
-            periodSeconds: 10
-            failureThreshold: 180
-          readinessProbe:
-            exec:
-              command:
-                - /bin/sh
-                - -c
-                - find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .
-            periodSeconds: 60
-            timeoutSeconds: 5
-            failureThreshold: 1
-          livenessProbe:
-            exec:
-              command:
-                - /bin/sh
-                - -c
-                - find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .
-            periodSeconds: 300
-            timeoutSeconds: 5
-            failureThreshold: 3
-          volumeMounts:
-            - name: data
-              mountPath: /opt/data
-              readOnly: true
-            - name: backups
-              mountPath: /opt/backups
-            - name: bootstrap
-              mountPath: /opt/bootstrap
-              readOnly: true
-            - name: tmp
-              mountPath: /tmp
       volumes:
         - name: config
           configMap:

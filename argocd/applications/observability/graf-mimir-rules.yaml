@@ -78,18 +78,16 @@ data:
           - alert: HermesBackupStale
             expr: |
               (
-                kube_pod_container_status_ready{
+                time() - kube_cronjob_status_last_successful_time{
                   namespace="hermes",
-                  pod=~"hermes-[0-9]+",
-                  container="backup"
-                } < 1
+                  cronjob="hermes-backup"
+                } > 93600
               )
               or
               absent(
-                kube_pod_container_status_ready{
+                kube_cronjob_status_last_successful_time{
                   namespace="hermes",
-                  pod=~"hermes-[0-9]+",
-                  container="backup"
+                  cronjob="hermes-backup"
                 }
               )
             for: 30m
@@ -98,8 +96,8 @@ data:
               team: platform
               service: hermes
             annotations:
-              summary: Hermes backup sidecar is not healthy
-              description: The Hermes backup sidecar has been unready for 30 minutes; inspect the last-success marker and backup archives.
+              summary: Hermes backup is stale
+              description: The Hermes backup CronJob has no successful completion in the last 26 hours; inspect its Job logs and verified archives.
               runbook_url: docs/runbooks/hermes-production-rollout.md
       - name: graf-telemetry.rules
         rules:

@@ -7,6 +7,7 @@ const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f
 export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
   statefulSet: 'argocd/applications/hermes/statefulset.yaml',
+  backupCronJob: 'argocd/applications/hermes/backup-cronjob.yaml',
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
@@ -19,6 +20,7 @@ export const productionPaths = {
   platform: 'argocd/applicationsets/platform.yaml',
   mimirRules: 'argocd/applications/observability/graf-mimir-rules.yaml',
   runbook: 'docs/runbooks/hermes-production-rollout.md',
+  impactMap: '.github/ci/impact-map.yml',
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -57,6 +59,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.kustomization, files.kustomization, [
     'namespace: hermes',
     '- statefulset.yaml',
+    '- backup-cronjob.yaml',
     '- network-policy.yaml',
     '- external-secret.yaml',
   ])
@@ -67,9 +70,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'restore-job.yaml',
   ])
 
-  if (count(files.statefulSet, `image: ${hermesImage}`) !== 3) {
+  if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
     failures.push(
-      `${productionPaths.statefulSet}: all three Hermes containers must use the mirrored immutable amd64 digest`,
+      `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
     )
   }
   requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
@@ -85,6 +88,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'API_SERVER_KEY',
     'name: data',
     'name: backups',
+    'mountPath: /opt/backups\n              readOnly: true',
     'storageClassName: rook-ceph-block',
   ])
   forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
@@ -93,12 +97,28 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hostPath:',
     'hostNetwork: true',
     'hostPID: true',
+    '        - name: backup\n',
   ])
-  if (count(files.statefulSet, 'find /opt/backups/last-success -mmin -1560 -print -quit | grep -q .') !== 3) {
-    failures.push(
-      `${productionPaths.statefulSet}: backup startup, readiness, and liveness probes must all enforce freshness`,
-    )
+
+  if (count(files.backupCronJob, `image: ${hermesImage}`) !== 1) {
+    failures.push(`${productionPaths.backupCronJob}: backup must use the immutable mirrored Hermes digest`)
   }
+  requireTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [
+    'kind: CronJob',
+    'concurrencyPolicy: Forbid',
+    'backoffLimit: 3',
+    'restartPolicy: OnFailure',
+    'requiredDuringSchedulingIgnoredDuringExecution:',
+    'app.kubernetes.io/component: gateway',
+    'kubernetes.io/arch: amd64',
+    'automountServiceAccountToken: false',
+    'runAsUser: 10000',
+    'readOnlyRootFilesystem: true',
+    '/opt/bootstrap/backup-once.sh',
+    'claimName: data-hermes-0',
+    'claimName: backups-hermes-0',
+  ])
+  forbidTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [':latest', 'restartPolicy: Never'])
 
   requireTerms(failures, productionPaths.config, files.config, [
     '_config_version: 33',
@@ -208,7 +228,18 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'alert: HermesBackupStale',
     'absent(\n                kube_statefulset_status_replicas_ready{',
     'absent(\n                kube_deployment_status_replicas_available{',
-    'absent(\n                kube_pod_container_status_ready{',
+    'time() - kube_cronjob_status_last_successful_time{',
+    'absent(\n                kube_cronjob_status_last_successful_time{',
+  ])
+
+  requireTerms(failures, productionPaths.impactMap, files.impactMap, [
+    '- .github/ci/impact-map.yml',
+    '- .github/workflows/pull-request.yml',
+    '- argocd/applications/hermes/**',
+    '- argocd/applications/observability/graf-mimir-rules.yaml',
+    '- argocd/applicationsets/platform.yaml',
+    '- docs/runbooks/hermes-production-rollout.md',
+    '- scripts/**',
   ])
 
   return failures

@@ -10,7 +10,7 @@ configMapGenerator:
   - name: hermes-bootstrap
     files:
       - bootstrap.sh
-      - backup-loop.sh
+      - backup-once.sh
       - AGENTS.md=bootstrap/AGENTS.md
       - HEARTBEAT.md=bootstrap/HEARTBEAT.md
       - IDENTITY.md=bootstrap/IDENTITY.md
@@ -28,4 +28,5 @@ resources:
   - egress-proxy.yaml
   - network-policy.yaml
   - statefulset.yaml
+  - backup-cronjob.yaml
   - pdb.yaml

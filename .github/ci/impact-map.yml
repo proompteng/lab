@@ -58,6 +58,12 @@ targets:
   root-scripts:
     kind: validation
     paths:
+      - .github/ci/impact-map.yml
+      - .github/workflows/pull-request.yml
+      - argocd/applications/hermes/**
+      - argocd/applications/observability/graf-mimir-rules.yaml
+      - argocd/applicationsets/platform.yaml
+      - docs/runbooks/hermes-production-rollout.md
       - scripts/**
 
   sag:

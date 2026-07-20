@@ -17,7 +17,7 @@ smoke test, manifest change, and normal CI/Codex review.
 
 ## Runtime boundaries
 
-- The gateway and backup sidecar run as UID/GID `10000`; Squid runs as UID/GID `13`.
+- The gateway and independent backup CronJob run as UID/GID `10000`; Squid runs as UID/GID `13`.
 - Root filesystems are read-only, all Linux capabilities are dropped, seccomp is `RuntimeDefault`, and no pod receives a
   Kubernetes service-account token.
 - The namespace enforces the Kubernetes `restricted` Pod Security profile.
@@ -33,8 +33,8 @@ smoke test, manifest change, and normal CI/Codex review.
 - `data-hermes-0`: 50 Gi RBD PVC for Hermes state, sessions, memories, skills, and workspace.
 - `backups-hermes-0`: 100 Gi RBD PVC for daily WAL-safe Hermes backup archives and SHA-256 sidecars.
 - StatefulSet PVC retention is `Retain` on delete and scale-down.
-- The backup sidecar retains the latest 14 successful archives. Its health probe fails when the success marker is older than
-  26 hours.
+- The daily backup CronJob retains the latest 14 verified archives and retries failures independently from the gateway. Its
+  last successful Job timestamp alerts after 26 hours without removing a healthy API endpoint.
 - OpenClaw's VM and PVC remain intact and stopped for at least 14 days after cutover. Do not run `hermes claw cleanup` during
   the rollback window.
 

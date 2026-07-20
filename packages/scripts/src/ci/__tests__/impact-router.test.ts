@@ -173,6 +173,21 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual([])
   })
 
+  test('routes every Hermes production surface through root script validation', () => {
+    const cases = [
+      ['argocd/applications/hermes/statefulset.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
+      ['argocd/applications/observability/graf-mimir-rules.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
+      ['argocd/applicationsets/platform.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
+      ['docs/runbooks/hermes-production-rollout.md', ['root-scripts']],
+      ['.github/ci/impact-map.yml', ['root-scripts', 'workflow-lint']],
+      ['.github/workflows/pull-request.yml', ['root-scripts', 'workflow-lint']],
+    ] as const
+
+    for (const [file, expectedTargets] of cases) {
+      expect(selectImpactPlan([file], map).validationTargets).toEqual(expectedTargets)
+    }
+  })
+
   test('always returns a planner target for an unmapped file', () => {
     const plan = selectImpactPlan(['README.md'], map)
     expect(plan.validationTargets).toEqual(['planner'])

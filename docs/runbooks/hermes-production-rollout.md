@@ -62,7 +62,8 @@ The expected mirrored amd64 manifest digest is
 
 ## Phase 1: API-only canary
 
-1. Verify rollout, immutable images, security context, PVCs, and the first backup:
+1. Verify rollout, immutable images, security context, and PVCs. Then create a one-time Job from the daily backup CronJob so
+   rollout evidence does not depend on the next schedule:
 
    ```bash
    kubectl -n hermes rollout status deployment/hermes-egress-proxy --timeout=5m
@@ -70,10 +71,17 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes get pod hermes-0 -o jsonpath='{range .spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}'
    kubectl -n hermes get pod hermes-0 -o jsonpath='{.spec.securityContext.runAsUser}{" "}{.spec.automountServiceAccountToken}{"\n"}'
    kubectl -n hermes get pvc data-hermes-0 backups-hermes-0
-   kubectl -n hermes exec hermes-0 -c backup -- test -s /opt/backups/last-success
-   kubectl -n hermes exec hermes-0 -c backup -- sh -c \
-     'archive=$(find /opt/backups -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1); test -n "$archive" && sha256sum -c "$archive.sha256"'
+   initial_backup_job="hermes-backup-initial-$(date -u +%Y%m%d%H%M%S)"
+   kubectl -n hermes create job --from=cronjob/hermes-backup "$initial_backup_job"
+   kubectl -n hermes wait "job/$initial_backup_job" --for=condition=Complete --timeout=15m
+   kubectl -n hermes logs "job/$initial_backup_job" -c backup
+   kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/backups/last-success
+   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
+     'cd /opt/backups; archive=$(find . -maxdepth 1 -name "hermes-backup-*.zip" -type f | sort -r | head -1); test -n "$archive" && sha256sum -c "$archive.sha256"'
    ```
+
+   The Job must complete and its log and checksum verification must succeed. `HermesBackupStale` uses the CronJob's last
+   successful completion metric; backup failure never changes the gateway Pod's readiness.
 
 2. Port-forward the cluster-local API and keep the key out of command output:
 
