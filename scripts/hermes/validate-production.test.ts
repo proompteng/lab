@@ -75,6 +75,18 @@ test('rejects a network-policy probe without bounded Pods', async () => {
   )
 })
 
+test('rejects treating arbitrary probe failures as policy enforcement', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicyProbe = files.networkPolicyProbe.replace(
+    'if [[ "$request_status" -eq 42 ]]',
+    'if [[ "$request_status" -ne 0 ]]',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicyProbe}: missing production invariant "if [[ \\"$request_status\\" -eq 42 ]]"`,
+  )
+})
+
 test('rejects syncing Hermes before network-policy enforcement proof', async () => {
   const files = await loadProductionFiles()
   const probeCommand = '   bash scripts/hermes/verify-network-policy-enforcement.sh\n'

@@ -289,6 +289,11 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'egress: []',
     'baseline_reachable=false',
     'policy_enforced=false',
+    'raise SystemExit(42)',
+    'raise SystemExit(43)',
+    'verify_probe_health() {',
+    'urllib.request.urlopen("http://127.0.0.1:8080/", timeout=2).read(1)',
+    'if [[ "$request_status" -eq 42 ]]',
     "echo 'NetworkPolicy is not enforced; do not sync Hermes' >&2",
     "printf 'network_policy_enforced=true\\n'",
   ])
@@ -308,6 +313,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'privileged: true',
     'hostNetwork: true',
     'serviceAccountName:',
+    'if ! probe_request',
   ])
   const probeBaselineIndex = files.networkPolicyProbe.indexOf('if [[ "$baseline_reachable" != true ]]')
   const probePolicyIndex = files.networkPolicyProbe.indexOf('name: deny-client-egress')

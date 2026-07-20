@@ -184,8 +184,25 @@ test -n "$server_ip"
 probe_request() {
   kubectl -n "$probe_namespace" exec pod/policy-client -c client -- \
     /opt/hermes/.venv/bin/python -c \
-    'import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=2).read(1)' \
+    'import sys, urllib.error, urllib.request
+try:
+    urllib.request.urlopen(sys.argv[1], timeout=2).read(1)
+except (TimeoutError, OSError, urllib.error.URLError):
+    raise SystemExit(42)
+except BaseException:
+    raise SystemExit(43)' \
     "http://$server_ip:8080/" >/dev/null 2>&1
+}
+
+verify_probe_health() {
+  kubectl -n "$probe_namespace" wait pod/policy-server pod/policy-client \
+    --for=condition=Ready --timeout=5s >/dev/null
+  kubectl -n "$probe_namespace" exec pod/policy-client -c client -- \
+    /opt/hermes/.venv/bin/python -c 'raise SystemExit(0)' >/dev/null 2>&1
+  kubectl -n "$probe_namespace" exec pod/policy-server -c server -- \
+    /opt/hermes/.venv/bin/python -c \
+    'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/", timeout=2).read(1)' \
+    >/dev/null 2>&1
 }
 
 baseline_reachable=false
@@ -193,6 +210,12 @@ for _ in $(seq 1 30); do
   if probe_request; then
     baseline_reachable=true
     break
+  else
+    request_status=$?
+  fi
+  if [[ "$request_status" -ne 42 ]]; then
+    echo "network-policy baseline probe execution failed with status $request_status" >&2
+    exit 1
   fi
   sleep 1
 done
@@ -219,11 +242,19 @@ EOF
 
 policy_enforced=false
 for _ in $(seq 1 30); do
-  if ! probe_request; then
+  if probe_request; then
+    sleep 1
+    continue
+  else
+    request_status=$?
+  fi
+  if [[ "$request_status" -eq 42 ]]; then
+    verify_probe_health
     policy_enforced=true
     break
   fi
-  sleep 1
+  echo "network-policy denial probe execution failed with status $request_status" >&2
+  exit 1
 done
 if [[ "$policy_enforced" != true ]]; then
   echo 'NetworkPolicy is not enforced; do not sync Hermes' >&2
