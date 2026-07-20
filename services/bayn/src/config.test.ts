@@ -53,7 +53,41 @@ describe('Effect configuration', () => {
     expect(Redacted.isRedacted(config.clickhouse.password)).toBe(true)
     expect(config.tigerBeetle.clusterId).toBe(2001n)
     expect(config.tigerBeetle.replicaAddresses).toEqual(['tigerbeetle.test:3000'])
-    expect(config.build).toEqual({ ...buildMetadata, imageDigest })
+    expect(config.build).toEqual({ ...buildMetadata, imageDigest, verification: 'embedded' })
+  })
+
+  test('supports an explicit, visibly unverified development provenance path', async () => {
+    const development = new Map(runtimeEnvironment)
+    development.set('BAYN_PROVENANCE_MODE', 'development')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(undefined), development))
+
+    expect(config.build).toMatchObject({
+      sourceRevision,
+      imageRepository,
+      imageDigest,
+      verification: 'development-configured',
+    })
+    expect(config.build.strategyBehaviorHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(config.runOnStartup).toBe(false)
+  })
+
+  test('does not let missing build facts or development mode bypass production verification', async () => {
+    const missing = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(undefined), runtimeEnvironment)))
+    expect(missing).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'provenance',
+    })
+
+    const bypass = new Map(runtimeEnvironment)
+    bypass.set('BAYN_PROVENANCE_MODE', 'development')
+    const mismatch = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), bypass)))
+    expect(mismatch).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'provenance',
+    })
   })
 
   test('returns a typed configuration failure for invalid values', async () => {

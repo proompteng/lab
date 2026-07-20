@@ -15,9 +15,20 @@ export const EmbeddedBuildMetadataSchema = Schema.Struct({
 })
 export type EmbeddedBuildMetadata = typeof EmbeddedBuildMetadataSchema.Type
 
-export const embeddedBuildMetadata = {
-  sourceRevision: typeof __BAYN_BUILD_SOURCE_REVISION__ === 'undefined' ? 'unbuilt' : __BAYN_BUILD_SOURCE_REVISION__,
-  imageRepository: typeof __BAYN_BUILD_IMAGE_REPOSITORY__ === 'undefined' ? 'unbuilt' : __BAYN_BUILD_IMAGE_REPOSITORY__,
-  strategyBehaviorHash:
-    typeof __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__ === 'undefined' ? 'unbuilt' : __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__,
-} as const
+const sourceRevision =
+  typeof __BAYN_BUILD_SOURCE_REVISION__ === 'undefined' ? undefined : __BAYN_BUILD_SOURCE_REVISION__
+const imageRepository =
+  typeof __BAYN_BUILD_IMAGE_REPOSITORY__ === 'undefined' ? undefined : __BAYN_BUILD_IMAGE_REPOSITORY__
+const strategyBehaviorHash =
+  typeof __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__ === 'undefined' ? undefined : __BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__
+
+const hasNoEmbeddedMetadata =
+  sourceRevision === undefined && imageRepository === undefined && strategyBehaviorHash === undefined
+
+export const embeddedBuildMetadata: EmbeddedBuildMetadata | undefined = hasNoEmbeddedMetadata
+  ? undefined
+  : {
+      sourceRevision: sourceRevision ?? 'incomplete',
+      imageRepository: imageRepository ?? 'incomplete',
+      strategyBehaviorHash: strategyBehaviorHash ?? 'incomplete',
+    }

@@ -33,6 +33,11 @@ canonical JSON, and refuses to run when configured source/repository attribution
 GitOps supplies the immutable image-index digest after publication. Status and the in-memory evidence envelope expose
 all of those facts and their contract versions.
 
+Local package entry points remain usable through an explicit `development-configured` provenance mode. It is reported
+in HTTP status with an unverified behavior marker, forces evaluation and journaling off, and cannot override embedded
+build facts. The production Nix image does not enable that mode: absent, partial, or mismatched embedded attribution
+prevents startup.
+
 The current transitional run ID is the SHA-256 hash of:
 
 - the runtime-provenance envelope; and

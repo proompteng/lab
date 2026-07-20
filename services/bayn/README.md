@@ -17,6 +17,10 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   immutable parameters only; the reviewed TypeScript implementation remains compiled into the image.
 - The executable embeds source, repository, and strategy-behavior identity. Startup verifies configured attribution,
   and status exposes the promoted image digest, parameter hash, and contract versions.
+- The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
+  not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
+  it also forces startup evaluation and journaling off. The Nix image starts in the default production mode and fails
+  closed if embedded facts are absent.
 - The transitional run ID binds runtime provenance and the exact ClickHouse input-manifest hash. It remains distinct
   from the target finalized-snapshot run identity until bounded Signal publications are adopted.
 - Signals are formed at a month-end close and may execute only at the next common session open.

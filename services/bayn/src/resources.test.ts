@@ -21,6 +21,7 @@ const config: RuntimeConfig = {
     imageRepository: provenance.image.repository,
     imageDigest: provenance.image.digest,
     strategyBehaviorHash: provenance.strategy.behaviorHash,
+    verification: 'embedded',
   },
   runOnStartup: true,
   operationTimeoutMs: 20,

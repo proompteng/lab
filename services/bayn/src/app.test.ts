@@ -22,6 +22,7 @@ const config: RuntimeConfig = {
     imageRepository: provenance.image.repository,
     imageDigest: provenance.image.digest,
     strategyBehaviorHash: provenance.strategy.behaviorHash,
+    verification: 'embedded',
   },
   runOnStartup: true,
   operationTimeoutMs: 250,
@@ -78,7 +79,9 @@ describe('Bayn HTTP probes', () => {
       Effect.scoped(
         Effect.gen(function* () {
           const state = yield* Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null })
-          const context = yield* Layer.build(makeHttpLayer({ host: '127.0.0.1', port: 0 }, state, provenance))
+          const context = yield* Layer.build(
+            makeHttpLayer({ host: '127.0.0.1', port: 0 }, state, provenance, 'embedded'),
+          )
           const address = Context.get(context, HttpServer.HttpServer).address
           if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
           port = address.port
@@ -104,6 +107,7 @@ describe('Bayn HTTP probes', () => {
               service: 'bayn',
               status: 'READY',
               authority: { brokerOrders: false, capitalPromotion: false },
+              provenanceVerification: 'embedded',
               provenance,
               evidence: { provenance },
             },
