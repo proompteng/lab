@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-20T20:17:50Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-20T18:56:39Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -47,11 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 627ad33f9ca9623c2055d53515026abb36ed016a
+              value: 948a8bb8f4a635ca7612319ca950e3b9b5930eba
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:fcc3d5245aa78e8bea5476dc3724ee29a8031ed9cc23f38cd58d75af3d38e124
+              value: sha256:418840c185016cdee2ef74029c8a243924d30d7188bbc717d06d08a77c9ecb79
             - name: BAYN_RUN_ON_STARTUP
               value: "true"
             - name: BAYN_OPERATION_TIMEOUT_MS
@@ -68,6 +68,13 @@ spec:
                 secretKeyRef:
                   name: bayn-clickhouse-auth
                   key: password
+            # Remove these legacy values atomically with the bounded-reader image promotion.
+            - name: BAYN_CLICKHOUSE_DATABASE
+              value: signal
+            - name: BAYN_CLICKHOUSE_TABLE
+              value: adjusted_daily_bars_v1
+            - name: BAYN_DATASET_VERSION
+              value: alpaca-all-iex-2017-01-01-2026-07-18-v1
             - name: BAYN_SIGNAL_SNAPSHOT_ID
               value: e6ff31d2b08ec246876c4b45937838f0e3b4f5167c682afd6c2f10c46acaab20
             - name: BAYN_SIGNAL_PUBLICATION_ASOF

@@ -199,6 +199,15 @@ export const RuntimeProvenanceSchema = Schema.Struct({
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
 export type RuntimeProvenanceInput = Omit<RuntimeProvenance, 'schemaVersion' | 'contractVersions'>
 
+export const makeStrategyProtocolHash = (strategy: RuntimeProvenance['strategy']): string =>
+  canonicalHashV1({
+    schemaVersion: 'bayn.strategy-protocol.v1',
+    name: strategy.name,
+    behaviorHash: strategy.behaviorHash,
+    parameterHash: strategy.parameterHash,
+    parameterSchemaVersion: strategy.parameterSchemaVersion,
+  })
+
 const EvidenceFreshnessBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.evidence-freshness.v1'),
   observedAt: UtcInstant,

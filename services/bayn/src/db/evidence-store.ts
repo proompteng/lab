@@ -4,7 +4,7 @@ import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
-import { makeRunIdentity, type RuntimeProvenance } from '../contracts'
+import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import { canonicalHashV1 } from '../hash'
 import type { EvaluationResult, ReconciliationResult } from '../types'
 import { migrationLoader } from './migrations'
@@ -193,10 +193,13 @@ const ensure = (condition: boolean, operation: string, message: string): Effect.
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
   const { evaluation, parameters, provenance, reconciliation } = input
   const strategyName = provenance.strategy.name
-  const protocolHash = canonicalHashV1(parameters)
-  if (protocolHash !== evaluation.protocolHash || protocolHash !== provenance.strategy.parameterHash) {
-    throw new TypeError('evaluation, strategy parameters, and provenance disagree on protocol hash')
+  const parameterHash = canonicalHashV1(parameters)
+  if (parameterHash !== provenance.strategy.parameterHash) {
+    throw new TypeError('strategy parameters and provenance disagree on parameter hash')
   }
+  const protocolHash = makeStrategyProtocolHash(provenance.strategy)
+  if (protocolHash !== evaluation.protocolHash)
+    throw new TypeError('evaluation and provenance disagree on protocol hash')
   if (evaluation.codeRevision !== provenance.sourceRevision) {
     throw new TypeError('evaluation code revision does not match runtime provenance')
   }
@@ -570,7 +573,13 @@ const makeEvidenceStore = Effect.gen(function* () {
                 protocol.strategy_name === plan.strategyName &&
                 protocol.behavior_hash === plan.provenance.strategy.behaviorHash &&
                 protocol.parameter_hash === plan.provenance.strategy.parameterHash &&
-                canonicalHashV1(protocol.parameters) === plan.protocolHash,
+                canonicalHashV1(protocol.parameters) === plan.provenance.strategy.parameterHash &&
+                makeStrategyProtocolHash({
+                  name: protocol.strategy_name,
+                  behaviorHash: protocol.behavior_hash,
+                  parameterHash: protocol.parameter_hash,
+                  parameterSchemaVersion: protocol.schema_version,
+                }) === plan.protocolHash,
               'protocol-lock',
               'stored protocol lock diverged from the evaluated protocol',
             )

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import { makeStrategyProtocolHash } from './contracts'
 import { calculatePerformanceMetrics, evaluateTsmom } from './strategy'
 import { canonicalHashV1 } from './hash'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
@@ -20,7 +21,7 @@ describe('TSMOM economic evaluator', () => {
     const second = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     expect(first).toEqual(second)
     expect(first.codeRevision).toBe(provenance.sourceRevision)
-    expect(first.protocolHash).toBe(provenance.strategy.parameterHash)
+    expect(first.protocolHash).toBe(makeStrategyProtocolHash(provenance.strategy))
     expect(first.strategy.observations).toBeGreaterThanOrEqual(fixtureProtocol.thresholds.minimumObservations)
     expect(BigInt(first.strategy.totalFeesMicros)).toBeGreaterThan(0n)
     expect(first.doubleCostStrategy.endingEquityMicros).not.toBe(first.strategy.endingEquityMicros)
@@ -80,7 +81,9 @@ describe('TSMOM economic evaluator', () => {
     expect(sourceChanged.runId).not.toBe(baseline.runId)
     expect(imageChanged.runId).not.toBe(baseline.runId)
     expect(behaviorChanged.runId).not.toBe(baseline.runId)
+    expect(behaviorChanged.protocolHash).not.toBe(baseline.protocolHash)
     expect(protocolChanged.runId).not.toBe(baseline.runId)
+    expect(protocolChanged.protocolHash).not.toBe(baseline.protocolHash)
     expect(inputChanged.runId).not.toBe(baseline.runId)
   })
 

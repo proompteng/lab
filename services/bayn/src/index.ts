@@ -6,9 +6,8 @@ import { run } from './app'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreRuntimeLive } from './db/evidence-store'
-import { operationalError } from './errors'
 import { JournalLive } from './ledger'
-import { MarketData, MarketDataLive } from './market-data'
+import { MarketDataLive } from './market-data'
 import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
 import { makeTsmomStrategy, Strategy } from './strategy-service'
 
@@ -41,13 +40,6 @@ const main = Effect.gen(function* () {
       }),
     ),
     Layer.provide(NodeHttpClient.layerNodeHttp),
-    Layer.catch((cause) =>
-      Layer.succeed(MarketData, {
-        load: Effect.fail(
-          operationalError('market-data', 'connect', 'failed to initialize Signal ClickHouse client', cause),
-        ),
-      }),
-    ),
   )
   const dependencies = Layer.mergeAll(
     marketData,
