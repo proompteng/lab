@@ -47,7 +47,7 @@ spec:
                 - daily
               env:
                 - name: SIGNAL_CODE_REVISION
-                  value: 0000000000000000000000000000000000000000
+                  value: "0000000000000000000000000000000000000000"
                 - name: SIGNAL_IMAGE_REPOSITORY
                   value: registry.ide-newton.ts.net/lab/signal-publisher
                 - name: SIGNAL_IMAGE_DIGEST
