@@ -115,7 +115,7 @@ const directVolatilityWeights = (
   return Object.fromEntries(protocol.universe.map((symbol) => [symbol, weight]))
 }
 
-const metrics = (
+export const calculatePerformanceMetrics = (
   equity: readonly number[],
   turnover: number,
   totalFees: number,
@@ -124,7 +124,7 @@ const metrics = (
   if (equity.length < 2 || equity.some((value) => !Number.isFinite(value) || value <= 0)) {
     throw new Error('evaluation produced an invalid equity curve')
   }
-  const returns = equity.slice(1).map((value, index) => value / equity[index] - 1)
+  const returns = [equity[0] / initialCapital - 1, ...equity.slice(1).map((value, index) => value / equity[index] - 1)]
   const totalReturn = equity.at(-1)! / initialCapital - 1
   const annualizedReturn = Math.pow(equity.at(-1)! / initialCapital, TRADING_DAYS / equity.length) - 1
   const volatility = sampleStandardDeviation(returns) * Math.sqrt(TRADING_DAYS)
@@ -277,7 +277,7 @@ const simulate = (
     equity.push(closingEquity)
   }
 
-  return { metrics: metrics(equity, turnover, totalFees, initialCapital), events }
+  return { metrics: calculatePerformanceMetrics(equity, turnover, totalFees, initialCapital), events }
 }
 
 const buildVerdict = (

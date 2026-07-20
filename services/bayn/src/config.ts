@@ -1,3 +1,5 @@
+import { isIP } from 'node:net'
+
 import { Config, Effect, Redacted, Schema, SchemaTransformation } from 'effect'
 
 import { operationalError, type OperationalError } from './errors'
@@ -26,6 +28,7 @@ export interface RuntimeConfig {
 const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const ClickHouseIdentifier = NonEmptyString.check(Schema.isPattern(/^[a-zA-Z_][a-zA-Z0-9_]*$/))
+const normalizeReplicaAddress = (address: string): string => (isIP(address) === 4 ? `${address}:3001` : address)
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
     Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
@@ -34,7 +37,8 @@ const ReplicaAddresses = Schema.Trim.pipe(
         value
           .split(',')
           .map((address) => address.trim())
-          .filter(Boolean),
+          .filter(Boolean)
+          .map(normalizeReplicaAddress),
       encode: (addresses) => addresses.join(','),
     }),
   ),

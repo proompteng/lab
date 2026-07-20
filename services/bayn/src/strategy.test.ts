@@ -1,11 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 
 import { defaultProtocol } from './protocol'
-import { evaluateTsmom } from './strategy'
+import { calculatePerformanceMetrics, evaluateTsmom } from './strategy'
 import { makeSnapshot } from './test-fixtures'
 import type { FillEvent } from './types'
 
 describe('TSMOM economic evaluator', () => {
+  test('includes the initial trading session in return statistics', () => {
+    const result = calculatePerformanceMetrics([90, 99], 0, 0, 100)
+    expect(result.totalReturn).toBeCloseTo(-0.01)
+    expect(result.annualizedVolatility).toBeCloseTo(Math.sqrt(0.02) * Math.sqrt(252))
+    expect(result.sharpe).toBeCloseTo(0)
+  })
+
   test('is deterministic, costed, and executes after the signal session', () => {
     const snapshot = makeSnapshot()
     const first = evaluateTsmom(snapshot.bars, snapshot.manifest, defaultProtocol, 'test-revision')

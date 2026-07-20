@@ -43,6 +43,14 @@ describe('Effect configuration', () => {
     expect(config.tigerBeetle.replicaAddresses).toEqual(['tigerbeetle.test:3000'])
   })
 
+  test('normalizes bare IPv4 TigerBeetle replicas to the default port', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.set('BAYN_TIGERBEETLE_ADDRESSES', '127.0.0.1,replica.test:3000,3001')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig, environment))
+    expect(config.tigerBeetle.replicaAddresses).toEqual(['127.0.0.1:3001', 'replica.test:3000', '3001'])
+  })
+
   test('returns a typed configuration failure for invalid values', async () => {
     const invalid = new Map(runtimeEnvironment)
     invalid.set('BAYN_OPERATION_TIMEOUT_MS', '0')
