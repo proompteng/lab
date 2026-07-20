@@ -2,7 +2,8 @@
 
 Status: production-proven for deterministic point-in-time replay materialization and independent verification against
 live Torghut market data. This proof does not establish adequate market-data coverage, strategy profitability, or
-capital authority.
+capital authority. The controlled tapes were not retained, so this document is a historical execution receipt rather
+than a byte-for-byte reproducible artifact.
 
 Evidence window: `2026-07-18T20:59:08Z` through `2026-07-18T21:22:04Z`.
 
@@ -73,7 +74,7 @@ The controlled input was `NVDA` on `2026-07-15` from feed `alpaca-iex`. The rece
 | Feature schema                | `378e31bba54f425b85a78d39aa67cfd9faaf0d5942157479783c0610a593e154`        |
 | Source query                  | `d931676c39f8079b20b3e57555e82539743f3198a87644bdeaf1e7a68fbb0fa2`        |
 | `torghut.ta_signals` schema   | `sha256:5dbd5bfe8a0b38a71a95b40815522356d27caa3c2bbd6d1d0469b82bd88a4f6c` |
-| `torghut.ta_microbars` schema | `sha256:22e6a26a379e6fa7fbdc7ffb5a8ad94dfb9b0b4c2444ebb3c2f9cf7a6710d32c` |
+| `torghut.ta_microbars` schema | `sha256:22e6a26a379529e6506661429d88bb082e876bfca2df221bc4d65` |
 
 The corporate-action input was an authenticated snapshot from Alpaca's
 [current corporate-actions endpoint](https://docs.alpaca.markets/us/reference/corporateactions-1), captured before the
@@ -99,7 +100,7 @@ matched on every required anchor:
 | Feature-matrix SHA-256 | `sha256:d09d94026eecbd97d923696e3e8b0d3dfccd0cb455ef90830d908a665ca5a8dc` | `sha256:d09d94026eecbd97d923696e3e8b0d3dfccd0cb455ef90830d908a665ca5a8dc` |
 
 The independent verifier loaded the finished artifact, recomputed the tape, input-row-set, feature-matrix, watermark,
-and receipt hashes, and compared all four expected anchors. It returned:
+and receipt hashes, and compared all four expected anchors. The selected fields relevant to this evidence were:
 
 ```json
 {
@@ -110,7 +111,7 @@ and receipt hashes, and compared all four expected anchors. It returned:
 ```
 
 The verifier was then run against the unchanged tape with an intentionally wrong expected receipt hash. It exited
-nonzero and returned exactly:
+nonzero; the selected rejection fields were:
 
 ```json
 {
@@ -118,6 +119,9 @@ nonzero and returned exactly:
   "status": "rejected"
 }
 ```
+
+The verifier also emitted its schema version, tape and manifest paths, observation cutoff, and all four computed hashes.
+The projections above are intentionally abbreviated and are not literal complete console output.
 
 A separate paper-probation negative control omitted replay metadata. It remained blocked with both independent reason
 codes:
@@ -129,7 +133,9 @@ codes:
 }
 ```
 
-The verifier boundary can be reproduced without trusting materializer console output:
+The following command documents the verifier invocation shape for a newly retained or newly materialized tape. It cannot
+reproduce the historical hashes by itself because the controlled tape and manifest referenced by this receipt were
+deleted:
 
 ```bash
 kubectl -n torghut exec <scheduler-pod> -- \
@@ -142,7 +148,9 @@ kubectl -n torghut exec <scheduler-pod> -- \
 ```
 
 The controlled validation tapes were non-candidate artifacts. Their hashes and outcomes were retained here, and their
-temporary in-pod directory was removed after verification rather than leaving garbage in the scheduler container.
+temporary in-pod directory was removed after verification rather than leaving garbage in the scheduler container. A
+future production-evidence run that claims independent reproducibility must retain the tape and manifest durably or
+record a complete immutable materialization specification and source snapshot sufficient to reconstruct them.
 
 ## GitOps And Singleton Readback
 
