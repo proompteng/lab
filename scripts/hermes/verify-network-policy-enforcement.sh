@@ -187,6 +187,8 @@ probe_request() {
     'import sys, urllib.error, urllib.request
 try:
     urllib.request.urlopen(sys.argv[1], timeout=2).read(1)
+except urllib.error.HTTPError:
+    raise SystemExit(43)
 except (TimeoutError, OSError, urllib.error.URLError):
     raise SystemExit(42)
 except BaseException:

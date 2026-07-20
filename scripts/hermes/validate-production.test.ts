@@ -87,6 +87,18 @@ test('rejects treating arbitrary probe failures as policy enforcement', async ()
   )
 })
 
+test('rejects treating HTTP error responses as policy enforcement', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicyProbe = files.networkPolicyProbe.replace(
+    'except urllib.error.HTTPError:\n    raise SystemExit(43)\nexcept (TimeoutError, OSError, urllib.error.URLError):',
+    'except (TimeoutError, OSError, urllib.error.URLError):\n    raise SystemExit(42)\nexcept urllib.error.HTTPError:',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicyProbe}: HTTP responses must not count as policy denials`,
+  )
+})
+
 test('rejects policy enforcement proof without connectivity restoration', async () => {
   const files = await loadProductionFiles()
   files.networkPolicyProbe = files.networkPolicyProbe.replace(

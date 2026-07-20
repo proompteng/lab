@@ -289,6 +289,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'egress: []',
     'baseline_reachable=false',
     'policy_enforced=false',
+    'except urllib.error.HTTPError:',
+    'except (TimeoutError, OSError, urllib.error.URLError):',
     'raise SystemExit(42)',
     'raise SystemExit(43)',
     'verify_probe_health() {',
@@ -332,6 +334,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(
       `${productionPaths.networkPolicyProbe}: baseline connectivity must pass before the deny policy is tested`,
     )
+  }
+  const probeHttpErrorIndex = files.networkPolicyProbe.indexOf('except urllib.error.HTTPError:')
+  const probeNetworkErrorIndex = files.networkPolicyProbe.indexOf(
+    'except (TimeoutError, OSError, urllib.error.URLError):',
+  )
+  if (probeHttpErrorIndex < 0 || probeNetworkErrorIndex <= probeHttpErrorIndex) {
+    failures.push(`${productionPaths.networkPolicyProbe}: HTTP responses must not count as policy denials`)
   }
   requireTerms(failures, productionPaths.maintenanceWait, files.maintenanceWait, [
     'set -euo pipefail',
