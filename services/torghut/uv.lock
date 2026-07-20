@@ -3530,10 +3530,10 @@ wheels = [
 
 [[package]]
 name = "tigerbeetle"
-version = "0.17.4"
+version = "0.17.9"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/a8/3d5b80197493af4bd1c1454ad3737d58234af2cb86827fcfb141f0f4b8c2/tigerbeetle-0.17.4-py3-none-any.whl", hash = "sha256:b0b79a2a340e99598b3d5a9094a2c29325d3caf58045f45260fd065f82238f3a", size = 1644037, upload-time = "2026-05-11T09:25:00.321Z" },
+    { url = "https://files.pythonhosted.org/packages/98/ba/1819cb0023531fd8e45b89c1d223a937c837aac9b6c0d4ae6f9ce1565a50/tigerbeetle-0.17.9-py3-none-any.whl", hash = "sha256:405910bfdf74f169a27a282abfd6a124bee57ac2ef8cc50d247bb753e9a119ec", size = 1680410, upload-time = "2026-07-06T17:24:45.517Z" },
 ]
 
 [[package]]
@@ -3787,7 +3787,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2,<7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9.0,<1.0" },
     { name = "sqlalchemy", specifier = ">=2.0.36,<3.0" },
-    { name = "tigerbeetle", specifier = "==0.17.4" },
+    { name = "tigerbeetle", specifier = "==0.17.9" },
     { name = "torch", marker = "(sys_platform == 'linux' and extra == 'cuda-research') or (sys_platform == 'win32' and extra == 'cuda-research')", specifier = "==2.11.0+cu128", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "torghut", extra = "cuda-research" } },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0,<1.0" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14,<3.0" },

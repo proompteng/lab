@@ -9,7 +9,7 @@ Torghut uses TigerBeetle as a durable double-entry ledger for execution/order li
 - Cluster: `TigerBeetleCluster/torghut-tigerbeetle`
 - Cluster ID: `2001`
 - Endpoint: `torghut-tigerbeetle.torghut.svc.cluster.local:3000`
-- Server/client version: `0.17.4`
+- Server/client version: `0.17.9`
 - Storage class: `rook-ceph-block`
 - Bootstrap replicas: `1`
 
@@ -101,7 +101,7 @@ The operator-driven journal runner emits stable JSON with schema version `torghu
 
 ## Rollout Checklist
 
-1. Confirm `0.17.4` is still the latest TigerBeetle release before changing pins.
+1. Confirm the intended TigerBeetle release is compatible with the live replica and update the server manifest, Python client dependency, lockfile, contract test, and version documentation together.
 2. Render manifests:
 
    ```bash
