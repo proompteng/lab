@@ -2,10 +2,14 @@
 
 ## Purpose and boundary
 
-Bayn is an autonomous quantitative evaluation and accounting service. Its first production protocol is adjusted-ETF
-time-series momentum. The service may read market data, evaluate a frozen protocol, and journal simulation accounting.
-It may not call a broker, submit an order, or promote capital. A profitable live trading system is a later outcome; this
-boundary first makes research results reproducible and mechanically rejectable.
+Bayn is being built as an autonomous quantitative evaluation, execution, and accounting service. Its first strategy is
+adjusted-ETF time-series momentum. The deployed runtime currently stops at evaluation and simulation accounting: it may
+not call a broker, submit an order, or promote capital. Later authority is unlocked only by the roadmap's economic,
+recovery, reconciliation, and observation gates.
+
+The current TigerBeetle-backed startup path described below is legacy production state, not the target architecture.
+The active roadmap replaces it incrementally with finalized Signal publications and Bayn-owned PostgreSQL evidence
+before any paper mutation work begins.
 
 ## Critical path
 
@@ -32,6 +36,17 @@ The run ID is the SHA-256 hash of:
 Decision and fill IDs derive from canonical event payloads. TigerBeetle account and transfer IDs derive from the run ID,
 event ID, and journal leg. Repeating the same run is idempotent; a changed price, protocol, or source revision creates a
 different run namespace.
+
+## Versioned contract boundary
+
+The target evaluation path uses the executable v1 contracts in [`contracts/v1.md`](contracts/v1.md). They strictly
+decode finalized-snapshot provenance, evaluation bounds, run identity, evidence freshness, independent status axes, and
+authority. Unknown versions and excess fields fail closed. Run identity binds the full source revision, OCI image
+digest, compiled strategy behavior hash, decoded strategy parameters, finalized snapshot, exchange-calendar version,
+and explicit bounds through canonical JSON and SHA-256.
+
+Contract availability does not mean the deployed runtime has adopted the target path. Adoption, persistence, continuous
+health, and removal of the legacy TigerBeetle dependency are separate roadmap tickets with their own rollout evidence.
 
 ## Economic test
 
