@@ -75,6 +75,15 @@ test('rejects a backup CronJob without independent retry behavior', async () => 
   )
 })
 
+test('rejects a backup CronJob that cannot be suspended deterministically', async () => {
+  const files = await loadProductionFiles()
+  files.backupCronJob = files.backupCronJob.replace('suspend: false', 'suspend: true')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupCronJob}: missing production invariant "suspend: false"`,
+  )
+})
+
 test('rejects availability alerts that ignore missing metrics', async () => {
   const files = await loadProductionFiles()
   files.mimirRules = files.mimirRules.replace(
@@ -114,6 +123,27 @@ test('rejects alerting before the first scheduled backup window expires', async 
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.mimirRules}: missing production invariant "time() - kube_cronjob_created{"`,
+  )
+})
+
+test('rejects migration or restore without backup quiescence', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\'\n',
+    '',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: migration and restore must both suspend the backup CronJob`,
+  )
+})
+
+test('rejects API key rotation without restart proof', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('## API key rotation', '## API credential maintenance')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "## API key rotation"`,
   )
 })
 

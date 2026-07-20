@@ -109,10 +109,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [
     'kind: CronJob',
+    'suspend: false',
     'concurrencyPolicy: Forbid',
     'backoffLimit: 3',
     'restartPolicy: OnFailure',
     'requiredDuringSchedulingIgnoredDuringExecution:',
+    'jobTemplate:\n    metadata:\n      labels:\n        app.kubernetes.io/name: hermes\n        app.kubernetes.io/component: backup',
     'app.kubernetes.io/component: gateway',
     'kubernetes.io/arch: amd64',
     'automountServiceAccountToken: false',
@@ -223,9 +225,24 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never pass `--migrate-secrets`',
     'Never run `hermes claw cleanup`',
     'A standalone Job does not update the CronJob',
+    '## API key rotation',
+    'Every API key rotation must restart `hermes-0`',
+    'previous_secret_version=',
+    'Authorization: Bearer $old_api_key',
+    'Authorization: Bearer $new_api_key',
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
   ])
+  const suspendBackupCommand =
+    'kubectl -n hermes patch cronjob hermes-backup --type=merge -p \'{"spec":{"suspend":true}}\''
+  if (count(files.runbook, suspendBackupCommand) !== 2) {
+    failures.push(`${productionPaths.runbook}: migration and restore must both suspend the backup CronJob`)
+  }
+  const activeBackupSelector =
+    'kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup'
+  if (count(files.runbook, activeBackupSelector) !== 2) {
+    failures.push(`${productionPaths.runbook}: migration and restore must both wait for active backup Jobs`)
+  }
 
   requireTerms(failures, productionPaths.mimirRules, files.mimirRules, [
     'alert: HermesGatewayUnavailable',

@@ -24,6 +24,7 @@ smoke test, manifest change, and normal CI/Codex review.
 - Default-deny network policy permits the gateway to reach only cluster DNS, Flamingo, and the allowlisted Squid proxy.
 - Squid permits HTTPS `CONNECT` only to Discord-owned domains and blocks private, tailnet, metadata, and multicast ranges.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
+- API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
 - Plugins, MCP servers, delegation, cron, hooks, speech-to-text, and Discord are disabled for the initial canary.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.

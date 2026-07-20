@@ -9,6 +9,8 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 - Never pass `--migrate-secrets` to the OpenClaw migration.
 - Never store or print the API key or Discord token in Git, shell history, logs, Job specs, or evidence artifacts.
 - Never run `hermes claw cleanup`, delete the OpenClaw VM/PVC, or delete Hermes PVCs during the 14-day rollback window.
+- Never start migration or restore until the backup CronJob is suspended and every active backup Job has finished.
+- Every API key rotation must restart `hermes-0` and prove the old key is rejected and the new key is accepted.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
 - Roll out and cut over only from merged `main`; do not deploy manifests from an unmerged worktree.
@@ -128,6 +130,38 @@ The expected mirrored amd64 manifest digest is
 
    The direct public request must fail. Discord through Squid must connect, and the non-allowlisted domain must fail.
 
+## API key rotation
+
+External Secrets updates the Kubernetes Secret but cannot change environment variables in an existing container. Every API
+key rotation therefore includes a bounded Secret refresh, a gateway Pod restart, and old-key/new-key authentication proof.
+Run this in a private shell while the Phase 1 port-forward is active; record only HTTP status and health results:
+
+```bash
+previous_secret_version=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.metadata.resourceVersion}')
+old_api_key=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d)
+new_api_key=$(openssl rand -hex 32)
+op item edit --vault infra hermes-runtime "API_SERVER_KEY[password]=$new_api_key" >/dev/null
+kubectl -n hermes annotate externalsecret hermes-api-auth force-sync="$(date +%s)" --overwrite
+current_secret_version=$previous_secret_version
+for _ in $(seq 1 72); do
+  current_secret_version=$(kubectl -n hermes get secret hermes-api-auth -o jsonpath='{.metadata.resourceVersion}')
+  [ "$current_secret_version" != "$previous_secret_version" ] && break
+  sleep 5
+done
+test "$current_secret_version" != "$previous_secret_version"
+kubectl -n hermes delete pod hermes-0
+kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+test "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $old_api_key" \
+  http://127.0.0.1:18642/health/detailed)" = 401
+curl -fsS -H "Authorization: Bearer $new_api_key" http://127.0.0.1:18642/health/detailed | jq -e \
+  '.status == "ok" and .gateway_state == "running"'
+argocd app sync hermes --prune=false
+unset old_api_key new_api_key previous_secret_version current_secret_version
+```
+
+Stop and roll back the 1Password value if the Secret does not refresh, the replacement Pod does not become ready, the old
+key remains accepted, or the new key fails. ExternalSecret `Ready` alone is not rotation proof.
+
 ## Phase 2: non-secret user-data migration
 
 1. Build a sanitized source archive from the OpenClaw workspace. Only the listed identity and memory paths are exported;
@@ -145,13 +179,21 @@ The expected mirrored amd64 manifest digest is
 
    Review the file-name-only inventory. Stop if it contains config, credential, token, session, or log files.
 
-2. Stage the sanitized directory on the Hermes data PVC, then stop the gateway so the migration has exclusive RBD access:
+2. Stage the sanitized directory on the Hermes data PVC. Suspend new backups and wait up to 65 minutes for every active
+   backup Job to finish before stopping the gateway; only then does the migration have exclusive RBD access:
 
    ```bash
    kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw
    kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/openclaw -c hermes
    rm -rf -- "$hermes_stage_dir"
    unset hermes_stage_dir
+   kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
+   backup_wait_deadline=$(( $(date +%s) + 3900 ))
+   while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
+     test "$(date +%s)" -lt "$backup_wait_deadline"
+     sleep 10
+   done
+   unset backup_wait_deadline
    kubectl -n hermes scale statefulset/hermes --replicas=0
    kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
    ```
@@ -178,7 +220,11 @@ The expected mirrored amd64 manifest digest is
    ```bash
    argocd app sync hermes --prune=false
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+   test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
    ```
+
+   If migration is aborted before the final sync, sync the Hermes app before leaving the maintenance window so backups are
+   resumed. Do not resume backups while a migration Job is active.
 
 ## Phase 3: Discord cutover
 
@@ -231,6 +277,13 @@ Scale Hermes to zero, select a known-good archive, verify its SHA-256 sidecar, a
 the archive name below with the reviewed recovery point; never select it only by recency:
 
 ```bash
+kubectl -n hermes patch cronjob hermes-backup --type=merge -p '{"spec":{"suspend":true}}'
+backup_wait_deadline=$(( $(date +%s) + 3900 ))
+while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kubernetes.io/component=backup -o json | jq '[.items[] | select(any(.status.conditions[]?; .status == "True" and (.type == "Complete" or .type == "Failed")) | not)] | length')" -gt 0 ]; do
+  test "$(date +%s)" -lt "$backup_wait_deadline"
+  sleep 10
+done
+unset backup_wait_deadline
 kubectl -n hermes scale statefulset/hermes --replicas=0
 kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
 kubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml
@@ -245,9 +298,11 @@ kubectl -n hermes wait "$restore_job" --for=condition=Complete --timeout=15m
 kubectl -n hermes logs "$restore_job"
 argocd app sync hermes --prune=false
 kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
 ```
 
-Run all Phase 1 checks again after restore. Never overwrite or delete the source archive during the restore.
+Run all Phase 1 checks again after restore. Never overwrite or delete the source archive during the restore. If restore is
+aborted, keep backups suspended until every restore Pod and Job is inactive, then sync the Hermes app to resume them.
 
 ## Completion evidence
 

@@ -8,11 +8,16 @@ metadata:
     app.kubernetes.io/component: backup
 spec:
   schedule: "17 9 * * *"
+  suspend: false
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hermes
+        app.kubernetes.io/component: backup
     spec:
       backoffLimit: 3
       activeDeadlineSeconds: 3600
