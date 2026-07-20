@@ -245,6 +245,50 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(error.message).toContain('stored snapshot reference diverged')
   })
 
+  test('rejects a replay whose initial capital was altered', async () => {
+    const input = makeInput()
+    const error = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`
+          UPDATE bayn_evaluation_runs
+          SET initial_capital_micros = initial_capital_micros + 1
+          WHERE run_id = ${input.evaluation.runId}
+        `
+        return yield* store.persist(input).pipe(Effect.flip)
+      }),
+    )
+
+    expect(error).toBeInstanceOf(DatabaseError)
+    expect(error.failure).toBe('invariant')
+    expect(error.operation).toBe('read-receipt')
+    expect(error.message).toContain('stored run identity diverged')
+  })
+
+  test('rejects a replay whose status detail was altered', async () => {
+    const input = makeInput()
+    const error = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.persist(input)
+        yield* sql`
+          UPDATE bayn_status_history
+          SET detail = ${sql.json({ reconciliationExact: false, verdict: 'corrupted' })}
+          WHERE run_id = ${input.evaluation.runId} AND status = 'COMPLETE'
+        `
+        return yield* store.persist(input).pipe(Effect.flip)
+      }),
+    )
+
+    expect(error).toBeInstanceOf(DatabaseError)
+    expect(error.failure).toBe('invariant')
+    expect(error.operation).toBe('read-receipt')
+    expect(error.message).toContain('stored status history diverged')
+  })
+
   test('rolls back every table when an event constraint fails', async () => {
     const input = makeInput()
     const duplicateId = input.evaluation.events[0].id

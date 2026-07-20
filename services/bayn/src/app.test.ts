@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test'
+import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 
-import { Cause, Context, Effect, Exit, Layer, Redacted, Ref } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { Cause, Context, Effect, Exit, Fiber, Layer, Redacted, Ref } from 'effect'
 import { HttpServer } from 'effect/unstable/http'
 
 import { initialize, makeHttpLayer, run, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
-import { DatabaseError, EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
+import { DatabaseError, EvidenceStore, EvidenceStoreRuntimeLive, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
@@ -73,6 +76,36 @@ const fetchJson = async (port: number, path: string, method = 'GET') => {
     allow: response.headers.get('allow'),
     body: (await response.json()) as Record<string, unknown>,
   }
+}
+
+const unusedPort = () =>
+  new Promise<number>((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (address === null || typeof address === 'string') {
+        server.close()
+        reject(new Error('test server did not bind a TCP port'))
+        return
+      }
+      server.close((error) => (error === undefined ? resolve(address.port) : reject(error)))
+    })
+  })
+
+const waitForStatus = async (port: number, expectedStatus: string) => {
+  const deadline = Date.now() + 2_000
+  let lastError: unknown
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchJson(port, '/v1/status')
+      if (response.body.status === expectedStatus) return response
+    } catch (error) {
+      lastError = error
+    }
+    await Bun.sleep(20)
+  }
+  throw new Error(`Bayn did not reach ${expectedStatus}`, { cause: lastError })
 }
 
 const readyState = (): RuntimeState => {
@@ -341,5 +374,43 @@ describe('Bayn startup lifecycle', () => {
       evidence: null,
       error: expect.stringContaining('database.persist-evaluation'),
     })
+  })
+
+  test('keeps HTTP live and readiness closed when database layer setup fails', async () => {
+    const port = await unusedPort()
+    const unavailableDatabase = {
+      ...config,
+      port,
+      postgres: {
+        ...config.postgres,
+        tls: true,
+        caPath: `/tmp/bayn-missing-ca-${randomUUID()}.crt`,
+      },
+    }
+    const dependencies = Layer.mergeAll(
+      Layer.succeed(MarketData, { load: Effect.succeed(makeSnapshot()) }),
+      Layer.succeed(Journal, successfulJournal),
+      EvidenceStoreRuntimeLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)),
+      TsmomStrategyLayer(fixtureProtocol, provenance),
+    )
+    const fiber = Effect.runFork(run(unavailableDatabase).pipe(Effect.provide(dependencies)))
+
+    try {
+      const status = await waitForStatus(port, 'FAIL_CLOSED')
+      expect(status).toMatchObject({
+        status: 200,
+        body: {
+          status: 'FAIL_CLOSED',
+          error: expect.stringContaining('database.health-check'),
+        },
+      })
+      expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
+      expect(await fetchJson(port, '/readyz')).toMatchObject({
+        status: 503,
+        body: { ready: false, status: 'FAIL_CLOSED' },
+      })
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(fiber))
+    }
   })
 })

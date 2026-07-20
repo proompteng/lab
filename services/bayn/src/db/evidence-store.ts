@@ -113,6 +113,7 @@ const ReceiptRow = Schema.Struct({
   image_repository: Schema.String,
   image_digest: ImageDigest,
   strategy_name: Schema.String,
+  initial_capital_micros: Schema.String,
   status: Schema.Literal('COMPLETE'),
   expected_artifact_count: PositiveInteger,
   expected_event_count: NonNegativeInteger,
@@ -142,7 +143,10 @@ const GateReferenceRow = Schema.Struct({
   required: Schema.Unknown,
   content_hash: Sha256,
 })
-const StatusReferenceRow = Schema.Struct({ status: Schema.Literals(['WRITING', 'COMPLETE']) })
+const StatusReferenceRow = Schema.Struct({
+  status: Schema.Literals(['WRITING', 'COMPLETE']),
+  detail: Schema.Unknown,
+})
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -361,6 +365,7 @@ const makeEvidenceStore = Effect.gen(function* () {
         run.image_repository,
         run.image_digest,
         run.strategy_name,
+        run.initial_capital_micros::text AS initial_capital_micros,
         run.status,
         run.expected_artifact_count,
         run.expected_event_count,
@@ -406,7 +411,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Request: RunRequest,
     Result: StatusReferenceRow,
     execute: ({ runId }) => sql`
-      SELECT status FROM bayn_status_history WHERE run_id = ${runId} ORDER BY sequence
+      SELECT status, detail FROM bayn_status_history WHERE run_id = ${runId} ORDER BY sequence
     `,
   })
 
@@ -420,7 +425,8 @@ const makeEvidenceStore = Effect.gen(function* () {
           row.source_revision === plan.provenance.sourceRevision &&
           row.image_repository === plan.provenance.image.repository &&
           row.image_digest === plan.provenance.image.digest &&
-          row.strategy_name === plan.strategyName,
+          row.strategy_name === plan.strategyName &&
+          row.initial_capital_micros === plan.evaluation.initialCapitalMicros,
         'read-receipt',
         'stored run identity diverged from the evaluated runtime',
       )
@@ -494,9 +500,19 @@ const makeEvidenceStore = Effect.gen(function* () {
         'stored gate content diverged',
       )
       yield* ensure(
-        statuses.length === 2 && statuses[0].status === 'WRITING' && statuses[1].status === 'COMPLETE',
+        statuses.length === 2 &&
+          statuses[0].status === 'WRITING' &&
+          canonicalHashV1(statuses[0].detail) ===
+            canonicalHashV1({
+              artifactCount: plan.artifacts.length,
+              eventCount: plan.events.length,
+              gateCount: plan.gates.length,
+            }) &&
+          statuses[1].status === 'COMPLETE' &&
+          canonicalHashV1(statuses[1].detail) ===
+            canonicalHashV1({ reconciliationExact: true, verdict: plan.evaluation.verdict.status }),
         'read-receipt',
-        'stored status history is incomplete',
+        'stored status history diverged',
       )
       return {
         runId: row.run_id,
@@ -755,6 +771,18 @@ const migrations = PgMigrator.run({ loader: migrationLoader, table: 'bayn_schema
 
 const MigrationLive = Layer.effectDiscard(migrations)
 const EvidenceStoreLayer = Layer.effect(EvidenceStore, makeEvidenceStore)
+const EvidenceStoreDatabaseLayer = Layer.merge(MigrationLive, EvidenceStoreLayer)
 
 export const EvidenceStoreLive = (config: RuntimeConfig) =>
-  Layer.merge(MigrationLive, EvidenceStoreLayer).pipe(Layer.provideMerge(PostgresClientLive(config)))
+  EvidenceStoreDatabaseLayer.pipe(Layer.provideMerge(PostgresClientLive(config)))
+
+export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
+  EvidenceStoreDatabaseLayer.pipe(
+    Layer.provide(PostgresClientLive(config)),
+    Layer.catch((error) =>
+      Layer.succeed(EvidenceStore, {
+        check: Effect.fail(error),
+        persist: () => Effect.fail(error),
+      }),
+    ),
+  )
