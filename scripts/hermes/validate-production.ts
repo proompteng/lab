@@ -443,6 +443,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ) {
     failures.push(`${productionPaths.runbook}: restore staging must clean up a stale staging Pod before create`)
   }
+  if (
+    !restoreSection.includes('hermes_pod_name=$(kubectl -n hermes get pod hermes-0 --ignore-not-found -o name)') ||
+    restoreSection.includes('kubectl -n hermes wait pod/hermes-0 --for=delete')
+  ) {
+    failures.push(`${productionPaths.runbook}: restore must treat an already-absent Hermes gateway as stopped`)
+  }
   const cutoverSection = files.runbook.match(/## Phase 3:[\s\S]*?## Rollback/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, cutoverSection, [
     'systemctl --user stop openclaw-gateway.service',

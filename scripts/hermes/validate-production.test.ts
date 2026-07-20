@@ -271,6 +271,15 @@ test('rejects restore staging without stale Pod cleanup', async () => {
   )
 })
 
+test('rejects restore instructions that fail when the gateway is already absent', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace('get pod hermes-0 --ignore-not-found -o name', 'get pod hermes-0 -o name')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: restore must treat an already-absent Hermes gateway as stopped`,
+  )
+})
+
 test('rejects canary, migration, or restore without backup quiescence', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(

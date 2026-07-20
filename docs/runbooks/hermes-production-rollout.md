@@ -503,7 +503,20 @@ while [ "$(kubectl -n hermes get jobs -l app.kubernetes.io/name=hermes,app.kuber
 done
 unset backup_wait_deadline
 kubectl -n hermes scale statefulset/hermes --replicas=0
-kubectl -n hermes wait pod/hermes-0 --for=delete --timeout=10m
+hermes_stop_deadline=$(( $(date +%s) + 600 ))
+while :; do
+  hermes_pod_name=$(kubectl -n hermes get pod hermes-0 --ignore-not-found -o name)
+  if [ -z "$hermes_pod_name" ]; then
+    break
+  fi
+  if [ "$(date +%s)" -ge "$hermes_stop_deadline" ]; then
+    kubectl -n hermes get pod hermes-0 -o wide >&2
+    echo 'Hermes gateway did not stop before restore; backups remain suspended' >&2
+    exit 1
+  fi
+  sleep 5
+done
+unset hermes_pod_name hermes_stop_deadline
 bash scripts/hermes/wait-for-maintenance.sh --cleanup-restore-stage
 kubectl -n hermes create -f argocd/applications/hermes/operations/restore-stage-pod.yaml
 if ! kubectl -n hermes wait pod/hermes-restore-stage --for=condition=Ready --timeout=5m; then
