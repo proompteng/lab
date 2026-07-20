@@ -34,6 +34,13 @@ import ./bun-workspace-service.nix {
       + buildDefine "__SIGNAL_PUBLISHER_BUILD_IMAGE_REPOSITORY__" imageRepository
     )
     "grep -F -- ${lib.escapeShellArg repoRevision} services/signal-publisher/dist/main.js"
+    (
+      "bun services/signal-publisher/src/runtime-smoke.ts "
+      + "services/signal-publisher/dist/main.js "
+      + lib.escapeShellArg repoRevision
+      + " "
+      + lib.escapeShellArg imageRepository
+    )
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/signal-publisher/dist"
