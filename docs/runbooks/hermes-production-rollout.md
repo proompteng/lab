@@ -55,8 +55,9 @@ The expected mirrored amd64 manifest digest is
 
 2. Empirically prove the live CNI enforces `networking.k8s.io/v1` policies. The probe creates an isolated disposable
    namespace, schedules its bounded client and server on different nodes, first proves Pod-to-Pod connectivity, applies a
-   client egress deny, proves that same request fails, and then deletes the namespace. A rendered or accepted NetworkPolicy
-   object is not enforcement evidence:
+   client egress deny, proves that same request fails while both endpoints remain healthy, removes the policy, proves
+   connectivity returns, and then deletes the namespace. A rendered or accepted NetworkPolicy object is not enforcement
+   evidence:
 
    ```bash
    bash scripts/hermes/verify-network-policy-enforcement.sh

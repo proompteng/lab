@@ -261,6 +261,26 @@ if [[ "$policy_enforced" != true ]]; then
   exit 1
 fi
 
+kubectl -n "$probe_namespace" delete networkpolicy deny-client-egress --wait=true --timeout=1m >/dev/null
+policy_released=false
+for _ in $(seq 1 30); do
+  if probe_request; then
+    policy_released=true
+    break
+  else
+    request_status=$?
+  fi
+  if [[ "$request_status" -ne 42 ]]; then
+    echo "network-policy release probe execution failed with status $request_status" >&2
+    exit 1
+  fi
+  sleep 1
+done
+if [[ "$policy_released" != true ]]; then
+  echo 'NetworkPolicy removal did not restore baseline connectivity; do not sync Hermes' >&2
+  exit 1
+fi
+
 printf 'network_policy_enforced=true\n'
 cleanup_probe
 trap - EXIT HUP INT TERM

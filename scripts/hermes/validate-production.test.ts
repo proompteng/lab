@@ -87,6 +87,18 @@ test('rejects treating arbitrary probe failures as policy enforcement', async ()
   )
 })
 
+test('rejects policy enforcement proof without connectivity restoration', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicyProbe = files.networkPolicyProbe.replace(
+    'if [[ "$policy_released" != true ]]',
+    'if [[ "$policy_released" == true ]]',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicyProbe}: missing production invariant "if [[ \\"$policy_released\\" != true ]]"`,
+  )
+})
+
 test('rejects syncing Hermes before network-policy enforcement proof', async () => {
   const files = await loadProductionFiles()
   const probeCommand = '   bash scripts/hermes/verify-network-policy-enforcement.sh\n'

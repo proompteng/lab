@@ -294,6 +294,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'verify_probe_health() {',
     'urllib.request.urlopen("http://127.0.0.1:8080/", timeout=2).read(1)',
     'if [[ "$request_status" -eq 42 ]]',
+    'delete networkpolicy deny-client-egress --wait=true --timeout=1m',
+    'policy_released=false',
+    'if [[ "$policy_released" != true ]]',
+    "echo 'NetworkPolicy removal did not restore baseline connectivity; do not sync Hermes' >&2",
     "echo 'NetworkPolicy is not enforced; do not sync Hermes' >&2",
     "printf 'network_policy_enforced=true\\n'",
   ])
@@ -318,7 +322,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const probeBaselineIndex = files.networkPolicyProbe.indexOf('if [[ "$baseline_reachable" != true ]]')
   const probePolicyIndex = files.networkPolicyProbe.indexOf('name: deny-client-egress')
   const probeEnforcementIndex = files.networkPolicyProbe.indexOf('if [[ "$policy_enforced" != true ]]')
-  if (probeBaselineIndex < 0 || probePolicyIndex <= probeBaselineIndex || probeEnforcementIndex <= probePolicyIndex) {
+  const probeReleaseIndex = files.networkPolicyProbe.indexOf('if [[ "$policy_released" != true ]]')
+  if (
+    probeBaselineIndex < 0 ||
+    probePolicyIndex <= probeBaselineIndex ||
+    probeEnforcementIndex <= probePolicyIndex ||
+    probeReleaseIndex <= probeEnforcementIndex
+  ) {
     failures.push(
       `${productionPaths.networkPolicyProbe}: baseline connectivity must pass before the deny policy is tested`,
     )
