@@ -15,7 +15,7 @@ manifest is appended. It has no broker, TigerBeetle, PostgreSQL, or capital auth
 
 ## Finalization contract
 
-Each capture creates a content-addressed `signal-v1-<sha256>` snapshot. The identity binds provider, feed, adjustment,
+Each capture creates a content-addressed 64-hex SHA-256 snapshot. The identity binds provider, feed, adjustment,
 calendar version, requested bounds, symbol set, ordered bar hash, and ordered exchange-session hash. A retry with the
 same content reuses the same identity.
 
@@ -28,9 +28,9 @@ Only after exact database readback does it append one row to `signal.snapshot_ma
 finalization boundary. A partial run is not finalized; an exact retry resumes it. Duplicate keys, unexpected rows,
 changed values, multiple manifests, or a hash mismatch invalidate the snapshot instead of replacing it.
 
-The final session must contain exactly one valid OHLCV bar for every configured symbol. All bars must fall on a returned
-exchange session and inside the requested bounds. Historical symbol-session gaps before the final session remain
-visible in the manifest counts and hashes; they are not synthesized.
+Every returned exchange session must contain exactly one valid OHLCV bar for every configured symbol. All bars must
+fall on a returned exchange session and inside the requested bounds. Any historical or final symbol-session gap blocks
+finalization; gaps are never dropped, synthesized, or hidden behind manifest counts.
 
 `publication_asof` records the last included session. The immutable snapshot is a capture of what Alpaca returned at
 `finalized_at`; it is not a claim that Alpaca provides a historical vendor-revision time machine. The provider `asof`

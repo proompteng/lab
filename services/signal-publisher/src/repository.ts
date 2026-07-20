@@ -10,6 +10,7 @@ import {
   manifestSchemaVersion,
   MarketTimeSchema,
   provider,
+  SnapshotIdSchema,
   type BarRow,
   type ManifestRow,
   type SessionRow,
@@ -25,7 +26,6 @@ export interface SnapshotRepository {
   readonly insertManifest: (row: ManifestRow) => Effect.Effect<void, PublicationError>
 }
 
-const SnapshotId = Schema.String.check(Schema.isPattern(/^signal-v1-[0-9a-f]{64}$/))
 const Symbol = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,14}$/))
 const FixedDecimal = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)\.\d{8}$/))
 const Digits = Schema.String.check(Schema.isPattern(/^\d+$/))
@@ -37,7 +37,7 @@ const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
 const FinalizedAt = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/))
 
 const BarRowSchema = Schema.Struct({
-  snapshot_id: SnapshotId,
+  snapshot_id: SnapshotIdSchema,
   symbol: Symbol,
   session_date: IsoDateSchema,
   adjusted_open: FixedDecimal,
@@ -53,7 +53,7 @@ const BarRowSchema = Schema.Struct({
   publication_asof: IsoDateSchema,
 })
 const SessionRowSchema = Schema.Struct({
-  snapshot_id: SnapshotId,
+  snapshot_id: SnapshotIdSchema,
   calendar_version: NonEmptyString,
   session_date: IsoDateSchema,
   open_time: MarketTimeSchema,
@@ -63,7 +63,7 @@ const SessionRowSchema = Schema.Struct({
 })
 const Count = Schema.Union([Schema.Number, Digits])
 const ManifestRowSchema = Schema.Struct({
-  snapshot_id: SnapshotId,
+  snapshot_id: SnapshotIdSchema,
   schema_version: Schema.Literal(manifestSchemaVersion),
   publisher_source_revision: SourceRevision,
   publisher_image_repository: ImageRepository,

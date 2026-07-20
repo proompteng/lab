@@ -19,6 +19,7 @@ export const IsoDateSchema = Schema.String.check(
     expected: 'a valid ISO date (YYYY-MM-DD)',
   }),
 )
+export const SnapshotIdSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 export const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:0\d|1\d|2[0-3]):[0-5]\d$/))
 const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))

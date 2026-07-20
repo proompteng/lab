@@ -6,6 +6,7 @@ import {
   AlpacaBarsResponseSchema,
   buildPublication,
   missingRows,
+  SnapshotIdSchema,
   verifyPublication,
   type AlpacaBar,
   type BuildPublicationInput,
@@ -77,6 +78,7 @@ describe('Adjusted-daily snapshot domain', () => {
 
     expect(first.manifest.snapshot_id).toBe(reordered.manifest.snapshot_id)
     expect(first.manifest.snapshot_id).toMatch(/^[a-f0-9]{64}$/)
+    expect(Schema.decodeUnknownSync(SnapshotIdSchema)(first.manifest.snapshot_id)).toBe(first.manifest.snapshot_id)
     expect(first.manifest.manifest_content_hash).not.toBe(reordered.manifest.manifest_content_hash)
     expect(first.manifest).toMatchObject({
       schema_version: 'signal.adjusted-daily-snapshot.v1',
