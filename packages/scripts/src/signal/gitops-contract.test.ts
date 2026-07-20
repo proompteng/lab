@@ -9,28 +9,35 @@ const root = resolve(import.meta.dir, '../../../..')
 const clickhouseDirectory = resolve(root, 'argocd/applications/torghut/clickhouse')
 const read = (path: string) => readFileSync(resolve(clickhouseDirectory, path), 'utf8')
 
+const assertActivationProvenance = (cronJob: ReturnType<typeof parse>, kustomization: ReturnType<typeof parse>) => {
+  if (cronJob.spec.suspend) return
+  const container = cronJob.spec.jobTemplate.spec.template.spec.containers[0]
+  const environment = new Map(container.env.map((entry: { name: string; value?: string }) => [entry.name, entry]))
+  const image = kustomization.images.find(
+    (entry: { name: string }) => entry.name === 'registry.ide-newton.ts.net/lab/signal-publisher',
+  )
+  expect(image.newTag).toMatch(/^sha-[0-9a-f]{40}$/)
+  expect(image.digest).toMatch(/^sha256:[0-9a-f]{64}$/)
+  expect(environment.get('SIGNAL_CODE_REVISION')).toMatchObject({ value: image.newTag.slice(4) })
+  expect(environment.get('SIGNAL_IMAGE_REPOSITORY')).toMatchObject({ value: image.newName })
+  expect(environment.get('SIGNAL_IMAGE_DIGEST')).toMatchObject({ value: image.digest })
+}
+
 describe('Signal publisher GitOps authority contract', () => {
-  test('activates only an immutable image with matching runtime provenance', () => {
+  test('requires immutable image provenance whenever the publisher is active', () => {
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
     const kustomization = parse(read('kustomization.yaml'))
     const container = cronJob.spec.jobTemplate.spec.template.spec.containers[0]
     const environment = new Map(container.env.map((entry: { name: string; value?: string }) => [entry.name, entry]))
-    const image = kustomization.images.find(
-      (entry: { name: string }) => entry.name === 'registry.ide-newton.ts.net/lab/signal-publisher',
-    )
 
     expect(cronJob.spec).toMatchObject({
       schedule: '30 18 * * 1-5',
       timeZone: 'America/New_York',
       concurrencyPolicy: 'Forbid',
-      suspend: false,
     })
-    expect(image.newTag).toMatch(/^sha-[0-9a-f]{40}$/)
-    expect(image.digest).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(typeof cronJob.spec.suspend).toBe('boolean')
     expect(container.args).toEqual(['daily'])
-    expect(environment.get('SIGNAL_CODE_REVISION')).toMatchObject({ value: image.newTag.slice(4) })
-    expect(environment.get('SIGNAL_IMAGE_REPOSITORY')).toMatchObject({ value: image.newName })
-    expect(environment.get('SIGNAL_IMAGE_DIGEST')).toMatchObject({ value: image.digest })
+    assertActivationProvenance(cronJob, kustomization)
     expect(environment.get('SIGNAL_CLICKHOUSE_USERNAME')).toMatchObject({
       valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'username' } },
     })
@@ -39,6 +46,15 @@ describe('Signal publisher GitOps authority contract', () => {
     })
     expect(environment.get('SIGNAL_ALPACA_FEED')).toMatchObject({ value: 'sip' })
     expect([...environment.keys()].filter((name) => /BROKER|TIGERBEETLE|CAPITAL/.test(name))).toEqual([])
+  })
+
+  test('always permits a fail-closed suspension', () => {
+    const cronJob = structuredClone(parse(read('signal-publisher-cronjob.yaml')))
+    const kustomization = structuredClone(parse(read('kustomization.yaml')))
+    cronJob.spec.suspend = true
+    kustomization.images[0].newTag = 'bootstrap'
+    delete kustomization.images[0].digest
+    expect(() => assertActivationProvenance(cronJob, kustomization)).not.toThrow()
   })
 
   test('limits database authority to the three append-only publication tables', () => {
