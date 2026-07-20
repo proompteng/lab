@@ -8,7 +8,9 @@ program, not a long-running service. Its immutable image supports two commands:
 
 Both commands fetch the Alpaca calendar and paginated bars, runtime-decode every response, and apply the same domain
 validation. The daily GitOps CronJob runs at 18:30 `America/New_York`, forbids overlap, and uses deterministic insert
-deduplication. It has no broker, TigerBeetle, PostgreSQL, or capital authority.
+deduplication. Publisher writes require both ClickHouse replicas to acknowledge each insert, and readback uses
+sequential consistency before the manifest is appended. It has no broker, TigerBeetle, PostgreSQL, or capital
+authority.
 
 ## Finalization contract
 

@@ -1,4 +1,4 @@
-import { Effect, Redacted, Schema } from 'effect'
+import { Cause, Effect, Redacted, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest } from 'effect/unstable/http'
 
 import type { PublisherConfig } from './config'
@@ -56,7 +56,9 @@ const fetchJson = (
     Effect.mapError((cause) =>
       cause instanceof PublicationError
         ? cause
-        : publicationError('provider', `Alpaca request timed out for ${url.pathname}`, cause),
+        : Cause.isTimeoutError(cause)
+          ? publicationError('provider', `Alpaca request timed out for ${url.pathname}`, cause)
+          : publicationError('provider', `Alpaca request failed for ${url.pathname}`, cause),
     ),
   )
 

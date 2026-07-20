@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Redacted } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
 import { fetchBars, fetchCalendar } from './alpaca'
 import type { PublisherConfig } from './config'
@@ -122,5 +122,27 @@ describe('Alpaca HTTP client', () => {
     expect(failure).toMatchObject({ _tag: 'PublicationError', phase: 'provider' })
     expect(failure.message).toContain('timed out')
     expect(interrupted).toBe(true)
+  })
+
+  test('does not misreport an immediate transport failure as a timeout', async () => {
+    const failingClient = HttpClient.make((request) =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, description: 'connection refused' }),
+        }),
+      ),
+    )
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        fetchCalendar(config, '2026-07-17', '2026-07-17').pipe(
+          Effect.provideService(HttpClient.HttpClient, failingClient),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({ _tag: 'PublicationError', phase: 'provider' })
+    expect(failure.message).toContain('request failed')
+    expect(failure.message).not.toContain('timed out')
   })
 })

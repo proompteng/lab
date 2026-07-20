@@ -33,7 +33,14 @@ describe('Signal publisher GitOps authority contract', () => {
 
   test('limits database authority to the three append-only publication tables', () => {
     const installation = parse(read('clickhouse-cluster.yaml'))
+    const profiles = installation.spec.configuration.profiles
     const users = installation.spec.configuration.users
+    expect(profiles).toMatchObject({
+      'signal_publisher/insert_quorum': 2,
+      'signal_publisher/insert_quorum_parallel': 0,
+      'signal_publisher/insert_quorum_timeout': 60000,
+      'signal_publisher/select_sequential_consistency': 1,
+    })
     expect(users['signal_publisher/grants/query']).toEqual([
       'GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT, INSERT ON signal.exchange_sessions_v1',

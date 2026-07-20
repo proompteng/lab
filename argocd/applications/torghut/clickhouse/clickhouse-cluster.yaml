@@ -94,6 +94,10 @@ spec:
       signal_publisher/result_overflow_mode: throw
       signal_publisher/max_memory_usage: 2147483648
       signal_publisher/max_threads: 4
+      signal_publisher/insert_quorum: 2
+      signal_publisher/insert_quorum_parallel: 0
+      signal_publisher/insert_quorum_timeout: 60000
+      signal_publisher/select_sequential_consistency: 1
       notebook/readonly: 1
       notebook/max_execution_time: 30
       notebook/max_result_rows: 100000
