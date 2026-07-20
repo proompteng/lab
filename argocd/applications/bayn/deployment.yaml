@@ -74,6 +74,15 @@ spec:
               value: adjusted_daily_bars_v1
             - name: BAYN_DATASET_VERSION
               value: alpaca-all-iex-2017-01-01-2026-07-18-v1
+            - name: BAYN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: fqdn-uri
+            - name: BAYN_POSTGRES_TLS
+              value: "true"
+            - name: BAYN_POSTGRES_CA_PATH
+              value: /var/run/secrets/bayn/postgres/ca.crt
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "2001"
             - name: BAYN_TIGERBEETLE_ADDRESSES
@@ -122,7 +131,17 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: postgres-ca
+              mountPath: /var/run/secrets/bayn/postgres
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
+        - name: postgres-ca
+          secret:
+            secretName: bayn-db-ca
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt

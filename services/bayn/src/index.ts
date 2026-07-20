@@ -1,9 +1,10 @@
-import { NodeRuntime } from '@effect/platform-node'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Cause, Effect, Layer, Logger } from 'effect'
 
 import { run } from './app'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
+import { EvidenceStoreLive } from './db/evidence-store'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
@@ -29,6 +30,7 @@ const main = Effect.gen(function* () {
   const dependencies = Layer.mergeAll(
     MarketDataLive(config, strategy.universe),
     JournalLive(config),
+    EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)),
     Layer.succeed(Strategy, strategy),
   )
   return yield* run(config).pipe(Effect.provide(dependencies))

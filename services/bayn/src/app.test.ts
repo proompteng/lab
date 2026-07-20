@@ -5,6 +5,7 @@ import { HttpServer } from 'effect/unstable/http'
 
 import { initialize, makeHttpLayer, run, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
+import { DatabaseError, EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
@@ -34,6 +35,11 @@ const config: RuntimeConfig = {
     table: 'adjusted_daily_bars_v1',
     datasetVersion: 'fixture-v1',
   },
+  postgres: {
+    url: Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'),
+    tls: false,
+    caPath: '/tmp/test-postgres-ca.crt',
+  },
   tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
 }
 
@@ -45,6 +51,18 @@ const successfulJournal: JournalService = {
       accountCount: evaluation.inputManifest.symbols.length + 5,
       transferCount: evaluation.events.length,
       exact: true,
+    }),
+}
+
+const successfulEvidenceStore: EvidenceStoreService = {
+  check: Effect.void,
+  persist: ({ evaluation }) =>
+    Effect.succeed({
+      runId: evaluation.runId,
+      deduplicated: false,
+      artifactCount: 5,
+      eventCount: evaluation.events.length,
+      gateCount: evaluation.verdict.gates.length,
     }),
 }
 
@@ -67,6 +85,13 @@ const readyState = (): RuntimeState => {
       provenance,
       evaluation: { ...evaluationWithoutEvents, eventCount: events.length },
       reconciliation: { runId: evaluation.runId, accountCount: 13, transferCount: events.length, exact: true },
+      persistence: {
+        runId: evaluation.runId,
+        deduplicated: false,
+        artifactCount: 5,
+        eventCount: events.length,
+        gateCount: evaluation.verdict.gates.length,
+      },
     },
     error: null,
   }
@@ -152,6 +177,7 @@ describe('Bayn startup lifecycle', () => {
     const strategy: StrategyService = {
       name: 'test-strategy',
       universe: fixtureProtocol.universe,
+      parameters: fixtureProtocol,
       provenance,
       evaluate: (bars, manifest) => {
         calls += 1
@@ -163,6 +189,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, { load: Effect.succeed(snapshot) }),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provideService(Strategy, strategy),
       ),
     )
@@ -180,6 +207,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -200,6 +228,7 @@ describe('Bayn startup lifecycle', () => {
       initialize(config, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -226,6 +255,7 @@ describe('Bayn startup lifecycle', () => {
       initialize({ ...config, runOnStartup: false }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -248,6 +278,7 @@ describe('Bayn startup lifecycle', () => {
       initialize({ ...config, operationTimeoutMs: 10 }, state).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
       ),
     )
@@ -265,6 +296,7 @@ describe('Bayn startup lifecycle', () => {
       run(config).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
         Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
         Effect.timeoutOrElse({
           duration: 250,
@@ -279,5 +311,35 @@ describe('Bayn startup lifecycle', () => {
       expect(Cause.pretty(exit.cause)).toContain('unexpected startup defect')
       expect(Cause.pretty(exit.cause)).not.toContain('remained alive')
     }
+  })
+
+  test('keeps readiness closed when durable evidence cannot be committed', async () => {
+    const state = await Effect.runPromise(Ref.make<RuntimeState>({ status: 'STARTING', evidence: null, error: null }))
+    const unavailable: EvidenceStoreService = {
+      check: Effect.void,
+      persist: () =>
+        Effect.fail(
+          new DatabaseError({
+            failure: 'unavailable',
+            operation: 'persist',
+            message: 'database unavailable',
+          }),
+        ),
+    }
+
+    await Effect.runPromise(
+      initialize(config, state).pipe(
+        Effect.provideService(MarketData, { load: Effect.succeed(makeSnapshot()) }),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, unavailable),
+        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+      ),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAIL_CLOSED',
+      evidence: null,
+      error: expect.stringContaining('database.persist-evaluation'),
+    })
   })
 })

@@ -6,6 +6,7 @@ import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetl
 
 import { initialize, type RuntimeState } from './app'
 import type { RuntimeConfig } from './config'
+import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { Journal, JournalLive, type JournalService } from './ledger'
 import { MarketData, MarketDataLive, type MarketDataService } from './market-data'
 import { TsmomStrategyLayer } from './strategy-service'
@@ -33,6 +34,11 @@ const config: RuntimeConfig = {
     table: 'adjusted_daily_bars_v1',
     datasetVersion: 'fixture-v1',
   },
+  postgres: {
+    url: Redacted.make('postgresql://bayn:secret@postgres.test:5432/bayn'),
+    tls: false,
+    caPath: '/tmp/test-postgres-ca.crt',
+  },
   tigerBeetle: { clusterId: 2001n, replicaAddresses: ['3000'], ledger: 7001 },
 }
 
@@ -40,6 +46,18 @@ const successfulJournal: JournalService = {
   check: Effect.void,
   journalAndReconcile: (evaluation) =>
     Effect.succeed({ runId: evaluation.runId, accountCount: 1, transferCount: 1, exact: true }),
+}
+
+const successfulEvidenceStore: EvidenceStoreService = {
+  check: Effect.void,
+  persist: ({ evaluation }) =>
+    Effect.succeed({
+      runId: evaluation.runId,
+      deduplicated: false,
+      artifactCount: 5,
+      eventCount: evaluation.events.length,
+      gateCount: evaluation.verdict.gates.length,
+    }),
 }
 
 describe('Bayn resource lifecycle', () => {
@@ -101,6 +119,7 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
+          Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
             MarketDataLive(config, fixtureProtocol.universe, {
@@ -131,6 +150,7 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initialize(config, state).pipe(
           Effect.provideService(Journal, successfulJournal),
+          Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
             MarketDataLive(config, fixtureProtocol.universe, {
@@ -169,6 +189,7 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         initialize(config, state).pipe(
           Effect.provideService(MarketData, marketData),
+          Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
             JournalLive(config, {

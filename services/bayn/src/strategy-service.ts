@@ -7,6 +7,7 @@ import type { DailyBar, EvaluationResult, InputManifest, TsmomProtocol } from '.
 export interface StrategyService {
   readonly name: string
   readonly universe: readonly string[]
+  readonly parameters: unknown
   readonly provenance: RuntimeProvenance
   readonly evaluate: (bars: readonly DailyBar[], manifest: InputManifest) => EvaluationResult
 }
@@ -16,6 +17,7 @@ export class Strategy extends Context.Service<Strategy, StrategyService>()('bayn
 export const makeTsmomStrategy = (protocol: TsmomProtocol, provenance: RuntimeProvenance): StrategyService => ({
   name: 'tsmom',
   universe: protocol.universe,
+  parameters: protocol,
   provenance,
   evaluate: (bars, manifest) => evaluateTsmom(bars, manifest, protocol, provenance),
 })

@@ -11,6 +11,9 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   startup operation (30 seconds by default).
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
+- Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
+  runs additive Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
+  query cancellation.
 - The composition root selects one strategy capability. TSMOM is the first implementation and owns its protocol and
   universe; the HTTP and startup lifecycle do not depend on TSMOM directly.
 - The protocol is committed at `protocols/tsmom-v1.json` and runtime-decoded with Effect Schema before use. JSON holds
@@ -24,9 +27,13 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 - The transitional run ID binds runtime provenance and the exact ClickHouse input-manifest hash. It remains distinct
   from the target finalized-snapshot run identity until bounded Signal publications are adopted.
 - Signals are formed at a month-end close and may execute only at the next common session open.
-- A run becomes ready only after ClickHouse validation, evaluation, TigerBeetle journal creation, and exact
-  reconciliation. Strategy rejection is an auditable economic `FAIL_CLOSED`; dependency or accounting failure keeps
-  the Kubernetes readiness probe closed.
+- After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
+  snapshot reference, run identity, metrics, reconciliation receipt, ordered events, gate outcomes, and status
+  history. An exact replay returns the existing complete receipt only after every stored payload and content hash is
+  revalidated; conflicting, altered, or partial evidence fails closed.
+- A run becomes ready only after ClickHouse validation, evaluation, TigerBeetle journal creation, exact reconciliation,
+  and the PostgreSQL commit. Strategy rejection is an auditable economic `FAIL_CLOSED`; dependency, accounting, or
+  persistence failure keeps the Kubernetes readiness probe closed.
 
 ## Endpoints
 
@@ -41,6 +48,13 @@ bun run --filter @proompteng/bayn test
 bun run --filter @proompteng/bayn tsc
 bun run --filter @proompteng/bayn build
 bun run --filter @proompteng/bayn lint:oxlint
+```
+
+The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
+
+```sh
+BAYN_TEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:5432/bayn_test \
+  bun test services/bayn/src/db/evidence-store.integration.test.ts
 ```
 
 The legacy `adjusted_daily_bars_v1` read remains transitional until the bounded finalized-snapshot reader is adopted.
