@@ -33,11 +33,20 @@ smoke test, manifest change, and normal CI/Codex review.
   the `hermes` ServiceAccount. Bootstrap writes a non-secret kubeconfig that follows the rotating projected token by file
   path rather than persisting token material.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
+- The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. The gateway receives
+  it as `GH_TOKEN`/`GITHUB_TOKEN`; plaintext is not written to the PVC, Git config, or a rendered manifest.
+- GitHub token rotation must reseal `hermes-github-auth` and increment the StatefulSet's
+  `hermes.proompteng.ai/github-auth-revision` annotation so the environment-backed credential takes effect in a new Pod.
+- Bootstrap downloads GitHub CLI `2.96.0` from its official release, enforces SHA-256
+  `83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60`, caches the verified archive, and recreates the
+  `tuslagch` Git identity and `gh auth git-credential` helper on every start.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
-- Plugins, MCP servers, delegation, cron, hooks, speech-to-text, and Discord are disabled for the initial canary.
+- Plugins, MCP servers, delegation, cron, hooks, and speech-to-text remain disabled. Terminal access is explicit for CLI,
+  authenticated API, and Discord sessions; manual approvals and unconditional deny rules remain enabled.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.
-- Bootstrap maintains a credential-free `proompteng/lab` checkout at `/opt/data/workspace/tuslagch/lab`. Clean `main`
+- Bootstrap maintains `proompteng/lab` at `/opt/data/workspace/tuslagch/lab`. Initial clone and clean-main refresh remain
+  credential-free; interactive runtime Git and GitHub CLI operations use the sealed `tuslagch` identity. Clean `main`
   checkouts fast-forward on restart; dirty worktrees and non-main branches are preserved. Both the gateway's documented
   `terminal.cwd` and the container working directory point at this repository root.
 

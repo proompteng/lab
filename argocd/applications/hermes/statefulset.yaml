@@ -22,6 +22,8 @@ spec:
       app.kubernetes.io/component: gateway
   template:
     metadata:
+      annotations:
+        hermes.proompteng.ai/github-auth-revision: "1"
       labels:
         app.kubernetes.io/name: hermes
         app.kubernetes.io/component: gateway
@@ -138,6 +140,28 @@ spec:
               value: /opt/data/home/.kube/config
             - name: XDG_CACHE_HOME
               value: /opt/data/home/.cache
+            - name: GH_CONFIG_DIR
+              value: /opt/data/home/.config/gh
+            - name: GH_PROMPT_DISABLED
+              value: "1"
+            - name: GH_PAGER
+              value: cat
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-github-auth
+                  key: GH_TOKEN
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-github-auth
+                  key: GH_TOKEN
+            - name: GIT_CONFIG_NOSYSTEM
+              value: "1"
+            - name: GIT_CONFIG_GLOBAL
+              value: /opt/data/home/.gitconfig
+            - name: GIT_TERMINAL_PROMPT
+              value: "0"
             - name: PATH
               value: /opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
             - name: API_SERVER_ENABLED

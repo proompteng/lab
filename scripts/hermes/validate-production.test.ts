@@ -150,6 +150,72 @@ test('rejects a Discord token without a matching gateway SecretKeyRef', async ()
   )
 })
 
+test('rejects a GitHub token without a matching sealed SecretKeyRef', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace('- name: GH_TOKEN\n', '- name: GH_TOKEN_DISABLED\n')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: GH_TOKEN must use the sealed hermes-github-auth GH_TOKEN`,
+  )
+})
+
+test('rejects plaintext GitHub credentials', async () => {
+  const files = await loadProductionFiles()
+  files.githubSealedSecret = files.githubSealedSecret.replace(
+    '  encryptedData:',
+    '  stringData:\n    GH_TOKEN: gho_plaintext\n  encryptedData:',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.githubSealedSecret}: contains forbidden production term "\\n  stringData:"`,
+  )
+})
+
+test('rejects a broadly scoped GitHub SealedSecret', async () => {
+  const files = await loadProductionFiles()
+  files.githubSealedSecret += '\n    sealedsecrets.bitnami.com/cluster-wide: "true"\n'
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.githubSealedSecret}: contains forbidden production term "sealedsecrets.bitnami.com/cluster-wide"`,
+  )
+})
+
+test('rejects API sessions without the terminal toolset', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace(
+    '  api_server: [file, memory, terminal, todo]',
+    '  api_server: [file, memory, todo]',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, terminal, todo]\\n  api_server: [file, memory, terminal, todo]\\n  discord: [file, memory, terminal, todo]"`,
+  )
+})
+
+test('rejects duplicate platform toolset keys', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace(
+    '  discord: [file, memory, terminal, todo]\n',
+    '  discord: [file, memory, terminal, todo]\n  discord: [file, memory, terminal, todo]\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: discord must have exactly one production terminal toolset`,
+  )
+})
+
+test('rejects an unverified GitHub CLI archive', async () => {
+  const files = await loadProductionFiles()
+  files.githubBootstrap = files.githubBootstrap.replace(
+    '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60',
+    '03d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.githubBootstrap}: missing production invariant "GH_CLI_ARCHIVE_SHA256:-83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60"`,
+  )
+})
+
 test('rejects a Discord allowlist missing from the SealedSecret', async () => {
   const files = await loadProductionFiles()
   files.discordSealedSecret = files.discordSealedSecret.replace(

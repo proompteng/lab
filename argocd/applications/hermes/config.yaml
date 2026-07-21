@@ -67,13 +67,14 @@ agent:
   coding_instructions:
     - Keep all mutable work inside /opt/data/workspace/tuslagch.
     - Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory.
+    - Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests for explicitly requested repository changes; never force-push or push directly to main.
     - Kubernetes access is cluster-wide read-only; never attempt to mutate resources or read Kubernetes Secrets.
     - Never claim an external action completed without a fresh readback.
 
 platform_toolsets:
-  cli: [file, memory, todo]
-  api_server: [file, memory, todo]
-  discord: [terminal, file, memory, todo]
+  cli: [file, memory, terminal, todo]
+  api_server: [file, memory, terminal, todo]
+  discord: [file, memory, terminal, todo]
 
 platforms:
   discord:
