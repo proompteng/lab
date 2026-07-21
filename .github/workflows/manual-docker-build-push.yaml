@@ -83,16 +83,16 @@ jobs:
           set -euo pipefail
           docker buildx imagetools create \
             --tag "${{ steps.image.outputs.target_transport }}" \
-            --metadata-file mirror-metadata.json \
             "${{ steps.image.outputs.source }}"
 
       - name: Verify digest and required platforms
         shell: bash
         run: |
           set -euo pipefail
-          test "$(jq -r '.containerimage.descriptor.digest' mirror-metadata.json)" = \
+          docker buildx imagetools inspect --raw \
+            "${{ steps.image.outputs.target_transport }}" > mirrored-index.json
+          test "sha256:$(sha256sum mirrored-index.json | cut -d ' ' -f1)" = \
             "${{ steps.image.outputs.source_digest }}"
-          docker buildx imagetools inspect --raw "${{ steps.image.outputs.target }}" > mirrored-index.json
           jq -e '
             any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
             any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
