@@ -156,3 +156,30 @@ test('rejects enforcement testing before controller activation', async () => {
     `${productionPaths.runbook}: coverage, activation, and enforcement proof are out of order`,
   )
 })
+
+test('rejects runtime verification that ignores the reported multi-architecture index digest', async () => {
+  const files = copy(await loadProductionFiles())
+  files.runbook = files.runbook.replace('*"@$kube_router_index_digest"|*"@$platform_digest")', '*"@$platform_digest")')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "*\\\"@$kube_router_index_digest\\\"|*\\\"@$platform_digest\\\")"`,
+  )
+})
+
+test('rejects runtime verification that can accept an empty pod list', async () => {
+  const files = copy(await loadProductionFiles())
+  files.runbook = files.runbook.replace('if [ "$pod_count" -ne "$desired" ]; then', 'if false; then')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "if [ \\"$pod_count\\" -ne \\"$desired\\" ]; then"`,
+  )
+})
+
+test('rejects a policy metrics probe that can fail from SIGPIPE under pipefail', async () => {
+  const files = copy(await loadProductionFiles())
+  files.runbook = files.runbook.replace(
+    'metrics=$(kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics)',
+    'kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics |',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "metrics=$(kubectl -n kube-system exec \\\"$pod\\\" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics)"`,
+  )
+})

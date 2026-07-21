@@ -338,6 +338,18 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.runbook, files.runbook, [
     'kubectl -n kube-system rollout status daemonset/kube-router',
+    'kube_router_index_digest=sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22',
+    'pod_rows=$(',
+    'if [ "$pod_count" -ne "$desired" ]; then',
+    "while IFS=$'\\t' read -r pod node pod_ready restart_count image_id",
+    'test "$restart_count" = 0',
+    'node_arch=$(kubectl get node "$node" -o jsonpath=\'{.status.nodeInfo.architecture}\')',
+    '*"@$kube_router_index_digest"|*"@$platform_digest")',
+    'test "$(kubectl -n kube-system exec "$pod" -c kube-router -- uname -m)" = "$expected_runtime_arch"',
+    'metrics=$(kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics)',
+    'grep -Eq \'^kube_router_controller_policy_(chains|ipsets) \' <<< "$metrics"',
+    'pod_logs=$(kubectl -n kube-system logs "$pod" -c kube-router --prefix --tail=500)',
+    'done <<< "$pod_rows"',
     'operations/cleanup',
     'kubectl -n kube-system delete daemonset kube-router --wait=true',
     'KUBE-ROUTER-*',
