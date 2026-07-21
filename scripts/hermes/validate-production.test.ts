@@ -590,6 +590,18 @@ test('rejects migration Jobs without the stable production config', async () => 
   )
 })
 
+test('rejects an apply Job that does not verify both production character limits', async () => {
+  const files = await loadProductionFiles()
+  files.migrationApply = files.migrationApply.replace(
+    "expected_char_limits = {'user-profile': 2200, 'daily-memory': 4400}",
+    "expected_char_limits = {'user-profile': 4400, 'daily-memory': 4400}",
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.migrationApply}: missing production invariant "expected_char_limits = {'user-profile': 2200, 'daily-memory': 4400}"`,
+  )
+})
+
 test('rejects a source guard that treats normal skipped directories as fatal', async () => {
   const files = await loadProductionFiles()
   files.migrationDryRun = files.migrationDryRun.replace(
