@@ -3,7 +3,6 @@ import { Schema } from 'effect'
 import {
   EvaluationBoundsSchema,
   IsoDateSchema,
-  LegacyFinalizedSnapshotProvenanceSchema,
   Sha256Schema,
   UniverseBoundFinalizedSnapshotProvenanceSchema,
 } from './contracts'
@@ -41,17 +40,6 @@ const InputManifestFields = {
   ).check(Schema.isMinLength(1)),
 } as const
 
-const LegacyInputManifestBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.input-manifest.v2'),
-  ...InputManifestFields,
-  tables: Schema.Struct({
-    bars: Schema.Literal('adjusted_daily_bars_v2'),
-    sessions: Schema.Literal('exchange_sessions_v1'),
-    manifests: Schema.Literal('snapshot_manifests_v1'),
-  }),
-  finalizedSnapshot: LegacyFinalizedSnapshotProvenanceSchema,
-})
-
 const UniverseBoundInputManifestBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.input-manifest.v3'),
   ...InputManifestFields,
@@ -63,9 +51,7 @@ const UniverseBoundInputManifestBase = Schema.Struct({
   finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenanceSchema,
 })
 
-const inputManifestIssues = (
-  manifest: typeof LegacyInputManifestBase.Type | typeof UniverseBoundInputManifestBase.Type,
-): readonly Schema.FilterIssue[] => {
+const inputManifestIssues = (manifest: typeof UniverseBoundInputManifestBase.Type): readonly Schema.FilterIssue[] => {
   const { hash, ...material } = manifest
   const symbolNames = manifest.symbols.map((coverage) => coverage.symbol)
   const issues: Schema.FilterIssue[] = []
@@ -94,14 +80,7 @@ const inputManifestIssues = (
   return issues
 }
 
-const LegacyInputManifestArtifactSchema = LegacyInputManifestBase.check(Schema.makeFilter(inputManifestIssues))
-const UniverseBoundInputManifestArtifactSchema = UniverseBoundInputManifestBase.check(
-  Schema.makeFilter(inputManifestIssues),
-)
-export const InputManifestArtifactSchema = Schema.Union([
-  LegacyInputManifestArtifactSchema,
-  UniverseBoundInputManifestArtifactSchema,
-])
+export const InputManifestArtifactSchema = UniverseBoundInputManifestBase.check(Schema.makeFilter(inputManifestIssues))
 
 const PerformanceMetricsSchema = Schema.Struct({
   observations: PositiveInteger,
@@ -179,18 +158,11 @@ const EvaluationSummaryFields = {
   markedEquityReconciliation: MarkedEquityReconciliationSchema,
 } as const
 
-export const EvaluationSummarySchema = Schema.Union([
-  Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.evaluation-summary.v3'),
-    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v4'),
-    ...EvaluationSummaryFields,
-  }),
-  Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.evaluation-summary.v5'),
-    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
-    ...EvaluationSummaryFields,
-  }),
-])
+export const EvaluationSummarySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.evaluation-summary.v5'),
+  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
+  ...EvaluationSummaryFields,
+})
 
 export const ReconciliationResultSchema = Schema.Struct({
   runId: Sha256Schema,
@@ -321,34 +293,6 @@ export const DailyPositionMarksArtifactSchema = Schema.Struct({
   ).check(Schema.isMinLength(1)),
 })
 
-export const TsmomSignalDecisionsArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.tsmom-signal-decisions.v1'),
-  items: Schema.Array(
-    Schema.Struct({
-      schemaVersion: Schema.Literal('bayn.tsmom-decision-plan.v1'),
-      decisionId: Sha256Schema,
-      signalDate: IsoDateSchema,
-      executionDate: IsoDateSchema,
-      targetWeights: Schema.Record(Symbol, Schema.Finite),
-      signals: Schema.Array(
-        Schema.Struct({
-          symbol: Symbol,
-          lookbacks: Schema.Array(
-            Schema.Struct({
-              lookbackSessions: PositiveInteger,
-              return: Schema.Finite,
-              direction: Schema.Literals(['positive', 'non-positive']),
-            }),
-          ).check(Schema.isMinLength(1)),
-          score: Schema.Int,
-          active: Schema.Boolean,
-          targetWeight: Schema.Finite,
-        }),
-      ).check(Schema.isMinLength(1)),
-    }),
-  ).check(Schema.isMinLength(1)),
-})
-
 export const RiskBalancedTrendSignalDecisionsArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decisions.v1'),
   items: Schema.Array(
@@ -400,7 +344,7 @@ export const QualificationArtifactManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
   identity: Schema.Struct({
     runId: Sha256Schema,
-    evaluationSchemaVersion: Schema.Literals(['bayn.evaluation.v4', 'bayn.evaluation.v6']),
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
     protocolHash: Sha256Schema,
     sourceRevision: SourceRevision,
     image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),
@@ -457,10 +401,6 @@ export const decodeSimulatedOrdersArtifact = Schema.decodeUnknownEffect(
 export const decodeCashChangesArtifact = Schema.decodeUnknownEffect(CashChangesArtifactSchema, StrictParseOptions)
 export const decodeDailyPositionMarksArtifact = Schema.decodeUnknownEffect(
   DailyPositionMarksArtifactSchema,
-  StrictParseOptions,
-)
-export const decodeTsmomSignalDecisionsArtifact = Schema.decodeUnknownEffect(
-  TsmomSignalDecisionsArtifactSchema,
   StrictParseOptions,
 )
 export const decodeRiskBalancedTrendSignalDecisionsArtifact = Schema.decodeUnknownEffect(

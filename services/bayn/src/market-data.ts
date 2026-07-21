@@ -3,10 +3,10 @@ import { Clock, Context, Effect, Layer, Schema } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import {
-  LegacyFinalizedSnapshotProvenanceSchema,
   UniverseBoundFinalizedSnapshotProvenanceSchema,
   type EvaluationBounds,
   type FinalizedSnapshotProvenance,
+  type UniverseBoundFinalizedSnapshotProvenance,
 } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1, sha256 } from './hash'
@@ -20,17 +20,11 @@ import {
   type IsoDate,
   type RiskBalancedTrendProtocol,
   type SymbolCoverage,
-  type TsmomProtocol,
   type UniverseBoundInputManifest,
 } from './types'
 
 const database = 'signal' as const
-const legacyTables = {
-  bars: 'adjusted_daily_bars_v2',
-  sessions: 'exchange_sessions_v1',
-  manifests: 'snapshot_manifests_v1',
-} as const
-const universeBoundTables = {
+const tables = {
   bars: 'adjusted_daily_bars_v2',
   sessions: 'exchange_sessions_v1',
   manifests: 'snapshot_manifests_v2',
@@ -104,29 +98,23 @@ const SignalManifestFields = {
   manifest_content_hash: HashSchema,
   finalized_at: FinalizedAtSchema,
 } as const
-const LegacySignalManifestRowSchema = Schema.Struct({
-  schema_version: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV1),
-  ...SignalManifestFields,
-})
-const UniverseBoundSignalManifestRowSchema = Schema.Struct({
+const SignalManifestRowSchema = Schema.Struct({
   schema_version: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV2),
   universe_id: Schema.Literal('equity-infrastructure-v1'),
   universe_symbol_hash: HashSchema,
   ...SignalManifestFields,
 })
-const SignalManifestRowSchema = Schema.Union([LegacySignalManifestRowSchema, UniverseBoundSignalManifestRowSchema])
 
 export type SignalBarRow = typeof SignalBarRowSchema.Type
 export type SignalSessionRow = typeof SignalSessionRowSchema.Type
-type DecodedSignalManifestRow = typeof SignalManifestRowSchema.Type
-type NumericManifestCounts<Row> = Row extends unknown
-  ? Omit<Row, 'symbol_count' | 'session_count' | 'bar_count'> & {
-      readonly symbol_count: number
-      readonly session_count: number
-      readonly bar_count: number
-    }
-  : never
-export type SignalManifestRow = NumericManifestCounts<DecodedSignalManifestRow>
+export type SignalManifestRow = Omit<
+  typeof SignalManifestRowSchema.Type,
+  'symbol_count' | 'session_count' | 'bar_count'
+> & {
+  readonly symbol_count: number
+  readonly session_count: number
+  readonly bar_count: number
+}
 
 export interface SnapshotRows {
   readonly bars: readonly SignalBarRow[]
@@ -134,34 +122,25 @@ export interface SnapshotRows {
   readonly manifests: readonly SignalManifestRow[]
 }
 
-interface SnapshotRequestBase {
+export interface SnapshotRequest {
   readonly snapshotId: string
   readonly publicationAsOf: string
   readonly calendarVersion: string
   readonly universe: readonly string[]
   readonly bounds: EvaluationBounds
   readonly observedAt: string
-}
-
-export interface LegacySnapshotRequest extends SnapshotRequestBase {
-  readonly universeId?: never
-}
-
-export interface UniverseBoundSnapshotRequest extends SnapshotRequestBase {
   readonly universeId: 'equity-infrastructure-v1'
   readonly universeSymbolHash: string
   readonly historyStart: IsoDate
   readonly evaluationStart: IsoDate
 }
 
-export type SnapshotRequest = LegacySnapshotRequest | UniverseBoundSnapshotRequest
+export type UniverseBoundSnapshotRequest = SnapshotRequest
 
-type LegacyMarketDataContract = Pick<TsmomProtocol, 'universe'>
-type UniverseBoundMarketDataContract = Pick<
+type MarketDataContract = Pick<
   RiskBalancedTrendProtocol,
   'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
 >
-type MarketDataContract = LegacyMarketDataContract | UniverseBoundMarketDataContract
 
 export interface MarketDataSnapshot {
   readonly bars: readonly DailyBar[]
@@ -190,10 +169,6 @@ const asCount = (value: string | number, name: string): number => {
 const decodeBars = Schema.decodeUnknownSync(Schema.Array(SignalBarRowSchema), StrictParseOptions)
 const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SignalSessionRowSchema), StrictParseOptions)
 const decodeManifests = Schema.decodeUnknownSync(Schema.Array(SignalManifestRowSchema), StrictParseOptions)
-const decodeLegacyFinalizedSnapshot = Schema.decodeUnknownSync(
-  LegacyFinalizedSnapshotProvenanceSchema,
-  StrictParseOptions,
-)
 const decodeUniverseBoundFinalizedSnapshot = Schema.decodeUnknownSync(
   UniverseBoundFinalizedSnapshotProvenanceSchema,
   StrictParseOptions,
@@ -252,7 +227,7 @@ const assertBoundSessions = (sessions: ReadonlySet<string>, bounds: EvaluationBo
 
 interface VerifiedManifest {
   readonly manifest: SignalManifestRow
-  readonly finalizedSnapshot: FinalizedSnapshotProvenance
+  readonly finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenance
   readonly universe: readonly string[]
 }
 
@@ -290,14 +265,11 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
     barsContentHash: manifest.bars_content_hash,
     sessionsContentHash: manifest.sessions_content_hash,
   } as const
-  let expectedSnapshotId = canonicalHashV1(snapshotIdentity)
-  if (request.universeId !== undefined && manifest.schema_version === PublicationSchema.AdjustedDailySnapshotV2) {
-    expectedSnapshotId = canonicalHashV1({
-      ...snapshotIdentity,
-      universeId: manifest.universe_id,
-      universeSymbolHash: manifest.universe_symbol_hash,
-    })
-  }
+  const expectedSnapshotId = canonicalHashV1({
+    ...snapshotIdentity,
+    universeId: manifest.universe_id,
+    universeSymbolHash: manifest.universe_symbol_hash,
+  })
   if (manifest.snapshot_id !== expectedSnapshotId) throw new Error('snapshot ID does not match finalized content')
   if (request.bounds.dataStart < manifest.first_session || request.bounds.dataEnd > manifest.last_session) {
     throw new Error('evaluation data bounds are outside the finalized snapshot')
@@ -328,22 +300,6 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
     sessionsContentHash: manifest.sessions_content_hash,
   } as const
 
-  if (request.universeId === undefined) {
-    if (manifest.schema_version !== PublicationSchema.AdjustedDailySnapshotV1) {
-      throw new Error('legacy audit requires a Signal V1 manifest')
-    }
-    return {
-      manifest,
-      universe,
-      finalizedSnapshot: decodeLegacyFinalizedSnapshot({
-        schemaVersion: 'bayn.finalized-snapshot.v2',
-        ...commonSnapshot,
-      }),
-    }
-  }
-  if (manifest.schema_version !== PublicationSchema.AdjustedDailySnapshotV2) {
-    throw new Error('universe-bound strategy requires a Signal V2 manifest')
-  }
   if (manifest.universe_id !== request.universeId) throw new Error('manifest universe ID does not match request')
   if (manifest.universe_symbol_hash !== request.universeSymbolHash) {
     throw new Error('manifest universe symbol hash does not match request')
@@ -380,13 +336,13 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
 export const verifyFinalizedManifest = (
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
-): FinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
+): UniverseBoundFinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
 
 interface VerifiedCalendar {
   readonly verifiedManifest: VerifiedManifest
   readonly orderedSessions: readonly SignalSessionRow[]
   readonly boundedSessions: readonly SignalSessionRow[]
-  readonly inputManifest: InputManifest
+  readonly inputManifest: UniverseBoundInputManifest
 }
 
 const verifyCalendar = (
@@ -442,24 +398,13 @@ const verifyCalendar = (
     lastSession: lastBoundedSession.session_date,
     symbols,
   } as const
-  let inputManifest: InputManifest
-  if (finalizedSnapshot.schemaVersion === 'bayn.finalized-snapshot.v2') {
-    const material = {
-      schemaVersion: 'bayn.input-manifest.v2',
-      tables: legacyTables,
-      ...manifestFields,
-      finalizedSnapshot,
-    } as const
-    inputManifest = { ...material, hash: canonicalHashV1(material) }
-  } else {
-    const material: Omit<UniverseBoundInputManifest, 'hash'> = {
-      schemaVersion: 'bayn.input-manifest.v3',
-      tables: universeBoundTables,
-      ...manifestFields,
-      finalizedSnapshot,
-    }
-    inputManifest = { ...material, hash: canonicalHashV1(material) }
+  const material: Omit<UniverseBoundInputManifest, 'hash'> = {
+    schemaVersion: 'bayn.input-manifest.v3',
+    tables,
+    ...manifestFields,
+    finalizedSnapshot,
   }
+  const inputManifest = { ...material, hash: canonicalHashV1(material) }
   return {
     verifiedManifest,
     orderedSessions,
@@ -554,33 +499,7 @@ const makeMarketData = (
     const sql = yield* ClickhouseClient.ClickhouseClient
     // The Bayn principal is readonly=1, so query-level setting changes are forbidden. Snapshot counts and content
     // hashes below make an incomplete or stale replica read fail closed.
-    const loadLegacyManifests = sql`
-        SELECT
-          snapshot_id,
-          schema_version,
-          publisher_source_revision,
-          publisher_image_repository,
-          publisher_image_digest,
-          provider,
-          source_feed,
-          adjustment,
-          calendar_version,
-          toString(requested_start) AS requested_start,
-          toString(publication_asof) AS publication_asof,
-          toString(first_session) AS first_session,
-          toString(last_session) AS last_session,
-          symbol_count,
-          session_count,
-          bar_count,
-          bars_content_hash,
-          sessions_content_hash,
-          manifest_content_hash,
-          toString(finalized_at) AS finalized_at
-        FROM signal.snapshot_manifests_v1
-        WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
-        ORDER BY finalized_at
-      `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
-    const loadUniverseBoundManifests = sql`
+    const loadManifests = sql`
         SELECT
           snapshot_id,
           schema_version,
@@ -608,8 +527,6 @@ const makeMarketData = (
         WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
         ORDER BY finalized_at
       `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
-    const universeBound = 'universeId' in contract
-    const loadManifests = universeBound ? loadUniverseBoundManifests : loadLegacyManifests
     const loadSessions = sql`
             SELECT
               snapshot_id,
@@ -653,15 +570,13 @@ const makeMarketData = (
         bounds: config.clickhouse.bounds,
         observedAt,
       } as const
-      return universeBound
-        ? {
-            ...common,
-            universeId: contract.universeId,
-            universeSymbolHash: contract.universeSymbolHash,
-            historyStart: contract.historyStart,
-            evaluationStart: contract.evaluationStart,
-          }
-        : common
+      return {
+        ...common,
+        universeId: contract.universeId,
+        universeSymbolHash: contract.universeSymbolHash,
+        historyStart: contract.historyStart,
+        evaluationStart: contract.evaluationStart,
+      }
     }
     const verify = <A>(operation: string, body: () => A): Effect.Effect<A, OperationalError> =>
       Effect.try({
@@ -715,12 +630,6 @@ const makeMarketData = (
 
 export const MarketDataLive = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
-  contract: UniverseBoundMarketDataContract,
-): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
-  Layer.effect(MarketData, makeMarketData(config, contract))
-
-export const HistoricalMarketDataLive = (
-  config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
-  contract: LegacyMarketDataContract,
+  contract: MarketDataContract,
 ): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
   Layer.effect(MarketData, makeMarketData(config, contract))

@@ -175,7 +175,7 @@ const qualificationLockIssues = (
 }
 
 const LegacyQualificationLockSchema = LegacyQualificationLockBase.check(Schema.makeFilter(qualificationLockIssues))
-const UniverseBoundQualificationLockSchema = UniverseBoundQualificationLockBase.check(
+export const UniverseBoundQualificationLockSchema = UniverseBoundQualificationLockBase.check(
   Schema.makeFilter(qualificationLockIssues),
 )
 export const QualificationLockSchema = Schema.Union([

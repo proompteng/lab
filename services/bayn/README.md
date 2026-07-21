@@ -2,7 +2,7 @@
 
 Bayn is a single-writer, paper-only quantitative qualification runtime. Its current protocol evaluates the frozen
 risk-balanced trend candidate on the authoritative infrastructure-equity universe and journals the resulting simulation
-to TigerBeetle. Historical TSMOM evidence remains readable. Bayn contains no broker client or capital-promotion path.
+to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 
 ## Runtime contract
 
@@ -14,7 +14,7 @@ to TigerBeetle. Historical TSMOM evidence remains readable. Bayn contains no bro
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
   runs additive Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
   query cancellation.
-- The composition root selects one strategy capability. The compiled `bayn.risk-balanced-trend.protocol.v1` owns its
+- The composition root selects one strategy capability. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its
   authoritative universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
 - The typed protocol is compiled into the image and runtime-decoded with Effect Schema. Strategies remain reviewed
   TypeScript rather than JSON.
@@ -33,9 +33,9 @@ to TigerBeetle. Historical TSMOM evidence remains readable. Bayn contains no bro
 - `BAYN_QUALIFICATION_RUN_ID` optionally pins one terminal qualification across operational image updates. Startup
   verifies the stored strategy and Signal bindings, then recovers it without inspecting bars, opening a lock,
   evaluating, journaling, or persisting.
-- One pure compiled TSMOM decision function records each lookback return, direction vote, score, active symbol, and
-  target weight at a month-end close. Historical evaluation uses that function directly; any later paper planner must
-  reuse it. Decisions may execute only at the next exchange session open.
+- The compiled risk-balanced trend decision function records every normalized trend horizon, volatility estimate,
+  portfolio-volatility scale, and target weight at a month-end close. Decisions may execute only at the next exchange
+  session open.
 - After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
   snapshot reference, run identity, metrics, simulated orders, fills, cash changes, daily position marks, daily
   returns, turnover, fees, drawdown, aligned benchmark series, the full equity series, independent marked-equity
@@ -57,6 +57,9 @@ to TigerBeetle. Historical TSMOM evidence remains readable. Bayn contains no bro
   Any terminal-result failure rolls the evaluation graph back and leaves the lock visibly incomplete. An incomplete
   lock is never silently retried and blocks every new candidate; a locked candidate cannot bypass the terminal result
   through the ordinary persistence path.
+- Migration 8 is a deliberate one-way reset from the never-promoted TSMOM evidence contract. In one transaction it
+  deletes the old evidence graph and installs current-only SQL constraints. The runtime does not read, convert, restore,
+  or fall back to TSMOM records.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.
@@ -127,5 +130,4 @@ BAYN_TEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:5432/bayn_test \
 ```
 
 The current candidate reads `adjusted_daily_bars_v2`, `exchange_sessions_v1`, and `snapshot_manifests_v2` through the
-official Effect ClickHouse client. Historical TSMOM audits retain an explicit V1-manifest reader. Bayn's Signal identity
-is read-only and has no DDL, insert, or mutation authority.
+official Effect ClickHouse client. Bayn's Signal identity is read-only and has no DDL, insert, or mutation authority.

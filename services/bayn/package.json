@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "audit:qualification": "bun src/qualification-audit-command.ts",
-    "build": "bun build src/index.ts src/restore-ledger-command.ts --target=node --external tigerbeetle-node --outdir=dist",
+    "build": "bun build src/index.ts --target=node --external tigerbeetle-node --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "start": "BAYN_PROVENANCE_MODE=development node dist/index.js",
-    "restore:ledger": "node dist/restore-ledger-command.js",
     "lint": "bunx oxfmt --check src",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
