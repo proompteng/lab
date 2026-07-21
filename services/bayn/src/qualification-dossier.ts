@@ -72,7 +72,7 @@ const validateSubject = (
 }
 
 export interface QualificationDossier {
-  readonly schemaVersion: 'bayn.qualification-dossier.v1'
+  readonly schemaVersion: 'bayn.qualification-dossier.v2'
   readonly subject: {
     readonly run: AuditDatabaseSnapshot['run']
     readonly protocol: AuditDatabaseSnapshot['protocol']
@@ -117,7 +117,7 @@ export const makeQualificationDossier = (input: QualificationAuditInput): Qualif
   assert(canonicalHashV1(lock.priorTrialRunIds) === canonicalHashV1(database.priorTrialRunIds), 'trial lineage differs')
 
   const material = {
-    schemaVersion: 'bayn.qualification-dossier.v1' as const,
+    schemaVersion: 'bayn.qualification-dossier.v2' as const,
     subject: {
       run: database.run,
       protocol: database.protocol,

@@ -21,6 +21,8 @@ const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const IsoInstant = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/))
+const ReplicaName = Schema.Trim.check(Schema.isMinLength(1))
+const AuditClickhouseUrls = Config.Array(Schema.URLFromString).check(Schema.isMinLength(2), Schema.isUnique())
 
 const RunRow = Schema.Struct({
   run_id: Sha256,
@@ -76,11 +78,13 @@ const QualificationRow = Schema.Struct({
 })
 const ReadOnlyRow = Schema.Struct({ read_only: Schema.Boolean })
 const AccessRow = Schema.Struct({
+  replica: ReplicaName,
   query_id: Schema.String,
   query_start_time: IsoInstant,
   user: Schema.String,
   kind: Schema.Literals(['manifest', 'sessions', 'bars']),
 })
+const ReplicaRow = Schema.Struct({ replica: ReplicaName })
 
 const decodeRunRows = Schema.decodeUnknownSync(Schema.Array(RunRow), StrictParseOptions)
 const decodeArtifactRows = Schema.decodeUnknownSync(Schema.Array(ArtifactRow), StrictParseOptions)
@@ -91,6 +95,7 @@ const decodeTrialRows = Schema.decodeUnknownSync(Schema.Array(TrialRow), StrictP
 const decodeQualificationRows = Schema.decodeUnknownSync(Schema.Array(QualificationRow), StrictParseOptions)
 const decodeReadOnlyRows = Schema.decodeUnknownSync(Schema.Array(ReadOnlyRow), StrictParseOptions)
 const decodeAccessRows = Schema.decodeUnknownSync(Schema.Array(AccessRow), StrictParseOptions)
+const decodeReplicaRows = Schema.decodeUnknownSync(Schema.Array(ReplicaRow), StrictParseOptions)
 
 const exactlyOne = <A>(values: readonly A[], name: string): A => {
   if (values.length !== 1) throw new Error(`${name} returned ${values.length} rows; expected exactly one`)
@@ -107,7 +112,7 @@ const config = Config.all({
   signalUsername: Config.string('BAYN_AUDIT_SIGNAL_USERNAME'),
   signalPublisherUsername: Config.string('BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME'),
   signalPassword: Config.redacted('BAYN_AUDIT_SIGNAL_PASSWORD'),
-  auditClickhouseUrl: Config.string('BAYN_AUDIT_CLICKHOUSE_URL'),
+  auditClickhouseUrls: Config.schema(AuditClickhouseUrls, 'BAYN_AUDIT_CLICKHOUSE_URLS'),
   auditClickhouseUsername: Config.string('BAYN_AUDIT_CLICKHOUSE_USERNAME'),
   auditClickhousePassword: Config.redacted('BAYN_AUDIT_CLICKHOUSE_PASSWORD'),
   repositoryPath: Config.string('BAYN_AUDIT_REPOSITORY_PATH').pipe(Config.withDefault('.')),
@@ -351,16 +356,43 @@ const loadSignal = (input: AuditConfig, manifest: InputManifest, protocol: Strat
   )
 }
 
-const readSignalAccess = (
+interface SignalReplicaAccess {
+  readonly replica: string
+  readonly topology: readonly string[]
+  readonly access: readonly SignalAccessRecord[]
+}
+
+const readSignalReplicaAccess = (
   input: AuditConfig,
+  url: URL,
+  ordinal: number,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
   manifestTable: InputManifest['tables']['manifests'],
-): Effect.Effect<readonly SignalAccessRecord[], unknown> => {
+): Effect.Effect<SignalReplicaAccess, unknown> => {
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
+    const replica = exactlyOne(
+      decodeReplicaRows(
+        yield* sql`
+          SELECT host_name AS replica
+          FROM system.clusters
+          WHERE cluster = 'default' AND is_local
+        `,
+      ),
+      `ClickHouse audit endpoint ${ordinal}`,
+    ).replica
+    const topology = decodeReplicaRows(
+      yield* sql`
+        SELECT host_name AS replica
+        FROM system.clusters
+        WHERE cluster = 'default'
+        ORDER BY shard_num, replica_num
+      `,
+    ).map((row) => row.replica)
     const rows = yield* sql`
       SELECT
+        ${sql.param('String', replica)} AS replica,
         query_id,
         formatDateTime(toTimeZone(query_start_time_microseconds, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ') AS query_start_time,
         user,
@@ -384,17 +416,22 @@ const readSignalAccess = (
         )
       ORDER BY query_start_time_microseconds, query_id
     `.pipe(sql.withQueryId(`bayn-audit-access-${database.run.runId.slice(-24)}`))
-    return decodeAccessRows(rows).map((row) => ({
-      queryId: row.query_id,
-      queryStartTime: row.query_start_time,
-      user: row.user,
-      kind: row.kind,
-    }))
+    return {
+      replica,
+      topology,
+      access: decodeAccessRows(rows).map((row) => ({
+        replica: row.replica,
+        queryId: row.query_id,
+        queryStartTime: row.query_start_time,
+        user: row.user,
+        kind: row.kind,
+      })),
+    }
   })
   return program.pipe(
     Effect.provide(
       ClickhouseClient.layer({
-        url: input.auditClickhouseUrl,
+        url: url.href,
         username: input.auditClickhouseUsername,
         password: Redacted.value(input.auditClickhousePassword),
         database: 'system',
@@ -405,6 +442,45 @@ const readSignalAccess = (
     Effect.provide(NodeHttpClient.layerNodeHttp),
   )
 }
+
+const readSignalAccess = (
+  input: AuditConfig,
+  database: AuditDatabaseSnapshot,
+  finalizedAt: string,
+  manifestTable: InputManifest['tables']['manifests'],
+): Effect.Effect<{ readonly replicas: readonly string[]; readonly access: readonly SignalAccessRecord[] }, unknown> =>
+  Effect.all(
+    input.auditClickhouseUrls.map((url, ordinal) =>
+      readSignalReplicaAccess(input, url, ordinal, database, finalizedAt, manifestTable),
+    ),
+    { concurrency: 'unbounded' },
+  ).pipe(
+    Effect.flatMap((sources) =>
+      Effect.try({
+        try: () => {
+          const observed = sources.map((source) => source.replica).sort()
+          if (new Set(observed).size !== observed.length) {
+            throw new Error('ClickHouse audit endpoints resolved to duplicate replicas')
+          }
+          const topology = [...(sources[0]?.topology ?? [])].sort()
+          if (topology.length < 2 || new Set(topology).size !== topology.length) {
+            throw new Error('ClickHouse audit topology must contain at least two unique replicas')
+          }
+          if (sources.some((source) => [...source.topology].sort().join('\0') !== topology.join('\0'))) {
+            throw new Error('ClickHouse audit endpoints report divergent replica topology')
+          }
+          if (observed.join('\0') !== topology.join('\0')) {
+            throw new Error('ClickHouse audit endpoints do not cover every configured cluster replica')
+          }
+          if (sources.some((source) => source.access.some((record) => record.replica !== source.replica))) {
+            throw new Error('ClickHouse query-log rows do not match their audited replica')
+          }
+          return { replicas: observed, access: sources.flatMap((source) => source.access) }
+        },
+        catch: (cause) => cause,
+      }),
+    ),
+  )
 
 const repositoryAudit = (
   repositoryPath: string,
@@ -474,7 +550,8 @@ const main = Effect.gen(function* () {
     manifest: signal.manifest,
     protocol,
     database,
-    signalAccess,
+    signalReplicas: signalAccess.replicas,
+    signalAccess: signalAccess.access,
     signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
   }

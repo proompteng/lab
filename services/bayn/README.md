@@ -1,8 +1,8 @@
 # Bayn
 
-Bayn is a single-writer, paper-only quantitative research runtime. Its first protocol evaluates a frozen long-or-cash
-time-series momentum strategy on adjusted ETF daily bars, compares it with buy-and-hold and direct-volatility timing,
-and journals the resulting simulation to TigerBeetle. It contains no broker client and has no capital-promotion path.
+Bayn is a single-writer, paper-only quantitative qualification runtime. Its current protocol evaluates the frozen
+risk-balanced trend candidate on the authoritative infrastructure-equity universe and journals the resulting simulation
+to TigerBeetle. Historical TSMOM evidence remains readable. Bayn contains no broker client or capital-promotion path.
 
 ## Runtime contract
 
@@ -14,10 +14,10 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
   runs additive Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
   query cancellation.
-- The composition root selects one strategy capability. TSMOM is the first implementation and owns its protocol and
-  universe; the HTTP and startup lifecycle do not depend on TSMOM directly.
-- The typed `bayn.tsmom.protocol.v2` default is compiled into the image and runtime-decoded with Effect Schema before
-  use. It contains the complete versioned execution model; strategies remain reviewed TypeScript rather than JSON.
+- The composition root selects one strategy capability. The compiled `bayn.risk-balanced-trend.protocol.v1` owns its
+  authoritative universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
+- The typed protocol is compiled into the image and runtime-decoded with Effect Schema. Strategies remain reviewed
+  TypeScript rather than JSON.
 - The executable embeds source, repository, and strategy-behavior identity. Startup verifies configured attribution,
   and status exposes the promoted image digest, parameter hash, and contract versions.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
@@ -92,9 +92,9 @@ bun run --filter @proompteng/bayn lint:oxlint
 For a terminal locked candidate, `audit:qualification` performs an operator-side, read-only reproduction. It reads the
 evidence graph in one PostgreSQL `REPEATABLE READ, READ ONLY` transaction, reloads the finalized Signal snapshot,
 replays the candidate and all benchmarks without importing the production strategy, checks ClickHouse query-start
-chronology with a separately supplied audit principal, and checks authoritative `origin/main` history. It emits one
-`bayn.qualification-audit.v1` JSON report and exits nonzero on any failed check. Run it twice and require identical
-`auditHash` values.
+chronology on every physical ClickHouse replica with a separately supplied audit principal, and checks authoritative
+`origin/main` history. It emits one `bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run
+it twice and require identical `auditHash` values.
 
 ```sh
 BAYN_AUDIT_RUN_ID=<run-id> \
@@ -103,7 +103,7 @@ BAYN_AUDIT_SIGNAL_URL=<signal-clickhouse-url> \
 BAYN_AUDIT_SIGNAL_USERNAME=<readonly-bayn-user> \
 BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME=<signal-publisher-user> \
 BAYN_AUDIT_SIGNAL_PASSWORD=<readonly-bayn-password> \
-BAYN_AUDIT_CLICKHOUSE_URL=<clickhouse-audit-url> \
+BAYN_AUDIT_CLICKHOUSE_URLS=<replica-0-audit-url>,<replica-1-audit-url> \
 BAYN_AUDIT_CLICKHOUSE_USERNAME=<query-log-audit-user> \
 BAYN_AUDIT_CLICKHOUSE_PASSWORD=<query-log-audit-password> \
 BAYN_AUDIT_REPOSITORY_PATH=<lab-checkout> \
@@ -114,7 +114,7 @@ The audit command is not part of the deployed runtime and never calls TigerBeetl
 ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal
 read-only identity.
 
-Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v1`. The deterministic dossier
+Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
 binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
 verdict, and observe-only authority. GitOps publishes the reviewed JSON as the content-hashed
 `bayn-qualification-dossier` ConfigMap.
@@ -126,5 +126,6 @@ BAYN_TEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:5432/bayn_test \
   bun test services/bayn/src/db/evidence-store.integration.test.ts
 ```
 
-Bayn reads the fixed `adjusted_daily_bars_v2`, `exchange_sessions_v1`, and `snapshot_manifests_v1` tables through the
-official Effect ClickHouse client. Its Signal identity is read-only and has no DDL, insert, or mutation authority.
+The current candidate reads `adjusted_daily_bars_v2`, `exchange_sessions_v1`, and `snapshot_manifests_v2` through the
+official Effect ClickHouse client. Historical TSMOM audits retain an explicit V1-manifest reader. Bayn's Signal identity
+is read-only and has no DDL, insert, or mutation authority.
