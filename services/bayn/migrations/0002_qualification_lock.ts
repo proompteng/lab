@@ -41,6 +41,16 @@ export default Effect.gen(function* () {
   `
 
   yield* sql`
+    CREATE TABLE bayn_qualification_results (
+      lock_id text PRIMARY KEY REFERENCES bayn_qualification_locks(lock_id) ON DELETE RESTRICT,
+      schema_version text NOT NULL CHECK (schema_version = 'bayn.qualification-result.v1'),
+      run_id text NOT NULL UNIQUE REFERENCES bayn_evaluation_runs(run_id) ON DELETE RESTRICT,
+      verdict text NOT NULL CHECK (verdict IN ('QUALIFIED', 'REJECTED')),
+      committed_at timestamptz NOT NULL DEFAULT transaction_timestamp()
+    )
+  `
+
+  yield* sql`
     CREATE FUNCTION bayn_reject_qualification_mutation()
     RETURNS trigger
     LANGUAGE plpgsql
@@ -60,6 +70,12 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE TRIGGER bayn_qualification_locks_append_only
     BEFORE UPDATE OR DELETE ON bayn_qualification_locks
+    FOR EACH ROW EXECUTE FUNCTION bayn_reject_qualification_mutation()
+  `
+
+  yield* sql`
+    CREATE TRIGGER bayn_qualification_results_append_only
+    BEFORE UPDATE OR DELETE ON bayn_qualification_results
     FOR EACH ROW EXECUTE FUNCTION bayn_reject_qualification_mutation()
   `
 

@@ -129,6 +129,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'bayn_gate_outcomes',
       'bayn_protocol_locks',
       'bayn_qualification_locks',
+      'bayn_qualification_results',
       'bayn_qualification_trials',
       'bayn_schema_migrations',
       'bayn_snapshot_references',
@@ -280,6 +281,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const locks = yield* sql<{ lock_id: string; payload: unknown }>`
           SELECT lock_id, payload FROM bayn_qualification_locks
         `
+        const results = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM bayn_qualification_results
+        `
         const trialUpdate = yield* Effect.exit(sql`
           UPDATE bayn_qualification_trials SET disposition = 'BURNED' WHERE run_id = ${input.evaluation.runId}
         `)
@@ -313,7 +317,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             ${sql.json(lock)}
           )
         `)
-        return { lock, locks, trials, trialUpdate, trialDelete, lockUpdate, lockDelete, divergentLock }
+        return { lock, locks, results, trials, trialUpdate, trialDelete, lockUpdate, lockDelete, divergentLock }
       }),
     )
 
@@ -327,6 +331,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       },
     ])
     expect(result.locks).toEqual([{ lock_id: result.lock.lockId, payload: result.lock }])
+    expect(result.results).toEqual([{ count: 0 }])
     expect(Exit.isFailure(result.trialUpdate)).toBe(true)
     expect(Exit.isFailure(result.trialDelete)).toBe(true)
     expect(Exit.isFailure(result.lockUpdate)).toBe(true)

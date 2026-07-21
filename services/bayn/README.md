@@ -37,7 +37,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   as an untouched qualification window, and the trial record cannot be updated or deleted.
 - A future qualification lock must bind the exact protocol, source and image, finalized snapshot and bounds, universe
   rationale, prior trials, and content-hashed benchmark, threshold, uncertainty, and execution policies. Lock rows are
-  append-only; no active lock or qualification result exists until the remaining M2 policies are complete.
+  append-only, and the result table permits exactly one immutable `QUALIFIED` or `REJECTED` run per lock. No active
+  lock or qualification result exists until the remaining M2 policies are complete.
 - The independent reducer rebuilds protocol costs, cash, positions, and every marked-equity point with integer micros.
   Evaluation and recovery fail if lineage diverges or fees or equity differ by more than one cent; the exact measured
   differences remain part of the receipt.
