@@ -505,27 +505,85 @@ unset stale_maintenance_holder
 
 Discord activation requires a second PR. That PR must:
 
-- add an ExternalSecret mapping `hermes-runtime/DISCORD_BOT_TOKEN` and `hermes-runtime/DISCORD_ALLOWED_USERS`;
+- add the name- and namespace-bound `hermes-discord-auth` SealedSecret with only `DISCORD_BOT_TOKEN` and
+  `DISCORD_ALLOWED_USERS`;
+- leave `hermes-api-auth` and its ExternalSecret responsible only for `API_SERVER_KEY`;
 - inject both secret keys into the gateway container;
 - set `platforms.discord.enabled: true`;
 - set OpenClaw `spec.runStrategy: Halted` and remove the OpenClaw `cluster-admin` binding;
 - retain the OpenClaw VM, root-disk PVC, cloud-init Secret, and scoped read-only rollback resources;
-- retain manual Argo automation so the token transfer and sync are ordered by the operator.
+- retain manual Argo automation so secret staging, source quiescence, and the full sync are ordered by the operator.
+
+Generate or rotate `discord-sealed-secret.yaml` while OpenClaw is still the sole writer. Use explicit strict scope. Plaintext
+may exist only in this private shell and in the two command pipelines; only ciphertext is written to Git:
+
+```bash
+set -euo pipefail
+cleanup_discord_credentials() {
+  unset discord_bot_token discord_allowed_users discord_bot_token_cipher discord_allowed_users_cipher
+}
+abort_discord_credentials() { trap - EXIT HUP INT TERM; cleanup_discord_credentials; exit 130; }
+trap cleanup_discord_credentials EXIT
+trap abort_discord_credentials HUP INT TERM
+discord_bot_token=$(virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
+  --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
+  --command='set -eu; jq -er '\''.channels.discord.token | select(type == "string" and length >= 20)'\'' /home/ubuntu/.openclaw/openclaw.json' \
+  vm/openclaw)
+discord_allowed_users=$(virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
+  --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
+  --command='set -eu; jq -er '\''[.channels.discord.allowFrom[]?, .channels.discord.guilds[]?.users[]?] | if length > 0 and all(.[]; type == "string" and test("^[0-9]+$")) then unique | join(",") else error("numeric Discord allowlist required") end'\'' /home/ubuntu/.openclaw/openclaw.json' \
+  vm/openclaw)
+test "${#discord_bot_token}" -ge 20
+case "$discord_allowed_users" in ""|,*|*,|*,,*|*[!0-9,]*) exit 1 ;; esac
+discord_bot_token_cipher=$(printf '%s' "$discord_bot_token" | kubeseal --raw --from-file=/dev/stdin \
+  --controller-name sealed-secrets --controller-namespace sealed-secrets \
+  --namespace hermes --name hermes-discord-auth --scope strict)
+discord_allowed_users_cipher=$(printf '%s' "$discord_allowed_users" | kubeseal --raw --from-file=/dev/stdin \
+  --controller-name sealed-secrets --controller-namespace sealed-secrets \
+  --namespace hermes --name hermes-discord-auth --scope strict)
+DISCORD_BOT_TOKEN_CIPHER="$discord_bot_token_cipher" \
+DISCORD_ALLOWED_USERS_CIPHER="$discord_allowed_users_cipher" \
+  yq -i '
+    .spec.encryptedData.DISCORD_BOT_TOKEN = strenv(DISCORD_BOT_TOKEN_CIPHER) |
+    .spec.encryptedData.DISCORD_ALLOWED_USERS = strenv(DISCORD_ALLOWED_USERS_CIPHER)
+  ' argocd/applications/hermes/discord-sealed-secret.yaml
+if rg -q --fixed-strings --file <(printf '%s\n%s\n' "$discord_bot_token" "$discord_allowed_users") \
+  argocd/applications/hermes/discord-sealed-secret.yaml; then
+  echo 'plaintext Discord credential found in SealedSecret manifest' >&2
+  exit 1
+fi
+kubeseal --validate --controller-name sealed-secrets --controller-namespace sealed-secrets \
+  < argocd/applications/hermes/discord-sealed-secret.yaml
+printf 'discord_ciphertext_valid=true allowlist_count=%s\n' \
+  "$(printf '%s\n' "$discord_allowed_users" | awk -F, '{print NF}')"
+cleanup_discord_credentials
+trap - EXIT HUP INT TERM
+```
 
 Cutover sequence:
 
-1. In a dedicated private credential shell, capture the existing bot token and numeric allowlist without printing either
-   value. Keep this shell open through step 4. Record only the allowlist count, quiesce OpenClaw's Discord writer while the
-   VM remains reachable, and prove the gateway process is inactive:
+1. After the activation PR is merged, resource-sync only the SealedSecret while the live Hermes StatefulSet is still the
+   API-only revision. Compare the generated Secret exactly with the OpenClaw source without printing either value, prove
+   Hermes has no Discord credential references, then quiesce OpenClaw and prove its gateway process is inactive. A failure
+   before the stop leaves OpenClaw as the writer; do not continue on any failure:
 
    ```bash
    set -euo pipefail
    cleanup_discord_credentials() {
-     unset discord_bot_token discord_allowed_users discord_allowed_user_count
+     unset discord_bot_token discord_allowed_users sealed_discord_bot_token sealed_discord_allowed_users
+     unset discord_secret_keys hermes_discord_ref_count
    }
    abort_discord_credentials() { trap - EXIT HUP INT TERM; cleanup_discord_credentials; exit 130; }
    trap cleanup_discord_credentials EXIT
    trap abort_discord_credentials HUP INT TERM
+   kubeseal --validate --controller-name sealed-secrets --controller-namespace sealed-secrets \
+     < argocd/applications/hermes/discord-sealed-secret.yaml
+   argocd app sync hermes --prune=false \
+     --resource bitnami.com:SealedSecret:hermes-discord-auth
+   kubectl -n hermes wait sealedsecret/hermes-discord-auth --for=condition=Synced --timeout=5m
+   discord_secret_keys=$(kubectl -n hermes get secret hermes-discord-auth -o json | \
+     jq -r '.data | keys | sort | join(",")')
+   test "$discord_secret_keys" = DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN
    discord_bot_token=$(virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
      --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
      --command='set -eu; jq -er '\''.channels.discord.token | select(type == "string" and length >= 20)'\'' /home/ubuntu/.openclaw/openclaw.json' \
@@ -536,24 +594,35 @@ Cutover sequence:
      vm/openclaw)
    test "${#discord_bot_token}" -ge 20
    case "$discord_allowed_users" in ""|,*|*,|*,,*|*[!0-9,]*) exit 1 ;; esac
-   discord_allowed_user_count=$(printf '%s\n' "$discord_allowed_users" | awk -F, '{print NF}')
-   printf 'openclaw_discord_allowed_users=%s\n' "$discord_allowed_user_count"
+   sealed_discord_bot_token=$(kubectl -n hermes get secret hermes-discord-auth \
+     -o jsonpath='{.data.DISCORD_BOT_TOKEN}' | base64 -d)
+   sealed_discord_allowed_users=$(kubectl -n hermes get secret hermes-discord-auth \
+     -o jsonpath='{.data.DISCORD_ALLOWED_USERS}' | base64 -d)
+   test "$sealed_discord_bot_token" = "$discord_bot_token"
+   test "$sealed_discord_allowed_users" = "$discord_allowed_users"
+   hermes_discord_ref_count=$(kubectl -n hermes get statefulset hermes -o json | jq '
+     [.spec.template.spec.containers[] | select(.name == "hermes") | .env[]? |
+       select(.name == "DISCORD_BOT_TOKEN" or .name == "DISCORD_ALLOWED_USERS")] | length')
+   test "$hermes_discord_ref_count" = 0
+   printf 'sealed_discord_source_match=true allowlist_count=%s hermes_discord_refs=0\n' \
+     "$(printf '%s\n' "$discord_allowed_users" | awk -F, '{print NF}')"
    virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
      --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
      --command='set -eu; test "$(systemctl --user show openclaw-gateway.service --property=KillMode --value)" = control-group; systemctl --user stop openclaw-gateway.service; test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive; test "$(systemctl --user show openclaw-gateway.service --property=MainPID --value)" = 0; sync' \
      vm/openclaw
+   cleanup_discord_credentials
+   trap - EXIT HUP INT TERM
    ```
 
 2. In a separate maintenance shell, with the source quiesced, repeat Phase 2 steps 1 through 4 from a fresh
    `hermes_stage_dir`. Preserve the new audit output, dry-run Job, apply Job, and restore-point archive as the final
    reconciliation evidence. Do not reuse the earlier archive. Leave the Hermes StatefulSet at zero and backups suspended;
    do not run Phase 2 step 5 because merged `main` now enables Discord. Keep the same Phase 2 shell and Lease open through
-   cutover step 5. Keep the credential shell from step 1 open through step 4. If this final migration fails, keep Hermes
-   Discord disabled. If cutover is abandoned before the VMI is stopped, restart `openclaw-gateway.service`, resync the last
-   API-only Hermes revision, release the Lease, clear the credential variables, and repeat this final reconciliation before
-   any later attempt.
+   cutover step 4. If this final migration fails, keep Hermes Discord disabled. If cutover is abandoned before the VMI is
+   stopped, restart `openclaw-gateway.service`, resync the last API-only Hermes revision, release the Lease, and repeat this
+   final reconciliation before any later attempt.
 3. In the same shell, assert continued Lease ownership, sync the merged OpenClaw GitOps change, and prove its VMI is gone
-   before provisioning Hermes with the shared token:
+   before enabling Hermes Discord:
 
    ```bash
    set -euo pipefail
@@ -594,7 +663,7 @@ Cutover sequence:
      fi
      if [ "$(date +%s)" -ge "$openclaw_stop_deadline" ]; then
        kubectl -n openclaw get virtualmachineinstance openclaw -o wide >&2
-       echo 'OpenClaw VMI did not stop; do not provision Hermes with the Discord token' >&2
+       echo 'OpenClaw VMI did not stop; do not enable Hermes Discord' >&2
        exit 1
      fi
      sleep 5
@@ -602,46 +671,9 @@ Cutover sequence:
    unset openclaw_vmi_name openclaw_stop_deadline
    ```
 
-4. Only after the OpenClaw VMI is absent, use the credential shell from step 1 to transfer the captured bot token and numeric
-   allowlist directly into the `hermes-runtime` 1Password item. Verify the fields without printing them, clear the variables,
-   and keep the Lease-owning shell open:
-
-   ```bash
-   set -euo pipefail
-   test -n "${discord_bot_token:-}"
-   test -n "${discord_allowed_users:-}"
-   op item get --vault infra hermes-runtime --format json | \
-     jq --rawfile discord_bot_token <(printf '%s' "$discord_bot_token") \
-       --rawfile discord_allowed_users <(printf '%s' "$discord_allowed_users") '
-       def upsert_field($id; $type; $label; $value):
-         ([.fields[] | select(.label == $label)] | length) as $count
-         | if $count == 0 then
-             .fields += [{id: $id, type: $type, label: $label, value: $value}]
-           elif $count == 1 then
-             .fields |= map(if .label == $label then .type = $type | .value = $value else . end)
-           else
-             error("duplicate field: " + $label)
-           end;
-       upsert_field("DISCORD_BOT_TOKEN"; "CONCEALED"; "DISCORD_BOT_TOKEN"; $discord_bot_token)
-       | upsert_field("DISCORD_ALLOWED_USERS"; "STRING"; "DISCORD_ALLOWED_USERS"; $discord_allowed_users)
-     ' | op item edit --vault infra hermes-runtime >/dev/null
-   op item get --vault infra hermes-runtime --format json | \
-     jq -e --rawfile expected_discord_bot_token <(printf '%s' "$discord_bot_token") \
-       --rawfile expected_discord_allowed_users <(printf '%s' "$discord_allowed_users") '
-       ([.fields[] | select(
-         .label == "DISCORD_BOT_TOKEN" and .value == $expected_discord_bot_token
-       )] | length == 1) and
-       ([.fields[] | select(
-         .label == "DISCORD_ALLOWED_USERS" and .value == $expected_discord_allowed_users
-       )] | length == 1)
-     ' >/dev/null
-   cleanup_discord_credentials
-   trap - EXIT HUP INT TERM
-   ```
-
-5. Keep the Lease-owning shell open. Sync Hermes from merged `main` only after the OpenClaw VMI is gone. Wait for the
-   updated ExternalSecret and rollout, verify backups are enabled, then release the Lease. Prove only one Discord bot
-   session is active. This sync restores the Hermes replicas and backups:
+4. Keep the Lease-owning shell open. Sync Hermes from merged `main` only after the OpenClaw VMI is gone. Wait for the
+   API ExternalSecret, Discord SealedSecret, and rollout; verify backups are enabled, then release the Lease. Prove only one
+   Discord bot session is active. This sync restores the Hermes replicas and backups:
 
    ```bash
    set -euo pipefail
@@ -649,10 +681,13 @@ Cutover sequence:
    test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
    argocd app sync hermes --prune=false
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
+   kubectl -n hermes wait sealedsecret/hermes-discord-auth --for=condition=Synced --timeout=5m
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
-   discord_secret_keys=$(kubectl -n hermes get secret hermes-api-auth -o json | jq -r '.data | keys | sort | join(",")')
-   test "$discord_secret_keys" = API_SERVER_KEY,DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN
-   unset discord_secret_keys
+   api_secret_keys=$(kubectl -n hermes get secret hermes-api-auth -o json | jq -r '.data | keys | sort | join(",")')
+   discord_secret_keys=$(kubectl -n hermes get secret hermes-discord-auth -o json | jq -r '.data | keys | sort | join(",")')
+   test "$api_secret_keys" = API_SERVER_KEY
+   test "$discord_secret_keys" = DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN
+   unset api_secret_keys discord_secret_keys
    test "$(kubectl -n hermes get cronjob hermes-backup -o jsonpath='{.spec.suspend}')" = false
    test -z "$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)"
    test "$(kubectl -n hermes get statefulset hermes -o jsonpath='{.status.readyReplicas}')" = 1
@@ -662,9 +697,9 @@ Cutover sequence:
    unset maintenance_holder
    ```
 
-6. From the allowlisted account, send a unique canary message and capture the inbound message ID, Hermes session ID, response
+5. From the allowlisted account, send a unique canary message and capture the inbound message ID, Hermes session ID, response
    message ID, and timestamp. Verify a non-allowlisted account is rejected or ignored.
-7. Restart `hermes-0`, send a second canary, and verify session/memory continuity plus a current successful backup.
+6. Restart `hermes-0`, send a second canary, and verify session/memory continuity plus a current successful backup.
 
 Do not declare cutover complete from pod readiness alone.
 

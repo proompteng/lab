@@ -53,19 +53,37 @@ test('rejects a Discord token without a matching gateway SecretKeyRef', async ()
   files.statefulSet = files.statefulSet.replace('- name: DISCORD_BOT_TOKEN\n', '- name: DISCORD_BOT_TOKEN_DISABLED\n')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: DISCORD_BOT_TOKEN must have exactly one matching SecretKeyRef`,
+    `${productionPaths.statefulSet}: DISCORD_BOT_TOKEN must have exactly one matching hermes-discord-auth SecretKeyRef`,
   )
 })
 
-test('rejects a Discord allowlist without a matching 1Password mapping', async () => {
+test('rejects a Discord allowlist missing from the SealedSecret', async () => {
   const files = await loadProductionFiles()
-  files.externalSecret = files.externalSecret.replace(
-    '    - secretKey: DISCORD_ALLOWED_USERS\n',
-    '    - secretKey: DISCORD_ALLOWED_USERS_DISABLED\n',
+  files.discordSealedSecret = files.discordSealedSecret.replace(
+    '    DISCORD_ALLOWED_USERS:',
+    '    DISCORD_ALLOWED_USERS_DISABLED:',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.externalSecret}: DISCORD_ALLOWED_USERS must have exactly one 1Password mapping`,
+    `${productionPaths.discordSealedSecret}: encryptedData must contain exactly the Discord token and allowlist`,
+  )
+})
+
+test('rejects Discord fields in the API ExternalSecret', async () => {
+  const files = await loadProductionFiles()
+  files.externalSecret += '\n    - secretKey: DISCORD_BOT_TOKEN\n'
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.externalSecret}: contains forbidden production term "DISCORD_BOT_TOKEN"`,
+  )
+})
+
+test('rejects a broadly scoped Discord SealedSecret', async () => {
+  const files = await loadProductionFiles()
+  files.discordSealedSecret += '\n    sealedsecrets.bitnami.com/namespace-wide: "true"\n'
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.discordSealedSecret}: contains forbidden production term "sealedsecrets.bitnami.com/namespace-wide"`,
   )
 })
 
@@ -132,11 +150,11 @@ test('rejects an OpenClaw sync without an admission-safe runStrategy transition'
   )
 })
 
-test('rejects stopping the source before Discord credentials are captured', async () => {
+test('rejects stopping the source before the sealed credentials match', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    '   discord_bot_token=$(virtctl ssh',
-    '   systemctl --user stop openclaw-gateway.service\n   discord_bot_token=$(virtctl ssh',
+    '   test "$sealed_discord_bot_token" = "$discord_bot_token"',
+    '   systemctl --user stop openclaw-gateway.service\n   test "$sealed_discord_bot_token" = "$discord_bot_token"',
   )
 
   expect(validateProductionContent(files)).toContain(
@@ -159,11 +177,11 @@ test('rejects a gateway quiescence check that matches its own remote shell', asy
   )
 })
 
-test('rejects transferring the Discord token before the OpenClaw VMI is absent', async () => {
+test('rejects a full Hermes sync before the OpenClaw VMI is absent', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
     '   argocd app sync openclaw --prune=false\n',
-    '   op item edit --vault infra hermes-runtime\n   argocd app sync openclaw --prune=false\n',
+    '   argocd app sync hermes --prune=false\n   argocd app sync openclaw --prune=false\n',
   )
 
   expect(validateProductionContent(files)).toContain(
@@ -171,24 +189,27 @@ test('rejects transferring the Discord token before the OpenClaw VMI is absent',
   )
 })
 
-test('rejects exposing secrets through 1Password assignment arguments', async () => {
+test('rejects plaintext fields in the Discord SealedSecret', async () => {
   const files = await loadProductionFiles()
-  files.runbook += '\nop item edit --vault infra hermes-runtime "DISCORD_BOT_TOKEN[password]=$discord_bot_token"\n'
+  files.discordSealedSecret = files.discordSealedSecret.replace(
+    '  encryptedData:\n',
+    '  stringData:\n    DISCORD_BOT_TOKEN: plaintext\n  encryptedData:\n',
+  )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: contains forbidden production term "DISCORD_BOT_TOKEN[password]="`,
+    `${productionPaths.discordSealedSecret}: contains forbidden production term "\\n  stringData:"`,
   )
 })
 
 test('rejects a Discord credential transfer without exact-value verification', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    '.value == $expected_discord_bot_token',
-    '(.value | type == "string" and length >= 20)',
+    'test "$sealed_discord_bot_token" = "$discord_bot_token"',
+    'test "${#sealed_discord_bot_token}" -ge 20',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant ".value == $expected_discord_bot_token"`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$sealed_discord_bot_token\\" = \\"$discord_bot_token\\""`,
   )
 })
 

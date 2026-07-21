@@ -29,6 +29,7 @@ configMapGenerator:
 resources:
   - serviceaccount.yaml
   - external-secret.yaml
+  - discord-sealed-secret.yaml
   - service.yaml
   - egress-proxy.yaml
   - network-policy.yaml
