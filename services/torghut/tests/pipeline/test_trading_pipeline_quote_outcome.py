@@ -635,9 +635,12 @@ class TestTradingPipelineQuoteOutcome(TradingPipelineTestCaseBase):
                     event_payload_json={
                         "event_id": "reject-event-captured-entry-quote",
                         "signal_payload": {
-                            "price": "100.00",
-                            "imbalance_bid_px": "99.99",
-                            "imbalance_ask_px": "100.01",
+                            "executable_quote": {
+                                "bid_px": "99.99",
+                                "ask_px": "100.01",
+                                "mid_price": "100.00",
+                                "source": "captured-nbbo",
+                            },
                         },
                     },
                     outcome_payload_json=None,
