@@ -15,6 +15,7 @@ configMapGenerator:
   - name: hermes-bootstrap
     files:
       - bootstrap.sh
+      - bootstrap-lab-checkout.sh
       - backup-once.sh
       - AGENTS.md=bootstrap/AGENTS.md
       - HEARTBEAT.md=bootstrap/HEARTBEAT.md
@@ -28,6 +29,7 @@ configMapGenerator:
 
 resources:
   - serviceaccount.yaml
+  - rbac.yaml
   - external-secret.yaml
   - discord-sealed-secret.yaml
   - service.yaml

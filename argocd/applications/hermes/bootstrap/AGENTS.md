@@ -16,7 +16,10 @@ This workspace is the only mutable work area for Tuslagch. Treat it as durable u
 - Ask before sending messages, publishing content, changing external systems, or making any public action.
 - Never claim an action succeeded without a fresh readback from the authoritative surface.
 - Never weaken approvals, network policy, authentication, or this workspace policy.
-- Do not invoke Kubernetes, container engines, SSH, arbitrary network clients, or service-management commands.
+- Kubernetes access is cluster-wide read-only. Use `kubectl` for inspection, logs, events, status, and diagnostics only.
+- Never use `kubectl` to create, apply, edit, patch, replace, delete, scale, execute in, attach to, copy to, or port-forward
+  a resource. Kubernetes Secrets and service-account token subresources are outside your authority.
+- Do not invoke container engines, SSH, arbitrary network clients, or service-management commands.
 - Do not install or enable skills, plugins, MCP servers, cron jobs, hooks, delegation, or new messaging platforms without Greg's explicit request and an operator-reviewed GitOps change.
 - Do not modify `/opt/data/config.yaml`, `/opt/data/SOUL.md`, `/opt/data/IDENTITY.md`, `/opt/data/TOOLS.md`, or `/opt/data/HEARTBEAT.md`; they are operator-managed.
 - Destructive commands and irreversible actions require explicit approval. Prefer recoverable operations.
@@ -40,4 +43,5 @@ This workspace is the only mutable work area for Tuslagch. Treat it as durable u
 - Flamingo is the only approved model endpoint.
 - The API and Discord channel are operator-controlled surfaces; their availability does not expand authority.
 - A healthy process is not proof of a completed external action.
+- The local `proompteng/lab` checkout is `/opt/data/workspace/tuslagch/lab`; preserve local work when inspecting it.
 - If a required capability is disabled, explain the boundary and ask for an operator-reviewed rollout instead of bypassing it.

@@ -6,6 +6,57 @@ test('accepts the committed Hermes production surfaces', async () => {
   expect(validateProductionContent(await loadProductionFiles())).toEqual([])
 })
 
+test('rejects Kubernetes write verbs in the Hermes ClusterRole', async () => {
+  const files = await loadProductionFiles()
+  files.rbac = files.rbac.replace('verbs: [get, list, watch]', 'verbs: [get, list, watch, create]')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.rbac}: every RBAC rule must contain only get, list, and watch`,
+  )
+})
+
+test('rejects Kubernetes Secret access in the Hermes ClusterRole', async () => {
+  const files = await loadProductionFiles()
+  files.rbac = files.rbac.replace('      - services\n', '      - services\n      - secrets\n')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.rbac}: contains forbidden production term "      - secrets"`,
+  )
+})
+
+test('rejects disabling the gateway service-account token', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '      automountServiceAccountToken: true',
+    '      automountServiceAccountToken: false',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "automountServiceAccountToken: true"`,
+  )
+})
+
+test('rejects a mutable kubectl image volume', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    /registry\.k8s\.io\/kubectl@sha256:[a-f0-9]+/,
+    'registry.k8s.io/kubectl:latest',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`,
+  )
+})
+
+test('rejects restoring the blanket kubectl command deny', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('  deny:\n', '  deny:\n    - "*kubectl*"\n')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: contains forbidden production term "    - \\"*kubectl*\\""`,
+  )
+})
+
 test('rejects a mutable Hermes runtime image', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(

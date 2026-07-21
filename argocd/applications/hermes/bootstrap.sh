@@ -15,6 +15,11 @@ mkdir -p \
   /opt/data/skills \
   /opt/data/workspace/tuslagch
 
+install -m 0555 /opt/kubectl-image/bin/kubectl /opt/tools/kubectl
+/opt/tools/kubectl version --client=true >/tmp/kubectl-version.log
+
+/bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh
+
 seed_file() {
   source_path=$1
   destination_path=$2

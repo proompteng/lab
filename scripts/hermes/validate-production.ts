@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 const hermesImage =
   'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
+const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
 
 export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
@@ -15,7 +16,14 @@ export const productionPaths = {
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
+  squidConfig: 'argocd/applications/hermes/squid.conf',
   serviceAccount: 'argocd/applications/hermes/serviceaccount.yaml',
+  rbac: 'argocd/applications/hermes/rbac.yaml',
+  bootstrap: 'argocd/applications/hermes/bootstrap.sh',
+  labCheckout: 'argocd/applications/hermes/bootstrap-lab-checkout.sh',
+  workspaceAgents: 'argocd/applications/hermes/bootstrap/AGENTS.md',
+  workspaceTools: 'argocd/applications/hermes/bootstrap/TOOLS.md',
+  readme: 'argocd/applications/hermes/README.md',
   migrationDryRun: 'argocd/applications/hermes/operations/migration-dry-run-job.yaml',
   migrationApply: 'argocd/applications/hermes/operations/migration-apply-job.yaml',
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
@@ -77,8 +85,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- statefulset.yaml',
     '- backup-cronjob.yaml',
     '- network-policy.yaml',
+    '- rbac.yaml',
     '- external-secret.yaml',
     '- discord-sealed-secret.yaml',
+    '- bootstrap-lab-checkout.sh',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
@@ -96,7 +106,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'persistentVolumeClaimRetentionPolicy:',
     'whenDeleted: Retain',
     'whenScaled: Retain',
-    'automountServiceAccountToken: false',
+    'automountServiceAccountToken: true',
     'runAsUser: 10000',
     'runAsGroup: 10000',
     'readOnlyRootFilesystem: true',
@@ -109,6 +119,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'name: backups',
     'mountPath: /opt/backups\n              readOnly: true',
     'storageClassName: rook-ceph-block',
+    `reference: ${kubectlImage}`,
+    'mountPath: /opt/kubectl-image',
+    'mountPath: /opt/tools',
+    'value: /opt/tools:/opt/hermes/bin:',
+    'value: https://github.com/proompteng/lab.git',
+    'value: main',
+    'value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1',
   ])
   forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
     ':latest',
@@ -118,6 +135,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hostPID: true',
     '        - name: backup\n',
   ])
+  if (count(files.statefulSet, `reference: ${kubectlImage}`) !== 1) {
+    failures.push(`${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`)
+  }
   for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
     const reference = [
       `            - name: ${key}`,
@@ -197,8 +217,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mcp_servers: {}',
     'hooks_auto_accept: false',
     'memory_char_limit: 4400',
+    'Use /opt/data/workspace/tuslagch/lab as the local proompteng/lab checkout',
+    'Kubernetes access is cluster-wide read-only',
+    '  - "kubectl get *"',
+    '  - "kubectl * get *"',
+    '  - "kubectl logs *"',
+    '  - "kubectl * logs *"',
+    '  - "kubectl auth can-i *"',
   ])
-  forbidTerms(failures, productionPaths.config, files.config, ['api_key:', 'token:', 'allow_all_users: true'])
+  forbidTerms(failures, productionPaths.config, files.config, [
+    'api_key:',
+    'token:',
+    'allow_all_users: true',
+    '    - "*kubectl*"',
+  ])
 
   requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
     'name: onepassword-infra',
@@ -293,6 +325,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- 100.64.0.0/10',
     '- 169.254.0.0/16',
     '- 192.168.0.0/16',
+    'cidr: 10.96.0.1/32',
   ])
   forbidTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
     '          port: 80\n',
@@ -308,16 +341,90 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'readOnlyRootFilesystem: true',
     'allowPrivilegeEscalation: false',
   ])
+  requireTerms(failures, productionPaths.squidConfig, files.squidConfig, [
+    'acl allowed_discord dstdomain .discord.com',
+    'acl allowed_github dstdomain .github.com',
+    'http_access allow CONNECT allowed_discord',
+    'http_access allow CONNECT allowed_github',
+    'http_access deny all',
+  ])
+  forbidTerms(failures, productionPaths.squidConfig, files.squidConfig, [
+    'http_access allow all',
+    'dstdomain .gitlab.com',
+  ])
 
   requireTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
     'kind: ServiceAccount',
-    'automountServiceAccountToken: false',
+    'automountServiceAccountToken: true',
   ])
   forbidTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
     'kind: Role',
     'kind: ClusterRole',
     'kind: RoleBinding',
     'kind: ClusterRoleBinding',
+  ])
+
+  requireTerms(failures, productionPaths.rbac, files.rbac, [
+    'kind: ClusterRole',
+    'name: hermes-cluster-reader',
+    'apiGroups: [""]',
+    'resources: ["*"]',
+    'kind: ClusterRoleBinding',
+    'kind: ServiceAccount',
+    'name: hermes',
+    'namespace: hermes',
+    'name: hermes-cluster-reader',
+    '      - pods',
+    '      - pods/log',
+  ])
+  forbidTerms(failures, productionPaths.rbac, files.rbac, [
+    'apiGroups: ["*"]',
+    '      - secrets',
+    '      - serviceaccounts/token',
+    '      - pods/exec',
+    '      - pods/attach',
+    '      - pods/portforward',
+    '      - services/proxy',
+    'name: cluster-admin',
+  ])
+  const rbacVerbLists = [...files.rbac.matchAll(/^\s+verbs:\s+\[([^\]]+)]$/gm)]
+  if (rbacVerbLists.length !== 2 || rbacVerbLists.some((match) => match[1]?.replaceAll(' ', '') !== 'get,list,watch')) {
+    failures.push(`${productionPaths.rbac}: every RBAC rule must contain only get, list, and watch`)
+  }
+
+  requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'install -m 0555 /opt/kubectl-image/bin/kubectl /opt/tools/kubectl',
+    '/opt/tools/kubectl version --client=true',
+    '/bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh',
+  ])
+  requireTerms(failures, productionPaths.labCheckout, files.labCheckout, [
+    'set -eu',
+    'GIT_TERMINAL_PROMPT',
+    'https://github.com/proompteng/lab.git',
+    'LAB_CHECKOUT_REF:-main',
+    'LAB_CHECKOUT_DIR:-/opt/data/workspace/tuslagch/lab',
+    'if [ -L "$checkout_dir" ]',
+    '--filter=blob:none',
+    'git -C "$checkout_dir" fetch',
+    'git -C "$checkout_dir" merge --ff-only',
+    'preserving local lab checkout state',
+    'preserving the existing verified worktree',
+    'lab_checkout_ready=true',
+  ])
+  requireTerms(failures, productionPaths.workspaceAgents, files.workspaceAgents, [
+    'Kubernetes access is cluster-wide read-only.',
+    'Kubernetes Secrets and service-account token subresources are outside your authority.',
+    '/opt/data/workspace/tuslagch/lab',
+  ])
+  requireTerms(failures, productionPaths.workspaceTools, files.workspaceTools, [
+    '`kubectl` has cluster-wide read access to non-secret resources.',
+    'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
+    '/opt/data/workspace/tuslagch/lab',
+  ])
+  requireTerms(failures, productionPaths.readme, files.readme, [
+    'digest-pinned Kubernetes 1.35 `kubectl` binary',
+    'only `get`, `list`, and `watch`',
+    'credential-free `proompteng/lab` checkout',
   ])
 
   const operationDeadlines = {
@@ -580,6 +687,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'The CronJob must remain suspended until every prior backup',
     'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
     'direct public egress unexpectedly succeeded',
+    'git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main',
+    'test "$(kubectl auth can-i list pods --all-namespaces)" = yes',
+    'test "$(kubectl auth can-i get secrets --all-namespaces)" = no',
+    'test "$(kubectl auth can-i create deployments.apps --all-namespaces)" = no',
+    '! kubectl -n hermes get secret hermes-api-auth',
+    '! kubectl -n hermes create configmap hermes-readonly-proof',
+    'git -C /opt/data/workspace/tuslagch/lab remote get-url origin',
+    'cat /opt/data/workspace/tuslagch/.lab-source-revision',
+    'git -C /opt/data/workspace/tuslagch/lab cat-file -e HEAD:AGENTS.md',
+    'gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA',
     "'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'",
     "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",
     'test "$sidecar_archive" = "$archive_name"',
