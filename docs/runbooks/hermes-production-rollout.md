@@ -540,7 +540,7 @@ Cutover sequence:
    printf 'openclaw_discord_allowed_users=%s\n' "$discord_allowed_user_count"
    virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
      --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
-     --command='set -eu; systemctl --user stop openclaw-gateway.service; test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive; if pgrep -f "[o]penclaw.*gateway" >/dev/null; then exit 1; fi; sync' \
+     --command='set -eu; test "$(systemctl --user show openclaw-gateway.service --property=KillMode --value)" = control-group; systemctl --user stop openclaw-gateway.service; test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive; test "$(systemctl --user show openclaw-gateway.service --property=MainPID --value)" = 0; sync' \
      vm/openclaw
    ```
 
