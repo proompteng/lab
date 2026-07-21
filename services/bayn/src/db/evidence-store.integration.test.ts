@@ -187,6 +187,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
+        yield* sql`DROP SCHEMA IF EXISTS restore_probe CASCADE`
+        yield* sql`CREATE SCHEMA restore_probe`
+        yield* sql`CREATE TABLE restore_probe.evidence (proof_id text PRIMARY KEY, proof_value text NOT NULL)`
+        yield* sql`INSERT INTO restore_probe.evidence VALUES ('legacy-restore-proof', 'must-be-deleted')`
         const deployedMigrations = migrationLoader.pipe(
           Effect.map((migrations) => migrations.filter(([id]) => id <= 5)),
         )
@@ -372,6 +376,18 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           FROM pg_catalog.pg_tables
           WHERE schemaname = 'public' AND tablename LIKE 'bayn\_%' ESCAPE '\'
         `
+        const legacyRelations = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM pg_catalog.pg_class AS relation
+          INNER JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+          WHERE namespace.nspname = 'public' AND left(relation.relname, 5) = 'bayn_'
+        `
+        const currentSequence = yield* sql<{ exists: boolean }>`
+          SELECT to_regclass('public.status_history_sequence_seq') IS NOT NULL AS exists
+        `
+        const restoreProbe = yield* sql<{ exists: boolean }>`
+          SELECT to_regnamespace('restore_probe') IS NOT NULL AS exists
+        `
         const migrations = yield* sql<{ count: number }>`
           SELECT count(*)::integer AS count FROM schema_migrations
         `
@@ -391,13 +407,23 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `
         return {
           legacyTableCount: legacyTables[0]?.count,
+          legacyRelationCount: legacyRelations[0]?.count,
+          currentSequenceExists: currentSequence[0]?.exists,
+          restoreProbeExists: restoreProbe[0]?.exists,
           migrationCount: migrations[0]?.count,
           evidenceCount: evidence[0]?.count,
         }
       }),
     )
 
-    expect(migrated).toEqual({ legacyTableCount: 0, migrationCount: 8, evidenceCount: 0 })
+    expect(migrated).toEqual({
+      legacyTableCount: 0,
+      legacyRelationCount: 0,
+      currentSequenceExists: true,
+      restoreProbeExists: false,
+      migrationCount: 8,
+      evidenceCount: 0,
+    })
   })
 
   test('rejects legacy protocol rows after the hard cut', async () => {

@@ -61,6 +61,9 @@ export default Effect.gen(function* () {
     RESTART IDENTITY
   `
 
+  yield* sql`DROP SCHEMA IF EXISTS restore_probe CASCADE`
+  yield* sql`ALTER SEQUENCE bayn_status_history_sequence_seq RENAME TO status_history_sequence_seq`
+
   for (const [table, trigger] of truncateGuards) {
     yield* sql`ALTER TABLE ${sql(table)} ENABLE TRIGGER ${sql(trigger)}`
   }
