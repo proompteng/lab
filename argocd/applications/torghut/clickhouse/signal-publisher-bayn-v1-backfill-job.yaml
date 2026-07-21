@@ -9,7 +9,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
-  suspend: false
+  suspend: true
   backoffLimit: 1
   activeDeadlineSeconds: 900
   template:
@@ -100,7 +100,7 @@ spec:
             - name: SIGNAL_FINALIZATION_LAG_MINUTES
               value: "90"
             - name: SIGNAL_OPERATION_TIMEOUT_MS
-              value: "60000"
+              value: "180000"
           resources:
             requests:
               cpu: 100m
