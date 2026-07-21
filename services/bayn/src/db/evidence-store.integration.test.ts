@@ -164,6 +164,35 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     ])
   })
 
+  test('keeps the audit snapshot repeatable-read and rejects writes', async () => {
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE TABLE bayn_audit_read_only_probe (id integer PRIMARY KEY)`
+        const transaction = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`
+            const mode = yield* sql<{ isolation: string; read_only: boolean }>`
+              SELECT
+                current_setting('transaction_isolation') AS isolation,
+                current_setting('transaction_read_only') = 'on' AS read_only
+            `
+            const write = yield* Effect.exit(sql`INSERT INTO bayn_audit_read_only_probe (id) VALUES (1)`)
+            return { mode: mode[0], write }
+          }),
+        )
+        const rows = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM bayn_audit_read_only_probe
+        `
+        return { ...transaction, rows }
+      }),
+    )
+
+    expect(observed.mode).toEqual({ isolation: 'repeatable read', read_only: true })
+    expect(Exit.isFailure(observed.write)).toBe(true)
+    expect(observed.rows).toEqual([{ count: 0 }])
+  })
+
   test('commits one complete run and deduplicates an exact replay', async () => {
     const input = makeInput()
     const result = await runtime.runPromise(

@@ -416,7 +416,7 @@ const decodeSnapshotRows = (
 })
 
 const makeMarketData = (
-  config: RuntimeConfig,
+  config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   universe: readonly string[],
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
   Effect.gen(function* () {
@@ -542,7 +542,7 @@ const makeMarketData = (
   })
 
 export const MarketDataLive = (
-  config: RuntimeConfig,
+  config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   universe: readonly string[],
 ): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
   Layer.effect(MarketData, makeMarketData(config, universe))
