@@ -8,7 +8,9 @@ const StrictParseOptions = { onExcessProperty: 'error' } as const
 const Micros = Schema.String.check(Schema.isPattern(/^\d+$/))
 const SignedMicros = Schema.String.check(Schema.isPattern(/^-?\d+$/))
 const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/))
+const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
+const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const Symbol = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 
@@ -110,9 +112,9 @@ export const MarkedEquityReconciliationSchema = Schema.Struct({
 })
 
 export const EvaluationSummarySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.evaluation-summary.v1'),
+  schemaVersion: Schema.Literal('bayn.evaluation-summary.v2'),
   runId: Sha256Schema,
-  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v2'),
+  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v3'),
   codeRevision: SourceRevision,
   protocolHash: Sha256Schema,
   initialCapitalMicros: Micros,
@@ -131,9 +133,15 @@ export const EvaluationSummarySchema = Schema.Struct({
   doubleCostStrategy: PerformanceMetricsSchema,
   verdict: VerdictSchema,
   eventCount: PositiveInteger,
+  signalDecisionCount: PositiveInteger,
   orderCount: PositiveInteger,
   cashChangeCount: PositiveInteger,
   dailyMarkCount: PositiveInteger,
+  benchmarkSeriesCounts: Schema.Struct({
+    buyAndHold: PositiveInteger,
+    directVolTiming: PositiveInteger,
+    doubleCostStrategy: PositiveInteger,
+  }),
   markedEquityReconciliation: MarkedEquityReconciliationSchema,
 })
 
@@ -198,11 +206,25 @@ export const CashChangesArtifactSchema = Schema.Struct({
   ).check(Schema.isMinLength(1)),
 })
 
+const DailyPerformanceFields = {
+  sessionDate: IsoDateSchema,
+  equityMicros: Micros,
+  netReturn: Schema.Finite,
+  turnoverMicros: Micros,
+  cumulativeTurnoverMicros: Micros,
+  feeMicros: Micros,
+  cumulativeFeesMicros: Micros,
+  peakEquityMicros: Micros,
+  drawdown: Schema.Finite,
+} as const
+
+const DailyPerformancePointSchema = Schema.Struct(DailyPerformanceFields)
+
 export const DailyPositionMarksArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.daily-position-marks.v1'),
+  schemaVersion: Schema.Literal('bayn.daily-position-marks.v2'),
   items: Schema.Array(
     Schema.Struct({
-      sessionDate: IsoDateSchema,
+      ...DailyPerformanceFields,
       cashMicros: Micros,
       positions: Schema.Array(
         Schema.Struct({
@@ -213,9 +235,74 @@ export const DailyPositionMarksArtifactSchema = Schema.Struct({
           marketValueMicros: Micros,
         }),
       ).check(Schema.isMinLength(1)),
-      equityMicros: Micros,
     }),
   ).check(Schema.isMinLength(1)),
+})
+
+export const TsmomSignalDecisionsArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.tsmom-signal-decisions.v1'),
+  items: Schema.Array(
+    Schema.Struct({
+      schemaVersion: Schema.Literal('bayn.tsmom-decision-plan.v1'),
+      decisionId: Sha256Schema,
+      signalDate: IsoDateSchema,
+      executionDate: IsoDateSchema,
+      targetWeights: Schema.Record(Symbol, Schema.Finite),
+      signals: Schema.Array(
+        Schema.Struct({
+          symbol: Symbol,
+          lookbacks: Schema.Array(
+            Schema.Struct({
+              lookbackSessions: PositiveInteger,
+              return: Schema.Finite,
+              direction: Schema.Literals(['positive', 'non-positive']),
+            }),
+          ).check(Schema.isMinLength(1)),
+          score: Schema.Int,
+          active: Schema.Boolean,
+          targetWeight: Schema.Finite,
+        }),
+      ).check(Schema.isMinLength(1)),
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
+export const DailyPerformanceSeriesArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.daily-performance-series.v1'),
+  series: Schema.Literals(['buy-and-hold', 'direct-volatility-timing', 'double-cost-strategy']),
+  items: Schema.Array(DailyPerformancePointSchema).check(Schema.isMinLength(1)),
+})
+
+export const QualificationArtifactManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
+  identity: Schema.Struct({
+    runId: Sha256Schema,
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v3'),
+    protocolHash: Sha256Schema,
+    sourceRevision: SourceRevision,
+    image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),
+    snapshotId: Sha256Schema,
+    publicationId: Sha256Schema,
+    inputManifestHash: Sha256Schema,
+    bounds: EvaluationBoundsSchema,
+    calendarVersion: Schema.String,
+  }),
+  execution: Schema.Struct({
+    parameterSchemaVersion: Schema.String,
+    parameterHash: Sha256Schema,
+    simulationSchemaVersion: Schema.Literal('bayn.simulation-trace.v2'),
+    transactionCostBpsMicros: Micros,
+  }),
+  artifacts: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      schemaVersion: Schema.String,
+      itemCount: NonNegativeInteger,
+      contentHash: Sha256Schema,
+    }),
+  ).check(Schema.isMinLength(1)),
+  events: Schema.Struct({ count: PositiveInteger, contentHash: Sha256Schema }),
+  gates: Schema.Struct({ count: PositiveInteger, contentHash: Sha256Schema }),
 })
 
 export const EquitySeriesArtifactSchema = Schema.Struct({
@@ -246,6 +333,18 @@ export const decodeSimulatedOrdersArtifact = Schema.decodeUnknownEffect(
 export const decodeCashChangesArtifact = Schema.decodeUnknownEffect(CashChangesArtifactSchema, StrictParseOptions)
 export const decodeDailyPositionMarksArtifact = Schema.decodeUnknownEffect(
   DailyPositionMarksArtifactSchema,
+  StrictParseOptions,
+)
+export const decodeTsmomSignalDecisionsArtifact = Schema.decodeUnknownEffect(
+  TsmomSignalDecisionsArtifactSchema,
+  StrictParseOptions,
+)
+export const decodeDailyPerformanceSeriesArtifact = Schema.decodeUnknownEffect(
+  DailyPerformanceSeriesArtifactSchema,
+  StrictParseOptions,
+)
+export const decodeQualificationArtifactManifest = Schema.decodeUnknownEffect(
+  QualificationArtifactManifestSchema,
   StrictParseOptions,
 )
 

@@ -29,10 +29,16 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   lookback, and evaluation bounds before exposing numeric bars.
 - The run ID binds source and image identity, compiled strategy behavior and decoded parameters, complete finalized
   snapshot provenance, calendar version, and explicit bounds.
-- Signals are formed at a month-end close and may execute only at the next exchange session open.
+- One pure compiled TSMOM decision function records each lookback return, direction vote, score, active symbol, and
+  target weight at a month-end close. Historical evaluation uses that function directly; any later paper planner must
+  reuse it. Decisions may execute only at the next exchange session open.
 - After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
-  snapshot reference, run identity, metrics, simulated orders, fills, cash changes, daily position marks, the full
-  equity series, independent marked-equity proof, reconciliation receipt, gate outcomes, and status history.
+  snapshot reference, run identity, metrics, simulated orders, fills, cash changes, daily position marks, daily
+  returns, turnover, fees, drawdown, aligned benchmark series, the full equity series, independent marked-equity
+  proof, reconciliation receipt, gate outcomes, and status history. A content-addressed dossier manifest binds every
+  artifact, event, and gate hash to the exact source, image, protocol, snapshot, calendar, and execution contract.
+- Ordered artifacts can be read internally through contiguous pages capped at 256 items. PostgreSQL triggers make the
+  complete evidence graph append-only and permit an evaluation row only its exact `WRITING` to `COMPLETE` transition.
 - Every completed pre-qualification run is recorded once as a burned trial. Observed results cannot later be presented
   as an untouched qualification window, and the trial record cannot be updated or deleted.
 - A future qualification lock must bind the exact protocol, source and image, finalized snapshot and bounds, universe

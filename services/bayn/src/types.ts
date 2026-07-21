@@ -63,6 +63,32 @@ export interface TsmomProtocol {
   readonly thresholds: EconomicThresholds
 }
 
+export interface TsmomLookbackSignal {
+  readonly lookbackSessions: number
+  readonly return: number
+  readonly direction: 'positive' | 'non-positive'
+}
+
+export interface TsmomSymbolSignal {
+  readonly symbol: string
+  readonly lookbacks: readonly TsmomLookbackSignal[]
+  readonly score: number
+  readonly active: boolean
+  readonly targetWeight: number
+}
+
+export interface TsmomDecisionPlan {
+  readonly schemaVersion: 'bayn.tsmom-decision-plan.v1'
+  readonly signalDate: IsoDate
+  readonly targetWeights: Readonly<Record<string, number>>
+  readonly signals: readonly TsmomSymbolSignal[]
+}
+
+export interface TsmomSignalDecision extends TsmomDecisionPlan {
+  readonly decisionId: string
+  readonly executionDate: IsoDate
+}
+
 export interface DecisionEvent {
   readonly kind: 'decision'
   readonly id: string
@@ -119,10 +145,29 @@ export interface DailyPositionMark {
   readonly cashMicros: string
   readonly positions: readonly PositionMark[]
   readonly equityMicros: string
+  readonly netReturn: number
+  readonly turnoverMicros: string
+  readonly cumulativeTurnoverMicros: string
+  readonly feeMicros: string
+  readonly cumulativeFeesMicros: string
+  readonly peakEquityMicros: string
+  readonly drawdown: number
+}
+
+export interface DailyPerformancePoint {
+  readonly sessionDate: IsoDate
+  readonly equityMicros: string
+  readonly netReturn: number
+  readonly turnoverMicros: string
+  readonly cumulativeTurnoverMicros: string
+  readonly feeMicros: string
+  readonly cumulativeFeesMicros: string
+  readonly peakEquityMicros: string
+  readonly drawdown: number
 }
 
 export interface SimulationTrace {
-  readonly schemaVersion: 'bayn.simulation-trace.v1'
+  readonly schemaVersion: 'bayn.simulation-trace.v2'
   readonly transactionCostBpsMicros: string
   readonly orders: readonly SimulatedOrder[]
   readonly cashChanges: readonly CashChange[]
@@ -178,7 +223,7 @@ export interface EconomicVerdict {
 }
 
 export interface EvaluationResult {
-  readonly schemaVersion: 'bayn.evaluation.v2'
+  readonly schemaVersion: 'bayn.evaluation.v3'
   readonly runId: string
   readonly codeRevision: string
   readonly protocolHash: string
@@ -190,15 +235,21 @@ export interface EvaluationResult {
   readonly doubleCostStrategy: PerformanceMetrics
   readonly verdict: EconomicVerdict
   readonly events: readonly EvaluationEvent[]
+  readonly signalDecisions: readonly TsmomSignalDecision[]
   readonly simulation: SimulationTrace
+  readonly benchmarkSeries: {
+    readonly buyAndHold: readonly DailyPerformancePoint[]
+    readonly directVolTiming: readonly DailyPerformancePoint[]
+    readonly doubleCostStrategy: readonly DailyPerformancePoint[]
+  }
   readonly equitySeries: readonly EquityPoint[]
   readonly markedEquityReconciliation: MarkedEquityReconciliation
 }
 
 export interface EvaluationSummary {
-  readonly schemaVersion: 'bayn.evaluation-summary.v1'
+  readonly schemaVersion: 'bayn.evaluation-summary.v2'
   readonly runId: string
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v2'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v3'
   readonly codeRevision: string
   readonly protocolHash: string
   readonly initialCapitalMicros: string
@@ -217,9 +268,15 @@ export interface EvaluationSummary {
   readonly doubleCostStrategy: PerformanceMetrics
   readonly verdict: EconomicVerdict
   readonly eventCount: number
+  readonly signalDecisionCount: number
   readonly orderCount: number
   readonly cashChangeCount: number
   readonly dailyMarkCount: number
+  readonly benchmarkSeriesCounts: {
+    readonly buyAndHold: number
+    readonly directVolTiming: number
+    readonly doubleCostStrategy: number
+  }
   readonly markedEquityReconciliation: MarkedEquityReconciliation
 }
 

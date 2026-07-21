@@ -5,6 +5,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
 import { makeQualificationLock, makeQualificationPolicyDocument } from '../qualification'
 import { evaluateTsmom } from '../strategy'
@@ -180,7 +181,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
 
     expect(result.first).toMatchObject({ runId: input.evaluation.runId, deduplicated: false })
-    expect(result.first.artifactCount).toBe(12)
+    expect(result.first.artifactCount).toBe(17)
     expect(result.second).toEqual({ ...result.first, deduplicated: true })
     expect(result.runs).toEqual([
       {
@@ -339,7 +340,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.divergentLock)).toBe(true)
   })
 
-  test('reads and recovers the complete v2 evidence contract without evaluating it again', async () => {
+  test('reads and recovers the complete v3 evidence contract without evaluating it again', async () => {
     const input = makeInput()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -364,24 +365,46 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       })
       expect(result.stored.value.run).toMatchObject({
         runId: input.evaluation.runId,
-        evaluationSchemaVersion: 'bayn.evaluation.v2',
-        artifactCount: 12,
+        evaluationSchemaVersion: 'bayn.evaluation.v3',
+        artifactCount: 17,
         eventCount: input.evaluation.events.length,
       })
       expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toEqual([
         'buy-and-hold',
+        'buy-and-hold-series',
         'cash-changes',
         'daily-position-marks',
         'direct-volatility-timing',
+        'direct-volatility-timing-series',
         'double-cost-strategy',
+        'double-cost-strategy-series',
         'equity-series',
         'evaluation-summary',
         'input-manifest',
         'marked-equity-reconciliation',
+        'qualification-artifact-manifest',
         'reconciliation',
         'simulated-orders',
         'strategy',
+        'tsmom-signal-decisions',
       ])
+      const manifest = result.stored.value.artifacts.find(
+        (artifact) => artifact.name === 'qualification-artifact-manifest',
+      )
+      if (manifest === undefined) throw new Error('qualification artifact manifest is missing')
+      expect(manifest.payload).toMatchObject({
+        schemaVersion: 'bayn.qualification-artifact-manifest.v1',
+        identity: {
+          runId: input.evaluation.runId,
+          protocolHash: input.evaluation.protocolHash,
+          snapshotId: input.evaluation.inputManifest.finalizedSnapshot.snapshotId,
+          sourceRevision: input.provenance.sourceRevision,
+          image: input.provenance.image,
+        },
+        events: { count: input.evaluation.events.length },
+        gates: { count: input.evaluation.verdict.gates.length },
+      })
+      expect(canonicalHashV1(manifest.payload)).toBe(manifest.contentHash)
     }
     expect(Option.isSome(result.recovered)).toBe(true)
     if (Option.isSome(result.recovered)) {
@@ -391,10 +414,66 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           markedEquityReconciliation: { withinTolerance: true },
         },
         reconciliation: { runId: input.evaluation.runId, exact: true },
-        persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 12 },
+        persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 17 },
       })
     }
     expect(Option.isNone(result.missing)).toBe(true)
+  })
+
+  test('retrieves ordered artifact items through bounded contiguous pages', async () => {
+    const input = makeInput()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        yield* store.persist(input)
+        const items: unknown[] = []
+        const pageSizes: number[] = []
+        let afterOrdinal = -1
+        let contentHash = ''
+        while (true) {
+          const page = yield* store.readArtifactItems({
+            runId: input.evaluation.runId,
+            artifactName: 'daily-position-marks',
+            afterOrdinal,
+            limit: 31,
+          })
+          if (Option.isNone(page)) throw new Error('daily-position-marks page is missing')
+          contentHash = page.value.contentHash
+          pageSizes.push(page.value.items.length)
+          items.push(...page.value.items.map((item) => item.payload))
+          if (page.value.nextAfterOrdinal === null) break
+          afterOrdinal = page.value.nextAfterOrdinal
+        }
+        const scalar = yield* store.readArtifactItems({
+          runId: input.evaluation.runId,
+          artifactName: 'strategy',
+          limit: 1,
+        })
+        const invalidLimit = yield* store
+          .readArtifactItems({
+            runId: input.evaluation.runId,
+            artifactName: 'daily-position-marks',
+            limit: 257,
+          })
+          .pipe(Effect.flip)
+        return { contentHash, invalidLimit, items, pageSizes, scalar }
+      }),
+    )
+
+    expect(result.items).toEqual([...input.evaluation.simulation.dailyMarks])
+    expect(result.contentHash).toBe(
+      canonicalHashV1({
+        schemaVersion: 'bayn.daily-position-marks.v2',
+        items: input.evaluation.simulation.dailyMarks,
+      }),
+    )
+    expect(result.pageSizes.length).toBeGreaterThan(2)
+    expect(result.pageSizes.every((size) => size > 0 && size <= 31)).toBe(true)
+    expect(Option.isNone(result.scalar)).toBe(true)
+    expect(result.invalidLimit).toMatchObject({
+      failure: 'invariant',
+      operation: 'read-artifact-items',
+    })
   })
 
   test('rejects a simulation whose declared costs diverge from its locked protocol', async () => {
@@ -469,118 +548,64 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     ])
   })
 
-  test('rejects a complete receipt whose stored evidence was altered', async () => {
+  test('rejects updates and deletes across the completed evidence graph', async () => {
     const input = makeInput()
-    const errors = await runtime.runPromise(
+    const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
         const sql = yield* PgClient.PgClient
         yield* store.persist(input)
-        yield* sql`
+        const artifactUpdate = yield* Effect.exit(sql`
           UPDATE bayn_evaluation_artifacts
           SET payload = ${sql.json({ corrupted: true })}
           WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'strategy'
-        `
-        const read = yield* store.read(input.evaluation.runId).pipe(Effect.flip)
-        const replay = yield* store.persist(input).pipe(Effect.flip)
-        return { read, replay }
-      }),
-    )
-
-    expect(errors.read).toBeInstanceOf(DatabaseError)
-    expect(errors.read.failure).toBe('invariant')
-    expect(errors.read.operation).toBe('read-evidence')
-    expect(errors.replay).toBeInstanceOf(DatabaseError)
-    expect(errors.replay.failure).toBe('invariant')
-    expect(errors.replay.operation).toBe('read-receipt')
-  })
-
-  test('rejects a replay whose normalized snapshot bounds were altered', async () => {
-    const input = makeInput()
-    const error = await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* EvidenceStore
-        const sql = yield* PgClient.PgClient
-        yield* store.persist(input)
-        yield* sql`
+        `)
+        const snapshotUpdate = yield* Effect.exit(sql`
           UPDATE bayn_snapshot_references
           SET first_session = first_session + 1
           WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
-        `
-        return yield* store.persist(input).pipe(Effect.flip)
-      }),
-    )
-
-    expect(error).toBeInstanceOf(DatabaseError)
-    expect(error.failure).toBe('invariant')
-    expect(error.operation).toBe('snapshot-reference')
-    expect(error.message).toContain('stored snapshot reference diverged')
-  })
-
-  test('fails recovery when the stored snapshot manifest was altered', async () => {
-    const input = makeInput()
-    const error = await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* EvidenceStore
-        const sql = yield* PgClient.PgClient
-        yield* store.persist(input)
-        yield* sql`
-          UPDATE bayn_snapshot_references
-          SET manifest = ${sql.json({ corrupted: true })}
-          WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
-        `
-        return yield* store.recover(input.evaluation.runId, input.provenance).pipe(Effect.flip)
-      }),
-    )
-
-    expect(error).toBeInstanceOf(DatabaseError)
-    expect(error.failure).toBe('invariant')
-    expect(error.operation).toBe('recover-evidence')
-    expect(error.message).toContain('stored snapshot reference diverged')
-  })
-
-  test('rejects a replay whose initial capital was altered', async () => {
-    const input = makeInput()
-    const error = await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* EvidenceStore
-        const sql = yield* PgClient.PgClient
-        yield* store.persist(input)
-        yield* sql`
+        `)
+        const runUpdate = yield* Effect.exit(sql`
           UPDATE bayn_evaluation_runs
           SET initial_capital_micros = initial_capital_micros + 1
           WHERE run_id = ${input.evaluation.runId}
-        `
-        return yield* store.persist(input).pipe(Effect.flip)
-      }),
-    )
-
-    expect(error).toBeInstanceOf(DatabaseError)
-    expect(error.failure).toBe('invariant')
-    expect(error.operation).toBe('read-receipt')
-    expect(error.message).toContain('stored run identity diverged')
-  })
-
-  test('rejects a replay whose status detail was altered', async () => {
-    const input = makeInput()
-    const error = await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* EvidenceStore
-        const sql = yield* PgClient.PgClient
-        yield* store.persist(input)
-        yield* sql`
+        `)
+        const statusUpdate = yield* Effect.exit(sql`
           UPDATE bayn_status_history
-          SET detail = ${sql.json({ reconciliationExact: false, verdict: 'corrupted' })}
+          SET detail = ${sql.json({ corrupted: true })}
           WHERE run_id = ${input.evaluation.runId} AND status = 'COMPLETE'
-        `
-        return yield* store.persist(input).pipe(Effect.flip)
+        `)
+        const eventDelete = yield* Effect.exit(sql`
+          DELETE FROM bayn_evaluation_events WHERE run_id = ${input.evaluation.runId}
+        `)
+        const gateDelete = yield* Effect.exit(sql`
+          DELETE FROM bayn_gate_outcomes WHERE run_id = ${input.evaluation.runId}
+        `)
+        const protocolDelete = yield* Effect.exit(sql`
+          DELETE FROM bayn_protocol_locks WHERE protocol_hash = ${input.evaluation.protocolHash}
+        `)
+        const runDelete = yield* Effect.exit(sql`
+          DELETE FROM bayn_evaluation_runs WHERE run_id = ${input.evaluation.runId}
+        `)
+        const read = yield* store.read(input.evaluation.runId)
+        return {
+          exits: [
+            artifactUpdate,
+            snapshotUpdate,
+            runUpdate,
+            statusUpdate,
+            eventDelete,
+            gateDelete,
+            protocolDelete,
+            runDelete,
+          ],
+          read,
+        }
       }),
     )
 
-    expect(error).toBeInstanceOf(DatabaseError)
-    expect(error.failure).toBe('invariant')
-    expect(error.operation).toBe('read-receipt')
-    expect(error.message).toContain('stored status history diverged')
+    expect(result.exits.every(Exit.isFailure)).toBe(true)
+    expect(Option.isSome(result.read)).toBe(true)
   })
 
   test('rolls back every table when a terminal evidence constraint fails', async () => {

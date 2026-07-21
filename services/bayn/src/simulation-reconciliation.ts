@@ -152,7 +152,7 @@ export const reconcileMarkedEquity = (input: {
   const tolerance = input.toleranceMicros ?? MARKED_EQUITY_TOLERANCE_MICROS
   ensure(tolerance >= 0n, 'marked-equity tolerance must not be negative')
   ensure(/^[0-9a-f]{64}$/.test(input.runId), 'marked-equity run ID is invalid')
-  ensure(input.simulation.schemaVersion === 'bayn.simulation-trace.v1', 'simulation trace version is unsupported')
+  ensure(input.simulation.schemaVersion === 'bayn.simulation-trace.v2', 'simulation trace version is unsupported')
   const transactionCostBpsMicros = unsigned(input.simulation.transactionCostBpsMicros, 'transaction cost basis points')
   ensure(transactionCostBpsMicros <= BASIS_POINTS * MICROS, 'transaction cost basis points exceed 100%')
 

@@ -7,14 +7,17 @@ import type { RuntimeConfig } from '../config'
 import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import {
   decodeCashChangesArtifact,
+  decodeDailyPerformanceSeriesArtifact,
   decodeDailyPositionMarksArtifact,
   decodeEquitySeriesArtifact,
   decodeEvaluationEvents,
   decodeEvaluationSummary,
   decodeInputManifestArtifact,
   decodeMarkedEquityReconciliation,
+  decodeQualificationArtifactManifest,
   decodeReconciliationResult,
   decodeSimulatedOrdersArtifact,
+  decodeTsmomSignalDecisionsArtifact,
   makeEquitySeriesArtifact,
 } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
@@ -47,10 +50,26 @@ export interface PersistEvaluationInput {
   readonly reconciliation: ReconciliationResult
 }
 
+export interface ArtifactItemPage {
+  readonly runId: string
+  readonly artifactName: string
+  readonly schemaVersion: string
+  readonly contentHash: string
+  readonly itemCount: number
+  readonly items: readonly { readonly ordinal: number; readonly payload: unknown }[]
+  readonly nextAfterOrdinal: number | null
+}
+
 export interface EvidenceStoreService {
   readonly check: Effect.Effect<void, DatabaseError>
   readonly persist: (input: PersistEvaluationInput) => Effect.Effect<PersistenceReceipt, DatabaseError>
   readonly read: (runId: string) => Effect.Effect<Option.Option<StoredEvaluationEvidence>, DatabaseError>
+  readonly readArtifactItems: (input: {
+    readonly runId: string
+    readonly artifactName: string
+    readonly afterOrdinal?: number
+    readonly limit: number
+  }) => Effect.Effect<Option.Option<ArtifactItemPage>, DatabaseError>
   readonly recover: (
     runId: string,
     provenance: RuntimeProvenance,
@@ -203,6 +222,15 @@ const ArtifactReferenceRow = Schema.Struct({
   content_hash: Sha256,
   payload: Schema.Unknown,
 })
+const ArtifactSeriesMetadataRow = Schema.Struct({
+  schema_version: Schema.String,
+  content_hash: Sha256,
+  item_count: NonNegativeInteger,
+})
+const ArtifactItemRow = Schema.Struct({
+  ordinal: NonNegativeInteger,
+  payload: Schema.Unknown,
+})
 const EventReferenceRow = Schema.Struct({
   ordinal: NonNegativeInteger,
   event_id: Sha256,
@@ -301,6 +329,11 @@ const protocolTransactionCostBpsMicros = (parameters: unknown): string => {
   return BigInt(micros).toString()
 }
 
+const artifactItemCount = (payload: unknown): number => {
+  if (typeof payload !== 'object' || payload === null || !('items' in payload)) return 0
+  return Array.isArray(payload.items) ? payload.items.length : 0
+}
+
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
   const { evaluation, parameters, provenance, reconciliation } = input
   const strategyName = provenance.strategy.name
@@ -355,8 +388,34 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     throw new TypeError('independent marked-equity proof diverges from the evaluation evidence')
   }
 
-  const artifacts = [
-    ['evaluation-summary', 'bayn.evaluation-summary.v1', summarizeEvaluation(evaluation)],
+  const decisionEvents = evaluation.events.filter((event) => event.kind === 'decision')
+  if (
+    evaluation.signalDecisions.length !== decisionEvents.length ||
+    evaluation.signalDecisions.some(
+      (decision, index) =>
+        decision.decisionId !== decisionEvents[index]?.id ||
+        decision.signalDate !== decisionEvents[index]?.signalDate ||
+        decision.executionDate !== decisionEvents[index]?.executionDate ||
+        canonicalHashV1(decision.targetWeights) !== canonicalHashV1(decisionEvents[index]?.targetWeights),
+    )
+  ) {
+    throw new TypeError('TSMOM signal decisions diverge from durable decision events')
+  }
+  const candidateDates = evaluation.simulation.dailyMarks.map((point) => point.sessionDate)
+  const benchmarkSeries = Object.values(evaluation.benchmarkSeries)
+  if (
+    candidateDates.length !== evaluation.strategy.observations ||
+    benchmarkSeries.some(
+      (series) =>
+        series.length !== candidateDates.length ||
+        series.some((point, index) => point.sessionDate !== candidateDates[index]),
+    )
+  ) {
+    throw new TypeError('candidate and benchmark daily series are not exactly aligned')
+  }
+
+  const baseArtifacts = [
+    ['evaluation-summary', 'bayn.evaluation-summary.v2', summarizeEvaluation(evaluation)],
     ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
     ['strategy', 'bayn.performance-metrics.v1', evaluation.strategy],
     ['buy-and-hold', 'bayn.performance-metrics.v1', evaluation.buyAndHold],
@@ -378,8 +437,40 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     ],
     [
       'daily-position-marks',
-      'bayn.daily-position-marks.v1',
-      { schemaVersion: 'bayn.daily-position-marks.v1', items: evaluation.simulation.dailyMarks },
+      'bayn.daily-position-marks.v2',
+      { schemaVersion: 'bayn.daily-position-marks.v2', items: evaluation.simulation.dailyMarks },
+    ],
+    [
+      'tsmom-signal-decisions',
+      'bayn.tsmom-signal-decisions.v1',
+      { schemaVersion: 'bayn.tsmom-signal-decisions.v1', items: evaluation.signalDecisions },
+    ],
+    [
+      'buy-and-hold-series',
+      'bayn.daily-performance-series.v1',
+      {
+        schemaVersion: 'bayn.daily-performance-series.v1',
+        series: 'buy-and-hold',
+        items: evaluation.benchmarkSeries.buyAndHold,
+      },
+    ],
+    [
+      'direct-volatility-timing-series',
+      'bayn.daily-performance-series.v1',
+      {
+        schemaVersion: 'bayn.daily-performance-series.v1',
+        series: 'direct-volatility-timing',
+        items: evaluation.benchmarkSeries.directVolTiming,
+      },
+    ],
+    [
+      'double-cost-strategy-series',
+      'bayn.daily-performance-series.v1',
+      {
+        schemaVersion: 'bayn.daily-performance-series.v1',
+        series: 'double-cost-strategy',
+        items: evaluation.benchmarkSeries.doubleCostStrategy,
+      },
     ],
     ['equity-series', 'bayn.equity-series.v1', makeEquitySeriesArtifact(evaluation.equitySeries)],
     [
@@ -393,7 +484,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     schemaVersion: schemaVersion as string,
     contentHash: canonicalHashV1(payload),
     payload,
-  }))
+  })) satisfies ArtifactPlan[]
   const events = evaluation.events.map((event, ordinal) => ({
     ordinal,
     id: event.id,
@@ -411,6 +502,57 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }))
   if (events.length === 0) throw new TypeError('evaluation produced no durable events')
   if (gates.length === 0) throw new TypeError('evaluation produced no economic gate outcomes')
+
+  const artifactManifest = {
+    schemaVersion: 'bayn.qualification-artifact-manifest.v1',
+    identity: {
+      runId: evaluation.runId,
+      evaluationSchemaVersion: evaluation.schemaVersion,
+      protocolHash,
+      sourceRevision: provenance.sourceRevision,
+      image: provenance.image,
+      snapshotId,
+      publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
+      inputManifestHash: evaluation.inputManifest.hash,
+      bounds: evaluation.inputManifest.bounds,
+      calendarVersion: evaluation.inputManifest.finalizedSnapshot.calendarVersion,
+    },
+    execution: {
+      parameterSchemaVersion: provenance.strategy.parameterSchemaVersion,
+      parameterHash: provenance.strategy.parameterHash,
+      simulationSchemaVersion: evaluation.simulation.schemaVersion,
+      transactionCostBpsMicros: evaluation.simulation.transactionCostBpsMicros,
+    },
+    artifacts: [...baseArtifacts]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((artifact) => ({
+        name: artifact.name,
+        schemaVersion: artifact.schemaVersion,
+        itemCount: artifactItemCount(artifact.payload),
+        contentHash: artifact.contentHash,
+      })),
+    events: {
+      count: events.length,
+      contentHash: canonicalHashV1(
+        events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+      ),
+    },
+    gates: {
+      count: gates.length,
+      contentHash: canonicalHashV1(
+        gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
+      ),
+    },
+  }
+  const artifacts = [
+    ...baseArtifacts,
+    {
+      name: 'qualification-artifact-manifest',
+      schemaVersion: artifactManifest.schemaVersion,
+      contentHash: canonicalHashV1(artifactManifest),
+      payload: artifactManifest,
+    },
+  ]
 
   return { ...input, strategyName, protocolHash, snapshotId, artifacts, events, gates }
 }
@@ -555,6 +697,42 @@ const makeEvidenceStore = Effect.gen(function* () {
       FROM bayn_evaluation_artifacts
       WHERE run_id = ${runId}
       ORDER BY artifact_name
+    `,
+  })
+  const getArtifactSeriesMetadata = SqlSchema.findAll({
+    Request: Schema.Struct({ runId: Sha256, artifactName: Schema.String }),
+    Result: ArtifactSeriesMetadataRow,
+    execute: ({ runId, artifactName }) => sql`
+      SELECT
+        artifact.schema_version,
+        artifact.content_hash,
+        jsonb_array_length(artifact.payload -> 'items')::integer AS item_count
+      FROM bayn_evaluation_artifacts AS artifact
+      JOIN bayn_evaluation_runs AS run USING (run_id)
+      WHERE artifact.run_id = ${runId}
+        AND artifact.artifact_name = ${artifactName}
+        AND run.status = 'COMPLETE'
+        AND jsonb_typeof(artifact.payload -> 'items') = 'array'
+    `,
+  })
+  const getArtifactItems = SqlSchema.findAll({
+    Request: Schema.Struct({
+      runId: Sha256,
+      artifactName: Schema.String,
+      afterOrdinal: Schema.Int,
+      limit: PositiveInteger,
+    }),
+    Result: ArtifactItemRow,
+    execute: ({ runId, artifactName, afterOrdinal, limit }) => sql`
+      SELECT (item.ordinality - 1)::integer AS ordinal, item.payload
+      FROM bayn_evaluation_artifacts AS artifact
+      CROSS JOIN LATERAL jsonb_array_elements(artifact.payload -> 'items')
+        WITH ORDINALITY AS item(payload, ordinality)
+      WHERE artifact.run_id = ${runId}
+        AND artifact.artifact_name = ${artifactName}
+        AND (item.ordinality - 1) > ${afterOrdinal}
+      ORDER BY item.ordinality
+      LIMIT ${limit}
     `,
   })
   const getEventReferences = SqlSchema.findAll({
@@ -828,6 +1006,53 @@ const makeEvidenceStore = Effect.gen(function* () {
 
   const read = (runId: string) => runDatabase('read-evidence', readStored(runId))
 
+  const readArtifactItems: EvidenceStoreService['readArtifactItems'] = ({
+    runId,
+    artifactName,
+    afterOrdinal = -1,
+    limit,
+  }) =>
+    runDatabase(
+      'read-artifact-items',
+      Effect.gen(function* () {
+        yield* ensure(/^[0-9a-f]{64}$/.test(runId), 'read-artifact-items', 'run ID is invalid')
+        yield* ensure(
+          artifactName.length > 0 && artifactName.trim() === artifactName,
+          'read-artifact-items',
+          'artifact name is invalid',
+        )
+        yield* ensure(
+          Number.isInteger(afterOrdinal) && afterOrdinal >= -1,
+          'read-artifact-items',
+          'after ordinal must be an integer greater than or equal to -1',
+        )
+        yield* ensure(
+          Number.isInteger(limit) && limit > 0 && limit <= 256,
+          'read-artifact-items',
+          'page limit must be between 1 and 256',
+        )
+        const metadata = yield* getArtifactSeriesMetadata({ runId, artifactName })
+        if (metadata.length === 0) return Option.none<ArtifactItemPage>()
+        yield* ensure(metadata.length === 1, 'read-artifact-items', 'artifact series metadata is duplicated')
+        const rows = yield* getArtifactItems({ runId, artifactName, afterOrdinal, limit })
+        yield* ensure(
+          rows.every((row, index) => row.ordinal === afterOrdinal + index + 1),
+          'read-artifact-items',
+          'artifact page is not contiguous',
+        )
+        const last = rows.at(-1)?.ordinal
+        return Option.some({
+          runId,
+          artifactName,
+          schemaVersion: metadata[0].schema_version,
+          contentHash: metadata[0].content_hash,
+          itemCount: metadata[0].item_count,
+          items: rows,
+          nextAfterOrdinal: last !== undefined && last < metadata[0].item_count - 1 ? last : null,
+        } satisfies ArtifactItemPage)
+      }),
+    )
+
   const recover = (runId: string, provenance: RuntimeProvenance) =>
     runDatabase(
       'recover-evidence',
@@ -837,17 +1062,22 @@ const makeEvidenceStore = Effect.gen(function* () {
         const stored = storedOption.value
         const requiredArtifacts = new Map([
           ['buy-and-hold', 'bayn.performance-metrics.v1'],
+          ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
           ['cash-changes', 'bayn.cash-changes.v1'],
-          ['daily-position-marks', 'bayn.daily-position-marks.v1'],
+          ['daily-position-marks', 'bayn.daily-position-marks.v2'],
           ['direct-volatility-timing', 'bayn.performance-metrics.v1'],
+          ['direct-volatility-timing-series', 'bayn.daily-performance-series.v1'],
           ['double-cost-strategy', 'bayn.performance-metrics.v1'],
+          ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
           ['equity-series', 'bayn.equity-series.v1'],
-          ['evaluation-summary', 'bayn.evaluation-summary.v1'],
+          ['evaluation-summary', 'bayn.evaluation-summary.v2'],
           ['input-manifest', 'bayn.input-manifest.v2'],
           ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v1'],
+          ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
           ['reconciliation', 'bayn.reconciliation.v1'],
           ['simulated-orders', 'bayn.simulated-orders.v1'],
           ['strategy', 'bayn.performance-metrics.v1'],
+          ['tsmom-signal-decisions', 'bayn.tsmom-signal-decisions.v1'],
         ])
         const artifacts = new Map(stored.artifacts.map((artifact) => [artifact.name, artifact]))
         yield* ensure(
@@ -856,11 +1086,11 @@ const makeEvidenceStore = Effect.gen(function* () {
               ([name, schemaVersion]) => artifacts.get(name)?.schemaVersion === schemaVersion,
             ),
           'recover-evidence',
-          'stored run does not have the exact v2 artifact contract',
+          'stored run does not have the exact v3 artifact contract',
         )
         yield* ensure(
           stored.run.runId === runId &&
-            stored.run.evaluationSchemaVersion === 'bayn.evaluation.v2' &&
+            stored.run.evaluationSchemaVersion === 'bayn.evaluation.v3' &&
             stored.run.sourceRevision === provenance.sourceRevision &&
             stored.run.imageRepository === provenance.image.repository &&
             stored.run.imageDigest === provenance.image.digest &&
@@ -877,6 +1107,21 @@ const makeEvidenceStore = Effect.gen(function* () {
         const equitySeries = yield* decodeEquitySeriesArtifact(artifacts.get('equity-series')!.payload)
         const events = yield* decodeEvaluationEvents(stored.events.map((event) => event.payload))
         const orders = yield* decodeSimulatedOrdersArtifact(artifacts.get('simulated-orders')!.payload)
+        const signalDecisions = yield* decodeTsmomSignalDecisionsArtifact(
+          artifacts.get('tsmom-signal-decisions')!.payload,
+        )
+        const buyAndHoldSeries = yield* decodeDailyPerformanceSeriesArtifact(
+          artifacts.get('buy-and-hold-series')!.payload,
+        )
+        const directVolatilitySeries = yield* decodeDailyPerformanceSeriesArtifact(
+          artifacts.get('direct-volatility-timing-series')!.payload,
+        )
+        const doubleCostSeries = yield* decodeDailyPerformanceSeriesArtifact(
+          artifacts.get('double-cost-strategy-series')!.payload,
+        )
+        const artifactManifest = yield* decodeQualificationArtifactManifest(
+          artifacts.get('qualification-artifact-manifest')!.payload,
+        )
         const storedTransactionCostBpsMicros = yield* Effect.try({
           try: () => protocolTransactionCostBpsMicros(stored.protocol.parameters),
           catch: (cause) =>
@@ -895,6 +1140,48 @@ const makeEvidenceStore = Effect.gen(function* () {
         const cashChanges = yield* decodeCashChangesArtifact(artifacts.get('cash-changes')!.payload)
         const dailyMarks = yield* decodeDailyPositionMarksArtifact(artifacts.get('daily-position-marks')!.payload)
         const inputManifest = yield* decodeInputManifestArtifact(artifacts.get('input-manifest')!.payload)
+        const expectedArtifactManifest = {
+          schemaVersion: 'bayn.qualification-artifact-manifest.v1',
+          identity: {
+            runId,
+            evaluationSchemaVersion: evaluation.evaluationSchemaVersion,
+            protocolHash: stored.run.protocolHash,
+            sourceRevision: stored.run.sourceRevision,
+            image: { repository: stored.run.imageRepository, digest: stored.run.imageDigest },
+            snapshotId: stored.run.snapshotId,
+            publicationId: inputManifest.finalizedSnapshot.publicationId,
+            inputManifestHash: inputManifest.hash,
+            bounds: inputManifest.bounds,
+            calendarVersion: inputManifest.finalizedSnapshot.calendarVersion,
+          },
+          execution: {
+            parameterSchemaVersion: stored.protocol.schemaVersion,
+            parameterHash: stored.protocol.parameterHash,
+            simulationSchemaVersion: 'bayn.simulation-trace.v2',
+            transactionCostBpsMicros: storedTransactionCostBpsMicros,
+          },
+          artifacts: stored.artifacts
+            .filter((artifact) => artifact.name !== 'qualification-artifact-manifest')
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map((artifact) => ({
+              name: artifact.name,
+              schemaVersion: artifact.schemaVersion,
+              itemCount: artifactItemCount(artifact.payload),
+              contentHash: artifact.contentHash,
+            })),
+          events: {
+            count: stored.events.length,
+            contentHash: canonicalHashV1(
+              stored.events.map(({ ordinal, id, kind, contentHash }) => ({ ordinal, id, kind, contentHash })),
+            ),
+          },
+          gates: {
+            count: stored.gates.length,
+            contentHash: canonicalHashV1(
+              stored.gates.map(({ ordinal, name, passed, contentHash }) => ({ ordinal, name, passed, contentHash })),
+            ),
+          },
+        }
         const storedSnapshot = yield* getSnapshot({ snapshotId: stored.run.snapshotId })
         yield* ensure(
           snapshotReferenceMatches(storedSnapshot, inputManifest),
@@ -910,7 +1197,7 @@ const makeEvidenceStore = Effect.gen(function* () {
               evaluatorEndingEquityMicros: evaluation.strategy.endingEquityMicros,
               events,
               simulation: {
-                schemaVersion: 'bayn.simulation-trace.v1',
+                schemaVersion: 'bayn.simulation-trace.v2',
                 transactionCostBpsMicros: orders.transactionCostBpsMicros,
                 orders: orders.items,
                 cashChanges: cashChanges.items,
@@ -921,6 +1208,8 @@ const makeEvidenceStore = Effect.gen(function* () {
             databaseError('invariant', 'recover-evidence', 'stored marked-equity reconstruction failed', cause),
         })
         const finalPoint = equitySeries.items.at(-1)!
+        const decisionEvents = events.filter((event) => event.kind === 'decision')
+        const candidateDates = dailyMarks.items.map((point) => point.sessionDate)
         yield* ensure(
           evaluation.runId === runId &&
             evaluation.codeRevision === provenance.sourceRevision &&
@@ -937,10 +1226,27 @@ const makeEvidenceStore = Effect.gen(function* () {
               canonicalHashV1(inputManifest.symbols.map((coverage) => coverage.symbol)) &&
             evaluation.eventCount === stored.run.eventCount &&
             evaluation.eventCount === events.length &&
+            evaluation.signalDecisionCount === signalDecisions.items.length &&
+            signalDecisions.items.length === decisionEvents.length &&
+            signalDecisions.items.every(
+              (decision, index) =>
+                decision.decisionId === decisionEvents[index]?.id &&
+                decision.signalDate === decisionEvents[index]?.signalDate &&
+                decision.executionDate === decisionEvents[index]?.executionDate &&
+                canonicalHashV1(decision.targetWeights) === canonicalHashV1(decisionEvents[index]?.targetWeights),
+            ) &&
             evaluation.orderCount === orders.items.length &&
             evaluation.cashChangeCount === cashChanges.items.length &&
             evaluation.dailyMarkCount === dailyMarks.items.length &&
             evaluation.dailyMarkCount === evaluation.strategy.observations &&
+            evaluation.benchmarkSeriesCounts.buyAndHold === buyAndHoldSeries.items.length &&
+            evaluation.benchmarkSeriesCounts.directVolTiming === directVolatilitySeries.items.length &&
+            evaluation.benchmarkSeriesCounts.doubleCostStrategy === doubleCostSeries.items.length &&
+            [buyAndHoldSeries.items, directVolatilitySeries.items, doubleCostSeries.items].every(
+              (series) =>
+                series.length === candidateDates.length &&
+                series.every((point, index) => point.sessionDate === candidateDates[index]),
+            ) &&
             evaluation.markedEquityReconciliation.runId === runId &&
             canonicalHashV1(evaluation.markedEquityReconciliation) === canonicalHashV1(markedEquity) &&
             canonicalHashV1(evaluation.strategy) === artifacts.get('strategy')!.contentHash &&
@@ -966,10 +1272,11 @@ const makeEvidenceStore = Effect.gen(function* () {
             finalPoint.evaluatorEquityMicros === markedEquity.evaluatorEndingEquityMicros &&
             finalPoint.reconstructedEquityMicros === markedEquity.reconstructedEndingEquityMicros &&
             finalPoint.differenceMicros === markedEquity.differenceMicros &&
+            canonicalHashV1(artifactManifest) === canonicalHashV1(expectedArtifactManifest) &&
             canonicalHashV1(stored.statuses[1]?.detail) ===
               canonicalHashV1({ reconciliationExact: true, verdict: evaluation.verdict.status }),
           'recover-evidence',
-          'stored v2 evidence components diverge',
+          'stored v3 evidence components diverge',
         )
 
         return Option.some({
@@ -1188,6 +1495,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     check: runDatabase('health', health(undefined).pipe(Effect.asVoid)),
     persist,
     read,
+    readArtifactItems,
     recover,
   } satisfies EvidenceStoreService
 })
@@ -1245,6 +1553,7 @@ export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
         check: Effect.fail(error),
         persist: () => Effect.fail(error),
         read: () => Effect.fail(error),
+        readArtifactItems: () => Effect.fail(error),
         recover: () => Effect.fail(error),
       }),
     ),
