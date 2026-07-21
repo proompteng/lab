@@ -11,7 +11,7 @@ import {
   type Transfer,
   createClient,
 } from 'tigerbeetle-node'
-import { Context, Effect, Layer, ScopedRef, Semaphore } from 'effect'
+import { Context, Effect, Layer, Option, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { operationalError, type OperationalError } from './errors'
@@ -699,26 +699,51 @@ export const JournalLive = (
             ),
           ),
       )
-      const clients = yield* ScopedRef.fromAcquire(acquireClient)
+      const clients = yield* ScopedRef.fromAcquire(acquireClient.pipe(Effect.map(Option.some)))
       const semaphore = yield* Semaphore.make(1)
+      const installClient = ScopedRef.set(clients, acquireClient.pipe(Effect.map(Option.some)))
       const refresh = (trigger: string): Effect.Effect<void> =>
-        ScopedRef.set(clients, acquireClient).pipe(
-          Effect.tap(() => Effect.logInfo('TigerBeetle client refreshed').pipe(Effect.annotateLogs({ trigger }))),
-          Effect.catch((error) =>
-            Effect.logWarning('TigerBeetle client refresh failed').pipe(
-              Effect.annotateLogs({
-                trigger,
-                component: error.component,
-                operation: error.operation,
-                error: error.message,
-              }),
+        ScopedRef.set(clients, Effect.succeed(Option.none<Client>())).pipe(
+          Effect.andThen(
+            installClient.pipe(
+              Effect.tap(() => Effect.logInfo('TigerBeetle client refreshed').pipe(Effect.annotateLogs({ trigger }))),
+              Effect.catch((error) =>
+                Effect.logWarning('TigerBeetle client refresh failed').pipe(
+                  Effect.annotateLogs({
+                    trigger,
+                    component: error.component,
+                    operation: error.operation,
+                    error: error.message,
+                  }),
+                ),
+              ),
             ),
           ),
         )
+      const getClient = ScopedRef.get(clients).pipe(
+        Effect.flatMap(
+          Option.match({
+            onSome: Effect.succeed,
+            onNone: () =>
+              installClient.pipe(
+                Effect.andThen(ScopedRef.get(clients)),
+                Effect.flatMap(
+                  Option.match({
+                    onSome: Effect.succeed,
+                    onNone: () =>
+                      Effect.fail(
+                        operationalError('journal', 'connect', 'TigerBeetle client unavailable after refresh'),
+                      ),
+                  }),
+                ),
+              ),
+          }),
+        ),
+      )
       const client: LedgerClient = {
         request: <A>(operation: string, execute: (active: Client) => Promise<A>) =>
           semaphore.withPermit(
-            ScopedRef.get(clients).pipe(
+            getClient.pipe(
               Effect.flatMap((active) =>
                 Effect.tryPromise({
                   try: () => execute(active),
