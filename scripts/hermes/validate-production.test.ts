@@ -57,6 +57,15 @@ test('rejects restoring the blanket kubectl command deny', async () => {
   )
 })
 
+test('rejects omitting the translated Kubernetes API endpoints', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicy = files.networkPolicy.replace('            cidr: 100.100.244.141/32\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicy}: missing production invariant "cidr: 100.100.244.141/32"`,
+  )
+})
+
 test('rejects a mutable Hermes runtime image', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(
