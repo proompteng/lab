@@ -11,7 +11,7 @@ import {
   type Transfer,
   createClient,
 } from 'tigerbeetle-node'
-import { Context, Effect, Layer } from 'effect'
+import { Context, Effect, Layer, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { operationalError, type OperationalError } from './errors'
@@ -445,11 +445,12 @@ export const assertReconciled = (
   }
 }
 
-const request = <A>(client: Client, operation: string, execute: () => Promise<A>): Effect.Effect<A, OperationalError> =>
-  Effect.tryPromise({
-    try: execute,
-    catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
-  }).pipe(Effect.onInterrupt(() => Effect.sync(() => client.destroy())))
+interface LedgerClient {
+  readonly request: <A>(
+    operation: string,
+    execute: (client: Client) => Promise<A>,
+  ) => Effect.Effect<A, OperationalError>
+}
 
 const validate = <A>(operation: string, evaluate: () => A): Effect.Effect<A, OperationalError> =>
   Effect.try({
@@ -457,9 +458,12 @@ const validate = <A>(operation: string, evaluate: () => A): Effect.Effect<A, Ope
     catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
   })
 
-const createAndVerifyAccounts = (client: Client, accounts: readonly Account[]): Effect.Effect<void, OperationalError> =>
+const createAndVerifyAccounts = (
+  client: LedgerClient,
+  accounts: readonly Account[],
+): Effect.Effect<void, OperationalError> =>
   Effect.gen(function* () {
-    const results = yield* request(client, 'create-accounts', () => client.createAccounts([...accounts]))
+    const results = yield* client.request('create-accounts', (active) => active.createAccounts([...accounts]))
     const existingIds = yield* validate('verify-account-results', () => {
       if (results.length !== accounts.length) {
         throw new Error('TigerBeetle returned an incomplete account result batch')
@@ -478,7 +482,7 @@ const createAndVerifyAccounts = (client: Client, accounts: readonly Account[]): 
     })
     if (existingIds.length === 0) return
 
-    const existing = yield* request(client, 'lookup-existing-accounts', () => client.lookupAccounts(existingIds))
+    const existing = yield* client.request('lookup-existing-accounts', (active) => active.lookupAccounts(existingIds))
     const expected = accounts.filter((value) => existingIds.includes(value.id))
     yield* validate('verify-existing-accounts', () =>
       assertUniqueExact('existing account', existing, expected, accountMetadataMatches),
@@ -486,11 +490,11 @@ const createAndVerifyAccounts = (client: Client, accounts: readonly Account[]): 
   })
 
 const createAndVerifyTransfers = (
-  client: Client,
+  client: LedgerClient,
   transfers: readonly Transfer[],
 ): Effect.Effect<void, OperationalError> =>
   Effect.gen(function* () {
-    const results = yield* request(client, 'create-transfers', () => client.createTransfers([...transfers]))
+    const results = yield* client.request('create-transfers', (active) => active.createTransfers([...transfers]))
     const existingIds = yield* validate('verify-transfer-results', () => {
       if (results.length !== transfers.length) {
         throw new Error('TigerBeetle returned an incomplete transfer result batch')
@@ -509,7 +513,7 @@ const createAndVerifyTransfers = (
     })
     if (existingIds.length === 0) return
 
-    const existing = yield* request(client, 'lookup-existing-transfers', () => client.lookupTransfers(existingIds))
+    const existing = yield* client.request('lookup-existing-transfers', (active) => active.lookupTransfers(existingIds))
     const expected = transfers.filter((value) => existingIds.includes(value.id))
     yield* validate('verify-existing-transfers', () =>
       assertUniqueExact('existing transfer', existing, expected, transferMatches),
@@ -595,7 +599,7 @@ const assertPersistedRun = (
 }
 
 const checkRun = (
-  client: Client,
+  client: LedgerClient,
   ledger: number,
   result: ReconciliationResult,
 ): Effect.Effect<void, OperationalError> =>
@@ -609,11 +613,11 @@ const checkRun = (
     const runTag = stableU64('bayn-run-v1', result.runId)
     const [accounts, transfers] = yield* Effect.all(
       [
-        request(client, 'check-run-accounts', () =>
-          client.queryAccounts({ ...queryFilter(ledger), user_data_128: runKey, limit: result.accountCount + 1 }),
+        client.request('check-run-accounts', (active) =>
+          active.queryAccounts({ ...queryFilter(ledger), user_data_128: runKey, limit: result.accountCount + 1 }),
         ),
-        request(client, 'check-run-transfers', () =>
-          client.queryTransfers({ ...queryFilter(ledger), user_data_64: runTag, limit: result.transferCount + 1 }),
+        client.request('check-run-transfers', (active) =>
+          active.queryTransfers({ ...queryFilter(ledger), user_data_64: runTag, limit: result.transferCount + 1 }),
         ),
       ],
       { concurrency: 'unbounded' },
@@ -622,7 +626,7 @@ const checkRun = (
   })
 
 const journalAndReconcile = (
-  client: Client,
+  client: LedgerClient,
   ledger: number,
   result: EvaluationResult,
 ): Effect.Effect<ReconciliationResult, OperationalError> =>
@@ -634,8 +638,8 @@ const journalAndReconcile = (
     const transferQuery = { ...queryFilter(ledger), user_data_64: plan.runTag, limit: plan.transfers.length + 1 }
     const [accounts, transfers] = yield* Effect.all(
       [
-        request(client, 'query-accounts', () => client.queryAccounts(accountQuery)),
-        request(client, 'query-transfers', () => client.queryTransfers(transferQuery)),
+        client.request('query-accounts', (active) => active.queryAccounts(accountQuery)),
+        client.request('query-transfers', (active) => active.queryTransfers(transferQuery)),
       ],
       { concurrency: 'unbounded' },
     )
@@ -658,48 +662,81 @@ export const JournalLive = (
 ): Layer.Layer<Journal, OperationalError> =>
   Layer.effect(
     Journal,
-    Effect.acquireRelease(
-      dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses).pipe(
-        Effect.flatMap((replicaAddresses) =>
-          Effect.try({
-            try: () =>
-              dependencies.createClient({
-                cluster_id: config.tigerBeetle.clusterId,
-                replica_addresses: replicaAddresses,
-              }),
-            catch: (cause) => operationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+    Effect.gen(function* () {
+      const acquireClient = Effect.acquireRelease(
+        dependencies.resolveReplicaAddresses(config.tigerBeetle.replicaAddresses).pipe(
+          Effect.flatMap((replicaAddresses) =>
+            Effect.try({
+              try: () =>
+                dependencies.createClient({
+                  cluster_id: config.tigerBeetle.clusterId,
+                  replica_addresses: replicaAddresses,
+                }),
+              catch: (cause) => operationalError('journal', 'connect', 'failed to create TigerBeetle client', cause),
+            }),
+          ),
+          Effect.timeoutOrElse({
+            duration: config.operationTimeoutMs,
+            orElse: () =>
+              Effect.fail(
+                operationalError(
+                  'journal',
+                  'connect',
+                  `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
+                ),
+              ),
           }),
         ),
-        Effect.timeoutOrElse({
-          duration: config.operationTimeoutMs,
-          orElse: () =>
-            Effect.fail(
-              operationalError(
-                'journal',
-                'connect',
-                `TigerBeetle client creation timed out after ${config.operationTimeoutMs}ms`,
+        (client) =>
+          Effect.try({
+            try: () => client.destroy(),
+            catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning('TigerBeetle client close failed').pipe(
+                Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
               ),
             ),
-        }),
-      ),
-      (client) =>
-        Effect.try({
-          try: () => client.destroy(),
-          catch: (cause) => operationalError('journal', 'close', 'failed to close TigerBeetle client', cause),
-        }).pipe(
+          ),
+      )
+      const clients = yield* ScopedRef.fromAcquire(acquireClient)
+      const semaphore = yield* Semaphore.make(1)
+      const refresh = (trigger: string): Effect.Effect<void> =>
+        ScopedRef.set(clients, acquireClient).pipe(
+          Effect.tap(() => Effect.logInfo('TigerBeetle client refreshed').pipe(Effect.annotateLogs({ trigger }))),
           Effect.catch((error) =>
-            Effect.logWarning('TigerBeetle client close failed').pipe(
-              Effect.annotateLogs({ component: error.component, operation: error.operation, error: error.message }),
+            Effect.logWarning('TigerBeetle client refresh failed').pipe(
+              Effect.annotateLogs({
+                trigger,
+                component: error.component,
+                operation: error.operation,
+                error: error.message,
+              }),
             ),
           ),
-        ),
-    ).pipe(
-      Effect.map((client) => ({
-        check: request(client, 'connectivity-check', () =>
-          client.lookupAccounts([stableU128('bayn-connectivity-probe')]),
-        ).pipe(Effect.asVoid),
+        )
+      const client: LedgerClient = {
+        request: <A>(operation: string, execute: (active: Client) => Promise<A>) =>
+          semaphore.withPermit(
+            ScopedRef.get(clients).pipe(
+              Effect.flatMap((active) =>
+                Effect.tryPromise({
+                  try: () => execute(active),
+                  catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+                }).pipe(
+                  Effect.onInterrupt(() => refresh(`interrupted:${operation}`)),
+                  Effect.catch((error) => refresh(`failed:${operation}`).pipe(Effect.andThen(Effect.fail(error)))),
+                ),
+              ),
+            ),
+          ),
+      }
+      return {
+        check: client
+          .request('connectivity-check', (active) => active.lookupAccounts([stableU128('bayn-connectivity-probe')]))
+          .pipe(Effect.asVoid),
         checkRun: (result) => checkRun(client, config.tigerBeetle.ledger, result),
         journalAndReconcile: (result) => journalAndReconcile(client, config.tigerBeetle.ledger, result),
-      })),
-    ),
+      }
+    }),
   )
