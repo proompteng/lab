@@ -97,6 +97,7 @@ BAYN_AUDIT_RUN_ID=<run-id> \
 BAYN_AUDIT_POSTGRES_URL=<authenticated-postgres-uri> \
 BAYN_AUDIT_SIGNAL_URL=<signal-clickhouse-url> \
 BAYN_AUDIT_SIGNAL_USERNAME=<readonly-bayn-user> \
+BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME=<signal-publisher-user> \
 BAYN_AUDIT_SIGNAL_PASSWORD=<readonly-bayn-password> \
 BAYN_AUDIT_CLICKHOUSE_URL=<clickhouse-audit-url> \
 BAYN_AUDIT_CLICKHOUSE_USERNAME=<query-log-audit-user> \

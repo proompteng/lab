@@ -77,6 +77,11 @@ export interface SignalAccessRecord {
   readonly kind: 'manifest' | 'sessions' | 'bars'
 }
 
+export interface SignalPrincipals {
+  readonly candidate: string
+  readonly publishers: readonly string[]
+}
+
 export interface RepositoryAudit {
   readonly sourceCommitExists: boolean
   readonly sourceCommitAncestorOfMain: boolean
@@ -89,6 +94,7 @@ export interface QualificationAuditInput {
   readonly protocol: TsmomProtocol
   readonly database: AuditDatabaseSnapshot
   readonly signalAccess: readonly SignalAccessRecord[]
+  readonly signalPrincipals: SignalPrincipals
   readonly repository: RepositoryAudit
 }
 
@@ -114,9 +120,21 @@ export interface QualificationAuditReport {
     readonly lockId: string
     readonly resultHash: string
   }
+  readonly policies: {
+    readonly declaredAt: string
+    readonly lockId: string
+    readonly policySetHash: string
+    readonly documents: readonly {
+      readonly name: string
+      readonly schemaVersion: string
+      readonly contentHash: string
+      readonly content: unknown
+    }[]
+  }
   readonly contamination: {
     readonly lockCreatedAt: string
     readonly resultCommittedAt: string
+    readonly principals: SignalPrincipals
     readonly access: readonly SignalAccessRecord[]
   }
   readonly repository: RepositoryAudit & { readonly sourceRevision: string }
@@ -456,6 +474,17 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   )
   const lockData = object(lock.data, 'qualification lock data')
   const lockPolicies = object(lock.policies, 'qualification lock policies')
+  const policyDocuments = Object.entries(lockPolicies)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => {
+      const policy = object(value, `qualification policy ${name}`)
+      return {
+        name,
+        schemaVersion: string(policy.schemaVersion, `qualification policy ${name} schema version`),
+        contentHash: string(policy.contentHash, `qualification policy ${name} content hash`),
+        content: policy.content,
+      }
+    })
   check(
     'lock-candidate-binding',
     lock.candidateRunId === database.run.runId &&
@@ -478,11 +507,11 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   )
   check(
     'lock-policy-hashes',
-    Object.values(lockPolicies).every((value) => {
-      const policy = object(value, 'qualification policy')
-      return policy.contentHash === canonicalHashV1(policy.content)
-    }),
-    `${Object.keys(lockPolicies).length} policies`,
+    same(
+      policyDocuments.map((policy) => policy.name),
+      ['benchmark', 'execution', 'thresholds', 'uncertainty'],
+    ) && policyDocuments.every((policy) => policy.contentHash === canonicalHashV1(policy.content)),
+    `${policyDocuments.length} policies policySetHash=${canonicalHashV1(policyDocuments)}`,
   )
   check(
     'locked-prior-trial-lineage',
@@ -533,8 +562,9 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       ? left.queryId.localeCompare(right.queryId)
       : left.queryStartTime.localeCompare(right.queryStartTime),
   )
-  const candidateReads = sortedAccess.filter((value) => value.kind === 'sessions' || value.kind === 'bars')
-  const manifestReads = sortedAccess.filter((value) => value.kind === 'manifest')
+  const candidateAccess = sortedAccess.filter((value) => value.user === input.signalPrincipals.candidate)
+  const candidateReads = candidateAccess.filter((value) => value.kind === 'sessions' || value.kind === 'bars')
+  const manifestReads = candidateAccess.filter((value) => value.kind === 'manifest')
   const preLockCandidateReads = candidateReads.filter(
     (value) => value.queryStartTime < database.qualification.lockCreatedAt,
   )
@@ -557,8 +587,15 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `${manifestReads.length} manifest reads`,
   )
   check(
-    'signal-read-principal',
-    sortedAccess.every((value) => value.user === 'bayn'),
+    'signal-read-principals',
+    input.signalPrincipals.candidate.length > 0 &&
+      input.signalPrincipals.publishers.length > 0 &&
+      new Set([input.signalPrincipals.candidate, ...input.signalPrincipals.publishers]).size ===
+        input.signalPrincipals.publishers.length + 1 &&
+      sortedAccess.every(
+        (value) =>
+          value.user === input.signalPrincipals.candidate || input.signalPrincipals.publishers.includes(value.user),
+      ),
     [...new Set(sortedAccess.map((value) => value.user))].join(','),
   )
   check(
@@ -588,9 +625,16 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       lockId,
       resultHash,
     },
+    policies: {
+      declaredAt: database.qualification.lockCreatedAt,
+      lockId,
+      policySetHash: canonicalHashV1(policyDocuments),
+      documents: policyDocuments,
+    },
     contamination: {
       lockCreatedAt: database.qualification.lockCreatedAt,
       resultCommittedAt: database.qualification.resultCommittedAt,
+      principals: input.signalPrincipals,
       access: sortedAccess,
     },
     repository: { ...input.repository, sourceRevision: database.run.sourceRevision },
