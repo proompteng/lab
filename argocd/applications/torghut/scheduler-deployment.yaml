@@ -59,7 +59,7 @@ spec:
             - name: TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS
               value: "45"
             - name: TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS
-              value: "30"
+              value: "300"
             - name: TRADING_SCHEDULER_LEADERSHIP_REQUIRED
               value: "true"
             - name: TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS
