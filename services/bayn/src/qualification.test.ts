@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
 import {
+  defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
   makeQualificationPolicyDocument,
   QualificationLockSchema,
@@ -53,6 +54,16 @@ const material: QualificationLockMaterial = {
 }
 
 describe('qualification lock', () => {
+  test('binds the exact default statistical policy as a canonical lock document', () => {
+    expect(defaultQualificationStatisticsPolicyDocument).toMatchObject({
+      schemaVersion: 'bayn.qualification-statistics-policy.v1',
+      content: {
+        schemaVersion: 'bayn.qualification-statistics-policy.v1',
+        bootstrap: { method: 'paired-complete-rebalance-blocks', samples: 5_000 },
+      },
+    })
+  })
+
   test('builds a deterministic identity from the complete precommit', () => {
     const first = makeQualificationLock(material)
     const second = makeQualificationLock(structuredClone(material))

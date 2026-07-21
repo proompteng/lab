@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1, canonicalJsonV1 } from './hash'
+import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const NonEmptyString = Schema.String.check(
@@ -144,3 +145,8 @@ export const makeQualificationLock = (input: QualificationLockMaterial): Qualifi
   const material = decodeLockMaterialSync(input)
   return decodeLockSync({ ...material, lockId: canonicalHashV1(material) })
 }
+
+export const defaultQualificationStatisticsPolicyDocument = makeQualificationPolicyDocument(
+  defaultQualificationStatisticsPolicy.schemaVersion,
+  defaultQualificationStatisticsPolicy,
+)
