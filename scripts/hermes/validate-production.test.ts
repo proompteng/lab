@@ -336,6 +336,19 @@ test('rejects declaring the globally excluded maintenance Lease as an Argo resou
   )
 })
 
+test('rejects incomplete normalization of StatefulSet PVC template defaults', async () => {
+  const files = await loadProductionFiles()
+  const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
+  files.platform = files.platform.replace(
+    hermesApplication,
+    hermesApplication.replace('                      - .spec.volumeClaimTemplates[].status\n', ''),
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.platform}: missing production invariant "- .spec.volumeClaimTemplates[].status"`,
+  )
+})
+
 test('rejects the invalid namespace name-plus-selector rollout check', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
