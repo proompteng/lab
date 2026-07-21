@@ -33,6 +33,7 @@ class MarketDataFeedTest {
   @Test
   fun `assigns channel-aware delay semantics without relabeling feeds`() {
     assertEquals(MarketDataDelayClass.RealTimeExchangeOnly, marketDataDelayClass(EquityFeed.Iex, "quotes"))
+    assertEquals(MarketDataDelayClass.RealTimeConsolidated, marketDataDelayClass(EquityFeed.Sip, "trades"))
     assertEquals(
       MarketDataDelayClass.Delayed15MinuteConsolidated,
       marketDataDelayClass(EquityFeed.DelayedSip, "bars"),
@@ -44,9 +45,10 @@ class MarketDataFeedTest {
   }
 
   @Test
-  fun `rejects unknown equity feeds`() {
+  fun `parses supported equity feeds and rejects unknown feeds`() {
+    assertEquals(EquityFeed.Sip, EquityFeed.parse("SIP"))
     assertEquals(EquityFeed.DelayedSip, EquityFeed.parse("DELAYED_SIP"))
-    assertFailsWith<IllegalStateException> { EquityFeed.parse("sip") }
+    assertFailsWith<IllegalStateException> { EquityFeed.parse("unknown") }
   }
 
   @Test
@@ -69,7 +71,7 @@ class MarketDataFeedTest {
       )
 
     val topics = EquityFeed.entries.map { feed -> runtime(feed).topicFor("bars", AlpacaMarketType.EQUITY) }
-    assertEquals(listOf("iex.bars", "delayed_sip.bars", "overnight.bars"), topics)
+    assertEquals(listOf("iex.bars", "sip.bars", "delayed_sip.bars", "overnight.bars"), topics)
     assertEquals("observation.status", runtime(EquityFeed.Overnight).topicFor("status", AlpacaMarketType.EQUITY))
     assertEquals(null, runtime(EquityFeed.Overnight).topicFor("status", AlpacaMarketType.OPTIONS))
   }

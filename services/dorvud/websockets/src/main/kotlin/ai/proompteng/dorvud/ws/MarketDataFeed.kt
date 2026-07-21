@@ -10,6 +10,7 @@ enum class EquityFeed(
   val observationOnly: Boolean,
 ) {
   Iex("iex", "v2", false),
+  Sip("sip", "v2", false),
   DelayedSip("delayed_sip", "v2", true),
   Overnight("overnight", "v1beta1", true),
   ;
@@ -34,6 +35,7 @@ enum class MarketDataDelayClass(
   val id: String,
 ) {
   RealTimeExchangeOnly("real_time_exchange_only"),
+  RealTimeConsolidated("real_time_consolidated"),
   Delayed15MinuteConsolidated("delayed_15m_consolidated"),
   IndicativeRealTime("indicative_real_time"),
   Delayed15MinuteAdjusted("delayed_15m_adjusted"),
@@ -90,6 +92,7 @@ internal fun marketDataDelayClass(
       ?: error("unsupported market-data channel for ${feed.id}: $channel")
   return when (feed) {
     EquityFeed.Iex -> MarketDataDelayClass.RealTimeExchangeOnly
+    EquityFeed.Sip -> MarketDataDelayClass.RealTimeConsolidated
     EquityFeed.DelayedSip -> MarketDataDelayClass.Delayed15MinuteConsolidated
     EquityFeed.Overnight ->
       when (canonicalChannel) {

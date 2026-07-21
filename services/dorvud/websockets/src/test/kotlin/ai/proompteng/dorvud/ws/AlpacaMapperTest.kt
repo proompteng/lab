@@ -10,6 +10,46 @@ import kotlin.test.fail
 
 class AlpacaMapperTest {
   @Test
+  fun `keeps bars and updated-bar corrections on one per-symbol sequence`() {
+    val sequenceKeys = mutableListOf<String>()
+    val sequences = mutableMapOf<String, Long>()
+    val nextSequence: (String) -> Long = { key ->
+      sequenceKeys += key
+      val next = sequences.getOrDefault(key, 0) + 1
+      sequences[key] = next
+      next
+    }
+    val bar =
+      AlpacaBar(
+        symbol = "NVDA",
+        open = 170.0,
+        high = 171.0,
+        low = 169.5,
+        close = 170.5,
+        volume = 100.0,
+        timestamp = "2026-07-21T14:00:00Z",
+      )
+    val correction =
+      AlpacaUpdatedBar(
+        symbol = "NVDA",
+        open = 170.0,
+        high = 171.1,
+        low = 169.5,
+        close = 170.6,
+        volume = 101.0,
+        timestamp = "2026-07-21T14:00:00Z",
+      )
+
+    val barEnvelope = AlpacaMapper.toEnvelope(bar, AlpacaMarketType.EQUITY, "iex", EquityFeed.Iex, nextSequence)
+    val correctionEnvelope =
+      AlpacaMapper.toEnvelope(correction, AlpacaMarketType.EQUITY, "iex", EquityFeed.Iex, nextSequence)
+
+    assertEquals(listOf("bars:NVDA", "bars:NVDA"), sequenceKeys)
+    assertEquals(1L, assertNotNull(barEnvelope).seq)
+    assertEquals(2L, assertNotNull(correctionEnvelope).seq)
+  }
+
+  @Test
   fun `preserves feed session delay semantics and feed-channel sequence scope`() {
     val sequenceKeys = mutableListOf<String>()
     val delayedQuote =

@@ -336,7 +336,7 @@ internal fun marketDataFreshnessGateActive(
   equityFeed: EquityFeed? = null,
 ): Boolean =
   when (equityFeed) {
-    EquityFeed.DelayedSip -> sessionState in setOf("pre", "regular", "post")
+    EquityFeed.Sip, EquityFeed.DelayedSip -> sessionState in setOf("pre", "regular", "post")
     EquityFeed.Overnight -> sessionState == "overnight"
     EquityFeed.Iex, null -> sessionState == "continuous" || sessionState == "regular"
   }

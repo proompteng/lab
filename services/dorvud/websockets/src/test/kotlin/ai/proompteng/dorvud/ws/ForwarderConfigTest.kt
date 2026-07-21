@@ -31,6 +31,23 @@ class ForwarderConfigTest {
     )
 
   @Test
+  fun `preserves the supported sip core feed when observations are disabled`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "ALPACA_FEED" to "sip",
+          "SYMBOLS" to "AAPL",
+        ),
+      )
+
+    val runtime = cfg.marketDataFeedConfigs().single()
+    assertEquals(EquityFeed.Sip, runtime.equityFeed)
+    assertEquals("wss://stream.data.alpaca.markets/v2/sip", alpacaMarketDataStreamUrl(cfg, runtime))
+  }
+
+  @Test
   fun `builds typed isolated runtimes for the authoritative observation feeds`() {
     val cfg =
       ForwarderConfig.fromEnv(

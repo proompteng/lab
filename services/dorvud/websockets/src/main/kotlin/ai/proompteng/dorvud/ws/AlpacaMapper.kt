@@ -70,7 +70,7 @@ object AlpacaMapper {
           message.symbol,
           channel = "updatedBars",
           eventTs = message.timestamp,
-          seq = seqProvider("updatedBars:${message.symbol}"),
+          seq = seqProvider("bars:${message.symbol}"),
           payload = json.encodeToJsonElement(AlpacaUpdatedBar.serializer(), message),
           feed = feed,
           equityFeed = equityFeed,
