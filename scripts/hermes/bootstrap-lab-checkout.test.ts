@@ -6,7 +6,7 @@ import { join } from 'node:path'
 const script = join(import.meta.dir, '../../argocd/applications/hermes/bootstrap-lab-checkout.sh')
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const process = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const process = Bun.spawn(['git', '-c', 'commit.gpgsign=false', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   const [exitCode, stdout, stderr] = await Promise.all([
     process.exited,
     new Response(process.stdout).text(),

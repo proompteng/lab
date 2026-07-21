@@ -30,7 +30,8 @@ smoke test, manifest change, and normal CI/Codex review.
   tailnet, metadata, and multicast ranges.
 - Hermes receives a digest-pinned Kubernetes 1.35 `kubectl` binary through an OCI image volume. Its custom ClusterRole has
   only `get`, `list`, and `watch`, excludes core Secrets and interactive Pod subresources, and is bound cluster-wide only to
-  the `hermes` ServiceAccount.
+  the `hermes` ServiceAccount. Bootstrap writes a non-secret kubeconfig that follows the rotating projected token by file
+  path rather than persisting token material.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
