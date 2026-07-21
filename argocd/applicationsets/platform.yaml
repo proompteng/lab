@@ -83,6 +83,13 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: kube-router
+                path: argocd/applications/kube-router
+                namespace: kube-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: manual
+                enabled: "true"
               - name: volume-snapshot-controller
                 path: argocd/applications/volume-snapshot-controller
                 namespace: kube-system

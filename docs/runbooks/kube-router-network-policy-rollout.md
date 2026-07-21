@@ -1,0 +1,175 @@
+# kube-router NetworkPolicy production rollout
+
+This runbook activates enforcement for `networking.k8s.io/v1` NetworkPolicies without replacing Flannel or kube-proxy.
+The application is manual and must be rolled out only from merged `main`.
+
+## Invariants
+
+- Keep Flannel as the CNI and kube-proxy in nftables mode.
+- Keep kube-router routing, service proxy, load-balancer allocation, CNI installation, and IPv6 disabled.
+- Never activate the DaemonSet unless every namespace with an existing NetworkPolicy has the temporary allow-all policy.
+- Never remove the temporary safety policies during activation or rollback.
+- Never delete the active DaemonSet without subsequently running the pinned cleanup DaemonSet on every node; kube-router
+  rules persist after the controller exits.
+- Stop immediately on node, workload, DNS, service routing, or policy-probe regression.
+
+## 1. Release and cluster preflight
+
+Run from the repository root and retain the non-secret output:
+
+```bash
+set -euo pipefail
+git fetch --quiet origin main
+main_revision=$(git rev-parse origin/main)
+test "$(git rev-parse HEAD)" = "$main_revision"
+test "$(crane digest docker.io/cloudnativelabs/kube-router:v2.10.0)" = \
+  sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
+test "$(kubectl -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')" = 10.96.0.1
+kubectl -n kube-system get daemonset kube-proxy -o json |
+  jq -e '.spec.template.spec.containers[0].command | any(. == "--proxy-mode=nftables")'
+kubectl get nodes -o json |
+  jq -e 'all(.items[]; any(.status.conditions[]; .type == "Ready" and .status == "True"))'
+bash scripts/kube-router/verify-safety-coverage.sh
+kustomize build argocd/applications/kube-router |
+  kubeconform -strict -summary -ignore-missing-schemas
+printf 'main=%s\n' "$main_revision"
+```
+
+Record a baseline before activation:
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods --all-namespaces -o json |
+  jq -r '.items[] | select(any(.status.containerStatuses[]?; .ready != true)) | [.metadata.namespace,.metadata.name,.status.phase] | @tsv'
+kubectl -n argocd get applications -o json |
+  jq -r '.items[] | [.metadata.name,.status.sync.status,.status.health.status,.status.sync.revision] | @tsv' |
+  sort
+kubectl -n openclaw get virtualmachine,virtualmachineinstance,pvc -o wide
+kubectl -n flamingo get deployment,pod,service -o wide
+```
+
+Expected image platform digests are
+`sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f` for amd64 and
+`sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8` for arm64.
+
+## 2. Manual activation
+
+Refresh the manual application and require it to target the exact merged revision:
+
+```bash
+set -euo pipefail
+argocd app get kube-router --refresh
+test "$(kubectl -n argocd get application kube-router -o jsonpath='{.status.sync.revision}')" = "$main_revision"
+argocd app sync kube-router --revision "$main_revision" --prune=false --timeout 600
+kubectl -n kube-system rollout status daemonset/kube-router --timeout=10m
+```
+
+The sync hook must print `All existing NetworkPolicy namespaces have a traffic-neutral activation policy.` If it fails,
+the DaemonSet wave is not applied. Update the declared safety coverage through Git and rerun CI; do not bypass the hook.
+
+Verify every desired node has one ready controller, the pinned platform image is running, health is green, and policy
+metrics exist:
+
+```bash
+set -euo pipefail
+desired=$(kubectl -n kube-system get daemonset kube-router -o jsonpath='{.status.desiredNumberScheduled}')
+ready=$(kubectl -n kube-system get daemonset kube-router -o jsonpath='{.status.numberReady}')
+test "$desired" -gt 0
+test "$ready" = "$desired"
+
+kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
+  jq -e '
+    all(.items[];
+      .status.containerStatuses[0].ready == true and
+      (.status.containerStatuses[0].imageID |
+        endswith("sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f") or
+        endswith("sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8")))'
+
+while IFS= read -r pod; do
+  kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20244/healthz
+  kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics |
+    grep -Eq '^kube_router_controller_policy_(chains|ipsets) '
+done < <(kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o name)
+
+kubectl -n kube-system logs -l app.kubernetes.io/name=kube-router -c kube-router --prefix --tail=500 |
+  tee /tmp/kube-router-rollout.log
+! grep -Eiq 'panic|fatal|permission denied|operation not permitted|failed to (sync|restore|create)' \
+  /tmp/kube-router-rollout.log
+rm -f /tmp/kube-router-rollout.log
+```
+
+## 3. Enforcement and regression proof
+
+The first disposable probe schedules a client and server on every Linux node, checks each client against a server on a
+different node, proves an egress-deny policy blocks every one of those flows, and proves removal restores them. The
+second probe repeats the contract using the exact amd64 Hermes runtime image. Both delete their namespace on exit:
+
+```bash
+set -euo pipefail
+bash scripts/kube-router/verify-all-node-enforcement.sh
+bash scripts/hermes/verify-network-policy-enforcement.sh
+probe_namespaces=$(kubectl get namespaces -o name)
+test -z "$(grep -E '(kube-router|hermes)-network-policy-probe' <<< "$probe_namespaces" || true)"
+unset probe_namespaces
+```
+
+Compare the post-activation state with the baseline and prove OpenClaw and Flamingo remain healthy:
+
+```bash
+kubectl get nodes -o wide
+kubectl get pods --all-namespaces -o json |
+  jq -r '.items[] | select(any(.status.containerStatuses[]?; .ready != true)) | [.metadata.namespace,.metadata.name,.status.phase] | @tsv'
+kubectl -n argocd get applications -o json |
+  jq -r '.items[] | [.metadata.name,.status.sync.status,.status.health.status,.status.sync.revision] | @tsv' |
+  sort
+kubectl -n openclaw get virtualmachine,virtualmachineinstance,pvc -o wide
+kubectl -n flamingo rollout status deployment/flamingo --timeout=10m
+```
+
+Do not sync Hermes unless the policy probe passes and there is no new workload regression.
+
+## Emergency rollback and cleanup
+
+This is the documented emergency exception to GitOps. Keep every safety policy in place. First stop reconciliation and
+the active controller, then run the pinned targeted cleanup init container once on every Linux node. The cleanup removes
+only `KUBE-ROUTER-*`, `KUBE-NWPLCY-*`, and `KUBE-POD-FW-*` filter chains plus their NetworkPolicy ipsets. It deliberately
+does not use kube-router's generic cleanup mode, which can flush unrelated IPVS state:
+
+```bash
+set -euo pipefail
+argocd app terminate-op kube-router || true
+kubectl -n kube-system delete daemonset kube-router --wait=true
+kustomize build argocd/applications/kube-router/operations/cleanup |
+  kubectl -n kube-system apply -f -
+kubectl -n kube-system rollout status daemonset/kube-router-cleanup --timeout=5m
+
+kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router-cleanup -o json |
+  jq -e 'all(.items[]; .status.initContainerStatuses[0].state.terminated.exitCode == 0)'
+while IFS= read -r pod; do
+  iptables_state=$(kubectl -n kube-system exec "$pod" -c verifier -- iptables-save)
+  ipset_state=$(kubectl -n kube-system exec "$pod" -c verifier -- ipset list -name)
+  if grep -Eq 'KUBE-(ROUTER|NWPLCY|POD-FW)-' <<< "$iptables_state"; then
+    echo "targeted kube-router chains remain on $pod" >&2
+    exit 1
+  fi
+  if grep -Eq '^(inet6:)?KUBE-(SRC|DST)-|^(inet6:)?kube-router-local-pods$' <<< "$ipset_state"; then
+    echo "targeted kube-router ipsets remain on $pod" >&2
+    exit 1
+  fi
+done < <(kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router-cleanup -o name)
+unset iptables_state ipset_state
+
+kubectl -n kube-system delete daemonset kube-router-cleanup --wait=true
+set +e
+rollback_probe_output=$(bash scripts/hermes/verify-network-policy-enforcement.sh 2>&1)
+rollback_probe_status=$?
+set -e
+test "$rollback_probe_status" -ne 0
+grep -q 'NetworkPolicy is not enforced' <<< "$rollback_probe_output"
+unset rollback_probe_output rollback_probe_status
+```
+
+The final probe is expected to fail with `NetworkPolicy is not enforced`; it must still clean its disposable namespace.
+Recheck node, DNS, service routing, OpenClaw, and Flamingo health. Revert the Git commit through the normal PR path so
+Argo no longer desires the controller. Do not remove the safety policies until a separate policy rollout proves each
+namespace's required traffic.

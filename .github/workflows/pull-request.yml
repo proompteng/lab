@@ -203,6 +203,8 @@ jobs:
               bun run lint:flamingo-hard-migration
               bun run scripts/hermes/validate-production.ts
               bun test scripts/hermes/*.test.ts
+              bun run scripts/kube-router/validate-production.ts
+              bun test scripts/kube-router/*.test.ts
               ;;
             sag)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/sag

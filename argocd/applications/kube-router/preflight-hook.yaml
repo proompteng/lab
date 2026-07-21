@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kube-router-policy-preflight
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-router
+        app.kubernetes.io/component: policy-preflight
+    spec:
+      serviceAccountName: kube-router-policy-preflight
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/os: linux
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: verify-policy-safety
+          image: docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -o pipefail
+              expected_namespaces=$(
+                printf '%s\n' agents argocd bayn bilig kafka media pgadmin synthesis torghut | sort -u
+              )
+              actual_namespaces=$(
+                kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json |
+                  jq -r '.items[].metadata.namespace' |
+                  sort -u
+              )
+
+              if [[ "$actual_namespaces" != "$expected_namespaces" ]]; then
+                echo 'NetworkPolicy namespace coverage changed; refusing to activate kube-router.' >&2
+                diff -u <(printf '%s\n' "$expected_namespaces") <(printf '%s\n' "$actual_namespaces") >&2 || true
+                exit 1
+              fi
+
+              while IFS= read -r namespace; do
+                kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
+                  jq -e '
+                    .spec.podSelector == {} and
+                    (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
+                    .spec.ingress == [{}] and
+                    .spec.egress == [{}]
+                  ' >/dev/null
+              done <<< "$expected_namespaces"
+
+              echo 'All existing NetworkPolicy namespaces have a traffic-neutral activation policy.'
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
