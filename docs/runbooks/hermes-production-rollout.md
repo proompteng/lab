@@ -146,7 +146,8 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes rollout status deployment/hermes-egress-proxy --timeout=5m
    kubectl -n hermes rollout status statefulset/hermes --timeout=15m
    kubectl -n hermes get pod hermes-0 -o jsonpath='{range .spec.containers[*]}{.name}{"="}{.image}{"\n"}{end}'
-   kubectl -n hermes get pod hermes-0 -o jsonpath='{.spec.securityContext.runAsUser}{" "}{.spec.automountServiceAccountToken}{"\n"}'
+   test "$(kubectl -n hermes get pod hermes-0 -o jsonpath='{.spec.securityContext.runAsUser}')" = 10000
+   test "$(kubectl -n hermes get pod hermes-0 -o jsonpath='{.spec.automountServiceAccountToken}')" = true
    kubectl -n hermes get pvc data-hermes-0 backups-hermes-0
    maintenance_holder="backup-canary-$(openssl rand -hex 8)"
    release_maintenance_lock() { bash scripts/hermes/maintenance-lock.sh release "$maintenance_holder"; }
@@ -252,11 +253,42 @@ The expected mirrored amd64 manifest digest is
    fi
    kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
      'import urllib.request; request=urllib.request.Request("https://discord.com/api/v10/gateway", headers={"User-Agent":"DiscordBot (https://proompteng.ai, 1.0)"}); response=urllib.request.urlopen(request, timeout=10); assert response.status == 200; response.read(1)'
+   kubectl -n hermes exec hermes-0 -c hermes -- \
+     git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main
    kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -c \
      '! /opt/hermes/.venv/bin/python -c '\''import urllib.request; urllib.request.urlopen("https://example.com", timeout=5)'\'''
    ```
 
-   The direct public request must fail. Discord through Squid must connect, and the non-allowlisted domain must fail.
+   The direct public request must fail. Discord and the credential-free GitHub checkout path must work through Squid, and
+   the non-allowlisted domain must fail.
+
+5. Prove the cluster reader and local lab checkout from inside the gateway:
+
+   ```bash
+   set -euo pipefail
+   kubectl -n hermes exec hermes-0 -c hermes -- sh -c '
+     set -eu
+     test "$(kubectl auth can-i list pods --all-namespaces)" = yes
+     test "$(kubectl auth can-i get pods/log --all-namespaces)" = yes
+     test "$(kubectl auth can-i get secrets --all-namespaces)" = no
+     test "$(kubectl auth can-i create deployments.apps --all-namespaces)" = no
+     kubectl get pods --all-namespaces --request-timeout=10s >/tmp/hermes-cluster-pods
+     test -s /tmp/hermes-cluster-pods
+     kubectl -n hermes logs statefulset/hermes --tail=1 >/tmp/hermes-gateway-log
+     ! kubectl -n hermes get secret hermes-api-auth >/tmp/hermes-secret 2>&1
+     ! kubectl -n hermes create configmap hermes-readonly-proof \
+       --from-literal=proof=denied --dry-run=server -o name >/tmp/hermes-write 2>&1
+     test "$(git -C /opt/data/workspace/tuslagch/lab remote get-url origin)" = \
+       https://github.com/proompteng/lab.git
+     test "$(cat /opt/data/workspace/tuslagch/.lab-source-revision)" = \
+       "$(git -C /opt/data/workspace/tuslagch/lab rev-parse HEAD)"
+     git -C /opt/data/workspace/tuslagch/lab cat-file -e HEAD:AGENTS.md
+   '
+   ```
+
+   The `hermes-cluster-reader` ClusterRole must contain only `get`, `list`, and `watch`. It intentionally excludes core
+   Secrets, service-account token subresources, `exec`, `attach`, `proxy`, and `port-forward`. The server-side dry-run is an
+   authorization proof: it must be rejected before admission and must not create a ConfigMap.
 
 ## API key rotation
 
@@ -823,7 +855,8 @@ The rollout record is complete only when it includes:
 - image digests and upstream release commit;
 - Argo `Synced/Healthy` readback at those revisions;
 - ExternalSecret Ready conditions and secret field lengths/counts without values;
-- pod UID, read-only rootfs, no-token, NetworkPolicy, PVC, and verified backup evidence;
+- pod UID, read-only rootfs, scoped service-account token, NetworkPolicy, PVC, and verified backup evidence;
+- gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA;
 - authenticated API rejection/success, Flamingo model response, and persistence after restart;
 - migration dry-run/apply Job identities and report counts;
 - single-writer Discord message lifecycle IDs and non-allowlisted-user rejection;

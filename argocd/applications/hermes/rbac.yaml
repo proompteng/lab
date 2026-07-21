@@ -1,0 +1,137 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hermes-cluster-reader
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: gateway
+rules:
+  # Core resources are explicit so Kubernetes Secrets, service-account token
+  # subresources, exec, attach, proxy, and port-forward are never readable.
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - endpoints
+      - events
+      - limitranges
+      - namespaces
+      - nodes
+      - persistentvolumeclaims
+      - persistentvolumes
+      - pods
+      - pods/log
+      - replicationcontrollers
+      - resourcequotas
+      - serviceaccounts
+      - services
+    verbs: [get, list, watch]
+  # Enumerate installed non-core API groups instead of using an API-group
+  # wildcard, which would also match the core API group and expose Secrets.
+  - apiGroups:
+      - acme.cert-manager.io
+      - actions.github.com
+      - admissionregistration.k8s.io
+      - agents.proompteng.ai
+      - apiextensions.k8s.io
+      - apiregistration.k8s.io
+      - approvals.proompteng.ai
+      - apps
+      - argocd-image-updater.argoproj.io
+      - argoproj.io
+      - artifacts.proompteng.ai
+      - autoscaling
+      - autoscaling.internal.knative.dev
+      - backup.kubevirt.io
+      - barmancloud.cnpg.io
+      - batch
+      - bitnami.com
+      - budgets.proompteng.ai
+      - caching.internal.knative.dev
+      - cdi.kubevirt.io
+      - ceph.rook.io
+      - cert-manager.io
+      - certificates.k8s.io
+      - clickhouse-keeper.altinity.com
+      - clickhouse.altinity.com
+      - clone.kubevirt.io
+      - coordination.k8s.io
+      - core.openfeature.dev
+      - core.strimzi.io
+      - crdb.cockroachlabs.com
+      - csi.ceph.io
+      - discovery.k8s.io
+      - eventing.knative.dev
+      - events.k8s.io
+      - export.kubevirt.io
+      - extensions.istio.io
+      - external-secrets.io
+      - flink.apache.org
+      - flowcontrol.apiserver.k8s.io
+      - flows.knative.dev
+      - forklift.cdi.kubevirt.io
+      - gateway.networking.k8s.io
+      - generators.external-secrets.io
+      - groupsnapshot.storage.k8s.io
+      - hub.traefik.io
+      - instancetype.kubevirt.io
+      - internal.kafka.eventing.knative.dev
+      - jetstream.nats.io
+      - kafka.strimzi.io
+      - kubevirt.io
+      - messaging.knative.dev
+      - metallb.io
+      - metrics.k8s.io
+      - migrations.kubevirt.io
+      - networking.internal.knative.dev
+      - networking.istio.io
+      - networking.k8s.io
+      - nfd.k8s-sigs.io
+      - node.k8s.io
+      - nvidia.com
+      - objectbucket.io
+      - operator.knative.dev
+      - orchestration.proompteng.ai
+      - policy
+      - pool.kubevirt.io
+      - postgresql.cnpg.io
+      - rbac.authorization.k8s.io
+      - redis.redis.opstreelabs.in
+      - resource.k8s.io
+      - schedules.proompteng.ai
+      - scheduling.k8s.io
+      - security.istio.io
+      - security.proompteng.ai
+      - serving.knative.dev
+      - signals.proompteng.ai
+      - sinks.knative.dev
+      - snapshot.kubevirt.io
+      - snapshot.storage.k8s.io
+      - sources.knative.dev
+      - storage.k8s.io
+      - subresources.kubevirt.io
+      - swarm.proompteng.ai
+      - tailscale.com
+      - telemetry.istio.io
+      - tigerbeetle.proompteng.ai
+      - tools.proompteng.ai
+      - traefik.io
+      - upload.cdi.kubevirt.io
+      - workspaces.proompteng.ai
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hermes-cluster-reader
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: gateway
+subjects:
+  - kind: ServiceAccount
+    name: hermes
+    namespace: hermes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hermes-cluster-reader

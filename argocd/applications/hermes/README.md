@@ -19,18 +19,25 @@ smoke test, manifest change, and normal CI/Codex review.
 ## Runtime boundaries
 
 - The gateway and independent backup CronJob run as UID/GID `10000`; Squid runs as UID/GID `13`.
-- Root filesystems are read-only, all Linux capabilities are dropped, seccomp is `RuntimeDefault`, and no pod receives a
-  Kubernetes service-account token.
+- Root filesystems are read-only, all Linux capabilities are dropped, and seccomp is `RuntimeDefault`. Only the gateway Pod
+  receives a rotating Kubernetes service-account token; backup, migration, restore, and egress-proxy Pods explicitly disable
+  token mounting.
 - The namespace enforces the Kubernetes `restricted` Pod Security profile.
-- Default-deny NetworkPolicies permit the gateway to reach only cluster DNS, Flamingo, and the allowlisted Squid proxy once
-  a compatible policy engine is present. Flannel alone does not enforce these objects; the runbook's disposable live probe
-  must pass before the first sync.
-- Squid permits HTTPS `CONNECT` only to Discord-owned domains and blocks private, tailnet, metadata, and multicast ranges.
+- Default-deny NetworkPolicies permit the gateway to reach only cluster DNS, the Kubernetes API service, Flamingo, and the
+  allowlisted Squid proxy once a compatible policy engine is present. Flannel alone does not enforce these objects; the
+  runbook's disposable live probe must pass before the first sync.
+- Squid permits HTTPS `CONNECT` only to Discord-owned domains and GitHub, and blocks other destinations plus private,
+  tailnet, metadata, and multicast ranges.
+- Hermes receives a digest-pinned Kubernetes 1.35 `kubectl` binary through an OCI image volume. Its custom ClusterRole has
+  only `get`, `list`, and `watch`, excludes core Secrets and interactive Pod subresources, and is bound cluster-wide only to
+  the `hermes` ServiceAccount.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
 - Plugins, MCP servers, delegation, cron, hooks, speech-to-text, and Discord are disabled for the initial canary.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.
+- Bootstrap maintains a credential-free `proompteng/lab` checkout at `/opt/data/workspace/tuslagch/lab`. Clean `main`
+  checkouts fast-forward on restart; dirty worktrees and non-main branches are preserved.
 
 ## State and recovery
 

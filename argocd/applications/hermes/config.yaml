@@ -66,6 +66,8 @@ agent:
   reasoning_effort: medium
   coding_instructions:
     - Keep all mutable work inside /opt/data/workspace/tuslagch.
+    - Use /opt/data/workspace/tuslagch/lab as the local proompteng/lab checkout for code and GitOps inspection.
+    - Kubernetes access is cluster-wide read-only; never attempt to mutate resources or read Kubernetes Secrets.
     - Never claim an external action completed without a fresh readback.
 
 platform_toolsets:
@@ -98,7 +100,6 @@ approvals:
   mcp_reload_confirm: true
   destructive_slash_confirm: true
   deny:
-    - "*kubectl*"
     - "*docker*"
     - "*podman*"
     - "*printenv*"
@@ -114,7 +115,27 @@ approvals:
     - "*scp *"
     - "*git push --force*"
 
-command_allowlist: []
+command_allowlist:
+  - "kubectl get *"
+  - "kubectl * get *"
+  - "kubectl describe *"
+  - "kubectl * describe *"
+  - "kubectl logs *"
+  - "kubectl * logs *"
+  - "kubectl top *"
+  - "kubectl * top *"
+  - "kubectl events *"
+  - "kubectl * events *"
+  - "kubectl api-resources*"
+  - "kubectl api-versions*"
+  - "kubectl cluster-info*"
+  - "kubectl version*"
+  - "kubectl explain *"
+  - "kubectl auth can-i *"
+  - "kubectl rollout status *"
+  - "kubectl * rollout status *"
+  - "kubectl rollout history *"
+  - "kubectl * rollout history *"
 
 checkpoints:
   enabled: true
