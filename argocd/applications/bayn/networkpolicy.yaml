@@ -42,16 +42,6 @@ spec:
         - port: 8123
           protocol: TCP
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: torghut
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/instance: torghut-tigerbeetle
-      ports:
-        - port: 3000
-          protocol: TCP
-    - to:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: ledger
