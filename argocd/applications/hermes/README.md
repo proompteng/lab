@@ -50,9 +50,10 @@ smoke test, manifest change, and normal CI/Codex review.
   authenticated API, and Discord sessions; manual approvals and unconditional deny rules remain enabled.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.
 - Bootstrap maintains `proompteng/lab` at `/opt/data/workspace/tuslagch/lab`. Initial clone and clean-main refresh remain
-  credential-free; interactive runtime Git and GitHub CLI operations use the sealed `tuslagch` identity. Clean `main`
-  checkouts fast-forward on restart; dirty worktrees and non-main branches are preserved. Both the gateway's documented
-  `terminal.cwd` and the container working directory point at this repository root.
+  credential-free and use bounded retries for transient pod-network startup races; interactive runtime Git and GitHub CLI
+  operations use the sealed `tuslagch` identity. Clean `main` checkouts fast-forward on restart; dirty worktrees and non-main
+  branches are preserved. Both the gateway's documented `terminal.cwd` and the container working directory point at this
+  repository root.
 
 ## State and recovery
 
