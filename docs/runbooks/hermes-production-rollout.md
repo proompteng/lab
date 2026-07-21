@@ -300,12 +300,14 @@ The expected mirrored amd64 manifest digest is
      set -eu
      test "$(command -v gh)" = /opt/tools/gh
      gh --version | grep -F "gh version 2.96.0"
-     test "$(gh api user --jq .login)" = tuslagch
-     test "$(gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN
+     test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh api user --jq .login)" = tuslagch
+     test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN
      test "$(git config --global user.name)" = tuslagch
      test "$(git config --global user.email)" = 241203724+tuslagch@users.noreply.github.com
      git config --global --get-all credential.https://github.com.helper | grep -Fx "!/opt/tools/gh auth git-credential"
      ! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig
+     test -r /opt/github-auth/hosts.yml
+     test "$(stat -c %a /opt/github-auth/hosts.yml)" = 400
      test ! -e /opt/data/home/.config/gh/hosts.yml
      git ls-remote --exit-code origin refs/heads/main >/dev/null
      git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof
@@ -314,8 +316,9 @@ The expected mirrored amd64 manifest digest is
 
    The dry run performs GitHub authentication and branch authorization without creating a remote ref. A real change must
    use a unique `codex/` branch, an explicitly requested push, and a pull request; force pushes and direct `main` pushes
-   remain forbidden. `GH_TOKEN`/`GITHUB_TOKEN` come only from `hermes-github-auth`, and neither `gh auth login` nor a
-   plaintext `hosts.yml` is part of the production bootstrap.
+   remain forbidden. Only the bootstrap init container receives `GH_TOKEN` from `hermes-github-auth`; it runs the documented
+   `gh auth login --with-token --insecure-storage` flow into a mode-`0400` per-Pod `emptyDir`. The gateway receives that
+   volume read-only and has no GitHub token environment variable. The auth file never enters the data PVC or Hermes backups.
 
 ## API key rotation
 

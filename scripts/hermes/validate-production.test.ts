@@ -155,7 +155,28 @@ test('rejects a GitHub token without a matching sealed SecretKeyRef', async () =
   files.statefulSet = files.statefulSet.replace('- name: GH_TOKEN\n', '- name: GH_TOKEN_DISABLED\n')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: GH_TOKEN must use the sealed hermes-github-auth GH_TOKEN`,
+    `${productionPaths.statefulSet}: only the bootstrap init container may receive the sealed GitHub token`,
+  )
+})
+
+test('rejects exposing the GitHub token in the gateway environment', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '            - name: GIT_CONFIG_NOSYSTEM\n',
+    '            - name: GITHUB_TOKEN\n              value: plaintext\n            - name: GIT_CONFIG_NOSYSTEM\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: contains forbidden production term "name: GITHUB_TOKEN"`,
+  )
+})
+
+test('rejects persisting GitHub CLI auth on the Hermes data volume', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replaceAll('/opt/github-auth', '/opt/data/home/.config/gh')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: contains forbidden production term "value: /opt/data/home/.config/gh"`,
   )
 })
 
