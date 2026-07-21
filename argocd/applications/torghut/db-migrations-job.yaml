@@ -11,9 +11,10 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
   backoffLimit: 6
-  # Online index builds cover the live 6+ GiB options catalog; keep this above
-  # the migration's 45-minute statement timeout so Kubernetes does not kill a healthy build.
-  activeDeadlineSeconds: 3600
+  # Migration 0083 can run two sequential 30-minute concurrent index builds.
+  # Include both 300-second database waits and remaining migration work so
+  # Kubernetes cannot kill a healthy PreSync hook before Alembic stamps it.
+  activeDeadlineSeconds: 5400
   ttlSecondsAfterFinished: 600
   template:
     metadata:

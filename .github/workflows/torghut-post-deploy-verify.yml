@@ -163,9 +163,9 @@ jobs:
             request_argocd_sync "${app}" "${EXPECTED_REVISION}"
           done
 
-          # The PreSync database migration may run for up to one hour. Keep the verifier
+          # The PreSync database migration may run for up to 90 minutes. Keep the verifier
           # alive for that deadline plus five minutes of Argo reconciliation headroom.
-          ARGO_SYNC_TIMEOUT_SECONDS=3900
+          ARGO_SYNC_TIMEOUT_SECONDS=5700
           ARGO_SYNC_POLL_INTERVAL_SECONDS=2
           ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))
 
