@@ -240,6 +240,7 @@ jobs:
           if git diff --quiet -- \
             argocd/applications/torghut/ta/flinkdeployment.yaml \
             argocd/applications/torghut/ta-sim/flinkdeployment.yaml \
+            argocd/applications/torghut/market-data-archive/flinkdeployment.yaml \
             argocd/applications/torghut-options/ta/flinkdeployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -263,6 +264,7 @@ jobs:
           add-paths: |
             argocd/applications/torghut/ta/flinkdeployment.yaml
             argocd/applications/torghut/ta-sim/flinkdeployment.yaml
+            argocd/applications/torghut/market-data-archive/flinkdeployment.yaml
             argocd/applications/torghut-options/ta/flinkdeployment.yaml
           body: |
             ## Summary
@@ -271,7 +273,7 @@ jobs:
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
-            - Manifests: live TA, sim TA, options TA
+            - Manifests: live TA, sim TA, Bayn market-data archive, options TA
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

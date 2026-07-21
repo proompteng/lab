@@ -76,6 +76,7 @@ data class ForwarderConfig(
   val dedupMaxEntries: Int,
   val kafka: KafkaProducerSettings,
   val topics: TopicConfig,
+  val observationFeeds: List<ObservationFeedConfig> = emptyList(),
   val healthPort: Int = 8080,
   val metricsPort: Int = 9090,
   val healthNotReadyKillAfterMs: Long = 180_000,
@@ -124,6 +125,9 @@ data class ForwarderConfig(
           "options" -> AlpacaMarketType.OPTIONS
           else -> error("ALPACA_MARKET_TYPE must be one of: equity, crypto, options")
         }
+      val alpacaFeed =
+        mergedEnv["ALPACA_FEED"]?.trim()?.lowercase()
+          ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) "opra" else "iex"
       val alpacaCryptoLocation = mergedEnv["ALPACA_CRYPTO_LOCATION"]?.trim()?.lowercase() ?: "us"
       if (
         alpacaMarketType == AlpacaMarketType.CRYPTO &&
@@ -211,6 +215,16 @@ data class ForwarderConfig(
           tradeUpdates = mergedEnv["TOPIC_TRADE_UPDATES"],
           tradeUpdatesV2 = mergedEnv["TOPIC_TRADE_UPDATES_V2"],
         )
+      val observationFeeds =
+        parseObservationFeeds(
+          raw = mergedEnv["ALPACA_OBSERVATION_FEEDS"],
+          marketType = alpacaMarketType,
+          coreFeed = alpacaFeed,
+          coreTopics = topics,
+          mergedEnv = mergedEnv,
+          configuredSymbols = staticSymbols,
+          hasVersionedUniverse = universeContract != null,
+        )
       val enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false
       if (alpacaMarketType == AlpacaMarketType.OPTIONS && enableBarsBackfill) {
         error("ENABLE_BARS_BACKFILL is not supported when ALPACA_MARKET_TYPE=options")
@@ -289,7 +303,7 @@ data class ForwarderConfig(
         alpacaSecretKey = mergedEnv.getValue("ALPACA_SECRET_KEY"),
         alpacaMarketType = alpacaMarketType,
         alpacaCryptoLocation = alpacaCryptoLocation,
-        alpacaFeed = mergedEnv["ALPACA_FEED"] ?: if (alpacaMarketType == AlpacaMarketType.OPTIONS) "opra" else "iex",
+        alpacaFeed = alpacaFeed,
         alpacaStreamUrl = mergedEnv["ALPACA_STREAM_URL"] ?: "wss://stream.data.alpaca.markets",
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
@@ -316,6 +330,7 @@ data class ForwarderConfig(
         dedupMaxEntries = mergedEnv["DEDUP_MAX_ENTRIES"]?.toIntOrNull() ?: 10_000,
         kafka = kafka,
         topics = topics,
+        observationFeeds = observationFeeds,
         healthPort = mergedEnv["HEALTH_PORT"]?.toIntOrNull() ?: 8080,
         metricsPort = mergedEnv["METRICS_PORT"]?.toIntOrNull() ?: 9090,
         healthNotReadyKillAfterMs = healthNotReadyKillAfterMs,
@@ -346,6 +361,83 @@ data class ForwarderConfig(
               error("OPTIONS_MARKET_HOLIDAYS must contain ISO-8601 dates (yyyy-MM-dd): $token")
             }
         }.toSet()
+    }
+
+    private fun parseObservationFeeds(
+      raw: String?,
+      marketType: AlpacaMarketType,
+      coreFeed: String,
+      coreTopics: TopicConfig,
+      mergedEnv: Map<String, String>,
+      configuredSymbols: List<String>,
+      hasVersionedUniverse: Boolean,
+    ): List<ObservationFeedConfig> {
+      val requested =
+        raw
+          ?.split(",")
+          ?.map { it.trim().lowercase() }
+          ?.filter { it.isNotEmpty() }
+          .orEmpty()
+      if (requested.isEmpty()) return emptyList()
+      if (marketType != AlpacaMarketType.EQUITY) {
+        error("ALPACA_OBSERVATION_FEEDS is only supported when ALPACA_MARKET_TYPE=equity")
+      }
+      if (coreFeed != EquityFeed.Iex.id) {
+        error("ALPACA_FEED must be iex when ALPACA_OBSERVATION_FEEDS is enabled")
+      }
+      if (requested.distinct().size != requested.size) {
+        error("ALPACA_OBSERVATION_FEEDS must not contain duplicates")
+      }
+      if (!hasVersionedUniverse || configuredSymbols.isEmpty()) {
+        error("ALPACA_OBSERVATION_FEEDS requires a versioned static market-data universe")
+      }
+
+      val feeds =
+        requested.map { value ->
+          val feed = EquityFeed.parse(value)
+          if (!feed.observationOnly) {
+            error("ALPACA_OBSERVATION_FEEDS cannot include the core ${feed.id} feed")
+          }
+          val envPrefix = feed.id.uppercase()
+
+          fun topic(channel: String): String =
+            mergedEnv["TOPIC_${envPrefix}_$channel"]?.trim()?.takeIf { it.isNotEmpty() }
+              ?: error("TOPIC_${envPrefix}_$channel must be set when ${feed.id} is enabled")
+
+          ObservationFeedConfig(
+            feed = feed,
+            topics =
+              TopicConfig(
+                trades = topic("TRADES"),
+                quotes = topic("QUOTES"),
+                bars1m = topic("BARS_1M"),
+                status =
+                  mergedEnv["TOPIC_OBSERVATION_STATUS"]?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: error("TOPIC_OBSERVATION_STATUS must be set when observation feeds are enabled"),
+                tradeUpdates = null,
+                tradeUpdatesV2 = null,
+              ),
+          )
+        }
+      val marketDataTopics =
+        listOf(coreTopics.trades, coreTopics.quotes, coreTopics.status) +
+          listOfNotNull(coreTopics.bars1m, coreTopics.tradeUpdates, coreTopics.tradeUpdatesV2) +
+          feeds.flatMap { feed -> listOf(feed.topics.trades, feed.topics.quotes, requireNotNull(feed.topics.bars1m)) } +
+          feeds.map { it.topics.status }.distinct()
+      val duplicateTopics =
+        marketDataTopics
+          .groupingBy { it }
+          .eachCount()
+          .filterValues { it > 1 }
+          .keys
+      if (duplicateTopics.isNotEmpty()) {
+        error("market-data feed topics must be unique: ${duplicateTopics.sorted().joinToString(",")}")
+      }
+      val subscriptionCount = configuredSymbols.size * (feeds.size + 1)
+      if (subscriptionCount > 30) {
+        error("configured market-data feeds require $subscriptionCount symbol subscriptions; Alpaca Basic allows 30")
+      }
+      return feeds
     }
 
     private fun loadDotEnv(): Map<String, String> {

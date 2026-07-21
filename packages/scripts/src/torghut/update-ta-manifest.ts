@@ -13,6 +13,7 @@ const defaultRepository = 'lab/torghut-ta'
 const defaultManifestPaths = [
   'argocd/applications/torghut/ta/flinkdeployment.yaml',
   'argocd/applications/torghut/ta-sim/flinkdeployment.yaml',
+  'argocd/applications/torghut/market-data-archive/flinkdeployment.yaml',
   'argocd/applications/torghut-options/ta/flinkdeployment.yaml',
 ]
 const digestPattern = /^sha256:[0-9a-f]{64}$/i
@@ -130,7 +131,7 @@ Options:
   --digest <sha256:...>
   --version <value>
   --commit <sha40>
-  --manifest-path <path>  May be repeated. Defaults to live, sim, and options TA manifests.
+  --manifest-path <path>  May be repeated. Defaults to live, sim, archive, and options TA manifests.
   --bump-restart-nonce`)
       process.exit(0)
     }

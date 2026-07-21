@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: market-data-archive-config
+  namespace: torghut
+data:
+  ARCHIVE_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
+  ARCHIVE_KAFKA_SECURITY: "SASL_PLAINTEXT"
+  ARCHIVE_KAFKA_SASL_MECH: "SCRAM-SHA-512"
+  ARCHIVE_KAFKA_USERNAME: "torghut-ws"
+  ARCHIVE_GROUP_ID: "bayn-market-data-archive-v1"
+  ARCHIVE_CLIENT_ID: "bayn-market-data-archive"
+  ARCHIVE_IEX_BARS_TOPIC: "torghut.bars.1m.v1"
+  ARCHIVE_DELAYED_SIP_BARS_TOPIC: "bayn.market-data.delayed-sip.bars.1m.v1"
+  ARCHIVE_OVERNIGHT_BARS_TOPIC: "bayn.market-data.overnight.bars.1m.v1"
+  ARCHIVE_CHECKPOINT_INTERVAL_MS: "60000"
+  ARCHIVE_PARALLELISM: "3"
+  ARCHIVE_CLICKHOUSE_URL: "jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal"
+  ARCHIVE_CLICKHOUSE_USERNAME: "signal_publisher"
+  ARCHIVE_CLICKHOUSE_BATCH_SIZE: "100"
+  ARCHIVE_CLICKHOUSE_FLUSH_MS: "1000"
+  ARCHIVE_CLICKHOUSE_MAX_RETRIES: "3"

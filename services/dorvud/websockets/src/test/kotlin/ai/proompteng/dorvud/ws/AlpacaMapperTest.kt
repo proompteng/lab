@@ -10,6 +10,97 @@ import kotlin.test.fail
 
 class AlpacaMapperTest {
   @Test
+  fun `keeps bars and updated-bar corrections on one per-symbol sequence`() {
+    val sequenceKeys = mutableListOf<String>()
+    val sequences = mutableMapOf<String, Long>()
+    val nextSequence: (String) -> Long = { key ->
+      sequenceKeys += key
+      val next = sequences.getOrDefault(key, 0) + 1
+      sequences[key] = next
+      next
+    }
+    val bar =
+      AlpacaBar(
+        symbol = "NVDA",
+        open = 170.0,
+        high = 171.0,
+        low = 169.5,
+        close = 170.5,
+        volume = 100.0,
+        timestamp = "2026-07-21T14:00:00Z",
+      )
+    val correction =
+      AlpacaUpdatedBar(
+        symbol = "NVDA",
+        open = 170.0,
+        high = 171.1,
+        low = 169.5,
+        close = 170.6,
+        volume = 101.0,
+        timestamp = "2026-07-21T14:00:00Z",
+      )
+
+    val barEnvelope = AlpacaMapper.toEnvelope(bar, AlpacaMarketType.EQUITY, "iex", EquityFeed.Iex, nextSequence)
+    val correctionEnvelope =
+      AlpacaMapper.toEnvelope(correction, AlpacaMarketType.EQUITY, "iex", EquityFeed.Iex, nextSequence)
+
+    assertEquals(listOf("bars:NVDA", "bars:NVDA"), sequenceKeys)
+    assertEquals(1L, assertNotNull(barEnvelope).seq)
+    assertEquals(2L, assertNotNull(correctionEnvelope).seq)
+  }
+
+  @Test
+  fun `preserves feed session delay semantics and feed-channel sequence scope`() {
+    val sequenceKeys = mutableListOf<String>()
+    val delayedQuote =
+      AlpacaMapper.toEnvelope(
+        message =
+          AlpacaQuote(
+            symbol = "NVDA",
+            bidPrice = 170.0,
+            bidSize = 10.0,
+            askPrice = 170.1,
+            askSize = 12.0,
+            timestamp = "2026-07-21T12:00:00Z",
+          ),
+        marketType = AlpacaMarketType.EQUITY,
+        feed = EquityFeed.DelayedSip.id,
+        equityFeed = EquityFeed.DelayedSip,
+        seqProvider = { key ->
+          sequenceKeys += key
+          7
+        },
+      )
+    val overnightTrade =
+      AlpacaMapper.toEnvelope(
+        message =
+          AlpacaTrade(
+            symbol = "NVDA",
+            price = 170.05,
+            size = 3.0,
+            timestamp = "2026-07-22T01:00:00Z",
+          ),
+        marketType = AlpacaMarketType.EQUITY,
+        feed = EquityFeed.Overnight.id,
+        equityFeed = EquityFeed.Overnight,
+        seqProvider = { key ->
+          sequenceKeys += key
+          8
+        },
+      )
+
+    assertNotNull(delayedQuote)
+    assertEquals("alpaca", delayedQuote.provider)
+    assertEquals("pre", delayedQuote.marketSession)
+    assertEquals("delayed_15m_consolidated", delayedQuote.delayClass)
+    assertEquals(2, delayedQuote.version)
+    assertNotNull(overnightTrade)
+    assertEquals("overnight", overnightTrade.marketSession)
+    assertEquals("delayed_15m_adjusted", overnightTrade.delayClass)
+    assertEquals(listOf("quotes:NVDA", "trades:NVDA"), sequenceKeys)
+  }
+
+  @Test
   fun `maps trade to envelope`() {
     val msg =
       """{"T":"t","S":"AAPL","i":123,"p":190.5,"s":10,"t":"2025-12-05T00:00:00Z"}"""

@@ -106,6 +106,7 @@ describe('torghut-deploy-automerge workflow', () => {
     const promotedTaManifests = [
       'argocd/applications/torghut/ta/flinkdeployment.yaml',
       'argocd/applications/torghut/ta-sim/flinkdeployment.yaml',
+      'argocd/applications/torghut/market-data-archive/flinkdeployment.yaml',
       'argocd/applications/torghut-options/ta/flinkdeployment.yaml',
     ]
     const promotedWsManifests = [

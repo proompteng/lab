@@ -83,11 +83,20 @@ private const val MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT = 34
 private const val MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK = 0x00000003ffffffffL
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
+  alpacaMarketDataStreamUrl(config, config.marketDataFeedConfigs().first())
+
+internal fun alpacaMarketDataStreamUrl(
+  config: ForwarderConfig,
+  feed: FeedRuntimeConfig,
+): String =
   when (config.alpacaMarketType) {
-    AlpacaMarketType.EQUITY -> "${config.alpacaStreamUrl.trimEnd('/')}/v2/${config.alpacaFeed}"
+    AlpacaMarketType.EQUITY -> {
+      val equityFeed = requireNotNull(feed.equityFeed) { "equity runtime requires a typed equity feed" }
+      "${config.alpacaStreamUrl.trimEnd('/')}/${equityFeed.apiVersion}/${equityFeed.id}"
+    }
     AlpacaMarketType.CRYPTO ->
       "${config.alpacaStreamUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}"
-    AlpacaMarketType.OPTIONS -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta1/${config.alpacaFeed}"
+    AlpacaMarketType.OPTIONS -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta1/${feed.feed}"
   }
 
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
@@ -186,10 +195,13 @@ internal fun alpacaTradesBackfillQuery(
 
 internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
-internal fun barDedupKey(message: AlpacaMessage): String? =
+internal fun barDedupKey(
+  message: AlpacaMessage,
+  feed: String? = null,
+): String? =
   when (message) {
-    is AlpacaBar -> "bars:${message.timestamp}-${message.symbol}"
-    is AlpacaUpdatedBar -> "updatedBars:${message.timestamp}-${message.symbol}"
+    is AlpacaBar -> listOfNotNull(feed, "bars", "${message.timestamp}-${message.symbol}").joinToString(":")
+    is AlpacaUpdatedBar -> listOfNotNull(feed, "updatedBars", "${message.timestamp}-${message.symbol}").joinToString(":")
     else -> null
   }
 
@@ -219,6 +231,52 @@ internal fun decodeAlpacaTradesResponse(
   json: Json,
 ): AlpacaTradesResponse = json.decodeFromString(payload)
 
+private class MarketDataFeedRuntimeState(
+  val config: FeedRuntimeConfig,
+  appConfig: ForwarderConfig,
+  nowMs: () -> Long,
+) {
+  val sequence = SeqTracker()
+  val tradesDedup = DedupCache<String>(Duration.ofSeconds(appConfig.dedupTtlSeconds), appConfig.dedupMaxEntries)
+  val quotesDedup = DedupCache<String>(Duration.ofSeconds(appConfig.dedupTtlSeconds), appConfig.dedupMaxEntries)
+  val barsDedup = DedupCache<String>(Duration.ofSeconds(appConfig.dedupTtlSeconds), appConfig.dedupMaxEntries)
+  val websocketReady = AtomicBoolean(false)
+  val kafkaReady = AtomicBoolean(false)
+  val websocketStatus = AtomicReference(AlpacaMarketDataWebsocketStatus())
+  val errorClass = AtomicReference<ReadinessErrorClass?>(null)
+  val kafkaFailureCount = AtomicInteger(0)
+  val envelopeDropLogged = AtomicBoolean(false)
+  val backfillDone = AtomicBoolean(false)
+  val tradesBackfillDone = AtomicBoolean(false)
+  val reconnectBackoff = ReconnectBackoff(appConfig.reconnectBaseMs, appConfig.reconnectMaxMs)
+  val channelFreshness =
+    MarketDataChannelFreshnessTracker(
+      requiredChannels = config.channels,
+      maxLagMs = appConfig.marketDataChannelFreshnessMaxMs,
+      warmupMs = appConfig.marketDataChannelFreshnessWarmupMs,
+      nowMs = nowMs,
+      marketType = appConfig.alpacaMarketType,
+      marketHolidays = appConfig.optionsMarketHolidays,
+      equityFeed = config.equityFeed,
+    )
+
+  fun readiness(): MarketDataFeedReadiness {
+    val channels = channelFreshness.snapshot()
+    val websocket = websocketStatus.get()
+    val ready = websocketReady.get() && kafkaReady.get() && channels.all { it.ready }
+    return MarketDataFeedReadiness(
+      feed = config.feed,
+      core = config.core,
+      ready = ready,
+      authOk = websocket.authOk,
+      subscriptionOk = websocket.subscriptionOk,
+      kafkaReady = kafkaReady.get(),
+      errorClass = errorClass.get()?.id ?: websocket.errorClass,
+      channels = channels,
+    )
+  }
+}
+
 class ForwarderApp(
   private val config: ForwarderConfig,
   private val producerFactory: (ForwarderConfig) -> KafkaProducer<String, String> = { cfg -> buildProducer(cfg.kafka) },
@@ -238,15 +296,10 @@ class ForwarderApp(
   private val tradeUpdatesReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val readinessErrorClass = AtomicReference<ReadinessErrorClass?>(null)
-  private val marketDataWsStatus = AtomicReference(AlpacaMarketDataWebsocketStatus())
   private val alpacaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val tradeUpdatesErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val reportedNotReadyClass = AtomicReference<ReadinessErrorClass?>(null)
-  private val kafkaFailureCount = AtomicInteger(0)
-  private val envelopeDropLogged = AtomicBoolean(false)
-  private val backfillDone = AtomicBoolean(false)
-  private val tradesBackfillDone = AtomicBoolean(false)
   private val notReadyLivenessGate = NotReadyLivenessGate(config.healthNotReadyKillAfterMs, nowMs)
   private val notReadyLivenessLogged = AtomicBoolean(false)
   private val tradeUpdatesEnabled =
@@ -257,31 +310,20 @@ class ForwarderApp(
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
   private val metrics = ForwarderMetrics(Metrics.registry)
-  private val marketDataChannelFreshness =
-    MarketDataChannelFreshnessTracker(
-      requiredChannels = config.alpacaMarketDataChannels,
-      maxLagMs = config.marketDataChannelFreshnessMaxMs,
-      warmupMs = config.marketDataChannelFreshnessWarmupMs,
-      nowMs = nowMs,
-      marketType = config.alpacaMarketType,
-      marketHolidays = config.optionsMarketHolidays,
-    )
-  private val reconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
+  private val marketDataFeeds = config.marketDataFeedConfigs().map { MarketDataFeedRuntimeState(it, config, nowMs) }
+  private val coreMarketDataFeed = marketDataFeeds.single { it.config.core }
+  private val tradeUpdatesReconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
     val job =
       scope.launch {
         logger.info {
           "dorvud-ws starting shard=${config.shardIndex}/${config.shardCount} " +
-            "jangarSymbolsUrl=${config.jangarSymbolsUrl} channels=${config.alpacaMarketDataChannels} " +
+            "jangarSymbolsUrl=${config.jangarSymbolsUrl} feeds=${marketDataFeeds.map { it.config.feed }} " +
             "universeId=${config.universeContract?.id} universeSymbolHash=${config.universeContract?.symbolHash}"
         }
         val producer = producerFactory(config)
-        val seq = SeqTracker()
-
-        val tradesDedup = DedupCache<String>(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries)
-        val quotesDedup = DedupCache<String>(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries)
-        val barsDedup = DedupCache<String>(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries)
+        val tradeUpdatesSequence = SeqTracker()
         val tradeUpdatesDedup =
           if (tradeUpdatesEnabled) {
             DedupCache<String>(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries)
@@ -301,18 +343,13 @@ class ForwarderApp(
             },
           )
 
-        val jobs = mutableListOf<Job>()
-        jobs +=
-          launch {
-            streamMarketDataLoop(
-              producer,
-              seq,
-              tradesDedup,
-              quotesDedup,
-              barsDedup,
-              symbolsTracker,
-            )
-          }
+        val jobs =
+          marketDataFeeds
+            .map { feed ->
+              launch {
+                streamMarketDataLoop(producer, feed, symbolsTracker)
+              }
+            }.toMutableList()
 
         if (tradeUpdatesEnabled) {
           val tradeStreamUrl = config.alpacaTradeStreamUrl
@@ -326,7 +363,7 @@ class ForwarderApp(
               launch {
                 streamTradeUpdatesLoop(
                   producer,
-                  seq,
+                  tradeUpdatesSequence,
                   tradeUpdatesDedup
                     ?: DedupCache(Duration.ofSeconds(config.dedupTtlSeconds), config.dedupMaxEntries),
                   tradeStreamUrl,
@@ -347,6 +384,10 @@ class ForwarderApp(
         } finally {
           markReady(false)
           wsReady.set(false)
+          marketDataFeeds.forEach { feed ->
+            feed.websocketReady.set(false)
+            feed.kafkaReady.set(false)
+          }
           tradeUpdatesReady.set(false)
           kafkaReady.set(false)
           runCatching { producer.flush() }
@@ -373,13 +414,16 @@ class ForwarderApp(
     val gates = currentReadinessGates()
     val errorClassId = currentReadinessErrorClass(readyNow, gates)?.id
     val channelSnapshot = marketDataChannelSnapshot()
+    val feedSnapshot = marketDataFeeds.map { it.readiness() }
+    feedSnapshot.forEach { feed -> metrics.setMarketDataChannelReadiness(feed.feed, feed.channels) }
     return ReadinessInfo(
       status = if (readyNow) "ready" else "not_ready",
       ready = readyNow,
       errorClass = errorClassId,
       gates = gates,
-      alpacaMarketDataWs = marketDataWsStatus.get(),
+      alpacaMarketDataWs = coreMarketDataFeed.websocketStatus.get(),
       marketDataChannels = channelSnapshot,
+      marketDataFeeds = feedSnapshot,
       marketDataUniverse =
         config.universeContract?.let { contract ->
           MarketDataUniverseInfo(
@@ -408,17 +452,14 @@ class ForwarderApp(
 
   private suspend fun streamMarketDataLoop(
     producer: KafkaProducer<String, String>,
-    seq: SeqTracker,
-    tradesDedup: DedupCache<String>,
-    quotesDedup: DedupCache<String>,
-    barsDedup: DedupCache<String>,
+    feed: MarketDataFeedRuntimeState,
     symbolsTracker: SymbolsTracker,
   ) {
     var attempt = 0
     while (scope.isActive) {
       try {
-        ensureKafkaReady(producer)
-        streamMarketDataSession(producer, seq, tradesDedup, quotesDedup, barsDedup, symbolsTracker) {
+        ensureKafkaReady(producer, feed)
+        streamMarketDataSession(producer, feed, symbolsTracker) {
           attempt = 0
         }
       } catch (e: CancellationException) {
@@ -426,18 +467,20 @@ class ForwarderApp(
       } catch (e: Exception) {
         ReadinessClassifier.classifyAlpacaHandshakeFailure(e)?.let { errorClass ->
           metrics.recordWsConnectError(errorClass)
-          recordAlpacaError(errorClass)
+          metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
+          recordFeedError(feed, errorClass)
         }
-        logger.warn(e) { "alpaca ws session ended" }
+        logger.warn(e) { "alpaca ws session ended feed=${feed.config.feed}" }
       } finally {
-        setWsReady(false)
+        setFeedWsReady(feed, false)
       }
 
       if (!scope.isActive) break
       attempt += 1
       metrics.reconnects.increment()
-      val delayMs = reconnectBackoff.nextDelay(attempt)
-      logger.warn { "alpaca ws reconnecting in ${delayMs}ms (attempt=$attempt)" }
+      metrics.recordMarketDataReconnect(feed.config.feed)
+      val delayMs = feed.reconnectBackoff.nextDelay(attempt)
+      logger.warn { "alpaca ws reconnecting feed=${feed.config.feed} in ${delayMs}ms (attempt=$attempt)" }
       delay(delayMs)
     }
   }
@@ -453,7 +496,7 @@ class ForwarderApp(
     var attempt = 0
     while (scope.isActive) {
       try {
-        ensureKafkaReady(producer)
+        ensureKafkaReady(producer, coreMarketDataFeed)
         streamTradeUpdatesSession(producer, seq, tradeUpdatesDedup, streamUrl, topicV1, topicV2) {
           attempt = 0
         }
@@ -472,7 +515,7 @@ class ForwarderApp(
       if (!scope.isActive) break
       attempt += 1
       metrics.reconnects.increment()
-      val delayMs = reconnectBackoff.nextDelay(attempt)
+      val delayMs = tradeUpdatesReconnectBackoff.nextDelay(attempt)
       logger.warn { "alpaca trade_updates reconnecting in ${delayMs}ms (attempt=$attempt)" }
       delay(delayMs)
     }
@@ -480,14 +523,11 @@ class ForwarderApp(
 
   private suspend fun streamMarketDataSession(
     producer: KafkaProducer<String, String>,
-    seq: SeqTracker,
-    tradesDedup: DedupCache<String>,
-    quotesDedup: DedupCache<String>,
-    barsDedup: DedupCache<String>,
+    feed: MarketDataFeedRuntimeState,
     symbolsTracker: SymbolsTracker,
     onReady: () -> Unit,
   ) {
-    val url = alpacaMarketDataStreamUrl(config)
+    val url = alpacaMarketDataStreamUrl(config, feed.config)
     httpClient.webSocket({
       url(url)
       if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
@@ -521,7 +561,8 @@ class ForwarderApp(
           put("secret", config.alpacaSecretKey)
         }
       sendSerialized(auth)
-      markMarketDataWsSessionStarting()
+      markMarketDataWsSessionStarting(feed)
+      publishObservationStatus(producer, feed, "connecting")
 
       val subscribedSymbols = mutableSetOf<String>()
       val subscribedLock = Mutex()
@@ -545,11 +586,11 @@ class ForwarderApp(
         if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
           metrics.setOptionsEventStarvation(eventStarved)
           if (eventStarved) {
-            recordAlpacaError(ReadinessErrorClass.OptionsEventStarvation)
+            recordFeedError(feed, ReadinessErrorClass.OptionsEventStarvation)
           }
         }
         val nowReady = authOk && subscribedOk && !eventStarved
-        setWsReady(nowReady)
+        setFeedWsReady(feed, nowReady)
         if (nowReady && !readyNotified) {
           onReady()
           readyNotified = true
@@ -567,7 +608,8 @@ class ForwarderApp(
                   is AlpacaSuccess -> {
                     if (msg.msg.contains("auth", ignoreCase = true)) {
                       authOk = true
-                      recordMarketDataAuthSuccess()
+                      recordMarketDataAuthSuccess(feed)
+                      publishObservationStatus(producer, feed, "authenticated")
                       updateWsReady()
                     }
                   }
@@ -575,13 +617,15 @@ class ForwarderApp(
                     authOk = false
                     subscribedOk = false
                     val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
-                    recordMarketDataWsDisconnected(errorClass)
+                    recordMarketDataWsDisconnected(feed, errorClass)
                     updateWsReady()
                     metrics.recordWsConnectError(errorClass)
-                    recordAlpacaError(errorClass)
+                    metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
+                    recordFeedError(feed, errorClass)
+                    publishObservationStatus(producer, feed, "degraded", errorClass, msg.msg)
                     publishOptionsWsStatus(
                       producer = producer,
-                      seq = seq,
+                      seq = feed.sequence,
                       subscribedCount = 0,
                       statusValue = optionsStatusForCode(msg.code),
                       errorCode = msg.code?.toString(),
@@ -606,7 +650,7 @@ class ForwarderApp(
 
       suspend fun applySubscribe(symbols: List<String>) {
         if (symbols.isEmpty()) return
-        val channels = alpacaMarketDataChannels(config)
+        val channels = feed.config.channels
         symbols.chunked(config.subscribeBatchSize).forEach { batch ->
           val subscribe =
             buildJsonObject {
@@ -620,7 +664,7 @@ class ForwarderApp(
 
       suspend fun applyUnsubscribe(symbols: List<String>) {
         if (symbols.isEmpty()) return
-        val channels = alpacaMarketDataChannels(config)
+        val channels = feed.config.channels
         symbols.chunked(config.subscribeBatchSize).forEach { batch ->
           val unsubscribe =
             buildJsonObject {
@@ -654,8 +698,10 @@ class ForwarderApp(
 
       awaitAuthOrThrow()
       applySubscribe(initial)
-      maybeBackfillTrades(producer, seq, initial)
-      maybeBackfillBars(producer, seq, initial)
+      if (feed.config.core) {
+        maybeBackfillTrades(producer, feed.sequence, initial)
+        maybeBackfillBars(producer, feed.sequence, initial)
+      }
 
       val poller =
         config.jangarSymbolsUrl?.let {
@@ -680,7 +726,7 @@ class ForwarderApp(
               if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && updates.isNotEmpty()) {
                 publishOptionsWsStatus(
                   producer = producer,
-                  seq = seq,
+                  seq = feed.sequence,
                   subscribedCount = desired.size,
                   statusValue = "ok",
                   authOk = authOk,
@@ -689,8 +735,10 @@ class ForwarderApp(
                   lastEventTs = lastOptionsMarketDataEventAt.get(),
                 )
               }
-              maybeBackfillTrades(producer, seq, desired)
-              maybeBackfillBars(producer, seq, desired)
+              if (feed.config.core) {
+                maybeBackfillTrades(producer, feed.sequence, desired)
+                maybeBackfillBars(producer, feed.sequence, desired)
+              }
             }
           }
         }
@@ -714,12 +762,12 @@ class ForwarderApp(
                 )
               metrics.setOptionsEventStarvation(eventStarved)
               if (eventStarved) {
-                recordAlpacaError(ReadinessErrorClass.OptionsEventStarvation)
-                setWsReady(false)
+                recordFeedError(feed, ReadinessErrorClass.OptionsEventStarvation)
+                setFeedWsReady(feed, false)
                 if (starvationStatusPublished.compareAndSet(false, true)) {
                   publishOptionsWsStatus(
                     producer = producer,
-                    seq = seq,
+                    seq = feed.sequence,
                     subscribedCount = subscribedCount,
                     statusValue = "degraded",
                     errorCode = ReadinessErrorClass.OptionsEventStarvation.id,
@@ -744,40 +792,47 @@ class ForwarderApp(
               is AlpacaSuccess -> {
                 if (msg.msg.contains("auth", ignoreCase = true)) {
                   authOk = true
-                  recordMarketDataAuthSuccess()
+                  recordMarketDataAuthSuccess(feed)
                   updateWsReady()
                 }
                 return@forEach
               }
               is AlpacaSubscription -> {
-                val channels = alpacaMarketDataChannels(config)
+                val channels = feed.config.channels
                 val actualSubscribedByChannel = msg.subscribedSymbolsByChannel(channels)
                 val actualSubscribed = actualSubscribedByChannel.values.flatten().toSet()
                 val missingByChannel = missingDesiredSymbolsByChannel(symbolsTracker.current(), actualSubscribedByChannel, channels)
                 val missing = missingByChannel.values.flatten().distinct()
                 val wsStatus =
                   msg.toMarketDataWebsocketStatus(
-                    previous = marketDataWsStatus.get(),
+                    previous = feed.websocketStatus.get(),
                     channels = channels,
                     desiredSymbols = symbolsTracker.current(),
                     authOk = authOk,
                     nowMs = nowMs(),
                   )
-                marketDataWsStatus.set(wsStatus)
+                feed.websocketStatus.set(wsStatus)
                 subscribedLock.withLock {
                   subscribedSymbols.clear()
                   subscribedSymbols.addAll(actualSubscribed)
                 }
                 if (actualSubscribed.isNotEmpty()) {
                   subscribedSince.compareAndSet(null, Instant.ofEpochMilli(nowMs()))
-                  marketDataChannelFreshness.recordSubscriptionByChannel(actualSubscribedByChannel)
+                  feed.channelFreshness.recordSubscriptionByChannel(actualSubscribedByChannel)
                 } else {
                   subscribedSince.set(null)
                   lastOptionsMarketDataEventAt.set(null)
-                  marketDataChannelFreshness.clearSubscription()
+                  feed.channelFreshness.clearSubscription()
                 }
                 subscribedOk = wsStatus.subscriptionOk
                 updateWsReady()
+                publishObservationStatus(
+                  producer,
+                  feed,
+                  if (subscribedOk) "ready" else "degraded",
+                  if (subscribedOk) null else ReadinessErrorClass.Unknown,
+                  if (subscribedOk) null else "subscription acknowledgement is incomplete",
+                )
                 if (missingByChannel.isNotEmpty()) {
                   logger.warn {
                     val missingSummary = missingByChannel.mapValues { (_, symbols) -> symbols.size }
@@ -789,7 +844,7 @@ class ForwarderApp(
                 }
                 publishOptionsWsStatus(
                   producer = producer,
-                  seq = seq,
+                  seq = feed.sequence,
                   subscribedCount =
                     subscribedLock.withLock {
                       subscribedSymbols.size
@@ -806,13 +861,15 @@ class ForwarderApp(
                 authOk = false
                 subscribedOk = false
                 val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
-                recordMarketDataWsDisconnected(errorClass)
+                recordMarketDataWsDisconnected(feed, errorClass)
                 updateWsReady()
                 metrics.recordWsConnectError(errorClass)
-                recordAlpacaError(errorClass)
+                metrics.recordMarketDataWsConnectError(feed.config.feed, errorClass)
+                recordFeedError(feed, errorClass)
+                publishObservationStatus(producer, feed, "degraded", errorClass, msg.msg)
                 publishOptionsWsStatus(
                   producer = producer,
-                  seq = seq,
+                  seq = feed.sequence,
                   subscribedCount =
                     subscribedLock.withLock {
                       subscribedSymbols.size
@@ -831,8 +888,8 @@ class ForwarderApp(
               else -> {
                 val observed = observedMarketDataMessage(msg)
                 if (observed != null) {
-                  metrics.recordProviderMessage(config.alpacaMarketType, observed.channel)
-                  marketDataChannelFreshness.recordProviderEvent(observed.channel, observed.symbol)
+                  metrics.recordProviderMessage(config.alpacaMarketType, feed.config.feed, observed.channel)
+                  feed.channelFreshness.recordProviderEvent(observed.channel, observed.symbol)
                   if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
                     lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
                     starvationStatusPublished.set(false)
@@ -840,7 +897,7 @@ class ForwarderApp(
                     updateWsReady()
                   }
                 }
-                val channel = handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
+                val channel = handleMessage(msg, producer, feed)
                 if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && channel in setOf("trade", "trades", "quote", "quotes")) {
                   lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
                   starvationStatusPublished.set(false)
@@ -854,11 +911,12 @@ class ForwarderApp(
       } finally {
         poller?.cancel()
         starvationMonitor?.cancel()
-        recordMarketDataWsDisconnected()
+        recordMarketDataWsDisconnected(feed)
+        publishObservationStatus(producer, feed, "disconnected", feed.errorClass.get(), "market-data session closed")
         if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
           publishOptionsWsStatus(
             producer = producer,
-            seq = seq,
+            seq = feed.sequence,
             subscribedCount = 0,
             statusValue = "degraded",
             errorCode = "session_closed",
@@ -1085,7 +1143,7 @@ class ForwarderApp(
     if (!config.enableBarsBackfill) return
     val barsTopic = config.topics.bars1m ?: return
     if (symbols.isEmpty()) return
-    if (!backfillDone.compareAndSet(false, true)) return
+    if (!coreMarketDataFeed.backfillDone.compareAndSet(false, true)) return
 
     try {
       val requestNow = Instant.ofEpochMilli(nowMs())
@@ -1104,23 +1162,28 @@ class ForwarderApp(
           "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
       }
       bars.forEach { bar ->
+        val eventTime = Instant.parse(bar.timestamp)
         val env =
           Envelope(
             ingestTs = Instant.now(),
-            eventTs = Instant.parse(bar.timestamp),
+            eventTs = eventTime,
             feed = config.alpacaFeed,
             channel = "bars",
             symbol = bar.symbol,
-            seq = seq.next(bar.symbol),
+            seq = seq.next("bars:${bar.symbol}"),
             payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
+            provider = "alpaca",
+            marketSession = classifyMarketSession(eventTime).id,
+            delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
             isFinal = true,
             source = "rest",
+            version = 2,
           )
-        recordLag(env)
-        sendKafka(producer, barsTopic, env)
+        recordLag(env, coreMarketDataFeed)
+        sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed)
       }
     } catch (e: Exception) {
-      backfillDone.set(false)
+      coreMarketDataFeed.backfillDone.set(false)
       logger.warn(e) { "backfill failed; will retry when symbols refresh" }
     }
   }
@@ -1132,7 +1195,7 @@ class ForwarderApp(
   ) {
     if (!config.enableTradesBackfill) return
     if (symbols.isEmpty()) return
-    if (!tradesBackfillDone.compareAndSet(false, true)) return
+    if (!coreMarketDataFeed.tradesBackfillDone.compareAndSet(false, true)) return
 
     try {
       val requestNow = Instant.ofEpochMilli(nowMs())
@@ -1152,23 +1215,28 @@ class ForwarderApp(
       trades
         .sortedBy { it.timestamp }
         .forEach { trade ->
+          val eventTime = Instant.parse(trade.timestamp)
           val env =
             Envelope(
               ingestTs = Instant.now(),
-              eventTs = Instant.parse(trade.timestamp),
+              eventTs = eventTime,
               feed = config.alpacaFeed,
               channel = "trades",
               symbol = trade.symbol,
-              seq = seq.next(trade.symbol),
+              seq = seq.next("trades:${trade.symbol}"),
               payload = json.encodeToJsonElement(AlpacaTrade.serializer(), trade),
+              provider = "alpaca",
+              marketSession = classifyMarketSession(eventTime).id,
+              delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "trades").id },
               isFinal = true,
               source = "rest",
+              version = 2,
             )
-          recordLag(env)
-          sendKafka(producer, config.topics.trades, env)
+          recordLag(env, coreMarketDataFeed)
+          sendKafka(producer, config.topics.trades, env, "trades", coreMarketDataFeed)
         }
     } catch (e: Exception) {
-      tradesBackfillDone.set(false)
+      coreMarketDataFeed.tradesBackfillDone.set(false)
       logger.warn(e) { "trades backfill failed; will retry when symbols refresh" }
     }
   }
@@ -1324,17 +1392,21 @@ class ForwarderApp(
     }
   }
 
-  private fun ensureKafkaReady(producer: KafkaProducer<String, String>) {
+  private fun ensureKafkaReady(
+    producer: KafkaProducer<String, String>,
+    feed: MarketDataFeedRuntimeState,
+  ) {
     val topics =
       buildList {
-        add(config.topics.trades)
-        add(config.topics.quotes)
-        config.topics.bars1m?.let { add(it) }
-        add(config.topics.status)
-        if (tradeUpdatesEnabled) {
+        add(feed.config.topics.trades)
+        add(feed.config.topics.quotes)
+        feed.config.topics.bars1m
+          ?.let { add(it) }
+        add(feed.config.topics.status)
+        if (feed.config.core && tradeUpdatesEnabled) {
           config.topics.tradeUpdates?.let { add(it) }
         }
-      }
+      }.distinct()
 
     val result =
       runCatching {
@@ -1348,22 +1420,20 @@ class ForwarderApp(
           KafkaFailureContext.Metadata,
         )
       metrics.recordKafkaMetadataError(errorClass)
-      recordKafkaError(errorClass)
+      feed.errorClass.set(errorClass)
+      if (feed.config.core) recordKafkaError(errorClass)
     }
 
     if (readyNow) {
-      kafkaFailureCount.set(0)
+      feed.kafkaFailureCount.set(0)
     }
-    setKafkaReady(readyNow)
+    setFeedKafkaReady(feed, readyNow)
   }
 
   private fun handleMessage(
     msg: AlpacaMessage,
     producer: KafkaProducer<String, String>,
-    seq: SeqTracker,
-    tradesDedup: DedupCache<String>,
-    quotesDedup: DedupCache<String>,
-    barsDedup: DedupCache<String>,
+    feed: MarketDataFeedRuntimeState,
   ): String? {
     when (msg) {
       is AlpacaError -> {
@@ -1377,31 +1447,35 @@ class ForwarderApp(
       is AlpacaTrade -> {
         val dedupKey =
           if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
-            "${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.exchange}:${msg.conditions.orEmpty().joinToString("|")}"
+            "${feed.config.feed}:trades:${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.exchange}:" +
+              msg.conditions.orEmpty().joinToString("|")
           } else {
-            msg.id.toString()
+            msg.id?.let { "${feed.config.feed}:trades:id:$it" }
+              ?: "${feed.config.feed}:trades:${msg.symbol}:${msg.timestamp}:${msg.price}:${msg.size}:${msg.exchange}:" +
+              msg.conditions.orEmpty().joinToString("|")
           }
-        if (tradesDedup.isDuplicate(dedupKey)) {
-          metrics.recordDedup("trades")
+        if (feed.tradesDedup.isDuplicate(dedupKey)) {
+          metrics.recordMarketDataDedup(feed.config.feed, "trades")
           return null
         }
       }
       is AlpacaQuote -> {
         val dedupKey =
           if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
-            "${msg.symbol}:${msg.timestamp}:${msg.bidPrice}:${msg.bidSize}:${msg.askPrice}:${msg.askSize}"
+            "${feed.config.feed}:quotes:${msg.symbol}:${msg.timestamp}:${msg.bidPrice}:${msg.bidSize}:" +
+              "${msg.askPrice}:${msg.askSize}"
           } else {
-            "${msg.timestamp}-${msg.symbol}"
+            "${feed.config.feed}:quotes:${msg.timestamp}-${msg.symbol}"
           }
-        if (quotesDedup.isDuplicate(dedupKey)) {
-          metrics.recordDedup("quotes")
+        if (feed.quotesDedup.isDuplicate(dedupKey)) {
+          metrics.recordMarketDataDedup(feed.config.feed, "quotes")
           return null
         }
       }
       is AlpacaBar, is AlpacaUpdatedBar -> {
-        val dedupKey = requireNotNull(barDedupKey(msg))
-        if (barsDedup.isDuplicate(dedupKey)) {
-          metrics.recordDedup("bars")
+        val dedupKey = requireNotNull(barDedupKey(msg, feed.config.feed))
+        if (feed.barsDedup.isDuplicate(dedupKey)) {
+          metrics.recordMarketDataDedup(feed.config.feed, "bars")
           return null
         }
       }
@@ -1409,24 +1483,22 @@ class ForwarderApp(
     }
 
     val env =
-      AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) }
+      AlpacaMapper.toEnvelope(
+        msg,
+        config.alpacaMarketType,
+        feed.config.feed,
+        feed.config.equityFeed,
+      ) { key -> feed.sequence.next(key) }
         ?: run {
-          recordMarketDataEnvelopeDrop(msg)
+          recordMarketDataEnvelopeDrop(feed, msg)
           return null
         }
-    recordLag(env)
+    recordLag(env, feed)
 
-    val topic =
-      when (env.channel) {
-        "trade", "trades" -> config.topics.trades
-        "quote", "quotes" -> config.topics.quotes
-        "bars", "updatedBars" -> config.topics.bars1m
-        "status" -> if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) null else config.topics.status
-        else -> null
-      } ?: return null
+    val topic = feed.config.topicFor(env.channel, config.alpacaMarketType) ?: return null
 
-    marketDataChannelFreshness.recordSerializedEvent(env.channel, env.symbol)
-    sendKafka(producer, topic, env, env.channel)
+    feed.channelFreshness.recordSerializedEvent(env.channel, env.symbol)
+    sendKafka(producer, topic, env, env.channel, feed)
     return env.channel
   }
 
@@ -1435,6 +1507,7 @@ class ForwarderApp(
     topic: String,
     env: Envelope<JsonElement>,
     marketDataChannel: String? = null,
+    feed: MarketDataFeedRuntimeState? = null,
   ) {
     val payload = json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
@@ -1445,34 +1518,41 @@ class ForwarderApp(
         metrics.recordKafkaLatency(elapsed)
         if (exception != null) {
           metrics.kafkaSendErrors.increment()
-          recordKafkaFailure(exception, topic)
+          recordKafkaFailure(exception, topic, feed)
         } else {
           metrics.recordKafkaProduceSuccess(topic)
-          marketDataChannelFreshness.recordKafkaSuccess(marketDataFreshnessChannelFor(env, marketDataChannel), env.symbol)
-          recordKafkaSuccess()
+          feed?.channelFreshness?.recordKafkaSuccess(marketDataFreshnessChannelFor(env, marketDataChannel), env.symbol)
+          recordKafkaSuccess(feed)
         }
       }
     } catch (e: Exception) {
       val elapsed = Duration.ofNanos(System.nanoTime() - start)
       metrics.recordKafkaLatency(elapsed)
       metrics.kafkaSendErrors.increment()
-      recordKafkaFailure(e, topic)
+      recordKafkaFailure(e, topic, feed)
     }
   }
 
-  private fun recordLag(env: Envelope<*>) {
+  private fun recordLag(
+    env: Envelope<*>,
+    feed: MarketDataFeedRuntimeState? = null,
+  ) {
     val lagMs = Duration.between(env.eventTs, env.ingestTs).toMillis()
     metrics.recordLagMs(lagMs)
+    feed?.let { metrics.recordMarketDataLagMs(it.config.feed, env.channel, lagMs) }
   }
 
-  private fun recordMarketDataEnvelopeDrop(msg: AlpacaMessage) {
+  private fun recordMarketDataEnvelopeDrop(
+    feed: MarketDataFeedRuntimeState,
+    msg: AlpacaMessage,
+  ) {
     val observed = observedMarketDataMessage(msg) ?: return
     val reason = marketDataEnvelopeDropReason(msg)
-    metrics.recordMarketDataDrop(config.alpacaMarketType, observed.channel, reason)
-    if (envelopeDropLogged.compareAndSet(false, true)) {
+    metrics.recordMarketDataDrop(config.alpacaMarketType, feed.config.feed, observed.channel, reason)
+    if (feed.envelopeDropLogged.compareAndSet(false, true)) {
       logger.warn {
         "alpaca market-data frame dropped before envelope " +
-          "market_type=${config.alpacaMarketType.name.lowercase()} channel=${observed.channel} " +
+          "market_type=${config.alpacaMarketType.name.lowercase()} feed=${feed.config.feed} channel=${observed.channel} " +
           "reason=$reason timestamp_shape=${timestampShape(alpacaEventTimestamp(msg))}"
       }
     }
@@ -1481,11 +1561,14 @@ class ForwarderApp(
   private fun recordKafkaFailure(
     exception: Exception,
     topic: String,
+    feed: MarketDataFeedRuntimeState? = null,
   ) {
+    val target = feed ?: coreMarketDataFeed
     val errorClass = ReadinessClassifier.classifyKafkaFailure(exception, KafkaFailureContext.Produce)
     metrics.recordKafkaProduceError(topic, errorClass)
-    recordKafkaError(errorClass)
-    val failures = kafkaFailureCount.incrementAndGet()
+    target.errorClass.set(errorClass)
+    if (target.config.core) recordKafkaError(errorClass)
+    val failures = target.kafkaFailureCount.incrementAndGet()
     if (failures == 1) {
       logger.warn(exception) { "kafka send failure detected; count=$failures error_class=${errorClass.id}" }
     }
@@ -1493,17 +1576,29 @@ class ForwarderApp(
       if (failures == 3) {
         logger.warn(exception) { "kafka send failures reached $failures; marking not-ready error_class=${errorClass.id}" }
       }
-      setKafkaReady(false)
+      setFeedKafkaReady(target, false)
     }
   }
 
-  private fun recordKafkaSuccess() {
-    kafkaFailureCount.set(0)
-    if (!kafkaReady.get()) {
-      setKafkaReady(true)
+  private fun recordKafkaSuccess(feed: MarketDataFeedRuntimeState? = null) {
+    val target = feed ?: coreMarketDataFeed
+    target.kafkaFailureCount.set(0)
+    target.errorClass.compareAndSet(ReadinessErrorClass.KafkaMetadata, null)
+    target.errorClass.compareAndSet(ReadinessErrorClass.KafkaProduce, null)
+    target.errorClass.compareAndSet(ReadinessErrorClass.KafkaAuth, null)
+    if (!target.kafkaReady.get()) {
+      setFeedKafkaReady(target, true)
       return
     }
-    refreshReadinessFromMarketDataChannels()
+    if (target.config.core) refreshReadinessFromMarketDataChannels()
+  }
+
+  private fun setFeedKafkaReady(
+    feed: MarketDataFeedRuntimeState,
+    value: Boolean,
+  ) {
+    feed.kafkaReady.set(value)
+    if (feed.config.core) setKafkaReady(value)
   }
 
   private fun setKafkaReady(value: Boolean) {
@@ -1511,7 +1606,21 @@ class ForwarderApp(
       kafkaErrorClass.set(null)
     }
     kafkaReady.set(value)
+    coreMarketDataFeed.kafkaReady.set(value)
     markReady(value && wsReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
+  }
+
+  private fun setFeedWsReady(
+    feed: MarketDataFeedRuntimeState,
+    value: Boolean,
+  ) {
+    val previous = feed.websocketReady.getAndSet(value)
+    if (value) feed.errorClass.set(null)
+    if (value && !previous) metrics.recordMarketDataWsConnectSuccess(feed.config.feed)
+    if (!feed.config.core) {
+      return
+    }
+    setWsReady(value)
   }
 
   private fun setWsReady(value: Boolean) {
@@ -1525,9 +1634,9 @@ class ForwarderApp(
     markReady(value && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
-  private fun markMarketDataWsSessionStarting() {
-    marketDataChannelFreshness.clearSubscription()
-    marketDataWsStatus.updateAndGet {
+  private fun markMarketDataWsSessionStarting(feed: MarketDataFeedRuntimeState) {
+    feed.channelFreshness.clearSubscription()
+    feed.websocketStatus.updateAndGet {
       it.copy(
         authOk = false,
         subscriptionOk = false,
@@ -1541,15 +1650,18 @@ class ForwarderApp(
     }
   }
 
-  private fun recordMarketDataAuthSuccess() {
-    marketDataWsStatus.updateAndGet {
+  private fun recordMarketDataAuthSuccess(feed: MarketDataFeedRuntimeState) {
+    feed.websocketStatus.updateAndGet {
       it.copy(authOk = true, latestAuthSuccessAtMs = nowMs(), errorClass = null)
     }
   }
 
-  private fun recordMarketDataWsDisconnected(errorClass: ReadinessErrorClass? = null) {
-    marketDataChannelFreshness.clearSubscription()
-    marketDataWsStatus.updateAndGet {
+  private fun recordMarketDataWsDisconnected(
+    feed: MarketDataFeedRuntimeState,
+    errorClass: ReadinessErrorClass? = null,
+  ) {
+    feed.channelFreshness.clearSubscription()
+    feed.websocketStatus.updateAndGet {
       it.copy(
         authOk = false,
         subscriptionOk = false,
@@ -1576,8 +1688,8 @@ class ForwarderApp(
   private fun marketDataChannelsGate(): Boolean = marketDataChannelSnapshot().all { it.ready }
 
   private fun marketDataChannelSnapshot(): List<MarketDataChannelReadiness> {
-    val snapshot = marketDataChannelFreshness.snapshot()
-    metrics.setMarketDataChannelReadiness(snapshot)
+    val snapshot = coreMarketDataFeed.channelFreshness.snapshot()
+    metrics.setMarketDataChannelReadiness(coreMarketDataFeed.config.feed, snapshot)
     return snapshot
   }
 
@@ -1639,9 +1751,15 @@ class ForwarderApp(
     }
   }
 
-  private fun recordAlpacaError(errorClass: ReadinessErrorClass) {
-    alpacaErrorClass.set(errorClass)
-    recordReadinessError(errorClass)
+  private fun recordFeedError(
+    feed: MarketDataFeedRuntimeState,
+    errorClass: ReadinessErrorClass,
+  ) {
+    feed.errorClass.set(errorClass)
+    if (feed.config.core) {
+      alpacaErrorClass.set(errorClass)
+      recordReadinessError(errorClass)
+    }
   }
 
   private fun recordTradeUpdatesError(errorClass: ReadinessErrorClass) {
@@ -1733,6 +1851,47 @@ class ForwarderApp(
       405, 406, 410, 412, 413 -> "blocked"
       else -> "degraded"
     }
+
+  private fun publishObservationStatus(
+    producer: KafkaProducer<String, String>,
+    feed: MarketDataFeedRuntimeState,
+    status: String,
+    errorClass: ReadinessErrorClass? = null,
+    detail: String? = null,
+  ) {
+    if (feed.config.core) return
+    val now = Instant.ofEpochMilli(nowMs())
+    val websocket = feed.websocketStatus.get()
+    val payload: JsonElement =
+      buildJsonObject {
+        put("component", "market_data_observation")
+        put("provider", "alpaca")
+        put("feed", feed.config.feed)
+        put("status", status)
+        put("auth_ok", websocket.authOk)
+        put("subscription_ok", websocket.subscriptionOk)
+        put("kafka_ready", feed.kafkaReady.get())
+        put("error_class", errorClass?.id?.let(::JsonPrimitive) ?: JsonNull)
+        put("detail", detail?.let(::JsonPrimitive) ?: JsonNull)
+        put("schema_version", 1)
+      }
+    val envelope =
+      Envelope(
+        ingestTs = now,
+        eventTs = now,
+        feed = feed.config.feed,
+        channel = "status",
+        symbol = feed.config.feed,
+        seq = feed.sequence.next("status:${feed.config.feed}"),
+        payload = payload,
+        provider = "alpaca",
+        marketSession = classifyMarketSession(now).id,
+        isFinal = true,
+        source = "ws",
+        version = 2,
+      )
+    sendKafka(producer, feed.config.topics.status, envelope, feed = feed)
+  }
 
   private fun publishOptionsWsStatus(
     producer: KafkaProducer<String, String>,

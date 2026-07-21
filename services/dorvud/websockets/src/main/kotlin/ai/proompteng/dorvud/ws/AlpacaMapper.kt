@@ -28,6 +28,7 @@ object AlpacaMapper {
     message: AlpacaMessage,
     marketType: AlpacaMarketType,
     feed: String,
+    equityFeed: EquityFeed? = null,
     seqProvider: (String) -> Long,
   ): Envelope<JsonElement>? =
     when (message) {
@@ -36,9 +37,10 @@ object AlpacaMapper {
           message.symbol,
           channel = if (marketType == AlpacaMarketType.OPTIONS) "trade" else "trades",
           eventTs = message.timestamp,
-          seq = seqProvider(message.symbol),
+          seq = seqProvider("trades:${message.symbol}"),
           payload = tradePayload(message, marketType),
           feed = feed,
+          equityFeed = equityFeed,
           isFinal = true,
         )
       is AlpacaQuote ->
@@ -46,9 +48,10 @@ object AlpacaMapper {
           message.symbol,
           channel = if (marketType == AlpacaMarketType.OPTIONS) "quote" else "quotes",
           eventTs = message.timestamp,
-          seq = seqProvider(message.symbol),
+          seq = seqProvider("quotes:${message.symbol}"),
           payload = quotePayload(message, marketType),
           feed = feed,
+          equityFeed = equityFeed,
           isFinal = true,
         )
       is AlpacaBar ->
@@ -56,9 +59,10 @@ object AlpacaMapper {
           message.symbol,
           channel = "bars",
           eventTs = message.timestamp,
-          seq = seqProvider(message.symbol),
+          seq = seqProvider("bars:${message.symbol}"),
           payload = json.encodeToJsonElement(AlpacaBar.serializer(), message),
           feed = feed,
+          equityFeed = equityFeed,
           isFinal = true,
         )
       is AlpacaUpdatedBar ->
@@ -66,9 +70,10 @@ object AlpacaMapper {
           message.symbol,
           channel = "updatedBars",
           eventTs = message.timestamp,
-          seq = seqProvider(message.symbol),
+          seq = seqProvider("bars:${message.symbol}"),
           payload = json.encodeToJsonElement(AlpacaUpdatedBar.serializer(), message),
           feed = feed,
+          equityFeed = equityFeed,
           isFinal = false,
           source = "ws",
         )
@@ -77,9 +82,10 @@ object AlpacaMapper {
           message.symbol,
           channel = "status",
           eventTs = message.timestamp,
-          seq = seqProvider(message.symbol),
+          seq = seqProvider("status:${message.symbol}"),
           payload = json.encodeToJsonElement(AlpacaStatus.serializer(), message),
           feed = feed,
+          equityFeed = equityFeed,
           isFinal = true,
         )
       else -> null
@@ -141,10 +147,15 @@ object AlpacaMapper {
     seq: Long,
     payload: JsonElement,
     feed: String,
+    equityFeed: EquityFeed?,
     isFinal: Boolean,
     source: String = "ws",
   ): Envelope<JsonElement>? {
     val parsedEventTs = parseAlpacaEventInstant(eventTs) ?: return null
+    val delayClass =
+      equityFeed
+        ?.takeIf { canonicalMarketDataChannel(channel) != null }
+        ?.let { marketDataDelayClass(it, channel).id }
     return Envelope(
       ingestTs = Instant.now(),
       eventTs = parsedEventTs,
@@ -153,8 +164,12 @@ object AlpacaMapper {
       symbol = symbol,
       seq = seq,
       payload = payload,
+      provider = "alpaca",
+      marketSession = equityFeed?.let { classifyMarketSession(parsedEventTs).id },
+      delayClass = delayClass,
       isFinal = isFinal,
       source = source,
+      version = 2,
     )
   }
 }

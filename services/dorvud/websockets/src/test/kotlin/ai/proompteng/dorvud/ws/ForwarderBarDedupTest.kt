@@ -31,6 +31,7 @@ class ForwarderBarDedupTest {
     assertEquals("bars:2026-07-18T20:00:00Z-AAPL", barDedupKey(regular))
     assertEquals("updatedBars:2026-07-18T20:00:00Z-AAPL", barDedupKey(updated))
     assertNotEquals(barDedupKey(regular), barDedupKey(updated))
+    assertNotEquals(barDedupKey(regular, "iex"), barDedupKey(regular, "overnight"))
   }
 
   @Test

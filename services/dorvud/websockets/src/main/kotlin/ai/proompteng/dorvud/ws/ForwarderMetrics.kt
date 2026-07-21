@@ -22,6 +22,10 @@ internal class ForwarderMetrics(
   private val desiredSymbolsFetchFailureCounters = ConcurrentHashMap<String, Counter>()
   private val providerMessageCounters = ConcurrentHashMap<String, Counter>()
   private val marketDataDropCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataReconnectCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataWsConnectSuccessCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataWsConnectErrorCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataLagSummaries = ConcurrentHashMap<String, DistributionSummary>()
   private val marketDataChannelGaugeValues = ConcurrentHashMap<String, AtomicLong>()
 
   private val readinessStatus = AtomicInteger(0)
@@ -174,6 +178,24 @@ internal class ForwarderMetrics(
     lagSummary.record(lagMs.toDouble())
   }
 
+  fun recordMarketDataLagMs(
+    feed: String,
+    channel: String,
+    lagMs: Long,
+  ) {
+    if (lagMs < 0) return
+    marketDataLagSummaries
+      .computeIfAbsent("$feed|$channel") { key ->
+        val parts = key.split("|", limit = 2)
+        DistributionSummary
+          .builder("torghut_ws_market_data_lag_ms")
+          .tag("feed", parts[0])
+          .tag("channel", parts[1])
+          .publishPercentileHistogram()
+          .register(registry)
+      }.record(lagMs.toDouble())
+  }
+
   fun recordKafkaLatency(duration: Duration) {
     kafkaLatency.record(duration)
   }
@@ -188,34 +210,88 @@ internal class ForwarderMetrics(
       }.increment()
   }
 
+  fun recordMarketDataDedup(
+    feed: String,
+    channel: String,
+  ) {
+    dedupCounters
+      .computeIfAbsent("market_data|$feed|$channel") { key ->
+        val parts = key.split("|", limit = 3)
+        Counter
+          .builder("torghut_ws_market_data_dedup_drops_total")
+          .tag("feed", parts[1])
+          .tag("channel", parts[2])
+          .register(registry)
+      }.increment()
+  }
+
   fun recordProviderMessage(
     marketType: AlpacaMarketType,
+    feed: String,
     channel: String,
   ) {
     providerMessageCounters
-      .computeIfAbsent("${marketType.name}|$channel") { key ->
-        val parts = key.split("|", limit = 2)
+      .computeIfAbsent("${marketType.name}|$feed|$channel") { key ->
+        val parts = key.split("|", limit = 3)
         Counter
           .builder("torghut_ws_provider_messages_total")
           .tag("market_type", parts[0].lowercase())
-          .tag("channel", parts[1])
+          .tag("feed", parts[1])
+          .tag("channel", parts[2])
           .register(registry)
       }.increment()
   }
 
   fun recordMarketDataDrop(
     marketType: AlpacaMarketType,
+    feed: String,
     channel: String,
     reason: String,
   ) {
     marketDataDropCounters
-      .computeIfAbsent("${marketType.name}|$channel|$reason") { key ->
-        val parts = key.split("|", limit = 3)
+      .computeIfAbsent("${marketType.name}|$feed|$channel|$reason") { key ->
+        val parts = key.split("|", limit = 4)
         Counter
           .builder("torghut_ws_market_data_drops_total")
           .tag("market_type", parts[0].lowercase())
-          .tag("channel", parts[1])
-          .tag("reason", parts[2])
+          .tag("feed", parts[1])
+          .tag("channel", parts[2])
+          .tag("reason", parts[3])
+          .register(registry)
+      }.increment()
+  }
+
+  fun recordMarketDataReconnect(feed: String) {
+    marketDataReconnectCounters
+      .computeIfAbsent(feed) { value ->
+        Counter
+          .builder("torghut_ws_market_data_reconnects_total")
+          .tag("feed", value)
+          .register(registry)
+      }.increment()
+  }
+
+  fun recordMarketDataWsConnectSuccess(feed: String) {
+    marketDataWsConnectSuccessCounters
+      .computeIfAbsent(feed) { value ->
+        Counter
+          .builder("torghut_ws_market_data_connect_success_total")
+          .tag("feed", value)
+          .register(registry)
+      }.increment()
+  }
+
+  fun recordMarketDataWsConnectError(
+    feed: String,
+    errorClass: ReadinessErrorClass,
+  ) {
+    marketDataWsConnectErrorCounters
+      .computeIfAbsent("$feed|${errorClass.id}") { key ->
+        val parts = key.split("|", limit = 2)
+        Counter
+          .builder("torghut_ws_market_data_connect_errors_total")
+          .tag("feed", parts[0])
+          .tag("error_class", parts[1])
           .register(registry)
       }.increment()
   }
@@ -224,64 +300,79 @@ internal class ForwarderMetrics(
     optionsEventStarvation.set(if (starved) 1 else 0)
   }
 
-  fun setMarketDataChannelReadiness(channels: Collection<MarketDataChannelReadiness>) {
+  fun setMarketDataChannelReadiness(
+    feed: String,
+    channels: Collection<MarketDataChannelReadiness>,
+  ) {
     channels.forEach { channel ->
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "ready",
         value = if (channel.ready) 1 else 0,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "lag_ms",
         value = channel.lagMs ?: -1,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "latest_provider_event_at_ms",
         value = channel.latestProviderEventAtMs ?: 0,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "latest_serialized_at_ms",
         value = channel.latestSerializedAtMs ?: 0,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "latest_kafka_success_at_ms",
         value = channel.latestKafkaSuccessAtMs ?: 0,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "latest_subscription_ack_at_ms",
         value = channel.latestSubscriptionAckAtMs ?: 0,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "subscription_ack_lag_ms",
         value = channel.subscriptionAckLagMs ?: -1,
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "subscribed_symbol_count",
         value = channel.subscribedSymbolCount.toLong(),
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "observed_symbol_count",
         value = channel.observedSymbolCount.toLong(),
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "fresh_symbol_count",
         value = channel.freshSymbolCount.toLong(),
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "missing_symbol_count",
         value = channel.missingSymbols.size.toLong(),
       )
       setMarketDataChannelGauge(
+        feed = feed,
         channel = channel.channel,
         field = "stale_symbol_count",
         value = channel.staleSymbols.size.toLong(),
@@ -290,18 +381,20 @@ internal class ForwarderMetrics(
   }
 
   private fun setMarketDataChannelGauge(
+    feed: String,
     channel: String,
     field: String,
     value: Long,
   ) {
     marketDataChannelGaugeValues
-      .computeIfAbsent("$channel|$field") { key ->
-        val parts = key.split("|", limit = 2)
+      .computeIfAbsent("$feed|$channel|$field") { key ->
+        val parts = key.split("|", limit = 3)
         val gaugeValue = AtomicLong(0)
         Gauge
           .builder("torghut_ws_market_data_channel", gaugeValue) { it.get().toDouble() }
-          .tag("channel", parts[0])
-          .tag("field", parts[1])
+          .tag("feed", parts[0])
+          .tag("channel", parts[1])
+          .tag("field", parts[2])
           .register(registry)
         gaugeValue
       }.set(value)

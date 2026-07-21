@@ -3,6 +3,7 @@ package ai.proompteng.dorvud.ws
 import ai.proompteng.dorvud.platform.Envelope
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -48,6 +49,7 @@ internal class MarketDataChannelFreshnessTracker(
   private val nowMs: () -> Long,
   private val marketType: AlpacaMarketType,
   private val marketHolidays: Set<LocalDate> = emptySet(),
+  private val equityFeed: EquityFeed? = null,
 ) {
   private val requiredChannels = requiredChannels.mapNotNull(::canonicalMarketDataChannel).distinct()
   private val latestByChannel = ConcurrentHashMap<String, ChannelFreshnessState>()
@@ -127,7 +129,7 @@ internal class MarketDataChannelFreshnessTracker(
       hasAnySubscribedSymbols &&
         subscribedAt > 0 &&
         now - subscribedAt >= warmupMs &&
-        marketDataFreshnessGateActive(sessionState)
+        marketDataFreshnessGateActive(sessionState, equityFeed)
     return requiredChannels.map { channel ->
       val channelSymbols = symbolsByChannel[channel].orEmpty()
       val readinessMode = readinessModeFor(channel, marketType)
@@ -324,11 +326,20 @@ internal class MarketDataChannelFreshnessTracker(
 }
 
 private val marketDataFreshnessZoneId: ZoneId = ZoneId.of("America/New_York")
+private val overnightSessionClose: LocalTime = LocalTime.of(4, 0)
 private val regularSessionOpen: LocalTime = LocalTime.of(9, 30)
 private val regularSessionClose: LocalTime = LocalTime.of(16, 0)
 private val extendedSessionClose: LocalTime = LocalTime.of(20, 0)
 
-internal fun marketDataFreshnessGateActive(sessionState: String): Boolean = sessionState == "continuous" || sessionState == "regular"
+internal fun marketDataFreshnessGateActive(
+  sessionState: String,
+  equityFeed: EquityFeed? = null,
+): Boolean =
+  when (equityFeed) {
+    EquityFeed.Sip, EquityFeed.DelayedSip -> sessionState in setOf("pre", "regular", "post")
+    EquityFeed.Overnight -> sessionState == "overnight"
+    EquityFeed.Iex, null -> sessionState == "continuous" || sessionState == "regular"
+  }
 
 internal fun marketSessionState(
   now: Instant,
@@ -338,13 +349,18 @@ internal fun marketSessionState(
   if (marketType == AlpacaMarketType.CRYPTO) return "continuous"
   val marketNow = now.atZone(marketDataFreshnessZoneId)
   if (marketNow.toLocalDate() in marketHolidays) return "holiday"
-  if (marketNow.dayOfWeek.value >= 6) return "weekend"
+  val day = marketNow.dayOfWeek
   val localTime = marketNow.toLocalTime()
+  if (day == DayOfWeek.SATURDAY || (day == DayOfWeek.SUNDAY && localTime < extendedSessionClose)) {
+    return "weekend"
+  }
+  if (day == DayOfWeek.FRIDAY && localTime >= extendedSessionClose) return "closed"
   return when {
+    localTime < overnightSessionClose -> "overnight"
     localTime < regularSessionOpen -> "pre"
     localTime < regularSessionClose -> "regular"
     localTime < extendedSessionClose -> "post"
-    else -> "closed"
+    else -> "overnight"
   }
 }
 

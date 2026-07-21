@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { parse } from 'yaml'
+import { parse, parseAllDocuments } from 'yaml'
 
 const root = resolve(import.meta.dir, '../../../..')
 const clickhouseDirectory = resolve(root, 'argocd/applications/torghut/clickhouse')
@@ -178,5 +178,101 @@ describe('Signal publisher GitOps authority contract', () => {
     )
     expect(kustomization.resources).toContain('signal-publisher-cronjob.yaml')
     expect(kustomization.resources).not.toContain('signal-publisher-bayn-v1-backfill-job.yaml')
+  })
+
+  test('creates a replicated bounded intraday archive schema for Bayn reads', () => {
+    const schema = parse(read('intraday-bars-schema-job.yaml'))
+    const migration = schema.spec.template.spec.containers[0].args[0] as string
+    const kustomization = parse(read('kustomization.yaml'))
+    const shellSyntax = spawnSync('bash', ['-n'], { input: migration, encoding: 'utf8' })
+
+    expect(shellSyntax).toMatchObject({ status: 0, stderr: '' })
+    expect(schema.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('3')
+    expect(migration).toContain('signal.intraday_bars_1m_v1 ON CLUSTER default')
+    expect(migration).toContain('ENGINE = ReplicatedReplacingMergeTree(')
+    expect(migration).toContain('PARTITION BY toYYYYMM(event_ts)')
+    expect(migration).toContain('ORDER BY (universe_id, feed, symbol, event_ts)')
+    expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE')
+    expect(migration).toContain('for host in "${hosts[@]}"; do')
+    expect(migration).toContain('FROM system.tables')
+    expect(migration).toContain('FROM system.columns')
+    expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
+  })
+
+  test('keeps the three-feed archive dormant until its promoted image is available', () => {
+    const torghutKustomization = parse(
+      readFileSync(resolve(root, 'argocd/applications/torghut/kustomization.yaml'), 'utf8'),
+    )
+    const archiveDirectory = resolve(root, 'argocd/applications/torghut/market-data-archive')
+    const archiveKustomization = parse(readFileSync(resolve(archiveDirectory, 'kustomization.yaml'), 'utf8'))
+    const archive = parse(readFileSync(resolve(archiveDirectory, 'flinkdeployment.yaml'), 'utf8'))
+    const config = parse(readFileSync(resolve(archiveDirectory, 'configmap.yaml'), 'utf8'))
+    const websocket = parse(readWsConfig())
+
+    expect(torghutKustomization.resources).not.toContain('market-data-archive')
+    expect(archiveKustomization.resources).toEqual([
+      'configmap.yaml',
+      'flinkdeployment.yaml',
+      'metrics-service.yaml',
+      'pdb.yaml',
+    ])
+    expect(archive.spec).toMatchObject({
+      job: {
+        entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
+        parallelism: 3,
+        state: 'running',
+      },
+      taskManager: { replicas: 2 },
+    })
+    expect(config.data).toMatchObject({
+      ARCHIVE_IEX_BARS_TOPIC: 'torghut.bars.1m.v1',
+      ARCHIVE_DELAYED_SIP_BARS_TOPIC: 'bayn.market-data.delayed-sip.bars.1m.v1',
+      ARCHIVE_OVERNIGHT_BARS_TOPIC: 'bayn.market-data.overnight.bars.1m.v1',
+      ARCHIVE_PARALLELISM: '3',
+      ARCHIVE_CLICKHOUSE_USERNAME: 'signal_publisher',
+    })
+    const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
+    expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
+      expect.arrayContaining([
+        { configMapRef: { name: 'market-data-archive-config' } },
+        { configMapRef: { name: 'bayn-universe-v1' } },
+      ]),
+    )
+    expect(archiveEnvironment.get('ARCHIVE_CLICKHOUSE_PASSWORD')).toMatchObject({
+      valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'password' } },
+    })
+    expect(websocket.data.ALPACA_OBSERVATION_FEEDS).toBe('')
+  })
+
+  test('provisions isolated bounded Kafka topics for observation feeds', () => {
+    const topicsPath = resolve(root, 'argocd/applications/kafka/bayn-market-data-topics.yaml')
+    const topics = parseAllDocuments(readFileSync(topicsPath, 'utf8')).map((document) => document.toJS())
+    const kafkaKustomization = parse(
+      readFileSync(resolve(root, 'argocd/applications/kafka/kustomization.yaml'), 'utf8'),
+    )
+    const names = topics.map((topic) => topic.metadata.name)
+
+    expect(new Set(names).size).toBe(7)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'bayn.market-data.delayed-sip.trades.v1',
+        'bayn.market-data.delayed-sip.quotes.v1',
+        'bayn.market-data.delayed-sip.bars.1m.v1',
+        'bayn.market-data.overnight.trades.v1',
+        'bayn.market-data.overnight.quotes.v1',
+        'bayn.market-data.overnight.bars.1m.v1',
+        'bayn.market-data.observation.status.v1',
+      ]),
+    )
+    for (const topic of topics) {
+      expect(topic.spec).toMatchObject({ partitions: 3, replicas: 3 })
+      expect(topic.spec.config['compression.type']).toBe('lz4')
+      if (topic.metadata.name.includes('.bars.1m.')) {
+        expect(topic.spec.config['retention.ms']).toBe(3_024_000_000)
+      } else {
+        expect(topic.spec.config['retention.ms']).toBe(604_800_000)
+      }
+    }
+    expect(kafkaKustomization.resources).toContain('bayn-market-data-topics.yaml')
   })
 })
