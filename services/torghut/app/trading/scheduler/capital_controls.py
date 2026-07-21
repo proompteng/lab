@@ -22,7 +22,12 @@ from ..broker_mutation_receipts import BrokerMutationPurpose
 from ..execution_adapters import ExecutionAdapter
 from ..models import StrategyDecision
 from ..session_context import regular_session_open_utc_for
-from ..tigerbeetle_client import check_tigerbeetle_health
+from ..tigerbeetle_client import (
+    RealTigerBeetleClient,
+    TigerBeetleHealth,
+    check_tigerbeetle_health,
+    create_tigerbeetle_client,
+)
 from ..tigerbeetle_reconcile.latest_tigerbeetle_reconciliation_status_p import (
     latest_tigerbeetle_reconciliation_status_payload,
 )
@@ -59,6 +64,23 @@ class CapitalSafetyController:
         self.sleep = sleep
         self._ledger_checked_at_monotonic: float | None = None
         self._ledger_stop_reason_cache: str | None = None
+        self._ledger_client: RealTigerBeetleClient | None = None
+
+    def close(self) -> None:
+        client = self._ledger_client
+        self._ledger_client = None
+        if client is not None:
+            client.close()
+
+    def _check_ledger_protocol(self) -> TigerBeetleHealth:
+        if not settings.tigerbeetle_enabled:
+            return check_tigerbeetle_health(settings)
+        if self._ledger_client is None:
+            self._ledger_client = create_tigerbeetle_client(settings)
+        health = check_tigerbeetle_health(settings, client=self._ledger_client)
+        if not health.ok:
+            self.close()
+        return health
 
     def evaluate(self, session: Session, snapshot: PositionSnapshot) -> None:
         if settings.trading_mode != "live":
@@ -224,7 +246,7 @@ class CapitalSafetyController:
             return self._ledger_stop_reason_cache
         if protocol_required:
             try:
-                protocol_health = check_tigerbeetle_health(settings)
+                protocol_health = self._check_ledger_protocol()
             except Exception as exc:
                 logger.exception("TigerBeetle protocol safety check failed")
                 reason = f"tigerbeetle_protocol_unavailable:{type(exc).__name__}"

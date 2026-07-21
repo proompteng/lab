@@ -45,6 +45,7 @@ def _run_with_timeout(
     operation_name: str,
     timeout_seconds: float,
     operation: Callable[[], _T],
+    on_timeout: Callable[[], None] | None = None,
 ) -> _T:
     result_queue: queue.Queue[tuple[bool, _T | BaseException]] = queue.Queue(maxsize=1)
 
@@ -63,9 +64,17 @@ def _run_with_timeout(
     try:
         ok, value = result_queue.get(timeout=max(float(timeout_seconds), 0.001))
     except queue.Empty as exc:
-        raise TigerBeetleClientTimeoutError(
+        timeout_error = TigerBeetleClientTimeoutError(
             f"tigerbeetle_{operation_name}_timeout:{timeout_seconds:.3f}s"
-        ) from exc
+        )
+        if on_timeout is not None:
+            on_timeout()
+        thread.join(timeout=1.0)
+        if thread.is_alive():
+            timeout_error.add_note(
+                "timed-out TigerBeetle worker did not stop after cancellation"
+            )
+        raise timeout_error from exc
     if ok:
         return cast(_T, value)
     if isinstance(value, TigerBeetleClientError):
@@ -176,23 +185,31 @@ class RealTigerBeetleClient:
         official_addresses = resolve_replica_addresses(replica_addresses)
         self._tb: Any = tb
         self._rpc_timeout_seconds = max(float(rpc_timeout_seconds), 0.001)
-        self._client: Any = _run_with_timeout(
-            operation_name="connect",
-            timeout_seconds=self._rpc_timeout_seconds,
-            operation=lambda: tb.ClientSync(
-                cluster_id=cluster_id,
-                replica_addresses=",".join(official_addresses),
-            ),
+        self._close_lock = threading.Lock()
+        self._closed = False
+        self._client: Any = tb.ClientSync(
+            cluster_id=cluster_id,
+            replica_addresses=",".join(official_addresses),
         )
 
     def close(self) -> None:
-        close = getattr(self._client, "close", None)
-        if callable(close):
-            close()
-            return
-        exit_fn = getattr(self._client, "__exit__", None)
-        if callable(exit_fn):
-            exit_fn(None, None, None)
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            client = self._client
+        client.close()
+
+    def _run(self, operation_name: str, operation: Callable[[], _T]) -> _T:
+        with self._close_lock:
+            if self._closed:
+                raise TigerBeetleClientError("tigerbeetle_client_closed")
+        return _run_with_timeout(
+            operation_name=operation_name,
+            timeout_seconds=self._rpc_timeout_seconds,
+            operation=operation,
+            on_timeout=self.close,
+        )
 
     def nop(self) -> None:
         # The Python client does not expose TigerBeetle's internal NOP request.
@@ -238,35 +255,31 @@ class RealTigerBeetleClient:
         )
 
     def create_accounts(self, accounts: Sequence[object]) -> Sequence[object]:
-        return _run_with_timeout(
-            operation_name="create_accounts",
-            timeout_seconds=self._rpc_timeout_seconds,
-            operation=lambda: self._client.create_accounts(
+        return self._run(
+            "create_accounts",
+            lambda: self._client.create_accounts(
                 [self._account_event(item) for item in accounts]
             ),
         )
 
     def lookup_accounts(self, ids: Sequence[int]) -> Sequence[object]:
-        return _run_with_timeout(
-            operation_name="lookup_accounts",
-            timeout_seconds=self._rpc_timeout_seconds,
-            operation=lambda: self._client.lookup_accounts(list(ids)),
+        return self._run(
+            "lookup_accounts",
+            lambda: self._client.lookup_accounts(list(ids)),
         )
 
     def create_transfers(self, transfers: Sequence[object]) -> Sequence[object]:
-        return _run_with_timeout(
-            operation_name="create_transfers",
-            timeout_seconds=self._rpc_timeout_seconds,
-            operation=lambda: self._client.create_transfers(
+        return self._run(
+            "create_transfers",
+            lambda: self._client.create_transfers(
                 [self._transfer_event(item) for item in transfers]
             ),
         )
 
     def lookup_transfers(self, ids: Sequence[int]) -> Sequence[object]:
-        return _run_with_timeout(
-            operation_name="lookup_transfers",
-            timeout_seconds=self._rpc_timeout_seconds,
-            operation=lambda: self._client.lookup_transfers(list(ids)),
+        return self._run(
+            "lookup_transfers",
+            lambda: self._client.lookup_transfers(list(ids)),
         )
 
 
