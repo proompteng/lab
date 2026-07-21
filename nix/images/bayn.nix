@@ -9,14 +9,9 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  strategyBehaviorHash = builtins.hashString "sha256" (
-    "services/bayn/src/hash.ts\n"
-    + builtins.readFile ../../services/bayn/src/hash.ts
-    + "\nservices/bayn/src/execution-model.ts\n"
-    + builtins.readFile ../../services/bayn/src/execution-model.ts
-    + "\nservices/bayn/src/strategy.ts\n"
-    + builtins.readFile ../../services/bayn/src/strategy.ts
-  );
+  # Immutable identity for bayn.tsmom.behavior.v1. Source-text hashes turn behavior-preserving refactors into false
+  # incompatibilities. The complete deterministic evaluator fingerprint is locked in strategy.test.ts instead.
+  strategyBehaviorHash = "2d4c83a855a5b43f7f24072b30d4d3e73b2365a6d077baa0a1c72894e6638c7c";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
 in
 import ./bun-workspace-service.nix {

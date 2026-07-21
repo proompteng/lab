@@ -36,6 +36,7 @@ describe('TSMOM economic evaluator', () => {
     const first = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     const second = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     expect(first).toEqual(second)
+    expect(canonicalHashV1(first)).toBe('7c223f7d02215f5b2982bee51a0ae9107d319014a52634a772814672fde2ccd3')
     expect(canonicalHashV1(first.signalDecisions)).toBe(canonicalHashV1(second.signalDecisions))
     expect(canonicalHashV1(first.simulation.dailyMarks)).toBe(canonicalHashV1(second.simulation.dailyMarks))
     expect(canonicalHashV1(first.benchmarkSeries)).toBe(canonicalHashV1(second.benchmarkSeries))
