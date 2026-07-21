@@ -15,7 +15,7 @@ data:
   ARCHIVE_OVERNIGHT_BARS_TOPIC: "bayn.market-data.overnight.bars.1m.v1"
   ARCHIVE_CHECKPOINT_INTERVAL_MS: "60000"
   ARCHIVE_PARALLELISM: "3"
-  ARCHIVE_CLICKHOUSE_URL: "jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal"
+  ARCHIVE_CLICKHOUSE_URL: "jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?insert_quorum_parallel=1"
   ARCHIVE_CLICKHOUSE_USERNAME: "signal_publisher"
   ARCHIVE_CLICKHOUSE_BATCH_SIZE: "100"
   ARCHIVE_CLICKHOUSE_FLUSH_MS: "1000"
