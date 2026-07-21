@@ -68,6 +68,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   requireTerms(failures, productionPaths.kustomization, files.kustomization, [
     'namespace: hermes',
+    'name: hermes-operation-config',
+    'options:\n      disableNameSuffixHash: true',
     '- statefulset.yaml',
     '- backup-cronjob.yaml',
     '- network-policy.yaml',
@@ -169,6 +171,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'inherit_mcp_toolsets: false',
     'mcp_servers: {}',
     'hooks_auto_accept: false',
+    'memory_char_limit: 4400',
   ])
   forbidTerms(failures, productionPaths.config, files.config, ['api_key:', 'token:', 'allow_all_users: true'])
 
@@ -253,6 +256,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '--dry-run',
     'migration preview contains a conflict or refusal',
     'migration_preview_verified=true conflicts=0 secrets=false',
+    'name: hermes-operation-config',
+    'mountPath: /opt/data/config.yaml',
+    'subPath: config.yaml',
   ])
   requireTerms(failures, productionPaths.migrationApply, files.migrationApply, [
     '--source /opt/data/migration/source',
@@ -265,11 +271,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     "summary.get('conflict', 0) != 0 or summary.get('error', 0) != 0",
     "{'secret-settings', 'provider-keys'} & selected",
     "for kind in ('user-profile', 'daily-memory'):",
+    "item.get('details', {}).get('char_limit') != 4400",
     "for kind in ('soul', 'workspace-agents'):",
     "for kind in ('secret-settings', 'provider-keys', 'discord-settings', 'slack-settings'):",
     "pathlib.Path('/opt/data/backups').glob('pre-migration-*.zip')",
     'migration_report_verified=true',
     'operator_owned_identity_unchanged=true secrets=false',
+    'name: hermes-operation-config',
+    'mountPath: /opt/data/config.yaml',
+    'subPath: config.yaml',
   ])
   forbidTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--overwrite'])
   forbidTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--overwrite'])

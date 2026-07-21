@@ -37,6 +37,8 @@ smoke test, manifest change, and normal CI/Codex review.
 - `data-hermes-0`: 50 Gi RBD PVC for Hermes state, sessions, memories, skills, and workspace.
 - `backups-hermes-0`: 100 Gi RBD PVC for daily WAL-safe Hermes backup archives and SHA-256 sidecars.
 - StatefulSet PVC retention is `Retain` on delete and scale-down.
+- Migration Jobs mount the stable, read-only `hermes-operation-config` generated from the same production `config.yaml` as
+  the gateway, so previews, memory limits, reports, and restore points use production settings rather than Hermes defaults.
 - The daily backup CronJob retains the latest 14 verified archives and retries failures independently from the gateway. Its
   first scheduled success and subsequent last-success timestamp are monitored on a 26-hour window without removing a
   healthy API endpoint.

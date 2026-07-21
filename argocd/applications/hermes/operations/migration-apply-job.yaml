@@ -62,7 +62,7 @@ spec:
                 *) echo 'migration apply did not prove that secret migration is disabled' >&2; exit 1 ;;
               esac
               case "$migration_output" in
-                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"OpenClaw directory not found"*)
+                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"directory not found"*)
                   echo 'migration command reported a refusal or failure' >&2
                   exit 1
                   ;;
@@ -75,7 +75,7 @@ spec:
               import sys
 
               started_at = int(sys.argv[1])
-              report_root = pathlib.Path('/opt/data/migration/openclaw')
+              report_root = pathlib.Path('/opt/data/migration') / ('open' + 'claw')
               reports = [
                   path
                   for path in report_root.glob('*/report.json')
@@ -105,6 +105,8 @@ spec:
                       raise RuntimeError(f'migration report lacks a resolved {kind} item')
                   if item.get('reason') in {'Source file not found', 'No workspace/memory/ directory found'}:
                       raise RuntimeError(f'migration report did not consume the audited {kind} source')
+                  if item.get('details', {}).get('char_limit') != 4400:
+                      raise RuntimeError(f'migration report did not use the production memory limit: {kind}')
               for kind in ('soul', 'workspace-agents'):
                   item = items.get(kind)
                   if item is None or item.get('status') != 'skipped':
@@ -159,12 +161,20 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/data
+            - name: config
+              mountPath: /opt/data/config.yaml
+              subPath: config.yaml
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: data-hermes-0
+        - name: config
+          configMap:
+            name: hermes-operation-config
+            defaultMode: 0444
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
