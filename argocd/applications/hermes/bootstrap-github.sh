@@ -11,6 +11,7 @@ gh_cache_dir=${GH_CLI_CACHE_DIR:-${HOME:?HOME is required}/.cache/hermes-tools}
 gh_install_path=${GH_CLI_INSTALL_PATH:-/opt/tools/gh}
 gh_config_dir=${GH_CONFIG_DIR:?GH_CONFIG_DIR is required}
 gh_hosts_path=${gh_config_dir}/hosts.yml
+gh_cli_config_path=${gh_config_dir}/config.yml
 gh_auth_stage_dir=${gh_config_dir}/.bootstrap.$$
 git_config_path=${HERMES_GIT_CONFIG_PATH:-${HOME}/.gitconfig}
 python_bin=${HERMES_PYTHON_BIN:-/opt/hermes/.venv/bin/python}
@@ -65,7 +66,7 @@ fi
 # This volume is per-Pod and the gateway has not started yet. Clear any file
 # left by a failed init attempt so GitHub CLI never tries to migrate a
 # partially initialized or read-only auth file on retry.
-rm -f -- "$gh_hosts_path"
+rm -f -- "$gh_hosts_path" "$gh_cli_config_path"
 
 archive_is_valid() {
   [ -f "$archive_path" ] && printf '%s  %s\n' "$gh_archive_sha256" "$archive_path" | sha256sum -c - >/dev/null 2>&1
@@ -136,7 +137,11 @@ if [ ! -s "$gh_auth_stage_dir/hosts.yml" ]; then
   echo 'GitHub CLI did not create its authentication file' >&2
   exit 1
 fi
-chmod 0600 "$gh_auth_stage_dir/hosts.yml"
+if [ ! -s "$gh_auth_stage_dir/config.yml" ]; then
+  echo 'GitHub CLI did not create its configuration file' >&2
+  exit 1
+fi
+chmod 0600 "$gh_auth_stage_dir/hosts.yml" "$gh_auth_stage_dir/config.yml"
 github_login=$(env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$gh_auth_stage_dir" \
   "$gh_install_path" api user --jq .login)
 if [ "$github_login" != tuslagch ]; then
@@ -149,6 +154,7 @@ if [ "$github_permission" != ADMIN ]; then
   echo "tuslagch lacks ADMIN permission on proompteng/lab: $github_permission" >&2
   exit 1
 fi
+mv -f -- "$gh_auth_stage_dir/config.yml" "$gh_cli_config_path"
 mv -f -- "$gh_auth_stage_dir/hosts.yml" "$gh_hosts_path"
 rm -rf -- "$gh_auth_stage_dir"
 

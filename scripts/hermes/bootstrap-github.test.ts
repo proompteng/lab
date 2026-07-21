@@ -46,6 +46,7 @@ test('installs a verified GitHub CLI archive and recreates deterministic Git con
   const testTmp = join(root, 'tmp')
   const installedGh = join(tools, 'gh')
   const ghHosts = join(ghConfigDir, 'hosts.yml')
+  const ghConfig = join(ghConfigDir, 'config.yml')
   const gitConfig = join(home, '.gitconfig')
   const testToken = 'test-token-value-with-sufficient-length'
 
@@ -131,7 +132,9 @@ esac
   expect((await stat(tools)).mode & 0o777).toBe(0o775)
   expect((await stat(ghConfigDir)).mode & 0o777).toBe(0o775)
   expect((await stat(ghHosts)).mode & 0o777).toBe(0o600)
+  expect((await stat(ghConfig)).mode & 0o777).toBe(0o600)
   expect(await readFile(ghHosts, 'utf8')).toContain(`oauth_token: ${testToken}`)
+  expect(await readFile(ghConfig, 'utf8')).not.toContain(testToken)
   expect(await run([installedGh, '--version'])).toContain(`gh version ${version}`)
   expect(
     await run([installedGh, 'api', 'user', '--jq', '.login'], {

@@ -34,7 +34,7 @@ smoke test, manifest change, and normal CI/Codex review.
   path rather than persisting token material.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
 - The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. Only the bootstrap init
-  container receives `GH_TOKEN`; it creates a mode-`0600` GitHub CLI auth file in a per-Pod `emptyDir` shared read-only with
+  container receives `GH_TOKEN`; it creates mode-`0600` GitHub CLI auth files in a per-Pod `emptyDir` shared read-only with
   the gateway. The pinned Hermes runtime intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal
   subprocesses, so environment-only authentication is insufficient. The token never enters the gateway environment, data
   PVC, backups, Git config, or a rendered manifest.

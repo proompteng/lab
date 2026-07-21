@@ -307,7 +307,9 @@ The expected mirrored amd64 manifest digest is
      git config --global --get-all credential.https://github.com.helper | grep -Fx "!/opt/tools/gh auth git-credential"
      ! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig
      test -r /opt/github-auth/hosts.yml
+     test -r /opt/github-auth/config.yml
      test "$(stat -c %a /opt/github-auth/hosts.yml)" = 600
+     test "$(stat -c %a /opt/github-auth/config.yml)" = 600
      test ! -e /opt/data/home/.config/gh/hosts.yml
      git ls-remote --exit-code origin refs/heads/main >/dev/null
      git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof
@@ -317,7 +319,7 @@ The expected mirrored amd64 manifest digest is
    The dry run performs GitHub authentication and branch authorization without creating a remote ref. A real change must
    use a unique `codex/` branch, an explicitly requested push, and a pull request; force pushes and direct `main` pushes
    remain forbidden. Only the bootstrap init container receives `GH_TOKEN` from `hermes-github-auth`; it runs the documented
-   `gh auth login --with-token --insecure-storage` flow into a mode-`0600` per-Pod `emptyDir`. The gateway receives that
+   `gh auth login --with-token --insecure-storage` flow into mode-`0600` files in a per-Pod `emptyDir`. The gateway receives that
    volume read-only and has no GitHub token environment variable. The auth file never enters the data PVC or Hermes backups.
 
 ## API key rotation
