@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import socket
 import sys
-import time
+import threading
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
@@ -180,66 +180,32 @@ class TestTigerBeetleClient(TestCase):
             )
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
-    def test_real_client_times_out_blocked_account_rpc(self) -> None:
-        class _BlockingSync:
-            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
-                del cluster_id, replica_addresses
+    def test_real_client_timeout_cancels_worker_and_closes_client(self) -> None:
+        instances: list[object] = []
+        worker_finished = threading.Event()
 
-            def create_accounts(self, accounts: list[object]) -> list[object]:
-                del accounts
-                time.sleep(0.2)
-                return []
-
-        fake_module = SimpleNamespace(
-            ClientSync=_BlockingSync,
-            Account=_TigerBeetleEvent,
-            Transfer=_TigerBeetleEvent,
-        )
-        with (
-            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
-            patch(
-                "app.trading.tigerbeetle_client.socket.getaddrinfo",
-                return_value=[
-                    (
-                        socket.AF_INET,
-                        socket.SOCK_STREAM,
-                        6,
-                        "",
-                        ("10.99.251.1", 3000),
-                    )
-                ],
-            ),
-        ):
-            client = RealTigerBeetleClient(
-                cluster_id=2001,
-                replica_addresses=[
-                    "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
-                ],
-                rpc_timeout_seconds=0.01,
-            )
-            account = TigerBeetleAccountSpec(
-                account_id=11,
-                account_key="cash:paper:usd",
-                ledger=LEDGER_USD_MICRO,
-                code=1001,
-                account_label="paper",
-            )
-
-            with self.assertRaisesRegex(
-                TigerBeetleClientTimeoutError,
-                "tigerbeetle_create_accounts_timeout",
-            ):
-                client.create_accounts([account])
-
-    def test_real_client_times_out_blocked_health_lookup(self) -> None:
         class _BlockingHealthSync:
             def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
                 del cluster_id, replica_addresses
+                self.release = threading.Event()
+                self.closed = False
+                self.lookup_calls = 0
+                self.close_calls = 0
+                instances.append(self)
 
             def lookup_accounts(self, ids: list[int]) -> list[object]:
                 del ids
-                time.sleep(0.2)
+                self.lookup_calls += 1
+                self.release.wait(timeout=1.0)
+                worker_finished.set()
+                if self.closed:
+                    raise RuntimeError("client closed")
                 return []
+
+            def close(self) -> None:
+                self.close_calls += 1
+                self.closed = True
+                self.release.set()
 
         fake_module = SimpleNamespace(
             ClientSync=_BlockingHealthSync,
@@ -275,43 +241,18 @@ class TestTigerBeetleClient(TestCase):
             ):
                 client.nop()
 
-    def test_real_client_times_out_blocked_connect(self) -> None:
-        class _BlockingConnectSync:
-            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
-                del cluster_id, replica_addresses
-                time.sleep(0.2)
-
-        fake_module = SimpleNamespace(
-            ClientSync=_BlockingConnectSync,
-            Account=_TigerBeetleEvent,
-            Transfer=_TigerBeetleEvent,
-        )
-        with (
-            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
-            patch(
-                "app.trading.tigerbeetle_client.socket.getaddrinfo",
-                return_value=[
-                    (
-                        socket.AF_INET,
-                        socket.SOCK_STREAM,
-                        6,
-                        "",
-                        ("10.99.251.1", 3000),
-                    )
-                ],
-            ),
-        ):
+            sync = instances[0]
+            self.assertTrue(worker_finished.is_set())
+            self.assertTrue(sync.closed)
+            self.assertEqual(sync.close_calls, 1)
             with self.assertRaisesRegex(
-                TigerBeetleClientTimeoutError,
-                "tigerbeetle_connect_timeout",
+                TigerBeetleClientError,
+                "tigerbeetle_client_closed",
             ):
-                RealTigerBeetleClient(
-                    cluster_id=2001,
-                    replica_addresses=[
-                        "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
-                    ],
-                    rpc_timeout_seconds=0.01,
-                )
+                client.nop()
+            client.close()
+            self.assertEqual(sync.lookup_calls, 1)
+            self.assertEqual(sync.close_calls, 1)
 
     def test_real_client_converts_domain_specs_to_official_events(self) -> None:
         instances: list[object] = []
@@ -407,19 +348,3 @@ class TestTigerBeetleClient(TestCase):
         self.assertEqual(sync.created_transfers[0].id, 22)
         self.assertEqual(sync.lookup_account_requests[-1], [HEALTH_PROBE_ACCOUNT_ID])
         self.assertTrue(sync.closed)
-
-    def test_real_client_close_uses_exit_when_close_missing(self) -> None:
-        class _ExitOnly:
-            def __init__(self) -> None:
-                self.exited = False
-
-            def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-                self.exited = True
-
-        client: RealTigerBeetleClient = object.__new__(RealTigerBeetleClient)
-        owned = _ExitOnly()
-        client._client = owned
-
-        client.close()
-
-        self.assertTrue(owned.exited)

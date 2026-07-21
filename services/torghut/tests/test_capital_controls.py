@@ -4,7 +4,7 @@ from datetime import datetime, time, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 from app.config import settings
@@ -113,6 +113,10 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_reconcile_required", True),
             patch.object(controller, "_load_risk_snapshot", return_value=risk),
             patch(
+                "app.trading.scheduler.capital_controls.create_tigerbeetle_client",
+                return_value=Mock(),
+            ),
+            patch(
                 "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
                 return_value=SimpleNamespace(enabled=True, ok=True),
             ),
@@ -147,6 +151,10 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_required", True),
             patch.object(settings, "tigerbeetle_reconcile_required", False),
             patch(
+                "app.trading.scheduler.capital_controls.create_tigerbeetle_client",
+                return_value=Mock(),
+            ),
+            patch(
                 "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
                 return_value=SimpleNamespace(enabled=True, ok=True),
             ),
@@ -164,6 +172,53 @@ class TestCapitalSafetyController(TestCase):
 
         self.assertIsNone(reason)
         self.assertEqual(controller.state.capital_ledger_state, "current")
+
+    def test_protocol_checks_reuse_one_client_until_controller_close(self) -> None:
+        controller = self._controller()
+        client = SimpleNamespace(nop=Mock(), close=Mock())
+        now = datetime(2026, 7, 10, 15, 0, tzinfo=ZoneInfo("America/New_York"))
+
+        with (
+            patch.object(settings, "tigerbeetle_enabled", True),
+            patch.object(settings, "tigerbeetle_required", True),
+            patch.object(settings, "tigerbeetle_reconcile_required", False),
+            patch(
+                "app.trading.scheduler.capital_controls.create_tigerbeetle_client",
+                return_value=client,
+            ) as create_client,
+        ):
+            self.assertIsNone(
+                controller._ledger_stop_reason(SimpleNamespace(), now=now)
+            )
+            controller._ledger_checked_at_monotonic = None
+            self.assertIsNone(
+                controller._ledger_stop_reason(SimpleNamespace(), now=now)
+            )
+            controller.close()
+            controller.close()
+
+        create_client.assert_called_once_with(settings)
+        self.assertEqual(client.nop.call_count, 2)
+        client.close.assert_called_once_with()
+
+    def test_required_disabled_protocol_fails_closed_without_creating_client(
+        self,
+    ) -> None:
+        controller = self._controller()
+        now = datetime(2026, 7, 10, 15, 0, tzinfo=ZoneInfo("America/New_York"))
+
+        with (
+            patch.object(settings, "tigerbeetle_enabled", False),
+            patch.object(settings, "tigerbeetle_required", True),
+            patch.object(settings, "tigerbeetle_reconcile_required", False),
+            patch(
+                "app.trading.scheduler.capital_controls.create_tigerbeetle_client"
+            ) as create_client,
+        ):
+            reason = controller._ledger_stop_reason(SimpleNamespace(), now=now)
+
+        self.assertEqual(reason, "tigerbeetle_protocol_unavailable")
+        create_client.assert_not_called()
 
     def test_required_protocol_failure_latches_stop_without_reconciliation(
         self,
@@ -184,6 +239,10 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_required", True),
             patch.object(settings, "tigerbeetle_reconcile_required", False),
             patch.object(controller, "_load_risk_snapshot", return_value=risk),
+            patch(
+                "app.trading.scheduler.capital_controls.create_tigerbeetle_client",
+                return_value=Mock(),
+            ),
             patch(
                 "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
                 return_value=SimpleNamespace(enabled=True, ok=False),
@@ -212,6 +271,10 @@ class TestCapitalSafetyController(TestCase):
         with (
             patch.object(settings, "tigerbeetle_required", True),
             patch.object(settings, "tigerbeetle_reconcile_required", False),
+            patch(
+                "app.trading.scheduler.capital_controls.create_tigerbeetle_client",
+                return_value=Mock(),
+            ),
             patch(
                 "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
                 side_effect=ModuleNotFoundError("tigerbeetle package unavailable"),

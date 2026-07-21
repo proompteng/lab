@@ -109,6 +109,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             SimpleNamespace(
                 account_label="paper",
                 order_feed_ingestor=SimpleNamespace(close=Mock()),
+                capital_safety=SimpleNamespace(close=Mock()),
             )
         ]
         scheduler._pipeline = scheduler._pipelines[0]
@@ -122,6 +123,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         leadership = _FakeLeadership()
         fatal_exit = Mock()
         scheduler = self._prepared_scheduler(leadership, fatal_exit=fatal_exit)
+        pipeline = scheduler._pipelines[0]
 
         await scheduler.start()
         await scheduler.stop()
@@ -129,6 +131,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         self.assertEqual(leadership.acquire_calls, 1)
         self.assertEqual(leadership.release_calls, 1)
         self.assertFalse(scheduler.leadership_status.acquired)
+        pipeline.capital_safety.close.assert_called_once_with()
         fatal_exit.assert_not_called()
 
     async def test_unexpected_loop_return_is_process_fatal(self) -> None:
@@ -345,6 +348,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         pipeline = SimpleNamespace(
             account_label="paper",
             order_feed_ingestor=SimpleNamespace(close=Mock()),
+            capital_safety=SimpleNamespace(close=Mock()),
             run_once=blocking_run_once,
         )
         scheduler._pipelines = [pipeline]
@@ -405,6 +409,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         pipeline = SimpleNamespace(
             account_label="paper",
             order_feed_ingestor=SimpleNamespace(close=Mock()),
+            capital_safety=SimpleNamespace(close=Mock()),
             run_once=run_once,
             ingest_broker_account_activities=ingest_broker_account_activities,
         )

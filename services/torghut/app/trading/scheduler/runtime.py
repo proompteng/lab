@@ -552,6 +552,7 @@ class TradingScheduler(
         )
         for pipeline in active_pipelines:
             pipeline.order_feed_ingestor.close()
+            pipeline.capital_safety.close()
         self._pipelines = []
         self._pipeline = None
         await asyncio.to_thread(self._leadership.release)
