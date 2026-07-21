@@ -123,6 +123,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mountPath: /opt/kubectl-image',
     'mountPath: /opt/tools',
     'value: /opt/tools:/opt/hermes/bin:',
+    'name: KUBECONFIG',
+    'value: /opt/data/home/.kube/config',
     'value: https://github.com/proompteng/lab.git',
     'value: main',
     'value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1',
@@ -399,7 +401,17 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
     'install -m 0555 /opt/kubectl-image/bin/kubectl /opt/tools/kubectl',
     '/opt/tools/kubectl version --client=true',
+    'install -d -m 0700 "$kubeconfig_dir"',
+    'certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+    'server: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}',
+    'tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token',
+    'chmod 0600 "$kubeconfig_tmp"',
     '/bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh',
+  ])
+  forbidTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'token: ${',
+    'token: $(cat',
+    'certificate-authority-data:',
   ])
   requireTerms(failures, productionPaths.labCheckout, files.labCheckout, [
     'set -eu',

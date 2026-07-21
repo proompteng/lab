@@ -66,6 +66,18 @@ test('rejects omitting the translated Kubernetes API endpoints', async () => {
   )
 })
 
+test('rejects persisting a service-account token in the kubeconfig', async () => {
+  const files = await loadProductionFiles()
+  files.bootstrap = files.bootstrap.replace(
+    '      tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token',
+    '      token: ${SERVICE_ACCOUNT_TOKEN}',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.bootstrap}: contains forbidden production term "token: \${"`,
+  )
+})
+
 test('rejects a mutable Hermes runtime image', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(

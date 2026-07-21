@@ -63,6 +63,8 @@ spec:
               value: /opt/data
             - name: HOME
               value: /opt/data/home
+            - name: KUBECONFIG
+              value: /opt/data/home/.kube/config
             - name: GIT_TERMINAL_PROMPT
               value: "0"
             - name: LAB_REPOSITORY_URL
@@ -131,6 +133,8 @@ spec:
               value: "1"
             - name: HOME
               value: /opt/data/home
+            - name: KUBECONFIG
+              value: /opt/data/home/.kube/config
             - name: XDG_CACHE_HOME
               value: /opt/data/home/.cache
             - name: PATH

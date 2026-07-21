@@ -18,6 +18,34 @@ mkdir -p \
 install -m 0555 /opt/kubectl-image/bin/kubectl /opt/tools/kubectl
 /opt/tools/kubectl version --client=true >/tmp/kubectl-version.log
 
+kubeconfig_dir=${HOME}/.kube
+kubeconfig_path=${kubeconfig_dir}/config
+kubeconfig_tmp=${kubeconfig_path}.tmp.$$
+: "${KUBERNETES_SERVICE_HOST:?Kubernetes service host is required}"
+: "${KUBERNETES_SERVICE_PORT:?Kubernetes service port is required}"
+install -d -m 0700 "$kubeconfig_dir"
+cat >"$kubeconfig_tmp" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+  - name: in-cluster
+    cluster:
+      certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      server: https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}
+contexts:
+  - name: in-cluster
+    context:
+      cluster: in-cluster
+      user: hermes
+current-context: in-cluster
+users:
+  - name: hermes
+    user:
+      tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+EOF
+chmod 0600 "$kubeconfig_tmp"
+mv -- "$kubeconfig_tmp" "$kubeconfig_path"
+
 /bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh
 
 seed_file() {
