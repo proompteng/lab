@@ -52,8 +52,11 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(typeof cronJob.spec.suspend).toBe('boolean')
     expect(typeof backfillJob.spec.suspend).toBe('boolean')
     expect(container.args).toEqual(['daily'])
+    const cronManaged = kustomization.resources.includes('signal-publisher-cronjob.yaml')
     const backfillManaged = kustomization.resources.includes('signal-publisher-bayn-v1-backfill-job.yaml')
+    expect(cronManaged).toBe(!cronJob.spec.suspend)
     expect(backfillManaged).toBe(!backfillJob.spec.suspend)
+    expect(cronManaged && backfillManaged).toBe(false)
     expect(cronJob.spec.suspend || backfillJob.spec.suspend).toBe(true)
     assertActivationProvenance(cronJob, kustomization)
     assertActivationProvenance(backfillJob, kustomization)
@@ -170,9 +173,9 @@ describe('Signal publisher GitOps authority contract', () => {
         'signal-publisher-sealed-secret.yaml',
         'signal-schema-job.yaml',
         'bayn-universe-v1-configmap.yaml',
-        'signal-publisher-cronjob.yaml',
       ]),
     )
+    expect(kustomization.resources).not.toContain('signal-publisher-cronjob.yaml')
     expect(kustomization.resources).not.toContain('signal-publisher-bayn-v1-backfill-job.yaml')
   })
 })
