@@ -108,6 +108,18 @@ test('rejects whole-application pruning during OpenClaw cutover', async () => {
   )
 })
 
+test('rejects an OpenClaw sync without an admission-safe runStrategy transition', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '-p=\'[{"op":"test","path":"/spec/running","value":true},{"op":"remove","path":"/spec/running"},{"op":"add","path":"/spec/runStrategy","value":"Halted"}]\'',
+    '-p=\'[{"op":"add","path":"/spec/runStrategy","value":"Halted"}]\'',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "-p='[{\\"op\\":\\"test\\",\\"path\\":\\"/spec/running\\",\\"value\\":true},{\\"op\\":\\"remove\\",\\"path\\":\\"/spec/running\\"},{\\"op\\":\\"add\\",\\"path\\":\\"/spec/runStrategy\\",\\"value\\":\\"Halted\\"}]'"`,
+  )
+})
+
 test('rejects stopping the source before Discord credentials are captured', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
