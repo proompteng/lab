@@ -326,6 +326,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- 169.254.0.0/16',
     '- 192.168.0.0/16',
     'cidr: 10.96.0.1/32',
+    'cidr: 100.100.244.141/32',
+    'cidr: 100.100.244.142/32',
+    'cidr: 100.100.244.190/32',
+    'port: 6443',
   ])
   forbidTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
     '          port: 80\n',
