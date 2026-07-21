@@ -110,7 +110,7 @@ export interface StoredEvaluationEvidence {
   readonly events: readonly {
     readonly ordinal: number
     readonly id: string
-    readonly kind: 'decision' | 'fill'
+    readonly kind: 'decision' | 'fill' | 'fee' | 'cash-yield'
     readonly contentHash: string
     readonly payload: unknown
   }[]
@@ -144,7 +144,7 @@ interface ArtifactPlan {
 interface EventPlan {
   readonly ordinal: number
   readonly id: string
-  readonly kind: 'decision' | 'fill'
+  readonly kind: 'decision' | 'fill' | 'fee' | 'cash-yield'
   readonly contentHash: string
   readonly payload: unknown
 }
@@ -234,7 +234,7 @@ const ArtifactItemRow = Schema.Struct({
 const EventReferenceRow = Schema.Struct({
   ordinal: NonNegativeInteger,
   event_id: Sha256,
-  event_kind: Schema.Literals(['decision', 'fill']),
+  event_kind: Schema.Literals(['decision', 'fill', 'fee', 'cash-yield']),
   content_hash: Sha256,
   payload: Schema.Unknown,
 })
@@ -312,21 +312,17 @@ const snapshotReferenceMatches = (row: typeof SnapshotRow.Type, inputManifest: I
   )
 }
 
-const protocolTransactionCostBpsMicros = (parameters: unknown): string => {
+const protocolExecutionModel = (parameters: unknown): unknown => {
   if (
     typeof parameters !== 'object' ||
     parameters === null ||
-    !('transactionCostBps' in parameters) ||
-    typeof parameters.transactionCostBps !== 'number' ||
-    !Number.isFinite(parameters.transactionCostBps) ||
-    parameters.transactionCostBps < 0 ||
-    parameters.transactionCostBps > 10_000
+    !('executionModel' in parameters) ||
+    typeof parameters.executionModel !== 'object' ||
+    parameters.executionModel === null
   ) {
-    throw new TypeError('strategy parameters do not declare valid transaction costs')
+    throw new TypeError('strategy parameters do not declare an execution model')
   }
-  const micros = parameters.transactionCostBps * 1_000_000
-  if (!Number.isSafeInteger(micros)) throw new TypeError('transaction costs exceed fixed-point precision')
-  return BigInt(micros).toString()
+  return parameters.executionModel
 }
 
 const artifactItemCount = (payload: unknown): number => {
@@ -341,8 +337,11 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   if (parameterHash !== provenance.strategy.parameterHash) {
     throw new TypeError('strategy parameters and provenance disagree on parameter hash')
   }
-  if (evaluation.simulation.transactionCostBpsMicros !== protocolTransactionCostBpsMicros(parameters)) {
-    throw new TypeError('simulation transaction costs do not match strategy parameters')
+  if (canonicalHashV1(evaluation.simulation.executionModel) !== canonicalHashV1(protocolExecutionModel(parameters))) {
+    throw new TypeError('simulation execution model does not match strategy parameters')
+  }
+  if (evaluation.simulation.costMultiplierMicros !== '1000000') {
+    throw new TypeError('candidate simulation must use the base execution-cost multiplier')
   }
   const protocolHash = makeStrategyProtocolHash(provenance.strategy)
   if (protocolHash !== evaluation.protocolHash)
@@ -415,30 +414,31 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }
 
   const baseArtifacts = [
-    ['evaluation-summary', 'bayn.evaluation-summary.v2', summarizeEvaluation(evaluation)],
+    ['evaluation-summary', 'bayn.evaluation-summary.v3', summarizeEvaluation(evaluation)],
     ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
-    ['strategy', 'bayn.performance-metrics.v1', evaluation.strategy],
-    ['buy-and-hold', 'bayn.performance-metrics.v1', evaluation.buyAndHold],
-    ['direct-volatility-timing', 'bayn.performance-metrics.v1', evaluation.directVolTiming],
-    ['double-cost-strategy', 'bayn.performance-metrics.v1', evaluation.doubleCostStrategy],
+    ['strategy', 'bayn.performance-metrics.v2', evaluation.strategy],
+    ['buy-and-hold', 'bayn.performance-metrics.v2', evaluation.buyAndHold],
+    ['direct-volatility-timing', 'bayn.performance-metrics.v2', evaluation.directVolTiming],
+    ['double-cost-strategy', 'bayn.performance-metrics.v2', evaluation.doubleCostStrategy],
     [
       'simulated-orders',
-      'bayn.simulated-orders.v1',
+      'bayn.simulated-orders.v2',
       {
-        schemaVersion: 'bayn.simulated-orders.v1',
-        transactionCostBpsMicros: evaluation.simulation.transactionCostBpsMicros,
+        schemaVersion: 'bayn.simulated-orders.v2',
+        executionModel: evaluation.simulation.executionModel,
+        costMultiplierMicros: evaluation.simulation.costMultiplierMicros,
         items: evaluation.simulation.orders,
       },
     ],
     [
       'cash-changes',
-      'bayn.cash-changes.v1',
-      { schemaVersion: 'bayn.cash-changes.v1', items: evaluation.simulation.cashChanges },
+      'bayn.cash-changes.v2',
+      { schemaVersion: 'bayn.cash-changes.v2', items: evaluation.simulation.cashChanges },
     ],
     [
       'daily-position-marks',
-      'bayn.daily-position-marks.v2',
-      { schemaVersion: 'bayn.daily-position-marks.v2', items: evaluation.simulation.dailyMarks },
+      'bayn.daily-position-marks.v3',
+      { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
     ],
     [
       'tsmom-signal-decisions',
@@ -521,7 +521,8 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
       parameterSchemaVersion: provenance.strategy.parameterSchemaVersion,
       parameterHash: provenance.strategy.parameterHash,
       simulationSchemaVersion: evaluation.simulation.schemaVersion,
-      transactionCostBpsMicros: evaluation.simulation.transactionCostBpsMicros,
+      executionModel: evaluation.simulation.executionModel,
+      costMultiplierMicros: evaluation.simulation.costMultiplierMicros,
     },
     artifacts: [...baseArtifacts]
       .sort((left, right) => left.name.localeCompare(right.name))
@@ -1061,22 +1062,22 @@ const makeEvidenceStore = Effect.gen(function* () {
         if (Option.isNone(storedOption)) return Option.none<RecoveredEvaluationEvidence>()
         const stored = storedOption.value
         const requiredArtifacts = new Map([
-          ['buy-and-hold', 'bayn.performance-metrics.v1'],
+          ['buy-and-hold', 'bayn.performance-metrics.v2'],
           ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
-          ['cash-changes', 'bayn.cash-changes.v1'],
-          ['daily-position-marks', 'bayn.daily-position-marks.v2'],
-          ['direct-volatility-timing', 'bayn.performance-metrics.v1'],
+          ['cash-changes', 'bayn.cash-changes.v2'],
+          ['daily-position-marks', 'bayn.daily-position-marks.v3'],
+          ['direct-volatility-timing', 'bayn.performance-metrics.v2'],
           ['direct-volatility-timing-series', 'bayn.daily-performance-series.v1'],
-          ['double-cost-strategy', 'bayn.performance-metrics.v1'],
+          ['double-cost-strategy', 'bayn.performance-metrics.v2'],
           ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
           ['equity-series', 'bayn.equity-series.v1'],
-          ['evaluation-summary', 'bayn.evaluation-summary.v2'],
+          ['evaluation-summary', 'bayn.evaluation-summary.v3'],
           ['input-manifest', 'bayn.input-manifest.v2'],
-          ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v1'],
+          ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v2'],
           ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
           ['reconciliation', 'bayn.reconciliation.v1'],
-          ['simulated-orders', 'bayn.simulated-orders.v1'],
-          ['strategy', 'bayn.performance-metrics.v1'],
+          ['simulated-orders', 'bayn.simulated-orders.v2'],
+          ['strategy', 'bayn.performance-metrics.v2'],
           ['tsmom-signal-decisions', 'bayn.tsmom-signal-decisions.v1'],
         ])
         const artifacts = new Map(stored.artifacts.map((artifact) => [artifact.name, artifact]))
@@ -1086,11 +1087,11 @@ const makeEvidenceStore = Effect.gen(function* () {
               ([name, schemaVersion]) => artifacts.get(name)?.schemaVersion === schemaVersion,
             ),
           'recover-evidence',
-          'stored run does not have the exact v3 artifact contract',
+          'stored run does not have the exact v4 artifact contract',
         )
         yield* ensure(
           stored.run.runId === runId &&
-            stored.run.evaluationSchemaVersion === 'bayn.evaluation.v3' &&
+            stored.run.evaluationSchemaVersion === 'bayn.evaluation.v4' &&
             stored.run.sourceRevision === provenance.sourceRevision &&
             stored.run.imageRepository === provenance.image.repository &&
             stored.run.imageDigest === provenance.image.digest &&
@@ -1122,10 +1123,9 @@ const makeEvidenceStore = Effect.gen(function* () {
         const artifactManifest = yield* decodeQualificationArtifactManifest(
           artifacts.get('qualification-artifact-manifest')!.payload,
         )
-        const storedTransactionCostBpsMicros = yield* Effect.try({
-          try: () => protocolTransactionCostBpsMicros(stored.protocol.parameters),
-          catch: (cause) =>
-            databaseError('invariant', 'recover-evidence', 'stored transaction-cost model is invalid', cause),
+        const storedExecutionModel = yield* Effect.try({
+          try: () => protocolExecutionModel(stored.protocol.parameters),
+          catch: (cause) => databaseError('invariant', 'recover-evidence', 'stored execution model is invalid', cause),
         })
         yield* ensure(
           stored.protocol.schemaVersion === provenance.strategy.parameterSchemaVersion &&
@@ -1133,9 +1133,10 @@ const makeEvidenceStore = Effect.gen(function* () {
             stored.protocol.behaviorHash === provenance.strategy.behaviorHash &&
             stored.protocol.parameterHash === provenance.strategy.parameterHash &&
             canonicalHashV1(stored.protocol.parameters) === provenance.strategy.parameterHash &&
-            storedTransactionCostBpsMicros === orders.transactionCostBpsMicros,
+            canonicalHashV1(storedExecutionModel) === canonicalHashV1(orders.executionModel) &&
+            orders.costMultiplierMicros === '1000000',
           'recover-evidence',
-          'stored protocol lock or transaction-cost model diverged',
+          'stored protocol lock or execution model diverged',
         )
         const cashChanges = yield* decodeCashChangesArtifact(artifacts.get('cash-changes')!.payload)
         const dailyMarks = yield* decodeDailyPositionMarksArtifact(artifacts.get('daily-position-marks')!.payload)
@@ -1157,8 +1158,9 @@ const makeEvidenceStore = Effect.gen(function* () {
           execution: {
             parameterSchemaVersion: stored.protocol.schemaVersion,
             parameterHash: stored.protocol.parameterHash,
-            simulationSchemaVersion: 'bayn.simulation-trace.v2',
-            transactionCostBpsMicros: storedTransactionCostBpsMicros,
+            simulationSchemaVersion: 'bayn.simulation-trace.v3',
+            executionModel: orders.executionModel,
+            costMultiplierMicros: orders.costMultiplierMicros,
           },
           artifacts: stored.artifacts
             .filter((artifact) => artifact.name !== 'qualification-artifact-manifest')
@@ -1197,8 +1199,9 @@ const makeEvidenceStore = Effect.gen(function* () {
               evaluatorEndingEquityMicros: evaluation.strategy.endingEquityMicros,
               events,
               simulation: {
-                schemaVersion: 'bayn.simulation-trace.v2',
-                transactionCostBpsMicros: orders.transactionCostBpsMicros,
+                schemaVersion: 'bayn.simulation-trace.v3',
+                executionModel: orders.executionModel,
+                costMultiplierMicros: orders.costMultiplierMicros,
                 orders: orders.items,
                 cashChanges: cashChanges.items,
                 dailyMarks: dailyMarks.items,
@@ -1276,7 +1279,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             canonicalHashV1(stored.statuses[1]?.detail) ===
               canonicalHashV1({ reconciliationExact: true, verdict: evaluation.verdict.status }),
           'recover-evidence',
-          'stored v3 evidence components diverge',
+          'stored v4 evidence components diverge',
         )
 
         return Option.some({

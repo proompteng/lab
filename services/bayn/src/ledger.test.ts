@@ -38,7 +38,7 @@ describe('TigerBeetle simulation journal', () => {
     const first = buildLedgerPlan(result, 7001)
     const second = buildLedgerPlan(result, 7001)
     expect(first).toEqual(second)
-    expect(first.accounts).toHaveLength(fixtureProtocol.universe.length + 5)
+    expect(first.accounts).toHaveLength(fixtureProtocol.universe.length + 6)
     expect(first.transfers.length).toBeGreaterThan(1)
     expect(() => assertReconciled(first, materializeAccounts(first), materializeTransfers(first))).not.toThrow()
   })

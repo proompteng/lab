@@ -193,7 +193,7 @@ export const RuntimeProvenanceSchema = Schema.Struct({
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),
     inputManifest: Schema.Literal('bayn.input-manifest.v2'),
-    evaluation: Schema.Literal('bayn.evaluation.v3'),
+    evaluation: Schema.Literal('bayn.evaluation.v4'),
   }),
 })
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
@@ -229,6 +229,6 @@ export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimePro
     contractVersions: {
       runtimeProvenance: 'bayn.runtime-provenance.v2',
       inputManifest: 'bayn.input-manifest.v2',
-      evaluation: 'bayn.evaluation.v3',
+      evaluation: 'bayn.evaluation.v4',
     },
   })

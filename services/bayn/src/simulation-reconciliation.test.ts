@@ -38,8 +38,10 @@ describe('independent marked-equity reconciliation', () => {
       equitySeries: evaluation.equitySeries,
     })
     expect(proof.equitySeries).toHaveLength(evaluation.strategy.observations)
-    expect(evaluation.simulation.orders).toHaveLength(fills.length)
-    expect(evaluation.simulation.cashChanges).toHaveLength(fills.length)
+    expect(evaluation.simulation.orders.length).toBeGreaterThanOrEqual(fills.length)
+    expect(evaluation.simulation.cashChanges).toHaveLength(
+      evaluation.events.filter((event) => event.kind !== 'decision').length,
+    )
     expect(evaluation.simulation.dailyMarks).toHaveLength(evaluation.strategy.observations)
     expect(proof.reconciliation.withinTolerance).toBe(true)
     expect(BigInt(proof.reconciliation.maximumDailyDifferenceMicros)).toBeLessThanOrEqual(
@@ -92,20 +94,24 @@ describe('independent marked-equity reconciliation', () => {
     )
     expect(() => reconcile({ events: badNotional })).toThrow('notional diverges')
 
+    const firstFeeIndex = evaluation.events.findIndex((event) => event.kind === 'fee')
+    const firstFee = evaluation.events[firstFeeIndex]
+    if (firstFee.kind !== 'fee') throw new Error('fixture has no fee event')
     const changedFeePayload = {
-      ...firstFill,
-      feeMicros: (BigInt(firstFill.feeMicros) + 20_000n).toString(),
+      ...firstFee,
+      secMicros: (BigInt(firstFee.secMicros) + 10_000n).toString(),
+      totalMicros: (BigInt(firstFee.totalMicros) + 10_000n).toString(),
     }
     const { id: ___, kind: ____, ...feeIdentityPayload } = changedFeePayload
     const badFee = evaluation.events.map((event, index) =>
-      index === firstFillIndex
+      index === firstFeeIndex
         ? {
             ...changedFeePayload,
-            id: hashObject({ runId: evaluation.runId, kind: 'fill', ...feeIdentityPayload }),
+            id: hashObject({ runId: evaluation.runId, kind: 'fee', ...feeIdentityPayload }),
           }
         : event,
     )
-    expect(() => reconcile({ events: badFee })).toThrow('fee diverges')
+    expect(() => reconcile({ events: badFee })).toThrow('SEC component diverges')
 
     expect(() =>
       reconcile({

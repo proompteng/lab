@@ -12,6 +12,8 @@ let
   strategyBehaviorHash = builtins.hashString "sha256" (
     "services/bayn/src/hash.ts\n"
     + builtins.readFile ../../services/bayn/src/hash.ts
+    + "\nservices/bayn/src/execution-model.ts\n"
+    + builtins.readFile ../../services/bayn/src/execution-model.ts
     + "\nservices/bayn/src/strategy.ts\n"
     + builtins.readFile ../../services/bayn/src/strategy.ts
   );
