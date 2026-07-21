@@ -5,6 +5,8 @@ import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
 import io.github.cdimascio.dotenv.dotenv
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.util.Properties
 
@@ -16,6 +18,18 @@ data class TopicConfig(
   val tradeUpdates: String?,
   val tradeUpdatesV2: String?,
 )
+
+data class MarketDataUniverseContract(
+  val id: String,
+  val symbolHash: String,
+  val symbols: List<String>,
+)
+
+internal fun canonicalSymbolHash(symbols: Collection<String>): String =
+  MessageDigest
+    .getInstance("SHA-256")
+    .digest(symbols.joinToString(",").toByteArray(StandardCharsets.UTF_8))
+    .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
 enum class AlpacaMarketType {
   EQUITY,
@@ -44,6 +58,7 @@ data class ForwarderConfig(
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
   val symbolAllowlist: Set<String>,
+  val universeContract: MarketDataUniverseContract? = null,
   val symbolsPollIntervalMs: Long,
   val subscribeBatchSize: Int,
   val shardCount: Int,
@@ -82,13 +97,13 @@ data class ForwarderConfig(
       if (symbolsPollIntervalMs <= 0) error("SYMBOLS_POLL_INTERVAL_MS must be > 0")
       if (subscribeBatchSize <= 0) error("SUBSCRIBE_BATCH_SIZE must be > 0")
 
-      val symbolAllowlist =
+      val configuredAllowlistSymbols =
         mergedEnv["SYMBOLS_ALLOWLIST"]
           ?.split(",")
           ?.map { it.trim().uppercase() }
           ?.filter { it.isNotEmpty() }
-          ?.toSet()
-          ?: emptySet()
+          ?: emptyList()
+      val symbolAllowlist = configuredAllowlistSymbols.toSet()
       if (symbolAllowlist.size > 12) error("SYMBOLS_ALLOWLIST must include no more than 12 symbols")
       val configuredStaticSymbols =
         mergedEnv["SYMBOLS"]
@@ -147,6 +162,43 @@ data class ForwarderConfig(
       if (jangarSymbolsUrl == null && staticSymbols.isEmpty()) {
         error("JANGAR_SYMBOLS_URL or SYMBOLS must be set")
       }
+
+      val universeId = mergedEnv["MARKET_DATA_UNIVERSE_ID"]?.trim()?.takeIf { it.isNotEmpty() }
+      val universeSymbolHash =
+        mergedEnv["MARKET_DATA_UNIVERSE_SYMBOL_HASH"]
+          ?.trim()
+          ?.takeIf { it.isNotEmpty() }
+      if ((universeId == null) != (universeSymbolHash == null)) {
+        error("MARKET_DATA_UNIVERSE_ID and MARKET_DATA_UNIVERSE_SYMBOL_HASH must be set together")
+      }
+      val universeContract =
+        universeId?.let { id ->
+          val expectedHash = requireNotNull(universeSymbolHash)
+          if (!id.matches(Regex("^[a-z0-9]+(?:[.-][a-z0-9]+)*$"))) {
+            error("MARKET_DATA_UNIVERSE_ID must be a versioned lowercase identifier")
+          }
+          if (!expectedHash.matches(Regex("^[0-9a-f]{64}$"))) {
+            error("MARKET_DATA_UNIVERSE_SYMBOL_HASH must be a lowercase SHA-256 hash")
+          }
+          if (jangarSymbolsUrl != null) {
+            error("a versioned market-data universe cannot use JANGAR_SYMBOLS_URL")
+          }
+          val configuredSymbols =
+            configuredStaticSymbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+          val canonicalSymbols =
+            configuredSymbols.distinct().sorted()
+          if (configuredSymbols != canonicalSymbols) {
+            error("SYMBOLS must be unique and canonically sorted for a versioned market-data universe")
+          }
+          if (configuredAllowlistSymbols != canonicalSymbols) {
+            error("SYMBOLS_ALLOWLIST must exactly match SYMBOLS for a versioned market-data universe")
+          }
+          val actualHash = canonicalSymbolHash(canonicalSymbols)
+          if (expectedHash != actualHash) {
+            error("MARKET_DATA_UNIVERSE_SYMBOL_HASH does not match canonical SYMBOLS")
+          }
+          MarketDataUniverseContract(id = id, symbolHash = actualHash, symbols = canonicalSymbols)
+        }
 
       val topics =
         TopicConfig(
@@ -246,6 +298,7 @@ data class ForwarderConfig(
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
         symbolAllowlist = symbolAllowlist,
+        universeContract = universeContract,
         symbolsPollIntervalMs = symbolsPollIntervalMs,
         subscribeBatchSize = subscribeBatchSize,
         shardCount = shardCount,

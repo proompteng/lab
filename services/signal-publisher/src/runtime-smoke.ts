@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import process from 'node:process'
 
 const [entrypoint, sourceRevision, imageRepository] = process.argv.slice(2)
@@ -6,6 +7,9 @@ const [entrypoint, sourceRevision, imageRepository] = process.argv.slice(2)
 if (!entrypoint || !sourceRevision || !imageRepository) {
   throw new Error('usage: runtime-smoke ENTRYPOINT SOURCE_REVISION IMAGE_REPOSITORY')
 }
+
+const symbols = 'SPY'
+const symbolHash = createHash('sha256').update(symbols).digest('hex')
 
 const result = spawnSync('node', [entrypoint, 'daily'], {
   encoding: 'utf8',
@@ -19,7 +23,9 @@ const result = spawnSync('node', [entrypoint, 'daily'], {
     SIGNAL_ALPACA_TRADING_URL: 'http://127.0.0.1:1',
     APCA_API_KEY_ID: 'runtime-smoke',
     APCA_API_SECRET_KEY: 'runtime-smoke',
-    SIGNAL_SYMBOLS: 'SPY',
+    SIGNAL_UNIVERSE_ID: 'runtime-smoke-v1',
+    SIGNAL_UNIVERSE_SYMBOL_HASH: symbolHash,
+    SIGNAL_SYMBOLS: symbols,
     SIGNAL_START_DATE: '2026-07-17',
     SIGNAL_CODE_REVISION: sourceRevision,
     SIGNAL_IMAGE_REPOSITORY: imageRepository,

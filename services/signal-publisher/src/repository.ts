@@ -33,6 +33,7 @@ const Hash = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const SourceRevision = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/))
 const ImageRepository = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
+const UniverseId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/))
 const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
 const FinalizedAt = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/))
 
@@ -68,6 +69,8 @@ const ManifestRowSchema = Schema.Struct({
   publisher_source_revision: SourceRevision,
   publisher_image_repository: ImageRepository,
   publisher_image_digest: ImageDigest,
+  universe_id: UniverseId,
+  universe_symbol_hash: Hash,
   provider: Schema.Literal(provider),
   source_feed: Schema.Literals(['iex', 'sip']),
   adjustment: Schema.Literal(adjustment),
@@ -85,9 +88,10 @@ const ManifestRowSchema = Schema.Struct({
   finalized_at: FinalizedAt,
 })
 
-const decodeBars = Schema.decodeUnknownSync(Schema.Array(BarRowSchema))
-const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SessionRowSchema))
-const decodeManifests = Schema.decodeUnknownSync(Schema.Array(ManifestRowSchema))
+const decodeBars = (input: unknown): readonly BarRow[] => Schema.decodeUnknownSync(Schema.Array(BarRowSchema))(input)
+const decodeSessions = (input: unknown): readonly SessionRow[] =>
+  Schema.decodeUnknownSync(Schema.Array(SessionRowSchema))(input)
+const decodeManifestRows = Schema.decodeUnknownSync(Schema.Array(ManifestRowSchema))
 
 const asCount = (value: string | number, name: string): number => {
   const parsed = typeof value === 'number' ? value : Number(value)
@@ -137,7 +141,7 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
         ORDER BY session_date, symbol
       `.pipe(
         storage('failed to read staged bars'),
-        Effect.flatMap((rows) => decodeReadback('bar rows', () => decodeBars(rows) as readonly BarRow[])),
+        Effect.flatMap((rows) => decodeReadback('bar rows', () => decodeBars(rows))),
       )
 
     const loadSessions = (snapshotId: string): Effect.Effect<readonly SessionRow[], PublicationError> =>
@@ -155,9 +159,7 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
         ORDER BY session_date
       `.pipe(
         storage('failed to read staged exchange sessions'),
-        Effect.flatMap((rows) =>
-          decodeReadback('exchange-session rows', () => decodeSessions(rows) as readonly SessionRow[]),
-        ),
+        Effect.flatMap((rows) => decodeReadback('exchange-session rows', () => decodeSessions(rows))),
       )
 
     const loadManifests = (snapshotId: string): Effect.Effect<readonly ManifestRow[], PublicationError> =>
@@ -168,6 +170,8 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
           publisher_source_revision,
           publisher_image_repository,
           publisher_image_digest,
+          universe_id,
+          universe_symbol_hash,
           provider,
           source_feed,
           adjustment,
@@ -183,21 +187,19 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
           sessions_content_hash,
           manifest_content_hash,
           toString(finalized_at) AS finalized_at
-        FROM signal.snapshot_manifests_v1
+        FROM signal.snapshot_manifests_v2
         WHERE snapshot_id = ${sql.param('String', snapshotId)}
         ORDER BY finalized_at
       `.pipe(
         storage('failed to read snapshot manifest'),
         Effect.flatMap((rows) =>
-          decodeReadback(
-            'manifest rows',
-            () =>
-              decodeManifests(rows).map((row) => ({
-                ...row,
-                symbol_count: asCount(row.symbol_count, 'symbol_count'),
-                session_count: asCount(row.session_count, 'session_count'),
-                bar_count: asCount(row.bar_count, 'bar_count'),
-              })) as readonly ManifestRow[],
+          decodeReadback('manifest rows', () =>
+            decodeManifestRows(rows).map((row) => ({
+              ...row,
+              symbol_count: asCount(row.symbol_count, 'symbol_count'),
+              session_count: asCount(row.session_count, 'session_count'),
+              bar_count: asCount(row.bar_count, 'bar_count'),
+            })),
           ),
         ),
       )
@@ -226,6 +228,6 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
       loadManifests,
       insertBars: (snapshotId, rows) => insert('signal.adjusted_daily_bars_v2', snapshotId, 'bars', rows),
       insertSessions: (snapshotId, rows) => insert('signal.exchange_sessions_v1', snapshotId, 'sessions', rows),
-      insertManifest: (row) => insert('signal.snapshot_manifests_v1', row.snapshot_id, 'manifest', [row]),
+      insertManifest: (row) => insert('signal.snapshot_manifests_v2', row.snapshot_id, 'manifest', [row]),
     }
   })

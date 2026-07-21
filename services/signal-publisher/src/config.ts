@@ -1,6 +1,6 @@
 import { Config, Effect, Redacted, Schema, SchemaTransformation } from 'effect'
 
-import { IsoDateSchema, type IsoDate, type PublisherProvenance } from './domain'
+import { canonicalSymbolHash, IsoDateSchema, type IsoDate, type PublisherProvenance } from './domain'
 
 declare const __SIGNAL_PUBLISHER_BUILD_SOURCE_REVISION__: string | undefined
 declare const __SIGNAL_PUBLISHER_BUILD_IMAGE_REPOSITORY__: string | undefined
@@ -24,6 +24,10 @@ export interface PublisherConfig {
     readonly feed: 'iex' | 'sip'
   }
   readonly symbols: readonly string[]
+  readonly universe: {
+    readonly id: string
+    readonly symbolHash: string
+  }
   readonly startDate: IsoDate
   readonly calendarVersion: string
   readonly finalizationLagMinutes: number
@@ -44,6 +48,8 @@ const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
 const SourceRevision = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/))
 const ImageRepository = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
+const UniverseId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/))
+const SymbolHash = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const SymbolList = Schema.Trim.pipe(
   Schema.decodeTo(
@@ -83,6 +89,8 @@ const rawConfig = Config.all({
   alpacaSecret: secretString('APCA_API_SECRET_KEY'),
   feed: Config.literals(['iex', 'sip'], 'SIGNAL_ALPACA_FEED').pipe(Config.withDefault('sip')),
   symbols: Config.schema(SymbolList, 'SIGNAL_SYMBOLS'),
+  universeId: Config.schema(UniverseId, 'SIGNAL_UNIVERSE_ID'),
+  universeSymbolHash: Config.schema(SymbolHash, 'SIGNAL_UNIVERSE_SYMBOL_HASH'),
   startDate: Config.schema(IsoDateSchema, 'SIGNAL_START_DATE'),
   calendarVersion: nonEmptyString('SIGNAL_CALENDAR_VERSION').pipe(Config.withDefault('alpaca-us-equity-calendar-v1')),
   finalizationLagMinutes: positiveInteger('SIGNAL_FINALIZATION_LAG_MINUTES', 90),
@@ -116,6 +124,9 @@ export const loadConfig = (
           for (const symbol of symbols) {
             if (!/^[A-Z][A-Z0-9.-]{0,14}$/.test(symbol)) throw new Error(`invalid symbol: ${symbol}`)
           }
+          if (config.universeSymbolHash !== canonicalSymbolHash(symbols)) {
+            throw new Error('SIGNAL_UNIVERSE_SYMBOL_HASH does not match canonical SIGNAL_SYMBOLS')
+          }
           return {
             clickhouse: {
               url: httpUrl(config.clickhouseUrl, 'SIGNAL_CLICKHOUSE_URL'),
@@ -130,6 +141,10 @@ export const loadConfig = (
               feed: config.feed,
             },
             symbols,
+            universe: {
+              id: config.universeId,
+              symbolHash: config.universeSymbolHash,
+            },
             startDate: config.startDate as IsoDate,
             calendarVersion: config.calendarVersion,
             finalizationLagMinutes: config.finalizationLagMinutes,

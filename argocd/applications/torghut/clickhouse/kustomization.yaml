@@ -13,6 +13,7 @@ resources:
   - clickhouse-service.yaml
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
+  - bayn-universe-v1-configmap.yaml
   - signal-publisher-cronjob.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher

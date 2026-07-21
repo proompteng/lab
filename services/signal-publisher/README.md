@@ -1,10 +1,13 @@
 # Signal Publisher
 
-Publishes finalized, content-addressed Alpaca consolidated-SIP adjusted-daily snapshots and exchange-session manifests
-to Signal ClickHouse. It is the only writer for its three owned tables; Bayn consumes them read-only.
+Publishes finalized, content-addressed Alpaca adjusted-daily snapshots and exchange-session manifests to Signal
+ClickHouse. The feed, versioned universe ID, and canonical symbol hash are explicit in every V2 snapshot; production
+uses delayed consolidated SIP after the session is finalized. It is the only writer for its three current publication
+tables, and Bayn consumes them read-only.
 
 The same binary supports `daily` and the explicitly bounded `backfill --start DATE --end DATE` command. Production
-runs use the GitOps CronJob and an immutable promoted image. See
+runs use immutable promoted images. The one-shot backfill and scheduled writer are activated separately and never run
+concurrently. See
 [`docs/bayn/signal-adjusted-daily-publications.md`](../../docs/bayn/signal-adjusted-daily-publications.md) for the data
 contract and operating procedure.
 

@@ -14,10 +14,11 @@ is replaced incrementally before any paper mutation work begins.
 ## Critical path
 
 1. A Signal-owned publisher captures adjusted daily bars and exchange sessions into an immutable snapshot and writes
-   its manifest last. Historical and daily modes use the same validation and finalization path.
-2. The runtime's dedicated ClickHouse identity has `SELECT` only. The Effect ClickHouse client reads one configured
-   manifest and its rows from the fixed `snapshot_manifests_v1`, `exchange_sessions_v1`, and `adjusted_daily_bars_v2`
-   tables using typed parameters and sequentially consistent reads.
+   its manifest last. Historical and daily modes use the same validation and finalization path. V2 manifests also bind
+   the authoritative universe ID and canonical symbol hash.
+2. The runtime's dedicated ClickHouse identity has `SELECT` only. The currently pinned TSMOM evidence reads V1
+   manifests; the staged universe publication uses `snapshot_manifests_v2`, `exchange_sessions_v1`, and
+   `adjusted_daily_bars_v2`. A later strategy integration must explicitly move Bayn to that V2 contract.
 3. Bayn reproduces the publisher's manifest, session, bar, and snapshot hashes; rejects mixed, duplicate, unexpected,
    incomplete, future, or out-of-bound input; and emits a bounded immutable input manifest.
 4. The committed `tsmom-v1` protocol forms signals at month-end close and executes at the next common session open.
@@ -35,8 +36,9 @@ broker secret, or Kubernetes API token. `maxSurge: 0` prevents overlapping runti
 
 ## Reproducibility
 
-The executable embeds its full source revision, OCI repository, and a behavior hash derived from the reviewed strategy
-and hashing sources. Startup strictly decodes the committed TSMOM parameter JSON, hashes the decoded value with
+The executable embeds its full source revision, OCI repository, and the versioned selected-strategy behavior identity.
+The TSMOM identity is guarded by a deterministic evaluator fingerprint so behavior-preserving refactors do not break a
+pinned qualification. Startup strictly decodes the committed TypeScript protocol, hashes the decoded value with
 canonical JSON, and refuses to run when configured source/repository attribution differs from the embedded build.
 GitOps supplies the immutable image-index digest after publication. Status and the in-memory evidence envelope expose
 all of those facts and their contract versions.

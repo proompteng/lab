@@ -18,11 +18,13 @@ export interface ReleaseIdentity {
 export interface SignalPublisherManifests {
   readonly kustomization: string
   readonly cronJob: string
+  readonly backfillJob: string
 }
 
 interface UpdateFilesOptions extends ReleaseIdentity {
   readonly kustomizationPath: string
   readonly cronJobPath: string
+  readonly backfillJobPath: string
 }
 
 const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string, name: string): string => {
@@ -51,38 +53,41 @@ export const updateSignalPublisherManifests = (
     'Signal publisher image block',
   )
 
-  let cronJob = replaceExactlyOnce(
-    manifests.cronJob,
-    /(^  suspend: )(?:true|false)$/m,
-    '$1false',
-    'Signal publisher suspend state',
-  )
-  cronJob = replaceExactlyOnce(
-    cronJob,
-    /(                - name: SIGNAL_CODE_REVISION\n                  value: )[^\n]+/,
-    `$1${JSON.stringify(release.sourceSha)}`,
-    'SIGNAL_CODE_REVISION value',
-  )
-  cronJob = replaceExactlyOnce(
-    cronJob,
-    /(                - name: SIGNAL_IMAGE_DIGEST\n                  value: )[^\n]+/,
-    `$1${release.digest}`,
-    'SIGNAL_IMAGE_DIGEST value',
-  )
-  return { kustomization, cronJob }
+  const pinProvenance = (manifest: string, name: string): string => {
+    const withRevision = replaceExactlyOnce(
+      manifest,
+      /(^[ \t]+- name: SIGNAL_CODE_REVISION\n[ \t]+value: )[^\n]+/m,
+      `$1${JSON.stringify(release.sourceSha)}`,
+      `${name} SIGNAL_CODE_REVISION value`,
+    )
+    return replaceExactlyOnce(
+      withRevision,
+      /(^[ \t]+- name: SIGNAL_IMAGE_DIGEST\n[ \t]+value: )[^\n]+/m,
+      `$1${release.digest}`,
+      `${name} SIGNAL_IMAGE_DIGEST value`,
+    )
+  }
+
+  const cronJob = pinProvenance(manifests.cronJob, 'Signal publisher CronJob')
+  const backfillJob = pinProvenance(manifests.backfillJob, 'Signal publisher backfill Job')
+  return { kustomization, cronJob, backfillJob }
 }
 
 const updateFiles = (options: UpdateFilesOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem
-    const [kustomization, cronJob] = yield* Effect.all([
+    const [kustomization, cronJob, backfillJob] = yield* Effect.all([
       fileSystem.readFileString(options.kustomizationPath),
       fileSystem.readFileString(options.cronJobPath),
+      fileSystem.readFileString(options.backfillJobPath),
     ])
-    const updated = yield* Effect.try(() => updateSignalPublisherManifests(options, { kustomization, cronJob }))
+    const updated = yield* Effect.try(() =>
+      updateSignalPublisherManifests(options, { kustomization, cronJob, backfillJob }),
+    )
     yield* Effect.all([
       fileSystem.writeFileString(options.kustomizationPath, updated.kustomization),
       fileSystem.writeFileString(options.cronJobPath, updated.cronJob),
+      fileSystem.writeFileString(options.backfillJobPath, updated.backfillJob),
     ])
   })
 
@@ -108,6 +113,7 @@ const parseArguments = (argv: readonly string[]): UpdateFilesOptions => {
     digest: required('--digest'),
     kustomizationPath: 'argocd/applications/torghut/clickhouse/kustomization.yaml',
     cronJobPath: 'argocd/applications/torghut/clickhouse/signal-publisher-cronjob.yaml',
+    backfillJobPath: 'argocd/applications/torghut/clickhouse/signal-publisher-bayn-v1-backfill-job.yaml',
   }
 }
 

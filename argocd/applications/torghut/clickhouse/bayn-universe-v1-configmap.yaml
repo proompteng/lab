@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-universe-v1
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: bayn-universe
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    bayn.proompteng.ai/contract: equity-infrastructure-v1
+data:
+  UNIVERSE_ID: equity-infrastructure-v1
+  UNIVERSE_SYMBOLS: AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC
+  UNIVERSE_SYMBOL_HASH: ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18
+  HISTORY_START_DATE: "2022-01-27"
+  HISTORY_FEED: sip

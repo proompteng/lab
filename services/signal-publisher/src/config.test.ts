@@ -13,6 +13,8 @@ const environment = {
   APCA_API_KEY_ID: 'key',
   APCA_API_SECRET_KEY: 'secret',
   SIGNAL_SYMBOLS: 'TLT,SPY',
+  SIGNAL_UNIVERSE_ID: 'equity-infrastructure-v1',
+  SIGNAL_UNIVERSE_SYMBOL_HASH: 'e21a3ab82277c13c426e9efdeac7e9ff774b8e7e34b1fa5d39a9f41552202c52',
   SIGNAL_START_DATE: '2017-01-01',
   SIGNAL_CODE_REVISION: sourceRevision,
   SIGNAL_IMAGE_REPOSITORY: imageRepository,
@@ -29,6 +31,10 @@ describe('Signal publisher config', () => {
     const config = await Effect.runPromise(provide(environment))
     expect(config.symbols).toEqual(['SPY', 'TLT'])
     expect(config.alpaca.feed).toBe('sip')
+    expect(config.universe).toEqual({
+      id: 'equity-infrastructure-v1',
+      symbolHash: 'e21a3ab82277c13c426e9efdeac7e9ff774b8e7e34b1fa5d39a9f41552202c52',
+    })
     expect(config.finalizationLagMinutes).toBe(90)
     expect(Redacted.isRedacted(config.alpaca.key)).toBe(true)
     expect(config.provenance).toEqual({
@@ -55,10 +61,14 @@ describe('Signal publisher config', () => {
     const invalidUrl = await Effect.runPromise(
       Effect.flip(provide({ ...environment, SIGNAL_CLICKHOUSE_URL: 'not-a-url' })),
     )
+    const mismatchedUniverse = await Effect.runPromise(
+      Effect.flip(provide({ ...environment, SIGNAL_UNIVERSE_SYMBOL_HASH: '0'.repeat(64) })),
+    )
 
     expect(missingBuild.message).toContain('compile-time build metadata')
     expect(mismatchedBuild.message).toContain('does not match embedded revision')
     expect(duplicateSymbols.message).toContain('contains duplicates')
     expect(invalidUrl.message).toContain('cannot be parsed as a URL')
+    expect(mismatchedUniverse.message).toContain('does not match canonical SIGNAL_SYMBOLS')
   })
 })

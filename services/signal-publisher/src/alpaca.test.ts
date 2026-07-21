@@ -20,6 +20,10 @@ const config: PublisherConfig = {
     feed: 'sip',
   },
   symbols: ['SPY', 'TLT'],
+  universe: {
+    id: 'equity-infrastructure-v1',
+    symbolHash: 'e21a3ab82277c13c426e9efdeac7e9ff774b8e7e34b1fa5d39a9f41552202c52',
+  },
   startDate: '2026-07-16',
   calendarVersion: 'alpaca-us-equity-calendar-v1',
   finalizationLagMinutes: 90,

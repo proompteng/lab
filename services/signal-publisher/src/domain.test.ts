@@ -33,6 +33,8 @@ const input = (overrides: Partial<BuildPublicationInput> = {}): BuildPublication
     { date: '2026-07-17', open: '09:30', close: '16:00' },
   ],
   symbols: ['SPY', 'TLT'],
+  universeId: 'equity-infrastructure-v1',
+  universeSymbolHash: 'e21a3ab82277c13c426e9efdeac7e9ff774b8e7e34b1fa5d39a9f41552202c52',
   feed: 'iex',
   calendarVersion: 'alpaca-us-equity-calendar-v1',
   requestedStart: '2026-07-16',
@@ -75,13 +77,17 @@ describe('Adjusted-daily snapshot domain', () => {
         finalizedAt: '2026-07-17 22:35:00.000',
       }),
     )
+    const renamedUniverse = buildPublication(input({ universeId: 'equity-infrastructure-v2' }))
 
     expect(first.manifest.snapshot_id).toBe(reordered.manifest.snapshot_id)
+    expect(first.manifest.snapshot_id).not.toBe(renamedUniverse.manifest.snapshot_id)
     expect(first.manifest.snapshot_id).toMatch(/^[a-f0-9]{64}$/)
     expect(Schema.decodeUnknownSync(SnapshotIdSchema)(first.manifest.snapshot_id)).toBe(first.manifest.snapshot_id)
     expect(first.manifest.manifest_content_hash).not.toBe(reordered.manifest.manifest_content_hash)
     expect(first.manifest).toMatchObject({
-      schema_version: 'signal.adjusted-daily-snapshot.v1',
+      schema_version: 'signal.adjusted-daily-snapshot.v2',
+      universe_id: 'equity-infrastructure-v1',
+      universe_symbol_hash: 'e21a3ab82277c13c426e9efdeac7e9ff774b8e7e34b1fa5d39a9f41552202c52',
       symbol_count: 2,
       session_count: 2,
       bar_count: 4,
@@ -92,6 +98,10 @@ describe('Adjusted-daily snapshot domain', () => {
   })
 
   test('rejects malformed, duplicate, non-session, and incomplete sessions', () => {
+    expect(() => buildPublication(input({ universeId: 'Equity Infrastructure' }))).toThrow('universe ID is invalid')
+    expect(() => buildPublication(input({ universeSymbolHash: '0'.repeat(64) }))).toThrow(
+      'universe symbol hash does not match canonical symbols',
+    )
     expect(() =>
       buildPublication(
         input({ barsBySymbol: { ...input().barsBySymbol, SPY: [{ ...bar('2026-07-17', 621), l: 700 }] } }),

@@ -22,7 +22,22 @@ on:
         type: string
 
 concurrency:
-  group: torghut-ws-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  group: >-
+    torghut-ws-release-${{
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          (
+            github.event.workflow_run.event == 'push' ||
+            github.event.workflow_run.event == 'workflow_dispatch'
+          )
+        )
+      ) &&
+      'current' ||
+      github.run_id
+    }}
   cancel-in-progress: true
 
 jobs:
@@ -30,7 +45,14 @@ jobs:
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
-        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          (
+            github.event.workflow_run.event == 'push' ||
+            github.event.workflow_run.event == 'workflow_dispatch'
+          )
+        )
       }}
     runs-on: arc-arm64
     permissions:
@@ -270,7 +292,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-ws-release-${{ steps.meta.outputs.tag }}
+          branch: codex/torghut-ws-release-current
           base: main
           title: 'chore(torghut): promote ws image ${{ steps.meta.outputs.tag }}'
           commit-message: 'chore(torghut): promote ws image ${{ steps.meta.outputs.tag }}'

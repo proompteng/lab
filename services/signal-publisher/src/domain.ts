@@ -5,7 +5,7 @@ import { Schema } from 'effect'
 export const provider = 'alpaca' as const
 export const adjustment = 'all' as const
 export const calendarTimeZone = 'America/New_York' as const
-export const manifestSchemaVersion = 'signal.adjusted-daily-snapshot.v1' as const
+export const manifestSchemaVersion = 'signal.adjusted-daily-snapshot.v2' as const
 
 const validIsoDate = (value: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -96,6 +96,8 @@ export interface ManifestRow {
   readonly publisher_source_revision: string
   readonly publisher_image_repository: string
   readonly publisher_image_digest: string
+  readonly universe_id: string
+  readonly universe_symbol_hash: string
   readonly provider: typeof provider
   readonly source_feed: 'iex' | 'sip'
   readonly adjustment: typeof adjustment
@@ -123,6 +125,8 @@ export interface BuildPublicationInput {
   readonly barsBySymbol: Readonly<Record<string, readonly AlpacaBar[]>>
   readonly calendar: readonly AlpacaCalendarSession[]
   readonly symbols: readonly string[]
+  readonly universeId: string
+  readonly universeSymbolHash: string
   readonly feed: 'iex' | 'sip'
   readonly calendarVersion: string
   readonly requestedStart: IsoDate
@@ -207,11 +211,18 @@ const validateSymbols = (symbols: readonly string[]): readonly string[] => {
   return normalized
 }
 
+export const canonicalSymbolHash = (symbols: readonly string[]): string =>
+  createHash('sha256').update(validateSymbols(symbols).join(',')).digest('hex')
+
 const manifestHash = (manifest: Omit<ManifestRow, 'manifest_content_hash'>): string =>
   hashJson(manifest as unknown as Json)
 
 export const buildPublication = (input: BuildPublicationInput): Publication => {
   const symbols = validateSymbols(input.symbols)
+  if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(input.universeId)) reject('universe ID is invalid')
+  if (input.universeSymbolHash !== canonicalSymbolHash(symbols)) {
+    reject('universe symbol hash does not match canonical symbols')
+  }
   if (input.requestedStart > input.publicationAsOf) reject('requested start must not be after publication as-of')
   if (
     !/^\d{4}-\d{2}-\d{2} (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}$/.test(input.finalizedAt) ||
@@ -281,6 +292,8 @@ export const buildPublication = (input: BuildPublicationInput): Publication => {
   const sessionsContentHash = hashJson(sessionsWithoutSnapshot as unknown as Json)
   const snapshotIdentity = {
     schemaVersion: manifestSchemaVersion,
+    universeId: input.universeId,
+    universeSymbolHash: input.universeSymbolHash,
     provider,
     feed: input.feed,
     adjustment,
@@ -294,20 +307,26 @@ export const buildPublication = (input: BuildPublicationInput): Publication => {
   const snapshotId = hashJson(snapshotIdentity)
   const bars = barsWithoutSnapshot.map((bar) => ({ snapshot_id: snapshotId, ...bar }))
   const sessions = sessionsWithoutSnapshot.map((session) => ({ snapshot_id: snapshotId, ...session }))
+  const firstSession = sessions[0]
+  if (firstSession === undefined) reject('calendar returned no exchange sessions')
+  const lastSession = sessions[sessions.length - 1]
+  if (lastSession === undefined) reject('calendar returned no exchange sessions')
   const manifestWithoutHash: Omit<ManifestRow, 'manifest_content_hash'> = {
     snapshot_id: snapshotId,
     schema_version: manifestSchemaVersion,
     publisher_source_revision: input.provenance.sourceRevision,
     publisher_image_repository: input.provenance.imageRepository,
     publisher_image_digest: input.provenance.imageDigest,
+    universe_id: input.universeId,
+    universe_symbol_hash: input.universeSymbolHash,
     provider,
     source_feed: input.feed,
     adjustment,
     calendar_version: input.calendarVersion,
     requested_start: input.requestedStart,
     publication_asof: input.publicationAsOf,
-    first_session: sessions[0].session_date,
-    last_session: sessions.at(-1)!.session_date,
+    first_session: firstSession.session_date,
+    last_session: lastSession.session_date,
     symbol_count: symbols.length,
     session_count: sessions.length,
     bar_count: bars.length,

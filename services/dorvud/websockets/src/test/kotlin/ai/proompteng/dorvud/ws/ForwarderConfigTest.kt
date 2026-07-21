@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 
 class ForwarderConfigTest {
   @Test
@@ -46,6 +47,83 @@ class ForwarderConfigTest {
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
     assertEquals(emptySet(), cfg.optionsMarketHolidays)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
+    assertNull(cfg.universeContract)
+  }
+
+  @Test
+  fun `binds a versioned static universe to its canonical symbol hash`() {
+    val symbols = "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC"
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "SYMBOLS" to symbols,
+          "SYMBOLS_ALLOWLIST" to symbols,
+          "MARKET_DATA_UNIVERSE_ID" to "equity-infrastructure-v1",
+          "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to
+            "ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18",
+        ),
+      )
+
+    assertEquals(
+      MarketDataUniverseContract(
+        id = "equity-infrastructure-v1",
+        symbolHash = "ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18",
+        symbols = listOf("AMD", "AVGO", "COHR", "CRDO", "LITE", "MRVL", "MU", "NVDA", "WDC"),
+      ),
+      cfg.universeContract,
+    )
+  }
+
+  @Test
+  fun `rejects drift in a versioned static universe`() {
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "AMD,NVDA",
+        "SYMBOLS_ALLOWLIST" to "AMD,NVDA",
+        "MARKET_DATA_UNIVERSE_ID" to "equity-infrastructure-v1",
+        "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(listOf("AMD", "NVDA")),
+      )
+
+    assertEquals(
+      "MARKET_DATA_UNIVERSE_SYMBOL_HASH does not match canonical SYMBOLS",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("MARKET_DATA_UNIVERSE_SYMBOL_HASH" to "0".repeat(64)))
+      }.message,
+    )
+    assertEquals(
+      "MARKET_DATA_UNIVERSE_ID must be a versioned lowercase identifier",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("MARKET_DATA_UNIVERSE_ID" to "Equity Infrastructure V1"))
+      }.message,
+    )
+    assertEquals(
+      "SYMBOLS_ALLOWLIST must exactly match SYMBOLS for a versioned market-data universe",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("SYMBOLS_ALLOWLIST" to "AMD"))
+      }.message,
+    )
+    assertEquals(
+      "SYMBOLS_ALLOWLIST must exactly match SYMBOLS for a versioned market-data universe",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("SYMBOLS_ALLOWLIST" to "NVDA,AMD"))
+      }.message,
+    )
+    assertEquals(
+      "SYMBOLS_ALLOWLIST must exactly match SYMBOLS for a versioned market-data universe",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("SYMBOLS_ALLOWLIST" to "AMD,NVDA,NVDA"))
+      }.message,
+    )
+    assertEquals(
+      "a versioned market-data universe cannot use JANGAR_SYMBOLS_URL",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("JANGAR_SYMBOLS_URL" to "http://jangar.test/symbols"))
+      }.message,
+    )
   }
 
   @Test

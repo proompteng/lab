@@ -273,7 +273,8 @@ class ForwarderApp(
       scope.launch {
         logger.info {
           "dorvud-ws starting shard=${config.shardIndex}/${config.shardCount} " +
-            "jangarSymbolsUrl=${config.jangarSymbolsUrl} channels=${config.alpacaMarketDataChannels}"
+            "jangarSymbolsUrl=${config.jangarSymbolsUrl} channels=${config.alpacaMarketDataChannels} " +
+            "universeId=${config.universeContract?.id} universeSymbolHash=${config.universeContract?.symbolHash}"
         }
         val producer = producerFactory(config)
         val seq = SeqTracker()
@@ -379,6 +380,14 @@ class ForwarderApp(
       gates = gates,
       alpacaMarketDataWs = marketDataWsStatus.get(),
       marketDataChannels = channelSnapshot,
+      marketDataUniverse =
+        config.universeContract?.let { contract ->
+          MarketDataUniverseInfo(
+            id = contract.id,
+            symbolHash = contract.symbolHash,
+            symbols = contract.symbols,
+          )
+        },
     )
   }
 
