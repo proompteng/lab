@@ -59,7 +59,7 @@ spec:
                 *) echo 'migration preview did not prove that secret migration is disabled' >&2; exit 1 ;;
               esac
               case "$migration_output" in
-                *"Conflicts ("*|*" conflict(s)"*|*"Refusing to apply"*|*"Migration preview failed"*|*"OpenClaw directory not found"*)
+                *"Conflicts ("*|*" conflict(s)"*|*"Refusing to apply"*|*"Migration preview failed"*|*"directory not found"*)
                   echo 'migration preview contains a conflict or refusal' >&2
                   exit 1
                   ;;
@@ -101,12 +101,20 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/data
+            - name: config
+              mountPath: /opt/data/config.yaml
+              subPath: config.yaml
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: data-hermes-0
+        - name: config
+          configMap:
+            name: hermes-operation-config
+            defaultMode: 0444
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi

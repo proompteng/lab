@@ -7,6 +7,11 @@ configMapGenerator:
   - name: hermes-config
     files:
       - config.yaml
+  - name: hermes-operation-config
+    files:
+      - config.yaml
+    options:
+      disableNameSuffixHash: true
   - name: hermes-bootstrap
     files:
       - bootstrap.sh

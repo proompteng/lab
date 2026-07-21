@@ -581,6 +581,15 @@ test('rejects an apply Job without runtime proof that secrets are disabled', asy
   )
 })
 
+test('rejects migration Jobs without the stable production config', async () => {
+  const files = await loadProductionFiles()
+  files.migrationApply = files.migrationApply.replace('name: hermes-operation-config', 'name: missing-config')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.migrationApply}: missing production invariant "name: hermes-operation-config"`,
+  )
+})
+
 test('rejects restore archive selection that expands the glob on the operator host', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(

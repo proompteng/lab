@@ -412,7 +412,9 @@ unset stale_maintenance_holder
 4. If the preview is correct, use the same shell and Lease to run the apply Job. Preserve its Job name, log, report summary,
    and generated restore-point archive as migration evidence. The Job verifies its current JSON report, zero
    conflicts/errors, excluded secrets, untouched GitOps-owned identity files, and a current restore point before it can
-   complete. Keep the Lease held for the final resync:
+   complete. It also requires the report to use the production `memory_char_limit` of `4400`; the stable read-only
+   `hermes-operation-config` is generated from the same `config.yaml` mounted by the gateway. Keep the Lease held for the
+   final resync:
 
    ```bash
    set -euo pipefail
