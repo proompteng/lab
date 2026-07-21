@@ -133,6 +133,11 @@ jobs:
             echo "reason=source commit is not an ancestor of main" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          source_version="$(git describe --tags --always "${source_sha}")"
+          if [[ -z "${source_version}" ]]; then
+            echo "Failed to derive source version for ${source_sha}" >&2
+            exit 2
+          fi
 
           case "${SERVICE}" in
             oirat)
@@ -159,6 +164,7 @@ jobs:
             echo "tag=${tag}"
             echo "digest=${digest}"
             echo "source_sha=${source_sha}"
+            echo "source_version=${source_version}"
             echo "package_attr=${package_attr}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -177,6 +183,7 @@ jobs:
           IMAGE: ${{ steps.meta.outputs.image }}
           DIGEST: ${{ steps.meta.outputs.digest }}
           SOURCE_SHA: ${{ steps.meta.outputs.source_sha }}
+          SOURCE_VERSION: ${{ steps.meta.outputs.source_version }}
         run: |
           set -euo pipefail
           case "${SERVICE}" in
@@ -198,8 +205,11 @@ jobs:
               image_ref="${IMAGE}@${DIGEST}"
               path="argocd/applications/froussard/knative-service.yaml"
               IMAGE_REF="${image_ref}" perl -0pi -e 's#image:\s+registry\.ide-newton\.ts\.net/lab/froussard(?::[A-Za-z0-9_.-]+|\@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' "${path}"
+              SOURCE_VERSION="${SOURCE_VERSION}" perl -0pi -e 's#(name:\s+FROUSSARD_VERSION\s*\n\s*value:\s*).*#$1$ENV{SOURCE_VERSION}#g' "${path}"
               SOURCE_SHA="${SOURCE_SHA}" perl -0pi -e 's#(name:\s+FROUSSARD_COMMIT\s*\n\s*value:\s*).*#$1$ENV{SOURCE_SHA}#g' "${path}"
               grep -F "image: ${image_ref}" "${path}"
+              grep -F "value: ${SOURCE_VERSION}" "${path}"
+              grep -F "value: ${SOURCE_SHA}" "${path}"
               ;;
           esac
 
@@ -216,6 +226,7 @@ jobs:
 
             - Promote `${{ steps.meta.outputs.service }}` to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
             - Source commit: `${{ steps.meta.outputs.source_sha }}`.
+            - Source version: `${{ steps.meta.outputs.source_version }}`.
             - Built by the shared Nix OCI workflow without Docker Buildx.
 
             ## Related Issues
