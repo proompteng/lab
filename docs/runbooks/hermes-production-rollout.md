@@ -84,8 +84,8 @@ The expected mirrored amd64 manifest digest is
    set -euo pipefail
    argocd app get hermes --refresh
    argocd app sync hermes --prune=false
-   kubectl -n hermes get namespace hermes \
-     -l observability.proompteng.ai/hermes-rollout-enabled=true -o name | grep -qx namespace/hermes
+   kubectl -n hermes get namespace hermes -o json |
+     jq -e '.metadata.labels["observability.proompteng.ai/hermes-rollout-enabled"] == "true"'
    hermes_deployed_revision=$(kubectl -n argocd get application hermes -o json | jq -r '.status.history[-1].revision // empty')
    test "$hermes_deployed_revision" = "$(git rev-parse HEAD)"
    kubectl -n hermes wait externalsecret/hermes-api-auth --for=condition=Ready --timeout=5m
@@ -285,10 +285,12 @@ from a new private shell if the fail-fast process has already exited. ExternalSe
 
 ## Maintenance lock recovery
 
-Every migration and restore shell acquires the fixed `hermes-maintenance` Lease before inspecting or mutating a PVC. Its
-four-hour duration exceeds the bounded backup wait, staging Pod, maintenance Job, and rollout windows. If an operator shell
-disconnects, do not clear the Lease while a maintenance Job is active. After every Job is terminal, recover the exact
-observed holder with compare-and-swap semantics, then restart the interrupted step:
+Every migration and restore shell acquires the fixed `hermes-maintenance` Lease before inspecting or mutating a PVC.
+Argo CD globally excludes Kubernetes Lease objects, so `maintenance-lock.sh acquire` atomically creates the canonical Lease on
+first use; competing creators still converge on one compare-and-swap lock. Its four-hour duration exceeds the bounded
+backup wait, staging Pod, maintenance Job, and rollout windows. If an operator shell disconnects, do not clear the Lease
+while a maintenance Job is active. After every Job is terminal, recover the exact observed holder with compare-and-swap
+semantics, then restart the interrupted step:
 
 ```bash
 set -euo pipefail

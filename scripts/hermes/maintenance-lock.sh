@@ -32,8 +32,33 @@ current_holder() {
   kubectl -n "$namespace" get lease "$lease" -o jsonpath='{.spec.holderIdentity}'
 }
 
+ensure_lease() {
+  if kubectl -n "$namespace" get lease "$lease" >/dev/null 2>&1; then
+    return
+  fi
+
+  if ! kubectl -n "$namespace" create -f - >/dev/null <<EOF
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: $lease
+  namespace: $namespace
+  labels:
+    app.kubernetes.io/name: hermes
+    app.kubernetes.io/component: maintenance
+spec:
+  holderIdentity: ""
+  leaseDurationSeconds: 14400
+EOF
+  then
+    # Another operator may have won the create race. Require the canonical Lease to exist before continuing.
+    kubectl -n "$namespace" get lease "$lease" >/dev/null
+  fi
+}
+
 case "$action" in
   acquire)
+    ensure_lease
     if ! patch_holder '' "$holder"; then
       echo 'Hermes maintenance Lease is already held' >&2
       exit 1
