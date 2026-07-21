@@ -40,6 +40,9 @@ smoke test, manifest change, and normal CI/Codex review.
 - The daily backup CronJob retains the latest 14 verified archives and retries failures independently from the gateway. Its
   first scheduled success and subsequent last-success timestamp are monitored on a 26-hour window without removing a
   healthy API endpoint.
+- The pinned backup process opens SQLite databases in read-only mode, but its data PVC mount is write-capable because WAL
+  readers must create or update shared-memory sidecars. The Pod has no service-account token and the wrapper rejects any
+  SQLite safe-copy fallback, verifies every archived database with `PRAGMA quick_check`, then publishes the SHA-256 sidecar.
 - OpenClaw's VM and PVC remain intact and stopped for at least 14 days after cutover. Do not run `hermes claw cleanup` during
   the rollback window.
 

@@ -91,7 +91,8 @@ spec:
               volumeMounts:
                 - name: data
                   mountPath: /opt/data
-                  readOnly: true
+                  # SQLite read-only WAL connections still create or update shared-memory sidecars.
+                  readOnly: false
                 - name: backups
                   mountPath: /opt/backups
                 - name: bootstrap
@@ -103,7 +104,7 @@ spec:
             - name: data
               persistentVolumeClaim:
                 claimName: data-hermes-0
-                readOnly: true
+                readOnly: false
             - name: backups
               persistentVolumeClaim:
                 claimName: backups-hermes-0

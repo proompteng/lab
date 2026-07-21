@@ -203,6 +203,33 @@ test('rejects publishing a backup archive before its verified checksum', async (
   )
 })
 
+test('rejects a read-only data mount that prevents SQLite WAL-safe backup', async () => {
+  const files = await loadProductionFiles()
+  files.backupCronJob = files.backupCronJob.replaceAll('readOnly: false', 'readOnly: true')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupCronJob}: missing production invariant "claimName: data-hermes-0\\n                readOnly: false"`,
+  )
+})
+
+test('rejects publishing a backup after SQLite falls back to a raw copy', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace('*"SQLite safe copy failed"*|', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupScript}: missing production invariant "*\\\"SQLite safe copy failed\\\"*|*\\\"Raw copy also failed\\\"*|*\\\"Warnings (\\\"*)"`,
+  )
+})
+
+test('rejects a backup without archived SQLite integrity checks', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace('connection.execute("PRAGMA quick_check")', '[("ok",)]')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.backupScript}: missing production invariant "connection.execute(\\\"PRAGMA quick_check\\\")"`,
+  )
+})
+
 test('rejects availability alerts that ignore missing metrics', async () => {
   const files = await loadProductionFiles()
   files.mimirRules = files.mimirRules.replace(
