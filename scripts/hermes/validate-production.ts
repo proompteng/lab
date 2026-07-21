@@ -725,7 +725,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'numeric Discord allowlist required',
     'test "${#discord_bot_token}" -ge 20',
     'case "$discord_allowed_users" in ""|,*|*,|*,,*|*[!0-9,]*) exit 1 ;; esac',
+    'test "$(systemctl --user show openclaw-gateway.service --property=KillMode --value)" = control-group',
     'systemctl --user stop openclaw-gateway.service',
+    'test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive',
+    'test "$(systemctl --user show openclaw-gateway.service --property=MainPID --value)" = 0',
     'repeat Phase 2 steps 1 through 4 from a fresh',
     '`hermes_stage_dir`',
     'Do not reuse the earlier archive.',
@@ -759,6 +762,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   forbidTerms(failures, productionPaths.runbook, cutoverSection, [
     'argocd app sync openclaw --prune=true',
     'allow_all_users: true',
+    'pgrep -f "[o]penclaw.*gateway"',
   ])
   if (cutoverSection.includes('kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete')) {
     failures.push(`${productionPaths.runbook}: cutover must treat an already-absent OpenClaw VMI as stopped`)

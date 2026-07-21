@@ -120,6 +120,21 @@ test('rejects stopping the source before Discord credentials are captured', asyn
   )
 })
 
+test('rejects a gateway quiescence check that matches its own remote shell', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'test "$(systemctl --user show openclaw-gateway.service --property=MainPID --value)" = 0',
+    'if pgrep -f "[o]penclaw.*gateway" >/dev/null; then exit 1; fi',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "test \\"$(systemctl --user show openclaw-gateway.service --property=MainPID --value)\\" = 0"`,
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "pgrep -f \\"[o]penclaw.*gateway\\""`,
+  )
+})
+
 test('rejects transferring the Discord token before the OpenClaw VMI is absent', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
