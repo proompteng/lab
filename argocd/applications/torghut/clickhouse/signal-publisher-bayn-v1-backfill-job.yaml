@@ -9,7 +9,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
-  suspend: true
+  suspend: false
   backoffLimit: 1
   activeDeadlineSeconds: 900
   template:
