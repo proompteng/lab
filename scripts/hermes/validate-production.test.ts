@@ -324,6 +324,18 @@ test('rejects a maintenance lock that cannot bootstrap the Argo-excluded Lease',
   )
 })
 
+test('rejects a Lease renewTime without Kubernetes MicroTime precision', async () => {
+  const files = await loadProductionFiles()
+  files.maintenanceLock = files.maintenanceLock.replace(
+    'date -u +%Y-%m-%dT%H:%M:%S.000000Z',
+    'date -u +%Y-%m-%dT%H:%M:%SZ',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.maintenanceLock}: missing production invariant "date -u +%Y-%m-%dT%H:%M:%S.000000Z"`,
+  )
+})
+
 test('rejects declaring the globally excluded maintenance Lease as an Argo resource', async () => {
   const files = await loadProductionFiles()
   files.kustomization = files.kustomization.replace(

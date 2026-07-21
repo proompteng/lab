@@ -356,6 +356,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'holderIdentity: ""',
     'leaseDurationSeconds: 14400',
     '    ensure_lease',
+    'date -u +%Y-%m-%dT%H:%M:%S.000000Z',
     '{op: "test", path: "/spec/holderIdentity", value: $expected}',
     '{op: "replace", path: "/spec/holderIdentity", value: $replacement}',
     'patch lease "$lease" --type=json',
