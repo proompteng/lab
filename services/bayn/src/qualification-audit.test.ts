@@ -4,6 +4,7 @@ import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import { auditQualification, type AuditDatabaseSnapshot, type QualificationAuditInput } from './qualification-audit'
+import { makeQualificationDossier, type QualificationDossier } from './qualification-dossier'
 import { makeTsmomStrategy } from './strategy-service'
 import { evaluateTsmom, summarizeEvaluation } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
@@ -431,5 +432,70 @@ describe('qualification audit', () => {
       expect(report.status, name).toBe('FAIL')
       expect(report.checks.find((check) => check.name === checkName)?.passed, name).toBe(false)
     }
+  })
+})
+
+describe('qualification dossier', () => {
+  test('keeps the committed GitOps artifact canonical and internally bound', async () => {
+    const dossier = (await Bun.file(
+      new URL('../../../argocd/applications/bayn/qualification-dossier.json', import.meta.url),
+    ).json()) as QualificationDossier
+    const { dossierHash, ...material } = dossier
+    const { auditHash, ...auditMaterial } = dossier.audit
+
+    expect(dossierHash).toBe(canonicalHashV1(material))
+    expect(auditHash).toBe(canonicalHashV1(auditMaterial))
+    expect(dossier.audit.status).toBe('PASS')
+    expect(dossier.audit.checks.every((check) => check.passed)).toBe(true)
+    expect(dossier.subject.run.runId).toBe(dossier.qualification.result.runId)
+    expect(dossier.subject.run.runId).toBe(dossier.audit.runId)
+    expect(dossier.authority.executable).toBe(dossier.qualification.result.verdict === 'QUALIFIED')
+  })
+
+  test('binds the complete audited subject deterministically', () => {
+    const first = makeQualificationDossier(fixture())
+    const second = makeQualificationDossier(fixture())
+    const { dossierHash, ...material } = first
+
+    expect(first.schemaVersion).toBe('bayn.qualification-dossier.v1')
+    expect(first.audit.status).toBe('PASS')
+    expect(first.audit.checks.every((check) => check.passed)).toBe(true)
+    expect(first.subject.run.runId).toBe(first.qualification.result.runId)
+    expect(first.subject.protocol.parameters).toEqual(fixtureProtocol)
+    expect(first.subject.inputManifest.finalizedSnapshot.snapshotId).toBe(first.subject.run.snapshotId)
+    expect(first.evidence.artifacts).toHaveLength(first.subject.run.artifactCount)
+    expect(first.evidence.events.count).toBe(first.subject.run.eventCount)
+    expect(first.evidence.gates.count).toBe(first.subject.run.gateCount)
+    expect(first.qualification.priorTrialSetHash).toBe(canonicalHashV1(first.qualification.priorTrialRunIds))
+    expect(first.authority).toEqual({
+      maximum: 'observe',
+      executable: false,
+      paperMutation: false,
+      brokerOrders: false,
+      capitalPromotion: false,
+    })
+    expect(dossierHash).toBe(canonicalHashV1(material))
+    expect(second.dossierHash).toBe(dossierHash)
+  })
+
+  test('refuses to publish a failed or mismatched audit', () => {
+    const failed = fixture()
+    expect(() =>
+      makeQualificationDossier({
+        ...failed,
+        repository: { ...failed.repository, sourceCommitAncestorOfMain: false },
+      }),
+    ).toThrow('qualification audit did not pass')
+
+    const mismatched = fixture()
+    expect(() =>
+      makeQualificationDossier({
+        ...mismatched,
+        database: {
+          ...mismatched.database,
+          run: { ...mismatched.database.run, artifactCount: mismatched.database.run.artifactCount + 1 },
+        },
+      }),
+    ).toThrow('qualification audit did not pass')
   })
 })

@@ -5,13 +5,14 @@ import { Cause, Clock, Duration, Effect, Exit, Layer, Option, Ref, Schedule } fr
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
-import type { FinalizedSnapshotProvenance, RuntimeProvenance } from './contracts'
+import { makeRuntimeProvenance, type FinalizedSnapshotProvenance, type RuntimeProvenance } from './contracts'
 import {
   EvidenceStore,
   type EvidenceStoreService,
   type PersistenceReceipt,
   type QualificationRecord,
   type RecoveredEvaluationEvidence,
+  type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { formatError, operationalError, type Component, type OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
@@ -23,7 +24,7 @@ import { Strategy } from './strategy-service'
 import type { EvaluationSummary, ReconciliationResult } from './types'
 
 export interface RuntimeEvidence {
-  readonly startupMode: 'evaluated' | 'recovered'
+  readonly startupMode: 'evaluated' | 'pinned' | 'recovered'
   readonly provenance: RuntimeProvenance
   readonly evaluation: EvaluationSummary
   readonly reconciliation: ReconciliationResult
@@ -125,11 +126,13 @@ const publicState = (
     },
     qualification: {
       status: state.evidence?.qualification.verdict ?? 'UNKNOWN',
+      executable: state.evidence?.qualification.verdict === 'QUALIFIED',
       lockId: state.evidence?.qualification.lockId ?? null,
       resultHash: state.evidence?.qualification.resultHash ?? null,
       analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
       candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
       reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
+      executionProvenance: state.evidence?.provenance ?? null,
     },
     accounting: {
       status: accounting,
@@ -264,6 +267,146 @@ const databaseOperation = <A, R>(effect: Effect.Effect<A, { readonly message: st
   effect.pipe(
     Effect.mapError((cause) => operationalError('database', operation, `PostgreSQL ${operation} failed`, cause)),
   )
+
+const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenance =>
+  makeRuntimeProvenance({
+    sourceRevision: stored.run.sourceRevision,
+    image: { repository: stored.run.imageRepository, digest: stored.run.imageDigest },
+    strategy: {
+      name: stored.protocol.strategyName,
+      behaviorHash: stored.protocol.behaviorHash,
+      parameterHash: stored.protocol.parameterHash,
+      parameterSchemaVersion: stored.protocol.schemaVersion,
+    },
+  })
+
+const recoverPinnedQualification = (
+  config: RuntimeConfig,
+  runId: string,
+  state: Ref.Ref<RuntimeState>,
+): Effect.Effect<void, OperationalError, Strategy | EvidenceStore> =>
+  Effect.gen(function* () {
+    const strategy = yield* Strategy
+    const evidenceStore = yield* EvidenceStore
+    yield* Effect.logInfo('Bayn pinned qualification recovery started').pipe(
+      Effect.annotateLogs({
+        service: 'bayn',
+        runId,
+        currentSourceRevision: config.build.sourceRevision,
+        currentImageDigest: config.build.imageDigest,
+      }),
+    )
+    const [storedOption, qualificationOption] = yield* withinDeadline(
+      databaseOperation(
+        Effect.all([evidenceStore.read(runId), evidenceStore.readQualification(runId)]),
+        'read-pinned-qualification',
+      ),
+      config.operationTimeoutMs,
+      'database',
+      'read-pinned-qualification',
+    )
+    if (Option.isNone(storedOption)) {
+      return yield* Effect.fail(
+        operationalError('database', 'read-pinned-qualification', `pinned evaluation ${runId} is missing`),
+      )
+    }
+    if (Option.isNone(qualificationOption) || qualificationOption.value.state !== 'TERMINAL') {
+      return yield* Effect.fail(
+        operationalError('database', 'read-pinned-qualification', `pinned qualification ${runId} is not terminal`),
+      )
+    }
+    const stored = storedOption.value
+    const qualification = qualificationOption.value
+    const executionProvenance = yield* Effect.try({
+      try: () => provenanceFromStored(stored),
+      catch: (cause) =>
+        operationalError(
+          'database',
+          'recover-pinned-qualification',
+          'stored qualification provenance is invalid',
+          cause,
+        ),
+    })
+    yield* Effect.try({
+      try: () => {
+        if (stored.run.runId !== runId || qualification.result.runId !== runId) {
+          throw new Error('stored evaluation and terminal qualification run IDs differ')
+        }
+        if (
+          canonicalHashV1(executionProvenance.strategy) !== canonicalHashV1(strategy.provenance.strategy) ||
+          canonicalHashV1(stored.protocol.parameters) !== canonicalHashV1(strategy.parameters)
+        ) {
+          throw new Error('compiled strategy differs from the pinned qualification protocol')
+        }
+        if (
+          qualification.lock.sourceRevision !== executionProvenance.sourceRevision ||
+          canonicalHashV1(qualification.lock.image) !== canonicalHashV1(executionProvenance.image)
+        ) {
+          throw new Error('qualification lock differs from the stored execution provenance')
+        }
+        if (
+          qualification.lock.data.snapshotId !== config.clickhouse.snapshotId ||
+          qualification.lock.data.lastSession !== config.clickhouse.publicationAsOf ||
+          qualification.lock.data.calendarVersion !== config.clickhouse.calendarVersion ||
+          canonicalHashV1(qualification.lock.data.bounds) !== canonicalHashV1(config.clickhouse.bounds)
+        ) {
+          throw new Error('configured Signal snapshot differs from the pinned qualification')
+        }
+      },
+      catch: (cause) =>
+        operationalError('database', 'recover-pinned-qualification', 'pinned qualification binding failed', cause),
+    })
+    const recoveredOption = yield* withinDeadline(
+      databaseOperation(evidenceStore.recover(runId, executionProvenance), 'recover-pinned-qualification'),
+      config.operationTimeoutMs,
+      'database',
+      'recover-pinned-qualification',
+    )
+    if (Option.isNone(recoveredOption)) {
+      return yield* Effect.fail(
+        operationalError('database', 'recover-pinned-qualification', `pinned evaluation ${runId} is missing`),
+      )
+    }
+    const recovered = recoveredOption.value
+    yield* Effect.try({
+      try: () => {
+        if (
+          recovered.evaluation.runId !== runId ||
+          recovered.reconciliation.runId !== runId ||
+          recovered.persistence.runId !== runId ||
+          canonicalHashV1(recovered.evaluation.verdict) !== canonicalHashV1(qualification.result.evaluationVerdict)
+        ) {
+          throw new Error('recovered evidence differs from the terminal qualification')
+        }
+      },
+      catch: (cause) =>
+        operationalError('database', 'recover-pinned-qualification', 'pinned qualification recovery failed', cause),
+    })
+    yield* Ref.update(
+      state,
+      (current): RuntimeState => ({
+        ...current,
+        evidence: {
+          startupMode: 'pinned',
+          provenance: executionProvenance,
+          evaluation: recovered.evaluation,
+          reconciliation: recovered.reconciliation,
+          persistence: recovered.persistence,
+          qualification: qualification.result,
+        },
+        error: null,
+      }),
+    )
+    yield* Effect.logInfo('Bayn pinned qualification recovered').pipe(
+      Effect.annotateLogs({
+        service: 'bayn',
+        runId,
+        qualification: qualification.result.verdict,
+        executionSourceRevision: executionProvenance.sourceRevision,
+        executionImageDigest: executionProvenance.image.digest,
+      }),
+    )
+  }).pipe(Effect.withLogSpan('startup'))
 
 const evaluateAndJournal = (
   config: RuntimeConfig,
@@ -477,7 +620,10 @@ export const initialize = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
 ): Effect.Effect<void, never, MarketData | Journal | Strategy | EvidenceStore> =>
-  evaluateAndJournal(config, state).pipe(Effect.catch((error) => failStartup(state, error)))
+  (config.qualificationRunId === undefined
+    ? evaluateAndJournal(config, state)
+    : recoverPinnedQualification(config, config.qualificationRunId, state)
+  ).pipe(Effect.catch((error) => failStartup(state, error)))
 
 interface ProbeResult<A> {
   readonly value: A | null

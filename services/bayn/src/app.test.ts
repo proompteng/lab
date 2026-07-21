@@ -143,6 +143,94 @@ const fixtureQualification = makeQualificationResult(
   fixtureEvaluation.verdict,
   fixtureStrategy.analyze(fixtureEvaluation, []),
 )
+const pinnedExecutionProvenance = {
+  ...provenance,
+  sourceRevision: 'e'.repeat(40),
+  image: { repository: provenance.image.repository, digest: `sha256:${'f'.repeat(64)}` },
+}
+const pinnedStrategy = makeTsmomStrategy(fixtureProtocol, pinnedExecutionProvenance)
+const pinnedEvaluation = pinnedStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+const pinnedLock = pinnedStrategy.prepareLock(
+  fixtureSnapshot.manifest,
+  [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
+  [],
+)
+const pinnedQualification = makeQualificationResult(
+  pinnedLock,
+  pinnedEvaluation.verdict,
+  pinnedStrategy.analyze(pinnedEvaluation, []),
+)
+const pinnedStoredEvidence: StoredEvaluationEvidence = {
+  protocol: {
+    protocolHash: pinnedEvaluation.protocolHash,
+    schemaVersion: fixtureProtocol.schemaVersion,
+    strategyName: pinnedExecutionProvenance.strategy.name,
+    behaviorHash: pinnedExecutionProvenance.strategy.behaviorHash,
+    parameterHash: pinnedExecutionProvenance.strategy.parameterHash,
+    parameters: fixtureProtocol,
+  },
+  run: {
+    runId: pinnedEvaluation.runId,
+    protocolHash: pinnedEvaluation.protocolHash,
+    snapshotId: fixtureSnapshot.manifest.finalizedSnapshot.snapshotId,
+    evaluationSchemaVersion: 'bayn.evaluation.v4',
+    sourceRevision: pinnedExecutionProvenance.sourceRevision,
+    imageRepository: pinnedExecutionProvenance.image.repository,
+    imageDigest: pinnedExecutionProvenance.image.digest,
+    strategyName: pinnedExecutionProvenance.strategy.name,
+    initialCapitalMicros: pinnedEvaluation.initialCapitalMicros,
+    artifactCount: 17,
+    eventCount: pinnedEvaluation.events.length,
+    gateCount: pinnedEvaluation.verdict.gates.length,
+  },
+  artifacts: [],
+  events: [],
+  gates: [],
+  statuses: [],
+}
+const pinnedRuntimeConfig: RuntimeConfig = {
+  ...config,
+  qualificationRunId: pinnedEvaluation.runId,
+  clickhouse: {
+    ...config.clickhouse,
+    snapshotId: fixtureSnapshot.manifest.finalizedSnapshot.snapshotId,
+    publicationAsOf: fixtureSnapshot.manifest.finalizedSnapshot.asOfSession,
+    calendarVersion: fixtureSnapshot.manifest.finalizedSnapshot.calendarVersion,
+    bounds: fixtureSnapshot.manifest.bounds,
+  },
+}
+
+const pinnedStore = (): EvidenceStoreService => ({
+  ...successfulEvidenceStore,
+  read: (runId) => Effect.succeed(runId === pinnedEvaluation.runId ? Option.some(pinnedStoredEvidence) : Option.none()),
+  readQualification: (runId) =>
+    Effect.succeed(
+      runId === pinnedEvaluation.runId
+        ? Option.some({ state: 'TERMINAL', lock: pinnedLock, result: pinnedQualification })
+        : Option.none(),
+    ),
+  recover: (runId, recoveredProvenance) =>
+    Effect.sync(() => {
+      expect(runId).toBe(pinnedEvaluation.runId)
+      expect(recoveredProvenance).toEqual(pinnedExecutionProvenance)
+      return Option.some({
+        evaluation: summarizeEvaluation(pinnedEvaluation),
+        reconciliation: {
+          runId: pinnedEvaluation.runId,
+          accountCount: 13,
+          transferCount: pinnedEvaluation.events.length,
+          exact: true,
+        },
+        persistence: {
+          runId: pinnedEvaluation.runId,
+          deduplicated: true,
+          artifactCount: 17,
+          eventCount: pinnedEvaluation.events.length,
+          gateCount: pinnedEvaluation.verdict.gates.length,
+        },
+      })
+    }),
+})
 
 const fetchJson = async (port: number, path: string, method = 'GET') => {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { method })
@@ -286,8 +374,10 @@ describe('Bayn HTTP probes', () => {
               economic: { status: 'REJECTED' },
               qualification: {
                 status: 'REJECTED',
+                executable: false,
                 lockId: fixtureQualification.lockId,
                 resultHash: fixtureQualification.resultHash,
+                executionProvenance: provenance,
               },
               accounting: { status: 'EXACT' },
             },
@@ -490,6 +580,105 @@ describe('Bayn continuous health', () => {
 })
 
 describe('Bayn startup lifecycle', () => {
+  test('recovers a pinned terminal qualification without inspecting data or writing state', async () => {
+    let forbiddenCalls = 0
+    const forbidden = (message: string) =>
+      Effect.sync(() => {
+        forbiddenCalls += 1
+        throw new Error(message)
+      })
+    const state = await Effect.runPromise(Ref.make(initialState()))
+
+    await Effect.runPromise(
+      initialize(pinnedRuntimeConfig, state).pipe(
+        Effect.provideService(MarketData, {
+          check: forbidden('pinned startup must not check Signal'),
+          inspect: forbidden('pinned startup must not inspect Signal'),
+          load: forbidden('pinned startup must not load Signal bars'),
+        }),
+        Effect.provideService(Journal, {
+          check: forbidden('pinned startup must not check TigerBeetle'),
+          checkRun: () => forbidden('pinned startup must not check a TigerBeetle run'),
+          journalAndReconcile: () => forbidden('pinned startup must not write TigerBeetle'),
+        }),
+        Effect.provideService(EvidenceStore, {
+          ...pinnedStore(),
+          check: forbidden('pinned startup must not run a separate database check'),
+          listPriorTrials: forbidden('pinned startup must not list or create trials'),
+          openQualification: () => forbidden('pinned startup must not open a qualification lock'),
+          persist: () => forbidden('pinned startup must not persist evidence'),
+        }),
+        Effect.provideService(Strategy, fixtureStrategy),
+      ),
+    )
+
+    expect(forbiddenCalls).toBe(0)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'STARTING',
+      evidence: {
+        startupMode: 'pinned',
+        provenance: pinnedExecutionProvenance,
+        evaluation: { runId: pinnedEvaluation.runId },
+        qualification: { verdict: 'REJECTED', resultHash: pinnedQualification.resultHash },
+      },
+    })
+  })
+
+  test('fails pinned recovery closed on strategy, snapshot, terminal-result, and durable-evidence drift', async () => {
+    const cases = [
+      {
+        name: 'strategy',
+        config: pinnedRuntimeConfig,
+        strategy: {
+          ...fixtureStrategy,
+          provenance: {
+            ...fixtureStrategy.provenance,
+            strategy: { ...fixtureStrategy.provenance.strategy, behaviorHash: '0'.repeat(64) },
+          },
+        },
+        store: pinnedStore(),
+      },
+      {
+        name: 'snapshot',
+        config: {
+          ...pinnedRuntimeConfig,
+          clickhouse: { ...pinnedRuntimeConfig.clickhouse, snapshotId: '0'.repeat(64) },
+        },
+        strategy: fixtureStrategy,
+        store: pinnedStore(),
+      },
+      {
+        name: 'terminal result',
+        config: pinnedRuntimeConfig,
+        strategy: fixtureStrategy,
+        store: { ...pinnedStore(), readQualification: () => Effect.succeed(Option.none()) },
+      },
+      {
+        name: 'durable evidence',
+        config: pinnedRuntimeConfig,
+        strategy: fixtureStrategy,
+        store: { ...pinnedStore(), recover: () => Effect.succeed(Option.none()) },
+      },
+    ]
+
+    for (const testCase of cases) {
+      const state = await Effect.runPromise(Ref.make(initialState()))
+      await Effect.runPromise(
+        initialize(testCase.config, state).pipe(
+          Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
+          Effect.provideService(Journal, successfulJournal),
+          Effect.provideService(EvidenceStore, testCase.store),
+          Effect.provideService(Strategy, testCase.strategy),
+        ),
+      )
+      expect(await Effect.runPromise(Ref.get(state)), testCase.name).toMatchObject({
+        status: 'FAILED',
+        evidence: null,
+        error: expect.stringContaining('pinned'),
+      })
+    }
+  })
+
   test('recovers a complete run without evaluating, journaling, or persisting again', async () => {
     const snapshot = makeSnapshot()
     const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
