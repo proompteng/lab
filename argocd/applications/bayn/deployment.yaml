@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-21T13:21:47Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-21T23:35:08Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -47,13 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 05e08fabbca2cbef071125e364814bcb23ba364b
+              value: aa8a68faf0ed92e90303d8b24f9a55ca8854c991
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:a838caa7f7426cabfe2d1a8ffcf1f60e938fdd13dce3910a7ff8c853baa3ae89
-            - name: BAYN_QUALIFICATION_RUN_ID
-              value: 42d8bbfaf1a2ce7759b2283384e8f41298fe3a354ba7c0e1756bb8a3e64af177
+              value: sha256:8eb055cf228e0339ee0c0df550846d57be21eade7ee18d5cc032560902d08e4e
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS
@@ -71,19 +69,19 @@ spec:
                   name: bayn-clickhouse-auth
                   key: password
             - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: 0e3188062fb6781f9dfdc048b4bfe9846d8f4ce74c5e429e296e3ebcd75e93a5
+              value: "98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292"
             - name: BAYN_SIGNAL_PUBLICATION_ASOF
               value: "2026-07-20"
             - name: BAYN_SIGNAL_CALENDAR_VERSION
-              value: alpaca-us-equity-calendar-v1
+              value: "alpaca-us-equity-calendar-v1"
             - name: BAYN_SIGNAL_DATA_START
-              value: "2017-01-03"
+              value: "2022-01-27"
             - name: BAYN_SIGNAL_DATA_END
               value: "2026-07-20"
             - name: BAYN_SIGNAL_LOOKBACK_START
-              value: "2017-01-03"
+              value: "2022-01-27"
             - name: BAYN_SIGNAL_EVALUATION_START
-              value: "2018-01-03"
+              value: "2023-01-30"
             - name: BAYN_SIGNAL_EVALUATION_END
               value: "2026-07-20"
             - name: BAYN_POSTGRES_URL
@@ -96,9 +94,9 @@ spec:
             - name: BAYN_POSTGRES_CA_PATH
               value: /var/run/secrets/bayn/postgres/ca.crt
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
-              value: "2001"
+              value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
-              value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+              value: "ledger.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
             - name: NODE_ENV
