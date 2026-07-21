@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1, sha256 } from './hash'
 import { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
@@ -33,13 +33,12 @@ const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/
 const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
+const UniverseId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/))
 const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(Schema.is(Schema.Json), { expected: 'a JSON value' }))
 
-const FinalizedSnapshotBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.finalized-snapshot.v2'),
+const FinalizedSnapshotFields = {
   snapshotId: Sha256Schema,
   publicationId: Sha256Schema,
-  publicationSchemaVersion: Schema.Enum(PublicationSchema),
   source: Schema.Enum(DataSource),
   sourceFeed: Schema.Enum(DataFeed),
   adjustment: Schema.Enum(PriceAdjustment),
@@ -59,32 +58,67 @@ const FinalizedSnapshotBase = Schema.Struct({
   sessionCount: PositiveInteger,
   contentHash: Sha256Schema,
   sessionsContentHash: Sha256Schema,
+} as const
+
+const LegacyFinalizedSnapshotBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.finalized-snapshot.v2'),
+  publicationSchemaVersion: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV1),
+  ...FinalizedSnapshotFields,
 })
 
-export const FinalizedSnapshotProvenanceSchema = FinalizedSnapshotBase.check(
-  Schema.makeFilter((snapshot: typeof FinalizedSnapshotBase.Type) => {
-    const issues: Schema.FilterIssue[] = []
-    if (snapshot.firstSession > snapshot.lastSession) {
-      issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
-    }
-    if (snapshot.requestedStart > snapshot.firstSession) {
-      issues.push({ path: ['requestedStart'], issue: 'must not be after firstSession' })
-    }
-    if (snapshot.asOfSession !== snapshot.lastSession) {
-      issues.push({ path: ['asOfSession'], issue: 'must equal lastSession for a finalized snapshot' })
-    }
-    const canonicalSymbols = [...new Set(snapshot.symbols)].sort()
-    if (canonicalSymbols.length !== snapshot.symbols.length) {
-      issues.push({ path: ['symbols'], issue: 'must not contain duplicate symbols' })
-    } else if (canonicalSymbols.some((symbol, index) => symbol !== snapshot.symbols[index])) {
-      issues.push({ path: ['symbols'], issue: 'must be sorted in canonical order' })
-    }
-    if (snapshot.rowCount !== snapshot.sessionCount * snapshot.symbols.length) {
-      issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by the symbol count' })
-    }
-    return issues
-  }),
+const UniverseBoundFinalizedSnapshotBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.finalized-snapshot.v3'),
+  publicationSchemaVersion: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV2),
+  universeId: UniverseId,
+  universeSymbolHash: Sha256Schema,
+  ...FinalizedSnapshotFields,
+})
+
+const finalizedSnapshotIssues = (
+  snapshot: typeof LegacyFinalizedSnapshotBase.Type | typeof UniverseBoundFinalizedSnapshotBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (snapshot.firstSession > snapshot.lastSession) {
+    issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
+  }
+  if (snapshot.requestedStart > snapshot.firstSession) {
+    issues.push({ path: ['requestedStart'], issue: 'must not be after firstSession' })
+  }
+  if (snapshot.asOfSession !== snapshot.lastSession) {
+    issues.push({ path: ['asOfSession'], issue: 'must equal lastSession for a finalized snapshot' })
+  }
+  const canonicalSymbols = [...new Set(snapshot.symbols)].sort()
+  if (canonicalSymbols.length !== snapshot.symbols.length) {
+    issues.push({ path: ['symbols'], issue: 'must not contain duplicate symbols' })
+  } else if (canonicalSymbols.some((symbol, index) => symbol !== snapshot.symbols[index])) {
+    issues.push({ path: ['symbols'], issue: 'must be sorted in canonical order' })
+  }
+  if (snapshot.rowCount !== snapshot.sessionCount * snapshot.symbols.length) {
+    issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by the symbol count' })
+  }
+  if (
+    snapshot.schemaVersion === 'bayn.finalized-snapshot.v3' &&
+    snapshot.universeSymbolHash !== sha256(snapshot.symbols.join(','))
+  ) {
+    issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical symbol list' })
+  }
+  return issues
+}
+
+export const LegacyFinalizedSnapshotProvenanceSchema = LegacyFinalizedSnapshotBase.check(
+  Schema.makeFilter(finalizedSnapshotIssues),
 )
+export type LegacyFinalizedSnapshotProvenance = typeof LegacyFinalizedSnapshotProvenanceSchema.Type
+
+export const UniverseBoundFinalizedSnapshotProvenanceSchema = UniverseBoundFinalizedSnapshotBase.check(
+  Schema.makeFilter(finalizedSnapshotIssues),
+)
+export type UniverseBoundFinalizedSnapshotProvenance = typeof UniverseBoundFinalizedSnapshotProvenanceSchema.Type
+
+export const FinalizedSnapshotProvenanceSchema = Schema.Union([
+  LegacyFinalizedSnapshotProvenanceSchema,
+  UniverseBoundFinalizedSnapshotProvenanceSchema,
+])
 export type FinalizedSnapshotProvenance = typeof FinalizedSnapshotProvenanceSchema.Type
 
 const EvaluationBoundsBase = Schema.Struct({
@@ -169,11 +203,18 @@ export const RunIdentitySchema = RunIdentityBase.check(
 )
 export type RunIdentity = typeof RunIdentitySchema.Type
 
-const evaluationContractVersionForStrategy = (
-  strategyName: string,
-): ContractVersion.Evaluation | ContractVersion.RiskBalancedTrendEvaluation | undefined => {
-  if (strategyName === 'tsmom') return ContractVersion.Evaluation
-  if (strategyName === 'risk-balanced-trend') return ContractVersion.RiskBalancedTrendEvaluation
+interface StrategyContractVersions {
+  readonly inputManifest: 'bayn.input-manifest.v2' | 'bayn.input-manifest.v3'
+  readonly evaluation: ContractVersion.Evaluation | ContractVersion.RiskBalancedTrendEvaluation
+}
+
+const contractVersionsForStrategy = (strategyName: string): StrategyContractVersions | undefined => {
+  if (strategyName === 'tsmom') {
+    return { inputManifest: 'bayn.input-manifest.v2', evaluation: ContractVersion.Evaluation }
+  }
+  if (strategyName === 'risk-balanced-trend') {
+    return { inputManifest: 'bayn.input-manifest.v3', evaluation: ContractVersion.RiskBalancedTrendEvaluation }
+  }
   return undefined
 }
 
@@ -192,20 +233,25 @@ const RuntimeProvenanceBase = Schema.Struct({
   }),
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),
-    inputManifest: Schema.Literal('bayn.input-manifest.v2'),
+    inputManifest: Schema.Literals(['bayn.input-manifest.v2', 'bayn.input-manifest.v3']),
     evaluation: Schema.Literals([ContractVersion.Evaluation, ContractVersion.RiskBalancedTrendEvaluation]),
   }),
 })
 
 export const RuntimeProvenanceSchema = RuntimeProvenanceBase.check(
   Schema.makeFilter((provenance: typeof RuntimeProvenanceBase.Type) => {
-    const expectedEvaluationVersion = evaluationContractVersionForStrategy(provenance.strategy.name)
-    if (expectedEvaluationVersion === undefined) {
+    const expected = contractVersionsForStrategy(provenance.strategy.name)
+    if (expected === undefined) {
       return [{ path: ['strategy', 'name'], issue: 'is not a supported compiled strategy' }]
     }
-    return provenance.contractVersions.evaluation === expectedEvaluationVersion
-      ? []
-      : [{ path: ['contractVersions', 'evaluation'], issue: 'does not match the compiled strategy' }]
+    const issues: Schema.FilterIssue[] = []
+    if (provenance.contractVersions.inputManifest !== expected.inputManifest) {
+      issues.push({ path: ['contractVersions', 'inputManifest'], issue: 'does not match the compiled strategy' })
+    }
+    if (provenance.contractVersions.evaluation !== expected.evaluation) {
+      issues.push({ path: ['contractVersions', 'evaluation'], issue: 'does not match the compiled strategy' })
+    }
+    return issues
   }),
 )
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
@@ -235,15 +281,14 @@ export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
 }
 
 export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance => {
-  const evaluation = evaluationContractVersionForStrategy(input.strategy.name)
-  if (evaluation === undefined) throw new TypeError(`unsupported compiled strategy: ${input.strategy.name}`)
+  const contractVersions = contractVersionsForStrategy(input.strategy.name)
+  if (contractVersions === undefined) throw new TypeError(`unsupported compiled strategy: ${input.strategy.name}`)
   return decodeRuntimeProvenanceSync({
     schemaVersion: 'bayn.runtime-provenance.v2',
     ...input,
     contractVersions: {
       runtimeProvenance: 'bayn.runtime-provenance.v2',
-      inputManifest: 'bayn.input-manifest.v2',
-      evaluation,
+      ...contractVersions,
     },
   })
 }

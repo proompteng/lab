@@ -196,9 +196,10 @@ describe('Bayn runtime provenance', () => {
         name: 'risk-balanced-trend',
         behaviorHash: sha('1'),
         parameterHash: sha('2'),
-        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
       },
     })
+    expect(candidate.contractVersions.inputManifest).toBe('bayn.input-manifest.v3')
     expect(candidate.contractVersions.evaluation).toBe(ContractVersion.RiskBalancedTrendEvaluation)
     await expectFailure(
       decodeRuntimeProvenance({

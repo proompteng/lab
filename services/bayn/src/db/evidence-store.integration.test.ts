@@ -13,6 +13,7 @@ import { evaluateTsmom } from '../strategy'
 import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from '../strategy-service'
 import {
   fixtureProtocol,
+  makeRiskBalancedTrendSnapshot,
   makeRiskBalancedTrendTestProvenance,
   makeSnapshot,
   makeTestProvenance,
@@ -71,6 +72,7 @@ const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
 
 const snapshot = makeSnapshot(800)
+const riskBalancedTrendSnapshot = makeRiskBalancedTrendSnapshot(800)
 
 const makeInput = (
   sourceRevision = 'a'.repeat(40),
@@ -96,8 +98,8 @@ const makeInput = (
 const makeRiskBalancedTrendInput = (): PersistEvaluationInput => {
   const provenance = makeRiskBalancedTrendTestProvenance()
   const evaluation = evaluateRiskBalancedTrend(
-    snapshot.bars,
-    snapshot.manifest,
+    riskBalancedTrendSnapshot.bars,
+    riskBalancedTrendSnapshot.manifest,
     riskBalancedTrendFixtureProtocol,
     provenance,
   )
@@ -253,7 +255,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
 
-    expect(migrated).toEqual({ legacyTableCount: 0, migrationCount: 6, protocolCount: 1 })
+    expect(migrated).toEqual({ legacyTableCount: 0, migrationCount: 7, protocolCount: 1 })
   })
 
   test('keeps the audit snapshot repeatable-read and rejects writes', async () => {
@@ -411,7 +413,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         yield* store.persist(terminalQualification.persist)
         const priorTrialRunIds = yield* store.listPriorTrials
         const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, candidate.provenance)
-        const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+        const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
         const lock = strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds)
         return { lock, priorTrialRunIds }
       }),
@@ -736,7 +738,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Option.isNone(result.missing)).toBe(true)
   })
 
-  test('persists and recovers the complete risk-balanced trend v5 evidence contract', async () => {
+  test('persists and recovers the complete risk-balanced trend v6 evidence contract', async () => {
     const input = makeRiskBalancedTrendInput()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -762,25 +764,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Option.isSome(result.stored)) {
       expect(result.stored.value.protocol).toMatchObject({
         strategyName: 'risk-balanced-trend',
-        schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
         parameters: riskBalancedTrendFixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({
-        evaluationSchemaVersion: 'bayn.evaluation.v5',
+        evaluationSchemaVersion: 'bayn.evaluation.v6',
         artifactCount: 17,
       })
       expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toContain('risk-balanced-trend-decisions')
       expect(result.stored.value.artifacts.map((artifact) => artifact.name)).not.toContain('tsmom-signal-decisions')
       expect(result.stored.value.artifacts.find((artifact) => artifact.name === 'evaluation-summary')).toMatchObject({
-        schemaVersion: 'bayn.evaluation-summary.v4',
+        schemaVersion: 'bayn.evaluation-summary.v5',
       })
     }
     expect(Option.isSome(result.recovered)).toBe(true)
     if (Option.isSome(result.recovered)) {
       expect(result.recovered.value).toMatchObject({
         evaluation: {
-          schemaVersion: 'bayn.evaluation-summary.v4',
-          evaluationSchemaVersion: 'bayn.evaluation.v5',
+          schemaVersion: 'bayn.evaluation-summary.v5',
+          evaluationSchemaVersion: 'bayn.evaluation.v6',
           runId: input.evaluation.runId,
         },
         reconciliation: { runId: input.evaluation.runId, exact: true },
@@ -824,7 +826,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(errors.profile).toBeInstanceOf(DatabaseError)
     expect(errors.profile).toMatchObject({ failure: 'invariant', operation: 'plan' })
     expect(errors.profile.message).toContain(
-      'unsupported evidence profile for strategy tsmom and evaluation bayn.evaluation.v5',
+      'unsupported evidence profile for strategy tsmom and evaluation bayn.evaluation.v6',
     )
     expect(errors.contract).toBeInstanceOf(DatabaseError)
     expect(errors.contract).toMatchObject({ failure: 'invariant', operation: 'plan' })

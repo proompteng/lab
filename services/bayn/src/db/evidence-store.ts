@@ -379,8 +379,9 @@ const artifactItemCount = (payload: unknown): number => {
 }
 
 interface EvidenceProfile {
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v5'
-  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v4'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v6'
+  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v5'
+  readonly inputManifestSchemaVersion: 'bayn.input-manifest.v2' | 'bayn.input-manifest.v3'
   readonly signalDecisionsArtifactName: 'risk-balanced-trend-decisions' | 'tsmom-signal-decisions'
   readonly signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1' | 'bayn.tsmom-signal-decisions.v1'
 }
@@ -390,14 +391,16 @@ const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: strin
     return {
       evaluationSchemaVersion,
       summarySchemaVersion: 'bayn.evaluation-summary.v3',
+      inputManifestSchemaVersion: 'bayn.input-manifest.v2',
       signalDecisionsArtifactName: 'tsmom-signal-decisions',
       signalDecisionsSchemaVersion: 'bayn.tsmom-signal-decisions.v1',
     }
   }
-  if (strategyName === 'risk-balanced-trend' && evaluationSchemaVersion === 'bayn.evaluation.v5') {
+  if (strategyName === 'risk-balanced-trend' && evaluationSchemaVersion === 'bayn.evaluation.v6') {
     return {
       evaluationSchemaVersion,
-      summarySchemaVersion: 'bayn.evaluation-summary.v4',
+      summarySchemaVersion: 'bayn.evaluation-summary.v5',
+      inputManifestSchemaVersion: 'bayn.input-manifest.v3',
       signalDecisionsArtifactName: 'risk-balanced-trend-decisions',
       signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
     }
@@ -432,6 +435,16 @@ const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQual
     bounds: inputManifest.bounds,
   }).runId
   const snapshot = inputManifest.finalizedSnapshot
+  const contractMatches =
+    (lock.schemaVersion === 'bayn.qualification-lock.v2' &&
+      inputManifest.schemaVersion === 'bayn.input-manifest.v2' &&
+      provenance.strategy.name === 'tsmom') ||
+    (lock.schemaVersion === 'bayn.qualification-lock.v3' &&
+      inputManifest.schemaVersion === 'bayn.input-manifest.v3' &&
+      provenance.strategy.name === 'risk-balanced-trend' &&
+      lock.universeId === inputManifest.finalizedSnapshot.universeId &&
+      lock.universeSymbolHash === inputManifest.finalizedSnapshot.universeSymbolHash &&
+      lock.data.inputManifestHash === inputManifest.hash)
   const dataMatches =
     lock.data.snapshotId === snapshot.snapshotId &&
     lock.data.publicationId === snapshot.publicationId &&
@@ -449,6 +462,7 @@ const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQual
     lock.protocolHash !== protocolHash ||
     lock.sourceRevision !== provenance.sourceRevision ||
     canonicalHashV1(lock.image) !== canonicalHashV1(provenance.image) ||
+    !contractMatches ||
     canonicalHashV1(lock.universe) !== canonicalHashV1(snapshot.symbols) ||
     !dataMatches ||
     canonicalHashV1(lock.policies.execution.content) !== canonicalHashV1(protocolExecutionModel(parameters))
@@ -465,6 +479,12 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     throw new TypeError('evaluation schema version does not match runtime provenance')
   }
   const evidenceProfile = evidenceProfileFor(strategyName, evaluation.schemaVersion)
+  if (
+    evaluation.inputManifest.schemaVersion !== evidenceProfile.inputManifestSchemaVersion ||
+    provenance.contractVersions.inputManifest !== evidenceProfile.inputManifestSchemaVersion
+  ) {
+    throw new TypeError('input manifest schema version does not match the strategy evidence profile')
+  }
   const parameterHash = canonicalHashV1(parameters)
   if (parameterHash !== provenance.strategy.parameterHash) {
     throw new TypeError('strategy parameters and provenance disagree on parameter hash')
@@ -956,7 +976,7 @@ const makeEvidenceStore = Effect.gen(function* () {
   const insertQualificationLock = SqlSchema.findAll({
     Request: Schema.Struct({
       lockId: Sha256,
-      schemaVersion: Schema.Literal('bayn.qualification-lock.v2'),
+      schemaVersion: Schema.Literals(['bayn.qualification-lock.v2', 'bayn.qualification-lock.v3']),
       candidateRunId: Sha256,
       protocolHash: Sha256,
       snapshotId: Sha256,
@@ -1567,7 +1587,7 @@ const makeEvidenceStore = Effect.gen(function* () {
           ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
           ['equity-series', 'bayn.equity-series.v1'],
           ['evaluation-summary', evidenceProfile.summarySchemaVersion],
-          ['input-manifest', 'bayn.input-manifest.v2'],
+          ['input-manifest', evidenceProfile.inputManifestSchemaVersion],
           ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v2'],
           ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
           ['reconciliation', 'bayn.reconciliation.v1'],

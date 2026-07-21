@@ -1,6 +1,12 @@
 import { Schema } from 'effect'
 
-import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
+import {
+  EvaluationBoundsSchema,
+  IsoDateSchema,
+  LegacyFinalizedSnapshotProvenanceSchema,
+  Sha256Schema,
+  UniverseBoundFinalizedSnapshotProvenanceSchema,
+} from './contracts'
 import { canonicalHashV1 } from './hash'
 import { ExecutionModelSchema } from './protocol'
 import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation'
@@ -17,16 +23,9 @@ const UnitIntervalFinite = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(1)
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const Symbol = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 
-const InputManifestBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.input-manifest.v2'),
+const InputManifestFields = {
   hash: Sha256Schema,
   database: Schema.Literal('signal'),
-  tables: Schema.Struct({
-    bars: Schema.Literal('adjusted_daily_bars_v2'),
-    sessions: Schema.Literal('exchange_sessions_v1'),
-    manifests: Schema.Literal('snapshot_manifests_v1'),
-  }),
-  finalizedSnapshot: FinalizedSnapshotProvenanceSchema,
   bounds: EvaluationBoundsSchema,
   rowCount: PositiveInteger,
   sessionCount: PositiveInteger,
@@ -40,38 +39,69 @@ const InputManifestBase = Schema.Struct({
       lastSession: IsoDateSchema,
     }),
   ).check(Schema.isMinLength(1)),
+} as const
+
+const LegacyInputManifestBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.input-manifest.v2'),
+  ...InputManifestFields,
+  tables: Schema.Struct({
+    bars: Schema.Literal('adjusted_daily_bars_v2'),
+    sessions: Schema.Literal('exchange_sessions_v1'),
+    manifests: Schema.Literal('snapshot_manifests_v1'),
+  }),
+  finalizedSnapshot: LegacyFinalizedSnapshotProvenanceSchema,
 })
 
-export const InputManifestArtifactSchema = InputManifestBase.check(
-  Schema.makeFilter((manifest: typeof InputManifestBase.Type) => {
-    const { hash, ...material } = manifest
-    const symbolNames = manifest.symbols.map((coverage) => coverage.symbol)
-    const issues: Schema.FilterIssue[] = []
-    if (canonicalHashV1(material) !== hash) issues.push({ path: ['hash'], issue: 'does not match the manifest' })
-    if (manifest.firstSession !== manifest.bounds.dataStart) {
-      issues.push({ path: ['firstSession'], issue: 'must equal bounds.dataStart' })
-    }
-    if (manifest.lastSession !== manifest.bounds.dataEnd) {
-      issues.push({ path: ['lastSession'], issue: 'must equal bounds.dataEnd' })
-    }
-    if (manifest.rowCount !== manifest.sessionCount * manifest.symbols.length) {
-      issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by symbol count' })
-    }
-    if (canonicalHashV1(symbolNames) !== canonicalHashV1(manifest.finalizedSnapshot.symbols)) {
-      issues.push({ path: ['symbols'], issue: 'must match the finalized snapshot universe' })
-    }
-    for (const [index, coverage] of manifest.symbols.entries()) {
-      if (
-        coverage.rows !== manifest.sessionCount ||
-        coverage.firstSession !== manifest.firstSession ||
-        coverage.lastSession !== manifest.lastSession
-      ) {
-        issues.push({ path: ['symbols', index], issue: 'coverage does not match the bounded manifest' })
-      }
-    }
-    return issues
+const UniverseBoundInputManifestBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.input-manifest.v3'),
+  ...InputManifestFields,
+  tables: Schema.Struct({
+    bars: Schema.Literal('adjusted_daily_bars_v2'),
+    sessions: Schema.Literal('exchange_sessions_v1'),
+    manifests: Schema.Literal('snapshot_manifests_v2'),
   }),
+  finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenanceSchema,
+})
+
+const inputManifestIssues = (
+  manifest: typeof LegacyInputManifestBase.Type | typeof UniverseBoundInputManifestBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const { hash, ...material } = manifest
+  const symbolNames = manifest.symbols.map((coverage) => coverage.symbol)
+  const issues: Schema.FilterIssue[] = []
+  if (canonicalHashV1(material) !== hash) issues.push({ path: ['hash'], issue: 'does not match the manifest' })
+  if (manifest.firstSession !== manifest.bounds.dataStart) {
+    issues.push({ path: ['firstSession'], issue: 'must equal bounds.dataStart' })
+  }
+  if (manifest.lastSession !== manifest.bounds.dataEnd) {
+    issues.push({ path: ['lastSession'], issue: 'must equal bounds.dataEnd' })
+  }
+  if (manifest.rowCount !== manifest.sessionCount * manifest.symbols.length) {
+    issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by symbol count' })
+  }
+  if (canonicalHashV1(symbolNames) !== canonicalHashV1(manifest.finalizedSnapshot.symbols)) {
+    issues.push({ path: ['symbols'], issue: 'must match the finalized snapshot universe' })
+  }
+  for (const [index, coverage] of manifest.symbols.entries()) {
+    if (
+      coverage.rows !== manifest.sessionCount ||
+      coverage.firstSession !== manifest.firstSession ||
+      coverage.lastSession !== manifest.lastSession
+    ) {
+      issues.push({ path: ['symbols', index], issue: 'coverage does not match the bounded manifest' })
+    }
+  }
+  return issues
+}
+
+const LegacyInputManifestArtifactSchema = LegacyInputManifestBase.check(Schema.makeFilter(inputManifestIssues))
+const UniverseBoundInputManifestArtifactSchema = UniverseBoundInputManifestBase.check(
+  Schema.makeFilter(inputManifestIssues),
 )
+export const InputManifestArtifactSchema = Schema.Union([
+  LegacyInputManifestArtifactSchema,
+  UniverseBoundInputManifestArtifactSchema,
+])
 
 const PerformanceMetricsSchema = Schema.Struct({
   observations: PositiveInteger,
@@ -156,8 +186,8 @@ export const EvaluationSummarySchema = Schema.Union([
     ...EvaluationSummaryFields,
   }),
   Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.evaluation-summary.v4'),
-    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v5'),
+    schemaVersion: Schema.Literal('bayn.evaluation-summary.v5'),
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
     ...EvaluationSummaryFields,
   }),
 ])
@@ -370,7 +400,7 @@ export const QualificationArtifactManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
   identity: Schema.Struct({
     runId: Sha256Schema,
-    evaluationSchemaVersion: Schema.Literals(['bayn.evaluation.v4', 'bayn.evaluation.v5']),
+    evaluationSchemaVersion: Schema.Literals(['bayn.evaluation.v4', 'bayn.evaluation.v6']),
     protocolHash: Sha256Schema,
     sourceRevision: SourceRevision,
     image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),

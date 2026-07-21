@@ -8,12 +8,12 @@ import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreRuntimeLive } from './db/evidence-store'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
-import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
-import { makeTsmomStrategy, Strategy } from './strategy-service'
+import { hashRiskBalancedTrendParameters, loadDefaultRiskBalancedTrendProtocol } from './protocol'
+import { makeRiskBalancedTrendStrategy, Strategy } from './strategy-service'
 
 const main = Effect.gen(function* () {
   const config = yield* loadConfig()
-  const protocol = yield* loadDefaultProtocol
+  const protocol = yield* loadDefaultRiskBalancedTrendProtocol
   const provenance = makeRuntimeProvenance({
     sourceRevision: config.build.sourceRevision,
     image: {
@@ -21,14 +21,14 @@ const main = Effect.gen(function* () {
       digest: config.build.imageDigest,
     },
     strategy: {
-      name: 'tsmom',
+      name: 'risk-balanced-trend',
       behaviorHash: config.build.strategyBehaviorHash,
-      parameterHash: hashTsmomParameters(protocol),
+      parameterHash: hashRiskBalancedTrendParameters(protocol),
       parameterSchemaVersion: protocol.schemaVersion,
     },
   })
-  const strategy = makeTsmomStrategy(protocol, provenance)
-  const marketData = MarketDataLive(config, strategy.universe).pipe(
+  const strategy = makeRiskBalancedTrendStrategy(protocol, provenance)
+  const marketData = MarketDataLive(config, protocol).pipe(
     Layer.provide(
       ClickhouseClient.layer({
         url: config.clickhouse.url,

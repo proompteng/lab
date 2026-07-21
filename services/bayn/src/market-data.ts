@@ -2,9 +2,14 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Clock, Context, Effect, Layer, Schema } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { FinalizedSnapshotProvenanceSchema, type EvaluationBounds, type FinalizedSnapshotProvenance } from './contracts'
+import {
+  UniverseBoundFinalizedSnapshotProvenanceSchema,
+  type EvaluationBounds,
+  type FinalizedSnapshotProvenance,
+  type UniverseBoundFinalizedSnapshotProvenance,
+} from './contracts'
 import { OperationalError, operationalError } from './errors'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1, sha256 } from './hash'
 import {
   DataFeed,
   DataSource,
@@ -13,14 +18,16 @@ import {
   type DailyBar,
   type InputManifest,
   type IsoDate,
+  type RiskBalancedTrendProtocol,
   type SymbolCoverage,
+  type UniverseBoundInputManifest,
 } from './types'
 
 const database = 'signal' as const
 const tables = {
   bars: 'adjusted_daily_bars_v2',
   sessions: 'exchange_sessions_v1',
-  manifests: 'snapshot_manifests_v1',
+  manifests: 'snapshot_manifests_v2',
 } as const
 const calendarTimeZone = 'America/New_York' as const
 const StrictParseOptions = { onExcessProperty: 'error' } as const
@@ -72,10 +79,12 @@ const SignalSessionRowSchema = Schema.Struct({
 })
 const SignalManifestRowSchema = Schema.Struct({
   snapshot_id: SnapshotIdSchema,
-  schema_version: Schema.Enum(PublicationSchema),
+  schema_version: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV2),
   publisher_source_revision: SourceRevisionSchema,
   publisher_image_repository: ImageRepositorySchema,
   publisher_image_digest: ImageDigestSchema,
+  universe_id: Schema.Literal('equity-infrastructure-v1'),
+  universe_symbol_hash: HashSchema,
   provider: Schema.Enum(DataSource),
   source_feed: Schema.Enum(DataFeed),
   adjustment: Schema.Enum(PriceAdjustment),
@@ -112,10 +121,19 @@ export interface SnapshotRequest {
   readonly snapshotId: string
   readonly publicationAsOf: string
   readonly calendarVersion: string
+  readonly universeId: 'equity-infrastructure-v1'
+  readonly universeSymbolHash: string
   readonly universe: readonly string[]
+  readonly historyStart: IsoDate
+  readonly evaluationStart: IsoDate
   readonly bounds: EvaluationBounds
   readonly observedAt: string
 }
+
+type MarketDataContract = Pick<
+  RiskBalancedTrendProtocol,
+  'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
+>
 
 export interface MarketDataSnapshot {
   readonly bars: readonly DailyBar[]
@@ -144,7 +162,10 @@ const asCount = (value: string | number, name: string): number => {
 const decodeBars = Schema.decodeUnknownSync(Schema.Array(SignalBarRowSchema), StrictParseOptions)
 const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SignalSessionRowSchema), StrictParseOptions)
 const decodeManifests = Schema.decodeUnknownSync(Schema.Array(SignalManifestRowSchema), StrictParseOptions)
-const decodeFinalizedSnapshot = Schema.decodeUnknownSync(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
+const decodeFinalizedSnapshot = Schema.decodeUnknownSync(
+  UniverseBoundFinalizedSnapshotProvenanceSchema,
+  StrictParseOptions,
+)
 
 const canonicalUniverse = (universe: readonly string[]): readonly string[] => {
   const canonical = [...new Set(universe)].sort()
@@ -199,7 +220,7 @@ const assertBoundSessions = (sessions: ReadonlySet<string>, bounds: EvaluationBo
 
 interface VerifiedManifest {
   readonly manifest: SignalManifestRow
-  readonly finalizedSnapshot: FinalizedSnapshotProvenance
+  readonly finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenance
   readonly universe: readonly string[]
 }
 
@@ -210,6 +231,13 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
   }
   const manifest = manifests[0]
   if (manifest.snapshot_id !== request.snapshotId) throw new Error('manifest snapshot ID does not match request')
+  if (manifest.universe_id !== request.universeId) throw new Error('manifest universe ID does not match request')
+  if (manifest.universe_symbol_hash !== request.universeSymbolHash) {
+    throw new Error('manifest universe symbol hash does not match request')
+  }
+  if (sha256(universe.join(',')) !== request.universeSymbolHash) {
+    throw new Error('requested universe symbol hash does not match its symbols')
+  }
   if (manifest.calendar_version !== request.calendarVersion) throw new Error('manifest calendar version does not match')
   if (manifest.publication_asof !== request.publicationAsOf) {
     throw new Error(
@@ -227,6 +255,8 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
   }
   const expectedSnapshotId = canonicalHashV1({
     schemaVersion: manifest.schema_version,
+    universeId: manifest.universe_id,
+    universeSymbolHash: manifest.universe_symbol_hash,
     provider: manifest.provider,
     feed: manifest.source_feed,
     adjustment: manifest.adjustment,
@@ -238,6 +268,19 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
     sessionsContentHash: manifest.sessions_content_hash,
   })
   if (manifest.snapshot_id !== expectedSnapshotId) throw new Error('snapshot ID does not match finalized content')
+  if (manifest.requested_start !== request.historyStart || manifest.first_session !== request.historyStart) {
+    throw new Error('snapshot history start does not match the compiled strategy')
+  }
+  if (
+    request.bounds.dataStart !== request.historyStart ||
+    request.bounds.lookbackStart !== request.historyStart ||
+    request.bounds.evaluationStart !== request.evaluationStart
+  ) {
+    throw new Error('evaluation bounds do not match the compiled strategy history')
+  }
+  if (request.bounds.dataEnd !== request.publicationAsOf || request.bounds.evaluationEnd !== request.publicationAsOf) {
+    throw new Error('evaluation end must match the finalized publication session')
+  }
   if (request.bounds.dataStart < manifest.first_session || request.bounds.dataEnd > manifest.last_session) {
     throw new Error('evaluation data bounds are outside the finalized snapshot')
   }
@@ -246,10 +289,12 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
     manifest,
     universe,
     finalizedSnapshot: decodeFinalizedSnapshot({
-      schemaVersion: 'bayn.finalized-snapshot.v2',
+      schemaVersion: 'bayn.finalized-snapshot.v3',
       snapshotId: manifest.snapshot_id,
       publicationId: manifest.manifest_content_hash,
       publicationSchemaVersion: manifest.schema_version,
+      universeId: manifest.universe_id,
+      universeSymbolHash: manifest.universe_symbol_hash,
       source: manifest.provider,
       sourceFeed: manifest.source_feed,
       adjustment: manifest.adjustment,
@@ -276,13 +321,13 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
 export const verifyFinalizedManifest = (
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
-): FinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
+): UniverseBoundFinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
 
 interface VerifiedCalendar {
   readonly verifiedManifest: VerifiedManifest
   readonly orderedSessions: readonly SignalSessionRow[]
   readonly boundedSessions: readonly SignalSessionRow[]
-  readonly inputManifest: InputManifest
+  readonly inputManifest: UniverseBoundInputManifest
 }
 
 const verifyCalendar = (
@@ -329,8 +374,8 @@ const verifyCalendar = (
     firstSession: firstBoundedSession.session_date,
     lastSession: lastBoundedSession.session_date,
   }))
-  const manifestMaterial: Omit<InputManifest, 'hash'> = {
-    schemaVersion: 'bayn.input-manifest.v2',
+  const manifestMaterial: Omit<UniverseBoundInputManifest, 'hash'> = {
+    schemaVersion: 'bayn.input-manifest.v3',
     database,
     tables,
     finalizedSnapshot,
@@ -429,7 +474,7 @@ const decodeSnapshotRows = (
 
 const makeMarketData = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
-  universe: readonly string[],
+  contract: MarketDataContract,
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
   Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
@@ -442,6 +487,8 @@ const makeMarketData = (
           publisher_source_revision,
           publisher_image_repository,
           publisher_image_digest,
+          universe_id,
+          universe_symbol_hash,
           provider,
           source_feed,
           adjustment,
@@ -457,7 +504,7 @@ const makeMarketData = (
           sessions_content_hash,
           manifest_content_hash,
           toString(finalized_at) AS finalized_at
-        FROM signal.snapshot_manifests_v1
+        FROM signal.snapshot_manifests_v2
         WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
         ORDER BY finalized_at
       `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
@@ -499,7 +546,11 @@ const makeMarketData = (
       snapshotId: config.clickhouse.snapshotId,
       publicationAsOf: config.clickhouse.publicationAsOf,
       calendarVersion: config.clickhouse.calendarVersion,
-      universe,
+      universeId: contract.universeId,
+      universeSymbolHash: contract.universeSymbolHash,
+      universe: contract.universe,
+      historyStart: contract.historyStart,
+      evaluationStart: contract.evaluationStart,
       bounds: config.clickhouse.bounds,
       observedAt,
     })
@@ -555,6 +606,6 @@ const makeMarketData = (
 
 export const MarketDataLive = (
   config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
-  universe: readonly string[],
+  contract: MarketDataContract,
 ): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
-  Layer.effect(MarketData, makeMarketData(config, universe))
+  Layer.effect(MarketData, makeMarketData(config, contract))

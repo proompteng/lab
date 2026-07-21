@@ -187,8 +187,8 @@ const expectedResultReason = (gateName: string): string =>
 
 interface AuditStrategyProfile {
   readonly name: 'tsmom' | 'risk-balanced-trend'
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v5'
-  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v4'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v6'
+  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v5'
   readonly decisionArtifactName: 'tsmom-signal-decisions' | 'risk-balanced-trend-decisions'
   readonly decisionArtifactSchemaVersion: 'bayn.tsmom-signal-decisions.v1' | 'bayn.risk-balanced-trend-decisions.v1'
 }
@@ -213,10 +213,18 @@ const auditStrategyProfile = (protocol: StrategyProtocol): AuditStrategyProfile 
 const evaluateReference = (
   input: QualificationAuditInput,
   provenance: ReturnType<typeof makeRuntimeProvenance>,
-): ReferenceEvaluation =>
-  input.protocol.schemaVersion === 'bayn.tsmom.protocol.v2'
-    ? evaluateReferenceTsmom(input.bars, input.manifest, input.protocol, provenance)
-    : evaluateReferenceRiskBalancedTrend(input.bars, input.manifest, input.protocol, provenance)
+): ReferenceEvaluation => {
+  if (input.protocol.schemaVersion === 'bayn.tsmom.protocol.v2') {
+    if (input.manifest.schemaVersion !== 'bayn.input-manifest.v2') {
+      throw new Error('TSMOM audit requires bayn.input-manifest.v2')
+    }
+    return evaluateReferenceTsmom(input.bars, input.manifest, input.protocol, provenance)
+  }
+  if (input.manifest.schemaVersion !== 'bayn.input-manifest.v3') {
+    throw new Error('risk-balanced trend audit requires bayn.input-manifest.v3')
+  }
+  return evaluateReferenceRiskBalancedTrend(input.bars, input.manifest, input.protocol, provenance)
+}
 
 const makeSummary = (
   input: QualificationAuditInput,
@@ -526,6 +534,14 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `storedResultHash=${database.qualification.storedResultHash}`,
   )
   const lockData = object(lock.data, 'qualification lock data')
+  const lockContractBinding =
+    input.protocol.schemaVersion === 'bayn.tsmom.protocol.v2'
+      ? lock.schemaVersion === 'bayn.qualification-lock.v2' && input.manifest.schemaVersion === 'bayn.input-manifest.v2'
+      : lock.schemaVersion === 'bayn.qualification-lock.v3' &&
+        input.manifest.schemaVersion === 'bayn.input-manifest.v3' &&
+        lock.universeId === input.protocol.universeId &&
+        lock.universeSymbolHash === input.protocol.universeSymbolHash &&
+        lockData.inputManifestHash === input.manifest.hash
   const lockPolicies = object(lock.policies, 'qualification lock policies')
   const policyDocuments = Object.entries(lockPolicies)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -544,6 +560,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       lock.protocolHash === database.run.protocolHash &&
       lock.sourceRevision === database.run.sourceRevision &&
       same(lock.image, { repository: database.run.imageRepository, digest: database.run.imageDigest }) &&
+      lockContractBinding &&
       same(lock.universe, input.protocol.universe),
     `candidateRunId=${String(lock.candidateRunId)}`,
   )

@@ -14,7 +14,7 @@ import {
   type SignalAccessRecord,
 } from './qualification-audit'
 import { makeQualificationDossier } from './qualification-dossier'
-import type { InputManifest, StrategyProtocol } from './types'
+import type { RiskBalancedTrendProtocol, UniverseBoundInputManifest } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
@@ -307,12 +307,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
     )
   })
 
-const loadSignal = (
-  input: AuditConfig,
-  database: AuditDatabaseSnapshot,
-  manifest: InputManifest,
-  protocol: StrategyProtocol,
-) => {
+const loadSignal = (input: AuditConfig, manifest: UniverseBoundInputManifest, protocol: RiskBalancedTrendProtocol) => {
   const layer = MarketDataLive(
     {
       operationTimeoutMs: input.operationTimeoutMs,
@@ -326,7 +321,7 @@ const loadSignal = (
         bounds: manifest.bounds,
       },
     },
-    protocol.universe,
+    protocol,
   ).pipe(
     Layer.provide(
       ClickhouseClient.layer({
@@ -359,7 +354,7 @@ const readSignalAccess = (
         formatDateTime(toTimeZone(query_start_time_microseconds, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ') AS query_start_time,
         user,
         multiIf(
-          positionCaseInsensitive(query, 'snapshot_manifests_v1') > 0, 'manifest',
+          positionCaseInsensitive(query, 'snapshot_manifests_v2') > 0, 'manifest',
           positionCaseInsensitive(query, 'exchange_sessions_v1') > 0, 'sessions',
           'bars'
         ) AS kind
@@ -372,7 +367,7 @@ const readSignalAccess = (
         )
         AND position(query, ${sql.param('String', database.run.snapshotId)}) > 0
         AND (
-          positionCaseInsensitive(query, 'snapshot_manifests_v1') > 0
+          positionCaseInsensitive(query, 'snapshot_manifests_v2') > 0
           OR positionCaseInsensitive(query, 'exchange_sessions_v1') > 0
           OR positionCaseInsensitive(query, 'adjusted_daily_bars_v2') > 0
         )
@@ -448,7 +443,13 @@ const main = Effect.gen(function* () {
   if (database.protocol.strategyName !== expectedStrategyName || database.run.strategyName !== expectedStrategyName) {
     throw new Error('stored strategy name does not match its protocol schema')
   }
-  const signal = yield* loadSignal(input, database, manifest, protocol)
+  if (protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2') {
+    throw new Error('live qualification audit supports the current risk-balanced trend contract only')
+  }
+  if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
+    throw new Error('risk-balanced trend qualification requires bayn.input-manifest.v3')
+  }
+  const signal = yield* loadSignal(input, manifest, protocol)
   const signalAccess = yield* readSignalAccess(input, database, manifest.finalizedSnapshot.finalizedAt)
   const result = database.qualification.result as Readonly<Record<string, unknown>>
   const analysis = result.analysis as Readonly<Record<string, unknown>>

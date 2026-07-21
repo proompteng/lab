@@ -1,8 +1,9 @@
 import { Effect, Schema } from 'effect'
 
+import { IsoDateSchema, Sha256Schema } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './execution-model'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1, sha256 } from './hash'
 import { DIRECT_VOLATILITY_WINDOW, type RiskBalancedTrendProtocol, type TsmomProtocol } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
@@ -149,8 +150,12 @@ export const loadDefaultProtocol = loadTsmomProtocol(defaultProtocolDocument)
 export const hashTsmomParameters = (parameters: TsmomProtocol): string => canonicalHashV1(parameters)
 
 const RiskBalancedTrendProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v1'),
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
+  universeId: Schema.Literal('equity-infrastructure-v1'),
+  universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
+  historyStart: IsoDateSchema,
+  evaluationStart: IsoDateSchema,
   horizons: Schema.Array(PositiveInteger).check(Schema.isMinLength(1)),
   volatilityWindow: PositiveInteger,
   rebalance: Schema.Literal('month-end'),
@@ -172,6 +177,12 @@ export const RiskBalancedTrendProtocolSchema = RiskBalancedTrendProtocolBase.che
     } else if (sortedUniverse.some((symbol, index) => symbol !== parameters.universe[index])) {
       issues.push({ path: ['universe'], issue: 'must be sorted in canonical order' })
     }
+    if (parameters.universeSymbolHash !== sha256(parameters.universe.join(','))) {
+      issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
+    }
+    if (parameters.evaluationStart <= parameters.historyStart) {
+      issues.push({ path: ['evaluationStart'], issue: 'must follow historyStart' })
+    }
     for (let index = 1; index < parameters.horizons.length; index += 1) {
       if (parameters.horizons[index] <= parameters.horizons[index - 1]) {
         issues.push({ path: ['horizons', index], issue: 'must be unique and strictly increasing' })
@@ -192,8 +203,12 @@ export const RiskBalancedTrendProtocolSchema = RiskBalancedTrendProtocolBase.che
 )
 
 export const defaultRiskBalancedTrendProtocolDocument = {
-  schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
-  universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
+  schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+  universeId: 'equity-infrastructure-v1',
+  universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
+  universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
+  historyStart: '2022-01-27',
+  evaluationStart: '2023-01-30',
   horizons: [21, 63, 126, 252],
   volatilityWindow: 63,
   rebalance: 'month-end',
