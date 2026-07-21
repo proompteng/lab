@@ -222,7 +222,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 3,
+      restartNonce: 4,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
@@ -236,7 +236,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_OVERNIGHT_BARS_TOPIC: 'bayn.market-data.overnight.bars.1m.v1',
       ARCHIVE_PARALLELISM: '3',
       ARCHIVE_CLICKHOUSE_URL:
-        'jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?insert_quorum_parallel=1',
+        'jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?clickhouse_setting_insert_quorum_parallel=1',
       ARCHIVE_CLICKHOUSE_USERNAME: 'signal_publisher',
     })
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
