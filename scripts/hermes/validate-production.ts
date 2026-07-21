@@ -542,9 +542,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'chmod 0600 "$gh_auth_stage_dir/hosts.yml"',
     'if [ "$github_login" != tuslagch ]; then',
     'if [ "$github_permission" != ADMIN ]; then',
+    'rm -rf -- "$gh_auth_stage_dir"',
     'github_bootstrap_ready=true',
   ])
-  forbidTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, ['curl ', 'wget ', ':latest'])
+  forbidTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, [
+    'rmdir -- "$gh_auth_stage_dir"',
+    'curl ',
+    'wget ',
+    ':latest',
+  ])
   requireTerms(failures, productionPaths.workspaceAgents, files.workspaceAgents, [
     'Kubernetes access is cluster-wide read-only.',
     'Kubernetes Secrets and service-account token subresources are outside your authority.',

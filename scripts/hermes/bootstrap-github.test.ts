@@ -76,6 +76,7 @@ case "\${1:-}" in
     test "$token" = "$TEST_EXPECTED_GH_TOKEN"
     mkdir -p "$GH_CONFIG_DIR"
     printf 'github.com:\\n    user: tuslagch\\n    oauth_token: %s\\n    git_protocol: https\\n' "$token" >"$GH_CONFIG_DIR/hosts.yml"
+    printf 'git_protocol: https\\n' >"$GH_CONFIG_DIR/config.yml"
     ;;
   api)
     test "\${2:-}" = user
