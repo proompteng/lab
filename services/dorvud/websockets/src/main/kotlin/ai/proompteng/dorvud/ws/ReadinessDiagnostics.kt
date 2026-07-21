@@ -49,7 +49,20 @@ data class ReadinessInfo(
   val gates: ReadinessGates,
   @SerialName("alpaca_market_data_ws") val alpacaMarketDataWs: AlpacaMarketDataWebsocketStatus = AlpacaMarketDataWebsocketStatus(),
   @SerialName("market_data_channels") val marketDataChannels: List<MarketDataChannelReadiness> = emptyList(),
+  @SerialName("market_data_feeds") val marketDataFeeds: List<MarketDataFeedReadiness> = emptyList(),
   @SerialName("market_data_universe") val marketDataUniverse: MarketDataUniverseInfo? = null,
+)
+
+@Serializable
+data class MarketDataFeedReadiness(
+  val feed: String,
+  val core: Boolean,
+  val ready: Boolean,
+  @SerialName("auth_ok") val authOk: Boolean,
+  @SerialName("subscription_ok") val subscriptionOk: Boolean,
+  @SerialName("kafka_ready") val kafkaReady: Boolean,
+  @SerialName("error_class") val errorClass: String? = null,
+  val channels: List<MarketDataChannelReadiness>,
 )
 
 @Serializable

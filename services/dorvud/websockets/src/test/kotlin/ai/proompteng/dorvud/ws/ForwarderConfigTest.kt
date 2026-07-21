@@ -10,6 +10,123 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class ForwarderConfigTest {
+  private val authoritativeUniverse =
+    mapOf(
+      "SYMBOLS" to "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC",
+      "SYMBOLS_ALLOWLIST" to "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC",
+      "MARKET_DATA_UNIVERSE_ID" to "equity-infrastructure-v1",
+      "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to
+        "ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18",
+    )
+
+  private val observationTopics =
+    mapOf(
+      "TOPIC_DELAYED_SIP_TRADES" to "bayn.market-data.delayed-sip.trades.v1",
+      "TOPIC_DELAYED_SIP_QUOTES" to "bayn.market-data.delayed-sip.quotes.v1",
+      "TOPIC_DELAYED_SIP_BARS_1M" to "bayn.market-data.delayed-sip.bars.1m.v1",
+      "TOPIC_OVERNIGHT_TRADES" to "bayn.market-data.overnight.trades.v1",
+      "TOPIC_OVERNIGHT_QUOTES" to "bayn.market-data.overnight.quotes.v1",
+      "TOPIC_OVERNIGHT_BARS_1M" to "bayn.market-data.overnight.bars.1m.v1",
+      "TOPIC_OBSERVATION_STATUS" to "bayn.market-data.observation.status.v1",
+    )
+
+  @Test
+  fun `builds typed isolated runtimes for the authoritative observation feeds`() {
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "ALPACA_FEED" to "iex",
+          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip,overnight",
+        ) + authoritativeUniverse + observationTopics,
+      )
+
+    assertEquals(listOf(EquityFeed.DelayedSip, EquityFeed.Overnight), cfg.observationFeeds.map { it.feed })
+    val runtimes = cfg.marketDataFeedConfigs()
+    assertEquals(listOf("iex", "delayed_sip", "overnight"), runtimes.map { it.feed })
+    assertEquals(listOf(true, false, false), runtimes.map { it.core })
+    assertEquals(
+      listOf(
+        "wss://stream.data.alpaca.markets/v2/iex",
+        "wss://stream.data.alpaca.markets/v2/delayed_sip",
+        "wss://stream.data.alpaca.markets/v1beta1/overnight",
+      ),
+      runtimes.map { alpacaMarketDataStreamUrl(cfg, it) },
+    )
+    assertEquals("torghut.trades.v1", runtimes[0].topics.trades)
+    assertEquals("bayn.market-data.delayed-sip.trades.v1", runtimes[1].topics.trades)
+    assertEquals("bayn.market-data.overnight.trades.v1", runtimes[2].topics.trades)
+  }
+
+  @Test
+  fun `rejects unsafe or incomplete observation-feed configuration`() {
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "ALPACA_OBSERVATION_FEEDS" to "delayed_sip,overnight",
+      ) + authoritativeUniverse + observationTopics
+
+    assertEquals(
+      "ALPACA_OBSERVATION_FEEDS must not contain duplicates",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("ALPACA_OBSERVATION_FEEDS" to "overnight,overnight"))
+      }.message,
+    )
+    assertEquals(
+      "ALPACA_FEED must be iex when ALPACA_OBSERVATION_FEEDS is enabled",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("ALPACA_FEED" to "delayed_sip"))
+      }.message,
+    )
+    assertEquals(
+      "TOPIC_OVERNIGHT_QUOTES must be set when overnight is enabled",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base - "TOPIC_OVERNIGHT_QUOTES")
+      }.message,
+    )
+    assertEquals(
+      "market-data feed topics must be unique: torghut.trades.v1",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("TOPIC_DELAYED_SIP_TRADES" to "torghut.trades.v1"))
+      }.message,
+    )
+    assertEquals(
+      "market-data feed topics must be unique: torghut.status.v1",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("TOPIC_OBSERVATION_STATUS" to "torghut.status.v1"))
+      }.message,
+    )
+    assertEquals(
+      "ALPACA_OBSERVATION_FEEDS requires a versioned static market-data universe",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(
+          mapOf(
+            "ALPACA_KEY_ID" to "key",
+            "ALPACA_SECRET_KEY" to "secret",
+            "ALPACA_OBSERVATION_FEEDS" to "overnight",
+            "JANGAR_SYMBOLS_URL" to "http://jangar.test/symbols",
+          ) + observationTopics,
+        )
+      }.message,
+    )
+    val oversizedUniverse = ('A'..'K').map { it.toString() }
+    assertEquals(
+      "configured market-data feeds require 33 symbol subscriptions; Alpaca Basic allows 30",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(
+          base +
+            mapOf(
+              "SYMBOLS" to oversizedUniverse.joinToString(","),
+              "SYMBOLS_ALLOWLIST" to oversizedUniverse.joinToString(","),
+              "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(oversizedUniverse),
+            ),
+        )
+      }.message,
+    )
+  }
+
   @Test
   fun `loads defaults when optional envs missing`() {
     val cfg =

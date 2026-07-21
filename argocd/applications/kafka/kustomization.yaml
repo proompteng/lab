@@ -40,6 +40,7 @@ resources:
   - torghut-options-kafkauser.yaml
   - torghut-hyperliquid-feed-kafkauser.yaml
   - torghut-topics.yaml
+  - bayn-market-data-topics.yaml
   - torghut-sim-topics.yaml
   - torghut-options-topics.yaml
   - torghut-hyperliquid-feed-topics.yaml

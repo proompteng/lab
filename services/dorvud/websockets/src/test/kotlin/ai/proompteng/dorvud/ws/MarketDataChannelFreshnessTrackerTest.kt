@@ -8,6 +8,62 @@ import kotlin.test.assertTrue
 
 class MarketDataChannelFreshnessTrackerTest {
   @Test
+  fun `observation freshness gates follow the feed active session`() {
+    val delayedSipPre =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("quotes"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { Instant.parse("2026-07-07T12:00:00Z").toEpochMilli() },
+        marketType = AlpacaMarketType.EQUITY,
+        equityFeed = EquityFeed.DelayedSip,
+      )
+    delayedSipPre.recordSubscription(listOf("NVDA"))
+    assertTrue(delayedSipPre.snapshot().single().gateActive)
+
+    val overnightRegular =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("quotes"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { Instant.parse("2026-07-07T14:00:00Z").toEpochMilli() },
+        marketType = AlpacaMarketType.EQUITY,
+        equityFeed = EquityFeed.Overnight,
+      )
+    overnightRegular.recordSubscription(listOf("NVDA"))
+    assertFalse(overnightRegular.snapshot().single().gateActive)
+
+    val overnightActive =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("quotes"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { Instant.parse("2026-07-08T01:00:00Z").toEpochMilli() },
+        marketType = AlpacaMarketType.EQUITY,
+        equityFeed = EquityFeed.Overnight,
+      )
+    overnightActive.recordSubscription(listOf("NVDA"))
+    assertTrue(overnightActive.snapshot().single().gateActive)
+    assertEquals("overnight", overnightActive.snapshot().single().marketSessionState)
+  }
+
+  @Test
+  fun `overnight session follows the Sunday evening through Friday evening market week`() {
+    val cases =
+      mapOf(
+        "2026-07-19T23:59:59Z" to "weekend",
+        "2026-07-20T00:00:00Z" to "overnight",
+        "2026-07-25T00:00:00Z" to "closed",
+        "2026-07-25T03:59:59Z" to "closed",
+        "2026-07-25T04:00:00Z" to "weekend",
+      )
+
+    cases.forEach { (timestamp, expected) ->
+      assertEquals(expected, marketSessionState(Instant.parse(timestamp), AlpacaMarketType.EQUITY), timestamp)
+    }
+  }
+
+  @Test
   fun `conditional updated bars do not block readiness when no late-trade corrections arrive`() {
     val nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
     val tracker =

@@ -1,0 +1,180 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: signal-intraday-bars-schema-v1
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: signal-intraday-bars-schema
+    app.kubernetes.io/part-of: signal
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: signal-intraday-bars-schema
+        app.kubernetes.io/part-of: signal
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Never
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: migrate
+          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+              client=(
+                clickhouse-client
+                --host torghut-clickhouse.torghut.svc.cluster.local
+                --port 9000
+                --user "${CLICKHOUSE_USERNAME}"
+                --password "${CLICKHOUSE_PASSWORD}"
+                --connect_timeout 5
+                --send_timeout 120
+                --receive_timeout 120
+              )
+
+              until "${client[@]}" --query "SELECT 1" >/dev/null; do sleep 3; done
+              "${client[@]}" --multiquery --query "
+                CREATE DATABASE IF NOT EXISTS signal ON CLUSTER default;
+
+                CREATE TABLE IF NOT EXISTS signal.intraday_bars_1m_v1 ON CLUSTER default
+                (
+                  provider LowCardinality(String),
+                  universe_id LowCardinality(String),
+                  universe_symbol_hash FixedString(64),
+                  feed LowCardinality(String),
+                  channel LowCardinality(String),
+                  market_session LowCardinality(String),
+                  delay_class LowCardinality(String),
+                  symbol LowCardinality(String),
+                  event_ts DateTime64(3, 'UTC'),
+                  ingest_ts DateTime64(3, 'UTC'),
+                  source_topic LowCardinality(String),
+                  source_partition UInt32,
+                  source_offset UInt64,
+                  is_final UInt8,
+                  open Float64,
+                  high Float64,
+                  low Float64,
+                  close Float64,
+                  volume Float64,
+                  vwap Nullable(Float64),
+                  trade_count Nullable(UInt64),
+                  schema_version UInt32
+                )
+                ENGINE = ReplicatedReplacingMergeTree(
+                  '/clickhouse/tables/{cluster}/{shard}/signal_intraday_bars_1m_v1',
+                  '{replica}',
+                  source_offset
+                )
+                PARTITION BY toYYYYMM(event_ts)
+                ORDER BY (universe_id, feed, symbol, event_ts)
+                TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE;
+              "
+
+              mapfile -t hosts < <(
+                "${client[@]}" --query "
+                  SELECT host_name
+                  FROM system.clusters
+                  WHERE cluster = 'default'
+                  ORDER BY shard_num, replica_num
+                "
+              )
+              if [ "${#hosts[@]}" -eq 0 ]; then
+                echo "ClickHouse cluster default has no replicas" >&2
+                exit 1
+              fi
+
+              for host in "${hosts[@]}"; do
+                replica_client=(
+                  clickhouse-client
+                  --host "${host}"
+                  --port 9000
+                  --user "${CLICKHOUSE_USERNAME}"
+                  --password "${CLICKHOUSE_PASSWORD}"
+                  --connect_timeout 5
+                  --send_timeout 120
+                  --receive_timeout 120
+                )
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 1
+                      OR countIf(engine = 'ReplicatedReplacingMergeTree') != 1
+                      OR countIf(sorting_key = 'universe_id, feed, symbol, event_ts') != 1
+                      OR countIf(partition_key = 'toYYYYMM(event_ts)') != 1
+                      OR countIf(position(engine_full, 'source_offset') > 0) != 1
+                      OR countIf(
+                        position(create_table_query, 'TTL toDateTime(event_ts) + toIntervalDay(400)') > 0
+                      ) != 1,
+                    'Signal intraday-bars table engine, keys, version, or TTL are incorrect'
+                  )
+                  FROM system.tables
+                  WHERE database = 'signal' AND name = 'intraday_bars_1m_v1'
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 22
+                      OR arraySort(groupUniqArray(concat(name, ':', type))) != arraySort([
+                        'provider:LowCardinality(String)',
+                        'universe_id:LowCardinality(String)',
+                        'universe_symbol_hash:FixedString(64)',
+                        'feed:LowCardinality(String)',
+                        'channel:LowCardinality(String)',
+                        'market_session:LowCardinality(String)',
+                        'delay_class:LowCardinality(String)',
+                        'symbol:LowCardinality(String)',
+                        'event_ts:DateTime64(3, \'UTC\')',
+                        'ingest_ts:DateTime64(3, \'UTC\')',
+                        'source_topic:LowCardinality(String)',
+                        'source_partition:UInt32',
+                        'source_offset:UInt64',
+                        'is_final:UInt8',
+                        'open:Float64',
+                        'high:Float64',
+                        'low:Float64',
+                        'close:Float64',
+                        'volume:Float64',
+                        'vwap:Nullable(Float64)',
+                        'trade_count:Nullable(UInt64)',
+                        'schema_version:UInt32'
+                      ]),
+                    'Signal intraday-bars columns do not match the archive contract'
+                  )
+                  FROM system.columns
+                  WHERE database = 'signal' AND table = 'intraday_bars_1m_v1'
+                "
+              done
+          env:
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

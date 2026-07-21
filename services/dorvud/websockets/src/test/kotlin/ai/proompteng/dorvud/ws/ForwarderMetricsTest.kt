@@ -81,8 +81,8 @@ class ForwarderMetricsTest {
     val registry = SimpleMeterRegistry()
     val metrics = ForwarderMetrics(registry)
 
-    metrics.recordProviderMessage(AlpacaMarketType.OPTIONS, "quote")
-    metrics.recordMarketDataDrop(AlpacaMarketType.OPTIONS, "quote", "invalid_event_ts")
+    metrics.recordProviderMessage(AlpacaMarketType.OPTIONS, "opra", "quote")
+    metrics.recordMarketDataDrop(AlpacaMarketType.OPTIONS, "opra", "quote", "invalid_event_ts")
     metrics.setOptionsEventStarvation(true)
 
     assertEquals(
@@ -90,6 +90,7 @@ class ForwarderMetricsTest {
       registry
         .find("torghut_ws_provider_messages_total")
         .tag("market_type", "options")
+        .tag("feed", "opra")
         .tag("channel", "quote")
         .counter()
         ?.count(),
@@ -99,6 +100,7 @@ class ForwarderMetricsTest {
       registry
         .find("torghut_ws_market_data_drops_total")
         .tag("market_type", "options")
+        .tag("feed", "opra")
         .tag("channel", "quote")
         .tag("reason", "invalid_event_ts")
         .counter()
@@ -123,11 +125,69 @@ class ForwarderMetricsTest {
   }
 
   @Test
+  fun `keeps market data operational metrics isolated by feed`() {
+    val registry = SimpleMeterRegistry()
+    val metrics = ForwarderMetrics(registry)
+
+    metrics.recordMarketDataReconnect("overnight")
+    metrics.recordMarketDataWsConnectSuccess("overnight")
+    metrics.recordMarketDataWsConnectError("overnight", ReadinessErrorClass.AlpacaAuth)
+    metrics.recordMarketDataDedup("overnight", "bars")
+    metrics.recordMarketDataLagMs("overnight", "bars", 42)
+
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_reconnects_total")
+        .tag("feed", "overnight")
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_connect_success_total")
+        .tag("feed", "overnight")
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_connect_errors_total")
+        .tag("feed", "overnight")
+        .tag("error_class", ReadinessErrorClass.AlpacaAuth.id)
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_dedup_drops_total")
+        .tag("feed", "overnight")
+        .tag("channel", "bars")
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_lag_ms")
+        .tag("feed", "overnight")
+        .tag("channel", "bars")
+        .summary()
+        ?.count()
+        ?.toDouble(),
+    )
+  }
+
+  @Test
   fun `records market data channel readiness gauges`() {
     val registry = SimpleMeterRegistry()
     val metrics = ForwarderMetrics(registry)
 
     metrics.setMarketDataChannelReadiness(
+      "delayed_sip",
       listOf(
         MarketDataChannelReadiness(
           channel = "trades",
@@ -155,6 +215,7 @@ class ForwarderMetricsTest {
       0.0,
       registry
         .find("torghut_ws_market_data_channel")
+        .tag("feed", "delayed_sip")
         .tag("channel", "trades")
         .tag("field", "ready")
         .gauge()
@@ -164,6 +225,7 @@ class ForwarderMetricsTest {
       -1.0,
       registry
         .find("torghut_ws_market_data_channel")
+        .tag("feed", "delayed_sip")
         .tag("channel", "trades")
         .tag("field", "lag_ms")
         .gauge()
@@ -173,6 +235,7 @@ class ForwarderMetricsTest {
       1.0,
       registry
         .find("torghut_ws_market_data_channel")
+        .tag("feed", "delayed_sip")
         .tag("channel", "trades")
         .tag("field", "observed_symbol_count")
         .gauge()
@@ -182,6 +245,7 @@ class ForwarderMetricsTest {
       90.0,
       registry
         .find("torghut_ws_market_data_channel")
+        .tag("feed", "delayed_sip")
         .tag("channel", "trades")
         .tag("field", "latest_subscription_ack_at_ms")
         .gauge()
@@ -191,6 +255,7 @@ class ForwarderMetricsTest {
       20.0,
       registry
         .find("torghut_ws_market_data_channel")
+        .tag("feed", "delayed_sip")
         .tag("channel", "trades")
         .tag("field", "subscription_ack_lag_ms")
         .gauge()

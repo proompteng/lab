@@ -26,6 +26,9 @@ data class Envelope<T>(
   val source: String = "ws",
   val window: Window? = null,
   val version: Int = 1,
+  val provider: String? = null,
+  val marketSession: String? = null,
+  val delayClass: String? = null,
 )
 
 @Serializable
