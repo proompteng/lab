@@ -8,9 +8,16 @@ import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
+import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { evaluateTsmom } from '../strategy'
 import { makeTsmomStrategy } from '../strategy-service'
-import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../test-fixtures'
+import {
+  fixtureProtocol,
+  makeRiskBalancedTrendTestProvenance,
+  makeSnapshot,
+  makeTestProvenance,
+  riskBalancedTrendFixtureProtocol,
+} from '../test-fixtures'
 import type { TsmomProtocol } from '../types'
 import {
   DatabaseError,
@@ -76,6 +83,28 @@ const makeInput = (
   return {
     provenance,
     parameters: protocol,
+    evaluation,
+    reconciliation: {
+      runId: evaluation.runId,
+      accountCount: ledger.accounts.length,
+      transferCount: ledger.transfers.length,
+      exact: true,
+    },
+  }
+}
+
+const makeRiskBalancedTrendInput = (): PersistEvaluationInput => {
+  const provenance = makeRiskBalancedTrendTestProvenance()
+  const evaluation = evaluateRiskBalancedTrend(
+    snapshot.bars,
+    snapshot.manifest,
+    riskBalancedTrendFixtureProtocol,
+    provenance,
+  )
+  const ledger = buildLedgerPlan(evaluation, 7_001)
+  return {
+    provenance,
+    parameters: riskBalancedTrendFixtureProtocol,
     evaluation,
     reconciliation: {
       runId: evaluation.runId,
@@ -682,6 +711,52 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       })
     }
     expect(Option.isNone(result.missing)).toBe(true)
+  })
+
+  test('persists and recovers the complete risk-balanced trend v5 evidence contract', async () => {
+    const input = makeRiskBalancedTrendInput()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const receipt = yield* store.persist(input)
+        const stored = yield* store.read(input.evaluation.runId)
+        const recovered = yield* store.recover(input.evaluation.runId, input.provenance)
+        return { receipt, stored, recovered }
+      }),
+    )
+
+    expect(result.receipt).toMatchObject({ runId: input.evaluation.runId, artifactCount: 17 })
+    expect(Option.isSome(result.stored)).toBe(true)
+    if (Option.isSome(result.stored)) {
+      expect(result.stored.value.protocol).toMatchObject({
+        strategyName: 'risk-balanced-trend',
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+        parameters: riskBalancedTrendFixtureProtocol,
+      })
+      expect(result.stored.value.run).toMatchObject({
+        evaluationSchemaVersion: 'bayn.evaluation.v5',
+        artifactCount: 17,
+      })
+      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toContain(
+        'risk-balanced-trend-signal-decisions',
+      )
+      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).not.toContain('tsmom-signal-decisions')
+      expect(result.stored.value.artifacts.find((artifact) => artifact.name === 'evaluation-summary')).toMatchObject({
+        schemaVersion: 'bayn.evaluation-summary.v4',
+      })
+    }
+    expect(Option.isSome(result.recovered)).toBe(true)
+    if (Option.isSome(result.recovered)) {
+      expect(result.recovered.value).toMatchObject({
+        evaluation: {
+          schemaVersion: 'bayn.evaluation-summary.v4',
+          evaluationSchemaVersion: 'bayn.evaluation.v5',
+          runId: input.evaluation.runId,
+        },
+        reconciliation: { runId: input.evaluation.runId, exact: true },
+        persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 17 },
+      })
+    }
   })
 
   test('retrieves ordered artifact items through bounded contiguous pages', async () => {

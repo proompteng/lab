@@ -31,11 +31,15 @@ import type {
   InputManifest,
   IsoDate,
   PerformanceMetrics,
+  RiskBalancedTrendDecisionPlan,
+  RiskBalancedTrendProtocol,
   SimulatedOrder,
+  SimulationProtocol,
   SimulationTrace,
+  StrategyDecisionPlan,
+  StrategySignalDecision,
   TsmomDecisionPlan,
   TsmomProtocol,
-  TsmomSignalDecision,
 } from './types'
 
 interface Session {
@@ -47,7 +51,7 @@ interface Target {
   readonly signalIndex: number
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
-  readonly plan?: TsmomDecisionPlan
+  readonly plan?: StrategyDecisionPlan
 }
 
 interface Position {
@@ -58,7 +62,7 @@ interface Position {
 interface Replay {
   readonly metrics: PerformanceMetrics
   readonly events: readonly EvaluationEvent[]
-  readonly decisions: readonly TsmomSignalDecision[]
+  readonly decisions: readonly StrategySignalDecision[]
   readonly daily: readonly DailyPerformancePoint[]
   readonly trace: SimulationTrace | null
 }
@@ -165,10 +169,219 @@ const decisionPlan = (
   }
 }
 
+const riskBalancedHistoryLength = (protocol: RiskBalancedTrendProtocol): number =>
+  Math.max(protocol.volatilityWindow, ...protocol.horizons)
+
+const allocateCapped = (
+  scores: Readonly<Record<string, number>>,
+  maximumWeight: number,
+): Readonly<Record<string, number>> => {
+  const weights: Record<string, number> = Object.fromEntries(
+    Object.keys(scores)
+      .sort()
+      .map((symbol) => [symbol, 0]),
+  )
+  let unallocated = 1
+  let available = Object.keys(scores)
+    .filter((symbol) => scores[symbol] > 0)
+    .sort()
+
+  while (available.length > 0 && unallocated > 0) {
+    const availableScore = available.reduce((total, symbol) => total + scores[symbol], 0)
+    if (!Number.isFinite(availableScore) || availableScore <= 0) break
+    const exceedsCap = available.filter((symbol) => (unallocated * scores[symbol]) / availableScore > maximumWeight)
+    if (exceedsCap.length === 0) {
+      for (const symbol of available) weights[symbol] = (unallocated * scores[symbol]) / availableScore
+      break
+    }
+    for (const symbol of exceedsCap) {
+      weights[symbol] = maximumWeight
+      unallocated = Math.max(0, unallocated - maximumWeight)
+    }
+    const allocated = new Set(exceedsCap)
+    available = available.filter((symbol) => !allocated.has(symbol))
+  }
+
+  return weights
+}
+
+const weightScale = 1_000_000_000_000
+
+const quantizeCappedWeights = (
+  weights: Readonly<Record<string, number>>,
+  maximumWeight: number,
+): Readonly<Record<string, number>> => {
+  const maximumUnits = Math.floor(maximumWeight * weightScale + Number.EPSILON)
+  const units: Record<string, number> = Object.fromEntries(
+    Object.keys(weights)
+      .sort()
+      .map((symbol) => {
+        const weight = weights[symbol]
+        if (!Number.isFinite(weight) || weight < 0) throw new Error(`reference target weight is invalid for ${symbol}`)
+        return [symbol, Math.min(maximumUnits, Math.max(0, Math.round(weight * weightScale)))]
+      }),
+  )
+  let total = Object.values(units).reduce((sum, value) => sum + value, 0)
+  let excess = Math.max(0, total - weightScale)
+  for (const symbol of Object.keys(units).sort().reverse()) {
+    if (excess === 0) break
+    const reduction = Math.min(units[symbol], excess)
+    units[symbol] -= reduction
+    excess -= reduction
+    total -= reduction
+  }
+  if (total > weightScale || excess > 0) throw new Error('reference weights cannot be bounded at full exposure')
+  return Object.fromEntries(Object.entries(units).map(([symbol, value]) => [symbol, value / weightScale]))
+}
+
+const sampleCovariance = (left: readonly number[], right: readonly number[]): number => {
+  if (left.length !== right.length || left.length < 2) throw new Error('reference covariance inputs are not aligned')
+  const leftAverage = average(left)
+  const rightAverage = average(right)
+  const value =
+    left.reduce((total, observation, index) => total + (observation - leftAverage) * (right[index] - rightAverage), 0) /
+    (left.length - 1)
+  if (!Number.isFinite(value)) throw new Error('reference covariance is not finite')
+  return value
+}
+
+const portfolioVolatility = (
+  weights: Readonly<Record<string, number>>,
+  returns: Readonly<Record<string, readonly number[]>>,
+): number => {
+  const symbols = Object.keys(weights).sort()
+  const dailyVariance = symbols.reduce(
+    (outer, left) =>
+      outer +
+      symbols.reduce(
+        (inner, right) => inner + weights[left] * weights[right] * sampleCovariance(returns[left], returns[right]),
+        0,
+      ),
+    0,
+  )
+  if (!Number.isFinite(dailyVariance) || dailyVariance < -1e-12) {
+    throw new Error('reference covariance produced an invalid portfolio variance')
+  }
+  const annualized = Math.sqrt(Math.max(0, dailyVariance) * tradingDays)
+  if (!Number.isFinite(annualized)) throw new Error('reference portfolio volatility is not finite')
+  return annualized
+}
+
+const riskBalancedDecisionPlan = (
+  signalIndex: number,
+  sessions: readonly Session[],
+  protocol: RiskBalancedTrendProtocol,
+): RiskBalancedTrendDecisionPlan => {
+  const requiredHistory = riskBalancedHistoryLength(protocol)
+  if (signalIndex < requiredHistory) throw new Error('reference risk-balanced trend has insufficient history')
+  const history = sessions.slice(signalIndex - requiredHistory, signalIndex + 1)
+  const sessionDates = history.map((session) => session.date)
+  const returnsBySymbol: Record<string, readonly number[]> = {}
+  const baseSignals = protocol.universe.map((symbol) => {
+    const closes = history.map((session) => session.bars[symbol].close)
+    if (closes.some((close) => !Number.isFinite(close) || close <= 0)) {
+      throw new Error(`reference risk-balanced trend has an invalid close for ${symbol}`)
+    }
+    const current = closes.at(-1)
+    if (current === undefined) throw new Error(`reference risk-balanced trend has no current close for ${symbol}`)
+    const volatilityCloses = closes.slice(-(protocol.volatilityWindow + 1))
+    const recentReturns = volatilityCloses.slice(1).map((close, index) => close / volatilityCloses[index] - 1)
+    if (recentReturns.some((value) => !Number.isFinite(value))) {
+      throw new Error(`reference risk-balanced trend has an invalid return for ${symbol}`)
+    }
+    returnsBySymbol[symbol] = recentReturns
+    const dailyVolatility = sampleDeviation(recentReturns)
+    const annualizedVolatility = dailyVolatility * Math.sqrt(tradingDays)
+    const horizons = protocol.horizons.map((horizonSessions) => {
+      const prior = closes[closes.length - 1 - horizonSessions]
+      if (prior === undefined) throw new Error(`reference risk-balanced trend has no prior close for ${symbol}`)
+      const value = current / prior - 1
+      const normalizedTrend = dailyVolatility === 0 ? 0 : value / (dailyVolatility * Math.sqrt(horizonSessions))
+      if (![value, normalizedTrend].every(Number.isFinite)) {
+        throw new Error(`reference risk-balanced trend has an invalid horizon signal for ${symbol}`)
+      }
+      return { horizonSessions, return: value, normalizedTrend }
+    })
+    const compositeScore = dailyVolatility === 0 ? 0 : average(horizons.map((horizon) => horizon.normalizedTrend))
+    if (![annualizedVolatility, compositeScore].every(Number.isFinite)) {
+      throw new Error(`reference risk-balanced trend has an invalid score for ${symbol}`)
+    }
+    return {
+      symbol,
+      horizons,
+      dailyVolatility,
+      annualizedVolatility,
+      compositeScore,
+      positiveScore: Math.max(0, compositeScore),
+      eligible: dailyVolatility > 0,
+    }
+  })
+
+  const scores = Object.fromEntries(baseSignals.map((signal) => [signal.symbol, signal.positiveScore]))
+  const scoreTotal = Object.values(scores).reduce((total, score) => total + score, 0)
+  const uncappedWeights = Object.fromEntries(
+    protocol.universe.map((symbol) => [symbol, scoreTotal === 0 ? 0 : scores[symbol] / scoreTotal]),
+  )
+  const cappedWeights = quantizeCappedWeights(
+    allocateCapped(scores, protocol.maximumSymbolWeight),
+    protocol.maximumSymbolWeight,
+  )
+  const estimatedAnnualizedPortfolioVolatility = portfolioVolatility(cappedWeights, returnsBySymbol)
+  const exposureScale =
+    estimatedAnnualizedPortfolioVolatility === 0
+      ? 1
+      : Math.min(1, protocol.maximumPortfolioVolatility / estimatedAnnualizedPortfolioVolatility)
+  let targetWeights = quantizeCappedWeights(
+    Object.fromEntries(protocol.universe.map((symbol) => [symbol, cappedWeights[symbol] * exposureScale])),
+    protocol.maximumSymbolWeight,
+  )
+  const scaledVolatility = portfolioVolatility(targetWeights, returnsBySymbol)
+  if (scaledVolatility > protocol.maximumPortfolioVolatility) {
+    const correction = protocol.maximumPortfolioVolatility / scaledVolatility
+    targetWeights = Object.fromEntries(
+      Object.entries(targetWeights).map(([symbol, weight]) => [
+        symbol,
+        Math.floor(weight * correction * weightScale) / weightScale,
+      ]),
+    )
+  }
+  const totalWeight = Object.values(targetWeights).reduce((total, weight) => total + weight, 0)
+  if (
+    totalWeight > 1 + 1e-12 ||
+    Object.values(targetWeights).some(
+      (weight) => !Number.isFinite(weight) || weight < 0 || weight > protocol.maximumSymbolWeight + 1e-12,
+    ) ||
+    portfolioVolatility(targetWeights, returnsBySymbol) > protocol.maximumPortfolioVolatility + 1e-12
+  ) {
+    throw new Error('reference risk-balanced trend produced weights outside the protocol limits')
+  }
+
+  const covarianceDates = sessionDates.slice(-protocol.volatilityWindow)
+  return {
+    schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
+    signalDate: sessions[signalIndex].date,
+    covarianceWindow: {
+      returnCount: protocol.volatilityWindow,
+      firstSession: covarianceDates[0],
+      lastSession: covarianceDates.at(-1) ?? sessions[signalIndex].date,
+      sessionsHash: canonicalHashV1(covarianceDates),
+    },
+    estimatedAnnualizedPortfolioVolatility,
+    exposureScale,
+    targetWeights,
+    signals: baseSignals.map((signal) => ({
+      ...signal,
+      uncappedWeight: roundWeight(uncappedWeights[signal.symbol]),
+      cappedWeight: cappedWeights[signal.symbol],
+      targetWeight: targetWeights[signal.symbol],
+    })),
+  }
+}
+
 const directVolatilityTarget = (
   sessions: readonly Session[],
   signalIndex: number,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
 ): Readonly<Record<string, number>> => {
   const portfolioReturns: number[] = []
   for (let index = signalIndex - 62; index <= signalIndex; index += 1) {
@@ -235,7 +448,7 @@ const order = (
   side: 'buy' | 'sell',
   requestedQuantityMicros: bigint,
   referencePrice: bigint,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
 ): SimulatedOrder => {
   const outcome = makeOrderOutcome({
     identity: {
@@ -310,7 +523,7 @@ const replay = (
   sessions: readonly Session[],
   targets: readonly Target[],
   startIndex: number,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
   costMultiplierMicros: bigint,
   runId: string,
   retainTrace: boolean,
@@ -329,7 +542,7 @@ const replay = (
   let previousDate: IsoDate | undefined
   const equity: bigint[] = []
   const events: EvaluationEvent[] = []
-  const decisions: TsmomSignalDecision[] = []
+  const decisions: StrategySignalDecision[] = []
   const orders: SimulatedOrder[] = []
   const changes: CashChange[] = []
   const marks: DailyPositionMark[] = []
@@ -632,7 +845,7 @@ const verdict = (
   buyAndHold: PerformanceMetrics,
   directVolTiming: PerformanceMetrics,
   doubleCost: PerformanceMetrics,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
 ): EconomicVerdict => {
   const threshold = protocol.thresholds
   const benchmarkSharpe = Math.max(buyAndHold.sharpe, directVolTiming.sharpe)
@@ -737,6 +950,104 @@ export const evaluateReferenceTsmom = (
   const protocolHash = makeStrategyProtocolHash(strategyIdentity)
   const candidateTargets = eligibleSignals.map((signalIndex): Target => {
     const plan = decisionPlan(signalIndex, sessions, protocol)
+    return { signalIndex, executionIndex: signalIndex + 1, weights: plan.targetWeights, plan }
+  })
+  const equalWeight = roundWeight(1 / protocol.universe.length)
+  const buyAndHoldTargets: readonly Target[] = [
+    {
+      signalIndex: startIndex - 1,
+      executionIndex: startIndex,
+      weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, equalWeight])),
+    },
+  ]
+  const directVolTargets = eligibleSignals.map(
+    (signalIndex): Target => ({
+      signalIndex,
+      executionIndex: signalIndex + 1,
+      weights: directVolatilityTarget(sessions, signalIndex, protocol),
+    }),
+  )
+  const strategy = replay(boundedSessions, candidateTargets, startIndex, protocol, MICROS, runId, true)
+  const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false)
+  const directVolTiming = replay(boundedSessions, directVolTargets, startIndex, protocol, MICROS, runId, false)
+  const doubleCostStrategy = replay(
+    boundedSessions,
+    candidateTargets,
+    startIndex,
+    protocol,
+    BigInt(protocol.executionModel.doubleCostMultiplier) * MICROS,
+    runId,
+    false,
+  )
+  return {
+    runId,
+    protocolHash,
+    strategy,
+    buyAndHold,
+    directVolTiming,
+    doubleCostStrategy,
+    verdict: verdict(
+      strategy.metrics,
+      buyAndHold.metrics,
+      directVolTiming.metrics,
+      doubleCostStrategy.metrics,
+      protocol,
+    ),
+  }
+}
+
+export const evaluateReferenceRiskBalancedTrend = (
+  bars: readonly DailyBar[],
+  manifest: InputManifest,
+  protocol: RiskBalancedTrendProtocol,
+  provenance: RuntimeProvenance,
+): ReferenceEvaluation => {
+  const sessions = align(bars, manifest, protocol.universe)
+  const dates = sessions.map((session) => session.date)
+  const requiredHistory = riskBalancedHistoryLength(protocol)
+  const eligibleSignals = monthEnds(dates).filter(
+    (index) =>
+      index >= requiredHistory &&
+      index < dates.length - 1 &&
+      dates[index - requiredHistory] >= manifest.bounds.lookbackStart &&
+      dates[index + 1] >= manifest.bounds.evaluationStart &&
+      dates[index + 1] <= manifest.bounds.evaluationEnd,
+  )
+  if (eligibleSignals.length === 0) throw new Error('reference dataset has no eligible signal session')
+  const startIndex = eligibleSignals[0] + 1
+  const firstAfterEnd = dates.findIndex((date) => date > manifest.bounds.evaluationEnd)
+  const endExclusive = firstAfterEnd === -1 ? dates.length : firstAfterEnd
+  const boundedSessions = sessions.slice(0, endExclusive)
+  if (endExclusive - startIndex < protocol.thresholds.minimumObservations) {
+    throw new Error('reference dataset has too few evaluation observations')
+  }
+
+  const parameterHash = canonicalHashV1(protocol)
+  const strategyIdentity = {
+    name: provenance.strategy.name,
+    behaviorHash: provenance.strategy.behaviorHash,
+    parameterHash,
+    parameterSchemaVersion: protocol.schemaVersion,
+  }
+  if (parameterHash !== provenance.strategy.parameterHash || provenance.strategy.name !== 'risk-balanced-trend') {
+    throw new Error('reference protocol does not match runtime provenance')
+  }
+  const runId = makeRunIdentity({
+    schemaVersion: 'bayn.run-identity.v1',
+    sourceRevision: provenance.sourceRevision,
+    image: provenance.image,
+    strategy: {
+      name: provenance.strategy.name,
+      behaviorHash: provenance.strategy.behaviorHash,
+      parameters: protocol,
+    },
+    finalizedSnapshot: manifest.finalizedSnapshot,
+    calendarVersion: manifest.finalizedSnapshot.calendarVersion,
+    bounds: manifest.bounds,
+  }).runId
+  const protocolHash = makeStrategyProtocolHash(strategyIdentity)
+  const candidateTargets = eligibleSignals.map((signalIndex): Target => {
+    const plan = riskBalancedDecisionPlan(signalIndex, sessions, protocol)
     return { signalIndex, executionIndex: signalIndex + 1, weights: plan.targetWeights, plan }
   })
   const equalWeight = roundWeight(1 / protocol.universe.length)

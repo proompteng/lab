@@ -5,23 +5,34 @@ import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import { auditQualification, type AuditDatabaseSnapshot, type QualificationAuditInput } from './qualification-audit'
 import { makeQualificationDossier, type QualificationDossier } from './qualification-dossier'
-import { makeTsmomStrategy } from './strategy-service'
-import { evaluateTsmom, summarizeEvaluation } from './strategy'
-import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from './strategy-service'
+import { summarizeEvaluation } from './strategy'
+import {
+  fixtureProtocol,
+  makeRiskBalancedTrendTestProvenance,
+  makeSnapshot,
+  makeTestProvenance,
+  riskBalancedTrendFixtureProtocol,
+} from './test-fixtures'
 
-const fixture = (): QualificationAuditInput => {
+const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): QualificationAuditInput => {
   const snapshot = makeSnapshot(900)
-  const provenance = makeTestProvenance()
-  const strategy = makeTsmomStrategy(fixtureProtocol, provenance)
-  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+  const protocol = profile === 'tsmom' ? fixtureProtocol : riskBalancedTrendFixtureProtocol
+  const provenance = profile === 'tsmom' ? makeTestProvenance() : makeRiskBalancedTrendTestProvenance()
+  const strategy =
+    profile === 'tsmom'
+      ? makeTsmomStrategy(fixtureProtocol, provenance)
+      : makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, provenance)
+  const evaluation = strategy.evaluate(snapshot.bars, snapshot.manifest)
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
   const priorTrialRunIds: readonly string[] = []
   const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
   const analysis = strategy.analyze(evaluation, priorTrialRunIds)
   const result = makeQualificationResult(lock, evaluation.verdict, analysis)
   const reconciliation = { runId: evaluation.runId, accountCount: 14, transferCount: 900, exact: true as const }
+  const evaluationSummary = summarizeEvaluation(evaluation)
   const base = [
-    ['evaluation-summary', 'bayn.evaluation-summary.v3', summarizeEvaluation(evaluation)],
+    ['evaluation-summary', evaluationSummary.schemaVersion, evaluationSummary],
     ['input-manifest', snapshot.manifest.schemaVersion, snapshot.manifest],
     ['strategy', 'bayn.performance-metrics.v2', evaluation.strategy],
     ['buy-and-hold', 'bayn.performance-metrics.v2', evaluation.buyAndHold],
@@ -48,9 +59,13 @@ const fixture = (): QualificationAuditInput => {
       { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
     ],
     [
-      'tsmom-signal-decisions',
-      'bayn.tsmom-signal-decisions.v1',
-      { schemaVersion: 'bayn.tsmom-signal-decisions.v1', items: evaluation.signalDecisions },
+      profile === 'tsmom' ? 'tsmom-signal-decisions' : 'risk-balanced-trend-signal-decisions',
+      profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-signal-decisions.v1',
+      {
+        schemaVersion:
+          profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-signal-decisions.v1',
+        items: evaluation.signalDecisions,
+      },
     ],
     [
       'buy-and-hold-series',
@@ -168,11 +183,11 @@ const fixture = (): QualificationAuditInput => {
     transactionReadOnly: true,
     protocol: {
       protocolHash: evaluation.protocolHash,
-      schemaVersion: fixtureProtocol.schemaVersion,
-      strategyName: 'tsmom',
+      schemaVersion: protocol.schemaVersion,
+      strategyName: profile,
       behaviorHash: provenance.strategy.behaviorHash,
       parameterHash: provenance.strategy.parameterHash,
-      parameters: fixtureProtocol,
+      parameters: protocol,
     },
     run: {
       runId: evaluation.runId,
@@ -182,7 +197,7 @@ const fixture = (): QualificationAuditInput => {
       sourceRevision: provenance.sourceRevision,
       imageRepository: provenance.image.repository,
       imageDigest: provenance.image.digest,
-      strategyName: 'tsmom',
+      strategyName: profile,
       initialCapitalMicros: evaluation.initialCapitalMicros,
       status: 'COMPLETE',
       artifactCount: artifacts.length,
@@ -214,7 +229,7 @@ const fixture = (): QualificationAuditInput => {
   return {
     bars: snapshot.bars,
     manifest: snapshot.manifest,
-    protocol: fixtureProtocol,
+    protocol,
     database,
     signalAccess: [
       {
@@ -279,6 +294,26 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
+  })
+
+  test('passes the same independent evidence audit for a risk-balanced trend evaluation', () => {
+    const input = fixture('risk-balanced-trend')
+    const report = auditQualification(input)
+    const dossier = makeQualificationDossier(input)
+
+    expect(report.checks.filter((check) => !check.passed)).toEqual([])
+    expect(report.status).toBe('PASS')
+    expect(report.reference.rebalanceCount).toBeGreaterThan(0)
+    expect(report.checks.every((check) => check.passed)).toBe(true)
+    expect(input.database.artifacts.find((artifact) => artifact.name === 'evaluation-summary')?.schemaVersion).toBe(
+      'bayn.evaluation-summary.v4',
+    )
+    expect(
+      input.database.artifacts.find((artifact) => artifact.name === 'risk-balanced-trend-signal-decisions')
+        ?.schemaVersion,
+    ).toBe('bayn.risk-balanced-trend-signal-decisions.v1')
+    expect(dossier.subject.run.strategyName).toBe('risk-balanced-trend')
+    expect(dossier.audit.auditHash).toBe(report.auditHash)
   })
 
   test('fails closed on stored evidence drift', () => {

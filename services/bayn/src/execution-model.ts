@@ -59,8 +59,12 @@ const ensureUnsigned = (value: string, name: string): bigint => {
 const scaledNumber = (value: number, name: string, scale = Number(MICROS)): bigint => {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be finite and non-negative`)
   const scaled = value * scale
-  if (!Number.isSafeInteger(scaled)) throw new Error(`${name} exceeds fixed-point precision`)
-  return BigInt(scaled)
+  const rounded = Math.round(scaled)
+  const floatingPointTolerance = Math.max(1e-9, Number.EPSILON * Math.abs(scaled) * 4)
+  if (!Number.isSafeInteger(rounded) || Math.abs(scaled - rounded) > floatingPointTolerance) {
+    throw new Error(`${name} exceeds fixed-point precision`)
+  }
+  return BigInt(rounded)
 }
 
 const ceilDiv = (numerator: bigint, denominator: bigint): bigint => {

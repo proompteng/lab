@@ -37,13 +37,17 @@ import {
   type IsoDate,
   type PerformanceMetrics,
   type SimulatedOrder,
+  type SimulationProtocol,
   type SimulationTrace,
+  type StrategyDecisionPlan,
+  type StrategyProtocol,
+  type StrategySignalDecision,
   type TsmomDecisionPlan,
+  type TsmomEvaluationResult,
   type TsmomProtocol,
-  type TsmomSignalDecision,
 } from './types'
 
-interface AlignedSession {
+export interface AlignedSession {
   readonly date: IsoDate
   readonly bars: Readonly<Record<string, DailyBar>>
 }
@@ -53,39 +57,39 @@ interface Position {
   costBasisMicros: bigint
 }
 
-interface Target {
+export interface SimulationTarget {
   readonly signalIndex: number
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
-  readonly decision?: TsmomDecisionPlan
+  readonly decision?: StrategyDecisionPlan
 }
 
-interface SimulationResult {
+export interface SimulationResult {
   readonly metrics: PerformanceMetrics
   readonly events: readonly EvaluationEvent[]
-  readonly signalDecisions: readonly TsmomSignalDecision[]
+  readonly signalDecisions: readonly StrategySignalDecision[]
   readonly dailyPerformance: readonly DailyPerformancePoint[]
   readonly simulation: SimulationTrace | null
 }
 
-const TRADING_DAYS = 252
+export const TRADING_DAYS = 252
 
 const toMicros = (value: number): string => {
   if (!Number.isFinite(value) || value < 0) throw new Error(`cannot quantize invalid monetary value: ${value}`)
   return Math.round(value * Number(MICROS)).toString()
 }
 
-const roundWeight = (value: number): number => Number.parseFloat(value.toFixed(12))
+export const roundWeight = (value: number): number => Number.parseFloat(value.toFixed(12))
 
-const mean = (values: readonly number[]): number => values.reduce((sum, value) => sum + value, 0) / values.length
+export const mean = (values: readonly number[]): number => values.reduce((sum, value) => sum + value, 0) / values.length
 
-const sampleStandardDeviation = (values: readonly number[]): number => {
+export const sampleStandardDeviation = (values: readonly number[]): number => {
   if (values.length < 2) return 0
   const average = mean(values)
   return Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1))
 }
 
-const alignBars = (
+export const alignBars = (
   bars: readonly DailyBar[],
   universe: readonly string[],
   inputManifest: InputManifest,
@@ -124,7 +128,7 @@ const alignBars = (
   return aligned
 }
 
-const isMonthEnd = (sessionDates: readonly IsoDate[], index: number): boolean => {
+export const isMonthEnd = (sessionDates: readonly IsoDate[], index: number): boolean => {
   const currentMonth = sessionDates[index].slice(0, 7)
   const nextMonth = sessionDates[index + 1]?.slice(0, 7)
   return nextMonth !== undefined && currentMonth !== nextMonth
@@ -173,10 +177,10 @@ export const makeTsmomDecision = (
   }
 }
 
-const directVolatilityWeights = (
+export const directVolatilityWeights = (
   sessions: readonly AlignedSession[],
   signalIndex: number,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
 ): Readonly<Record<string, number>> => {
   const window = 63
   const equalWeightReturns: number[] = []
@@ -271,7 +275,7 @@ const makeOrder = (
   side: 'buy' | 'sell',
   requestedQuantityMicros: bigint,
   referencePrice: bigint,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
 ): SimulatedOrder => {
   const outcome = makeOrderOutcome({
     identity: {
@@ -365,11 +369,11 @@ const makeCashYieldEvent = (
   return { kind: 'cash-yield' as const, id: hashObject({ runId, kind: 'cash-yield', ...payload }), ...payload }
 }
 
-const simulate = (
+export const simulate = (
   sessions: readonly AlignedSession[],
-  targets: readonly Target[],
+  targets: readonly SimulationTarget[],
   startIndex: number,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
   costMultiplierMicros: bigint,
   runId: string,
   recordEvents: boolean,
@@ -385,7 +389,7 @@ const simulate = (
   let totalCashYieldMicros = 0n
   const equityMicros: bigint[] = []
   const events: EvaluationEvent[] = []
-  const signalDecisions: TsmomSignalDecision[] = []
+  const signalDecisions: StrategySignalDecision[] = []
   const orders: SimulatedOrder[] = []
   const cashChanges: CashChange[] = []
   const dailyMarks: DailyPositionMark[] = []
@@ -436,12 +440,12 @@ const simulate = (
         ...decisionPayload,
       }
       if (recordEvents) {
-        if (target.decision === undefined) throw new Error('candidate target is missing its TSMOM signal decision')
+        if (target.decision === undefined) throw new Error('candidate target is missing its strategy decision')
         if (
           target.decision.signalDate !== decision.signalDate ||
           canonicalHashV1(target.decision.targetWeights) !== canonicalHashV1(decision.targetWeights)
         ) {
-          throw new Error('TSMOM signal decision diverges from its execution target')
+          throw new Error('strategy decision diverges from its execution target')
         }
         events.push(decision)
         signalDecisions.push({ ...target.decision, decisionId: decision.id, executionDate: decision.executionDate })
@@ -698,12 +702,12 @@ const simulate = (
   }
 }
 
-const buildVerdict = (
+export const buildVerdict = (
   strategy: PerformanceMetrics,
   buyAndHold: PerformanceMetrics,
   directVolTiming: PerformanceMetrics,
   doubleCost: PerformanceMetrics,
-  protocol: TsmomProtocol,
+  protocol: SimulationProtocol,
 ): EconomicVerdict => {
   const threshold = protocol.thresholds
   const benchmarkSharpe = Math.max(buyAndHold.sharpe, directVolTiming.sharpe)
@@ -756,18 +760,21 @@ const buildVerdict = (
   return { status: gates.every((gate) => gate.passed) ? 'PASS' : 'FAIL_CLOSED', gates }
 }
 
-const makeTsmomEvaluationIdentity = (
+export const makeEvaluationIdentity = (
   inputManifest: InputManifest,
-  protocol: TsmomProtocol,
+  protocol: StrategyProtocol,
   provenance: RuntimeProvenance,
+  expectedStrategyName: string,
+  parameterHash: string,
 ): { readonly runId: string; readonly protocolHash: string } => {
-  const parameterHash = hashTsmomParameters(protocol)
-  if (provenance.strategy.name !== 'tsmom') throw new Error('runtime provenance strategy must be tsmom')
+  if (provenance.strategy.name !== expectedStrategyName) {
+    throw new Error(`runtime provenance strategy must be ${expectedStrategyName}`)
+  }
   if (provenance.strategy.parameterSchemaVersion !== protocol.schemaVersion) {
-    throw new Error('runtime provenance parameter schema does not match decoded TSMOM parameters')
+    throw new Error('runtime provenance parameter schema does not match decoded strategy parameters')
   }
   if (provenance.strategy.parameterHash !== parameterHash) {
-    throw new Error('runtime provenance parameter hash does not match decoded TSMOM parameters')
+    throw new Error('runtime provenance parameter hash does not match decoded strategy parameters')
   }
   const protocolHash = makeStrategyProtocolHash(provenance.strategy)
   const { hash: inputManifestHash, ...inputManifestMaterial } = inputManifest
@@ -790,7 +797,7 @@ const makeTsmomEvaluationIdentity = (
   return { runId, protocolHash }
 }
 
-interface TsmomEvaluationWindow {
+export interface EvaluationWindow {
   readonly signalIndices: readonly number[]
   readonly startIndex: number
   readonly evaluationEndExclusive: number
@@ -805,11 +812,12 @@ export interface TsmomQualificationPrecommit {
   readonly executionDates: readonly IsoDate[]
 }
 
-const selectTsmomEvaluationWindow = (
+export const selectEvaluationWindow = (
   sessionDates: readonly IsoDate[],
   inputManifest: InputManifest,
-  protocol: TsmomProtocol,
-): TsmomEvaluationWindow => {
+  requiredHistorySessions: number,
+  minimumObservations: number,
+): EvaluationWindow => {
   if (
     sessionDates.length !== inputManifest.sessionCount ||
     sessionDates[0] !== inputManifest.firstSession ||
@@ -818,15 +826,14 @@ const selectTsmomEvaluationWindow = (
   ) {
     throw new Error('qualification calendar does not match the input manifest')
   }
-  const maximumLookback = Math.max(...protocol.lookbacks)
   const signalIndices = sessionDates
     .map((_, index) => index)
     .filter(
       (index) =>
-        index >= maximumLookback &&
+        index >= requiredHistorySessions &&
         index < sessionDates.length - 1 &&
         isMonthEnd(sessionDates, index) &&
-        sessionDates[index - maximumLookback] >= inputManifest.bounds.lookbackStart &&
+        sessionDates[index - requiredHistorySessions] >= inputManifest.bounds.lookbackStart &&
         sessionDates[index + 1] >= inputManifest.bounds.evaluationStart &&
         sessionDates[index + 1] <= inputManifest.bounds.evaluationEnd,
     )
@@ -837,10 +844,8 @@ const selectTsmomEvaluationWindow = (
   const evaluationEndExclusive = sessionDates.findIndex((date) => date > inputManifest.bounds.evaluationEnd)
   const boundedEnd = evaluationEndExclusive === -1 ? sessionDates.length : evaluationEndExclusive
   const selectedSessionCount = boundedEnd - startIndex
-  if (selectedSessionCount < protocol.thresholds.minimumObservations) {
-    throw new Error(
-      `dataset has ${selectedSessionCount} comparable observations; ${protocol.thresholds.minimumObservations} required`,
-    )
+  if (selectedSessionCount < minimumObservations) {
+    throw new Error(`dataset has ${selectedSessionCount} comparable observations; ${minimumObservations} required`)
   }
   return { signalIndices, startIndex, evaluationEndExclusive: boundedEnd }
 }
@@ -851,8 +856,19 @@ export const prepareTsmomQualification = (
   protocol: TsmomProtocol,
   provenance: RuntimeProvenance,
 ): TsmomQualificationPrecommit => {
-  const { runId, protocolHash } = makeTsmomEvaluationIdentity(inputManifest, protocol, provenance)
-  const window = selectTsmomEvaluationWindow(sessionDates, inputManifest, protocol)
+  const { runId, protocolHash } = makeEvaluationIdentity(
+    inputManifest,
+    protocol,
+    provenance,
+    'tsmom',
+    hashTsmomParameters(protocol),
+  )
+  const window = selectEvaluationWindow(
+    sessionDates,
+    inputManifest,
+    Math.max(...protocol.lookbacks),
+    protocol.thresholds.minimumObservations,
+  )
   return {
     candidateRunId: runId,
     protocolHash,
@@ -868,16 +884,27 @@ export const evaluateTsmom = (
   inputManifest: InputManifest,
   protocol: TsmomProtocol,
   provenance: RuntimeProvenance,
-): EvaluationResult => {
-  const { runId, protocolHash } = makeTsmomEvaluationIdentity(inputManifest, protocol, provenance)
+): TsmomEvaluationResult => {
+  const { runId, protocolHash } = makeEvaluationIdentity(
+    inputManifest,
+    protocol,
+    provenance,
+    'tsmom',
+    hashTsmomParameters(protocol),
+  )
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const sessionDates = sessions.map((session) => session.date)
-  const window = selectTsmomEvaluationWindow(sessionDates, inputManifest, protocol)
+  const window = selectEvaluationWindow(
+    sessionDates,
+    inputManifest,
+    Math.max(...protocol.lookbacks),
+    protocol.thresholds.minimumObservations,
+  )
   const maximumLookback = Math.max(...protocol.lookbacks)
   const { signalIndices, startIndex } = window
   const evaluationSessions = sessions.slice(0, window.evaluationEndExclusive)
 
-  const strategyTargets: Target[] = signalIndices.map((signalIndex) => {
+  const strategyTargets: SimulationTarget[] = signalIndices.map((signalIndex) => {
     const closes = Object.fromEntries(
       protocol.universe.map((symbol) => [
         symbol,
@@ -893,14 +920,14 @@ export const evaluateTsmom = (
     }
   })
   const equalWeight = roundWeight(1 / protocol.universe.length)
-  const buyAndHoldTargets: Target[] = [
+  const buyAndHoldTargets: SimulationTarget[] = [
     {
       signalIndex: startIndex - 1,
       executionIndex: startIndex,
       weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, equalWeight])),
     },
   ]
-  const directVolTargets: Target[] = signalIndices.map((signalIndex) => ({
+  const directVolTargets: SimulationTarget[] = signalIndices.map((signalIndex) => ({
     signalIndex,
     executionIndex: signalIndex + 1,
     weights: directVolatilityWeights(sessions, signalIndex, protocol),
@@ -918,6 +945,12 @@ export const evaluateTsmom = (
     false,
   )
   if (strategy.simulation === null) throw new Error('candidate simulation did not retain its evidence trace')
+  const signalDecisions = strategy.signalDecisions.map((decision) => {
+    if (decision.schemaVersion !== ContractVersion.TsmomDecisionPlan) {
+      throw new Error('TSMOM simulation retained a decision from another strategy')
+    }
+    return decision
+  })
   const markedEquity = reconcileMarkedEquity({
     runId,
     initialCapitalMicros: protocol.initialCapitalMicros,
@@ -940,7 +973,7 @@ export const evaluateTsmom = (
     doubleCostStrategy: doubleCost.metrics,
     verdict: buildVerdict(strategy.metrics, buyAndHold.metrics, directVolTiming.metrics, doubleCost.metrics, protocol),
     events: strategy.events,
-    signalDecisions: strategy.signalDecisions,
+    signalDecisions,
     simulation: strategy.simulation,
     benchmarkSeries: {
       buyAndHold: buyAndHold.dailyPerformance,
@@ -952,36 +985,47 @@ export const evaluateTsmom = (
   }
 }
 
-export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({
-  schemaVersion: ContractVersion.EvaluationSummary,
-  runId: evaluation.runId,
-  evaluationSchemaVersion: evaluation.schemaVersion,
-  codeRevision: evaluation.codeRevision,
-  protocolHash: evaluation.protocolHash,
-  initialCapitalMicros: evaluation.initialCapitalMicros,
-  input: {
-    snapshotId: evaluation.inputManifest.finalizedSnapshot.snapshotId,
-    publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
-    manifestHash: evaluation.inputManifest.hash,
-    bounds: evaluation.inputManifest.bounds,
-    rowCount: evaluation.inputManifest.rowCount,
-    sessionCount: evaluation.inputManifest.sessionCount,
-    symbols: evaluation.inputManifest.symbols.map((coverage) => coverage.symbol),
-  },
-  strategy: evaluation.strategy,
-  buyAndHold: evaluation.buyAndHold,
-  directVolTiming: evaluation.directVolTiming,
-  doubleCostStrategy: evaluation.doubleCostStrategy,
-  verdict: evaluation.verdict,
-  eventCount: evaluation.events.length,
-  signalDecisionCount: evaluation.signalDecisions.length,
-  orderCount: evaluation.simulation.orders.length,
-  cashChangeCount: evaluation.simulation.cashChanges.length,
-  dailyMarkCount: evaluation.simulation.dailyMarks.length,
-  benchmarkSeriesCounts: {
-    buyAndHold: evaluation.benchmarkSeries.buyAndHold.length,
-    directVolTiming: evaluation.benchmarkSeries.directVolTiming.length,
-    doubleCostStrategy: evaluation.benchmarkSeries.doubleCostStrategy.length,
-  },
-  markedEquityReconciliation: evaluation.markedEquityReconciliation,
-})
+export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => {
+  const summary = {
+    runId: evaluation.runId,
+    codeRevision: evaluation.codeRevision,
+    protocolHash: evaluation.protocolHash,
+    initialCapitalMicros: evaluation.initialCapitalMicros,
+    input: {
+      snapshotId: evaluation.inputManifest.finalizedSnapshot.snapshotId,
+      publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
+      manifestHash: evaluation.inputManifest.hash,
+      bounds: evaluation.inputManifest.bounds,
+      rowCount: evaluation.inputManifest.rowCount,
+      sessionCount: evaluation.inputManifest.sessionCount,
+      symbols: evaluation.inputManifest.symbols.map((coverage) => coverage.symbol),
+    },
+    strategy: evaluation.strategy,
+    buyAndHold: evaluation.buyAndHold,
+    directVolTiming: evaluation.directVolTiming,
+    doubleCostStrategy: evaluation.doubleCostStrategy,
+    verdict: evaluation.verdict,
+    eventCount: evaluation.events.length,
+    signalDecisionCount: evaluation.signalDecisions.length,
+    orderCount: evaluation.simulation.orders.length,
+    cashChangeCount: evaluation.simulation.cashChanges.length,
+    dailyMarkCount: evaluation.simulation.dailyMarks.length,
+    benchmarkSeriesCounts: {
+      buyAndHold: evaluation.benchmarkSeries.buyAndHold.length,
+      directVolTiming: evaluation.benchmarkSeries.directVolTiming.length,
+      doubleCostStrategy: evaluation.benchmarkSeries.doubleCostStrategy.length,
+    },
+    markedEquityReconciliation: evaluation.markedEquityReconciliation,
+  }
+  return evaluation.schemaVersion === ContractVersion.Evaluation
+    ? {
+        ...summary,
+        schemaVersion: ContractVersion.EvaluationSummary,
+        evaluationSchemaVersion: ContractVersion.Evaluation,
+      }
+    : {
+        ...summary,
+        schemaVersion: ContractVersion.RiskBalancedTrendEvaluationSummary,
+        evaluationSchemaVersion: ContractVersion.RiskBalancedTrendEvaluation,
+      }
+}

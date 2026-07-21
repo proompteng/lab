@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect'
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1 } from './hash'
-import type { TsmomProtocol } from './types'
+import type { RiskBalancedTrendProtocol, TsmomProtocol } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
@@ -16,6 +16,14 @@ const PositiveMicros = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 const UnsignedMicros = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/))
 const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
+const EconomicThresholdsSchema = Schema.Struct({
+  minimumObservations: PositiveInteger,
+  minimumAnnualizedReturn: Schema.Finite.check(Schema.isGreaterThan(-1)),
+  minimumSharpeImprovement: Schema.Finite,
+  maximumDrawdown: UnitInterval,
+  maximumAnnualTurnover: PositiveFinite,
+  requirePositiveDoubleCostReturn: Schema.Boolean,
+})
 
 export const ExecutionModelSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-model.v1'),
@@ -85,14 +93,7 @@ const TsmomProtocolBase = Schema.Struct({
   directVolatilityTarget: PositiveUnitInterval,
   initialCapitalMicros: PositiveMicros,
   executionModel: ExecutionModelSchema,
-  thresholds: Schema.Struct({
-    minimumObservations: PositiveInteger,
-    minimumAnnualizedReturn: Schema.Finite.check(Schema.isGreaterThan(-1)),
-    minimumSharpeImprovement: Schema.Finite,
-    maximumDrawdown: UnitInterval,
-    maximumAnnualTurnover: PositiveFinite,
-    requirePositiveDoubleCostReturn: Schema.Boolean,
-  }),
+  thresholds: EconomicThresholdsSchema,
 })
 
 export const TsmomProtocolSchema = TsmomProtocolBase.check(
@@ -114,6 +115,15 @@ export const TsmomProtocolSchema = TsmomProtocolBase.check(
   }),
 )
 
+const defaultEconomicThresholds = {
+  minimumObservations: 504,
+  minimumAnnualizedReturn: 0,
+  minimumSharpeImprovement: 0,
+  maximumDrawdown: 0.35,
+  maximumAnnualTurnover: 12,
+  requirePositiveDoubleCostReturn: true,
+} as const
+
 export const defaultProtocolDocument = {
   schemaVersion: 'bayn.tsmom.protocol.v2',
   universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
@@ -123,14 +133,7 @@ export const defaultProtocolDocument = {
   directVolatilityTarget: 0.1,
   initialCapitalMicros: '1000000000000',
   executionModel: defaultExecutionModel,
-  thresholds: {
-    minimumObservations: 504,
-    minimumAnnualizedReturn: 0,
-    minimumSharpeImprovement: 0,
-    maximumDrawdown: 0.35,
-    maximumAnnualTurnover: 12,
-    requirePositiveDoubleCostReturn: true,
-  },
+  thresholds: defaultEconomicThresholds,
 } as const
 
 export const loadTsmomProtocol = (input: unknown): Effect.Effect<TsmomProtocol, OperationalError> =>
@@ -144,3 +147,71 @@ export const loadTsmomProtocol = (input: unknown): Effect.Effect<TsmomProtocol, 
 export const loadDefaultProtocol = loadTsmomProtocol(defaultProtocolDocument)
 
 export const hashTsmomParameters = (parameters: TsmomProtocol): string => canonicalHashV1(parameters)
+
+const RiskBalancedTrendProtocolBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v1'),
+  universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
+  horizons: Schema.Array(PositiveInteger).check(Schema.isMinLength(1)),
+  volatilityWindow: PositiveInteger,
+  rebalance: Schema.Literal('month-end'),
+  positionPolicy: Schema.Literal('long-or-cash'),
+  maximumSymbolWeight: PositiveUnitInterval,
+  maximumPortfolioVolatility: PositiveUnitInterval,
+  directVolatilityTarget: PositiveUnitInterval,
+  initialCapitalMicros: PositiveMicros,
+  executionModel: ExecutionModelSchema,
+  thresholds: EconomicThresholdsSchema,
+})
+
+export const RiskBalancedTrendProtocolSchema = RiskBalancedTrendProtocolBase.check(
+  Schema.makeFilter((parameters: typeof RiskBalancedTrendProtocolBase.Type) => {
+    const issues: Schema.FilterIssue[] = []
+    const sortedUniverse = [...new Set(parameters.universe)].sort()
+    if (sortedUniverse.length !== parameters.universe.length) {
+      issues.push({ path: ['universe'], issue: 'must not contain duplicate symbols' })
+    } else if (sortedUniverse.some((symbol, index) => symbol !== parameters.universe[index])) {
+      issues.push({ path: ['universe'], issue: 'must be sorted in canonical order' })
+    }
+    for (let index = 1; index < parameters.horizons.length; index += 1) {
+      if (parameters.horizons[index] <= parameters.horizons[index - 1]) {
+        issues.push({ path: ['horizons', index], issue: 'must be unique and strictly increasing' })
+        break
+      }
+    }
+    return issues
+  }),
+)
+
+export const defaultRiskBalancedTrendProtocolDocument = {
+  schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+  universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
+  horizons: [21, 63, 126, 252],
+  volatilityWindow: 63,
+  rebalance: 'month-end',
+  positionPolicy: 'long-or-cash',
+  maximumSymbolWeight: 0.35,
+  maximumPortfolioVolatility: 0.1,
+  directVolatilityTarget: 0.1,
+  initialCapitalMicros: '1000000000000',
+  executionModel: defaultExecutionModel,
+  thresholds: defaultEconomicThresholds,
+} as const
+
+export const loadRiskBalancedTrendProtocol = (
+  input: unknown,
+): Effect.Effect<RiskBalancedTrendProtocol, OperationalError> =>
+  Schema.decodeUnknownEffect(
+    RiskBalancedTrendProtocolSchema,
+    StrictParseOptions,
+  )(input).pipe(
+    Effect.mapError((cause) =>
+      operationalError('strategy', 'parameters', 'invalid risk-balanced trend parameters', cause),
+    ),
+  )
+
+export const loadDefaultRiskBalancedTrendProtocol = loadRiskBalancedTrendProtocol(
+  defaultRiskBalancedTrendProtocolDocument,
+)
+
+export const hashRiskBalancedTrendParameters = (parameters: RiskBalancedTrendProtocol): string =>
+  canonicalHashV1(parameters)
