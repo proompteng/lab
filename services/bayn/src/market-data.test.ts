@@ -129,6 +129,31 @@ const producerRows = {
   ],
 } as const satisfies SnapshotRows
 
+const authoritativeManifest = {
+  snapshot_id: '98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292',
+  schema_version: PublicationSchema.AdjustedDailySnapshotV2,
+  publisher_source_revision: '72006ac26afef02e42fc1af8d434e49835cc40d6',
+  publisher_image_repository: 'registry.ide-newton.ts.net/lab/signal-publisher',
+  publisher_image_digest: 'sha256:2561a79d2baaa998036344c121cc3986aedec365881911dd592d334163d82729',
+  universe_id: 'equity-infrastructure-v1',
+  universe_symbol_hash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
+  provider: DataSource.Alpaca,
+  source_feed: DataFeed.Sip,
+  adjustment: PriceAdjustment.All,
+  calendar_version: 'alpaca-us-equity-calendar-v1',
+  requested_start: '2022-01-27',
+  publication_asof: '2026-07-20',
+  first_session: '2022-01-27',
+  last_session: '2026-07-20',
+  symbol_count: 9,
+  session_count: 1_122,
+  bar_count: 10_098,
+  bars_content_hash: '2be0f23ff137910ee5e2a38479c5b8a9ec232f95f67719f8f33b72f98390ce00',
+  sessions_content_hash: 'de8a0ef7fa7adeab4fd763efb9ee501073759a83f52603532e65289c58486a8c',
+  manifest_content_hash: 'f7f71f0fe961060ea326a545e140c9774bd992df3b9c20feb88da431577b0169',
+  finalized_at: '2026-07-21 10:48:49.305',
+} as const
+
 const makeFixture = (): {
   readonly rows: SnapshotRows
   readonly request: SnapshotRequest
@@ -158,6 +183,39 @@ const makeFixture = (): {
 }
 
 describe('finalized Signal snapshot reader', () => {
+  test('reproduces the authoritative V2 manifest and snapshot identities', () => {
+    const universe = ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'] as const
+    const publication = verifyFinalizedManifest([authoritativeManifest], {
+      snapshotId: authoritativeManifest.snapshot_id,
+      publicationAsOf: authoritativeManifest.publication_asof,
+      calendarVersion: authoritativeManifest.calendar_version,
+      universeId: authoritativeManifest.universe_id,
+      universeSymbolHash: authoritativeManifest.universe_symbol_hash,
+      universe,
+      historyStart: '2022-01-27',
+      evaluationStart: '2023-01-30',
+      bounds: {
+        schemaVersion: 'bayn.evaluation-bounds.v1',
+        dataStart: '2022-01-27',
+        dataEnd: '2026-07-20',
+        lookbackStart: '2022-01-27',
+        evaluationStart: '2023-01-30',
+        evaluationEnd: '2026-07-20',
+      },
+      observedAt: '2026-07-21T10:48:49.306Z',
+    })
+
+    expect(publication).toMatchObject({
+      snapshotId: authoritativeManifest.snapshot_id,
+      publicationId: authoritativeManifest.manifest_content_hash,
+      universeId: authoritativeManifest.universe_id,
+      universeSymbolHash: authoritativeManifest.universe_symbol_hash,
+      symbols: universe,
+      rowCount: authoritativeManifest.bar_count,
+      sessionCount: authoritativeManifest.session_count,
+    })
+  })
+
   test('reproduces the publisher contract before exposing bounded numeric bars', () => {
     const fixture = makeFixture()
     const snapshot = verifyFinalizedSnapshot(fixture.rows, fixture.request)
