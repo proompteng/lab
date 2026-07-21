@@ -2,7 +2,16 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit } from 'effect'
 
-import { defaultProtocolDocument, hashTsmomParameters, loadDefaultProtocol, loadTsmomProtocol } from './protocol'
+import {
+  defaultProtocolDocument,
+  defaultRiskBalancedTrendProtocolDocument,
+  hashRiskBalancedTrendParameters,
+  hashTsmomParameters,
+  loadDefaultProtocol,
+  loadDefaultRiskBalancedTrendProtocol,
+  loadRiskBalancedTrendProtocol,
+  loadTsmomProtocol,
+} from './protocol'
 
 describe('TSMOM parameter contract', () => {
   test('runtime-decodes the committed immutable parameters', async () => {
@@ -97,6 +106,47 @@ describe('TSMOM parameter contract', () => {
       delete parent[path.at(-1)!]
       const exit = await Effect.runPromiseExit(loadTsmomProtocol(document))
       expect(Exit.isFailure(exit)).toBe(true)
+    }
+  })
+})
+
+describe('risk-balanced trend parameter contract', () => {
+  test('decodes the fixed candidate protocol without requiring full-investment cap capacity', async () => {
+    const protocol = await Effect.runPromise(loadDefaultRiskBalancedTrendProtocol)
+    const cashRetainingProtocol = await Effect.runPromise(
+      loadRiskBalancedTrendProtocol({ ...defaultRiskBalancedTrendProtocolDocument, maximumSymbolWeight: 0.1 }),
+    )
+
+    expect(protocol).toMatchObject({
+      schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+      horizons: [21, 63, 126, 252],
+      volatilityWindow: 63,
+      maximumSymbolWeight: 0.35,
+      maximumPortfolioVolatility: 0.1,
+    })
+    expect(cashRetainingProtocol.maximumSymbolWeight).toBe(0.1)
+    expect(hashRiskBalancedTrendParameters(protocol)).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('rejects malformed or non-canonical candidate parameters', async () => {
+    const invalidDocuments: readonly unknown[] = [
+      { ...defaultRiskBalancedTrendProtocolDocument, universe: [...defaultProtocolDocument.universe].reverse() },
+      { ...defaultRiskBalancedTrendProtocolDocument, horizons: [] },
+      { ...defaultRiskBalancedTrendProtocolDocument, horizons: [63, 21] },
+      { ...defaultRiskBalancedTrendProtocolDocument, volatilityWindow: 0 },
+      { ...defaultRiskBalancedTrendProtocolDocument, volatilityWindow: 1 },
+      { ...defaultRiskBalancedTrendProtocolDocument, horizons: [1, 2], volatilityWindow: 2 },
+      { ...defaultRiskBalancedTrendProtocolDocument, maximumSymbolWeight: 0 },
+      { ...defaultRiskBalancedTrendProtocolDocument, maximumPortfolioVolatility: 1.1 },
+      { ...defaultRiskBalancedTrendProtocolDocument, futureField: true },
+    ]
+
+    for (const document of invalidDocuments) {
+      const exit = await Effect.runPromiseExit(loadRiskBalancedTrendProtocol(document))
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.toString()).toContain('invalid risk-balanced trend parameters')
+      }
     }
   })
 })

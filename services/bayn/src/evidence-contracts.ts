@@ -12,6 +12,8 @@ const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
+const UnitIntervalFinite = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(1))
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const Symbol = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 
@@ -115,10 +117,8 @@ export const MarkedEquityReconciliationSchema = Schema.Struct({
   withinTolerance: Schema.Literal(true),
 })
 
-export const EvaluationSummarySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.evaluation-summary.v3'),
+const EvaluationSummaryFields = {
   runId: Sha256Schema,
-  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v4'),
   codeRevision: SourceRevision,
   protocolHash: Sha256Schema,
   initialCapitalMicros: Micros,
@@ -147,7 +147,20 @@ export const EvaluationSummarySchema = Schema.Struct({
     doubleCostStrategy: PositiveInteger,
   }),
   markedEquityReconciliation: MarkedEquityReconciliationSchema,
-})
+} as const
+
+export const EvaluationSummarySchema = Schema.Union([
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.evaluation-summary.v3'),
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v4'),
+    ...EvaluationSummaryFields,
+  }),
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.evaluation-summary.v4'),
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v5'),
+    ...EvaluationSummaryFields,
+  }),
+])
 
 export const ReconciliationResultSchema = Schema.Struct({
   runId: Sha256Schema,
@@ -306,6 +319,47 @@ export const TsmomSignalDecisionsArtifactSchema = Schema.Struct({
   ).check(Schema.isMinLength(1)),
 })
 
+export const RiskBalancedTrendSignalDecisionsArtifactSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decisions.v1'),
+  items: Schema.Array(
+    Schema.Struct({
+      schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decision-plan.v1'),
+      decisionId: Sha256Schema,
+      signalDate: IsoDateSchema,
+      executionDate: IsoDateSchema,
+      covarianceWindow: Schema.Struct({
+        returnCount: PositiveInteger,
+        firstSession: IsoDateSchema,
+        lastSession: IsoDateSchema,
+        sessionsHash: Sha256Schema,
+      }),
+      estimatedAnnualizedPortfolioVolatility: NonNegativeFinite,
+      exposureScale: UnitIntervalFinite,
+      targetWeights: Schema.Record(Symbol, UnitIntervalFinite),
+      signals: Schema.Array(
+        Schema.Struct({
+          symbol: Symbol,
+          horizons: Schema.Array(
+            Schema.Struct({
+              horizonSessions: PositiveInteger,
+              return: Schema.Finite,
+              normalizedTrend: Schema.Finite,
+            }),
+          ).check(Schema.isMinLength(1)),
+          dailyVolatility: NonNegativeFinite,
+          annualizedVolatility: NonNegativeFinite,
+          compositeScore: Schema.Finite,
+          positiveScore: NonNegativeFinite,
+          eligible: Schema.Boolean,
+          uncappedWeight: UnitIntervalFinite,
+          cappedWeight: UnitIntervalFinite,
+          targetWeight: UnitIntervalFinite,
+        }),
+      ).check(Schema.isMinLength(1)),
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
 export const DailyPerformanceSeriesArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.daily-performance-series.v1'),
   series: Schema.Literals(['buy-and-hold', 'direct-volatility-timing', 'double-cost-strategy']),
@@ -316,7 +370,7 @@ export const QualificationArtifactManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
   identity: Schema.Struct({
     runId: Sha256Schema,
-    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v4'),
+    evaluationSchemaVersion: Schema.Literals(['bayn.evaluation.v4', 'bayn.evaluation.v5']),
     protocolHash: Sha256Schema,
     sourceRevision: SourceRevision,
     image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),
@@ -377,6 +431,10 @@ export const decodeDailyPositionMarksArtifact = Schema.decodeUnknownEffect(
 )
 export const decodeTsmomSignalDecisionsArtifact = Schema.decodeUnknownEffect(
   TsmomSignalDecisionsArtifactSchema,
+  StrictParseOptions,
+)
+export const decodeRiskBalancedTrendSignalDecisionsArtifact = Schema.decodeUnknownEffect(
+  RiskBalancedTrendSignalDecisionsArtifactSchema,
   StrictParseOptions,
 )
 export const decodeDailyPerformanceSeriesArtifact = Schema.decodeUnknownEffect(

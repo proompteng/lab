@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 
 import { canonicalHashV1 } from './hash'
-import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
+import { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 
@@ -169,7 +169,15 @@ export const RunIdentitySchema = RunIdentityBase.check(
 )
 export type RunIdentity = typeof RunIdentitySchema.Type
 
-export const RuntimeProvenanceSchema = Schema.Struct({
+const evaluationContractVersionForStrategy = (
+  strategyName: string,
+): ContractVersion.Evaluation | ContractVersion.RiskBalancedTrendEvaluation | undefined => {
+  if (strategyName === 'tsmom') return ContractVersion.Evaluation
+  if (strategyName === 'risk-balanced-trend') return ContractVersion.RiskBalancedTrendEvaluation
+  return undefined
+}
+
+const RuntimeProvenanceBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.runtime-provenance.v2'),
   sourceRevision: SourceRevision,
   image: Schema.Struct({
@@ -185,9 +193,21 @@ export const RuntimeProvenanceSchema = Schema.Struct({
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),
     inputManifest: Schema.Literal('bayn.input-manifest.v2'),
-    evaluation: Schema.Literal('bayn.evaluation.v4'),
+    evaluation: Schema.Literals([ContractVersion.Evaluation, ContractVersion.RiskBalancedTrendEvaluation]),
   }),
 })
+
+export const RuntimeProvenanceSchema = RuntimeProvenanceBase.check(
+  Schema.makeFilter((provenance: typeof RuntimeProvenanceBase.Type) => {
+    const expectedEvaluationVersion = evaluationContractVersionForStrategy(provenance.strategy.name)
+    if (expectedEvaluationVersion === undefined) {
+      return [{ path: ['strategy', 'name'], issue: 'is not a supported compiled strategy' }]
+    }
+    return provenance.contractVersions.evaluation === expectedEvaluationVersion
+      ? []
+      : [{ path: ['contractVersions', 'evaluation'], issue: 'does not match the compiled strategy' }]
+  }),
+)
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
 export type RuntimeProvenanceInput = Omit<RuntimeProvenance, 'schemaVersion' | 'contractVersions'>
 
@@ -214,13 +234,16 @@ export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
   return decodeRunIdentitySync({ ...material, runId: canonicalHashV1(material) })
 }
 
-export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance =>
-  decodeRuntimeProvenanceSync({
+export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance => {
+  const evaluation = evaluationContractVersionForStrategy(input.strategy.name)
+  if (evaluation === undefined) throw new TypeError(`unsupported compiled strategy: ${input.strategy.name}`)
+  return decodeRuntimeProvenanceSync({
     schemaVersion: 'bayn.runtime-provenance.v2',
     ...input,
     contractVersions: {
       runtimeProvenance: 'bayn.runtime-provenance.v2',
       inputManifest: 'bayn.input-manifest.v2',
-      evaluation: 'bayn.evaluation.v4',
+      evaluation,
     },
   })
+}

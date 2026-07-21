@@ -2,7 +2,12 @@ import { Effect } from 'effect'
 
 import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1 } from './hash'
-import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
+import {
+  hashRiskBalancedTrendParameters,
+  hashTsmomParameters,
+  loadDefaultProtocol,
+  loadDefaultRiskBalancedTrendProtocol,
+} from './protocol'
 import {
   DataFeed,
   DataSource,
@@ -11,10 +16,12 @@ import {
   type DailyBar,
   type InputManifest,
   type IsoDate,
+  type RiskBalancedTrendProtocol,
   type TsmomProtocol,
 } from './types'
 
 export const fixtureProtocol = Effect.runSync(loadDefaultProtocol)
+export const riskBalancedTrendFixtureProtocol = Effect.runSync(loadDefaultRiskBalancedTrendProtocol)
 
 export const makeTestProvenance = (
   protocol: TsmomProtocol = fixtureProtocol,
@@ -34,6 +41,28 @@ export const makeTestProvenance = (
       name: 'tsmom',
       behaviorHash: overrides.behaviorHash ?? 'c'.repeat(64),
       parameterHash: hashTsmomParameters(protocol),
+      parameterSchemaVersion: protocol.schemaVersion,
+    },
+  })
+
+export const makeRiskBalancedTrendTestProvenance = (
+  protocol: RiskBalancedTrendProtocol = riskBalancedTrendFixtureProtocol,
+  overrides: {
+    readonly sourceRevision?: string
+    readonly imageDigest?: string
+    readonly behaviorHash?: string
+  } = {},
+): RuntimeProvenance =>
+  makeRuntimeProvenance({
+    sourceRevision: overrides.sourceRevision ?? 'a'.repeat(40),
+    image: {
+      repository: 'registry.ide-newton.ts.net/lab/bayn',
+      digest: overrides.imageDigest ?? `sha256:${'b'.repeat(64)}`,
+    },
+    strategy: {
+      name: 'risk-balanced-trend',
+      behaviorHash: overrides.behaviorHash ?? 'd'.repeat(64),
+      parameterHash: hashRiskBalancedTrendParameters(protocol),
       parameterSchemaVersion: protocol.schemaVersion,
     },
   })

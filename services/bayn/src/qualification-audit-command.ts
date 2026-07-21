@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
 import { decodeInputManifestArtifact } from './evidence-contracts'
 import { MarketData, MarketDataLive } from './market-data'
-import { TsmomProtocolSchema } from './protocol'
+import { RiskBalancedTrendProtocolSchema, TsmomProtocolSchema } from './protocol'
 import {
   auditQualification,
   type AuditDatabaseSnapshot,
@@ -14,7 +14,7 @@ import {
   type SignalAccessRecord,
 } from './qualification-audit'
 import { makeQualificationDossier } from './qualification-dossier'
-import type { InputManifest, TsmomProtocol } from './types'
+import type { InputManifest, StrategyProtocol } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
@@ -311,7 +311,7 @@ const loadSignal = (
   input: AuditConfig,
   database: AuditDatabaseSnapshot,
   manifest: InputManifest,
-  protocol: TsmomProtocol,
+  protocol: StrategyProtocol,
 ) => {
   const layer = MarketDataLive(
     {
@@ -441,9 +441,13 @@ const main = Effect.gen(function* () {
   if (inputManifestArtifact === undefined) throw new Error('input-manifest artifact is missing')
   const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
   const protocol = yield* Schema.decodeUnknownEffect(
-    TsmomProtocolSchema,
+    Schema.Union([TsmomProtocolSchema, RiskBalancedTrendProtocolSchema]),
     StrictParseOptions,
   )(database.protocol.parameters)
+  const expectedStrategyName = protocol.schemaVersion === 'bayn.tsmom.protocol.v2' ? 'tsmom' : 'risk-balanced-trend'
+  if (database.protocol.strategyName !== expectedStrategyName || database.run.strategyName !== expectedStrategyName) {
+    throw new Error('stored strategy name does not match its protocol schema')
+  }
   const signal = yield* loadSignal(input, database, manifest, protocol)
   const signalAccess = yield* readSignalAccess(input, database, manifest.finalizedSnapshot.finalizedAt)
   const result = database.qualification.result as Readonly<Record<string, unknown>>

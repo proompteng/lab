@@ -1,8 +1,18 @@
 import { canonicalHashV1 } from './hash'
-import { evaluateReferenceTsmom } from './qualification-reference'
+import {
+  evaluateReferenceRiskBalancedTrend,
+  evaluateReferenceTsmom,
+  type ReferenceEvaluation,
+} from './qualification-reference'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
 import { makeRuntimeProvenance } from './contracts'
-import { ContractVersion, type DailyBar, type InputManifest, type SimulationTrace, type TsmomProtocol } from './types'
+import {
+  ContractVersion,
+  type DailyBar,
+  type InputManifest,
+  type SimulationTrace,
+  type StrategyProtocol,
+} from './types'
 
 export interface StoredArtifact {
   readonly name: string
@@ -91,7 +101,7 @@ export interface RepositoryAudit {
 export interface QualificationAuditInput {
   readonly bars: readonly DailyBar[]
   readonly manifest: InputManifest
-  readonly protocol: TsmomProtocol
+  readonly protocol: StrategyProtocol
   readonly database: AuditDatabaseSnapshot
   readonly signalAccess: readonly SignalAccessRecord[]
   readonly signalPrincipals: SignalPrincipals
@@ -175,44 +185,80 @@ const expectedResultReason = (gateName: string): string =>
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')}_FAILED`
 
+interface AuditStrategyProfile {
+  readonly name: 'tsmom' | 'risk-balanced-trend'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v5'
+  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v4'
+  readonly decisionArtifactName: 'tsmom-signal-decisions' | 'risk-balanced-trend-decisions'
+  readonly decisionArtifactSchemaVersion: 'bayn.tsmom-signal-decisions.v1' | 'bayn.risk-balanced-trend-decisions.v1'
+}
+
+const auditStrategyProfile = (protocol: StrategyProtocol): AuditStrategyProfile =>
+  protocol.schemaVersion === 'bayn.tsmom.protocol.v2'
+    ? {
+        name: 'tsmom',
+        evaluationSchemaVersion: ContractVersion.Evaluation,
+        summarySchemaVersion: ContractVersion.EvaluationSummary,
+        decisionArtifactName: 'tsmom-signal-decisions',
+        decisionArtifactSchemaVersion: 'bayn.tsmom-signal-decisions.v1',
+      }
+    : {
+        name: 'risk-balanced-trend',
+        evaluationSchemaVersion: ContractVersion.RiskBalancedTrendEvaluation,
+        summarySchemaVersion: ContractVersion.RiskBalancedTrendEvaluationSummary,
+        decisionArtifactName: 'risk-balanced-trend-decisions',
+        decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
+      }
+
+const evaluateReference = (
+  input: QualificationAuditInput,
+  provenance: ReturnType<typeof makeRuntimeProvenance>,
+): ReferenceEvaluation =>
+  input.protocol.schemaVersion === 'bayn.tsmom.protocol.v2'
+    ? evaluateReferenceTsmom(input.bars, input.manifest, input.protocol, provenance)
+    : evaluateReferenceRiskBalancedTrend(input.bars, input.manifest, input.protocol, provenance)
+
 const makeSummary = (
   input: QualificationAuditInput,
-  reference: ReturnType<typeof evaluateReferenceTsmom>,
+  reference: ReferenceEvaluation,
   trace: SimulationTrace,
   markedEquity: ReturnType<typeof reconcileMarkedEquity>['reconciliation'],
-) => ({
-  schemaVersion: ContractVersion.EvaluationSummary,
-  runId: reference.runId,
-  evaluationSchemaVersion: ContractVersion.Evaluation,
-  codeRevision: input.database.run.sourceRevision,
-  protocolHash: reference.protocolHash,
-  initialCapitalMicros: input.protocol.initialCapitalMicros,
-  input: {
-    snapshotId: input.manifest.finalizedSnapshot.snapshotId,
-    publicationId: input.manifest.finalizedSnapshot.publicationId,
-    manifestHash: input.manifest.hash,
-    bounds: input.manifest.bounds,
-    rowCount: input.manifest.rowCount,
-    sessionCount: input.manifest.sessionCount,
-    symbols: input.manifest.symbols.map((coverage) => coverage.symbol),
-  },
-  strategy: reference.strategy.metrics,
-  buyAndHold: reference.buyAndHold.metrics,
-  directVolTiming: reference.directVolTiming.metrics,
-  doubleCostStrategy: reference.doubleCostStrategy.metrics,
-  verdict: reference.verdict,
-  eventCount: reference.strategy.events.length,
-  signalDecisionCount: reference.strategy.decisions.length,
-  orderCount: trace.orders.length,
-  cashChangeCount: trace.cashChanges.length,
-  dailyMarkCount: trace.dailyMarks.length,
-  benchmarkSeriesCounts: {
-    buyAndHold: reference.buyAndHold.daily.length,
-    directVolTiming: reference.directVolTiming.daily.length,
-    doubleCostStrategy: reference.doubleCostStrategy.daily.length,
-  },
-  markedEquityReconciliation: markedEquity,
-})
+) => {
+  const profile = auditStrategyProfile(input.protocol)
+  return {
+    schemaVersion: profile.summarySchemaVersion,
+    runId: reference.runId,
+    evaluationSchemaVersion: profile.evaluationSchemaVersion,
+    codeRevision: input.database.run.sourceRevision,
+    protocolHash: reference.protocolHash,
+    initialCapitalMicros: input.protocol.initialCapitalMicros,
+    input: {
+      snapshotId: input.manifest.finalizedSnapshot.snapshotId,
+      publicationId: input.manifest.finalizedSnapshot.publicationId,
+      manifestHash: input.manifest.hash,
+      bounds: input.manifest.bounds,
+      rowCount: input.manifest.rowCount,
+      sessionCount: input.manifest.sessionCount,
+      symbols: input.manifest.symbols.map((coverage) => coverage.symbol),
+    },
+    strategy: reference.strategy.metrics,
+    buyAndHold: reference.buyAndHold.metrics,
+    directVolTiming: reference.directVolTiming.metrics,
+    doubleCostStrategy: reference.doubleCostStrategy.metrics,
+    verdict: reference.verdict,
+    eventCount: reference.strategy.events.length,
+    signalDecisionCount: reference.strategy.decisions.length,
+    orderCount: trace.orders.length,
+    cashChangeCount: trace.cashChanges.length,
+    dailyMarkCount: trace.dailyMarks.length,
+    benchmarkSeriesCounts: {
+      buyAndHold: reference.buyAndHold.daily.length,
+      directVolTiming: reference.directVolTiming.daily.length,
+      doubleCostStrategy: reference.doubleCostStrategy.daily.length,
+    },
+    markedEquityReconciliation: markedEquity,
+  }
+}
 
 export const auditQualification = (input: QualificationAuditInput): QualificationAuditReport => {
   const checks: AuditCheck[] = []
@@ -225,6 +271,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   const result = object(database.qualification.result, 'qualification result')
   const lockId = string(lock.lockId, 'qualification lock ID')
   const resultHash = string(result.resultHash, 'qualification result hash')
+  const profile = auditStrategyProfile(input.protocol)
   const provenance = makeRuntimeProvenance({
     sourceRevision: database.run.sourceRevision,
     image: { repository: database.run.imageRepository, digest: database.run.imageDigest },
@@ -235,7 +282,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       parameterSchemaVersion: database.protocol.schemaVersion,
     },
   })
-  const reference = evaluateReferenceTsmom(input.bars, input.manifest, input.protocol, provenance)
+  const reference = evaluateReference(input, provenance)
   if (reference.strategy.trace === null) throw new Error('reference evaluation omitted its candidate trace')
   const markedEquity = reconcileMarkedEquity({
     runId: reference.runId,
@@ -259,6 +306,11 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     reference.runId === database.run.runId &&
       reference.protocolHash === database.run.protocolHash &&
       input.manifest.finalizedSnapshot.snapshotId === database.run.snapshotId &&
+      database.protocol.strategyName === profile.name &&
+      database.run.strategyName === profile.name &&
+      database.run.evaluationSchemaVersion === profile.evaluationSchemaVersion &&
+      provenance.contractVersions.evaluation === profile.evaluationSchemaVersion &&
+      database.run.initialCapitalMicros === input.protocol.initialCapitalMicros &&
       database.run.status === 'COMPLETE',
     `runId=${database.run.runId}`,
   )
@@ -275,7 +327,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `${database.artifacts.length} artifacts`,
   )
   const expectedArtifactSchemas = new Map<string, string>([
-    ['evaluation-summary', 'bayn.evaluation-summary.v3'],
+    ['evaluation-summary', profile.summarySchemaVersion],
     ['input-manifest', input.manifest.schemaVersion],
     ['strategy', 'bayn.performance-metrics.v2'],
     ['buy-and-hold', 'bayn.performance-metrics.v2'],
@@ -284,7 +336,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     ['simulated-orders', 'bayn.simulated-orders.v2'],
     ['cash-changes', 'bayn.cash-changes.v2'],
     ['daily-position-marks', 'bayn.daily-position-marks.v3'],
-    ['tsmom-signal-decisions', 'bayn.tsmom-signal-decisions.v1'],
+    [profile.decisionArtifactName, profile.decisionArtifactSchemaVersion],
     ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
     ['direct-volatility-timing-series', 'bayn.daily-performance-series.v1'],
     ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
@@ -358,8 +410,8 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       { schemaVersion: 'bayn.daily-position-marks.v3', items: reference.strategy.trace.dailyMarks },
     ],
     [
-      'tsmom-signal-decisions',
-      { schemaVersion: 'bayn.tsmom-signal-decisions.v1', items: reference.strategy.decisions },
+      profile.decisionArtifactName,
+      { schemaVersion: profile.decisionArtifactSchemaVersion, items: reference.strategy.decisions },
     ],
     [
       'buy-and-hold-series',

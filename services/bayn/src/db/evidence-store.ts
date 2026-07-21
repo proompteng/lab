@@ -16,6 +16,7 @@ import {
   decodeMarkedEquityReconciliation,
   decodeQualificationArtifactManifest,
   decodeReconciliationResult,
+  decodeRiskBalancedTrendSignalDecisionsArtifact,
   decodeSimulatedOrdersArtifact,
   decodeTsmomSignalDecisionsArtifact,
   makeEquitySeriesArtifact,
@@ -377,6 +378,35 @@ const artifactItemCount = (payload: unknown): number => {
   return Array.isArray(payload.items) ? payload.items.length : 0
 }
 
+interface EvidenceProfile {
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v5'
+  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v4'
+  readonly signalDecisionsArtifactName: 'risk-balanced-trend-decisions' | 'tsmom-signal-decisions'
+  readonly signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1' | 'bayn.tsmom-signal-decisions.v1'
+}
+
+const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: string): EvidenceProfile => {
+  if (strategyName === 'tsmom' && evaluationSchemaVersion === 'bayn.evaluation.v4') {
+    return {
+      evaluationSchemaVersion,
+      summarySchemaVersion: 'bayn.evaluation-summary.v3',
+      signalDecisionsArtifactName: 'tsmom-signal-decisions',
+      signalDecisionsSchemaVersion: 'bayn.tsmom-signal-decisions.v1',
+    }
+  }
+  if (strategyName === 'risk-balanced-trend' && evaluationSchemaVersion === 'bayn.evaluation.v5') {
+    return {
+      evaluationSchemaVersion,
+      summarySchemaVersion: 'bayn.evaluation-summary.v4',
+      signalDecisionsArtifactName: 'risk-balanced-trend-decisions',
+      signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
+    }
+  }
+  throw new TypeError(
+    `unsupported evidence profile for strategy ${strategyName} and evaluation ${evaluationSchemaVersion}`,
+  )
+}
+
 const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQualificationInput => {
   const lock = decodeQualificationLock(input.lock)
   const { inputManifest, parameters, provenance } = input
@@ -431,6 +461,10 @@ const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQual
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
   const { evaluation, parameters, provenance, reconciliation } = input
   const strategyName = provenance.strategy.name
+  if (evaluation.schemaVersion !== provenance.contractVersions.evaluation) {
+    throw new TypeError('evaluation schema version does not match runtime provenance')
+  }
+  const evidenceProfile = evidenceProfileFor(strategyName, evaluation.schemaVersion)
   const parameterHash = canonicalHashV1(parameters)
   if (parameterHash !== provenance.strategy.parameterHash) {
     throw new TypeError('strategy parameters and provenance disagree on parameter hash')
@@ -496,7 +530,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
         canonicalHashV1(decision.targetWeights) !== canonicalHashV1(decisionEvents[index]?.targetWeights),
     )
   ) {
-    throw new TypeError('TSMOM signal decisions diverge from durable decision events')
+    throw new TypeError('strategy signal decisions diverge from durable decision events')
   }
   const candidateDates = evaluation.simulation.dailyMarks.map((point) => point.sessionDate)
   const benchmarkSeries = Object.values(evaluation.benchmarkSeries)
@@ -512,7 +546,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }
 
   const baseArtifacts = [
-    ['evaluation-summary', 'bayn.evaluation-summary.v3', summarizeEvaluation(evaluation)],
+    ['evaluation-summary', evidenceProfile.summarySchemaVersion, summarizeEvaluation(evaluation)],
     ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
     ['strategy', 'bayn.performance-metrics.v2', evaluation.strategy],
     ['buy-and-hold', 'bayn.performance-metrics.v2', evaluation.buyAndHold],
@@ -539,9 +573,9 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
       { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
     ],
     [
-      'tsmom-signal-decisions',
-      'bayn.tsmom-signal-decisions.v1',
-      { schemaVersion: 'bayn.tsmom-signal-decisions.v1', items: evaluation.signalDecisions },
+      evidenceProfile.signalDecisionsArtifactName,
+      evidenceProfile.signalDecisionsSchemaVersion,
+      { schemaVersion: evidenceProfile.signalDecisionsSchemaVersion, items: evaluation.signalDecisions },
     ],
     [
       'buy-and-hold-series',
@@ -1518,6 +1552,10 @@ const makeEvidenceStore = Effect.gen(function* () {
         const storedOption = yield* readStored(runId)
         if (Option.isNone(storedOption)) return Option.none<RecoveredEvaluationEvidence>()
         const stored = storedOption.value
+        const evidenceProfile = yield* Effect.try({
+          try: () => evidenceProfileFor(stored.run.strategyName, stored.run.evaluationSchemaVersion),
+          catch: (cause) => databaseError('invariant', 'recover-evidence', 'stored evidence profile is invalid', cause),
+        })
         const requiredArtifacts = new Map([
           ['buy-and-hold', 'bayn.performance-metrics.v2'],
           ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
@@ -1528,14 +1566,14 @@ const makeEvidenceStore = Effect.gen(function* () {
           ['double-cost-strategy', 'bayn.performance-metrics.v2'],
           ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
           ['equity-series', 'bayn.equity-series.v1'],
-          ['evaluation-summary', 'bayn.evaluation-summary.v3'],
+          ['evaluation-summary', evidenceProfile.summarySchemaVersion],
           ['input-manifest', 'bayn.input-manifest.v2'],
           ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v2'],
           ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
           ['reconciliation', 'bayn.reconciliation.v1'],
           ['simulated-orders', 'bayn.simulated-orders.v2'],
           ['strategy', 'bayn.performance-metrics.v2'],
-          ['tsmom-signal-decisions', 'bayn.tsmom-signal-decisions.v1'],
+          [evidenceProfile.signalDecisionsArtifactName, evidenceProfile.signalDecisionsSchemaVersion],
         ])
         const artifacts = new Map(stored.artifacts.map((artifact) => [artifact.name, artifact]))
         const requiredValue = <A>(value: A | undefined, description: string): Effect.Effect<A, DatabaseError> =>
@@ -1549,11 +1587,12 @@ const makeEvidenceStore = Effect.gen(function* () {
               ([name, schemaVersion]) => artifacts.get(name)?.schemaVersion === schemaVersion,
             ),
           'recover-evidence',
-          'stored run does not have the exact v4 artifact contract',
+          'stored run does not have the exact strategy evidence contract',
         )
         yield* ensure(
           stored.run.runId === runId &&
-            stored.run.evaluationSchemaVersion === 'bayn.evaluation.v4' &&
+            stored.run.evaluationSchemaVersion === evidenceProfile.evaluationSchemaVersion &&
+            stored.run.evaluationSchemaVersion === provenance.contractVersions.evaluation &&
             stored.run.sourceRevision === provenance.sourceRevision &&
             stored.run.imageRepository === provenance.image.repository &&
             stored.run.imageDigest === provenance.image.digest &&
@@ -1586,7 +1625,7 @@ const makeEvidenceStore = Effect.gen(function* () {
           requiredArtifact('marked-equity-reconciliation'),
           requiredArtifact('equity-series'),
           requiredArtifact('simulated-orders'),
-          requiredArtifact('tsmom-signal-decisions'),
+          requiredArtifact(evidenceProfile.signalDecisionsArtifactName),
           requiredArtifact('buy-and-hold-series'),
           requiredArtifact('direct-volatility-timing-series'),
           requiredArtifact('double-cost-strategy-series'),
@@ -1605,7 +1644,10 @@ const makeEvidenceStore = Effect.gen(function* () {
         const equitySeries = yield* decodeEquitySeriesArtifact(equitySeriesArtifact.payload)
         const events = yield* decodeEvaluationEvents(stored.events.map((event) => event.payload))
         const orders = yield* decodeSimulatedOrdersArtifact(ordersArtifact.payload)
-        const signalDecisions = yield* decodeTsmomSignalDecisionsArtifact(signalDecisionsArtifact.payload)
+        const signalDecisions =
+          evidenceProfile.signalDecisionsArtifactName === 'tsmom-signal-decisions'
+            ? yield* decodeTsmomSignalDecisionsArtifact(signalDecisionsArtifact.payload)
+            : yield* decodeRiskBalancedTrendSignalDecisionsArtifact(signalDecisionsArtifact.payload)
         const buyAndHoldSeries = yield* decodeDailyPerformanceSeriesArtifact(buyAndHoldSeriesArtifact.payload)
         const directVolatilitySeries = yield* decodeDailyPerformanceSeriesArtifact(
           directVolatilitySeriesArtifact.payload,

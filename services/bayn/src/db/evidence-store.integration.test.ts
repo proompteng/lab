@@ -8,10 +8,17 @@ import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
+import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { evaluateTsmom } from '../strategy'
-import { makeTsmomStrategy } from '../strategy-service'
-import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../test-fixtures'
-import type { TsmomProtocol } from '../types'
+import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from '../strategy-service'
+import {
+  fixtureProtocol,
+  makeRiskBalancedTrendTestProvenance,
+  makeSnapshot,
+  makeTestProvenance,
+  riskBalancedTrendFixtureProtocol,
+} from '../test-fixtures'
+import { ContractVersion, type TsmomProtocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -76,6 +83,28 @@ const makeInput = (
   return {
     provenance,
     parameters: protocol,
+    evaluation,
+    reconciliation: {
+      runId: evaluation.runId,
+      accountCount: ledger.accounts.length,
+      transferCount: ledger.transfers.length,
+      exact: true,
+    },
+  }
+}
+
+const makeRiskBalancedTrendInput = (): PersistEvaluationInput => {
+  const provenance = makeRiskBalancedTrendTestProvenance()
+  const evaluation = evaluateRiskBalancedTrend(
+    snapshot.bars,
+    snapshot.manifest,
+    riskBalancedTrendFixtureProtocol,
+    provenance,
+  )
+  const ledger = buildLedgerPlan(evaluation, 7_001)
+  return {
+    provenance,
+    parameters: riskBalancedTrendFixtureProtocol,
     evaluation,
     reconciliation: {
       runId: evaluation.runId,
@@ -367,6 +396,29 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
     expect(observed.trials).toEqual([input.evaluation.runId])
     expect(observed.counts).toEqual({ locks: 1, results: 1, runs: 1, trials: 0 })
+  })
+
+  test('builds the next candidate lineage from both burned and terminal trials', async () => {
+    const burned = makeInput('0'.repeat(40))
+    const terminal = makeInput('1'.repeat(40))
+    const terminalQualification = makeLockedInput(terminal, [burned.evaluation.runId])
+    const candidate = makeRiskBalancedTrendInput()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        yield* store.persist(burned)
+        yield* store.openQualification(terminalQualification.open)
+        yield* store.persist(terminalQualification.persist)
+        const priorTrialRunIds = yield* store.listPriorTrials
+        const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, candidate.provenance)
+        const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+        const lock = strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds)
+        return { lock, priorTrialRunIds }
+      }),
+    )
+
+    expect(observed.priorTrialRunIds).toEqual([burned.evaluation.runId, terminal.evaluation.runId].sort())
+    expect(observed.lock.priorTrialRunIds).toEqual(observed.priorTrialRunIds)
   })
 
   test('rolls back the evaluation graph when terminal qualification insertion fails', async () => {
@@ -682,6 +734,101 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       })
     }
     expect(Option.isNone(result.missing)).toBe(true)
+  })
+
+  test('persists and recovers the complete risk-balanced trend v5 evidence contract', async () => {
+    const input = makeRiskBalancedTrendInput()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const receipt = yield* store.persist(input)
+        const stored = yield* store.read(input.evaluation.runId)
+        const recovered = yield* store.recover(input.evaluation.runId, input.provenance)
+        const mismatchedRecovery = yield* store
+          .recover(input.evaluation.runId, {
+            ...input.provenance,
+            contractVersions: {
+              ...input.provenance.contractVersions,
+              evaluation: ContractVersion.Evaluation,
+            },
+          })
+          .pipe(Effect.flip)
+        return { receipt, stored, recovered, mismatchedRecovery }
+      }),
+    )
+
+    expect(result.receipt).toMatchObject({ runId: input.evaluation.runId, artifactCount: 17 })
+    expect(Option.isSome(result.stored)).toBe(true)
+    if (Option.isSome(result.stored)) {
+      expect(result.stored.value.protocol).toMatchObject({
+        strategyName: 'risk-balanced-trend',
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+        parameters: riskBalancedTrendFixtureProtocol,
+      })
+      expect(result.stored.value.run).toMatchObject({
+        evaluationSchemaVersion: 'bayn.evaluation.v5',
+        artifactCount: 17,
+      })
+      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toContain('risk-balanced-trend-decisions')
+      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).not.toContain('tsmom-signal-decisions')
+      expect(result.stored.value.artifacts.find((artifact) => artifact.name === 'evaluation-summary')).toMatchObject({
+        schemaVersion: 'bayn.evaluation-summary.v4',
+      })
+    }
+    expect(Option.isSome(result.recovered)).toBe(true)
+    if (Option.isSome(result.recovered)) {
+      expect(result.recovered.value).toMatchObject({
+        evaluation: {
+          schemaVersion: 'bayn.evaluation-summary.v4',
+          evaluationSchemaVersion: 'bayn.evaluation.v5',
+          runId: input.evaluation.runId,
+        },
+        reconciliation: { runId: input.evaluation.runId, exact: true },
+        persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 17 },
+      })
+    }
+    expect(result.mismatchedRecovery).toMatchObject({ failure: 'invariant', operation: 'recover-evidence' })
+    expect(result.mismatchedRecovery.message).toContain('stored run does not match the current runtime identity')
+  })
+
+  test('rejects a strategy and evaluation evidence-profile mismatch before writing', async () => {
+    const input = makeRiskBalancedTrendInput()
+    const errors = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const profile = yield* store
+          .persist({
+            ...input,
+            provenance: {
+              ...input.provenance,
+              strategy: { ...input.provenance.strategy, name: 'tsmom' },
+            },
+          })
+          .pipe(Effect.flip)
+        const contract = yield* store
+          .persist({
+            ...input,
+            provenance: {
+              ...input.provenance,
+              contractVersions: {
+                ...input.provenance.contractVersions,
+                evaluation: ContractVersion.Evaluation,
+              },
+            },
+          })
+          .pipe(Effect.flip)
+        return { contract, profile }
+      }),
+    )
+
+    expect(errors.profile).toBeInstanceOf(DatabaseError)
+    expect(errors.profile).toMatchObject({ failure: 'invariant', operation: 'plan' })
+    expect(errors.profile.message).toContain(
+      'unsupported evidence profile for strategy tsmom and evaluation bayn.evaluation.v5',
+    )
+    expect(errors.contract).toBeInstanceOf(DatabaseError)
+    expect(errors.contract).toMatchObject({ failure: 'invariant', operation: 'plan' })
+    expect(errors.contract.message).toContain('evaluation schema version does not match runtime provenance')
   })
 
   test('retrieves ordered artifact items through bounded contiguous pages', async () => {

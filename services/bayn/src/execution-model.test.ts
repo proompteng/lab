@@ -5,6 +5,7 @@ import {
   accrueCashYield,
   calculateSessionFees,
   defaultExecutionModel,
+  desiredQuantityMicros,
   makeFillTerms,
   makeOrderOutcome,
   referencePriceMicros,
@@ -101,6 +102,15 @@ describe('explicit paper execution model', () => {
       cash: { ...defaultExecutionModel.cash, annualYieldBps: 500 },
     }
     expect(accrueCashYield(1_000n * MICROS, 3, yielding)).toBe(410_958n)
+  })
+
+  test('accepts exact twelve-decimal weights despite binary floating-point representation', () => {
+    expect(desiredQuantityMicros(1_000n * MICROS, 0.123_456_789_012, 100n * MICROS, defaultExecutionModel)).toBe(
+      1_234_567n,
+    )
+    expect(() =>
+      desiredQuantityMicros(1_000n * MICROS, 0.123_456_789_012_3, 100n * MICROS, defaultExecutionModel),
+    ).toThrow('target weight exceeds fixed-point precision')
   })
 
   test('doubles declared execution costs without changing fill selection', () => {
