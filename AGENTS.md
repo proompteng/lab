@@ -7,6 +7,7 @@
 - For requests to change, build, or fix, make the requested in-scope local changes and run relevant non-destructive validation without asking first. Safe local actions include reading and searching files, inspecting logs and repository state, editing in-scope code, and running tests.
 - Require confirmation before external writes not explicitly requested, destructive actions, purchases, credential or permission changes, or a material expansion of scope.
 - Complete the requested outcome before yielding. For multi-step work, keep a short plan, update it only at meaningful milestones, and avoid narrating routine tool use.
+- Use the provided current working directory for all repository work. Do not create or use alternate worktrees or temporary repository copies unless the user explicitly requests one.
 - Start from concrete evidence and reproduce defects when practical. Gather context until you can name the files or resources to change and the validation path, then act without repeating equivalent searches or reads.
 - Lead final responses with the result, evidence, validation commands and outcomes, material caveats or blockers, and the next required action. Omit repeated background and generic reassurance.
 - Check the nearest `README` or nested `AGENTS.md` for component-specific rules.

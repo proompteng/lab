@@ -300,7 +300,9 @@ export const reconcileMarkedEquity = (input: {
       }
       cash += amount
       ensure(cash >= -tolerance, `event ${event.id} spends unavailable reconstructed cash`)
-      validateCashChange(input.runId, changesBySource.get(event.id)!, event, amount, cash)
+      const change = changesBySource.get(event.id)
+      if (change === undefined) throw new Error(`event ${event.id} has no cash change`)
+      validateCashChange(input.runId, change, event, amount, cash)
       eventIndex += 1
     }
 

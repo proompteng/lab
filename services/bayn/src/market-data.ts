@@ -5,7 +5,16 @@ import type { RuntimeConfig } from './config'
 import { FinalizedSnapshotProvenanceSchema, type EvaluationBounds, type FinalizedSnapshotProvenance } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1 } from './hash'
-import type { DailyBar, InputManifest, IsoDate, SymbolCoverage } from './types'
+import {
+  DataFeed,
+  DataSource,
+  PriceAdjustment,
+  PublicationSchema,
+  type DailyBar,
+  type InputManifest,
+  type IsoDate,
+  type SymbolCoverage,
+} from './types'
 
 const database = 'signal' as const
 const tables = {
@@ -13,17 +22,15 @@ const tables = {
   sessions: 'exchange_sessions_v1',
   manifests: 'snapshot_manifests_v1',
 } as const
-const signalSchemaVersion = 'signal.adjusted-daily-snapshot.v1' as const
 const calendarTimeZone = 'America/New_York' as const
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 
-const IsoDateSchema = Schema.String.check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/),
-  Schema.makeFilter((value: string) => {
-    const parsed = new Date(`${value}T00:00:00.000Z`)
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
-  }),
-)
+const isIsoDate = (value: string): value is IsoDate => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
+const IsoDateSchema = Schema.String.pipe(Schema.refine(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }))
 const SnapshotIdSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 const HashSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
@@ -49,9 +56,9 @@ const SignalBarRowSchema = Schema.Struct({
   adjusted_volume: FixedDecimalSchema,
   trade_count: DigitsSchema,
   vwap: Schema.NullOr(FixedDecimalSchema),
-  provider: Schema.Literal('alpaca'),
-  source_feed: Schema.Literal('sip'),
-  adjustment: Schema.Literal('all'),
+  provider: Schema.Enum(DataSource),
+  source_feed: Schema.Enum(DataFeed),
+  adjustment: Schema.Enum(PriceAdjustment),
   publication_asof: IsoDateSchema,
 })
 const SignalSessionRowSchema = Schema.Struct({
@@ -61,17 +68,17 @@ const SignalSessionRowSchema = Schema.Struct({
   open_time: MarketTimeSchema,
   close_time: MarketTimeSchema,
   timezone: Schema.Literal(calendarTimeZone),
-  provider: Schema.Literal('alpaca'),
+  provider: Schema.Enum(DataSource),
 })
 const SignalManifestRowSchema = Schema.Struct({
   snapshot_id: SnapshotIdSchema,
-  schema_version: Schema.Literal(signalSchemaVersion),
+  schema_version: Schema.Enum(PublicationSchema),
   publisher_source_revision: SourceRevisionSchema,
   publisher_image_repository: ImageRepositorySchema,
   publisher_image_digest: ImageDigestSchema,
-  provider: Schema.Literal('alpaca'),
-  source_feed: Schema.Literal('sip'),
-  adjustment: Schema.Literal('all'),
+  provider: Schema.Enum(DataSource),
+  source_feed: Schema.Enum(DataFeed),
+  adjustment: Schema.Enum(PriceAdjustment),
   calendar_version: Schema.Trim.check(Schema.isMinLength(1)),
   requested_start: IsoDateSchema,
   publication_asof: IsoDateSchema,
@@ -163,10 +170,10 @@ const toNumber = (value: string, name: string, positive: boolean): number => {
   return parsed
 }
 
-const toDailyBar = (row: SignalBarRow, publicationSchemaVersion: string): DailyBar => {
+const toDailyBar = (row: SignalBarRow, publicationSchemaVersion: PublicationSchema): DailyBar => {
   const bar: DailyBar = {
     symbol: row.symbol,
-    sessionDate: row.session_date as IsoDate,
+    sessionDate: row.session_date,
     open: toNumber(row.adjusted_open, 'adjusted_open', true),
     high: toNumber(row.adjusted_high, 'adjusted_high', true),
     low: toNumber(row.adjusted_low, 'adjusted_low', true),
@@ -299,11 +306,11 @@ const verifyCalendar = (
   }
   if (orderedSessions.length !== manifest.session_count)
     throw new Error('exchange-session count does not match manifest')
-  if (orderedSessions.length === 0) throw new Error('snapshot has no exchange sessions')
-  if (orderedSessions[0].session_date !== manifest.first_session)
-    throw new Error('first exchange session does not match')
-  if (orderedSessions.at(-1)!.session_date !== manifest.last_session)
-    throw new Error('last exchange session does not match')
+  const firstSession = orderedSessions.at(0)
+  const lastSession = orderedSessions.at(-1)
+  if (firstSession === undefined || lastSession === undefined) throw new Error('snapshot has no exchange sessions')
+  if (firstSession.session_date !== manifest.first_session) throw new Error('first exchange session does not match')
+  if (lastSession.session_date !== manifest.last_session) throw new Error('last exchange session does not match')
   if (canonicalHashV1(orderedSessions.map(withoutSnapshot)) !== manifest.sessions_content_hash) {
     throw new Error('exchange-session content hash is invalid')
   }
@@ -311,11 +318,16 @@ const verifyCalendar = (
   const boundedSessions = orderedSessions.filter(
     (session) => session.session_date >= request.bounds.dataStart && session.session_date <= request.bounds.dataEnd,
   )
+  const firstBoundedSession = boundedSessions.at(0)
+  const lastBoundedSession = boundedSessions.at(-1)
+  if (firstBoundedSession === undefined || lastBoundedSession === undefined) {
+    throw new Error('evaluation bounds contain no exchange sessions')
+  }
   const symbols: SymbolCoverage[] = universe.map((symbol) => ({
     symbol,
     rows: boundedSessions.length,
-    firstSession: boundedSessions[0].session_date as IsoDate,
-    lastSession: boundedSessions.at(-1)!.session_date as IsoDate,
+    firstSession: firstBoundedSession.session_date,
+    lastSession: lastBoundedSession.session_date,
   }))
   const manifestMaterial: Omit<InputManifest, 'hash'> = {
     schemaVersion: 'bayn.input-manifest.v2',
@@ -325,8 +337,8 @@ const verifyCalendar = (
     bounds: request.bounds,
     rowCount: boundedSessions.length * universe.length,
     sessionCount: boundedSessions.length,
-    firstSession: boundedSessions[0].session_date as IsoDate,
-    lastSession: boundedSessions.at(-1)!.session_date as IsoDate,
+    firstSession: firstBoundedSession.session_date,
+    lastSession: lastBoundedSession.session_date,
     symbols,
   }
   return {
@@ -344,7 +356,7 @@ export const verifyFinalizedCalendar = (
   const calendar = verifyCalendar(rows.sessions, rows.manifests, request)
   return {
     manifest: calendar.inputManifest,
-    sessionDates: calendar.boundedSessions.map((session) => session.session_date as IsoDate),
+    sessionDates: calendar.boundedSessions.map((session) => session.session_date),
   }
 }
 

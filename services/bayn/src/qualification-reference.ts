@@ -103,7 +103,14 @@ const align = (bars: readonly DailyBar[], manifest: InputManifest, universe: rea
       if (day.size !== universe.length || universe.some((symbol) => !day.has(symbol))) {
         throw new Error(`reference input session ${date} is incomplete`)
       }
-      return { date, bars: Object.fromEntries(universe.map((symbol) => [symbol, day.get(symbol)!])) }
+      const sessionBars = Object.fromEntries(
+        universe.map((symbol) => {
+          const bar = day.get(symbol)
+          if (bar === undefined) throw new Error(`reference input session ${date} is missing ${symbol}`)
+          return [symbol, bar]
+        }),
+      )
+      return { date, bars: sessionBars }
     })
   if (
     sessions.length !== manifest.sessionCount ||
@@ -188,11 +195,14 @@ const metrics = (
   if (equityMicros.length < 2 || equityMicros.some((value) => value <= 0n)) {
     throw new Error('reference replay produced an invalid equity curve')
   }
+  const endingEquityMicros = equityMicros.at(-1)
+  if (endingEquityMicros === undefined) throw new Error('reference replay produced an empty equity curve')
   const equity = equityMicros.map(microsToNumber)
   const initial = microsToNumber(initialMicros)
+  const endingEquity = microsToNumber(endingEquityMicros)
   const returns = equity.map((value, index) => value / (index === 0 ? initial : equity[index - 1]) - 1)
-  const totalReturn = equity.at(-1)! / initial - 1
-  const annualizedReturn = Math.pow(equity.at(-1)! / initial, tradingDays / equity.length) - 1
+  const totalReturn = endingEquity / initial - 1
+  const annualizedReturn = Math.pow(endingEquity / initial, tradingDays / equity.length) - 1
   const annualizedVolatility = sampleDeviation(returns) * Math.sqrt(tradingDays)
   const sharpe = annualizedVolatility === 0 ? 0 : (average(returns) * tradingDays) / annualizedVolatility
   let peak = initial
@@ -213,7 +223,7 @@ const metrics = (
     totalSpreadCostMicros: spreadMicros.toString(),
     totalSlippageCostMicros: slippageMicros.toString(),
     totalCashYieldMicros: yieldMicros.toString(),
-    endingEquityMicros: equityMicros.at(-1)!.toString(),
+    endingEquityMicros: endingEquityMicros.toString(),
   }
 }
 

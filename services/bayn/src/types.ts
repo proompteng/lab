@@ -2,6 +2,31 @@ import type { EvaluationBounds, FinalizedSnapshotProvenance } from './contracts'
 
 export type IsoDate = `${number}-${number}-${number}`
 
+export enum DataSource {
+  Alpaca = 'alpaca',
+}
+
+export enum DataFeed {
+  Sip = 'sip',
+}
+
+export enum PriceAdjustment {
+  All = 'all',
+}
+
+export enum PublicationSchema {
+  AdjustedDailySnapshotV1 = 'signal.adjusted-daily-snapshot.v1',
+}
+
+export enum ContractVersion {
+  Evaluation = 'bayn.evaluation.v4',
+  EvaluationSummary = 'bayn.evaluation-summary.v3',
+  PartialFillSeed = 'bayn.partial-fill-seed.v1',
+  RunIdentity = 'bayn.run-identity.v1',
+  SimulationTrace = 'bayn.simulation-trace.v3',
+  TsmomDecisionPlan = 'bayn.tsmom-decision-plan.v1',
+}
+
 export interface DailyBar {
   readonly symbol: string
   readonly sessionDate: IsoDate
@@ -10,10 +35,10 @@ export interface DailyBar {
   readonly low: number
   readonly close: number
   readonly volume: number
-  readonly source: string
-  readonly sourceFeed: string
-  readonly adjustment: string
-  readonly publicationSchemaVersion: string
+  readonly source: DataSource
+  readonly sourceFeed: DataFeed
+  readonly adjustment: PriceAdjustment
+  readonly publicationSchemaVersion: PublicationSchema
 }
 
 export interface SymbolCoverage {

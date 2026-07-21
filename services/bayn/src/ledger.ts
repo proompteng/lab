@@ -423,11 +423,17 @@ export const assertReconciled = (
 
   const expectedBalances = new Map(plan.accounts.map((value) => [value.id, { debits: 0n, credits: 0n }]))
   for (const value of plan.transfers) {
-    expectedBalances.get(value.debit_account_id)!.debits += value.amount
-    expectedBalances.get(value.credit_account_id)!.credits += value.amount
+    const debit = expectedBalances.get(value.debit_account_id)
+    const credit = expectedBalances.get(value.credit_account_id)
+    if (debit === undefined || credit === undefined) {
+      throw new Error(`transfer ${value.id} references an unknown account`)
+    }
+    debit.debits += value.amount
+    credit.credits += value.amount
   }
   for (const value of actualAccounts) {
-    const balance = expectedBalances.get(value.id)!
+    const balance = expectedBalances.get(value.id)
+    if (balance === undefined) throw new Error(`unexpected account ${value.id}`)
     if (
       value.debits_pending !== 0n ||
       value.credits_pending !== 0n ||
@@ -575,7 +581,8 @@ const assertPersistedRun = (
   }
 
   for (const value of accounts) {
-    const balance = balances.get(value.id)!
+    const balance = balances.get(value.id)
+    if (balance === undefined) throw new Error(`run ${result.runId} has no balance for account ${value.id}`)
     if (
       value.debits_pending !== 0n ||
       value.credits_pending !== 0n ||

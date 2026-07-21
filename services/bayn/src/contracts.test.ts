@@ -12,6 +12,7 @@ import {
   makeRunIdentity,
   makeRuntimeProvenance,
 } from './contracts'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const sha = (character: string): string => character.repeat(64)
 
@@ -19,10 +20,10 @@ const snapshot = {
   schemaVersion: 'bayn.finalized-snapshot.v2' as const,
   snapshotId: sha('a'),
   publicationId: sha('b'),
-  publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1',
-  source: 'alpaca',
-  sourceFeed: 'sip',
-  adjustment: 'all',
+  publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV1,
+  source: DataSource.Alpaca,
+  sourceFeed: DataFeed.Sip,
+  adjustment: PriceAdjustment.All,
   calendarVersion: 'XNYS-2025a',
   publisherSourceRevision: '1'.repeat(40),
   publisherImage: {

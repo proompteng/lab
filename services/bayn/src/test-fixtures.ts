@@ -3,7 +3,16 @@ import { Effect } from 'effect'
 import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { hashTsmomParameters, loadDefaultProtocol } from './protocol'
-import type { DailyBar, InputManifest, IsoDate, TsmomProtocol } from './types'
+import {
+  DataFeed,
+  DataSource,
+  PriceAdjustment,
+  PublicationSchema,
+  type DailyBar,
+  type InputManifest,
+  type IsoDate,
+  type TsmomProtocol,
+} from './types'
 
 export const fixtureProtocol = Effect.runSync(loadDefaultProtocol)
 
@@ -50,10 +59,10 @@ export const makeBars = (sessionCount = 900): readonly DailyBar[] => {
           low: Math.min(open, close) * 0.997,
           close,
           volume: 1_000_000 + session * 10 + symbolIndex,
-          source: 'alpaca',
-          sourceFeed: 'sip',
-          adjustment: 'all',
-          publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1',
+          source: DataSource.Alpaca,
+          sourceFeed: DataFeed.Sip,
+          adjustment: PriceAdjustment.All,
+          publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV1,
         })
       }
       session += 1
@@ -68,9 +77,12 @@ export const makeSnapshot = (
 ): { readonly bars: readonly DailyBar[]; readonly manifest: InputManifest } => {
   const bars = makeBars(sessionCount)
   const sessionDates = [...new Set(bars.map((bar) => bar.sessionDate))].sort()
-  const firstSession = sessionDates[0]
-  const lastSession = sessionDates.at(-1)!
+  const firstSession = sessionDates.at(0)
+  const lastSession = sessionDates.at(-1)
   const evaluationStart = sessionDates[Math.max(...fixtureProtocol.lookbacks)]
+  if (firstSession === undefined || lastSession === undefined || evaluationStart === undefined) {
+    throw new RangeError('fixture session count must cover the strategy lookback')
+  }
   const material: Omit<InputManifest, 'hash'> = {
     schemaVersion: 'bayn.input-manifest.v2',
     database: 'signal',
@@ -83,10 +95,10 @@ export const makeSnapshot = (
       schemaVersion: 'bayn.finalized-snapshot.v2',
       snapshotId: '1'.repeat(64),
       publicationId: '2'.repeat(64),
-      publicationSchemaVersion: 'signal.adjusted-daily-snapshot.v1',
-      source: 'alpaca',
-      sourceFeed: 'sip',
-      adjustment: 'all',
+      publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV1,
+      source: DataSource.Alpaca,
+      sourceFeed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       calendarVersion: 'fixture-calendar-v1',
       publisherSourceRevision: '3'.repeat(40),
       publisherImage: {

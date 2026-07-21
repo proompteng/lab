@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Cause, Effect, Layer, Logger, Redacted } from 'effect'
+import { Effect, Layer, Logger, Redacted } from 'effect'
 
 import { run } from './app'
 import { loadConfig } from './config'
@@ -50,15 +50,6 @@ const main = Effect.gen(function* () {
   return yield* run(config).pipe(Effect.provide(dependencies))
 })
 
-const program = main.pipe(
-  Effect.tapCause((cause) =>
-    Cause.hasInterruptsOnly(cause)
-      ? Effect.void
-      : Effect.logError('Bayn process failed').pipe(
-          Effect.annotateLogs({ service: 'bayn', event: 'process_failed', cause: Cause.pretty(cause) }),
-        ),
-  ),
-  Effect.provide(Logger.layer([Logger.consoleJson])),
-)
+const program = main.pipe(Effect.annotateLogs({ service: 'bayn' }), Effect.provide(Logger.layer([Logger.consoleJson])))
 
-NodeRuntime.runMain(program, { disableErrorReporting: true })
+NodeRuntime.runMain(program)

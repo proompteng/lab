@@ -46,6 +46,9 @@
   service modules. Validate once at startup and keep secrets `Redacted` until the third-party client boundary.
 - Decode every external payload with `Schema` or `SqlSchema`. A TypeScript assertion such as `json<Row>()` is not
   runtime validation. Pure domain code accepts decoded values only.
+- Model closed external vocabularies with TypeScript enums and `Schema.Enum`; do not repeat magic strings. Namespace
+  and version durable wire-contract identifiers, but keep internal names domain-oriented.
+- Do not use non-null assertions in production code. Narrow or validate the value and fail with a useful invariant.
 - Use `Effect.log*`, `Effect.annotateLogs`, and log spans. Production logs use `Logger.consoleJson`. Do not call `console.*`
   inside an Effect; direct console output is only an emergency before the runtime exists. Never log credentials.
 - Effect 4 HTTP lives under `effect/unstable/http`; use it with `@effect/platform-node` instead of hand-written Node
@@ -63,6 +66,8 @@
   record, and readiness requires exact account, transfer, and balance reconciliation.
 - Select one `Strategy` capability at the composition root; the strategy owns its protocol and universe. Do not add a
   runtime registry, scheduler, event bus, repository layer, or generic retry framework without a current requirement.
+- Define strategies and protocols in TypeScript. Do not add JSON strategy files, legacy loaders, or fallback paths;
+  make contract changes explicit and migrate callers directly.
 
 ## Tests and validation
 
@@ -70,6 +75,8 @@
   `Effect.runPromiseExit`; test layers replace external systems. Unit tests never require the live cluster.
 - Cover success, typed failure, defect propagation, interruption, timeout cancellation, and exactly-once finalization
   for changed Effectful code. Use deterministic fixtures and `TestClock` for time-dependent behavior.
+- Test observable behavior and durable contracts. Do not add tests that scan source text, filenames, or the absence of
+  old implementation details.
 - Run the focused test first, then before completing a code change run:
 
 ```sh
