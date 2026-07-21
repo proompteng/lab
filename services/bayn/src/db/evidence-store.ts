@@ -2041,16 +2041,44 @@ const migrations = migrate.pipe(
   Effect.asVoid,
 )
 
-const MigrationLive = Layer.effectDiscard(migrations)
-const EvidenceStoreLayer = Layer.effect(EvidenceStore, makeEvidenceStore)
-const EvidenceStoreDatabaseLayer = Layer.merge(MigrationLive, EvidenceStoreLayer)
+const withMigrationDeadline = <R>(
+  migration: Effect.Effect<void, DatabaseError, R>,
+  operationTimeoutMs: number,
+): Effect.Effect<void, DatabaseError, R> =>
+  migration.pipe(
+    Effect.timeoutOrElse({
+      duration: operationTimeoutMs,
+      orElse: () =>
+        Effect.fail(
+          databaseError('migration', 'migrate', `PostgreSQL migration timed out after ${operationTimeoutMs}ms`),
+        ),
+    }),
+  )
+
+const EvidenceStoreDatabaseLayer = <RMigration, RStore>(
+  config: Pick<RuntimeConfig, 'operationTimeoutMs'>,
+  migration: Effect.Effect<void, DatabaseError, RMigration>,
+  store: Effect.Effect<EvidenceStoreService, DatabaseError, RStore>,
+) =>
+  Layer.effect(
+    EvidenceStore,
+    Effect.gen(function* () {
+      yield* withMigrationDeadline(migration, config.operationTimeoutMs)
+      return yield* store
+    }),
+  )
 
 export const EvidenceStoreLive = (config: RuntimeConfig) =>
-  EvidenceStoreDatabaseLayer.pipe(Layer.provideMerge(PostgresClientLive(config)))
+  EvidenceStoreDatabaseLayer(config, migrations, makeEvidenceStore).pipe(Layer.provideMerge(PostgresClientLive(config)))
 
-export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
-  EvidenceStoreDatabaseLayer.pipe(
-    Layer.provide(PostgresClientLive(config)),
+export const makeEvidenceStoreRuntimeLayer = <RMigration, RStore>(
+  config: Pick<RuntimeConfig, 'operationTimeoutMs'>,
+  migration: Effect.Effect<void, DatabaseError, RMigration>,
+  store: Effect.Effect<EvidenceStoreService, DatabaseError, RStore>,
+) => recoverEvidenceStoreLayer(EvidenceStoreDatabaseLayer(config, migration, store))
+
+const recoverEvidenceStoreLayer = <R>(layer: Layer.Layer<EvidenceStore, DatabaseError, R>) =>
+  layer.pipe(
     Layer.catch((error) =>
       Layer.succeed(EvidenceStore, {
         check: Effect.fail(error),
@@ -2063,4 +2091,9 @@ export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
         readQualification: () => Effect.fail(error),
       }),
     ),
+  )
+
+export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
+  recoverEvidenceStoreLayer(
+    EvidenceStoreDatabaseLayer(config, migrations, makeEvidenceStore).pipe(Layer.provide(PostgresClientLive(config))),
   )
