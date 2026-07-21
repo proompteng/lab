@@ -130,11 +130,11 @@ supported limit-order semantics; this milestone submits no orders. The external 
 
 ## Rollout and proof
 
-1. Merge the versioned ConfigMap, additive schema, websocket wiring, suspended CronJob, and dormant backfill template.
-   The backfill Job is not yet a rendered resource, so this phase cannot write Signal data.
+1. Merge the versioned ConfigMap, additive schema, websocket wiring, and dormant CronJob and backfill templates.
+   Neither writer is rendered, so this phase cannot write Signal data or leave Argo waiting on a suspended CronJob.
 2. Promote immutable websocket and publisher images. Promotion pins source revisions and digests but leaves both Signal
    writers inert.
-3. Through a reviewed GitOps change, add and start only the one-shot backfill Job while the CronJob remains suspended.
+3. Through a reviewed GitOps change, add and start only the one-shot backfill Job while the CronJob remains absent.
    Require it to finalize exactly one SIP/all snapshot for all nine symbols from 2022-01-27 through
    2026-07-20: 1,122 sessions and 10,098 bars.
 4. Reproduce the manifest, session, and bar hashes from both ClickHouse replicas and prove one manifest row whose
