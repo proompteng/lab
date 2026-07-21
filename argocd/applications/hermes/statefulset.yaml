@@ -129,6 +129,16 @@ spec:
                 secretKeyRef:
                   name: hermes-api-auth
                   key: API_SERVER_KEY
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-api-auth
+                  key: DISCORD_BOT_TOKEN
+            - name: DISCORD_ALLOWED_USERS
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-api-auth
+                  key: DISCORD_ALLOWED_USERS
             - name: DISCORD_PROXY
               value: http://hermes-egress-proxy.hermes.svc.cluster.local:3128
             - name: HTTP_PROXY

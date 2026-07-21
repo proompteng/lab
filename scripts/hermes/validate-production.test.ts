@@ -39,21 +39,129 @@ test('rejects rollout evidence that permits an Argo revision mismatch', async ()
   )
 })
 
-test('rejects enabling Discord inside the API-only canary', async () => {
+test('rejects disabling Discord after the cutover', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace('discord:\n    enabled: false', 'discord:\n    enabled: true')
+  files.config = files.config.replace('discord:\n    enabled: true', 'discord:\n    enabled: false')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "discord:\\n    enabled: false"`,
+    `${productionPaths.config}: missing production invariant "discord:\\n    enabled: true"`,
+  )
+})
+
+test('rejects a Discord token without a matching gateway SecretKeyRef', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace('- name: DISCORD_BOT_TOKEN\n', '- name: DISCORD_BOT_TOKEN_DISABLED\n')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: DISCORD_BOT_TOKEN must have exactly one matching SecretKeyRef`,
+  )
+})
+
+test('rejects a Discord allowlist without a matching 1Password mapping', async () => {
+  const files = await loadProductionFiles()
+  files.externalSecret = files.externalSecret.replace(
+    '    - secretKey: DISCORD_ALLOWED_USERS\n',
+    '    - secretKey: DISCORD_ALLOWED_USERS_DISABLED\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.externalSecret}: DISCORD_ALLOWED_USERS must have exactly one 1Password mapping`,
+  )
+})
+
+test('rejects a cutover that leaves the OpenClaw VM running', async () => {
+  const files = await loadProductionFiles()
+  files.openClawVirtualMachine = files.openClawVirtualMachine.replace('runStrategy: Halted', 'runStrategy: Always')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.openClawVirtualMachine}: missing production invariant "runStrategy: Halted"`,
+  )
+})
+
+test('rejects the deprecated KubeVirt running field', async () => {
+  const files = await loadProductionFiles()
+  files.openClawVirtualMachine = files.openClawVirtualMachine.replace('runStrategy: Halted', 'running: false')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.openClawVirtualMachine}: contains forbidden production term "running: false"`,
+  )
+})
+
+test('rejects retaining OpenClaw cluster-admin authority', async () => {
+  const files = await loadProductionFiles()
+  files.openClawRbac += '\nroleRef:\n  name: cluster-admin\n'
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.openClawRbac}: contains forbidden production term "name: cluster-admin"`,
+  )
+})
+
+test('rejects whole-application pruning during OpenClaw cutover', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'argocd app sync openclaw --prune \\\n     --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
+    'argocd app sync openclaw --prune=true',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "argocd app sync openclaw --prune=true"`,
+  )
+})
+
+test('rejects stopping the source before Discord credentials are captured', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   discord_bot_token=$(virtctl ssh',
+    '   systemctl --user stop openclaw-gateway.service\n   discord_bot_token=$(virtctl ssh',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: Discord cutover operations are out of order`,
+  )
+})
+
+test('rejects transferring the Discord token before the OpenClaw VMI is absent', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   argocd app sync openclaw --prune=false\n',
+    '   op item edit --vault infra hermes-runtime\n   argocd app sync openclaw --prune=false\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: Discord cutover operations are out of order`,
+  )
+})
+
+test('rejects exposing secrets through 1Password assignment arguments', async () => {
+  const files = await loadProductionFiles()
+  files.runbook += '\nop item edit --vault infra hermes-runtime "DISCORD_BOT_TOKEN[password]=$discord_bot_token"\n'
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "DISCORD_BOT_TOKEN[password]="`,
+  )
+})
+
+test('rejects a Discord credential transfer without exact-value verification', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '.value == $expected_discord_bot_token',
+    '(.value | type == "string" and length >= 20)',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant ".value == $expected_discord_bot_token"`,
   )
 })
 
 test('rejects secret bridge verification that does not enforce key length', async () => {
   const files = await loadProductionFiles()
-  files.runbook = files.runbook.replace('test "$api_key_bytes" -ge 32', 'echo "$api_key_bytes"')
+  files.runbook = files.runbook.replace(
+    'test "$api_key_bytes" -ge 32\n   printf \'%s\\n\' "$api_key_bytes"',
+    'echo "$api_key_bytes"',
+  )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$api_key_bytes\\" -ge 32"`,
+    `${productionPaths.runbook}: 1Password and bridged API keys must both enforce the minimum length`,
   )
 })
 
@@ -128,6 +236,15 @@ test('rejects syncing Hermes before network-policy enforcement proof', async () 
 test('rejects automatic Argo reconciliation during the staged migration', async () => {
   const files = await loadProductionFiles()
   files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) manual/, '$1 auto')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.platform}: missing production invariant "automation: manual"`,
+  )
+})
+
+test('rejects automatic OpenClaw reconciliation during credential transfer', async () => {
+  const files = await loadProductionFiles()
+  files.platform = files.platform.replace(/(\n\s+- name: openclaw\n[\s\S]*?automation:) manual/, '$1 auto')
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.platform}: missing production invariant "automation: manual"`,
@@ -308,11 +425,11 @@ test('rejects migration instructions that skip the content audit', async () => {
 test('rejects Discord cutover without a final stopped-source reconciliation', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`',
+    'repeat Phase 2 steps 1 through 4 from a fresh',
     'reuse the earlier migration archive',
   )
 
-  const invariant = 'repeat Phase 2 steps 1 through 4 from a fresh `hermes_stage_dir`'
+  const invariant = 'repeat Phase 2 steps 1 through 4 from a fresh'
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant ${JSON.stringify(invariant)}`,
   )
@@ -478,6 +595,30 @@ test('rejects cutover instructions that fail when the OpenClaw VMI is already ab
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant "openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)"`,
+  )
+})
+
+test('rejects non-idempotent initial 1Password provisioning', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'hermes_item_count=$(op item list --vault infra --format json',
+    'hermes_item_count=0 # skip existing-item discovery',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "hermes_item_count=$(op item list --vault infra --format json"`,
+  )
+})
+
+test('rejects initial 1Password provisioning that does not fail on duplicate items', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'multiple hermes-runtime items found; reconcile them before continuing',
+    'continuing with an arbitrary hermes-runtime item',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "multiple hermes-runtime items found; reconcile them before continuing"`,
   )
 })
 
