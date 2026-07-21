@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import tomllib
 
 from tests.live_config_manifest_contract.support import (
@@ -271,12 +272,27 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "argocd/applications/torghut/knative-service-sim.yaml"
         )
         ws_config = _load_yaml_mapping("argocd/applications/torghut/ws/configmap.yaml")
+        ws_container = _load_knative_container(
+            "argocd/applications/torghut/ws/deployment.yaml"
+        )
+        universe_config = _load_yaml_mapping(
+            "argocd/applications/torghut/clickhouse/bayn-universe-v1-configmap.yaml"
+        )
         ws_data = ws_config.get("data")
         self.assertIsInstance(ws_data, Mapping)
         ws_metadata = ws_config.get("metadata")
         self.assertIsInstance(ws_metadata, Mapping)
         ws_annotations = cast(Mapping[str, object], ws_metadata).get("annotations")
         self.assertIsInstance(ws_annotations, Mapping)
+        universe_data = universe_config.get("data")
+        self.assertIsInstance(universe_data, Mapping)
+
+        env_entries = cast(list[Mapping[str, object]], ws_container.get("env", []))
+        env_by_name = {
+            str(entry.get("name")): entry
+            for entry in env_entries
+            if isinstance(entry.get("name"), str)
+        }
 
         _assert_exact_quote_covered_paper_strategy_universe(
             self,
@@ -298,16 +314,44 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
             context="sim runtime universe allowlist",
         )
-        _assert_exact_live_execution_chip_universe(
-            self,
-            _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS")),
-            context="torghut-ws subscription symbols",
+        ws_symbols = _csv_symbols(
+            cast(Mapping[str, object], universe_data).get("UNIVERSE_SYMBOLS")
         )
-        _assert_exact_live_execution_chip_universe(
+        _assert_chip_universe(
             self,
-            _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS_ALLOWLIST")),
-            context="torghut-ws subscription allowlist",
+            ws_symbols,
+            context="authoritative websocket subscription universe",
         )
+        self.assertEqual(ws_symbols, sorted(ws_symbols))
+        self.assertEqual(
+            cast(Mapping[str, object], universe_data).get("UNIVERSE_ID"),
+            "equity-infrastructure-v1",
+        )
+        self.assertEqual(
+            cast(Mapping[str, object], universe_data).get("UNIVERSE_SYMBOL_HASH"),
+            sha256(",".join(ws_symbols).encode()).hexdigest(),
+        )
+
+        expected_universe_refs = {
+            "SYMBOLS": "UNIVERSE_SYMBOLS",
+            "SYMBOLS_ALLOWLIST": "UNIVERSE_SYMBOLS",
+            "MARKET_DATA_UNIVERSE_ID": "UNIVERSE_ID",
+            "MARKET_DATA_UNIVERSE_SYMBOL_HASH": "UNIVERSE_SYMBOL_HASH",
+        }
+        for env_name, key in expected_universe_refs.items():
+            env_entry = cast(Mapping[str, object], env_by_name.get(env_name, {}))
+            value_from = cast(Mapping[str, object], env_entry.get("valueFrom", {}))
+            config_map_ref = cast(
+                Mapping[str, object], value_from.get("configMapKeyRef", {})
+            )
+            self.assertEqual(
+                config_map_ref,
+                {"name": "bayn-universe-v1", "key": key},
+                f"{env_name} must come from the authoritative Bayn universe ConfigMap",
+            )
+
+        self.assertNotIn("SYMBOLS", ws_data)
+        self.assertNotIn("SYMBOLS_ALLOWLIST", ws_data)
         self.assertNotIn("JANGAR_SYMBOLS_URL", ws_data)
         self.assertEqual(
             cast(Mapping[str, object], ws_annotations).get(
