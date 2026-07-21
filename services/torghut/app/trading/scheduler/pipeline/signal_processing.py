@@ -730,23 +730,13 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
     def _captured_rejected_signal_entry_snapshot(
         signal: SignalEnvelope,
     ) -> MarketSnapshot | None:
-        price = extract_executable_price(signal.payload)
-        bid = scheduler_optional_decimal(
-            payload_value(
-                signal.payload,
-                "imbalance_bid_px",
-                block="imbalance",
-                nested_key="bid_px",
-            )
+        quote_status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=None,
         )
-        ask = scheduler_optional_decimal(
-            payload_value(
-                signal.payload,
-                "imbalance_ask_px",
-                block="imbalance",
-                nested_key="ask_px",
-            )
-        )
+        price = quote_status.price
+        bid = quote_status.bid
+        ask = quote_status.ask
         if (
             price is None
             or bid is None
