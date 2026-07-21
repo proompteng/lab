@@ -133,6 +133,96 @@ data:
               summary: Hermes backup is stale
               description: The Hermes backup CronJob is missing or has no successful completion within its 26-hour freshness window; inspect its Job logs and verified archives.
               runbook_url: docs/runbooks/hermes-production-rollout.md
+      - name: kube-router-network-policy.rules
+        rules:
+          - record: kube_router_rollout_enabled
+            expr: |
+              max(
+                kube_argocd_application_deployment_history_info{
+                  namespace="argocd",
+                  application="kube-router"
+                }
+              )
+          - alert: KubeRouterDaemonSetUnavailable
+            expr: |
+              (
+                (
+                  kube_daemonset_status_number_ready{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                  <
+                  kube_daemonset_status_desired_number_scheduled{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                )
+                or
+                absent(
+                  kube_daemonset_status_number_ready{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                )
+              )
+              and on()
+              (kube_router_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kube-router
+            annotations:
+              summary: kube-router is unavailable on one or more nodes
+              description: The NetworkPolicy controller is not ready on every desired Linux node for five minutes.
+              runbook_url: docs/runbooks/kube-router-network-policy-rollout.md
+          - alert: KubeRouterMetricsMissing
+            expr: |
+              (
+                max(up{job="kube-router"} == 0) == 1
+                or
+                count(up{job="kube-router"})
+                  <
+                max(
+                  kube_daemonset_status_desired_number_scheduled{
+                    namespace="kube-system",
+                    daemonset="kube-router"
+                  }
+                )
+                or
+                absent(up{job="kube-router"})
+              )
+              and on()
+              (kube_router_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kube-router
+            annotations:
+              summary: kube-router policy metrics are incomplete
+              description: At least one desired kube-router controller is not being scraped successfully.
+              runbook_url: docs/runbooks/kube-router-network-policy-rollout.md
+          - alert: KubeRouterContainerRestarting
+            expr: |
+              sum by (pod) (
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="kube-system",
+                    pod=~"kube-router-.*",
+                    container="kube-router"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: kube-router
+            annotations:
+              summary: kube-router is restarting
+              description: NetworkPolicy controller Pod {{ $labels.pod }} restarted in the last 15 minutes.
+              runbook_url: docs/runbooks/kube-router-network-policy-rollout.md
       - name: graf-telemetry.rules
         rules:
           - alert: GrafHigh5xxRate

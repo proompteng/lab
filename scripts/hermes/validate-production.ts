@@ -603,7 +603,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.runbook}: final reconciliation must happen after the OpenClaw gateway is stopped`)
   }
 
-  requireTerms(failures, productionPaths.mimirRules, files.mimirRules, [
+  const hermesRuleGroup =
+    files.mimirRules.match(/      - name: hermes-production\.rules[\s\S]*?(?=\n      - name:)/)?.[0] ?? ''
+  requireTerms(failures, productionPaths.mimirRules, hermesRuleGroup, [
     'alert: HermesGatewayUnavailable',
     'alert: HermesEgressProxyUnavailable',
     'alert: HermesBackupStale',
@@ -618,11 +620,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'unless on (namespace, cronjob)',
     'absent(\n                  kube_cronjob_created{',
   ])
-  if (count(files.mimirRules, '(hermes_rollout_enabled == 1)') !== 3) {
+  if (count(hermesRuleGroup, '(hermes_rollout_enabled == 1)') !== 3) {
     failures.push(`${productionPaths.mimirRules}: all absent-series alerts must be gated on rollout enablement`)
   }
-  const hermesRuleGroup =
-    files.mimirRules.match(/- name: hermes-production\.rules[\s\S]*?- name: graf-telemetry\.rules/)?.[0] ?? ''
   forbidTerms(failures, productionPaths.mimirRules, hermesRuleGroup, [
     '[30d]',
     'or\n                hermes_rollout_enabled',
