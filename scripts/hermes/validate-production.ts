@@ -5,6 +5,8 @@ const hermesImage =
   'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
+const githubCliVersion = '2.96.0'
+const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
 
 export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
@@ -14,6 +16,7 @@ export const productionPaths = {
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
+  githubSealedSecret: 'argocd/applications/hermes/github-sealed-secret.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   squidConfig: 'argocd/applications/hermes/squid.conf',
@@ -21,6 +24,7 @@ export const productionPaths = {
   rbac: 'argocd/applications/hermes/rbac.yaml',
   bootstrap: 'argocd/applications/hermes/bootstrap.sh',
   labCheckout: 'argocd/applications/hermes/bootstrap-lab-checkout.sh',
+  githubBootstrap: 'argocd/applications/hermes/bootstrap-github.sh',
   workspaceAgents: 'argocd/applications/hermes/bootstrap/AGENTS.md',
   workspaceTools: 'argocd/applications/hermes/bootstrap/TOOLS.md',
   readme: 'argocd/applications/hermes/README.md',
@@ -88,7 +92,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- rbac.yaml',
     '- external-secret.yaml',
     '- discord-sealed-secret.yaml',
+    '- github-sealed-secret.yaml',
     '- bootstrap-lab-checkout.sh',
+    '- bootstrap-github.sh',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
@@ -107,6 +113,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'whenDeleted: Retain',
     'whenScaled: Retain',
     'automountServiceAccountToken: true',
+    'hermes.proompteng.ai/github-auth-revision: "1"',
     'runAsUser: 10000',
     'runAsGroup: 10000',
     'readOnlyRootFilesystem: true',
@@ -125,6 +132,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'value: /opt/tools:/opt/hermes/bin:',
     'name: KUBECONFIG',
     'value: /opt/data/home/.kube/config',
+    'name: GH_CONFIG_DIR',
+    'value: /opt/data/home/.config/gh',
+    'name: GH_PROMPT_DISABLED',
+    'name: GH_TOKEN',
+    'name: GITHUB_TOKEN',
+    'name: GIT_CONFIG_NOSYSTEM',
+    'name: GIT_CONFIG_GLOBAL',
+    'value: /opt/data/home/.gitconfig',
+    'name: GIT_TERMINAL_PROMPT',
     'workingDir: /opt/data/workspace/tuslagch/lab',
     'value: https://github.com/proompteng/lab.git',
     'value: main',
@@ -137,6 +153,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hostNetwork: true',
     'hostPID: true',
     '        - name: backup\n',
+    'value: gho_',
+    'value: github_pat_',
   ])
   if (count(files.statefulSet, `reference: ${kubectlImage}`) !== 1) {
     failures.push(`${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`)
@@ -158,6 +176,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
         `${productionPaths.statefulSet}: ${key} must have exactly one matching hermes-discord-auth SecretKeyRef`,
       )
     }
+  }
+  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN']) {
+    const reference = [
+      `            - name: ${key}`,
+      '              valueFrom:',
+      '                secretKeyRef:',
+      '                  name: hermes-github-auth',
+      '                  key: GH_TOKEN',
+    ].join('\n')
+    if (count(files.statefulSet, `            - name: ${key}\n`) !== 1 || count(files.statefulSet, reference) !== 1) {
+      failures.push(`${productionPaths.statefulSet}: ${key} must use the sealed hermes-github-auth GH_TOKEN`)
+    }
+  }
+  if (count(files.statefulSet, '                  key: GH_TOKEN\n') !== 2) {
+    failures.push(`${productionPaths.statefulSet}: exactly two GitHub token environment references are required`)
   }
 
   if (count(files.backupCronJob, `image: ${hermesImage}`) !== 1) {
@@ -222,7 +255,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hooks_auto_accept: false',
     'memory_char_limit: 4400',
     'Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory',
+    'Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests',
+    'platform_toolsets:\n  cli: [file, memory, terminal, todo]\n  api_server: [file, memory, terminal, todo]\n  discord: [file, memory, terminal, todo]',
     'Kubernetes access is cluster-wide read-only',
+    '    - "*git push --force*"',
     '  - "kubectl get *"',
     '  - "kubectl * get *"',
     '  - "kubectl logs *"',
@@ -235,6 +271,11 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'allow_all_users: true',
     '    - "*kubectl*"',
   ])
+  for (const platform of ['cli', 'api_server', 'discord']) {
+    if (count(files.config, `  ${platform}: [file, memory, terminal, todo]\n`) !== 1) {
+      failures.push(`${productionPaths.config}: ${platform} must have exactly one production terminal toolset`)
+    }
+  }
 
   requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
     'name: onepassword-infra',
@@ -288,6 +329,32 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     if (!/^Ag[A-Za-z0-9+/=]{100,}$/.test(ciphertext)) {
       failures.push(`${productionPaths.discordSealedSecret}: ${key} must contain non-placeholder sealed ciphertext`)
     }
+  }
+
+  requireTerms(failures, productionPaths.githubSealedSecret, files.githubSealedSecret, [
+    'apiVersion: bitnami.com/v1alpha1',
+    'kind: SealedSecret',
+    'name: hermes-github-auth',
+    'namespace: hermes',
+    'argocd.argoproj.io/sync-wave: "-3"',
+    '  encryptedData:',
+    '  template:',
+    '    type: Opaque',
+  ])
+  forbidTerms(failures, productionPaths.githubSealedSecret, files.githubSealedSecret, [
+    'kind: Secret',
+    '\n  data:',
+    '\n  stringData:',
+    'sealedsecrets.bitnami.com/cluster-wide',
+    'sealedsecrets.bitnami.com/namespace-wide',
+    'gho_',
+    'github_pat_',
+  ])
+  const sealedGithubKeys = [...files.githubSealedSecret.matchAll(/^    ([A-Z_]+): (\S+)$/gm)]
+  if (sealedGithubKeys.length !== 1 || sealedGithubKeys[0]?.[1] !== 'GH_TOKEN') {
+    failures.push(`${productionPaths.githubSealedSecret}: encryptedData must contain exactly GH_TOKEN`)
+  } else if (!/^Ag[A-Za-z0-9+/=]{100,}$/.test(sealedGithubKeys[0][2] ?? '')) {
+    failures.push(`${productionPaths.githubSealedSecret}: GH_TOKEN must contain non-placeholder sealed ciphertext`)
   }
 
   requireTerms(failures, productionPaths.openClawKustomization, files.openClawKustomization, [
@@ -352,6 +419,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.squidConfig, files.squidConfig, [
     'acl allowed_discord dstdomain .discord.com',
     'acl allowed_github dstdomain .github.com',
+    'acl allowed_github dstdomain .githubusercontent.com',
     'http_access allow CONNECT allowed_discord',
     'http_access allow CONNECT allowed_github',
     'http_access deny all',
@@ -409,6 +477,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token',
     'chmod 0600 "$kubeconfig_tmp"',
     '/bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh',
+    '/bin/sh /opt/bootstrap/bootstrap-github.sh',
   ])
   forbidTerms(failures, productionPaths.bootstrap, files.bootstrap, [
     'token: ${',
@@ -429,20 +498,49 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'preserving the existing verified worktree',
     'lab_checkout_ready=true',
   ])
+  requireTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, [
+    'set -eu',
+    `GH_CLI_VERSION:-${githubCliVersion}`,
+    `GH_CLI_ARCHIVE_SHA256:-${githubCliArchiveSha256}`,
+    'https://github.com/cli/cli/releases/download/v${gh_version}/${gh_archive_name}',
+    'maximum_bytes = 128 * 1024 * 1024',
+    'printf \'%s  %s\\n\' "$gh_archive_sha256" "$archive_tmp" | sha256sum -c -',
+    'member_name = f"gh_{version}_linux_amd64/bin/gh"',
+    'install -m 0555 "$extract_dir/gh" "$gh_install_path"',
+    'git config --file "$git_config_tmp" user.name tuslagch',
+    'git config --file "$git_config_tmp" user.email 241203724+tuslagch@users.noreply.github.com',
+    'git config --file "$git_config_tmp" commit.gpgsign false',
+    '"!$gh_install_path auth git-credential"',
+    'github_bootstrap_ready=true',
+  ])
+  forbidTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, [
+    'gh auth login',
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'curl ',
+    'wget ',
+    ':latest',
+  ])
   requireTerms(failures, productionPaths.workspaceAgents, files.workspaceAgents, [
     'Kubernetes access is cluster-wide read-only.',
     'Kubernetes Secrets and service-account token subresources are outside your authority.',
     '/opt/data/workspace/tuslagch/lab',
+    'authenticated `tuslagch` GitHub identity',
+    'Never force-push or push directly to `main`',
   ])
   requireTerms(failures, productionPaths.workspaceTools, files.workspaceTools, [
     '`kubectl` has cluster-wide read access to non-secret resources.',
     'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
     '/opt/data/workspace/tuslagch/lab',
+    'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
     'digest-pinned Kubernetes 1.35 `kubectl` binary',
     'only `get`, `list`, and `watch`',
-    'credential-free `proompteng/lab` checkout',
+    '`tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext',
+    '`hermes.proompteng.ai/github-auth-revision` annotation',
+    'GitHub CLI `2.96.0`',
+    githubCliArchiveSha256,
   ])
 
   const operationDeadlines = {
@@ -716,6 +814,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'git -C /opt/data/workspace/tuslagch/lab remote get-url origin',
     'cat /opt/data/workspace/tuslagch/.lab-source-revision',
     'git -C /opt/data/workspace/tuslagch/lab cat-file -e HEAD:AGENTS.md',
+    'test "$(command -v gh)" = /opt/tools/gh',
+    'gh --version | grep -F "gh version 2.96.0"',
+    'test "$(gh api user --jq .login)" = tuslagch',
+    'test "$(gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN',
+    'git config --global --get-all credential.https://github.com.helper',
+    '! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig',
+    'test ! -e /opt/data/home/.config/gh/hosts.yml',
+    'git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof',
     'gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA',
     "'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'",
     "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",

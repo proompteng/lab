@@ -47,6 +47,7 @@ chmod 0600 "$kubeconfig_tmp"
 mv -- "$kubeconfig_tmp" "$kubeconfig_path"
 
 /bin/sh /opt/bootstrap/bootstrap-lab-checkout.sh
+/bin/sh /opt/bootstrap/bootstrap-github.sh
 
 seed_file() {
   source_path=$1

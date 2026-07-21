@@ -292,6 +292,31 @@ The expected mirrored amd64 manifest digest is
    Secrets, service-account token subresources, `exec`, `attach`, `proxy`, and `port-forward`. The server-side dry-run is an
    authorization proof: it must be rejected before admission and must not create a ConfigMap.
 
+6. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
+
+   ```bash
+   set -euo pipefail
+   kubectl -n hermes exec hermes-0 -c hermes -- sh -c '
+     set -eu
+     test "$(command -v gh)" = /opt/tools/gh
+     gh --version | grep -F "gh version 2.96.0"
+     test "$(gh api user --jq .login)" = tuslagch
+     test "$(gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN
+     test "$(git config --global user.name)" = tuslagch
+     test "$(git config --global user.email)" = 241203724+tuslagch@users.noreply.github.com
+     git config --global --get-all credential.https://github.com.helper | grep -Fx "!/opt/tools/gh auth git-credential"
+     ! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig
+     test ! -e /opt/data/home/.config/gh/hosts.yml
+     git ls-remote --exit-code origin refs/heads/main >/dev/null
+     git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof
+   '
+   ```
+
+   The dry run performs GitHub authentication and branch authorization without creating a remote ref. A real change must
+   use a unique `codex/` branch, an explicitly requested push, and a pull request; force pushes and direct `main` pushes
+   remain forbidden. `GH_TOKEN`/`GITHUB_TOKEN` come only from `hermes-github-auth`, and neither `gh auth login` nor a
+   plaintext `hosts.yml` is part of the production bootstrap.
+
 ## API key rotation
 
 External Secrets updates the Kubernetes Secret but cannot change environment variables in an existing container. Every API
