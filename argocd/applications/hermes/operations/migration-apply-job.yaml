@@ -99,14 +99,15 @@ spec:
               selected = set(report.get('selection', {}).get('selected', []))
               if {'secret-settings', 'provider-keys'} & selected:
                   raise RuntimeError('migration report selected secret-bearing options')
-              for kind in ('user-profile', 'daily-memory'):
+              expected_char_limits = {'user-profile': 2200, 'daily-memory': 4400}
+              for kind, expected_char_limit in expected_char_limits.items():
                   item = items.get(kind)
                   if item is None or item.get('status') not in {'migrated', 'skipped'}:
                       raise RuntimeError(f'migration report lacks a resolved {kind} item')
                   if item.get('reason') in {'Source file not found', 'No workspace/memory/ directory found'}:
                       raise RuntimeError(f'migration report did not consume the audited {kind} source')
-                  if item.get('details', {}).get('char_limit') != 4400:
-                      raise RuntimeError(f'migration report did not use the production memory limit: {kind}')
+                  if item.get('details', {}).get('char_limit') != expected_char_limit:
+                      raise RuntimeError(f'migration report did not use the production character limit: {kind}')
               for kind in ('soul', 'workspace-agents'):
                   item = items.get(kind)
                   if item is None or item.get('status') != 'skipped':
