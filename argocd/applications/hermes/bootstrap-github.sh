@@ -150,7 +150,7 @@ if [ "$github_permission" != ADMIN ]; then
   exit 1
 fi
 mv -f -- "$gh_auth_stage_dir/hosts.yml" "$gh_hosts_path"
-rmdir -- "$gh_auth_stage_dir"
+rm -rf -- "$gh_auth_stage_dir"
 
 : >"$git_config_tmp"
 chmod 0600 "$git_config_tmp"
