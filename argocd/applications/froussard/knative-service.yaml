@@ -73,7 +73,7 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.571.1-491-ga931fba9e
+              value: v0.596.0-2330-g4000b49f4
             - name: FROUSSARD_COMMIT
               value: 4000b49f4435a9b8b27a6cc2b368258ace30e4e7
             - name: LGTM_TEMPO_TRACES_ENDPOINT
