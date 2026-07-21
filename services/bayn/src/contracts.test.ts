@@ -12,7 +12,7 @@ import {
   makeRunIdentity,
   makeRuntimeProvenance,
 } from './contracts'
-import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
+import { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const sha = (character: string): string => character.repeat(64)
 
@@ -188,5 +188,39 @@ describe('Bayn runtime provenance', () => {
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
     await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
     await expectFailure(decodeRuntimeProvenance({ ...provenance, schemaVersion: 'bayn.runtime-provenance.v1' }))
+
+    const candidate = makeRuntimeProvenance({
+      sourceRevision: provenance.sourceRevision,
+      image: provenance.image,
+      strategy: {
+        name: 'risk-balanced-trend',
+        behaviorHash: sha('1'),
+        parameterHash: sha('2'),
+        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+      },
+    })
+    expect(candidate.contractVersions.evaluation).toBe(ContractVersion.RiskBalancedTrendEvaluation)
+    await expectFailure(
+      decodeRuntimeProvenance({
+        ...provenance,
+        contractVersions: {
+          ...provenance.contractVersions,
+          evaluation: ContractVersion.RiskBalancedTrendEvaluation,
+        },
+      }),
+    )
+    await expectFailure(
+      decodeRuntimeProvenance({
+        ...candidate,
+        contractVersions: { ...candidate.contractVersions, evaluation: ContractVersion.Evaluation },
+      }),
+    )
+    expect(() =>
+      makeRuntimeProvenance({
+        sourceRevision: provenance.sourceRevision,
+        image: provenance.image,
+        strategy: { ...provenance.strategy, name: 'unknown' },
+      }),
+    ).toThrow('unsupported compiled strategy')
   })
 })

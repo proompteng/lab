@@ -381,10 +381,8 @@ const artifactItemCount = (payload: unknown): number => {
 interface EvidenceProfile {
   readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v5'
   readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v4'
-  readonly signalDecisionsArtifactName: 'risk-balanced-trend-signal-decisions' | 'tsmom-signal-decisions'
-  readonly signalDecisionsSchemaVersion:
-    | 'bayn.risk-balanced-trend-signal-decisions.v1'
-    | 'bayn.tsmom-signal-decisions.v1'
+  readonly signalDecisionsArtifactName: 'risk-balanced-trend-decisions' | 'tsmom-signal-decisions'
+  readonly signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1' | 'bayn.tsmom-signal-decisions.v1'
 }
 
 const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: string): EvidenceProfile => {
@@ -400,8 +398,8 @@ const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: strin
     return {
       evaluationSchemaVersion,
       summarySchemaVersion: 'bayn.evaluation-summary.v4',
-      signalDecisionsArtifactName: 'risk-balanced-trend-signal-decisions',
-      signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-signal-decisions.v1',
+      signalDecisionsArtifactName: 'risk-balanced-trend-decisions',
+      signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
     }
   }
   throw new TypeError(
@@ -463,6 +461,9 @@ const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQual
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
   const { evaluation, parameters, provenance, reconciliation } = input
   const strategyName = provenance.strategy.name
+  if (evaluation.schemaVersion !== provenance.contractVersions.evaluation) {
+    throw new TypeError('evaluation schema version does not match runtime provenance')
+  }
   const evidenceProfile = evidenceProfileFor(strategyName, evaluation.schemaVersion)
   const parameterHash = canonicalHashV1(parameters)
   if (parameterHash !== provenance.strategy.parameterHash) {
@@ -1591,6 +1592,7 @@ const makeEvidenceStore = Effect.gen(function* () {
         yield* ensure(
           stored.run.runId === runId &&
             stored.run.evaluationSchemaVersion === evidenceProfile.evaluationSchemaVersion &&
+            stored.run.evaluationSchemaVersion === provenance.contractVersions.evaluation &&
             stored.run.sourceRevision === provenance.sourceRevision &&
             stored.run.imageRepository === provenance.image.repository &&
             stored.run.imageDigest === provenance.image.digest &&

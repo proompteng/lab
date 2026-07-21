@@ -10,7 +10,7 @@ import { buildLedgerPlan } from '../ledger'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { evaluateTsmom } from '../strategy'
-import { makeTsmomStrategy } from '../strategy-service'
+import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from '../strategy-service'
 import {
   fixtureProtocol,
   makeRiskBalancedTrendTestProvenance,
@@ -18,7 +18,7 @@ import {
   makeTestProvenance,
   riskBalancedTrendFixtureProtocol,
 } from '../test-fixtures'
-import type { TsmomProtocol } from '../types'
+import { ContractVersion, type TsmomProtocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -398,6 +398,29 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.counts).toEqual({ locks: 1, results: 1, runs: 1, trials: 0 })
   })
 
+  test('builds the next candidate lineage from both burned and terminal trials', async () => {
+    const burned = makeInput('0'.repeat(40))
+    const terminal = makeInput('1'.repeat(40))
+    const terminalQualification = makeLockedInput(terminal, [burned.evaluation.runId])
+    const candidate = makeRiskBalancedTrendInput()
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        yield* store.persist(burned)
+        yield* store.openQualification(terminalQualification.open)
+        yield* store.persist(terminalQualification.persist)
+        const priorTrialRunIds = yield* store.listPriorTrials
+        const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, candidate.provenance)
+        const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+        const lock = strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds)
+        return { lock, priorTrialRunIds }
+      }),
+    )
+
+    expect(observed.priorTrialRunIds).toEqual([burned.evaluation.runId, terminal.evaluation.runId].sort())
+    expect(observed.lock.priorTrialRunIds).toEqual(observed.priorTrialRunIds)
+  })
+
   test('rolls back the evaluation graph when terminal qualification insertion fails', async () => {
     const input = makeInput()
     const qualification = makeLockedInput(input)
@@ -721,7 +744,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const receipt = yield* store.persist(input)
         const stored = yield* store.read(input.evaluation.runId)
         const recovered = yield* store.recover(input.evaluation.runId, input.provenance)
-        return { receipt, stored, recovered }
+        const mismatchedRecovery = yield* store
+          .recover(input.evaluation.runId, {
+            ...input.provenance,
+            contractVersions: {
+              ...input.provenance.contractVersions,
+              evaluation: ContractVersion.Evaluation,
+            },
+          })
+          .pipe(Effect.flip)
+        return { receipt, stored, recovered, mismatchedRecovery }
       }),
     )
 
@@ -737,9 +769,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         evaluationSchemaVersion: 'bayn.evaluation.v5',
         artifactCount: 17,
       })
-      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toContain(
-        'risk-balanced-trend-signal-decisions',
-      )
+      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toContain('risk-balanced-trend-decisions')
       expect(result.stored.value.artifacts.map((artifact) => artifact.name)).not.toContain('tsmom-signal-decisions')
       expect(result.stored.value.artifacts.find((artifact) => artifact.name === 'evaluation-summary')).toMatchObject({
         schemaVersion: 'bayn.evaluation-summary.v4',
@@ -757,6 +787,48 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 17 },
       })
     }
+    expect(result.mismatchedRecovery).toMatchObject({ failure: 'invariant', operation: 'recover-evidence' })
+    expect(result.mismatchedRecovery.message).toContain('stored run does not match the current runtime identity')
+  })
+
+  test('rejects a strategy and evaluation evidence-profile mismatch before writing', async () => {
+    const input = makeRiskBalancedTrendInput()
+    const errors = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const profile = yield* store
+          .persist({
+            ...input,
+            provenance: {
+              ...input.provenance,
+              strategy: { ...input.provenance.strategy, name: 'tsmom' },
+            },
+          })
+          .pipe(Effect.flip)
+        const contract = yield* store
+          .persist({
+            ...input,
+            provenance: {
+              ...input.provenance,
+              contractVersions: {
+                ...input.provenance.contractVersions,
+                evaluation: ContractVersion.Evaluation,
+              },
+            },
+          })
+          .pipe(Effect.flip)
+        return { contract, profile }
+      }),
+    )
+
+    expect(errors.profile).toBeInstanceOf(DatabaseError)
+    expect(errors.profile).toMatchObject({ failure: 'invariant', operation: 'plan' })
+    expect(errors.profile.message).toContain(
+      'unsupported evidence profile for strategy tsmom and evaluation bayn.evaluation.v5',
+    )
+    expect(errors.contract).toBeInstanceOf(DatabaseError)
+    expect(errors.contract).toMatchObject({ failure: 'invariant', operation: 'plan' })
+    expect(errors.contract.message).toContain('evaluation schema version does not match runtime provenance')
   })
 
   test('retrieves ordered artifact items through bounded contiguous pages', async () => {

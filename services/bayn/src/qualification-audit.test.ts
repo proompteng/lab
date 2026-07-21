@@ -59,11 +59,10 @@ const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): Qualificat
       { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
     ],
     [
-      profile === 'tsmom' ? 'tsmom-signal-decisions' : 'risk-balanced-trend-signal-decisions',
-      profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-signal-decisions.v1',
+      profile === 'tsmom' ? 'tsmom-signal-decisions' : 'risk-balanced-trend-decisions',
+      profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-decisions.v1',
       {
-        schemaVersion:
-          profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-signal-decisions.v1',
+        schemaVersion: profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-decisions.v1',
         items: evaluation.signalDecisions,
       },
     ],
@@ -309,9 +308,8 @@ describe('qualification audit', () => {
       'bayn.evaluation-summary.v4',
     )
     expect(
-      input.database.artifacts.find((artifact) => artifact.name === 'risk-balanced-trend-signal-decisions')
-        ?.schemaVersion,
-    ).toBe('bayn.risk-balanced-trend-signal-decisions.v1')
+      input.database.artifacts.find((artifact) => artifact.name === 'risk-balanced-trend-decisions')?.schemaVersion,
+    ).toBe('bayn.risk-balanced-trend-decisions.v1')
     expect(dossier.subject.run.strategyName).toBe('risk-balanced-trend')
     expect(dossier.audit.auditHash).toBe(report.auditHash)
   })

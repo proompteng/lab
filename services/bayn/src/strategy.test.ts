@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { makeStrategyProtocolHash } from './contracts'
-import { calculatePerformanceMetrics, evaluateTsmom, makeTsmomDecision, prepareTsmomQualification } from './strategy'
+import { calculatePerformanceMetrics } from './simulation'
+import { evaluateTsmom, makeTsmomDecision, prepareTsmomQualification } from './strategy'
 import { canonicalHashV1 } from './hash'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { FillEvent } from './types'

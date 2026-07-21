@@ -189,10 +189,8 @@ interface AuditStrategyProfile {
   readonly name: 'tsmom' | 'risk-balanced-trend'
   readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v5'
   readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v4'
-  readonly decisionArtifactName: 'tsmom-signal-decisions' | 'risk-balanced-trend-signal-decisions'
-  readonly decisionArtifactSchemaVersion:
-    | 'bayn.tsmom-signal-decisions.v1'
-    | 'bayn.risk-balanced-trend-signal-decisions.v1'
+  readonly decisionArtifactName: 'tsmom-signal-decisions' | 'risk-balanced-trend-decisions'
+  readonly decisionArtifactSchemaVersion: 'bayn.tsmom-signal-decisions.v1' | 'bayn.risk-balanced-trend-decisions.v1'
 }
 
 const auditStrategyProfile = (protocol: StrategyProtocol): AuditStrategyProfile =>
@@ -208,8 +206,8 @@ const auditStrategyProfile = (protocol: StrategyProtocol): AuditStrategyProfile 
         name: 'risk-balanced-trend',
         evaluationSchemaVersion: ContractVersion.RiskBalancedTrendEvaluation,
         summarySchemaVersion: ContractVersion.RiskBalancedTrendEvaluationSummary,
-        decisionArtifactName: 'risk-balanced-trend-signal-decisions',
-        decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-signal-decisions.v1',
+        decisionArtifactName: 'risk-balanced-trend-decisions',
+        decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
       }
 
 const evaluateReference = (
@@ -311,6 +309,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       database.protocol.strategyName === profile.name &&
       database.run.strategyName === profile.name &&
       database.run.evaluationSchemaVersion === profile.evaluationSchemaVersion &&
+      provenance.contractVersions.evaluation === profile.evaluationSchemaVersion &&
       database.run.initialCapitalMicros === input.protocol.initialCapitalMicros &&
       database.run.status === 'COMPLETE',
     `runId=${database.run.runId}`,

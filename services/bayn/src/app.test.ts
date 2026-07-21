@@ -22,8 +22,20 @@ import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { makeQualificationResult } from './qualification'
 import { evaluateTsmom, summarizeEvaluation } from './strategy'
-import { Strategy, TsmomStrategyLayer, makeTsmomStrategy, type StrategyService } from './strategy-service'
-import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+import {
+  Strategy,
+  TsmomStrategyLayer,
+  makeRiskBalancedTrendStrategy,
+  makeTsmomStrategy,
+  type StrategyService,
+} from './strategy-service'
+import {
+  fixtureProtocol,
+  makeRiskBalancedTrendTestProvenance,
+  makeSnapshot,
+  makeTestProvenance,
+  riskBalancedTrendFixtureProtocol,
+} from './test-fixtures'
 
 const provenance = makeTestProvenance()
 const historicalRunId = '9'.repeat(64)
@@ -622,6 +634,51 @@ describe('Bayn startup lifecycle', () => {
         evaluation: { runId: pinnedEvaluation.runId },
         qualification: { verdict: 'REJECTED', resultHash: pinnedQualification.resultHash },
       },
+    })
+  })
+
+  test('rejects a pinned TSMOM qualification under the candidate-composed runtime before dependency mutation', async () => {
+    let forbiddenCalls = 0
+    const forbidden = (message: string) =>
+      Effect.sync(() => {
+        forbiddenCalls += 1
+        throw new Error(message)
+      })
+    const state = await Effect.runPromise(Ref.make(initialState()))
+    const candidate = makeRiskBalancedTrendStrategy(
+      riskBalancedTrendFixtureProtocol,
+      makeRiskBalancedTrendTestProvenance(),
+    )
+
+    await Effect.runPromise(
+      initialize(pinnedRuntimeConfig, state).pipe(
+        Effect.provideService(MarketData, {
+          check: forbidden('strategy mismatch must not check Signal'),
+          inspect: forbidden('strategy mismatch must not inspect Signal'),
+          load: forbidden('strategy mismatch must not load Signal bars'),
+        }),
+        Effect.provideService(Journal, {
+          check: forbidden('strategy mismatch must not check TigerBeetle'),
+          checkRun: () => forbidden('strategy mismatch must not check a TigerBeetle run'),
+          journalAndReconcile: () => forbidden('strategy mismatch must not write TigerBeetle'),
+        }),
+        Effect.provideService(EvidenceStore, {
+          ...pinnedStore(),
+          recover: () => forbidden('strategy mismatch must not recover or mutate evidence'),
+          check: forbidden('strategy mismatch must not run a separate database check'),
+          listPriorTrials: forbidden('strategy mismatch must not list or create trials'),
+          openQualification: () => forbidden('strategy mismatch must not open a qualification lock'),
+          persist: () => forbidden('strategy mismatch must not persist evidence'),
+        }),
+        Effect.provideService(Strategy, candidate),
+      ),
+    )
+
+    expect(forbiddenCalls).toBe(0)
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAILED',
+      evidence: null,
+      error: expect.stringContaining('compiled strategy differs from the pinned qualification protocol'),
     })
   })
 

@@ -320,7 +320,7 @@ export const TsmomSignalDecisionsArtifactSchema = Schema.Struct({
 })
 
 export const RiskBalancedTrendSignalDecisionsArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-signal-decisions.v1'),
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decisions.v1'),
   items: Schema.Array(
     Schema.Struct({
       schemaVersion: Schema.Literal('bayn.risk-balanced-trend-decision-plan.v1'),

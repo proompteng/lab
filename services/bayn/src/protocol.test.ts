@@ -134,6 +134,8 @@ describe('risk-balanced trend parameter contract', () => {
       { ...defaultRiskBalancedTrendProtocolDocument, horizons: [] },
       { ...defaultRiskBalancedTrendProtocolDocument, horizons: [63, 21] },
       { ...defaultRiskBalancedTrendProtocolDocument, volatilityWindow: 0 },
+      { ...defaultRiskBalancedTrendProtocolDocument, volatilityWindow: 1 },
+      { ...defaultRiskBalancedTrendProtocolDocument, horizons: [1, 2], volatilityWindow: 2 },
       { ...defaultRiskBalancedTrendProtocolDocument, maximumSymbolWeight: 0 },
       { ...defaultRiskBalancedTrendProtocolDocument, maximumPortfolioVolatility: 1.1 },
       { ...defaultRiskBalancedTrendProtocolDocument, futureField: true },

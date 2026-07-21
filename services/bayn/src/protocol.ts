@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect'
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1 } from './hash'
-import type { RiskBalancedTrendProtocol, TsmomProtocol } from './types'
+import { DIRECT_VOLATILITY_WINDOW, type RiskBalancedTrendProtocol, type TsmomProtocol } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
@@ -177,6 +177,15 @@ export const RiskBalancedTrendProtocolSchema = RiskBalancedTrendProtocolBase.che
         issues.push({ path: ['horizons', index], issue: 'must be unique and strictly increasing' })
         break
       }
+    }
+    if (parameters.volatilityWindow < 2) {
+      issues.push({ path: ['volatilityWindow'], issue: 'must contain at least two returns for covariance' })
+    }
+    if (Math.max(parameters.volatilityWindow, ...parameters.horizons) < DIRECT_VOLATILITY_WINDOW) {
+      issues.push({
+        path: ['horizons'],
+        issue: `must provide at least ${DIRECT_VOLATILITY_WINDOW} sessions for the direct-volatility benchmark`,
+      })
     }
     return issues
   }),

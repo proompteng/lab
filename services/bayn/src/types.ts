@@ -30,6 +30,8 @@ export enum ContractVersion {
   TsmomDecisionPlan = 'bayn.tsmom-decision-plan.v1',
 }
 
+export const DIRECT_VOLATILITY_WINDOW = 63
+
 export interface DailyBar {
   readonly symbol: string
   readonly sessionDate: IsoDate

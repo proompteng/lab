@@ -15,7 +15,7 @@ import {
   simulate,
   TRADING_DAYS,
   type SimulationTarget,
-} from './strategy'
+} from './simulation'
 import {
   ContractVersion,
   type DailyBar,
