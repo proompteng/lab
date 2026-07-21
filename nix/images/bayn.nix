@@ -31,7 +31,7 @@ import ./bun-workspace-service.nix {
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/restore-ledger-command.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -41,10 +41,12 @@ import ./bun-workspace-service.nix {
     )
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restore-ledger-command.js"
+    "grep -F -- ${lib.escapeShellArg imageRepository} services/bayn/dist/restore-ledger-command.js"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
-    cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/index.js"
+    cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     cp -R -L "$TMPDIR/work/services/bayn/node_modules/tigerbeetle-node/." \
       "$out/app/services/bayn/node_modules/tigerbeetle-node/"

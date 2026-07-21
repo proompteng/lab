@@ -54,6 +54,13 @@ spec:
     - to:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/instance: bayn-tigerbeetle
+      ports:
+        - port: 3000
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
               cnpg.io/cluster: bayn-db
       ports:
         - port: 5432

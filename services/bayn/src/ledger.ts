@@ -15,8 +15,8 @@ import { Context, Effect, Layer, Option, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { operationalError, type OperationalError } from './errors'
-import { hashObject, stableU128, stableU64 } from './hash'
-import type { CashYieldEvent, EvaluationResult, FeeEvent, FillEvent, ReconciliationResult } from './types'
+import { canonicalHashV1, hashObject, stableU128, stableU64 } from './hash'
+import type { CashYieldEvent, EvaluationEvent, FeeEvent, FillEvent, InputManifest, ReconciliationResult } from './types'
 
 const SCHEMA_VERSION = 2
 const BATCH_MAX = 8_189
@@ -126,7 +126,21 @@ export const resolveReplicaAddresses = (
       )
     : Effect.forEach(configuredAddresses, (address) => resolveReplicaAddress(address, resolveHostname), {
         concurrency: 'unbounded',
-      }).pipe(Effect.map((resolved) => [...new Set(resolved.flat())]))
+      }).pipe(
+        Effect.flatMap((resolved) => {
+          const addresses = resolved.flat()
+          if (new Set(addresses).size !== addresses.length) {
+            return Effect.fail(
+              operationalError(
+                'journal',
+                'resolve-replica-addresses',
+                'TigerBeetle replica hostnames resolved to duplicate IPv4 addresses',
+              ),
+            )
+          }
+          return Effect.succeed(addresses)
+        }),
+      )
 
 const AccountCode = {
   cash: 110,
@@ -155,8 +169,15 @@ export interface LedgerPlan {
   readonly transfers: readonly Transfer[]
 }
 
+export interface LedgerInput {
+  readonly runId: string
+  readonly initialCapitalMicros: string
+  readonly inputManifest: InputManifest
+  readonly events: readonly EvaluationEvent[]
+}
+
 export interface JournalService {
-  readonly journalAndReconcile: (result: EvaluationResult) => Effect.Effect<ReconciliationResult, OperationalError>
+  readonly journalAndReconcile: (result: LedgerInput) => Effect.Effect<ReconciliationResult, OperationalError>
   readonly check: Effect.Effect<void, OperationalError>
   readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, OperationalError>
 }
@@ -219,7 +240,7 @@ const positiveAmount = (value: string, name: string): bigint => {
   return parsed
 }
 
-export const buildLedgerPlan = (result: EvaluationResult, ledger: number): LedgerPlan => {
+export const buildLedgerPlan = (result: LedgerInput, ledger: number): LedgerPlan => {
   const runKey = stableU128('bayn-run-v1', result.runId)
   const runTag = stableU64('bayn-run-v1', result.runId)
   const accountsByName = new Map<string, Account>()
@@ -373,6 +394,20 @@ export const buildLedgerPlan = (result: EvaluationResult, ledger: number): Ledge
     transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
   }
 }
+
+const serializeRecord = (record: Account | Transfer): Record<string, number | string> =>
+  Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, typeof value === 'bigint' ? value.toString() : value]),
+  )
+
+export const hashLedgerPlan = (plan: LedgerPlan): string =>
+  canonicalHashV1({
+    schemaVersion: 'bayn.ledger-plan.v1',
+    runKey: plan.runKey.toString(),
+    runTag: plan.runTag.toString(),
+    accounts: plan.accounts.map(serializeRecord),
+    transfers: plan.transfers.map(serializeRecord),
+  })
 
 const accountMetadataMatches = (actual: Account, expected: Account): boolean =>
   actual.id === expected.id &&
@@ -628,7 +663,7 @@ const checkRun = (
 const journalAndReconcile = (
   client: LedgerClient,
   ledger: number,
-  result: EvaluationResult,
+  result: LedgerInput,
 ): Effect.Effect<ReconciliationResult, OperationalError> =>
   Effect.gen(function* () {
     const plan = yield* validate('build-plan', () => buildLedgerPlan(result, ledger))
@@ -657,7 +692,7 @@ export interface JournalDependencies {
 const defaultDependencies: JournalDependencies = { createClient, resolveReplicaAddresses }
 
 export const JournalLive = (
-  config: RuntimeConfig,
+  config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   dependencies: JournalDependencies = defaultDependencies,
 ): Layer.Layer<Journal, OperationalError> =>
   Layer.effect(

@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-tigerbeetle
+  labels:
+    app.kubernetes.io/name: bayn-tigerbeetle
+    app.kubernetes.io/part-of: bayn
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: bayn-tigerbeetle
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: bayn-tigerbeetle
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tigresse-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tigresse
+      ports:
+        - port: 3000
+          protocol: TCP
