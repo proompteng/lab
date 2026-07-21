@@ -125,8 +125,9 @@ jobs:
           body: |
             ## Summary
 
-            Promote the immutable Bayn image, activate the Bayn Argo application, and bind runtime evidence to its
-            source commit.
+            Promote the immutable Bayn image and atomically cut the runtime to the current Signal snapshot and the
+            dedicated Bayn TigerBeetle ledger. The generated manifest removes the legacy qualification pin rather
+            than converting or restoring legacy evidence.
 
             - Source commit: `${{ steps.release.outputs.source_sha }}`
             - Image tag: `${{ steps.release.outputs.tag }}`
@@ -134,7 +135,7 @@ jobs:
 
             ## Related Issues
 
-            PROOMPT-353
+            PROOMPT-399
 
             ## Testing
 
@@ -146,7 +147,9 @@ jobs:
 
             ## Breaking Changes
 
-            None
+            The image applies the one-way current-protocol database migration. Merge only after a fresh CNPG backup
+            is verified and the dedicated `ledger` TigerBeetle cluster is healthy; rollback restores the pre-cut CNPG
+            backup and prior Git revision rather than attempting an in-place schema fallback.
 
             ## Checklist
 

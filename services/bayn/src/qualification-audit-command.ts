@@ -5,8 +5,8 @@ import { Cause, Config, Effect, FileSystem, Layer, Logger, Redacted, Schema, Std
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
 import { decodeInputManifestArtifact } from './evidence-contracts'
-import { HistoricalMarketDataLive, MarketData, MarketDataLive } from './market-data'
-import { RiskBalancedTrendProtocolSchema, TsmomProtocolSchema } from './protocol'
+import { MarketData, MarketDataLive } from './market-data'
+import { RiskBalancedTrendProtocolSchema } from './protocol'
 import {
   auditQualification,
   type AuditDatabaseSnapshot,
@@ -14,7 +14,7 @@ import {
   type SignalAccessRecord,
 } from './qualification-audit'
 import { makeQualificationDossier } from './qualification-dossier'
-import type { InputManifest, StrategyProtocol } from './types'
+import type { RiskBalancedTrendProtocol, UniverseBoundInputManifest } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
@@ -312,7 +312,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
     )
   })
 
-const loadSignal = (input: AuditConfig, manifest: InputManifest, protocol: StrategyProtocol) => {
+const loadSignal = (input: AuditConfig, manifest: UniverseBoundInputManifest, protocol: RiskBalancedTrendProtocol) => {
   const marketDataConfig = {
     operationTimeoutMs: input.operationTimeoutMs,
     clickhouse: {
@@ -325,18 +325,7 @@ const loadSignal = (input: AuditConfig, manifest: InputManifest, protocol: Strat
       bounds: manifest.bounds,
     },
   }
-  let source: ReturnType<typeof MarketDataLive> | ReturnType<typeof HistoricalMarketDataLive>
-  if (protocol.schemaVersion === 'bayn.tsmom.protocol.v2') {
-    if (manifest.schemaVersion !== 'bayn.input-manifest.v2') {
-      throw new Error('historical TSMOM audit requires bayn.input-manifest.v2')
-    }
-    source = HistoricalMarketDataLive(marketDataConfig, protocol)
-  } else {
-    if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
-      throw new Error('risk-balanced trend audit requires bayn.input-manifest.v3')
-    }
-    source = MarketDataLive(marketDataConfig, protocol)
-  }
+  const source = MarketDataLive(marketDataConfig, protocol)
   const layer = source.pipe(
     Layer.provide(
       ClickhouseClient.layer({
@@ -368,7 +357,7 @@ const readSignalReplicaAccess = (
   ordinal: number,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
-  manifestTable: InputManifest['tables']['manifests'],
+  manifestTable: UniverseBoundInputManifest['tables']['manifests'],
 ): Effect.Effect<SignalReplicaAccess, unknown> => {
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
@@ -447,7 +436,7 @@ const readSignalAccess = (
   input: AuditConfig,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
-  manifestTable: InputManifest['tables']['manifests'],
+  manifestTable: UniverseBoundInputManifest['tables']['manifests'],
 ): Effect.Effect<{ readonly replicas: readonly string[]; readonly access: readonly SignalAccessRecord[] }, unknown> =>
   Effect.all(
     input.auditClickhouseUrls.map((url, ordinal) =>
@@ -522,12 +511,14 @@ const main = Effect.gen(function* () {
   const inputManifestArtifact = database.artifacts.find((artifact) => artifact.name === 'input-manifest')
   if (inputManifestArtifact === undefined) throw new Error('input-manifest artifact is missing')
   const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
+  if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
+    throw new Error('qualification audit requires the current universe-bound input manifest')
+  }
   const protocol = yield* Schema.decodeUnknownEffect(
-    Schema.Union([TsmomProtocolSchema, RiskBalancedTrendProtocolSchema]),
+    RiskBalancedTrendProtocolSchema,
     StrictParseOptions,
   )(database.protocol.parameters)
-  const expectedStrategyName = protocol.schemaVersion === 'bayn.tsmom.protocol.v2' ? 'tsmom' : 'risk-balanced-trend'
-  if (database.protocol.strategyName !== expectedStrategyName || database.run.strategyName !== expectedStrategyName) {
+  if (database.protocol.strategyName !== 'risk-balanced-trend' || database.run.strategyName !== 'risk-balanced-trend') {
     throw new Error('stored strategy name does not match its protocol schema')
   }
   const signal = yield* loadSignal(input, manifest, protocol)

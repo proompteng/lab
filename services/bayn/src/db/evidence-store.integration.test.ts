@@ -7,19 +7,15 @@ import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } f
 import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
-import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
+import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
-import { evaluateTsmom } from '../strategy'
-import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from '../strategy-service'
+import { makeRiskBalancedTrendStrategy } from '../strategy-service'
 import {
-  fixtureProtocol,
   makeRiskBalancedTrendSnapshot,
   makeRiskBalancedTrendTestProvenance,
-  makeSnapshot,
-  makeTestProvenance,
   riskBalancedTrendFixtureProtocol,
 } from '../test-fixtures'
-import { ContractVersion, type TsmomProtocol } from '../types'
+import { ContractVersion, type RiskBalancedTrendProtocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -71,23 +67,20 @@ const makeEvidenceRuntime = (config = makeConfig()) =>
 const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
 
-const makeReadOnlyClientRuntime = (config = makeConfig()) =>
-  ManagedRuntime.make(
-    PostgresClientLive(config, { applicationName: 'bayn-ledger-restore-test', readOnly: true }).pipe(
-      Layer.provide(NodeServices.layer),
-    ),
-  )
-
-const snapshot = makeSnapshot(800)
 const riskBalancedTrendSnapshot = makeRiskBalancedTrendSnapshot(800)
 
 const makeInput = (
   sourceRevision = 'a'.repeat(40),
-  behaviorHash = 'c'.repeat(64),
-  protocol: TsmomProtocol = fixtureProtocol,
+  behaviorHash = 'd'.repeat(64),
+  protocol: RiskBalancedTrendProtocol = riskBalancedTrendFixtureProtocol,
 ): PersistEvaluationInput => {
-  const provenance = makeTestProvenance(protocol, { sourceRevision, behaviorHash })
-  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, protocol, provenance)
+  const provenance = makeRiskBalancedTrendTestProvenance(protocol, { sourceRevision, behaviorHash })
+  const evaluation = evaluateRiskBalancedTrend(
+    riskBalancedTrendSnapshot.bars,
+    riskBalancedTrendSnapshot.manifest,
+    protocol,
+    provenance,
+  )
   const ledger = buildLedgerPlan(evaluation, 7_001)
   return {
     provenance,
@@ -102,31 +95,11 @@ const makeInput = (
   }
 }
 
-const makeRiskBalancedTrendInput = (): PersistEvaluationInput => {
-  const provenance = makeRiskBalancedTrendTestProvenance()
-  const evaluation = evaluateRiskBalancedTrend(
-    riskBalancedTrendSnapshot.bars,
-    riskBalancedTrendSnapshot.manifest,
-    riskBalancedTrendFixtureProtocol,
-    provenance,
-  )
-  const ledger = buildLedgerPlan(evaluation, 7_001)
-  return {
-    provenance,
-    parameters: riskBalancedTrendFixtureProtocol,
-    evaluation,
-    reconciliation: {
-      runId: evaluation.runId,
-      accountCount: ledger.accounts.length,
-      transferCount: ledger.transfers.length,
-      exact: true,
-    },
-  }
-}
+const makeRiskBalancedTrendInput = makeInput
 
 const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readonly string[] = []) => {
-  const strategy = makeTsmomStrategy(fixtureProtocol, input.provenance)
-  const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+  const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, input.provenance)
+  const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
   const lock = strategy.prepareLock(input.evaluation.inputManifest, sessionDates, priorTrialRunIds)
   const result = makeQualificationResult(
     lock,
@@ -203,8 +176,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     ])
   })
 
-  test('hard-migrates the deployed schema without losing data or migration history', async () => {
+  test('hard-migrates the deployed schema by deleting legacy evidence and preserving migration history', async () => {
     const runId = '9'.repeat(64)
+    const snapshotId = '6'.repeat(64)
+    const lockId = '5'.repeat(64)
+    const resultHash = '4'.repeat(64)
+    const analysisHash = '3'.repeat(64)
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -233,6 +210,153 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `
+        yield* sql`
+          INSERT INTO bayn_snapshot_references (
+            snapshot_id,
+            schema_version,
+            database_name,
+            table_name,
+            dataset_version,
+            source,
+            source_feed,
+            adjustment,
+            content_hash,
+            row_count,
+            first_session,
+            last_session,
+            manifest
+          ) VALUES (
+            ${snapshotId},
+            'bayn.finalized-snapshot.v2',
+            'signal',
+            'adjusted_daily_bars_v2',
+            'signal.adjusted-daily-snapshot.v1',
+            'alpaca',
+            'sip',
+            'all',
+            ${'2'.repeat(64)},
+            1,
+            '2026-07-17',
+            '2026-07-17',
+            '{}'::jsonb
+          )
+        `
+        yield* sql`
+          INSERT INTO bayn_evaluation_runs (
+            run_id,
+            protocol_hash,
+            snapshot_id,
+            evaluation_schema_version,
+            source_revision,
+            image_repository,
+            image_digest,
+            strategy_name,
+            initial_capital_micros,
+            expected_artifact_count,
+            expected_event_count,
+            expected_gate_count,
+            status,
+            completed_at
+          ) VALUES (
+            ${runId},
+            ${runId},
+            ${snapshotId},
+            'bayn.evaluation.v4',
+            ${'1'.repeat(40)},
+            'registry.example/bayn',
+            ${`sha256:${'0'.repeat(64)}`},
+            'tsmom',
+            1000000,
+            1,
+            1,
+            1,
+            'COMPLETE',
+            transaction_timestamp()
+          )
+        `
+        yield* sql`
+          INSERT INTO bayn_evaluation_artifacts (
+            run_id, artifact_name, schema_version, content_hash, payload
+          ) VALUES (${runId}, 'legacy', 'bayn.legacy.v1', ${'a'.repeat(64)}, '{}'::jsonb)
+        `
+        yield* sql`
+          INSERT INTO bayn_evaluation_events (
+            run_id, ordinal, event_id, event_kind, content_hash, payload
+          ) VALUES (${runId}, 0, ${'b'.repeat(64)}, 'decision', ${'c'.repeat(64)}, '{}'::jsonb)
+        `
+        yield* sql`
+          INSERT INTO bayn_gate_outcomes (
+            run_id, ordinal, gate_name, passed, actual, required, content_hash
+          ) VALUES (${runId}, 0, 'legacy-gate', false, '0'::jsonb, '1'::jsonb, ${'d'.repeat(64)})
+        `
+        yield* sql`
+          INSERT INTO bayn_status_history (run_id, status, detail)
+          VALUES (${runId}, 'COMPLETE', '{}'::jsonb)
+        `
+        yield* sql`
+          INSERT INTO bayn_qualification_trials (
+            run_id, schema_version, disposition, reason_codes, observed_at
+          ) VALUES (
+            ${runId},
+            'bayn.qualification-trial.v1',
+            'BURNED',
+            ARRAY['PRE_LOCK_RESULT_OBSERVED'],
+            transaction_timestamp()
+          )
+        `
+        const lock = {
+          schemaVersion: 'bayn.qualification-lock.v2',
+          lockId,
+          candidateRunId: runId,
+          protocolHash: runId,
+          sourceRevision: '1'.repeat(40),
+          image: { repository: 'registry.example/bayn', digest: `sha256:${'0'.repeat(64)}` },
+          data: { snapshotId },
+        }
+        yield* sql`
+          INSERT INTO bayn_qualification_locks (
+            lock_id,
+            schema_version,
+            candidate_run_id,
+            protocol_hash,
+            snapshot_id,
+            source_revision,
+            image_repository,
+            image_digest,
+            payload
+          ) VALUES (
+            ${lockId},
+            'bayn.qualification-lock.v2',
+            ${runId},
+            ${runId},
+            ${snapshotId},
+            ${'1'.repeat(40)},
+            'registry.example/bayn',
+            ${`sha256:${'0'.repeat(64)}`},
+            ${sql.json(lock)}
+          )
+        `
+        const result = {
+          schemaVersion: 'bayn.qualification-result.v2',
+          lockId,
+          runId,
+          verdict: 'REJECTED',
+          analysis: { analysisHash },
+          resultHash,
+        }
+        yield* sql`
+          INSERT INTO bayn_qualification_results (
+            lock_id, schema_version, run_id, verdict, analysis_hash, result_hash, payload
+          ) VALUES (
+            ${lockId},
+            'bayn.qualification-result.v2',
+            ${runId},
+            'REJECTED',
+            ${analysisHash},
+            ${resultHash},
+            ${sql.json(result)}
+          )
+        `
       }),
     )
 
@@ -251,18 +375,65 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const migrations = yield* sql<{ count: number }>`
           SELECT count(*)::integer AS count FROM schema_migrations
         `
-        const protocols = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count FROM protocol_locks WHERE protocol_hash = ${runId}
+        const evidence = yield* sql<{ count: number }>`
+          SELECT (
+            (SELECT count(*) FROM protocol_locks) +
+            (SELECT count(*) FROM snapshot_references) +
+            (SELECT count(*) FROM evaluation_runs) +
+            (SELECT count(*) FROM evaluation_artifacts) +
+            (SELECT count(*) FROM evaluation_events) +
+            (SELECT count(*) FROM gate_outcomes) +
+            (SELECT count(*) FROM status_history) +
+            (SELECT count(*) FROM qualification_trials) +
+            (SELECT count(*) FROM qualification_locks) +
+            (SELECT count(*) FROM qualification_results)
+          )::integer AS count
         `
         return {
           legacyTableCount: legacyTables[0]?.count,
           migrationCount: migrations[0]?.count,
-          protocolCount: protocols[0]?.count,
+          evidenceCount: evidence[0]?.count,
         }
       }),
     )
 
-    expect(migrated).toEqual({ legacyTableCount: 0, migrationCount: 7, protocolCount: 1 })
+    expect(migrated).toEqual({ legacyTableCount: 0, migrationCount: 8, evidenceCount: 0 })
+  })
+
+  test('rejects legacy protocol rows after the hard cut', async () => {
+    const exits = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const legacy = yield* Effect.exit(sql`
+          INSERT INTO protocol_locks (
+            protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+          ) VALUES (
+            ${'0'.repeat(64)},
+            'bayn.tsmom.protocol.v2',
+            'tsmom',
+            ${'1'.repeat(64)},
+            ${'2'.repeat(64)},
+            '{}'::jsonb
+          )
+        `)
+        const current = yield* Effect.exit(sql`
+          INSERT INTO protocol_locks (
+            protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+          ) VALUES (
+            ${'3'.repeat(64)},
+            'bayn.risk-balanced-trend.protocol.v2',
+            'risk-balanced-trend',
+            ${'4'.repeat(64)},
+            ${'5'.repeat(64)},
+            '{}'::jsonb
+          )
+        `)
+        return { current, legacy }
+      }),
+    )
+
+    expect(Exit.isFailure(exits.legacy)).toBe(true)
+    expect(Exit.isSuccess(exits.current)).toBe(true)
   })
 
   test('keeps the audit snapshot repeatable-read and rejects writes', async () => {
@@ -292,26 +463,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.mode).toEqual({ isolation: 'repeatable read', read_only: true })
     expect(Exit.isFailure(observed.write)).toBe(true)
     expect(observed.rows).toEqual([{ count: 0 }])
-  })
-
-  test('enforces read-only PostgreSQL sessions for ledger restore', async () => {
-    const scoped = makeReadOnlyClientRuntime()
-    try {
-      const observed = await scoped.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const mode = yield* sql<{ read_only: boolean }>`
-            SELECT current_setting('default_transaction_read_only') = 'on' AS read_only
-          `
-          const write = yield* Effect.exit(sql`CREATE TEMP TABLE ledger_restore_write_probe (id integer)`)
-          return { mode: mode[0], write }
-        }),
-      )
-      expect(observed.mode).toEqual({ read_only: true })
-      expect(Exit.isFailure(observed.write)).toBe(true)
-    } finally {
-      await scoped.dispose()
-    }
   })
 
   test('commits one complete run and deduplicates an exact replay', async () => {
@@ -511,11 +662,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('persists and recovers fee, partial-fill, and nonzero cash-yield evidence', async () => {
-    const protocol: TsmomProtocol = {
-      ...fixtureProtocol,
+    const protocol: RiskBalancedTrendProtocol = {
+      ...riskBalancedTrendFixtureProtocol,
       executionModel: {
-        ...fixtureProtocol.executionModel,
-        cash: { ...fixtureProtocol.executionModel.cash, annualYieldBps: 500 },
+        ...riskBalancedTrendFixtureProtocol.executionModel,
+        cash: { ...riskBalancedTrendFixtureProtocol.executionModel.cash, annualYieldBps: 500 },
       },
     }
     const input = makeInput('a'.repeat(40), 'c'.repeat(64), protocol)
@@ -544,46 +695,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
   test('burns observed runs and preserves qualification state as append-only', async () => {
     const input = makeInput()
-    const policy = (name: string) => makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true })
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
         const sql = yield* PgClient.PgClient
         yield* store.persist(input)
 
-        const manifest = input.evaluation.inputManifest
-        const decisionCount = input.evaluation.events.filter((event) => event.kind === 'decision').length
-        const lock = makeQualificationLock({
-          schemaVersion: 'bayn.qualification-lock.v2',
-          candidateRunId: input.evaluation.runId,
-          protocolHash: input.evaluation.protocolHash,
-          sourceRevision: input.provenance.sourceRevision,
-          image: input.provenance.image,
-          universe: [...fixtureProtocol.universe],
-          universeRationale: 'Liquid cross-asset ETFs with complete fixture coverage.',
-          data: {
-            snapshotId: manifest.finalizedSnapshot.snapshotId,
-            publicationId: manifest.finalizedSnapshot.publicationId,
-            contentHash: manifest.finalizedSnapshot.contentHash,
-            sessionsContentHash: manifest.finalizedSnapshot.sessionsContentHash,
-            provider: manifest.finalizedSnapshot.source,
-            sourceFeed: manifest.finalizedSnapshot.sourceFeed,
-            adjustment: manifest.finalizedSnapshot.adjustment,
-            calendarVersion: manifest.finalizedSnapshot.calendarVersion,
-            firstSession: manifest.finalizedSnapshot.firstSession,
-            lastSession: manifest.finalizedSnapshot.lastSession,
-            selectedSessionCount: input.evaluation.strategy.observations,
-            selectedRebalanceCount: decisionCount,
-            bounds: manifest.bounds,
-          },
-          policies: {
-            benchmark: policy('benchmark-policy'),
-            thresholds: policy('threshold-policy'),
-            uncertainty: policy('uncertainty-policy'),
-            execution: policy('execution-policy'),
-          },
-          priorTrialRunIds: [input.evaluation.runId],
-        })
+        const lock = makeLockedInput(input, [input.evaluation.runId]).lock
 
         yield* sql`
           INSERT INTO qualification_locks (
@@ -685,7 +803,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.divergentLock)).toBe(true)
   })
 
-  test('reads and recovers the complete v4 evidence contract without evaluating it again', async () => {
+  test('reads and recovers the complete current evidence contract without evaluating it again', async () => {
     const input = makeInput()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -702,15 +820,15 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Option.isSome(result.stored)) {
       expect(result.stored.value.protocol).toMatchObject({
         protocolHash: input.evaluation.protocolHash,
-        schemaVersion: fixtureProtocol.schemaVersion,
-        strategyName: 'tsmom',
+        schemaVersion: riskBalancedTrendFixtureProtocol.schemaVersion,
+        strategyName: 'risk-balanced-trend',
         behaviorHash: input.provenance.strategy.behaviorHash,
         parameterHash: input.provenance.strategy.parameterHash,
-        parameters: fixtureProtocol,
+        parameters: riskBalancedTrendFixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({
         runId: input.evaluation.runId,
-        evaluationSchemaVersion: 'bayn.evaluation.v4',
+        evaluationSchemaVersion: 'bayn.evaluation.v6',
         artifactCount: 17,
         eventCount: input.evaluation.events.length,
       })
@@ -729,9 +847,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         'marked-equity-reconciliation',
         'qualification-artifact-manifest',
         'reconciliation',
+        'risk-balanced-trend-decisions',
         'simulated-orders',
         'strategy',
-        'tsmom-signal-decisions',
       ])
       const manifest = result.stored.value.artifacts.find(
         (artifact) => artifact.name === 'qualification-artifact-manifest',

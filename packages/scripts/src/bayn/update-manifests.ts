@@ -6,6 +6,19 @@ import process from 'node:process'
 const digestPattern = /^sha256:[0-9a-f]{64}$/
 const sourceShaPattern = /^[0-9a-f]{40}$/
 const tagPattern = /^[A-Za-z0-9._-]{1,128}$/
+const currentRuntimeConfiguration = {
+  BAYN_SIGNAL_SNAPSHOT_ID: '98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292',
+  BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-20',
+  BAYN_SIGNAL_CALENDAR_VERSION: 'alpaca-us-equity-calendar-v1',
+  BAYN_SIGNAL_DATA_START: '2022-01-27',
+  BAYN_SIGNAL_DATA_END: '2026-07-20',
+  BAYN_SIGNAL_LOOKBACK_START: '2022-01-27',
+  BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
+  BAYN_SIGNAL_EVALUATION_END: '2026-07-20',
+  BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
+  BAYN_TIGERBEETLE_ADDRESSES: 'ledger.bayn.svc.cluster.local:3000',
+  BAYN_TIGERBEETLE_LEDGER: '7001',
+} as const
 
 export interface UpdateBaynManifestOptions {
   readonly sourceSha: string
@@ -21,6 +34,12 @@ const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string
   const matches = [...source.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))]
   if (matches.length !== 1) throw new Error(`expected exactly one ${name}`)
   return source.replace(pattern, replacement)
+}
+
+const removeAtMostOnce = (source: string, pattern: RegExp, name: string): string => {
+  const matches = [...source.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))]
+  if (matches.length > 1) throw new Error(`expected at most one ${name}`)
+  return matches.length === 0 ? source : source.replace(pattern, '')
 }
 
 export const updateBaynManifests = (options: UpdateBaynManifestOptions): void => {
@@ -55,6 +74,19 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
     `$1${options.digest}`,
     'BAYN_IMAGE_DIGEST value',
   )
+  updatedDeployment = removeAtMostOnce(
+    updatedDeployment,
+    /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/,
+    'BAYN_QUALIFICATION_RUN_ID block',
+  )
+  for (const [name, value] of Object.entries(currentRuntimeConfiguration)) {
+    updatedDeployment = replaceExactlyOnce(
+      updatedDeployment,
+      new RegExp(`(            - name: ${name}\\n              value: )[^\\n]+`),
+      `$1${JSON.stringify(value)}`,
+      `${name} value`,
+    )
+  }
   updatedDeployment = replaceExactlyOnce(
     updatedDeployment,
     /(        kubectl\.kubernetes\.io\/restartedAt: )[^\n]+/,

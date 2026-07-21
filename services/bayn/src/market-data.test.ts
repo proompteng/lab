@@ -4,7 +4,6 @@ import {
   verifyFinalizedCalendar,
   verifyFinalizedManifest,
   verifyFinalizedSnapshot,
-  type LegacySnapshotRequest,
   type SnapshotRows,
   type UniverseBoundSnapshotRequest,
 } from './market-data'
@@ -184,51 +183,6 @@ const makeFixture = (): {
 }
 
 describe('finalized Signal snapshot reader', () => {
-  test('preserves the explicit Signal V1 reader used by historical TSMOM audits', () => {
-    const legacySnapshotId = '2fb38a01471d5a6bb6c5aa08a49b6ff844a5a9ee1c6e7bb9ff7786ecdac01bba'
-    const { universe_id: _, universe_symbol_hash: __, ...manifest } = producerRows.manifests[0]
-    const rows: SnapshotRows = {
-      bars: producerRows.bars.map((row) => ({ ...row, snapshot_id: legacySnapshotId })),
-      sessions: producerRows.sessions.map((row) => ({ ...row, snapshot_id: legacySnapshotId })),
-      manifests: [
-        {
-          ...manifest,
-          snapshot_id: legacySnapshotId,
-          schema_version: PublicationSchema.AdjustedDailySnapshotV1,
-          manifest_content_hash: 'ce42161b20b09b7054e107696aba7d1bb7928f10da4a1efe4682b6b70100e9b2',
-        },
-      ],
-    }
-    const request: LegacySnapshotRequest = {
-      snapshotId: legacySnapshotId,
-      publicationAsOf: '2025-01-03',
-      calendarVersion: 'alpaca-us-equity-calendar-v1',
-      universe: symbols,
-      bounds: {
-        schemaVersion: 'bayn.evaluation-bounds.v1',
-        dataStart: '2025-01-02',
-        dataEnd: '2025-01-03',
-        lookbackStart: '2025-01-02',
-        evaluationStart: '2025-01-03',
-        evaluationEnd: '2025-01-03',
-      },
-      observedAt: '2025-01-04T02:00:00.000Z',
-    }
-
-    const snapshot = verifyFinalizedSnapshot(rows, request)
-
-    expect(snapshot.manifest).toMatchObject({
-      schemaVersion: 'bayn.input-manifest.v2',
-      tables: { manifests: 'snapshot_manifests_v1' },
-      finalizedSnapshot: {
-        schemaVersion: 'bayn.finalized-snapshot.v2',
-        snapshotId: legacySnapshotId,
-        publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV1,
-      },
-    })
-    expect(snapshot.bars).toHaveLength(4)
-  })
-
   test('reproduces the authoritative V2 manifest and snapshot identities', () => {
     const universe = ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'] as const
     const publication = verifyFinalizedManifest([authoritativeManifest], {

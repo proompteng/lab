@@ -1,5 +1,5 @@
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Context, Data, Effect, FileSystem, Layer, Match, Option, Redacted, Schema } from 'effect'
+import { Context, Data, Effect, FileSystem, Layer, Match, Option, Schema } from 'effect'
 import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
@@ -18,13 +18,12 @@ import {
   decodeReconciliationResult,
   decodeRiskBalancedTrendSignalDecisionsArtifact,
   decodeSimulatedOrdersArtifact,
-  decodeTsmomSignalDecisionsArtifact,
   makeEquitySeriesArtifact,
 } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
 import {
-  QualificationLockSchema,
   QualificationResultSchema,
+  UniverseBoundQualificationLockSchema,
   type QualificationLock,
   type QualificationResult,
 } from '../qualification'
@@ -293,7 +292,7 @@ const MigrationTablesRow = Schema.Struct({
 })
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
-const decodeQualificationLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
+const decodeQualificationLock = Schema.decodeUnknownSync(UniverseBoundQualificationLockSchema, StrictParseOptions)
 const decodeQualificationResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
@@ -379,23 +378,14 @@ const artifactItemCount = (payload: unknown): number => {
 }
 
 interface EvidenceProfile {
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v6'
-  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v5'
-  readonly inputManifestSchemaVersion: 'bayn.input-manifest.v2' | 'bayn.input-manifest.v3'
-  readonly signalDecisionsArtifactName: 'risk-balanced-trend-decisions' | 'tsmom-signal-decisions'
-  readonly signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1' | 'bayn.tsmom-signal-decisions.v1'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v6'
+  readonly summarySchemaVersion: 'bayn.evaluation-summary.v5'
+  readonly inputManifestSchemaVersion: 'bayn.input-manifest.v3'
+  readonly signalDecisionsArtifactName: 'risk-balanced-trend-decisions'
+  readonly signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1'
 }
 
 const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: string): EvidenceProfile => {
-  if (strategyName === 'tsmom' && evaluationSchemaVersion === 'bayn.evaluation.v4') {
-    return {
-      evaluationSchemaVersion,
-      summarySchemaVersion: 'bayn.evaluation-summary.v3',
-      inputManifestSchemaVersion: 'bayn.input-manifest.v2',
-      signalDecisionsArtifactName: 'tsmom-signal-decisions',
-      signalDecisionsSchemaVersion: 'bayn.tsmom-signal-decisions.v1',
-    }
-  }
   if (strategyName === 'risk-balanced-trend' && evaluationSchemaVersion === 'bayn.evaluation.v6') {
     return {
       evaluationSchemaVersion,
@@ -410,7 +400,7 @@ const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: strin
   )
 }
 
-const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQualificationInput => {
+const validateQualificationOpenInput = (input: OpenQualificationInput) => {
   const lock = decodeQualificationLock(input.lock)
   const { inputManifest, parameters, provenance } = input
   if (canonicalHashV1(parameters) !== provenance.strategy.parameterHash) {
@@ -436,15 +426,12 @@ const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQual
   }).runId
   const snapshot = inputManifest.finalizedSnapshot
   const contractMatches =
-    (lock.schemaVersion === 'bayn.qualification-lock.v2' &&
-      inputManifest.schemaVersion === 'bayn.input-manifest.v2' &&
-      provenance.strategy.name === 'tsmom') ||
-    (lock.schemaVersion === 'bayn.qualification-lock.v3' &&
-      inputManifest.schemaVersion === 'bayn.input-manifest.v3' &&
-      provenance.strategy.name === 'risk-balanced-trend' &&
-      lock.universeId === inputManifest.finalizedSnapshot.universeId &&
-      lock.universeSymbolHash === inputManifest.finalizedSnapshot.universeSymbolHash &&
-      lock.data.inputManifestHash === inputManifest.hash)
+    lock.schemaVersion === 'bayn.qualification-lock.v3' &&
+    inputManifest.schemaVersion === 'bayn.input-manifest.v3' &&
+    provenance.strategy.name === 'risk-balanced-trend' &&
+    lock.universeId === inputManifest.finalizedSnapshot.universeId &&
+    lock.universeSymbolHash === inputManifest.finalizedSnapshot.universeSymbolHash &&
+    lock.data.inputManifestHash === inputManifest.hash
   const dataMatches =
     lock.data.snapshotId === snapshot.snapshotId &&
     lock.data.publicationId === snapshot.publicationId &&
@@ -976,7 +963,7 @@ const makeEvidenceStore = Effect.gen(function* () {
   const insertQualificationLock = SqlSchema.findAll({
     Request: Schema.Struct({
       lockId: Sha256,
-      schemaVersion: Schema.Literals(['bayn.qualification-lock.v2', 'bayn.qualification-lock.v3']),
+      schemaVersion: Schema.Literal('bayn.qualification-lock.v3'),
       candidateRunId: Sha256,
       protocolHash: Sha256,
       snapshotId: Sha256,
@@ -1664,10 +1651,7 @@ const makeEvidenceStore = Effect.gen(function* () {
         const equitySeries = yield* decodeEquitySeriesArtifact(equitySeriesArtifact.payload)
         const events = yield* decodeEvaluationEvents(stored.events.map((event) => event.payload))
         const orders = yield* decodeSimulatedOrdersArtifact(ordersArtifact.payload)
-        const signalDecisions =
-          evidenceProfile.signalDecisionsArtifactName === 'tsmom-signal-decisions'
-            ? yield* decodeTsmomSignalDecisionsArtifact(signalDecisionsArtifact.payload)
-            : yield* decodeRiskBalancedTrendSignalDecisionsArtifact(signalDecisionsArtifact.payload)
+        const signalDecisions = yield* decodeRiskBalancedTrendSignalDecisionsArtifact(signalDecisionsArtifact.payload)
         const buyAndHoldSeries = yield* decodeDailyPerformanceSeriesArtifact(buyAndHoldSeriesArtifact.payload)
         const directVolatilitySeries = yield* decodeDailyPerformanceSeriesArtifact(
           directVolatilitySeriesArtifact.payload,
@@ -2040,56 +2024,23 @@ const makeEvidenceStore = Effect.gen(function* () {
   } satisfies EvidenceStoreService
 })
 
-export interface PostgresClientOptions {
-  readonly applicationName?: string
-  readonly readOnly?: boolean
-}
-
-const connectionUrl = (
-  url: Redacted.Redacted<string>,
-  readOnly: boolean,
-): Effect.Effect<Redacted.Redacted<string>, DatabaseError> => {
-  if (!readOnly) return Effect.succeed(url)
-  return Effect.try({
-    try: () => {
-      const parsed = new URL(Redacted.value(url))
-      const existing = parsed.searchParams.get('options')?.trim()
-      parsed.searchParams.set(
-        'options',
-        [existing, '-c default_transaction_read_only=on']
-          .filter((value): value is string => value !== undefined && value.length > 0)
-          .join(' '),
-      )
-      return Redacted.make(parsed.toString())
-    },
-    catch: () => databaseError('unavailable', 'connect', 'invalid PostgreSQL connection URL'),
-  })
-}
-
-export const PostgresClientLive = (
-  config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres'>,
-  options: PostgresClientOptions = {},
-) => {
+export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres'>) => {
   const readCertificate = Effect.gen(function* () {
     if (!config.postgres.tls) return undefined
     const fileSystem = yield* FileSystem.FileSystem
     return yield* fileSystem.readFileString(config.postgres.caPath)
   })
   return Layer.unwrap(
-    Effect.all({
-      ca: readCertificate.pipe(
-        Effect.mapError((cause) =>
-          databaseError('unavailable', 'tls', 'failed to read PostgreSQL CA certificate', cause),
-        ),
+    readCertificate.pipe(
+      Effect.mapError((cause) =>
+        databaseError('unavailable', 'tls', 'failed to read PostgreSQL CA certificate', cause),
       ),
-      url: connectionUrl(config.postgres.url, options.readOnly === true),
-    }).pipe(
-      Effect.map(({ ca, url }) =>
+      Effect.map((ca) =>
         PgClient.layerFrom(
           PgClient.make({
-            url,
+            url: config.postgres.url,
             ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
-            applicationName: options.applicationName ?? 'bayn',
+            applicationName: 'bayn',
             connectTimeout: config.operationTimeoutMs,
             idleTimeout: '30 seconds',
             maxConnections: 2,
@@ -2191,14 +2142,4 @@ const recoverEvidenceStoreLayer = <R>(layer: Layer.Layer<EvidenceStore, Database
 export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
   recoverEvidenceStoreLayer(
     EvidenceStoreDatabaseLayer(config, migrations, makeEvidenceStore).pipe(Layer.provide(PostgresClientLive(config))),
-  )
-
-export const EvidenceStoreReadOnlyLive = (config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres'>) =>
-  EvidenceStoreDatabaseLayer(config, Effect.void, makeEvidenceStore).pipe(
-    Layer.provideMerge(
-      PostgresClientLive(config, {
-        applicationName: 'bayn-ledger-restore',
-        readOnly: true,
-      }),
-    ),
   )

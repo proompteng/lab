@@ -7,6 +7,7 @@ import executionEvents from '../../migrations/0004_execution_events'
 import lockedQualification from '../../migrations/0005_locked_qualification'
 import domainNames from '../../migrations/0006_domain_names'
 import universeBoundQualification from '../../migrations/0007_universe_bound_qualification'
+import currentProtocolOnly from '../../migrations/0008_current_protocol_only'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_evaluation_evidence': evaluationEvidence,
@@ -16,4 +17,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '5_locked_qualification': lockedQualification,
   '6_domain_names': domainNames,
   '7_universe_bound_qualification': universeBoundQualification,
+  '8_current_protocol_only': currentProtocolOnly,
 })
