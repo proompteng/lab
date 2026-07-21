@@ -47,11 +47,11 @@ spec:
               protocol: TCP
           env:
             - name: BAYN_CODE_REVISION
-              value: 0fc400af4fff32109d4009e74e5700b47df64992
+              value: b0dfaac26c8e55c39c55aa75c7b7f3686e784543
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:07562aa643834b3b2a4458b69234c5b3093fc8bb97de574af9c40e6b4de64b54
+              value: sha256:e225540b24f749bb8a1743948c9c01768b443b3d51e42c12f1f4f617a67c9819
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS
@@ -69,21 +69,21 @@ spec:
                   name: bayn-clickhouse-auth
                   key: password
             - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: e6ff31d2b08ec246876c4b45937838f0e3b4f5167c682afd6c2f10c46acaab20
+              value: 0e3188062fb6781f9dfdc048b4bfe9846d8f4ce74c5e429e296e3ebcd75e93a5
             - name: BAYN_SIGNAL_PUBLICATION_ASOF
-              value: "2026-07-17"
+              value: "2026-07-20"
             - name: BAYN_SIGNAL_CALENDAR_VERSION
               value: alpaca-us-equity-calendar-v1
             - name: BAYN_SIGNAL_DATA_START
               value: "2017-01-03"
             - name: BAYN_SIGNAL_DATA_END
-              value: "2026-07-17"
+              value: "2026-07-20"
             - name: BAYN_SIGNAL_LOOKBACK_START
               value: "2017-01-03"
             - name: BAYN_SIGNAL_EVALUATION_START
               value: "2018-01-03"
             - name: BAYN_SIGNAL_EVALUATION_END
-              value: "2026-07-17"
+              value: "2026-07-20"
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
