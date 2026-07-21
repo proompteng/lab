@@ -19,27 +19,28 @@ import {
 import { canonicalHashV1, hashObject } from './hash'
 import { hashTsmomParameters } from './protocol'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import type {
-  CashChange,
-  DailyBar,
-  DailyPerformancePoint,
-  DailyPositionMark,
-  DecisionEvent,
-  EconomicVerdict,
-  EvaluationEvent,
-  EvaluationResult,
-  EvaluationSummary,
-  FeeEvent,
-  FillEvent,
-  GateResult,
-  InputManifest,
-  IsoDate,
-  PerformanceMetrics,
-  SimulatedOrder,
-  SimulationTrace,
-  TsmomDecisionPlan,
-  TsmomProtocol,
-  TsmomSignalDecision,
+import {
+  ContractVersion,
+  type CashChange,
+  type DailyBar,
+  type DailyPerformancePoint,
+  type DailyPositionMark,
+  type DecisionEvent,
+  type EconomicVerdict,
+  type EvaluationEvent,
+  type EvaluationResult,
+  type EvaluationSummary,
+  type FeeEvent,
+  type FillEvent,
+  type GateResult,
+  type InputManifest,
+  type IsoDate,
+  type PerformanceMetrics,
+  type SimulatedOrder,
+  type SimulationTrace,
+  type TsmomDecisionPlan,
+  type TsmomProtocol,
+  type TsmomSignalDecision,
 } from './types'
 
 interface AlignedSession {
@@ -108,10 +109,14 @@ const alignBars = (
     if (actualSymbols.join(',') !== universe.join(',')) {
       throw new Error(`strategy input session ${date} is incomplete`)
     }
-    return {
-      date,
-      bars: Object.fromEntries(universe.map((symbol) => [symbol, session.get(symbol)!])),
-    }
+    const sessionBars = Object.fromEntries(
+      universe.map((symbol) => {
+        const bar = session.get(symbol)
+        if (bar === undefined) throw new Error(`strategy input session ${date} is missing ${symbol}`)
+        return [symbol, bar]
+      }),
+    )
+    return { date, bars: sessionBars }
   })
   if (aligned[0]?.date !== inputManifest.firstSession || aligned.at(-1)?.date !== inputManifest.lastSession) {
     throw new Error('strategy input bounds do not match manifest')
@@ -139,9 +144,11 @@ export const makeTsmomDecision = (
     if (history.some((price) => !Number.isFinite(price) || price <= 0)) {
       throw new Error(`TSMOM decision contains an invalid close for ${symbol}`)
     }
-    const current = history.at(-1)!
+    const current = history.at(-1)
+    if (current === undefined) throw new Error(`TSMOM decision has no current close for ${symbol}`)
     const lookbacks = protocol.lookbacks.map((lookbackSessions) => {
       const prior = history[maximumLookback - lookbackSessions]
+      if (prior === undefined) throw new Error(`TSMOM decision has no ${lookbackSessions}-session close for ${symbol}`)
       const value = current / prior - 1
       return {
         lookbackSessions,
@@ -159,7 +166,7 @@ export const makeTsmomDecision = (
     targetWeight: signal.active ? activeWeight : 0,
   }))
   return {
-    schemaVersion: 'bayn.tsmom-decision-plan.v1',
+    schemaVersion: ContractVersion.TsmomDecisionPlan,
     signalDate,
     targetWeights: Object.fromEntries(signals.map((signal) => [signal.symbol, signal.targetWeight])),
     signals,
@@ -197,9 +204,11 @@ export const calculatePerformanceMetrics = (
   if (equity.length < 2 || equity.some((value) => !Number.isFinite(value) || value <= 0)) {
     throw new Error('evaluation produced an invalid equity curve')
   }
+  const endingEquity = equity.at(-1)
+  if (endingEquity === undefined) throw new Error('evaluation produced an empty equity curve')
   const returns = [equity[0] / initialCapital - 1, ...equity.slice(1).map((value, index) => value / equity[index] - 1)]
-  const totalReturn = equity.at(-1)! / initialCapital - 1
-  const annualizedReturn = Math.pow(equity.at(-1)! / initialCapital, TRADING_DAYS / equity.length) - 1
+  const totalReturn = endingEquity / initialCapital - 1
+  const annualizedReturn = Math.pow(endingEquity / initialCapital, TRADING_DAYS / equity.length) - 1
   const volatility = sampleStandardDeviation(returns) * Math.sqrt(TRADING_DAYS)
   const sharpe = volatility === 0 ? 0 : (mean(returns) * TRADING_DAYS) / volatility
   let peak = initialCapital
@@ -221,7 +230,7 @@ export const calculatePerformanceMetrics = (
     totalSpreadCostMicros: '0',
     totalSlippageCostMicros: '0',
     totalCashYieldMicros: '0',
-    endingEquityMicros: toMicros(equity.at(-1)!),
+    endingEquityMicros: toMicros(endingEquity),
   }
 }
 
@@ -242,13 +251,15 @@ const calculateExactPerformanceMetrics = (
     microsToNumber(totalFeesMicros),
     initialCapital,
   )
+  const endingEquity = equityMicros.at(-1)
+  if (endingEquity === undefined) throw new Error('evaluation produced an empty exact equity curve')
   return {
     ...metrics,
     totalFeesMicros: totalFeesMicros.toString(),
     totalSpreadCostMicros: totalSpreadCostMicros.toString(),
     totalSlippageCostMicros: totalSlippageCostMicros.toString(),
     totalCashYieldMicros: totalCashYieldMicros.toString(),
-    endingEquityMicros: equityMicros.at(-1)!.toString(),
+    endingEquityMicros: endingEquity.toString(),
   }
 }
 
@@ -264,7 +275,7 @@ const makeOrder = (
 ): SimulatedOrder => {
   const outcome = makeOrderOutcome({
     identity: {
-      schemaVersion: 'bayn.partial-fill-seed.v1',
+      schemaVersion: ContractVersion.PartialFillSeed,
       signalDate: decision.signalDate,
       executionDate: decision.executionDate,
       symbol,
@@ -676,7 +687,7 @@ const simulate = (
     dailyPerformance,
     simulation: recordEvents
       ? {
-          schemaVersion: 'bayn.simulation-trace.v3',
+          schemaVersion: ContractVersion.SimulationTrace,
           executionModel: protocol.executionModel,
           costMultiplierMicros: costMultiplierMicros.toString(),
           orders,
@@ -764,7 +775,7 @@ const makeTsmomEvaluationIdentity = (
     throw new Error('input manifest hash does not match its content')
   }
   const runId = makeRunIdentity({
-    schemaVersion: 'bayn.run-identity.v1',
+    schemaVersion: ContractVersion.RunIdentity,
     sourceRevision: provenance.sourceRevision,
     image: provenance.image,
     strategy: {
@@ -917,7 +928,7 @@ export const evaluateTsmom = (
   })
 
   return {
-    schemaVersion: 'bayn.evaluation.v4',
+    schemaVersion: ContractVersion.Evaluation,
     runId,
     codeRevision: provenance.sourceRevision,
     protocolHash,
@@ -942,7 +953,7 @@ export const evaluateTsmom = (
 }
 
 export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({
-  schemaVersion: 'bayn.evaluation-summary.v3',
+  schemaVersion: ContractVersion.EvaluationSummary,
   runId: evaluation.runId,
   evaluationSchemaVersion: evaluation.schemaVersion,
   codeRevision: evaluation.codeRevision,

@@ -2,7 +2,7 @@ import { canonicalHashV1 } from './hash'
 import { evaluateReferenceTsmom } from './qualification-reference'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
 import { makeRuntimeProvenance } from './contracts'
-import type { DailyBar, InputManifest, TsmomProtocol } from './types'
+import { ContractVersion, type DailyBar, type InputManifest, type SimulationTrace, type TsmomProtocol } from './types'
 
 export interface StoredArtifact {
   readonly name: string
@@ -178,11 +178,12 @@ const expectedResultReason = (gateName: string): string =>
 const makeSummary = (
   input: QualificationAuditInput,
   reference: ReturnType<typeof evaluateReferenceTsmom>,
+  trace: SimulationTrace,
   markedEquity: ReturnType<typeof reconcileMarkedEquity>['reconciliation'],
 ) => ({
-  schemaVersion: 'bayn.evaluation-summary.v3',
+  schemaVersion: ContractVersion.EvaluationSummary,
   runId: reference.runId,
-  evaluationSchemaVersion: 'bayn.evaluation.v4',
+  evaluationSchemaVersion: ContractVersion.Evaluation,
   codeRevision: input.database.run.sourceRevision,
   protocolHash: reference.protocolHash,
   initialCapitalMicros: input.protocol.initialCapitalMicros,
@@ -202,9 +203,9 @@ const makeSummary = (
   verdict: reference.verdict,
   eventCount: reference.strategy.events.length,
   signalDecisionCount: reference.strategy.decisions.length,
-  orderCount: reference.strategy.trace!.orders.length,
-  cashChangeCount: reference.strategy.trace!.cashChanges.length,
-  dailyMarkCount: reference.strategy.trace!.dailyMarks.length,
+  orderCount: trace.orders.length,
+  cashChangeCount: trace.cashChanges.length,
+  dailyMarkCount: trace.dailyMarks.length,
   benchmarkSeriesCounts: {
     buyAndHold: reference.buyAndHold.daily.length,
     directVolTiming: reference.directVolTiming.daily.length,
@@ -336,7 +337,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   )
 
   const expectedArtifacts = new Map<string, unknown>([
-    ['evaluation-summary', makeSummary(input, reference, markedEquity.reconciliation)],
+    ['evaluation-summary', makeSummary(input, reference, reference.strategy.trace, markedEquity.reconciliation)],
     ['input-manifest', input.manifest],
     ['strategy', reference.strategy.metrics],
     ['buy-and-hold', reference.buyAndHold.metrics],

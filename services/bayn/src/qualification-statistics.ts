@@ -416,11 +416,13 @@ const buildCompleteBlocks = (series: QualificationSeries): readonly BlockWork[] 
       (observation) => observation.sessionDate >= startSession && observation.sessionDate < nextRebalanceSession,
     )
     if (observations.length === 0 || observations[0].sessionDate !== startSession) continue
+    const lastObservation = observations.at(-1)
+    if (lastObservation === undefined) continue
     const material = {
       schemaVersion: 'bayn.qualification-block.v1',
       ordinal: blocks.length,
       startSession,
-      endSession: observations.at(-1)!.sessionDate,
+      endSession: lastObservation.sessionDate,
       nextRebalanceSession,
       observations,
     }
@@ -586,13 +588,15 @@ const runWalkForward = (
     const drawdown = maximumDrawdown(strategyReturns)
     const positiveExcess = excessReturn > 0
     const drawdownWithinLimit = drawdown <= policy.walkForward.maximumFoldDrawdown
+    const lastTestObservation = test.at(-1)
+    if (lastTestObservation === undefined) throw new Error('walk-forward fold has no test observations')
     const material = {
       schemaVersion: 'bayn.walk-forward-fold.v1' as const,
       ordinal: folds.length,
       trainingStart: series.observations[0].sessionDate,
       trainingEnd: series.observations[testStart - 1].sessionDate,
       testStart: test[0].sessionDate,
-      testEnd: test.at(-1)!.sessionDate,
+      testEnd: lastTestObservation.sessionDate,
       testObservationCount: test.length,
       strategyReturn: roundStatistic(strategyReturn),
       cashReturn: roundStatistic(cashReturn),

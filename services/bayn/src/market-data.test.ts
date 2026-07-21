@@ -7,6 +7,7 @@ import {
   type SnapshotRequest,
   type SnapshotRows,
 } from './market-data'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const symbols = ['EEM', 'SPY'] as const
 const snapshotId = '2fb38a01471d5a6bb6c5aa08a49b6ff844a5a9ee1c6e7bb9ff7786ecdac01bba'
@@ -25,9 +26,9 @@ const producerRows = {
       adjusted_volume: '1000010.00000000',
       trade_count: '1010',
       vwap: '109.90000000',
-      provider: 'alpaca',
-      source_feed: 'sip',
-      adjustment: 'all',
+      provider: DataSource.Alpaca,
+      source_feed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       publication_asof: '2025-01-03',
     },
     {
@@ -41,9 +42,9 @@ const producerRows = {
       adjusted_volume: '1000020.00000000',
       trade_count: '1020',
       vwap: '119.90000000',
-      provider: 'alpaca',
-      source_feed: 'sip',
-      adjustment: 'all',
+      provider: DataSource.Alpaca,
+      source_feed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       publication_asof: '2025-01-03',
     },
     {
@@ -57,9 +58,9 @@ const producerRows = {
       adjusted_volume: '1000011.00000000',
       trade_count: '1011',
       vwap: '110.90000000',
-      provider: 'alpaca',
-      source_feed: 'sip',
-      adjustment: 'all',
+      provider: DataSource.Alpaca,
+      source_feed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       publication_asof: '2025-01-03',
     },
     {
@@ -73,9 +74,9 @@ const producerRows = {
       adjusted_volume: '1000021.00000000',
       trade_count: '1021',
       vwap: '120.90000000',
-      provider: 'alpaca',
-      source_feed: 'sip',
-      adjustment: 'all',
+      provider: DataSource.Alpaca,
+      source_feed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       publication_asof: '2025-01-03',
     },
   ],
@@ -87,7 +88,7 @@ const producerRows = {
       open_time: '09:30',
       close_time: '16:00',
       timezone: 'America/New_York',
-      provider: 'alpaca',
+      provider: DataSource.Alpaca,
     },
     {
       snapshot_id: snapshotId,
@@ -96,19 +97,19 @@ const producerRows = {
       open_time: '09:30',
       close_time: '16:00',
       timezone: 'America/New_York',
-      provider: 'alpaca',
+      provider: DataSource.Alpaca,
     },
   ],
   manifests: [
     {
       snapshot_id: snapshotId,
-      schema_version: 'signal.adjusted-daily-snapshot.v1',
+      schema_version: PublicationSchema.AdjustedDailySnapshotV1,
       publisher_source_revision: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       publisher_image_repository: 'registry.ide-newton.ts.net/lab/signal-publisher',
       publisher_image_digest: `sha256:${'b'.repeat(64)}`,
-      provider: 'alpaca',
-      source_feed: 'sip',
-      adjustment: 'all',
+      provider: DataSource.Alpaca,
+      source_feed: DataFeed.Sip,
+      adjustment: PriceAdjustment.All,
       calendar_version: 'alpaca-us-equity-calendar-v1',
       requested_start: '2025-01-02',
       publication_asof: '2025-01-03',
@@ -167,7 +168,7 @@ describe('finalized Signal snapshot reader', () => {
         publicationId: source.manifest_content_hash,
         contentHash: source.bars_content_hash,
         sessionsContentHash: source.sessions_content_hash,
-        sourceFeed: 'sip',
+        sourceFeed: DataFeed.Sip,
         symbols,
       },
     })

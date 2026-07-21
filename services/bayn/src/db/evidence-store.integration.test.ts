@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
@@ -19,6 +19,7 @@ import {
   PostgresClientLive,
   type PersistEvaluationInput,
 } from './evidence-store'
+import { migrationLoader } from './migrations'
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -143,32 +144,94 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         return yield* sql<{ table_name: string }>`
           SELECT table_name
           FROM information_schema.tables
-          WHERE table_schema = 'public' AND table_name LIKE 'bayn_%'
+          WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
           ORDER BY table_name
         `
       }),
     )
 
     expect(tables.map((row) => row.table_name)).toEqual([
-      'bayn_evaluation_artifacts',
-      'bayn_evaluation_events',
-      'bayn_evaluation_runs',
-      'bayn_gate_outcomes',
-      'bayn_protocol_locks',
-      'bayn_qualification_locks',
-      'bayn_qualification_results',
-      'bayn_qualification_trials',
-      'bayn_schema_migrations',
-      'bayn_snapshot_references',
-      'bayn_status_history',
+      'evaluation_artifacts',
+      'evaluation_events',
+      'evaluation_runs',
+      'gate_outcomes',
+      'protocol_locks',
+      'qualification_locks',
+      'qualification_results',
+      'qualification_trials',
+      'schema_migrations',
+      'snapshot_references',
+      'status_history',
     ])
+  })
+
+  test('hard-migrates the deployed schema without losing data or migration history', async () => {
+    const runId = '9'.repeat(64)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        const deployedMigrations = migrationLoader.pipe(
+          Effect.map((migrations) => migrations.filter(([id]) => id <= 5)),
+        )
+        yield* PgMigrator.run({ loader: deployedMigrations, table: 'bayn_schema_migrations' }).pipe(
+          Effect.provide(NodeServices.layer),
+        )
+        yield* sql`
+          INSERT INTO bayn_protocol_locks (
+            protocol_hash,
+            schema_version,
+            strategy_name,
+            behavior_hash,
+            parameter_hash,
+            parameters
+          ) VALUES (
+            ${runId},
+            'bayn.tsmom.protocol.v2',
+            'tsmom',
+            ${'8'.repeat(64)},
+            ${'7'.repeat(64)},
+            '{}'::jsonb
+          )
+        `
+      }),
+    )
+
+    await runtime.dispose()
+    runtime = makeEvidenceRuntime()
+    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
+
+    const migrated = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const legacyTables = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM pg_catalog.pg_tables
+          WHERE schemaname = 'public' AND tablename LIKE 'bayn\_%' ESCAPE '\'
+        `
+        const migrations = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM schema_migrations
+        `
+        const protocols = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count FROM protocol_locks WHERE protocol_hash = ${runId}
+        `
+        return {
+          legacyTableCount: legacyTables[0]?.count,
+          migrationCount: migrations[0]?.count,
+          protocolCount: protocols[0]?.count,
+        }
+      }),
+    )
+
+    expect(migrated).toEqual({ legacyTableCount: 0, migrationCount: 6, protocolCount: 1 })
   })
 
   test('keeps the audit snapshot repeatable-read and rejects writes', async () => {
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`CREATE TABLE bayn_audit_read_only_probe (id integer PRIMARY KEY)`
+        yield* sql`CREATE TABLE audit_read_only_probe (id integer PRIMARY KEY)`
         const transaction = yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`
@@ -177,12 +240,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                 current_setting('transaction_isolation') AS isolation,
                 current_setting('transaction_read_only') = 'on' AS read_only
             `
-            const write = yield* Effect.exit(sql`INSERT INTO bayn_audit_read_only_probe (id) VALUES (1)`)
+            const write = yield* Effect.exit(sql`INSERT INTO audit_read_only_probe (id) VALUES (1)`)
             return { mode: mode[0], write }
           }),
         )
         const rows = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count FROM bayn_audit_read_only_probe
+          SELECT count(*)::integer AS count FROM audit_read_only_probe
         `
         return { ...transaction, rows }
       }),
@@ -209,10 +272,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         }>`
           SELECT
             run.status,
-            (SELECT count(*)::integer FROM bayn_evaluation_artifacts WHERE run_id = run.run_id) AS artifact_count,
-            (SELECT count(*)::integer FROM bayn_evaluation_events WHERE run_id = run.run_id) AS event_count,
-            (SELECT count(*)::integer FROM bayn_gate_outcomes WHERE run_id = run.run_id) AS gate_count
-          FROM bayn_evaluation_runs AS run
+            (SELECT count(*)::integer FROM evaluation_artifacts WHERE run_id = run.run_id) AS artifact_count,
+            (SELECT count(*)::integer FROM evaluation_events WHERE run_id = run.run_id) AS event_count,
+            (SELECT count(*)::integer FROM gate_outcomes WHERE run_id = run.run_id) AS gate_count
+          FROM evaluation_runs AS run
         `
         const gates = yield* sql<{
           gate_name: string
@@ -227,7 +290,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             required,
             jsonb_typeof(actual) AS actual_type,
             jsonb_typeof(required) AS required_type
-          FROM bayn_gate_outcomes
+          FROM gate_outcomes
           WHERE run_id = ${input.evaluation.runId}
           ORDER BY ordinal
         `
@@ -281,10 +344,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           trials: number
         }>`
           SELECT
-            (SELECT count(*)::integer FROM bayn_qualification_locks) AS locks,
-            (SELECT count(*)::integer FROM bayn_qualification_results) AS results,
-            (SELECT count(*)::integer FROM bayn_evaluation_runs) AS runs,
-            (SELECT count(*)::integer FROM bayn_qualification_trials) AS trials
+            (SELECT count(*)::integer FROM qualification_locks) AS locks,
+            (SELECT count(*)::integer FROM qualification_results) AS results,
+            (SELECT count(*)::integer FROM evaluation_runs) AS runs,
+            (SELECT count(*)::integer FROM qualification_trials) AS trials
         `
         return { before, bypass, counts: counts[0], opened, receipt, reopened, terminal, trials }
       }),
@@ -326,7 +389,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `
         yield* sql`
           CREATE TRIGGER bayn_test_reject_qualification_result
-          BEFORE INSERT ON bayn_qualification_results
+          BEFORE INSERT ON qualification_results
           FOR EACH ROW EXECUTE FUNCTION bayn_test_reject_qualification_result()
         `
         const failure = yield* store.persist(qualification.persist).pipe(Effect.flip)
@@ -341,13 +404,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           statuses: number
         }>`
           SELECT
-            (SELECT count(*)::integer FROM bayn_qualification_locks) AS locks,
-            (SELECT count(*)::integer FROM bayn_qualification_results) AS results,
-            (SELECT count(*)::integer FROM bayn_evaluation_runs) AS runs,
-            (SELECT count(*)::integer FROM bayn_evaluation_artifacts) AS artifacts,
-            (SELECT count(*)::integer FROM bayn_evaluation_events) AS events,
-            (SELECT count(*)::integer FROM bayn_gate_outcomes) AS gates,
-            (SELECT count(*)::integer FROM bayn_status_history) AS statuses
+            (SELECT count(*)::integer FROM qualification_locks) AS locks,
+            (SELECT count(*)::integer FROM qualification_results) AS results,
+            (SELECT count(*)::integer FROM evaluation_runs) AS runs,
+            (SELECT count(*)::integer FROM evaluation_artifacts) AS artifacts,
+            (SELECT count(*)::integer FROM evaluation_events) AS events,
+            (SELECT count(*)::integer FROM gate_outcomes) AS gates,
+            (SELECT count(*)::integer FROM status_history) AS statuses
         `
         return { counts: counts[0], failure, record }
       }),
@@ -442,7 +505,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         })
 
         yield* sql`
-          INSERT INTO bayn_qualification_locks (
+          INSERT INTO qualification_locks (
             lock_id,
             schema_version,
             candidate_run_id,
@@ -476,28 +539,28 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             disposition,
             'PRE_LOCK_RESULT_OBSERVED' = ANY(reason_codes) AS prelock_observed,
             'FAILED_BENCHMARK_GATE' = ANY(reason_codes) AS failed_benchmark
-          FROM bayn_qualification_trials
+          FROM qualification_trials
         `
         const locks = yield* sql<{ lock_id: string; payload: unknown }>`
-          SELECT lock_id, payload FROM bayn_qualification_locks
+          SELECT lock_id, payload FROM qualification_locks
         `
         const results = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count FROM bayn_qualification_results
+          SELECT count(*)::integer AS count FROM qualification_results
         `
         const trialUpdate = yield* Effect.exit(sql`
-          UPDATE bayn_qualification_trials SET disposition = 'BURNED' WHERE run_id = ${input.evaluation.runId}
+          UPDATE qualification_trials SET disposition = 'BURNED' WHERE run_id = ${input.evaluation.runId}
         `)
         const trialDelete = yield* Effect.exit(sql`
-          DELETE FROM bayn_qualification_trials WHERE run_id = ${input.evaluation.runId}
+          DELETE FROM qualification_trials WHERE run_id = ${input.evaluation.runId}
         `)
         const lockUpdate = yield* Effect.exit(sql`
-          UPDATE bayn_qualification_locks SET payload = payload WHERE lock_id = ${lock.lockId}
+          UPDATE qualification_locks SET payload = payload WHERE lock_id = ${lock.lockId}
         `)
         const lockDelete = yield* Effect.exit(sql`
-          DELETE FROM bayn_qualification_locks WHERE lock_id = ${lock.lockId}
+          DELETE FROM qualification_locks WHERE lock_id = ${lock.lockId}
         `)
         const divergentLock = yield* Effect.exit(sql`
-          INSERT INTO bayn_qualification_locks (
+          INSERT INTO qualification_locks (
             lock_id,
             schema_version,
             candidate_run_id,
@@ -734,7 +797,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         yield* store.persist(second)
         return yield* sql<{ protocol_hash: string; behavior_hash: string; parameter_hash: string }>`
           SELECT protocol_hash, behavior_hash, parameter_hash
-          FROM bayn_protocol_locks
+          FROM protocol_locks
           ORDER BY behavior_hash
         `
       }),
@@ -763,36 +826,36 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         yield* store.persist(input)
         const artifactUpdate = yield* Effect.exit(sql`
-          UPDATE bayn_evaluation_artifacts
+          UPDATE evaluation_artifacts
           SET payload = ${sql.json({ corrupted: true })}
           WHERE run_id = ${input.evaluation.runId} AND artifact_name = 'strategy'
         `)
         const snapshotUpdate = yield* Effect.exit(sql`
-          UPDATE bayn_snapshot_references
+          UPDATE snapshot_references
           SET first_session = first_session + 1
           WHERE snapshot_id = ${input.evaluation.inputManifest.finalizedSnapshot.snapshotId}
         `)
         const runUpdate = yield* Effect.exit(sql`
-          UPDATE bayn_evaluation_runs
+          UPDATE evaluation_runs
           SET initial_capital_micros = initial_capital_micros + 1
           WHERE run_id = ${input.evaluation.runId}
         `)
         const statusUpdate = yield* Effect.exit(sql`
-          UPDATE bayn_status_history
+          UPDATE status_history
           SET detail = ${sql.json({ corrupted: true })}
           WHERE run_id = ${input.evaluation.runId} AND status = 'COMPLETE'
         `)
         const eventDelete = yield* Effect.exit(sql`
-          DELETE FROM bayn_evaluation_events WHERE run_id = ${input.evaluation.runId}
+          DELETE FROM evaluation_events WHERE run_id = ${input.evaluation.runId}
         `)
         const gateDelete = yield* Effect.exit(sql`
-          DELETE FROM bayn_gate_outcomes WHERE run_id = ${input.evaluation.runId}
+          DELETE FROM gate_outcomes WHERE run_id = ${input.evaluation.runId}
         `)
         const protocolDelete = yield* Effect.exit(sql`
-          DELETE FROM bayn_protocol_locks WHERE protocol_hash = ${input.evaluation.protocolHash}
+          DELETE FROM protocol_locks WHERE protocol_hash = ${input.evaluation.protocolHash}
         `)
         const runDelete = yield* Effect.exit(sql`
-          DELETE FROM bayn_evaluation_runs WHERE run_id = ${input.evaluation.runId}
+          DELETE FROM evaluation_runs WHERE run_id = ${input.evaluation.runId}
         `)
         const read = yield* store.read(input.evaluation.runId)
         return {
@@ -821,11 +884,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         return yield* Effect.forEach(
           [
-            sql`TRUNCATE bayn_evaluation_runs CASCADE`,
-            sql`TRUNCATE bayn_evaluation_artifacts`,
-            sql`TRUNCATE bayn_qualification_trials`,
-            sql`TRUNCATE bayn_qualification_locks CASCADE`,
-            sql`TRUNCATE bayn_qualification_results`,
+            sql`TRUNCATE evaluation_runs CASCADE`,
+            sql`TRUNCATE evaluation_artifacts`,
+            sql`TRUNCATE qualification_trials`,
+            sql`TRUNCATE qualification_locks CASCADE`,
+            sql`TRUNCATE qualification_results`,
           ],
           Effect.exit,
         )
@@ -859,10 +922,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           events: number
         }>`
           SELECT
-            (SELECT count(*)::integer FROM bayn_evaluation_runs) AS runs,
-            (SELECT count(*)::integer FROM bayn_protocol_locks) AS protocols,
-            (SELECT count(*)::integer FROM bayn_snapshot_references) AS snapshots,
-            (SELECT count(*)::integer FROM bayn_evaluation_events) AS events
+            (SELECT count(*)::integer FROM evaluation_runs) AS runs,
+            (SELECT count(*)::integer FROM protocol_locks) AS protocols,
+            (SELECT count(*)::integer FROM snapshot_references) AS snapshots,
+            (SELECT count(*)::integer FROM evaluation_events) AS events
         `
         return { error, counts: counts[0] }
       }),

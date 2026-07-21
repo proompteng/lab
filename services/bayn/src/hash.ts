@@ -22,25 +22,11 @@ export const hashObject = (value: unknown): string => sha256(canonicalJson(value
 
 const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
-const hasLoneSurrogate = (value: string): boolean => {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1)
-      if (next < 0xdc00 || next > 0xdfff) return true
-      index += 1
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true
-    }
-  }
-  return false
-}
-
 const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: string): string => {
   if (value === null) return 'null'
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (typeof value === 'string') {
-    if (hasLoneSurrogate(value)) throw new TypeError(`${path} contains an invalid Unicode surrogate`)
+    if (!value.isWellFormed()) throw new TypeError(`${path} contains an invalid Unicode surrogate`)
     return JSON.stringify(value)
   }
   if (typeof value === 'number') {
@@ -86,7 +72,7 @@ const serializeCanonicalValue = (value: unknown, ancestors: Set<object>, path: s
     const keys = Reflect.ownKeys(value)
     if (keys.some((key) => typeof key !== 'string')) throw new TypeError(`${path} contains a symbol key`)
     const entries = (keys as string[]).map((key) => {
-      if (hasLoneSurrogate(key)) throw new TypeError(`${path} contains an invalid Unicode key`)
+      if (!key.isWellFormed()) throw new TypeError(`${path} contains an invalid Unicode key`)
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError(`${path}.${key} must be an enumerable data property`)

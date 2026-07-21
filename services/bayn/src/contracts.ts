@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 
-import { canonicalHashV1, canonicalJsonV1 } from './hash'
+import { canonicalHashV1 } from './hash'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 
@@ -18,15 +19,6 @@ const isUtcInstant = (value: string): boolean => {
   return !Number.isNaN(date.getTime()) && date.toISOString() === value
 }
 
-const canCanonicalize = (value: unknown): boolean => {
-  try {
-    canonicalJsonV1(value)
-    return true
-  } catch {
-    return false
-  }
-}
-
 const NonEmptyString = Schema.String.check(
   Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value, {
     expected: 'a non-empty string without surrounding whitespace',
@@ -41,16 +33,16 @@ const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/
 const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
-const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(canCanonicalize, { expected: 'a canonical JSON value' }))
+const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(Schema.is(Schema.Json), { expected: 'a JSON value' }))
 
 const FinalizedSnapshotBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.finalized-snapshot.v2'),
   snapshotId: Sha256Schema,
   publicationId: Sha256Schema,
-  publicationSchemaVersion: NonEmptyString,
-  source: NonEmptyString,
-  sourceFeed: NonEmptyString,
-  adjustment: NonEmptyString,
+  publicationSchemaVersion: Schema.Enum(PublicationSchema),
+  source: Schema.Enum(DataSource),
+  sourceFeed: Schema.Enum(DataFeed),
+  adjustment: Schema.Enum(PriceAdjustment),
   calendarVersion: NonEmptyString,
   publisherSourceRevision: SourceRevision,
   publisherImage: Schema.Struct({

@@ -1,7 +1,7 @@
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Context, Data, Effect, FileSystem, Layer, Option, Schema } from 'effect'
+import { Context, Data, Effect, FileSystem, Layer, Match, Option, Schema } from 'effect'
 import { SqlSchema } from 'effect/unstable/sql'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
 import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
@@ -286,6 +286,10 @@ const QualificationRow = Schema.Struct({
 const CandidateRunCountRow = Schema.Struct({ count: NonNegativeInteger })
 const InsertedLockRow = Schema.Struct({ lock_id: Sha256 })
 const InsertedResultRow = Schema.Struct({ lock_id: Sha256 })
+const MigrationTablesRow = Schema.Struct({
+  current_exists: Schema.Boolean,
+  legacy_exists: Schema.Boolean,
+})
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const decodeQualificationLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
@@ -293,11 +297,25 @@ const decodeQualificationResult = Schema.decodeUnknownSync(QualificationResultSc
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
-const errorCodeOf = (cause: unknown, depth = 0): string | undefined => {
-  if (depth > 4 || typeof cause !== 'object' || cause === null) return undefined
-  if ('code' in cause && typeof cause.code === 'string') return cause.code
-  return 'cause' in cause ? errorCodeOf(cause.cause, depth + 1) : undefined
-}
+const unavailable = (): DatabaseFailure => 'unavailable'
+const constraint = (): DatabaseFailure => 'constraint'
+const query = (): DatabaseFailure => 'query'
+
+const classifySqlReason: (reason: SqlErrorReason) => DatabaseFailure = Match.type<SqlErrorReason>().pipe(
+  Match.tagsExhaustive({
+    AuthenticationError: unavailable,
+    AuthorizationError: unavailable,
+    ConnectionError: unavailable,
+    ConstraintError: constraint,
+    DeadlockError: unavailable,
+    LockTimeoutError: unavailable,
+    SerializationError: unavailable,
+    SqlSyntaxError: query,
+    StatementTimeoutError: unavailable,
+    UniqueViolation: constraint,
+    UnknownError: unavailable,
+  }),
+)
 
 const databaseError = (failure: DatabaseFailure, operation: string, message: string, cause?: unknown): DatabaseError =>
   new DatabaseError({
@@ -311,18 +329,7 @@ const classifyDatabaseError = (operation: string, cause: unknown): DatabaseError
   if (cause instanceof DatabaseError) return cause
   if (Schema.isSchemaError(cause)) return databaseError('decode', operation, 'database row decoding failed', cause)
   if (isSqlError(cause)) {
-    const code = errorCodeOf(cause.reason)
-    const failure: DatabaseFailure =
-      cause.reason._tag === 'UniqueViolation' || cause.reason._tag === 'ConstraintError'
-        ? 'constraint'
-        : cause.reason._tag === 'SqlSyntaxError' ||
-            (cause.reason._tag === 'UnknownError' &&
-              code !== undefined &&
-              !code.startsWith('E') &&
-              !code.startsWith('08'))
-          ? 'query'
-          : 'unavailable'
-    return databaseError(failure, operation, 'PostgreSQL operation failed', cause)
+    return databaseError(classifySqlReason(cause.reason), operation, 'PostgreSQL operation failed', cause)
   }
   return databaseError('invariant', operation, 'unexpected database result', cause)
 }
@@ -686,7 +693,7 @@ const makeEvidenceStore = Effect.gen(function* () {
   const getProtocol = SqlSchema.findOne({
     Request: Schema.Struct({ protocolHash: Sha256 }),
     Result: ProtocolRow,
-    execute: ({ protocolHash }) => sql`SELECT * FROM bayn_protocol_locks WHERE protocol_hash = ${protocolHash}`,
+    execute: ({ protocolHash }) => sql`SELECT * FROM protocol_locks WHERE protocol_hash = ${protocolHash}`,
   })
   const getSnapshot = SqlSchema.findOne({
     Request: Schema.Struct({ snapshotId: Sha256 }),
@@ -706,7 +713,7 @@ const makeEvidenceStore = Effect.gen(function* () {
         first_session::text,
         last_session::text,
         manifest
-      FROM bayn_snapshot_references
+      FROM snapshot_references
       WHERE snapshot_id = ${snapshotId}
     `,
   })
@@ -727,7 +734,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     }),
     Result: InsertedRun,
     execute: (request) => sql`
-      INSERT INTO bayn_evaluation_runs (
+      INSERT INTO evaluation_runs (
         run_id,
         protocol_hash,
         snapshot_id,
@@ -764,18 +771,18 @@ const makeEvidenceStore = Effect.gen(function* () {
     Request: RunRequest,
     Result: InsertedRun,
     execute: ({ runId }) => sql`
-      UPDATE bayn_evaluation_runs AS run
+      UPDATE evaluation_runs AS run
       SET status = 'COMPLETE', completed_at = transaction_timestamp()
       WHERE run.run_id = ${runId}
         AND run.status = 'WRITING'
         AND run.expected_artifact_count = (
-          SELECT count(*)::integer FROM bayn_evaluation_artifacts WHERE run_id = ${runId}
+          SELECT count(*)::integer FROM evaluation_artifacts WHERE run_id = ${runId}
         )
         AND run.expected_event_count = (
-          SELECT count(*)::integer FROM bayn_evaluation_events WHERE run_id = ${runId}
+          SELECT count(*)::integer FROM evaluation_events WHERE run_id = ${runId}
         )
         AND run.expected_gate_count = (
-          SELECT count(*)::integer FROM bayn_gate_outcomes WHERE run_id = ${runId}
+          SELECT count(*)::integer FROM gate_outcomes WHERE run_id = ${runId}
         )
       RETURNING run.run_id
     `,
@@ -798,10 +805,10 @@ const makeEvidenceStore = Effect.gen(function* () {
         run.expected_artifact_count,
         run.expected_event_count,
         run.expected_gate_count,
-        (SELECT count(*)::integer FROM bayn_evaluation_artifacts WHERE run_id = run.run_id) AS artifact_count,
-        (SELECT count(*)::integer FROM bayn_evaluation_events WHERE run_id = run.run_id) AS event_count,
-        (SELECT count(*)::integer FROM bayn_gate_outcomes WHERE run_id = run.run_id) AS gate_count
-      FROM bayn_evaluation_runs AS run
+        (SELECT count(*)::integer FROM evaluation_artifacts WHERE run_id = run.run_id) AS artifact_count,
+        (SELECT count(*)::integer FROM evaluation_events WHERE run_id = run.run_id) AS event_count,
+        (SELECT count(*)::integer FROM gate_outcomes WHERE run_id = run.run_id) AS gate_count
+      FROM evaluation_runs AS run
       WHERE run.run_id = ${runId}
     `,
   })
@@ -810,7 +817,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: ArtifactReferenceRow,
     execute: ({ runId }) => sql`
       SELECT artifact_name, schema_version, content_hash, payload
-      FROM bayn_evaluation_artifacts
+      FROM evaluation_artifacts
       WHERE run_id = ${runId}
       ORDER BY artifact_name
     `,
@@ -823,8 +830,8 @@ const makeEvidenceStore = Effect.gen(function* () {
         artifact.schema_version,
         artifact.content_hash,
         jsonb_array_length(artifact.payload -> 'items')::integer AS item_count
-      FROM bayn_evaluation_artifacts AS artifact
-      JOIN bayn_evaluation_runs AS run USING (run_id)
+      FROM evaluation_artifacts AS artifact
+      JOIN evaluation_runs AS run USING (run_id)
       WHERE artifact.run_id = ${runId}
         AND artifact.artifact_name = ${artifactName}
         AND run.status = 'COMPLETE'
@@ -841,7 +848,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: ArtifactItemRow,
     execute: ({ runId, artifactName, afterOrdinal, limit }) => sql`
       SELECT (item.ordinality - 1)::integer AS ordinal, item.payload
-      FROM bayn_evaluation_artifacts AS artifact
+      FROM evaluation_artifacts AS artifact
       CROSS JOIN LATERAL jsonb_array_elements(artifact.payload -> 'items')
         WITH ORDINALITY AS item(payload, ordinality)
       WHERE artifact.run_id = ${runId}
@@ -856,7 +863,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: EventReferenceRow,
     execute: ({ runId }) => sql`
       SELECT ordinal, event_id, event_kind, content_hash, payload
-      FROM bayn_evaluation_events
+      FROM evaluation_events
       WHERE run_id = ${runId}
       ORDER BY ordinal
     `,
@@ -866,7 +873,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: GateReferenceRow,
     execute: ({ runId }) => sql`
       SELECT ordinal, gate_name, passed, actual, required, content_hash
-      FROM bayn_gate_outcomes
+      FROM gate_outcomes
       WHERE run_id = ${runId}
       ORDER BY ordinal
     `,
@@ -875,7 +882,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Request: RunRequest,
     Result: StatusReferenceRow,
     execute: ({ runId }) => sql`
-      SELECT status, detail FROM bayn_status_history WHERE run_id = ${runId} ORDER BY sequence
+      SELECT status, detail FROM status_history WHERE run_id = ${runId} ORDER BY sequence
     `,
   })
   const getPriorTrials = SqlSchema.findAll({
@@ -884,9 +891,9 @@ const makeEvidenceStore = Effect.gen(function* () {
     execute: () => sql`
       SELECT run_id
       FROM (
-        SELECT run_id FROM bayn_qualification_trials
+        SELECT run_id FROM qualification_trials
         UNION
-        SELECT run_id FROM bayn_qualification_results
+        SELECT run_id FROM qualification_results
       ) AS trials
       ORDER BY run_id
     `,
@@ -896,8 +903,8 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: QualificationRow,
     execute: ({ candidateRunId }) => sql`
       SELECT lock.payload AS lock_payload, result.payload AS result_payload
-      FROM bayn_qualification_locks AS lock
-      LEFT JOIN bayn_qualification_results AS result USING (lock_id)
+      FROM qualification_locks AS lock
+      LEFT JOIN qualification_results AS result USING (lock_id)
       WHERE lock.candidate_run_id = ${candidateRunId}
     `,
   })
@@ -906,8 +913,8 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: QualificationRow,
     execute: ({ candidateRunId, snapshotId }) => sql`
       SELECT lock.payload AS lock_payload, result.payload AS result_payload
-      FROM bayn_qualification_locks AS lock
-      LEFT JOIN bayn_qualification_results AS result USING (lock_id)
+      FROM qualification_locks AS lock
+      LEFT JOIN qualification_results AS result USING (lock_id)
       WHERE lock.candidate_run_id = ${candidateRunId} OR lock.snapshot_id = ${snapshotId}
       ORDER BY lock.lock_id
     `,
@@ -926,7 +933,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     }),
     Result: InsertedLockRow,
     execute: (request) => sql`
-      INSERT INTO bayn_qualification_locks (
+      INSERT INTO qualification_locks (
         lock_id,
         schema_version,
         candidate_run_id,
@@ -963,7 +970,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     }),
     Result: InsertedResultRow,
     execute: (request) => sql`
-      INSERT INTO bayn_qualification_results (
+      INSERT INTO qualification_results (
         lock_id,
         schema_version,
         run_id,
@@ -988,7 +995,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Request: Schema.Struct({ candidateRunId: Sha256 }),
     Result: CandidateRunCountRow,
     execute: ({ candidateRunId }) => sql`
-      SELECT count(*)::integer AS count FROM bayn_evaluation_runs WHERE run_id = ${candidateRunId}
+      SELECT count(*)::integer AS count FROM evaluation_runs WHERE run_id = ${candidateRunId}
     `,
   })
   const getIncompleteQualificationCount = SqlSchema.findOne({
@@ -996,8 +1003,8 @@ const makeEvidenceStore = Effect.gen(function* () {
     Result: CandidateRunCountRow,
     execute: () => sql`
       SELECT count(*)::integer AS count
-      FROM bayn_qualification_locks AS lock
-      LEFT JOIN bayn_qualification_results AS result USING (lock_id)
+      FROM qualification_locks AS lock
+      LEFT JOIN qualification_results AS result USING (lock_id)
       WHERE result.lock_id IS NULL
     `,
   })
@@ -1032,7 +1039,7 @@ const makeEvidenceStore = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       yield* sql`
-        INSERT INTO bayn_protocol_locks (
+        INSERT INTO protocol_locks (
           protocol_hash,
           schema_version,
           strategy_name,
@@ -1071,7 +1078,7 @@ const makeEvidenceStore = Effect.gen(function* () {
     Effect.gen(function* () {
       const snapshot = inputManifest.finalizedSnapshot
       yield* sql`
-        INSERT INTO bayn_snapshot_references (
+        INSERT INTO snapshot_references (
           snapshot_id,
           schema_version,
           database_name,
@@ -1384,8 +1391,8 @@ const makeEvidenceStore = Effect.gen(function* () {
               parameters: plan.parameters,
             })
             yield* ensureSnapshotReference(plan.inputManifest)
-            yield* sql`LOCK TABLE bayn_qualification_trials IN SHARE MODE`
-            yield* sql`LOCK TABLE bayn_qualification_locks IN SHARE ROW EXCLUSIVE MODE`
+            yield* sql`LOCK TABLE qualification_trials IN SHARE MODE`
+            yield* sql`LOCK TABLE qualification_locks IN SHARE ROW EXCLUSIVE MODE`
 
             const existingRows = yield* getQualificationByIdentity({
               candidateRunId: lock.candidateRunId,
@@ -1531,6 +1538,11 @@ const makeEvidenceStore = Effect.gen(function* () {
           ['tsmom-signal-decisions', 'bayn.tsmom-signal-decisions.v1'],
         ])
         const artifacts = new Map(stored.artifacts.map((artifact) => [artifact.name, artifact]))
+        const requiredValue = <A>(value: A | undefined, description: string): Effect.Effect<A, DatabaseError> =>
+          value === undefined
+            ? Effect.fail(databaseError('invariant', 'recover-evidence', `stored run is missing ${description}`))
+            : Effect.succeed(value)
+        const requiredArtifact = (name: string) => requiredValue(artifacts.get(name), `artifact ${name}`)
         yield* ensure(
           artifacts.size === requiredArtifacts.size &&
             [...requiredArtifacts].every(
@@ -1550,29 +1562,56 @@ const makeEvidenceStore = Effect.gen(function* () {
           'recover-evidence',
           'stored run does not match the current runtime identity',
         )
-        const evaluation = yield* decodeEvaluationSummary(artifacts.get('evaluation-summary')!.payload)
-        const reconciliation = yield* decodeReconciliationResult(artifacts.get('reconciliation')!.payload)
-        const markedEquity = yield* decodeMarkedEquityReconciliation(
-          artifacts.get('marked-equity-reconciliation')!.payload,
-        )
-        const equitySeries = yield* decodeEquitySeriesArtifact(artifacts.get('equity-series')!.payload)
+        const [
+          evaluationArtifact,
+          reconciliationArtifact,
+          markedEquityArtifact,
+          equitySeriesArtifact,
+          ordersArtifact,
+          signalDecisionsArtifact,
+          buyAndHoldSeriesArtifact,
+          directVolatilitySeriesArtifact,
+          doubleCostSeriesArtifact,
+          artifactManifestArtifact,
+          cashChangesArtifact,
+          dailyMarksArtifact,
+          inputManifestArtifact,
+          strategyArtifact,
+          buyAndHoldArtifact,
+          directVolatilityArtifact,
+          doubleCostArtifact,
+        ] = yield* Effect.all([
+          requiredArtifact('evaluation-summary'),
+          requiredArtifact('reconciliation'),
+          requiredArtifact('marked-equity-reconciliation'),
+          requiredArtifact('equity-series'),
+          requiredArtifact('simulated-orders'),
+          requiredArtifact('tsmom-signal-decisions'),
+          requiredArtifact('buy-and-hold-series'),
+          requiredArtifact('direct-volatility-timing-series'),
+          requiredArtifact('double-cost-strategy-series'),
+          requiredArtifact('qualification-artifact-manifest'),
+          requiredArtifact('cash-changes'),
+          requiredArtifact('daily-position-marks'),
+          requiredArtifact('input-manifest'),
+          requiredArtifact('strategy'),
+          requiredArtifact('buy-and-hold'),
+          requiredArtifact('direct-volatility-timing'),
+          requiredArtifact('double-cost-strategy'),
+        ])
+        const evaluation = yield* decodeEvaluationSummary(evaluationArtifact.payload)
+        const reconciliation = yield* decodeReconciliationResult(reconciliationArtifact.payload)
+        const markedEquity = yield* decodeMarkedEquityReconciliation(markedEquityArtifact.payload)
+        const equitySeries = yield* decodeEquitySeriesArtifact(equitySeriesArtifact.payload)
         const events = yield* decodeEvaluationEvents(stored.events.map((event) => event.payload))
-        const orders = yield* decodeSimulatedOrdersArtifact(artifacts.get('simulated-orders')!.payload)
-        const signalDecisions = yield* decodeTsmomSignalDecisionsArtifact(
-          artifacts.get('tsmom-signal-decisions')!.payload,
-        )
-        const buyAndHoldSeries = yield* decodeDailyPerformanceSeriesArtifact(
-          artifacts.get('buy-and-hold-series')!.payload,
-        )
+        const orders = yield* decodeSimulatedOrdersArtifact(ordersArtifact.payload)
+        const signalDecisions = yield* decodeTsmomSignalDecisionsArtifact(signalDecisionsArtifact.payload)
+        const buyAndHoldSeries = yield* decodeDailyPerformanceSeriesArtifact(buyAndHoldSeriesArtifact.payload)
         const directVolatilitySeries = yield* decodeDailyPerformanceSeriesArtifact(
-          artifacts.get('direct-volatility-timing-series')!.payload,
+          directVolatilitySeriesArtifact.payload,
         )
-        const doubleCostSeries = yield* decodeDailyPerformanceSeriesArtifact(
-          artifacts.get('double-cost-strategy-series')!.payload,
-        )
-        const artifactManifest = yield* decodeQualificationArtifactManifest(
-          artifacts.get('qualification-artifact-manifest')!.payload,
-        )
+        const doubleCostSeries = yield* decodeDailyPerformanceSeriesArtifact(doubleCostSeriesArtifact.payload)
+        const artifactManifest = yield* decodeQualificationArtifactManifest(artifactManifestArtifact.payload)
         const storedExecutionModel = yield* Effect.try({
           try: () => protocolExecutionModel(stored.protocol.parameters),
           catch: (cause) => databaseError('invariant', 'recover-evidence', 'stored execution model is invalid', cause),
@@ -1588,9 +1627,9 @@ const makeEvidenceStore = Effect.gen(function* () {
           'recover-evidence',
           'stored protocol lock or execution model diverged',
         )
-        const cashChanges = yield* decodeCashChangesArtifact(artifacts.get('cash-changes')!.payload)
-        const dailyMarks = yield* decodeDailyPositionMarksArtifact(artifacts.get('daily-position-marks')!.payload)
-        const inputManifest = yield* decodeInputManifestArtifact(artifacts.get('input-manifest')!.payload)
+        const cashChanges = yield* decodeCashChangesArtifact(cashChangesArtifact.payload)
+        const dailyMarks = yield* decodeDailyPositionMarksArtifact(dailyMarksArtifact.payload)
+        const inputManifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
         const expectedArtifactManifest = {
           schemaVersion: 'bayn.qualification-artifact-manifest.v1',
           identity: {
@@ -1660,7 +1699,7 @@ const makeEvidenceStore = Effect.gen(function* () {
           catch: (cause) =>
             databaseError('invariant', 'recover-evidence', 'stored marked-equity reconstruction failed', cause),
         })
-        const finalPoint = equitySeries.items.at(-1)!
+        const finalPoint = yield* requiredValue(equitySeries.items.at(-1), 'final equity-series point')
         const decisionEvents = events.filter((event) => event.kind === 'decision')
         const candidateDates = dailyMarks.items.map((point) => point.sessionDate)
         yield* ensure(
@@ -1702,10 +1741,10 @@ const makeEvidenceStore = Effect.gen(function* () {
             ) &&
             evaluation.markedEquityReconciliation.runId === runId &&
             canonicalHashV1(evaluation.markedEquityReconciliation) === canonicalHashV1(markedEquity) &&
-            canonicalHashV1(evaluation.strategy) === artifacts.get('strategy')!.contentHash &&
-            canonicalHashV1(evaluation.buyAndHold) === artifacts.get('buy-and-hold')!.contentHash &&
-            canonicalHashV1(evaluation.directVolTiming) === artifacts.get('direct-volatility-timing')!.contentHash &&
-            canonicalHashV1(evaluation.doubleCostStrategy) === artifacts.get('double-cost-strategy')!.contentHash &&
+            canonicalHashV1(evaluation.strategy) === strategyArtifact.contentHash &&
+            canonicalHashV1(evaluation.buyAndHold) === buyAndHoldArtifact.contentHash &&
+            canonicalHashV1(evaluation.directVolTiming) === directVolatilityArtifact.contentHash &&
+            canonicalHashV1(evaluation.doubleCostStrategy) === doubleCostArtifact.contentHash &&
             stored.gates.length === evaluation.verdict.gates.length &&
             stored.gates.every(
               (gate, index) =>
@@ -1816,7 +1855,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             }
 
             yield* sql`
-            INSERT INTO bayn_status_history (run_id, status, detail)
+            INSERT INTO status_history (run_id, status, detail)
             VALUES (
               ${plan.evaluation.runId},
               'WRITING',
@@ -1830,7 +1869,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             yield* Effect.forEach(
               plan.artifacts,
               (artifact) => sql`
-              INSERT INTO bayn_evaluation_artifacts (
+              INSERT INTO evaluation_artifacts (
                 run_id,
                 artifact_name,
                 schema_version,
@@ -1849,7 +1888,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             yield* Effect.forEach(
               plan.events,
               (event) => sql`
-              INSERT INTO bayn_evaluation_events (
+              INSERT INTO evaluation_events (
                 run_id,
                 ordinal,
                 event_id,
@@ -1870,7 +1909,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             yield* Effect.forEach(
               plan.gates,
               (gate) => sql`
-              INSERT INTO bayn_gate_outcomes (
+              INSERT INTO gate_outcomes (
                 run_id,
                 ordinal,
                 gate_name,
@@ -1897,7 +1936,7 @@ const makeEvidenceStore = Effect.gen(function* () {
               'run could not be completed with exact evidence counts',
             )
             yield* sql`
-            INSERT INTO bayn_status_history (run_id, status, detail)
+            INSERT INTO status_history (run_id, status, detail)
             VALUES (
               ${plan.evaluation.runId},
               'COMPLETE',
@@ -1968,11 +2007,36 @@ export const PostgresClientLive = (config: RuntimeConfig) => {
   )
 }
 
-const migrations = PgMigrator.run({ loader: migrationLoader, table: 'bayn_schema_migrations' }).pipe(
+const migrate = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const inspectMigrationTables = SqlSchema.findOne({
+    Request: Schema.Void,
+    Result: MigrationTablesRow,
+    execute: () => sql`
+      SELECT
+        to_regclass('public.schema_migrations') IS NOT NULL AS current_exists,
+        to_regclass('public.bayn_schema_migrations') IS NOT NULL AS legacy_exists
+    `,
+  })
+  const state = yield* inspectMigrationTables(undefined)
+  if (state.current_exists && state.legacy_exists) {
+    return yield* Effect.fail(databaseError('migration', 'migrate', 'both current and legacy migration tables exist'))
+  }
+
+  const table = state.legacy_exists ? 'bayn_schema_migrations' : 'schema_migrations'
+  yield* PgMigrator.run({ loader: migrationLoader, table })
+  if (state.legacy_exists) {
+    yield* sql`ALTER TABLE bayn_schema_migrations RENAME TO schema_migrations`
+  }
+})
+
+const migrations = migrate.pipe(
   Effect.mapError((cause) =>
-    isSqlError(cause)
-      ? classifyDatabaseError('migrate', cause)
-      : databaseError('migration', 'migrate', 'PostgreSQL migration failed', cause),
+    cause instanceof DatabaseError
+      ? cause
+      : isSqlError(cause)
+        ? classifyDatabaseError('migrate', cause)
+        : databaseError('migration', 'migrate', 'PostgreSQL migration failed', cause),
   ),
   Effect.asVoid,
 )

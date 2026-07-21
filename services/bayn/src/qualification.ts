@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from './contracts'
-import { canonicalHashV1, canonicalJsonV1 } from './hash'
+import { canonicalHashV1 } from './hash'
 import {
   QualificationAnalysisSchema,
   defaultQualificationStatisticsPolicy,
@@ -20,19 +20,7 @@ const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/
 const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 const MinimumSessions = Schema.Int.check(Schema.isGreaterThanOrEqualTo(504))
 const MinimumRebalances = Schema.Int.check(Schema.isGreaterThanOrEqualTo(24))
-const CanonicalJson = Schema.Unknown.check(
-  Schema.makeFilter(
-    (value: unknown) => {
-      try {
-        canonicalJsonV1(value)
-        return true
-      } catch {
-        return false
-      }
-    },
-    { expected: 'a canonical JSON value' },
-  ),
-)
+const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(Schema.is(Schema.Json), { expected: 'a JSON value' }))
 
 const PolicyDocumentBase = Schema.Struct({
   schemaVersion: NonEmptyString,

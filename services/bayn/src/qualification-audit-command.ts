@@ -169,15 +169,15 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
                 run.strategy_name,
                 run.initial_capital_micros::text AS initial_capital_micros,
                 run.status,
-                (SELECT count(*)::integer FROM bayn_evaluation_artifacts WHERE run_id = run.run_id) AS artifact_count,
-                (SELECT count(*)::integer FROM bayn_evaluation_events WHERE run_id = run.run_id) AS event_count,
-                (SELECT count(*)::integer FROM bayn_gate_outcomes WHERE run_id = run.run_id) AS gate_count,
+                (SELECT count(*)::integer FROM evaluation_artifacts WHERE run_id = run.run_id) AS artifact_count,
+                (SELECT count(*)::integer FROM evaluation_events WHERE run_id = run.run_id) AS event_count,
+                (SELECT count(*)::integer FROM gate_outcomes WHERE run_id = run.run_id) AS gate_count,
                 protocol.schema_version,
                 protocol.behavior_hash,
                 protocol.parameter_hash,
                 protocol.parameters
-              FROM bayn_evaluation_runs AS run
-              JOIN bayn_protocol_locks AS protocol USING (protocol_hash)
+              FROM evaluation_runs AS run
+              JOIN protocol_locks AS protocol USING (protocol_hash)
               WHERE run.run_id = ${runId}
             `,
           ),
@@ -186,7 +186,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
         const artifacts = decodeArtifactRows(
           yield* sql`
             SELECT artifact_name, schema_version, content_hash, payload
-            FROM bayn_evaluation_artifacts
+            FROM evaluation_artifacts
             WHERE run_id = ${runId}
             ORDER BY artifact_name
           `,
@@ -194,7 +194,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
         const events = decodeEventRows(
           yield* sql`
             SELECT ordinal, event_id, event_kind, content_hash, payload
-            FROM bayn_evaluation_events
+            FROM evaluation_events
             WHERE run_id = ${runId}
             ORDER BY ordinal
           `,
@@ -202,7 +202,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
         const gates = decodeGateRows(
           yield* sql`
             SELECT ordinal, gate_name, passed, actual, required, content_hash
-            FROM bayn_gate_outcomes
+            FROM gate_outcomes
             WHERE run_id = ${runId}
             ORDER BY ordinal
           `,
@@ -210,7 +210,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
         const statuses = decodeStatusRows(
           yield* sql`
             SELECT status, detail
-            FROM bayn_status_history
+            FROM status_history
             WHERE run_id = ${runId}
             ORDER BY sequence
           `,
@@ -218,9 +218,9 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
         const trials = decodeTrialRows(
           yield* sql`
             SELECT run_id
-            FROM bayn_qualification_trials
+            FROM qualification_trials
             WHERE observed_at < (
-              SELECT created_at FROM bayn_qualification_locks WHERE candidate_run_id = ${runId}
+              SELECT created_at FROM qualification_locks WHERE candidate_run_id = ${runId}
             )
             ORDER BY run_id
           `,
@@ -237,8 +237,8 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
                 result.verdict,
                 lock.payload AS lock_payload,
                 result.payload AS result_payload
-              FROM bayn_qualification_locks AS lock
-              JOIN bayn_qualification_results AS result USING (lock_id)
+              FROM qualification_locks AS lock
+              JOIN qualification_results AS result USING (lock_id)
               WHERE lock.candidate_run_id = ${runId}
             `,
           ),
