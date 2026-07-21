@@ -5,6 +5,8 @@ metadata:
   namespace: torghut
   labels:
     app: torghut-ws
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
 spec:
   replicas: 1
   revisionHistoryLimit: 2

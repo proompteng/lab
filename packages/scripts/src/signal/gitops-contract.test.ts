@@ -247,6 +247,12 @@ describe('Signal publisher GitOps authority contract', () => {
       valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'password' } },
     })
     expect(websocket.data.ALPACA_OBSERVATION_FEEDS).toBe('delayed_sip')
+    expect(archive.metadata.annotations).toMatchObject({
+      'argocd.argoproj.io/sync-wave': '4',
+    })
+    expect(websocketDeployment.metadata.annotations).toMatchObject({
+      'argocd.argoproj.io/sync-wave': '5',
+    })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
       'torghut.proompteng.ai/ws-config-generation': 'bayn-delayed-sip-v1',
     })
