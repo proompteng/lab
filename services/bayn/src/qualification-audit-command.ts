@@ -13,6 +13,7 @@ import {
   type RepositoryAudit,
   type SignalAccessRecord,
 } from './qualification-audit'
+import { makeQualificationDossier } from './qualification-dossier'
 import type { InputManifest, TsmomProtocol } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
@@ -97,6 +98,7 @@ const exactlyOne = <A>(values: readonly A[], name: string): A => {
 }
 
 const config = Config.all({
+  output: Config.schema(Schema.Literals(['audit', 'dossier']), 'BAYN_AUDIT_OUTPUT').pipe(Config.withDefault('audit')),
   runId: Config.schema(Sha256, 'BAYN_AUDIT_RUN_ID'),
   postgresUrl: Config.redacted('BAYN_AUDIT_POSTGRES_URL'),
   postgresTls: Config.boolean('BAYN_AUDIT_POSTGRES_TLS').pipe(Config.withDefault(false)),
@@ -452,7 +454,7 @@ const main = Effect.gen(function* () {
     database.qualification.lockCreatedAt,
     [database.run.runId, String(result.resultHash), String(analysis.analysisHash)],
   )
-  const report = auditQualification({
+  const auditInput = {
     bars: signal.bars,
     manifest: signal.manifest,
     protocol,
@@ -460,10 +462,13 @@ const main = Effect.gen(function* () {
     signalAccess,
     signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
-  })
+  }
+  const report = input.output === 'dossier' ? makeQualificationDossier(auditInput) : auditQualification(auditInput)
   const stdio = yield* Stdio.Stdio
   yield* Stream.run(Stream.make(`${JSON.stringify(report)}\n`), stdio.stdout())
-  if (report.status !== 'PASS') return yield* Effect.fail(new Error('qualification audit failed'))
+  if (input.output === 'audit' && 'status' in report && report.status !== 'PASS') {
+    return yield* Effect.fail(new Error('qualification audit failed'))
+  }
 })
 
 const program = main.pipe(

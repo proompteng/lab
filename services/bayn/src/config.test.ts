@@ -44,6 +44,7 @@ describe('Effect configuration', () => {
 
     expect(config.host).toBe('0.0.0.0')
     expect(config.port).toBe(8080)
+    expect(config.qualificationRunId).toBeUndefined()
     expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
     expect(config.clickhouse).toMatchObject({
@@ -68,6 +69,15 @@ describe('Effect configuration', () => {
     expect(config.tigerBeetle.clusterId).toBe(2001n)
     expect(config.tigerBeetle.replicaAddresses).toEqual(['tigerbeetle.test:3000'])
     expect(config.build).toEqual({ ...buildMetadata, imageDigest, verification: 'embedded' })
+  })
+
+  test('loads an optional pinned terminal qualification run', async () => {
+    const pinned = new Map(runtimeEnvironment)
+    pinned.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), pinned))
+
+    expect(config.qualificationRunId).toBe('e'.repeat(64))
   })
 
   test('supports an explicit, visibly unverified development provenance path', async () => {
@@ -106,6 +116,18 @@ describe('Effect configuration', () => {
   test('returns a typed configuration failure for invalid values', async () => {
     const invalid = new Map(runtimeEnvironment)
     invalid.set('BAYN_OPERATION_TIMEOUT_MS', '0')
+
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'load',
+    })
+  })
+
+  test('rejects an invalid pinned qualification run ID', async () => {
+    const invalid = new Map(runtimeEnvironment)
+    invalid.set('BAYN_QUALIFICATION_RUN_ID', 'not-a-run-id')
 
     const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
     expect(error).toMatchObject({

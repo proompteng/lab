@@ -30,6 +30,9 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   data, lookback, and evaluation bounds before exposing numeric bars.
 - The run ID binds source and image identity, compiled strategy behavior and decoded parameters, complete finalized
   snapshot provenance, calendar version, and explicit bounds.
+- `BAYN_QUALIFICATION_RUN_ID` optionally pins one terminal qualification across operational image updates. Startup
+  verifies the stored strategy and Signal bindings, then recovers it without inspecting bars, opening a lock,
+  evaluating, journaling, or persisting.
 - One pure compiled TSMOM decision function records each lookback return, direction vote, score, active symbol, and
   target weight at a month-end close. Historical evaluation uses that function directly; any later paper planner must
   reuse it. Decisions may execute only at the next exchange session open.
@@ -72,7 +75,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 - `GET /livez`: process liveness.
 - `GET /readyz`: current dependency, evidence, and accounting readiness.
 - `GET /v1/status`: operational dependencies, data and evidence identity, terminal qualification, economic verdict,
-  accounting, build provenance, and fixed observe-only authority.
+  accounting, current build provenance, qualification-execution provenance, explicit execution eligibility, and fixed
+  observe-only authority.
 - `GET /v1/evaluations/:runId`: complete content-hashed evidence for one exact run ID. The service is ClusterIP-only
   and the Bayn network policy limits HTTP ingress to the namespace.
 
@@ -109,6 +113,11 @@ BAYN_AUDIT_REPOSITORY_PATH=<lab-checkout> \
 The audit command is not part of the deployed runtime and never calls TigerBeetle or a broker. Its privileged
 ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal
 read-only identity.
+
+Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v1`. The deterministic dossier
+binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
+verdict, and observe-only authority. GitOps publishes the reviewed JSON as the content-hashed
+`bayn-qualification-dossier` ConfigMap.
 
 The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
 
