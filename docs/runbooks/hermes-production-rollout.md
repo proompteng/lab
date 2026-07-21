@@ -270,8 +270,10 @@ The expected mirrored amd64 manifest digest is
      set -eu
      test "$(kubectl auth can-i list pods --all-namespaces)" = yes
      test "$(kubectl auth can-i get pods/log --all-namespaces)" = yes
-     test "$(kubectl auth can-i get secrets --all-namespaces)" = no
-     test "$(kubectl auth can-i create deployments.apps --all-namespaces)" = no
+     test "$(kubectl auth can-i get secrets --all-namespaces || true)" = no
+     test "$(kubectl auth can-i create deployments.apps --all-namespaces || true)" = no
+     test "$(pwd -P)" = /opt/data/workspace/tuslagch/lab
+     test "$(git rev-parse --show-toplevel)" = /opt/data/workspace/tuslagch/lab
      kubectl get pods --all-namespaces --request-timeout=10s >/tmp/hermes-cluster-pods
      test -s /tmp/hermes-cluster-pods
      kubectl -n hermes logs statefulset/hermes --tail=1 >/tmp/hermes-gateway-log

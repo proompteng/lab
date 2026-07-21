@@ -48,6 +48,27 @@ test('rejects a mutable kubectl image volume', async () => {
   )
 })
 
+test('rejects a gateway working directory above the lab checkout', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('  cwd: /opt/data/workspace/tuslagch/lab', '  cwd: /opt/data/workspace/tuslagch')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant "terminal:\\n  backend: local\\n  cwd: /opt/data/workspace/tuslagch/lab"`,
+  )
+})
+
+test('rejects a gateway container started outside the lab checkout', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '          workingDir: /opt/data/workspace/tuslagch/lab',
+    '          workingDir: /opt/hermes',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "workingDir: /opt/data/workspace/tuslagch/lab"`,
+  )
+})
+
 test('rejects restoring the blanket kubectl command deny', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace('  deny:\n', '  deny:\n    - "*kubectl*"\n')
