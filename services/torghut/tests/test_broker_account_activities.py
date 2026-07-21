@@ -674,9 +674,24 @@ def test_status_distinguishes_complete_fresh_cursor_from_stale_source() -> None:
             environment="paper",
             observed_at=clock.value + timedelta(seconds=61),
         )
+        cursor = session.scalar(select(BrokerAccountActivityCursor))
+        assert cursor is not None
+        cursor.status = "scanning"
+        cursor.scan_until = clock.value + timedelta(minutes=1)
+        cursor.updated_at = clock.value + timedelta(seconds=30)
+        session.commit()
+        overlap_scan = load_broker_account_activity_status(
+            session,
+            account_label="paper-account",
+            environment="paper",
+            observed_at=clock.value + timedelta(seconds=30),
+        )
 
     assert current["state"] == "current"
     assert current["current"] is True
     assert current["activities_inserted"] == 1
     assert stale["current"] is False
     assert stale["reason_codes"] == ["broker_account_activity_cursor_stale"]
+    assert overlap_scan["state"] == "current"
+    assert overlap_scan["current"] is True
+    assert overlap_scan["reason_codes"] == []
