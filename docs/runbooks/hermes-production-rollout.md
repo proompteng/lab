@@ -164,9 +164,12 @@ The expected mirrored amd64 manifest digest is
 
    The maintenance Lease must remain held. The CronJob must remain suspended until every prior backup and the one-off Job
    have terminated; `concurrencyPolicy` does not prevent a manually created Job from overlapping the schedule. The one-off
-   Job must complete and its log and checksum verification must succeed. A standalone Job does not update the CronJob's
-   status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success, then monitors its last
-   successful completion. A missing CronJob still alerts, and backup failure never changes the gateway Pod's readiness.
+   Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
+   is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
+   process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
+   A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success,
+   then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
+   gateway Pod's readiness.
 
 2. Port-forward the cluster-local API and keep the key out of command output:
 

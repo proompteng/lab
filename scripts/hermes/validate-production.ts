@@ -128,11 +128,18 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'readOnlyRootFilesystem: true',
     '/opt/bootstrap/backup-once.sh',
     'claimName: data-hermes-0',
+    'mountPath: /opt/data\n                  # SQLite read-only WAL connections still create or update shared-memory sidecars.\n                  readOnly: false',
+    'claimName: data-hermes-0\n                readOnly: false',
     'claimName: backups-hermes-0',
   ])
   forbidTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [':latest', 'restartPolicy: Never'])
 
   const backupPublicationSteps = [
+    'backup_output=$(/opt/hermes/.venv/bin/hermes backup --output "$pending_archive" 2>&1)',
+    '*"SQLite safe copy failed"*|*"Raw copy also failed"*|*"Warnings ("*)',
+    'corrupt_entry = backup.testzip()',
+    'connection.execute("PRAGMA quick_check")',
+    'if database_count == 0:',
     'pending_digest=$(sha256sum "$pending_archive")',
     'printf \'%s  %s\\n\' "$expected_digest" "$pending_archive" | sha256sum -c -',
     'mv -- "$pending_checksum" "$archive.sha256"',
