@@ -178,7 +178,7 @@ export const RunIdentitySchema = RunIdentityBase.check(
 export type RunIdentity = typeof RunIdentitySchema.Type
 
 export const RuntimeProvenanceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.runtime-provenance.v1'),
+  schemaVersion: Schema.Literal('bayn.runtime-provenance.v2'),
   sourceRevision: SourceRevision,
   image: Schema.Struct({
     repository: NonEmptyString,
@@ -191,9 +191,9 @@ export const RuntimeProvenanceSchema = Schema.Struct({
     parameterSchemaVersion: NonEmptyString,
   }),
   contractVersions: Schema.Struct({
-    runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v1'),
+    runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),
     inputManifest: Schema.Literal('bayn.input-manifest.v2'),
-    evaluation: Schema.Literal('bayn.evaluation.v2'),
+    evaluation: Schema.Literal('bayn.evaluation.v3'),
   }),
 })
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
@@ -224,11 +224,11 @@ export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
 
 export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance =>
   decodeRuntimeProvenanceSync({
-    schemaVersion: 'bayn.runtime-provenance.v1',
+    schemaVersion: 'bayn.runtime-provenance.v2',
     ...input,
     contractVersions: {
-      runtimeProvenance: 'bayn.runtime-provenance.v1',
+      runtimeProvenance: 'bayn.runtime-provenance.v2',
       inputManifest: 'bayn.input-manifest.v2',
-      evaluation: 'bayn.evaluation.v2',
+      evaluation: 'bayn.evaluation.v3',
     },
   })

@@ -1,12 +1,28 @@
 import { describe, expect, test } from 'bun:test'
 
 import { makeStrategyProtocolHash } from './contracts'
-import { calculatePerformanceMetrics, evaluateTsmom } from './strategy'
+import { calculatePerformanceMetrics, evaluateTsmom, makeTsmomDecision } from './strategy'
 import { canonicalHashV1 } from './hash'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { FillEvent } from './types'
 
 describe('TSMOM economic evaluator', () => {
+  test('uses one pure content-addressed decision function', () => {
+    const protocol = { ...fixtureProtocol, lookbacks: [1, 2] }
+    const closes = Object.fromEntries(
+      protocol.universe.map((symbol, index) => [
+        symbol,
+        index === 0 ? [100, 90, 110] : index === 1 ? [100, 120, 110] : [120, 110, 100],
+      ]),
+    )
+    const decision = makeTsmomDecision('2026-07-17', closes, protocol)
+
+    expect(decision.signals[0]).toMatchObject({ symbol: 'DBC', score: 2, active: true, targetWeight: 1 })
+    expect(decision.signals[1]).toMatchObject({ symbol: 'EEM', score: 0, active: false, targetWeight: 0 })
+    expect(Object.values(decision.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(1)
+    expect(canonicalHashV1(decision)).toBe('3f2a2f3484e66ee13e96fed0b88d9b03b4f1de3084a93a841bfa1a160db587b7')
+  })
+
   test('includes the initial trading session in return statistics', () => {
     const result = calculatePerformanceMetrics([90, 99], 0, 0, 100)
     expect(result.totalReturn).toBeCloseTo(-0.01)
@@ -20,6 +36,9 @@ describe('TSMOM economic evaluator', () => {
     const first = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     const second = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     expect(first).toEqual(second)
+    expect(canonicalHashV1(first.signalDecisions)).toBe(canonicalHashV1(second.signalDecisions))
+    expect(canonicalHashV1(first.simulation.dailyMarks)).toBe(canonicalHashV1(second.simulation.dailyMarks))
+    expect(canonicalHashV1(first.benchmarkSeries)).toBe(canonicalHashV1(second.benchmarkSeries))
     expect(first.codeRevision).toBe(provenance.sourceRevision)
     expect(first.protocolHash).toBe(makeStrategyProtocolHash(provenance.strategy))
     expect(first.strategy.observations).toBeGreaterThanOrEqual(fixtureProtocol.thresholds.minimumObservations)
@@ -34,6 +53,11 @@ describe('TSMOM economic evaluator', () => {
       )
       expect(fills.length).toBeGreaterThan(0)
       expect(fills.every((fill) => fill.sessionDate === firstDecision.executionDate)).toBe(true)
+      expect(first.signalDecisions.find((decision) => decision.decisionId === firstDecision.id)).toMatchObject({
+        signalDate: firstDecision.signalDate,
+        executionDate: firstDecision.executionDate,
+        targetWeights: firstDecision.targetWeights,
+      })
     }
   })
 
@@ -113,7 +137,7 @@ describe('TSMOM economic evaluator', () => {
     )
   })
 
-  test('retains bounded complete evidence for a production-sized history', () => {
+  test('retains complete aligned daily and rebalance evidence for a production-sized history', () => {
     const snapshot = makeSnapshot(2_400)
     const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const serializedEvidence = JSON.stringify({
@@ -124,6 +148,23 @@ describe('TSMOM economic evaluator', () => {
 
     expect(evaluation.simulation.dailyMarks).toHaveLength(evaluation.strategy.observations)
     expect(evaluation.equitySeries).toHaveLength(evaluation.strategy.observations)
+    expect(evaluation.signalDecisions).toHaveLength(
+      evaluation.events.filter((event) => event.kind === 'decision').length,
+    )
+    for (const series of Object.values(evaluation.benchmarkSeries)) {
+      expect(series.map((point) => point.sessionDate)).toEqual(
+        evaluation.simulation.dailyMarks.map((point) => point.sessionDate),
+      )
+    }
+    expect(
+      evaluation.simulation.dailyMarks.every(
+        (point) =>
+          Number.isFinite(point.netReturn) &&
+          Number.isFinite(point.drawdown) &&
+          BigInt(point.cumulativeTurnoverMicros) >= BigInt(point.turnoverMicros) &&
+          BigInt(point.cumulativeFeesMicros) >= BigInt(point.feeMicros),
+      ),
+    ).toBe(true)
     expect(Buffer.byteLength(serializedEvidence)).toBeLessThan(10 * 1024 * 1024)
   })
 })

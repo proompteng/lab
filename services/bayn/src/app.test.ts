@@ -110,12 +110,13 @@ const marketDataService = (load: MarketDataService['load']): MarketDataService =
 const successfulEvidenceStore: EvidenceStoreService = {
   check: Effect.void,
   read: (runId) => Effect.succeed(runId === historicalRunId ? Option.some(historicalEvidence) : Option.none()),
+  readArtifactItems: () => Effect.succeed(Option.none()),
   recover: () => Effect.succeed(Option.none()),
   persist: ({ evaluation }) =>
     Effect.succeed({
       runId: evaluation.runId,
       deduplicated: false,
-      artifactCount: 12,
+      artifactCount: 17,
       eventCount: evaluation.events.length,
       gateCount: evaluation.verdict.gates.length,
     }),
@@ -179,7 +180,7 @@ const readyState = (): RuntimeState => {
       persistence: {
         runId: evaluation.runId,
         deduplicated: false,
-        artifactCount: 12,
+        artifactCount: 17,
         eventCount: evaluation.events.length,
         gateCount: evaluation.verdict.gates.length,
       },
@@ -492,7 +493,7 @@ describe('Bayn startup lifecycle', () => {
             persistence: {
               runId: evaluation.runId,
               deduplicated: true,
-              artifactCount: 12,
+              artifactCount: 17,
               eventCount: evaluation.events.length,
               gateCount: evaluation.verdict.gates.length,
             },
@@ -703,6 +704,7 @@ describe('Bayn startup lifecycle', () => {
     const unavailable: EvidenceStoreService = {
       check: Effect.void,
       read: () => Effect.succeed(Option.none()),
+      readArtifactItems: () => Effect.succeed(Option.none()),
       recover: () => Effect.succeed(Option.none()),
       persist: () =>
         Effect.fail(

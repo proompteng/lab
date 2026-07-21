@@ -5,6 +5,7 @@ import { reconcileMarkedEquity } from './simulation-reconciliation'
 import type {
   CashChange,
   DailyBar,
+  DailyPerformancePoint,
   DailyPositionMark,
   DecisionEvent,
   EconomicVerdict,
@@ -18,7 +19,9 @@ import type {
   PerformanceMetrics,
   SimulatedOrder,
   SimulationTrace,
+  TsmomDecisionPlan,
   TsmomProtocol,
+  TsmomSignalDecision,
 } from './types'
 
 interface AlignedSession {
@@ -35,11 +38,14 @@ interface Target {
   readonly signalIndex: number
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
+  readonly decision?: TsmomDecisionPlan
 }
 
 interface SimulationResult {
   readonly metrics: PerformanceMetrics
   readonly events: readonly EvaluationEvent[]
+  readonly signalDecisions: readonly TsmomSignalDecision[]
+  readonly dailyPerformance: readonly DailyPerformancePoint[]
   readonly simulation: SimulationTrace | null
 }
 
@@ -102,23 +108,45 @@ const isMonthEnd = (sessions: readonly AlignedSession[], index: number): boolean
   return nextMonth !== undefined && currentMonth !== nextMonth
 }
 
-const tsmomWeights = (
-  sessions: readonly AlignedSession[],
-  signalIndex: number,
+export const makeTsmomDecision = (
+  signalDate: IsoDate,
+  closes: Readonly<Record<string, readonly number[]>>,
   protocol: TsmomProtocol,
-): Readonly<Record<string, number>> => {
-  const active = protocol.universe.filter((symbol) => {
-    const current = sessions[signalIndex].bars[symbol].close
-    const signedMomentum = protocol.lookbacks.reduce((score, lookback) => {
-      const prior = sessions[signalIndex - lookback].bars[symbol].close
-      return score + (current / prior - 1 > 0 ? 1 : -1)
-    }, 0)
-    return signedMomentum > 0
+): TsmomDecisionPlan => {
+  const maximumLookback = Math.max(...protocol.lookbacks)
+  const rawSignals = protocol.universe.map((symbol) => {
+    const history = closes[symbol]
+    if (history === undefined || history.length !== maximumLookback + 1) {
+      throw new Error(`TSMOM decision requires ${maximumLookback + 1} ordered closes for ${symbol}`)
+    }
+    if (history.some((price) => !Number.isFinite(price) || price <= 0)) {
+      throw new Error(`TSMOM decision contains an invalid close for ${symbol}`)
+    }
+    const current = history.at(-1)!
+    const lookbacks = protocol.lookbacks.map((lookbackSessions) => {
+      const prior = history[maximumLookback - lookbackSessions]
+      const value = current / prior - 1
+      return {
+        lookbackSessions,
+        return: value,
+        direction: value > 0 ? ('positive' as const) : ('non-positive' as const),
+      }
+    })
+    const score = lookbacks.reduce((total, signal) => total + (signal.direction === 'positive' ? 1 : -1), 0)
+    return { symbol, lookbacks, score, active: score > 0 }
   })
-  const weight = active.length === 0 ? 0 : 1 / active.length
-  return Object.fromEntries(
-    protocol.universe.map((symbol) => [symbol, active.includes(symbol) ? roundWeight(weight) : 0]),
-  )
+  const activeCount = rawSignals.filter((signal) => signal.active).length
+  const activeWeight = activeCount === 0 ? 0 : roundWeight(1 / activeCount)
+  const signals = rawSignals.map((signal) => ({
+    ...signal,
+    targetWeight: signal.active ? activeWeight : 0,
+  }))
+  return {
+    schemaVersion: 'bayn.tsmom-decision-plan.v1',
+    signalDate,
+    targetWeights: Object.fromEntries(signals.map((signal) => [signal.symbol, signal.targetWeight])),
+    signals,
+  }
 }
 
 const directVolatilityWeights = (
@@ -250,15 +278,21 @@ const simulate = (
   let totalFees = 0
   const equity: number[] = []
   const events: EvaluationEvent[] = []
+  const signalDecisions: TsmomSignalDecision[] = []
   const orders: SimulatedOrder[] = []
   const cashChanges: CashChange[] = []
   const dailyMarks: DailyPositionMark[] = []
+  const dailyPerformance: DailyPerformancePoint[] = []
   let reconstructedCashMicros = BigInt(toMicros(initialCapital))
   const feeRate = costBps / 10_000
+  let previousEquity = initialCapital
+  let peakEquity = initialCapital
 
   for (let index = startIndex; index < sessions.length; index += 1) {
     const session = sessions[index]
     const target = targetsByExecution.get(index)
+    const turnoverBeforeSession = turnover
+    const feesBeforeSession = totalFees
     if (target) {
       const decisionPayload = {
         signalDate: sessions[target.signalIndex].date,
@@ -270,7 +304,17 @@ const simulate = (
         id: hashObject({ runId, kind: 'decision', ...decisionPayload }),
         ...decisionPayload,
       }
-      if (recordEvents) events.push(decision)
+      if (recordEvents) {
+        if (target.decision === undefined) throw new Error('candidate target is missing its TSMOM signal decision')
+        if (
+          target.decision.signalDate !== decision.signalDate ||
+          canonicalHashV1(target.decision.targetWeights) !== canonicalHashV1(decision.targetWeights)
+        ) {
+          throw new Error('TSMOM signal decision diverges from its execution target')
+        }
+        events.push(decision)
+        signalDecisions.push({ ...target.decision, decisionId: decision.id, executionDate: decision.executionDate })
+      }
 
       const preTradeEquity =
         cash +
@@ -351,9 +395,23 @@ const simulate = (
         0,
       )
     equity.push(closingEquity)
+    const netReturn = closingEquity / previousEquity - 1
+    peakEquity = Math.max(peakEquity, closingEquity)
+    const performance = {
+      sessionDate: session.date,
+      equityMicros: toMicros(closingEquity),
+      netReturn,
+      turnoverMicros: toMicros(Math.max(0, turnover - turnoverBeforeSession)),
+      cumulativeTurnoverMicros: toMicros(turnover),
+      feeMicros: toMicros(Math.max(0, totalFees - feesBeforeSession)),
+      cumulativeFeesMicros: toMicros(totalFees),
+      peakEquityMicros: toMicros(peakEquity),
+      drawdown: 1 - closingEquity / peakEquity,
+    } satisfies DailyPerformancePoint
+    dailyPerformance.push(performance)
     if (recordEvents) {
       dailyMarks.push({
-        sessionDate: session.date,
+        ...performance,
         cashMicros: toMicros(Math.max(0, cash)),
         positions: Object.entries(session.bars)
           .sort(([left], [right]) => left.localeCompare(right))
@@ -367,17 +425,19 @@ const simulate = (
               marketValueMicros: toMicros(position.quantity * bar.close),
             }
           }),
-        equityMicros: toMicros(closingEquity),
       })
     }
+    previousEquity = closingEquity
   }
 
   return {
     metrics: calculatePerformanceMetrics(equity, turnover, totalFees, initialCapital),
     events,
+    signalDecisions,
+    dailyPerformance,
     simulation: recordEvents
       ? {
-          schemaVersion: 'bayn.simulation-trace.v1',
+          schemaVersion: 'bayn.simulation-trace.v2',
           transactionCostBpsMicros: toMicros(costBps),
           orders,
           cashChanges,
@@ -515,11 +575,21 @@ export const evaluateTsmom = (
     )
   }
 
-  const strategyTargets: Target[] = signalIndices.map((signalIndex) => ({
-    signalIndex,
-    executionIndex: signalIndex + 1,
-    weights: tsmomWeights(sessions, signalIndex, protocol),
-  }))
+  const strategyTargets: Target[] = signalIndices.map((signalIndex) => {
+    const closes = Object.fromEntries(
+      protocol.universe.map((symbol) => [
+        symbol,
+        sessions.slice(signalIndex - maximumLookback, signalIndex + 1).map((session) => session.bars[symbol].close),
+      ]),
+    )
+    const decision = makeTsmomDecision(sessions[signalIndex].date, closes, protocol)
+    return {
+      signalIndex,
+      executionIndex: signalIndex + 1,
+      weights: decision.targetWeights,
+      decision,
+    }
+  })
   const equalWeight = roundWeight(1 / protocol.universe.length)
   const buyAndHoldTargets: Target[] = [
     {
@@ -582,7 +652,7 @@ export const evaluateTsmom = (
   })
 
   return {
-    schemaVersion: 'bayn.evaluation.v2',
+    schemaVersion: 'bayn.evaluation.v3',
     runId,
     codeRevision: provenance.sourceRevision,
     protocolHash,
@@ -594,14 +664,20 @@ export const evaluateTsmom = (
     doubleCostStrategy: doubleCost.metrics,
     verdict: buildVerdict(strategy.metrics, buyAndHold.metrics, directVolTiming.metrics, doubleCost.metrics, protocol),
     events: strategy.events,
+    signalDecisions: strategy.signalDecisions,
     simulation: strategy.simulation,
+    benchmarkSeries: {
+      buyAndHold: buyAndHold.dailyPerformance,
+      directVolTiming: directVolTiming.dailyPerformance,
+      doubleCostStrategy: doubleCost.dailyPerformance,
+    },
     equitySeries: markedEquity.equitySeries,
     markedEquityReconciliation: markedEquity.reconciliation,
   }
 }
 
 export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({
-  schemaVersion: 'bayn.evaluation-summary.v1',
+  schemaVersion: 'bayn.evaluation-summary.v2',
   runId: evaluation.runId,
   evaluationSchemaVersion: evaluation.schemaVersion,
   codeRevision: evaluation.codeRevision,
@@ -622,8 +698,14 @@ export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSum
   doubleCostStrategy: evaluation.doubleCostStrategy,
   verdict: evaluation.verdict,
   eventCount: evaluation.events.length,
+  signalDecisionCount: evaluation.signalDecisions.length,
   orderCount: evaluation.simulation.orders.length,
   cashChangeCount: evaluation.simulation.cashChanges.length,
   dailyMarkCount: evaluation.simulation.dailyMarks.length,
+  benchmarkSeriesCounts: {
+    buyAndHold: evaluation.benchmarkSeries.buyAndHold.length,
+    directVolTiming: evaluation.benchmarkSeries.directVolTiming.length,
+    doubleCostStrategy: evaluation.benchmarkSeries.doubleCostStrategy.length,
+  },
   markedEquityReconciliation: evaluation.markedEquityReconciliation,
 })

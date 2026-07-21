@@ -174,15 +174,15 @@ describe('Bayn runtime provenance', () => {
     })
 
     expect(provenance).toMatchObject({
-      schemaVersion: 'bayn.runtime-provenance.v1',
+      schemaVersion: 'bayn.runtime-provenance.v2',
       contractVersions: {
-        runtimeProvenance: 'bayn.runtime-provenance.v1',
+        runtimeProvenance: 'bayn.runtime-provenance.v2',
         inputManifest: 'bayn.input-manifest.v2',
-        evaluation: 'bayn.evaluation.v2',
+        evaluation: 'bayn.evaluation.v3',
       },
     })
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
     await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
-    await expectFailure(decodeRuntimeProvenance({ ...provenance, schemaVersion: 'bayn.runtime-provenance.v2' }))
+    await expectFailure(decodeRuntimeProvenance({ ...provenance, schemaVersion: 'bayn.runtime-provenance.v1' }))
   })
 })

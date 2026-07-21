@@ -65,12 +65,13 @@ const marketDataService = (load: MarketDataService['load']): MarketDataService =
 const successfulEvidenceStore: EvidenceStoreService = {
   check: Effect.void,
   read: () => Effect.succeed(Option.none()),
+  readArtifactItems: () => Effect.succeed(Option.none()),
   recover: () => Effect.succeed(Option.none()),
   persist: ({ evaluation }) =>
     Effect.succeed({
       runId: evaluation.runId,
       deduplicated: false,
-      artifactCount: 12,
+      artifactCount: 17,
       eventCount: evaluation.events.length,
       gateCount: evaluation.verdict.gates.length,
     }),
