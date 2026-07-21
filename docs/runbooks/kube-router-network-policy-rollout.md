@@ -80,6 +80,21 @@ test "$desired" -gt 0
 test "$ready" = "$desired"
 
 kube_router_index_digest=sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
+pod_rows=$(
+  kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
+    jq -er '
+      .items as $pods
+      | if ($pods | length) == 0 then error("no kube-router pods found") else $pods[] end
+      | [.metadata.name,.spec.nodeName,.status.containerStatuses[0].ready,.status.containerStatuses[0].restartCount,.status.containerStatuses[0].imageID]
+      | @tsv'
+)
+pod_count=$(awk 'NF { count += 1 } END { print count + 0 }' <<< "$pod_rows")
+if [ "$pod_count" -ne "$desired" ]; then
+  echo "expected $desired kube-router pods, found $pod_count" >&2
+  exit 1
+fi
+
+controller_logs=
 while IFS=$'\t' read -r pod node pod_ready restart_count image_id; do
   test "$pod_ready" = true
   test "$restart_count" = 0
@@ -109,16 +124,12 @@ while IFS=$'\t' read -r pod node pod_ready restart_count image_id; do
   kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20244/healthz
   metrics=$(kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics)
   grep -Eq '^kube_router_controller_policy_(chains|ipsets) ' <<< "$metrics"
-done < <(
-  kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
-    jq -r '.items[] | [.metadata.name,.spec.nodeName,.status.containerStatuses[0].ready,.status.containerStatuses[0].restartCount,.status.containerStatuses[0].imageID] | @tsv'
-)
-unset expected_runtime_arch image_id kube_router_index_digest metrics node node_arch platform_digest pod pod_ready restart_count
-
-controller_logs=$(kubectl -n kube-system logs -l app.kubernetes.io/name=kube-router -c kube-router --prefix --tail=500)
+  pod_logs=$(kubectl -n kube-system logs "$pod" -c kube-router --prefix --tail=500)
+  controller_logs+=$'\n'"$pod_logs"
+done <<< "$pod_rows"
 ! grep -Eiq 'panic|fatal|permission denied|operation not permitted|failed to (sync|restore|create)' \
   <<< "$controller_logs"
-unset controller_logs
+unset controller_logs expected_runtime_arch image_id kube_router_index_digest metrics node node_arch platform_digest pod pod_count pod_logs pod_ready pod_rows restart_count
 ```
 
 ## 3. Enforcement and regression proof
