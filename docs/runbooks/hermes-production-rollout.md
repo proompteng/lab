@@ -559,8 +559,10 @@ Cutover sequence:
    set -euo pipefail
    test -n "${maintenance_holder:-}"
    test "$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')" = "$maintenance_holder"
-   argocd app sync openclaw --prune \
-     --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin
+   if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then
+     argocd app sync openclaw --prune \
+       --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin
+   fi
    test -z "$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)"
    openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json | jq -r '
      if .spec.running == true and (.spec | has("runStrategy") | not) then "legacy-running"

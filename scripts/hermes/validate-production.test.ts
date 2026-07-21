@@ -99,12 +99,24 @@ test('rejects retaining OpenClaw cluster-admin authority', async () => {
 test('rejects whole-application pruning during OpenClaw cutover', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'argocd app sync openclaw --prune \\\n     --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
+    'argocd app sync openclaw --prune \\\n       --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
     'argocd app sync openclaw --prune=true',
   )
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: contains forbidden production term "argocd app sync openclaw --prune=true"`,
+  )
+})
+
+test('rejects non-idempotent cluster-admin pruning during OpenClaw cutover', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then',
+    'if true; then',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then"`,
   )
 })
 
