@@ -569,6 +569,18 @@ test('rejects an apply Job that trusts the migration command exit code alone', a
   )
 })
 
+test('rejects an apply Job without runtime proof that secrets are disabled', async () => {
+  const files = await loadProductionFiles()
+  files.migrationApply = files.migrationApply.replace(
+    'migration apply did not prove that secret migration is disabled',
+    'migration apply secret mode was not checked',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.migrationApply}: missing production invariant "migration apply did not prove that secret migration is disabled"`,
+  )
+})
+
 test('rejects restore archive selection that expands the glob on the operator host', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
