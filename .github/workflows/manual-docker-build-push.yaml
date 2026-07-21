@@ -46,6 +46,11 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [registry."registry.registry.svc.cluster.local"]
+              http = true
+              insecure = true
 
       - name: Validate immutable references
         id: image
@@ -69,6 +74,7 @@ jobs:
             echo "source=${SOURCE_REGISTRY}/${SOURCE_REPOSITORY}@${SOURCE_DIGEST}"
             echo "source_digest=${SOURCE_DIGEST}"
             echo "target=registry.ide-newton.ts.net/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
+            echo "target_transport=registry.registry.svc.cluster.local/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Copy complete OCI index
@@ -76,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools create \
-            --tag "${{ steps.image.outputs.target }}" \
+            --tag "${{ steps.image.outputs.target_transport }}" \
             --metadata-file mirror-metadata.json \
             "${{ steps.image.outputs.source }}"
 
