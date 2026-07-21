@@ -39,7 +39,15 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-install -d -m 0700 "$gh_cache_dir" "$(dirname "$gh_install_path")" "$(dirname "$git_config_path")"
+gh_install_dir=$(dirname "$gh_install_path")
+install -d -m 0700 "$gh_cache_dir" "$(dirname "$git_config_path")"
+if [ ! -d "$gh_install_dir" ]; then
+  install -d -m 0700 "$gh_install_dir"
+fi
+if [ ! -w "$gh_install_dir" ]; then
+  echo "GitHub CLI install directory is not writable: $gh_install_dir" >&2
+  exit 1
+fi
 
 archive_is_valid() {
   [ -f "$archive_path" ] && printf '%s  %s\n' "$gh_archive_sha256" "$archive_path" | sha256sum -c - >/dev/null 2>&1

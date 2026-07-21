@@ -507,6 +507,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'printf \'%s  %s\\n\' "$gh_archive_sha256" "$archive_tmp" | sha256sum -c -',
     'member_name = f"gh_{version}_linux_amd64/bin/gh"',
     'install -m 0555 "$extract_dir/gh" "$gh_install_path"',
+    'if [ ! -d "$gh_install_dir" ]; then',
+    'if [ ! -w "$gh_install_dir" ]; then',
     'git config --file "$git_config_tmp" user.name tuslagch',
     'git config --file "$git_config_tmp" user.email 241203724+tuslagch@users.noreply.github.com',
     'git config --file "$git_config_tmp" commit.gpgsign false',
