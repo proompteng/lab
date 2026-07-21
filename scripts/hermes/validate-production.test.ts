@@ -590,6 +590,18 @@ test('rejects migration Jobs without the stable production config', async () => 
   )
 })
 
+test('rejects a source guard that treats normal skipped directories as fatal', async () => {
+  const files = await loadProductionFiles()
+  files.migrationDryRun = files.migrationDryRun.replace(
+    'directory not found: /opt/data/migration/source',
+    'directory not found',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.migrationDryRun}: missing production invariant "directory not found: /opt/data/migration/source"`,
+  )
+})
+
 test('rejects restore archive selection that expands the glob on the operator host', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
