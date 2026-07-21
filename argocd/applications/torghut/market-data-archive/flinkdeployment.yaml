@@ -8,7 +8,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "4"
 spec:
-  # This directory remains outside the parent Kustomization until the image contains MarketDataArchiveJobKt.
+  # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:1a3fba53b409b7f1f37d2836c59497a73ed4c6ea244d9004ee3c2dbf945043d4
   imagePullPolicy: IfNotPresent
   restartNonce: 2

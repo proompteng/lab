@@ -19,7 +19,7 @@ spec:
         app: torghut-ws
       annotations:
         kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
-        torghut.proompteng.ai/ws-config-generation: no-jangar-symbols
+        torghut.proompteng.ai/ws-config-generation: bayn-delayed-sip-v1
     spec:
       serviceAccountName: torghut-runtime
       securityContext:

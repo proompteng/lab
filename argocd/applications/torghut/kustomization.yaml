@@ -50,5 +50,6 @@ resources:
   - clickhouse
   - ws
   - ta
+  - market-data-archive
   - ta-sim
   - notebooks
