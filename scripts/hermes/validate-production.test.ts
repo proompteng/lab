@@ -137,8 +137,8 @@ test('rejects automatic Argo reconciliation during the staged migration', async 
 test('rejects secret migration in the apply Job', async () => {
   const files = await loadProductionFiles()
   files.migrationApply = files.migrationApply.replace(
-    '            - --yes',
-    '            - --migrate-secrets\n            - --yes',
+    '                  --yes 2>&1',
+    '                  --migrate-secrets \\\n                  --yes 2>&1',
   )
 
   expect(validateProductionContent(files)).toContain(
@@ -517,19 +517,19 @@ test('rejects a containment check that aborts on expected direct-egress denial',
 test('rejects migration staging that overlays a previous source tree', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
-    "'mkdir -p /opt/data/migration/openclaw'",
+    "'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'",
+    "'mkdir -p /opt/data/migration/source'",
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'"`,
+    `${productionPaths.runbook}: missing production invariant "'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'"`,
   )
 })
 
 test('rejects migration staging that races an active backup', async () => {
   const files = await loadProductionFiles()
   const stagingCommand =
-    "   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \\\n     'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'\n"
+    "   kubectl -n hermes exec hermes-0 -c hermes -- sh -c \\\n     'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'\n"
   files.runbook = files.runbook.replace(stagingCommand, '')
   const phaseTwoStart = files.runbook.indexOf('## Phase 2:')
   const phaseTwo = files.runbook
@@ -542,6 +542,30 @@ test('rejects migration staging that races an active backup', async () => {
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`,
+  )
+})
+
+test('rejects staging GitOps-owned identity or policy files', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'for path in USER.md memory; do test -r "$path"; done',
+    'for path in AGENTS.md USER.md memory; do test -r "$path"; done',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "for path in USER.md memory; do test -r \\"$path\\"; done"`,
+  )
+})
+
+test('rejects an apply Job that trusts the migration command exit code alone', async () => {
+  const files = await loadProductionFiles()
+  files.migrationApply = files.migrationApply.replace(
+    'migration_report_verified=true',
+    'migration_command_finished=true',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.migrationApply}: missing production invariant "migration_report_verified=true"`,
   )
 })
 

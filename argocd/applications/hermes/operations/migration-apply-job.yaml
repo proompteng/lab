@@ -35,19 +35,91 @@ spec:
           image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
           imagePullPolicy: IfNotPresent
           command:
-            - /opt/hermes/.venv/bin/hermes
+            - /bin/sh
+            - -ec
           args:
-            - claw
-            - migrate
-            - --source
-            - /opt/data/migration/openclaw
-            - --preset
-            - user-data
-            - --workspace-target
-            - /opt/data/workspace/tuslagch
-            - --skill-conflict
-            - skip
-            - --yes
+            - |
+              operator_files='/opt/data/SOUL.md /opt/data/IDENTITY.md /opt/data/TOOLS.md /opt/data/HEARTBEAT.md /opt/data/workspace/tuslagch/AGENTS.md'
+              operator_digests_before=$(sha256sum $operator_files)
+              migration_started_at=$(date +%s)
+              if migration_output=$(
+                /opt/hermes/.venv/bin/hermes claw migrate \
+                  --source /opt/data/migration/source \
+                  --preset user-data \
+                  --workspace-target /opt/data/workspace/tuslagch \
+                  --skill-conflict skip \
+                  --yes 2>&1
+              ); then
+                :
+              else
+                migration_status=$?
+                printf '%s\n' "$migration_output" >&2
+                exit "$migration_status"
+              fi
+              printf '%s\n' "$migration_output"
+              case "$migration_output" in
+                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"OpenClaw directory not found"*)
+                  echo 'migration command reported a refusal or failure' >&2
+                  exit 1
+                  ;;
+              esac
+              operator_digests_after=$(sha256sum $operator_files)
+              test "$operator_digests_after" = "$operator_digests_before"
+              /opt/hermes/.venv/bin/python - "$migration_started_at" <<'PY'
+              import json
+              import pathlib
+              import sys
+
+              started_at = int(sys.argv[1])
+              report_root = pathlib.Path('/opt/data/migration/openclaw')
+              reports = [
+                  path
+                  for path in report_root.glob('*/report.json')
+                  if path.stat().st_mtime >= started_at - 1
+              ]
+              if len(reports) != 1:
+                  raise RuntimeError(f'expected one current migration report, found {len(reports)}')
+              report_path = reports[0]
+              report = json.loads(report_path.read_text())
+              summary = report.get('summary', {})
+              if report.get('mode') != 'execute':
+                  raise RuntimeError('migration report is not an execute report')
+              if report.get('source_root') != '/opt/data/migration/source':
+                  raise RuntimeError('migration report source does not match the audited staging tree')
+              if report.get('migrate_secrets') is not False:
+                  raise RuntimeError('migration report does not prove that secrets were excluded')
+              if summary.get('conflict', 0) != 0 or summary.get('error', 0) != 0:
+                  raise RuntimeError('migration report contains conflicts or errors')
+
+              items = {item.get('kind'): item for item in report.get('items', [])}
+              for kind in ('user-profile', 'daily-memory'):
+                  item = items.get(kind)
+                  if item is None or item.get('status') not in {'migrated', 'skipped'}:
+                      raise RuntimeError(f'migration report lacks a resolved {kind} item')
+                  if item.get('reason') in {'Source file not found', 'No workspace/memory/ directory found'}:
+                      raise RuntimeError(f'migration report did not consume the audited {kind} source')
+              for kind in ('soul', 'workspace-agents'):
+                  item = items.get(kind)
+                  if item is None or item.get('status') != 'skipped':
+                      raise RuntimeError(f'GitOps-owned item was not skipped: {kind}')
+
+              backups = [
+                  path
+                  for path in pathlib.Path('/opt/data/backups').glob('pre-migration-*.zip')
+                  if path.stat().st_mtime >= started_at - 1
+              ]
+              if not backups:
+                  raise RuntimeError('migration did not create a current restore-point archive')
+              backup_path = max(backups, key=lambda path: path.stat().st_mtime)
+              print(
+                  'migration_report_verified=true '
+                  f'conflicts=0 errors=0 migrated={summary.get("migrated", 0)} '
+                  f'skipped={summary.get("skipped", 0)} '
+                  f'report={report_path.parent.name}/report.json '
+                  f'restore_point={backup_path.name}'
+              )
+              PY
+              printf '%s\n' 'operator_owned_identity_unchanged=true secrets=false'
           env:
             - name: HERMES_HOME
               value: /opt/data
