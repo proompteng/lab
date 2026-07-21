@@ -23,7 +23,7 @@ spec:
   template:
     metadata:
       annotations:
-        hermes.proompteng.ai/github-auth-revision: "1"
+        hermes.proompteng.ai/github-auth-revision: "2"
       labels:
         app.kubernetes.io/name: hermes
         app.kubernetes.io/component: gateway
@@ -65,6 +65,15 @@ spec:
               value: /opt/data
             - name: HOME
               value: /opt/data/home
+            - name: GH_CONFIG_DIR
+              value: /opt/github-auth
+            - name: GH_PROMPT_DISABLED
+              value: "1"
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-github-auth
+                  key: GH_TOKEN
             - name: KUBECONFIG
               value: /opt/data/home/.kube/config
             - name: GIT_TERMINAL_PROMPT
@@ -116,6 +125,8 @@ spec:
               readOnly: true
             - name: tools
               mountPath: /opt/tools
+            - name: github-auth
+              mountPath: /opt/github-auth
       containers:
         - name: hermes
           image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
@@ -141,21 +152,11 @@ spec:
             - name: XDG_CACHE_HOME
               value: /opt/data/home/.cache
             - name: GH_CONFIG_DIR
-              value: /opt/data/home/.config/gh
+              value: /opt/github-auth
             - name: GH_PROMPT_DISABLED
               value: "1"
             - name: GH_PAGER
               value: cat
-            - name: GH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: hermes-github-auth
-                  key: GH_TOKEN
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: hermes-github-auth
-                  key: GH_TOKEN
             - name: GIT_CONFIG_NOSYSTEM
               value: "1"
             - name: GIT_CONFIG_GLOBAL
@@ -285,6 +286,9 @@ spec:
             - name: tools
               mountPath: /opt/tools
               readOnly: true
+            - name: github-auth
+              mountPath: /opt/github-auth
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -308,6 +312,9 @@ spec:
         - name: tools
           emptyDir:
             sizeLimit: 128Mi
+        - name: github-auth
+          emptyDir:
+            sizeLimit: 1Mi
   volumeClaimTemplates:
     - metadata:
         name: data

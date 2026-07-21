@@ -33,13 +33,17 @@ smoke test, manifest change, and normal CI/Codex review.
   the `hermes` ServiceAccount. Bootstrap writes a non-secret kubeconfig that follows the rotating projected token by file
   path rather than persisting token material.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
-- The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. The gateway receives
-  it as `GH_TOKEN`/`GITHUB_TOKEN`; plaintext is not written to the PVC, Git config, or a rendered manifest.
+- The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. Only the bootstrap init
+  container receives `GH_TOKEN`; it creates a mode-`0400` GitHub CLI auth file in a per-Pod `emptyDir` shared read-only with
+  the gateway. The pinned Hermes runtime intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal
+  subprocesses, so environment-only authentication is insufficient. The token never enters the gateway environment, data
+  PVC, backups, Git config, or a rendered manifest.
 - GitHub token rotation must reseal `hermes-github-auth` and increment the StatefulSet's
-  `hermes.proompteng.ai/github-auth-revision` annotation so the environment-backed credential takes effect in a new Pod.
+  `hermes.proompteng.ai/github-auth-revision` annotation so the Secret-backed credential takes effect in a new Pod.
 - Bootstrap downloads GitHub CLI `2.96.0` from its official release, enforces SHA-256
   `83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60`, caches the verified archive, and recreates the
-  `tuslagch` Git identity and `gh auth git-credential` helper on every start.
+  `tuslagch` Git identity, GitHub CLI authentication, and `gh auth git-credential` helper on every start. Bootstrap fails
+  closed unless `gh api user` returns `tuslagch` and repository permission is `ADMIN`.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
 - Plugins, MCP servers, delegation, cron, hooks, and speech-to-text remain disabled. Terminal access is explicit for CLI,

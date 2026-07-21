@@ -113,7 +113,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'whenDeleted: Retain',
     'whenScaled: Retain',
     'automountServiceAccountToken: true',
-    'hermes.proompteng.ai/github-auth-revision: "1"',
+    'hermes.proompteng.ai/github-auth-revision: "2"',
     'runAsUser: 10000',
     'runAsGroup: 10000',
     'readOnlyRootFilesystem: true',
@@ -129,14 +129,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `reference: ${kubectlImage}`,
     'mountPath: /opt/kubectl-image',
     'mountPath: /opt/tools',
+    'mountPath: /opt/github-auth',
+    'sizeLimit: 1Mi',
     'value: /opt/tools:/opt/hermes/bin:',
     'name: KUBECONFIG',
     'value: /opt/data/home/.kube/config',
     'name: GH_CONFIG_DIR',
-    'value: /opt/data/home/.config/gh',
+    'value: /opt/github-auth',
     'name: GH_PROMPT_DISABLED',
     'name: GH_TOKEN',
-    'name: GITHUB_TOKEN',
     'name: GIT_CONFIG_NOSYSTEM',
     'name: GIT_CONFIG_GLOBAL',
     'value: /opt/data/home/.gitconfig',
@@ -155,6 +156,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '        - name: backup\n',
     'value: gho_',
     'value: github_pat_',
+    'name: GITHUB_TOKEN',
+    'value: /opt/data/home/.config/gh',
   ])
   if (count(files.statefulSet, `reference: ${kubectlImage}`) !== 1) {
     failures.push(`${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`)
@@ -177,21 +180,32 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       )
     }
   }
-  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN']) {
-    const reference = [
-      `            - name: ${key}`,
-      '              valueFrom:',
-      '                secretKeyRef:',
-      '                  name: hermes-github-auth',
-      '                  key: GH_TOKEN',
-    ].join('\n')
-    if (count(files.statefulSet, `            - name: ${key}\n`) !== 1 || count(files.statefulSet, reference) !== 1) {
-      failures.push(`${productionPaths.statefulSet}: ${key} must use the sealed hermes-github-auth GH_TOKEN`)
-    }
+  const githubTokenReference = [
+    '            - name: GH_TOKEN',
+    '              valueFrom:',
+    '                secretKeyRef:',
+    '                  name: hermes-github-auth',
+    '                  key: GH_TOKEN',
+  ].join('\n')
+  if (
+    count(files.statefulSet, '            - name: GH_TOKEN\n') !== 1 ||
+    count(files.statefulSet, githubTokenReference) !== 1 ||
+    count(files.statefulSet, '                  key: GH_TOKEN\n') !== 1
+  ) {
+    failures.push(
+      `${productionPaths.statefulSet}: only the bootstrap init container may receive the sealed GitHub token`,
+    )
   }
-  if (count(files.statefulSet, '                  key: GH_TOKEN\n') !== 2) {
-    failures.push(`${productionPaths.statefulSet}: exactly two GitHub token environment references are required`)
+  if (count(files.statefulSet, '            - name: GH_CONFIG_DIR\n') !== 2) {
+    failures.push(`${productionPaths.statefulSet}: init and gateway must share exactly one GitHub CLI config directory`)
   }
+  if (count(files.statefulSet, 'name: github-auth\n') !== 3) {
+    failures.push(`${productionPaths.statefulSet}: GitHub auth must use two mounts and one ephemeral volume`)
+  }
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    '            - name: github-auth\n              mountPath: /opt/github-auth\n              readOnly: true',
+    '        - name: github-auth\n          emptyDir:\n            sizeLimit: 1Mi',
+  ])
 
   if (count(files.backupCronJob, `image: ${hermesImage}`) !== 1) {
     failures.push(`${productionPaths.backupCronJob}: backup must use the immutable mirrored Hermes digest`)
@@ -509,20 +523,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'install -m 0555 "$extract_dir/gh" "$gh_install_path"',
     'if [ ! -d "$gh_install_dir" ]; then',
     'if [ ! -w "$gh_install_dir" ]; then',
+    'if [ ! -w "$gh_config_dir" ]; then',
     'git config --file "$git_config_tmp" user.name tuslagch',
     'git config --file "$git_config_tmp" user.email 241203724+tuslagch@users.noreply.github.com',
     'git config --file "$git_config_tmp" commit.gpgsign false',
     '"!$gh_install_path auth git-credential"',
+    'env -u GH_TOKEN -u GITHUB_TOKEN',
+    '--with-token',
+    '--insecure-storage',
+    'chmod 0400 "$gh_auth_stage_dir/hosts.yml"',
+    'if [ "$github_login" != tuslagch ]; then',
+    'if [ "$github_permission" != ADMIN ]; then',
     'github_bootstrap_ready=true',
   ])
-  forbidTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, [
-    'gh auth login',
-    'GH_TOKEN',
-    'GITHUB_TOKEN',
-    'curl ',
-    'wget ',
-    ':latest',
-  ])
+  forbidTerms(failures, productionPaths.githubBootstrap, files.githubBootstrap, ['curl ', 'wget ', ':latest'])
   requireTerms(failures, productionPaths.workspaceAgents, files.workspaceAgents, [
     'Kubernetes access is cluster-wide read-only.',
     'Kubernetes Secrets and service-account token subresources are outside your authority.',
@@ -540,8 +554,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'digest-pinned Kubernetes 1.35 `kubectl` binary',
     'only `get`, `list`, and `watch`',
     '`tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext',
+    'intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal',
     '`hermes.proompteng.ai/github-auth-revision` annotation',
     'GitHub CLI `2.96.0`',
+    'per-Pod `emptyDir`',
     githubCliArchiveSha256,
   ])
 
@@ -818,10 +834,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'git -C /opt/data/workspace/tuslagch/lab cat-file -e HEAD:AGENTS.md',
     'test "$(command -v gh)" = /opt/tools/gh',
     'gh --version | grep -F "gh version 2.96.0"',
-    'test "$(gh api user --jq .login)" = tuslagch',
-    'test "$(gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN',
+    'test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh api user --jq .login)" = tuslagch',
+    'test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh repo view proompteng/lab --json viewerPermission --jq .viewerPermission)" = ADMIN',
     'git config --global --get-all credential.https://github.com.helper',
     '! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig',
+    'test -r /opt/github-auth/hosts.yml',
+    'test "$(stat -c %a /opt/github-auth/hosts.yml)" = 400',
     'test ! -e /opt/data/home/.config/gh/hosts.yml',
     'git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof',
     'gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA',

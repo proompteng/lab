@@ -9,6 +9,9 @@ gh_archive_sha256=${GH_CLI_ARCHIVE_SHA256:-83d5c2ccad5498f58bf6368acb1ab32588cf4
 gh_archive_url=${GH_CLI_ARCHIVE_URL:-https://github.com/cli/cli/releases/download/v${gh_version}/${gh_archive_name}}
 gh_cache_dir=${GH_CLI_CACHE_DIR:-${HOME:?HOME is required}/.cache/hermes-tools}
 gh_install_path=${GH_CLI_INSTALL_PATH:-/opt/tools/gh}
+gh_config_dir=${GH_CONFIG_DIR:?GH_CONFIG_DIR is required}
+gh_hosts_path=${gh_config_dir}/hosts.yml
+gh_auth_stage_dir=${gh_config_dir}/.bootstrap.$$
 git_config_path=${HERMES_GIT_CONFIG_PATH:-${HOME}/.gitconfig}
 python_bin=${HERMES_PYTHON_BIN:-/opt/hermes/.venv/bin/python}
 archive_path=${gh_cache_dir}/${gh_archive_name}
@@ -35,7 +38,7 @@ fi
 
 cleanup() {
   rm -f -- "$archive_tmp" "$git_config_tmp"
-  rm -rf -- "$extract_dir"
+  rm -rf -- "$extract_dir" "$gh_auth_stage_dir"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -46,6 +49,17 @@ if [ ! -d "$gh_install_dir" ]; then
 fi
 if [ ! -w "$gh_install_dir" ]; then
   echo "GitHub CLI install directory is not writable: $gh_install_dir" >&2
+  exit 1
+fi
+if [ ! -d "$gh_config_dir" ]; then
+  install -d -m 0700 "$gh_config_dir"
+fi
+if [ ! -w "$gh_config_dir" ]; then
+  echo "GitHub CLI config directory is not writable: $gh_config_dir" >&2
+  exit 1
+fi
+if [ -z "${GH_TOKEN:-}" ]; then
+  echo 'GH_TOKEN is required for GitHub CLI bootstrap' >&2
   exit 1
 fi
 
@@ -106,6 +120,34 @@ PY
 install -m 0555 "$extract_dir/gh" "$gh_install_path"
 "$gh_install_path" --version | grep -F "gh version $gh_version" >/dev/null
 
+install -d -m 0700 "$gh_auth_stage_dir"
+printf '%s' "$GH_TOKEN" | env -u GH_TOKEN -u GITHUB_TOKEN \
+  GH_CONFIG_DIR="$gh_auth_stage_dir" GH_PROMPT_DISABLED=1 \
+  "$gh_install_path" auth login \
+    --hostname github.com \
+    --git-protocol https \
+    --with-token \
+    --insecure-storage
+if [ ! -s "$gh_auth_stage_dir/hosts.yml" ]; then
+  echo 'GitHub CLI did not create its authentication file' >&2
+  exit 1
+fi
+chmod 0400 "$gh_auth_stage_dir/hosts.yml"
+github_login=$(env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$gh_auth_stage_dir" \
+  "$gh_install_path" api user --jq .login)
+if [ "$github_login" != tuslagch ]; then
+  echo "GitHub CLI authenticated as unexpected account: $github_login" >&2
+  exit 1
+fi
+github_permission=$(env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR="$gh_auth_stage_dir" \
+  "$gh_install_path" repo view proompteng/lab --json viewerPermission --jq .viewerPermission)
+if [ "$github_permission" != ADMIN ]; then
+  echo "tuslagch lacks ADMIN permission on proompteng/lab: $github_permission" >&2
+  exit 1
+fi
+mv -f -- "$gh_auth_stage_dir/hosts.yml" "$gh_hosts_path"
+rmdir -- "$gh_auth_stage_dir"
+
 : >"$git_config_tmp"
 chmod 0600 "$git_config_tmp"
 git config --file "$git_config_tmp" user.name tuslagch
@@ -122,4 +164,4 @@ git config --file "$git_config_tmp" --add credential.https://gist.github.com.hel
 git config --file "$git_config_tmp" --add credential.https://gist.github.com.helper "!$gh_install_path auth git-credential"
 mv -- "$git_config_tmp" "$git_config_path"
 
-printf 'github_bootstrap_ready=true gh_version=%s git_user=tuslagch\n' "$gh_version"
+printf 'github_bootstrap_ready=true gh_version=%s git_user=tuslagch repo_permission=ADMIN\n' "$gh_version"
