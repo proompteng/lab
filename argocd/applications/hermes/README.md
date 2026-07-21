@@ -38,7 +38,8 @@ smoke test, manifest change, and normal CI/Codex review.
 - Plugins, MCP servers, delegation, cron, hooks, speech-to-text, and Discord are disabled for the initial canary.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.
 - Bootstrap maintains a credential-free `proompteng/lab` checkout at `/opt/data/workspace/tuslagch/lab`. Clean `main`
-  checkouts fast-forward on restart; dirty worktrees and non-main branches are preserved.
+  checkouts fast-forward on restart; dirty worktrees and non-main branches are preserved. Both the gateway's documented
+  `terminal.cwd` and the container working directory point at this repository root.
 
 ## State and recovery
 

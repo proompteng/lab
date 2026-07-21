@@ -43,5 +43,6 @@ This workspace is the only mutable work area for Tuslagch. Treat it as durable u
 - Flamingo is the only approved model endpoint.
 - The API and Discord channel are operator-controlled surfaces; their availability does not expand authority.
 - A healthy process is not proof of a completed external action.
-- The local `proompteng/lab` checkout is `/opt/data/workspace/tuslagch/lab`; preserve local work when inspecting it.
+- The default working directory and local `proompteng/lab` checkout are `/opt/data/workspace/tuslagch/lab`; preserve local
+  work when inspecting it.
 - If a required capability is disabled, explain the boundary and ask for an operator-reviewed rollout instead of bypassing it.

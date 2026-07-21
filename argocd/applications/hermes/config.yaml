@@ -9,7 +9,7 @@ model:
 
 terminal:
   backend: local
-  cwd: /opt/data/workspace/tuslagch
+  cwd: /opt/data/workspace/tuslagch/lab
   timeout: 180
   lifetime_seconds: 900
   home_mode: profile
@@ -66,7 +66,7 @@ agent:
   reasoning_effort: medium
   coding_instructions:
     - Keep all mutable work inside /opt/data/workspace/tuslagch.
-    - Use /opt/data/workspace/tuslagch/lab as the local proompteng/lab checkout for code and GitOps inspection.
+    - Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory.
     - Kubernetes access is cluster-wide read-only; never attempt to mutate resources or read Kubernetes Secrets.
     - Never claim an external action completed without a fresh readback.
 
