@@ -562,6 +562,27 @@ Cutover sequence:
    argocd app sync openclaw --prune \
      --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin
    test -z "$(kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name)"
+   openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json | jq -r '
+     if .spec.running == true and (.spec | has("runStrategy") | not) then "legacy-running"
+     elif .spec.runStrategy == "Always" and (.spec | has("running") | not) then "runstrategy-running"
+     elif .spec.runStrategy == "Halted" and (.spec | has("running") | not) then "halted"
+     else "unexpected"
+     end')
+   case "$openclaw_run_state" in
+     legacy-running)
+       kubectl -n openclaw patch virtualmachine openclaw --type=json \
+         -p='[{"op":"test","path":"/spec/running","value":true},{"op":"remove","path":"/spec/running"},{"op":"add","path":"/spec/runStrategy","value":"Halted"}]'
+       ;;
+     runstrategy-running)
+       kubectl -n openclaw patch virtualmachine openclaw --type=json \
+         -p='[{"op":"test","path":"/spec/runStrategy","value":"Always"},{"op":"replace","path":"/spec/runStrategy","value":"Halted"}]'
+       ;;
+     halted) ;;
+     *) echo 'OpenClaw VM has an unexpected run-state schema; refusing cutover' >&2; exit 1 ;;
+   esac
+   kubectl -n openclaw get virtualmachine openclaw -o json | \
+     jq -e '.spec.runStrategy == "Halted" and (.spec | has("running") | not)'
+   unset openclaw_run_state
    argocd app sync openclaw --prune=false
    openclaw_stop_deadline=$(( $(date +%s) + 600 ))
    while :; do

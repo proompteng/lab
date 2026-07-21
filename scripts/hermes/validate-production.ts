@@ -737,6 +737,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'cutover step 5.',
     'argocd app sync openclaw --prune \\\n     --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
     'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
+    'openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json',
+    'if .spec.running == true and (.spec | has("runStrategy") | not) then "legacy-running"',
+    'elif .spec.runStrategy == "Always" and (.spec | has("running") | not) then "runstrategy-running"',
+    'elif .spec.runStrategy == "Halted" and (.spec | has("running") | not) then "halted"',
+    '-p=\'[{"op":"test","path":"/spec/running","value":true},{"op":"remove","path":"/spec/running"},{"op":"add","path":"/spec/runStrategy","value":"Halted"}]\'',
+    '-p=\'[{"op":"test","path":"/spec/runStrategy","value":"Always"},{"op":"replace","path":"/spec/runStrategy","value":"Halted"}]\'',
+    'OpenClaw VM has an unexpected run-state schema; refusing cutover',
+    'jq -e \'.spec.runStrategy == "Halted" and (.spec | has("running") | not)\'',
     'argocd app sync openclaw --prune=false',
     'openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)',
     'op item get --vault infra hermes-runtime --format json',
@@ -774,6 +782,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const clusterAdminAbsentIndex = cutoverSection.indexOf(
     'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
   )
+  const openClawRunStrategyTransitionIndex = cutoverSection.indexOf(
+    'openclaw_run_state=$(kubectl -n openclaw get virtualmachine openclaw -o json',
+  )
   const cutoverOpenClawSyncIndex = cutoverSection.indexOf('argocd app sync openclaw --prune=false')
   const openClawVmiAbsentIndex = cutoverSection.indexOf('if [ -z "$openclaw_vmi_name" ]')
   const credentialTransferIndex = cutoverSection.indexOf('op item edit --vault infra hermes-runtime')
@@ -796,7 +807,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     finalReconciliationIndex <= openClawGatewayStopIndex ||
     clusterAdminPruneIndex <= finalReconciliationIndex ||
     clusterAdminAbsentIndex <= clusterAdminPruneIndex ||
-    cutoverOpenClawSyncIndex <= clusterAdminAbsentIndex ||
+    openClawRunStrategyTransitionIndex <= clusterAdminAbsentIndex ||
+    cutoverOpenClawSyncIndex <= openClawRunStrategyTransitionIndex ||
     openClawVmiAbsentIndex <= cutoverOpenClawSyncIndex ||
     credentialTransferIndex <= openClawVmiAbsentIndex ||
     credentialCleanupIndex <= credentialTransferIndex ||
