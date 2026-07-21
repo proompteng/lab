@@ -58,6 +58,10 @@ spec:
               fi
               printf '%s\n' "$migration_output"
               case "$migration_output" in
+                *"Secrets:     no"*) ;;
+                *) echo 'migration apply did not prove that secret migration is disabled' >&2; exit 1 ;;
+              esac
+              case "$migration_output" in
                 *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"OpenClaw directory not found"*)
                   echo 'migration command reported a refusal or failure' >&2
                   exit 1
@@ -86,12 +90,15 @@ spec:
                   raise RuntimeError('migration report is not an execute report')
               if report.get('source_root') != '/opt/data/migration/source':
                   raise RuntimeError('migration report source does not match the audited staging tree')
-              if report.get('migrate_secrets') is not False:
-                  raise RuntimeError('migration report does not prove that secrets were excluded')
+              if report.get('migrate_secrets') not in {False, '[redacted]'}:
+                  raise RuntimeError('migration report has an unexpected secret-migration marker')
               if summary.get('conflict', 0) != 0 or summary.get('error', 0) != 0:
                   raise RuntimeError('migration report contains conflicts or errors')
 
               items = {item.get('kind'): item for item in report.get('items', [])}
+              selected = set(report.get('selection', {}).get('selected', []))
+              if {'secret-settings', 'provider-keys'} & selected:
+                  raise RuntimeError('migration report selected secret-bearing options')
               for kind in ('user-profile', 'daily-memory'):
                   item = items.get(kind)
                   if item is None or item.get('status') not in {'migrated', 'skipped'}:
@@ -102,6 +109,10 @@ spec:
                   item = items.get(kind)
                   if item is None or item.get('status') != 'skipped':
                       raise RuntimeError(f'GitOps-owned item was not skipped: {kind}')
+              for kind in ('secret-settings', 'provider-keys', 'discord-settings', 'slack-settings'):
+                  item = items.get(kind)
+                  if item is None or item.get('status') != 'skipped':
+                      raise RuntimeError(f'secret-bearing item was not skipped: {kind}')
 
               backups = [
                   path
