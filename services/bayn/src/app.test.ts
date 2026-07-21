@@ -13,6 +13,7 @@ import {
   DatabaseError,
   EvidenceStore,
   EvidenceStoreRuntimeLive,
+  makeEvidenceStoreRuntimeLayer,
   type EvidenceStoreService,
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
@@ -1034,6 +1035,43 @@ describe('Bayn startup lifecycle', () => {
         body: {
           operational: { status: 'FAILED' },
           error: expect.stringContaining('database.health-check'),
+        },
+      })
+      expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
+      expect(await fetchJson(port, '/readyz')).toMatchObject({
+        status: 503,
+        body: { ready: false, status: 'FAILED' },
+      })
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(fiber))
+    }
+  })
+
+  test('keeps HTTP live and interrupts a migration that exceeds the operation deadline', async () => {
+    let interrupted = false
+    const port = await unusedPort()
+    const timedOutDatabase = {
+      ...config,
+      port,
+      operationTimeoutMs: 10,
+    }
+    const stalledMigration = Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))))
+    const dependencies = Layer.mergeAll(
+      Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
+      Layer.succeed(Journal, successfulJournal),
+      makeEvidenceStoreRuntimeLayer(timedOutDatabase, stalledMigration, Effect.succeed(successfulEvidenceStore)),
+      TsmomStrategyLayer(fixtureProtocol, provenance),
+    )
+    const fiber = Effect.runFork(run(timedOutDatabase).pipe(Effect.provide(dependencies)))
+
+    try {
+      const status = await waitForStatus(port, 'FAILED')
+      expect(interrupted).toBe(true)
+      expect(status).toMatchObject({
+        status: 200,
+        body: {
+          operational: { status: 'FAILED' },
+          error: expect.stringContaining('PostgreSQL migration timed out after 10ms'),
         },
       })
       expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
