@@ -216,12 +216,50 @@ const fixture = (): QualificationAuditInput => {
     protocol: fixtureProtocol,
     database,
     signalAccess: [
+      {
+        queryId: 'publisher',
+        queryStartTime: '2026-07-20T11:59:58.000000Z',
+        user: 'signal-publisher',
+        kind: 'bars',
+      },
       { queryId: 'manifest', queryStartTime: '2026-07-20T11:59:59.000000Z', user: 'bayn', kind: 'manifest' },
       { queryId: 'sessions', queryStartTime: '2026-07-20T12:00:01.000000Z', user: 'bayn', kind: 'sessions' },
       { queryId: 'bars', queryStartTime: '2026-07-20T12:00:01.100000Z', user: 'bayn', kind: 'bars' },
     ],
+    signalPrincipals: { candidate: 'bayn', publishers: ['signal-publisher'] },
     repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: true, preLockResultReferences: [] },
   }
+}
+
+const replaceArtifact = (
+  input: QualificationAuditInput,
+  name: string,
+  mutate: (payload: Readonly<Record<string, unknown>>) => unknown,
+): QualificationAuditInput => {
+  const source = input.database.artifacts.find((artifact) => artifact.name === name)
+  if (source === undefined || typeof source.payload !== 'object' || source.payload === null) {
+    throw new Error(`fixture artifact ${name} is missing or malformed`)
+  }
+  const payload = mutate(structuredClone(source.payload) as Readonly<Record<string, unknown>>)
+  return {
+    ...input,
+    database: {
+      ...input.database,
+      artifacts: input.database.artifacts.map((artifact) =>
+        artifact.name === name ? { ...artifact, payload, contentHash: canonicalHashV1(payload) } : artifact,
+      ),
+    },
+  }
+}
+
+const replaceFirstItem = (
+  payload: Readonly<Record<string, unknown>>,
+  patch: Readonly<Record<string, unknown>>,
+): unknown => {
+  if (!Array.isArray(payload.items) || typeof payload.items[0] !== 'object' || payload.items[0] === null) {
+    throw new Error('fixture artifact has no object item')
+  }
+  return { ...payload, items: [{ ...payload.items[0], ...patch }, ...payload.items.slice(1)] }
 }
 
 describe('qualification audit', () => {
@@ -231,6 +269,14 @@ describe('qualification audit', () => {
 
     expect(first.status).toBe('PASS')
     expect(first.checks.every((check) => check.passed)).toBe(true)
+    expect(first.policies.declaredAt).toBe(first.contamination.lockCreatedAt)
+    expect(first.policies.documents.map((policy) => policy.name)).toEqual([
+      'benchmark',
+      'execution',
+      'thresholds',
+      'uncertainty',
+    ])
+    expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
   })
 
@@ -255,11 +301,135 @@ describe('qualification audit', () => {
   test('fails closed when candidate data was read before the lock', () => {
     const input = fixture()
     const signalAccess = input.signalAccess.map((record) =>
-      record.kind === 'bars' ? { ...record, queryStartTime: '2026-07-20T11:59:58.000000Z' } : record,
+      record.user === 'bayn' && record.kind === 'bars'
+        ? { ...record, queryStartTime: '2026-07-20T11:59:58.000000Z' }
+        : record,
     )
     const report = auditQualification({ ...input, signalAccess })
 
     expect(report.status).toBe('FAIL')
     expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-data')?.passed).toBe(false)
+  })
+
+  test.each([
+    ['strategy', 'reference-strategy', (payload: Readonly<Record<string, unknown>>) => ({ ...payload, sharpe: 99 })],
+    [
+      'tsmom-signal-decisions',
+      'reference-tsmom-signal-decisions',
+      (payload: Readonly<Record<string, unknown>>) => replaceFirstItem(payload, { decisionId: '0'.repeat(64) }),
+    ],
+    [
+      'daily-position-marks',
+      'reference-daily-position-marks',
+      (payload: Readonly<Record<string, unknown>>) => replaceFirstItem(payload, { equityMicros: '1' }),
+    ],
+    [
+      'buy-and-hold-series',
+      'reference-buy-and-hold-series',
+      (payload: Readonly<Record<string, unknown>>) => replaceFirstItem(payload, { netReturn: 99 }),
+    ],
+    [
+      'simulated-orders',
+      'reference-simulated-orders',
+      (payload: Readonly<Record<string, unknown>>) => replaceFirstItem(payload, { filledQuantityMicros: '1' }),
+    ],
+  ])('fails closed on internally rehashed %s drift', (artifactName, checkName, mutate) => {
+    const report = auditQualification(replaceArtifact(fixture(), artifactName, mutate))
+
+    expect(report.status).toBe('FAIL')
+    expect(report.checks.find((check) => check.name === 'artifact-hashes')?.passed).toBe(true)
+    expect(report.checks.find((check) => check.name === checkName)?.passed).toBe(false)
+  })
+
+  test('fails closed on a rehashed gate that diverges from the independent result', () => {
+    const input = fixture()
+    const gate = input.database.gates[0]
+    const changed = { ...gate, passed: !gate.passed }
+    const contentHash = canonicalHashV1({
+      name: changed.name,
+      passed: changed.passed,
+      actual: changed.actual,
+      required: changed.required,
+    })
+    const database = { ...input.database, gates: [{ ...changed, contentHash }, ...input.database.gates.slice(1)] }
+    const report = auditQualification({ ...input, database })
+
+    expect(report.status).toBe('FAIL')
+    expect(report.checks.find((check) => check.name === 'gate-hashes-and-order')?.passed).toBe(true)
+    expect(report.checks.find((check) => check.name === 'reference-gates')?.passed).toBe(false)
+  })
+
+  test('fails closed on policy, trial-lineage, repository, access-coverage, and principal defects', () => {
+    const cases: readonly [string, QualificationAuditInput, string][] = [
+      [
+        'policy',
+        (() => {
+          const input = fixture()
+          const lock = structuredClone(input.database.qualification.lock) as Record<string, unknown>
+          const policies = lock.policies as Record<string, Record<string, unknown>>
+          lock.policies = {
+            ...policies,
+            thresholds: { ...policies.thresholds, content: { schemaVersion: 'tampered' } },
+          }
+          return {
+            ...input,
+            database: {
+              ...input.database,
+              qualification: { ...input.database.qualification, lock },
+            },
+          }
+        })(),
+        'lock-policy-hashes',
+      ],
+      [
+        'trial-lineage',
+        (() => {
+          const input = fixture()
+          return { ...input, database: { ...input.database, priorTrialRunIds: ['0'.repeat(64)] } }
+        })(),
+        'locked-prior-trial-lineage',
+      ],
+      [
+        'repository',
+        {
+          ...fixture(),
+          repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: false, preLockResultReferences: [] },
+        },
+        'source-revision-in-repository',
+      ],
+      [
+        'access-coverage',
+        (() => {
+          const input = fixture()
+          return { ...input, signalAccess: input.signalAccess.filter((record) => record.queryId !== 'bars') }
+        })(),
+        'signal-lock-before-candidate-data',
+      ],
+      [
+        'principal',
+        (() => {
+          const input = fixture()
+          return {
+            ...input,
+            signalAccess: [
+              ...input.signalAccess,
+              {
+                queryId: 'unknown',
+                queryStartTime: '2026-07-20T11:59:59.500000Z',
+                user: 'notebook',
+                kind: 'manifest' as const,
+              },
+            ],
+          }
+        })(),
+        'signal-read-principals',
+      ],
+    ]
+
+    for (const [name, input, checkName] of cases) {
+      const report = auditQualification(input)
+      expect(report.status, name).toBe('FAIL')
+      expect(report.checks.find((check) => check.name === checkName)?.passed, name).toBe(false)
+    }
   })
 })

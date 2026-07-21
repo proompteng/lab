@@ -103,6 +103,7 @@ const config = Config.all({
   postgresCaPath: Config.string('BAYN_AUDIT_POSTGRES_CA_PATH').pipe(Config.withDefault('')),
   signalUrl: Config.string('BAYN_AUDIT_SIGNAL_URL'),
   signalUsername: Config.string('BAYN_AUDIT_SIGNAL_USERNAME'),
+  signalPublisherUsername: Config.string('BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME'),
   signalPassword: Config.redacted('BAYN_AUDIT_SIGNAL_PASSWORD'),
   auditClickhouseUrl: Config.string('BAYN_AUDIT_CLICKHOUSE_URL'),
   auditClickhouseUsername: Config.string('BAYN_AUDIT_CLICKHOUSE_USERNAME'),
@@ -362,7 +363,6 @@ const readSignalAccess = (
         ) AS kind
       FROM system.query_log
       WHERE type = 'QueryStart'
-        AND user = 'bayn'
         AND query_start_time_microseconds >= parseDateTime64BestEffort(${sql.param('String', finalizedAt)}, 6)
         AND query_start_time_microseconds <= parseDateTime64BestEffort(
           ${sql.param('String', database.qualification.resultCommittedAt)},
@@ -458,6 +458,7 @@ const main = Effect.gen(function* () {
     protocol,
     database,
     signalAccess,
+    signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
   })
   const stdio = yield* Stdio.Stdio
