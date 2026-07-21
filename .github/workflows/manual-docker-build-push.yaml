@@ -1,37 +1,107 @@
-name: Manual Docker Pull and Push
+name: Manual OCI Mirror
 
 on:
   workflow_dispatch:
     inputs:
-      image_name:
-        description: 'Docker image name (e.g., nginx)'
+      source_registry:
+        description: Source registry
         required: true
-      image_tag:
-        description: 'Docker image tag'
+        default: ghcr.io
+        type: choice
+        options:
+          - ghcr.io
+          - docker.io
+      source_repository:
+        description: Source repository without registry
         required: true
-        default: 'latest'
+        type: string
+      source_digest:
+        description: Immutable source digest
+        required: true
+        type: string
+      target_repository:
+        description: Target repository below registry.ide-newton.ts.net/lab
+        required: true
+        type: string
+      target_tag:
+        description: Target tag
+        required: true
+        type: string
 
-env:
-  SOURCE_REGISTRY: docker.io
-  TARGET_REGISTRY: registry.ide-newton.ts.net/lab
+permissions:
+  contents: read
+  packages: read
 
 jobs:
-  pull-and-push:
+  mirror:
     runs-on: arc-arm64
     steps:
+      - name: Log in to GHCR
+        if: ${{ inputs.source_registry == 'ghcr.io' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Pull and push Docker image
+      - name: Validate immutable references
+        id: image
+        shell: bash
+        env:
+          SOURCE_REGISTRY: ${{ inputs.source_registry }}
+          SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+          SOURCE_DIGEST: ${{ inputs.source_digest }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+          TARGET_TAG: ${{ inputs.target_tag }}
         run: |
-          SOURCE_IMAGE="${{ env.SOURCE_REGISTRY }}/${{ github.event.inputs.image_name }}:${{ github.event.inputs.image_tag }}"
-          TARGET_IMAGE="${{ env.TARGET_REGISTRY }}/${{ github.event.inputs.image_name }}:${{ github.event.inputs.image_tag }}"
+          set -euo pipefail
+          repository_pattern='^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$'
+          digest_pattern='^sha256:[0-9a-f]{64}$'
+          tag_pattern='^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$'
+          [[ "$SOURCE_REPOSITORY" =~ $repository_pattern ]]
+          [[ "$TARGET_REPOSITORY" =~ $repository_pattern ]]
+          [[ "$SOURCE_DIGEST" =~ $digest_pattern ]]
+          [[ "$TARGET_TAG" =~ $tag_pattern ]]
+          {
+            echo "source=${SOURCE_REGISTRY}/${SOURCE_REPOSITORY}@${SOURCE_DIGEST}"
+            echo "source_digest=${SOURCE_DIGEST}"
+            echo "target=registry.ide-newton.ts.net/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
+          } >> "$GITHUB_OUTPUT"
 
-          echo "Pulling image: $SOURCE_IMAGE"
-          docker pull $SOURCE_IMAGE
+      - name: Copy complete OCI index
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${{ steps.image.outputs.target }}" \
+            --metadata-file mirror-metadata.json \
+            "${{ steps.image.outputs.source }}"
 
-          echo "Tagging image for target registry"
-          docker tag $SOURCE_IMAGE $TARGET_IMAGE
+      - name: Verify digest and required platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jq -r '.containerimage.descriptor.digest' mirror-metadata.json)" = \
+            "${{ steps.image.outputs.source_digest }}"
+          docker buildx imagetools inspect --raw "${{ steps.image.outputs.target }}" > mirrored-index.json
+          jq -e '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' mirrored-index.json
 
-          echo "Pushing image to target registry: $TARGET_IMAGE"
-          docker push $TARGET_IMAGE
+      - name: Summarize mirror
+        shell: bash
+        env:
+          MIRROR_SOURCE: ${{ steps.image.outputs.source }}
+          MIRROR_TARGET: ${{ steps.image.outputs.target }}
+        run: |
+          {
+            echo '### OCI mirror complete'
+            echo
+            echo "- Source: ${MIRROR_SOURCE}"
+            echo "- Target: ${MIRROR_TARGET}"
+            echo '- Platforms: linux/amd64, linux/arm64'
+          } >> "$GITHUB_STEP_SUMMARY"
