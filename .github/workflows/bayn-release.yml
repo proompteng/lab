@@ -8,7 +8,7 @@ on:
       - completed
 
 concurrency:
-  group: bayn-release-${{ github.event.workflow_run.head_sha }}
+  group: bayn-release
   cancel-in-progress: true
 
 jobs:
@@ -95,8 +95,9 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/bayn-release-${{ steps.release.outputs.tag }}
+          branch: codex/bayn-release-current
           base: main
+          delete-branch: true
           title: 'chore(bayn): promote image ${{ steps.release.outputs.tag }}'
           commit-message: 'chore(bayn): promote image ${{ steps.release.outputs.tag }}'
           add-paths: |

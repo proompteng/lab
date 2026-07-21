@@ -74,7 +74,7 @@ export const makeTsmomStrategy = (protocol: TsmomProtocol, provenance: RuntimePr
         image: provenance.image,
         universe: protocol.universe,
         universeRationale:
-          'Committed cross-asset ETF universe from bayn.tsmom.protocol.v2 with complete finalized SIP/all adjusted daily coverage.',
+          'Legacy TSMOM ETF universe with complete finalized SIP/all daily coverage; this qualification does not establish websocket execution coverage.',
         data: {
           snapshotId: snapshot.snapshotId,
           publicationId: snapshot.publicationId,

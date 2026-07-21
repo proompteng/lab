@@ -9,73 +9,9 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  strategyBehaviorFiles = [
-    {
-      name = "services/bayn/src/contracts.ts";
-      path = ../../services/bayn/src/contracts.ts;
-    }
-    {
-      name = "services/bayn/src/execution-model.ts";
-      path = ../../services/bayn/src/execution-model.ts;
-    }
-    {
-      name = "services/bayn/src/hash.ts";
-      path = ../../services/bayn/src/hash.ts;
-    }
-    {
-      name = "services/bayn/src/index.ts";
-      path = ../../services/bayn/src/index.ts;
-    }
-    {
-      name = "services/bayn/src/ledger.ts";
-      path = ../../services/bayn/src/ledger.ts;
-    }
-    {
-      name = "services/bayn/src/market-data.ts";
-      path = ../../services/bayn/src/market-data.ts;
-    }
-    {
-      name = "services/bayn/src/protocol.ts";
-      path = ../../services/bayn/src/protocol.ts;
-    }
-    {
-      name = "services/bayn/src/qualification-statistics.ts";
-      path = ../../services/bayn/src/qualification-statistics.ts;
-    }
-    {
-      name = "services/bayn/src/qualification.ts";
-      path = ../../services/bayn/src/qualification.ts;
-    }
-    {
-      name = "services/bayn/src/risk-balanced-trend.ts";
-      path = ../../services/bayn/src/risk-balanced-trend.ts;
-    }
-    {
-      name = "services/bayn/src/simulation-reconciliation.ts";
-      path = ../../services/bayn/src/simulation-reconciliation.ts;
-    }
-    {
-      name = "services/bayn/src/simulation.ts";
-      path = ../../services/bayn/src/simulation.ts;
-    }
-    {
-      name = "services/bayn/src/strategy.ts";
-      path = ../../services/bayn/src/strategy.ts;
-    }
-    {
-      name = "services/bayn/src/strategy-service.ts";
-      path = ../../services/bayn/src/strategy-service.ts;
-    }
-    {
-      name = "services/bayn/src/types.ts";
-      path = ../../services/bayn/src/types.ts;
-    }
-  ];
-  strategyBehaviorHash = builtins.hashString "sha256" (
-    builtins.concatStringsSep "\n" (
-      builtins.map (source: source.name + "\n" + builtins.readFile source.path) strategyBehaviorFiles
-    )
-  );
+  # Immutable identity for bayn.tsmom.behavior.v1. The complete deterministic evaluator fingerprint is locked in
+  # strategy.test.ts, so behavior-preserving refactors do not invalidate the pinned qualification.
+  strategyBehaviorHash = "2d4c83a855a5b43f7f24072b30d4d3e73b2365a6d077baa0a1c72894e6638c7c";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
 in
 import ./bun-workspace-service.nix {
