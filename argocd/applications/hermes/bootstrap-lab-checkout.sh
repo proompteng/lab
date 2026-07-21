@@ -10,10 +10,24 @@ repository_url=${LAB_REPOSITORY_URL:-https://github.com/proompteng/lab.git}
 checkout_ref=${LAB_CHECKOUT_REF:-main}
 checkout_dir=${LAB_CHECKOUT_DIR:-/opt/data/workspace/tuslagch/lab}
 revision_file=${LAB_CHECKOUT_REVISION_FILE:-/opt/data/workspace/tuslagch/.lab-source-revision}
+retry_attempts=${LAB_CHECKOUT_RETRY_ATTEMPTS:-5}
+retry_delay_seconds=${LAB_CHECKOUT_RETRY_DELAY_SECONDS:-2}
 
 case "$checkout_ref" in
   ''|*[!A-Za-z0-9._/-]*)
     echo "invalid lab checkout ref: $checkout_ref" >&2
+    exit 1
+    ;;
+esac
+case "$retry_attempts" in
+  ''|*[!0-9]*|0)
+    echo "invalid lab checkout retry attempts: $retry_attempts" >&2
+    exit 1
+    ;;
+esac
+case "$retry_delay_seconds" in
+  ''|*[!0-9]*)
+    echo "invalid lab checkout retry delay: $retry_delay_seconds" >&2
     exit 1
     ;;
 esac
@@ -25,19 +39,43 @@ fi
 
 mkdir -p "$(dirname "$checkout_dir")" "$(dirname "$revision_file")"
 
+retry_checkout_command() {
+  operation=$1
+  shift
+  attempt=1
+  while [ "$attempt" -le "$retry_attempts" ]; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$retry_attempts" ]; then
+      echo "warning: lab checkout $operation attempt $attempt/$retry_attempts failed; retrying in ${retry_delay_seconds}s" >&2
+      sleep "$retry_delay_seconds"
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 if [ ! -e "$checkout_dir" ]; then
   staging_dir="${checkout_dir}.clone.$$"
   cleanup_staging() {
     rm -rf -- "$staging_dir"
   }
   trap cleanup_staging EXIT HUP INT TERM
-  git -c protocol.version=2 clone \
-    --filter=blob:none \
-    --no-tags \
-    --single-branch \
-    --branch "$checkout_ref" \
-    "$repository_url" \
-    "$staging_dir"
+  clone_checkout() {
+    rm -rf -- "$staging_dir"
+    git -c protocol.version=2 clone \
+      --filter=blob:none \
+      --no-tags \
+      --single-branch \
+      --branch "$checkout_ref" \
+      "$repository_url" \
+      "$staging_dir"
+  }
+  if ! retry_checkout_command clone clone_checkout; then
+    echo "could not clone lab checkout after $retry_attempts attempts" >&2
+    exit 1
+  fi
   mv -- "$staging_dir" "$checkout_dir"
   trap - EXIT HUP INT TERM
 elif [ ! -d "$checkout_dir/.git" ]; then
@@ -50,12 +88,15 @@ else
     exit 1
   fi
 
-  if git -C "$checkout_dir" fetch \
-    --filter=blob:none \
-    --no-tags \
-    --prune \
-    origin \
-    "refs/heads/$checkout_ref:refs/remotes/origin/$checkout_ref"; then
+  fetch_checkout() {
+    git -C "$checkout_dir" fetch \
+      --filter=blob:none \
+      --no-tags \
+      --prune \
+      origin \
+      "refs/heads/$checkout_ref:refs/remotes/origin/$checkout_ref"
+  }
+  if retry_checkout_command fetch fetch_checkout; then
     current_branch=$(git -C "$checkout_dir" symbolic-ref --quiet --short HEAD || true)
     if [ "$current_branch" = "$checkout_ref" ] && [ -z "$(git -C "$checkout_dir" status --porcelain)" ]; then
       git -C "$checkout_dir" merge --ff-only "refs/remotes/origin/$checkout_ref"

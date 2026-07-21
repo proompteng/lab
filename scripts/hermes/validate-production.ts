@@ -511,7 +511,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'https://github.com/proompteng/lab.git',
     'LAB_CHECKOUT_REF:-main',
     'LAB_CHECKOUT_DIR:-/opt/data/workspace/tuslagch/lab',
+    'LAB_CHECKOUT_RETRY_ATTEMPTS:-5',
+    'LAB_CHECKOUT_RETRY_DELAY_SECONDS:-2',
     'if [ -L "$checkout_dir" ]',
+    'retry_checkout_command()',
+    'retry_checkout_command clone clone_checkout',
+    'retry_checkout_command fetch fetch_checkout',
     '--filter=blob:none',
     'git -C "$checkout_dir" fetch',
     'git -C "$checkout_dir" merge --ff-only',
@@ -572,6 +577,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '`hermes.proompteng.ai/github-auth-revision` annotation',
     'GitHub CLI `2.96.0`',
     'per-Pod `emptyDir`',
+    'bounded retries for transient pod-network startup races',
     githubCliArchiveSha256,
   ])
 
