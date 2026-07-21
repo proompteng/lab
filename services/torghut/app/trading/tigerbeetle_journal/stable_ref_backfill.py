@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+from sqlalchemy import cast as sa_cast
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -30,19 +32,30 @@ from .journal_payloads import (
 def _missing_stable_ref_clause(session: Session) -> ColumnElement[bool]:
     dialect_name = session.get_bind().dialect.name
     if dialect_name == "postgresql":
-        stable_ref_type = func.jsonb_typeof(
-            TigerBeetleTransferRef.payload_json["stable_ref"]
-        )
+        stable_ref = TigerBeetleTransferRef.payload_json["stable_ref"]
+        stable_ref_type = func.jsonb_typeof(stable_ref)
+        empty_object = stable_ref == sa_cast({}, JSONB)
     elif dialect_name == "sqlite":
         stable_ref_type = func.json_type(
             TigerBeetleTransferRef.payload_json,
             "$.stable_ref",
         )
+        empty_object = (
+            func.json_extract(
+                TigerBeetleTransferRef.payload_json,
+                "$.stable_ref",
+            )
+            == "{}"
+        )
     else:
         raise RuntimeError(
             f"tigerbeetle_stable_ref_backfill_dialect_unsupported:{dialect_name}"
         )
-    return or_(stable_ref_type.is_(None), stable_ref_type != "object")
+    return or_(
+        stable_ref_type.is_(None),
+        stable_ref_type != "object",
+        empty_object,
+    )
 
 
 def _required_payload_account_id(
@@ -192,7 +205,8 @@ def _backfill_ref(
     payload: Mapping[str, object],
     account_specs_by_id: Mapping[str, TigerBeetleAccountSpec],
 ) -> bool:
-    if isinstance(payload.get("stable_ref"), Mapping):
+    stable_ref = payload.get("stable_ref")
+    if isinstance(stable_ref, Mapping) and stable_ref:
         return False
     source_type = str(ref.source_type or "").strip()
     source_id = str(ref.source_id or "").strip()

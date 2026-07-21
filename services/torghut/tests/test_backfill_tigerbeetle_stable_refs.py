@@ -200,7 +200,7 @@ class TestBackfillTigerBeetleStableRefs(TestCase):
             with self.assertRaisesRegex(SystemExit, "missing DSN env var: CUSTOM_DSN"):
                 main(["--dsn-env", "CUSTOM_DSN"])
 
-    def test_postgresql_missing_predicate_uses_a_text_json_key(self) -> None:
+    def test_postgresql_missing_predicate_uses_supported_jsonb_operations(self) -> None:
         engine = create_engine("postgresql+psycopg://", future=True)
         try:
             with Session(engine) as session:
@@ -211,9 +211,39 @@ class TestBackfillTigerBeetleStableRefs(TestCase):
 
         self.assertIn("payload_json ->", str(compiled))
         self.assertIn("::TEXT", str(compiled))
-        self.assertNotIn("::JSONB", str(compiled))
+        self.assertIn("AS JSONB", str(compiled))
+        self.assertNotIn("jsonb_object_length", str(compiled))
         self.assertEqual(compiled.params["payload_json_1"], "stable_ref")
         self.assertEqual(compiled.params["jsonb_typeof_1"], "object")
+
+    def test_apply_replaces_empty_stable_ref_object_and_drains_missing_count(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            _seed_refs(session, count=1)
+            ref = session.scalar(select(TigerBeetleTransferRef))
+            assert ref is not None
+            ref.payload_json = {**ref.payload_json, "stable_ref": {}}
+            session.commit()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=FakeTigerBeetleClient(),
+            )
+
+            result = run_stable_ref_backfill(
+                session,
+                journal,
+                batch_size=1,
+                max_batches=1,
+                apply=True,
+            )
+            payload = session.scalar(select(TigerBeetleTransferRef.payload_json))
+
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["missing_before"], 1)
+        self.assertEqual(result["missing_after"], 0)
+        self.assertEqual(result["postgres_rows_updated"], 1)
+        self.assertTrue(payload["stable_ref"])
 
     def test_apply_drains_multiple_batches_without_tigerbeetle_writes(self) -> None:
         with Session(self.engine) as session:
