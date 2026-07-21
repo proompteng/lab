@@ -76,11 +76,15 @@ keeps every published activity in the same order, and economically sorts only th
 
 Crossing the published economic frontier is not a generic ingestion-time rule. A missing historical trade or a
 correction of published history requires a new reducer and projection version. A documented late date-only `CFEE` may
-append only after the canonical and independent reducers also replay the complete source in economic order and prove:
+append only after the normal dual reduction remains admissible and equivalent and the dedicated retroactive-append
+guard replays the complete source in economic order. That dedicated guard compares the canonical journal and proves:
 
 - the transaction ID and digest multiset is identical;
-- the final economic projection is identical, excluding only the order-dependent input-manifest digest; and
-- both reductions remain admissible and exactly equivalent.
+- the canonical journal's final economic projection is identical, excluding only the order-dependent input-manifest
+  digest.
+
+Independent-reducer equivalence is required by the normal replay boundary, but it is not an additional comparison made
+inside the retroactive-append guard.
 
 This rejects both obvious insufficient-position cases and sufficient-position cases where later trades changed the
 fee's average cost. The implementation never guesses that an append is safe from position quantity alone. A malformed,
