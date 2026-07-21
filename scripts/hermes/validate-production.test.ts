@@ -315,6 +315,39 @@ test('rejects maintenance operations without an atomic Lease', async () => {
   )
 })
 
+test('rejects a maintenance lock that cannot bootstrap the Argo-excluded Lease', async () => {
+  const files = await loadProductionFiles()
+  files.maintenanceLock = files.maintenanceLock.replace('    ensure_lease\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.maintenanceLock}: missing production invariant "    ensure_lease"`,
+  )
+})
+
+test('rejects declaring the globally excluded maintenance Lease as an Argo resource', async () => {
+  const files = await loadProductionFiles()
+  files.kustomization = files.kustomization.replace(
+    '  - serviceaccount.yaml\n',
+    '  - serviceaccount.yaml\n  - maintenance-lease.yaml\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kustomization}: contains forbidden production term "maintenance-lease.yaml"`,
+  )
+})
+
+test('rejects the invalid namespace name-plus-selector rollout check', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    '   kubectl -n hermes get namespace hermes -o json |',
+    '   kubectl -n hermes get namespace hermes -l observability.proompteng.ai/hermes-rollout-enabled=true -o json |',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "kubectl -n hermes get namespace hermes -o json"`,
+  )
+})
+
 test('rejects creating the one-off backup outside the maintenance Lease', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(

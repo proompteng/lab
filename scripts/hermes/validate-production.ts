@@ -15,7 +15,6 @@ export const productionPaths = {
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   serviceAccount: 'argocd/applications/hermes/serviceaccount.yaml',
-  maintenanceLease: 'argocd/applications/hermes/maintenance-lease.yaml',
   migrationDryRun: 'argocd/applications/hermes/operations/migration-dry-run-job.yaml',
   migrationApply: 'argocd/applications/hermes/operations/migration-apply-job.yaml',
   restoreStage: 'argocd/applications/hermes/operations/restore-stage-pod.yaml',
@@ -73,22 +72,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- backup-cronjob.yaml',
     '- network-policy.yaml',
     '- external-secret.yaml',
-    '- maintenance-lease.yaml',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
+    'maintenance-lease.yaml',
     'operations/',
     'migration-apply-job.yaml',
     'restore-job.yaml',
   ])
-  requireTerms(failures, productionPaths.maintenanceLease, files.maintenanceLease, [
-    'apiVersion: coordination.k8s.io/v1',
-    'kind: Lease',
-    'name: hermes-maintenance',
-    'holderIdentity: ""',
-    'leaseDurationSeconds: 14400',
-  ])
-
   if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
     failures.push(
       `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
@@ -359,6 +350,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'set -euo pipefail',
     'readonly lease=hermes-maintenance',
     '^(acquire|release|recover)$',
+    'ensure_lease() {',
+    'kubectl -n "$namespace" create -f -',
+    'app.kubernetes.io/component: maintenance',
+    'holderIdentity: ""',
+    'leaseDurationSeconds: 14400',
+    '    ensure_lease',
     '{op: "test", path: "/spec/holderIdentity", value: $expected}',
     '{op: "replace", path: "/spec/holderIdentity", value: $replacement}',
     'patch lease "$lease" --type=json',
@@ -371,15 +368,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'path: argocd/applications/hermes',
     'namespace: hermes',
     'automation: manual',
-    'group: coordination.k8s.io',
-    'kind: Lease',
-    'name: hermes-maintenance',
-    '- /spec/holderIdentity',
-    '- /spec/renewTime',
     'external-secrets.proompteng.ai/enabled: "true"',
     'observability.proompteng.ai/hermes-rollout-enabled: "true"',
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
+  ])
+  forbidTerms(failures, productionPaths.platform, hermesApplication, [
+    'group: coordination.k8s.io',
+    'kind: Lease',
+    'name: hermes-maintenance',
   ])
 
   requireTerms(failures, productionPaths.runbook, files.runbook, [
@@ -389,6 +386,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.',
     'Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.',
     'Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.',
+    'kubectl -n hermes get namespace hermes -o json',
+    'Argo CD globally excludes Kubernetes Lease objects',
     "stale_maintenance_holder=$(kubectl -n hermes get lease hermes-maintenance -o jsonpath='{.spec.holderIdentity}')",
     'maintenance-lock.sh recover "$stale_maintenance_holder"',
     'A standalone Job does not update the CronJob',
@@ -404,7 +403,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'redact or remove only the',
     'flagged material in `$hermes_stage_dir`',
     'Never weaken or bypass the patterns.',
-    'observability.proompteng.ai/hermes-rollout-enabled=true',
+    '.metadata.labels["observability.proompteng.ai/hermes-rollout-enabled"] == "true"',
     'kubectl -n hermes delete "$dry_run_job" --wait=true',
     'kubectl -n hermes delete "$migration_job" --wait=true',
     'kubectl -n hermes delete "$restore_job" --wait=true',
