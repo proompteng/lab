@@ -214,7 +214,7 @@ The expected mirrored amd64 manifest digest is
      exit 1
    fi
    kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
-     'import urllib.request; urllib.request.urlopen("https://discord.com/robots.txt", timeout=10).read(1)'
+     'import urllib.request; request=urllib.request.Request("https://discord.com/api/v10/gateway", headers={"User-Agent":"DiscordBot (https://proompteng.ai, 1.0)"}); response=urllib.request.urlopen(request, timeout=10); assert response.status == 200; response.read(1)'
    kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -c \
      '! /opt/hermes/.venv/bin/python -c '\''import urllib.request; urllib.request.urlopen("https://example.com", timeout=5)'\'''
    ```
@@ -306,8 +306,9 @@ unset stale_maintenance_holder
 
 ## Phase 2: non-secret user-data migration
 
-1. Build a sanitized source archive from the OpenClaw workspace. Only the listed identity and memory paths are exported;
-   `.openclaw/openclaw.json`, credentials, tokens, sessions, and logs never enter the archive:
+1. Build a sanitized source archive from the OpenClaw workspace. Only the user profile, memory, and optional skills are
+   exported; `.openclaw/openclaw.json`, credentials, tokens, sessions, logs, and operator-managed identity/policy files
+   never enter the archive. `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, and `HEARTBEAT.md` remain GitOps-owned:
 
    ```bash
    set -euo pipefail
@@ -317,8 +318,8 @@ unset stale_maintenance_holder
      set -o pipefail
      virtctl ssh -n openclaw --username ubuntu --identity-file /Users/gregkonush/.ssh/id_ed25519 \
        --local-ssh-opts='-o IdentityAgent=none' --local-ssh-opts='-o IdentitiesOnly=yes' \
-       --command='set -eu; cd /home/ubuntu/github.com/lab/services/tuslagch; for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; do test -r "$path"; done; set -- AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; for path in MEMORY.md skills; do if test -e "$path" || test -L "$path"; then test -r "$path"; set -- "$@" "$path"; fi; done; tar -czf - "$@"' \
-       vm/openclaw | tar -xzf - -C "$hermes_stage_dir/openclaw/workspace"
+       --command='set -eu; cd /home/ubuntu/github.com/lab/services/tuslagch; for path in USER.md memory; do test -r "$path"; done; set -- USER.md memory; for path in MEMORY.md skills; do if test -e "$path" || test -L "$path"; then test -r "$path"; set -- "$@" "$path"; fi; done; tar -czf - "$@"' \
+       vm/openclaw </dev/null | tar -xzf - -C "$hermes_stage_dir/openclaw/workspace"
    ); then
      rm -rf -- "$hermes_stage_dir"
      unset hermes_stage_dir
@@ -336,9 +337,9 @@ unset stale_maintenance_holder
    symlinks, non-text content, credential-like or opaque high-entropy values, and bounded-size violations without printing
    detected values. An audit failure blocks migration: inspect the reported file privately, redact or remove only the
    flagged material in `$hermes_stage_dir`, and rerun the unchanged auditor. Never weaken or bypass the patterns. Also review
-   the file-name-only inventory and stop if it contains config, credential, token, session, or log files. The six identity
-   files and `memory/` are required; `MEMORY.md` and `skills/` are included only when present, and any unreadable selected
-   path or descendant fails the pipe.
+   the file-name-only inventory and stop if it contains config, credential, token, session, log, or operator-managed
+   identity/policy files. `USER.md` and `memory/` are required; `MEMORY.md` and `skills/` are included only when present,
+   and any unreadable selected path or descendant fails the pipe.
 
 2. In one dedicated private Bash process, acquire the maintenance Lease for the entire staging, dry-run, and apply
    transaction. Keep this same shell open through step 5. Suspend new backups and wait up to 65 minutes for every active
@@ -366,8 +367,8 @@ unset stale_maintenance_holder
    done
    unset backup_wait_deadline
    kubectl -n hermes exec hermes-0 -c hermes -- sh -c \
-     'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'
-   kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/openclaw -c hermes
+     'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'
+   kubectl -n hermes cp "$hermes_stage_dir/openclaw/." hermes-0:/opt/data/migration/source -c hermes
    rm -rf -- "$hermes_stage_dir"
    unset hermes_stage_dir
    kubectl -n hermes scale statefulset/hermes --replicas=0
@@ -388,8 +389,8 @@ unset stale_maintenance_holder
    ```
 
 3. In the same shell, assert continued Lease ownership, run the merged dry-run Job, and review its complete log. It must
-   contain no secret migration and no unresolved conflict. Exit the shell to release the Lease if the preview is not
-   accepted:
+   contain `migration_preview_verified=true conflicts=0 secrets=false`, no secret migration, and no unresolved conflict.
+   Exit the shell to release the Lease if the preview is not accepted:
 
    ```bash
    set -euo pipefail
@@ -404,10 +405,14 @@ unset stale_maintenance_holder
      exit 1
    fi
    kubectl -n hermes logs "$dry_run_job"
+   kubectl -n hermes logs "$dry_run_job" | grep -Fqx \
+     'migration_preview_verified=true conflicts=0 secrets=false'
    ```
 
 4. If the preview is correct, use the same shell and Lease to run the apply Job. Preserve its Job name, log, report summary,
-   and generated restore-point archive as migration evidence. Keep the Lease held for the final resync:
+   and generated restore-point archive as migration evidence. The Job verifies its current JSON report, zero
+   conflicts/errors, excluded secrets, untouched GitOps-owned identity files, and a current restore point before it can
+   complete. Keep the Lease held for the final resync:
 
    ```bash
    set -euo pipefail
@@ -422,6 +427,10 @@ unset stale_maintenance_holder
      exit 1
    fi
    kubectl -n hermes logs "$migration_job"
+   kubectl -n hermes logs "$migration_job" | grep -Fq \
+     'migration_report_verified=true conflicts=0 errors=0'
+   kubectl -n hermes logs "$migration_job" | grep -Fqx \
+     'operator_owned_identity_unchanged=true secrets=false'
    ```
 
 5. In the same shell, restore desired replicas through Argo, verify backups are enabled, then release the Lease. Repeat the

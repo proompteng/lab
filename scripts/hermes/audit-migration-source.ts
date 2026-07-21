@@ -5,25 +5,11 @@ const maxFiles = 5_000
 const maxFileBytes = 5 * 1024 * 1024
 const maxTotalBytes = 100 * 1024 * 1024
 
-const allowedWorkspaceFiles = new Set([
-  'AGENTS.md',
-  'HEARTBEAT.md',
-  'IDENTITY.md',
-  'MEMORY.md',
-  'SOUL.md',
-  'TOOLS.md',
-  'USER.md',
-])
+// Hermes identity and operating-policy files are owned by GitOps. Only user
+// profile and memory content may cross the OpenClaw migration boundary.
+const allowedWorkspaceFiles = new Set(['MEMORY.md', 'USER.md'])
 const allowedWorkspaceDirectories = new Set(['memory', 'skills'])
-const requiredMigrationPaths = new Set([
-  'workspace/AGENTS.md',
-  'workspace/HEARTBEAT.md',
-  'workspace/IDENTITY.md',
-  'workspace/SOUL.md',
-  'workspace/TOOLS.md',
-  'workspace/USER.md',
-  'workspace/memory',
-])
+const requiredMigrationPaths = new Set(['workspace/USER.md', 'workspace/memory'])
 const forbiddenPathComponents = new Set([
   '.aws',
   '.env',

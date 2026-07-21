@@ -247,10 +247,33 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'activeDeadlineSeconds: 3900',
   ])
   forbidTerms(failures, productionPaths.restoreStage, files.restoreStage, ['kind: Secret', ':latest'])
-  requireTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--preset', 'user-data', '--dry-run'])
-  requireTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--preset', 'user-data', '--yes'])
+  requireTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, [
+    '--source /opt/data/migration/source',
+    '--preset user-data',
+    '--dry-run',
+    'migration preview contains a conflict or refusal',
+    'migration_preview_verified=true conflicts=0 secrets=false',
+  ])
+  requireTerms(failures, productionPaths.migrationApply, files.migrationApply, [
+    '--source /opt/data/migration/source',
+    '--preset user-data',
+    '--yes',
+    'operator_digests_before=$(sha256sum $operator_files)',
+    "report.get('source_root') != '/opt/data/migration/source'",
+    "report.get('migrate_secrets') is not False",
+    "summary.get('conflict', 0) != 0 or summary.get('error', 0) != 0",
+    "for kind in ('user-profile', 'daily-memory'):",
+    "for kind in ('soul', 'workspace-agents'):",
+    "pathlib.Path('/opt/data/backups').glob('pre-migration-*.zip')",
+    'migration_report_verified=true',
+    'operator_owned_identity_unchanged=true secrets=false',
+  ])
+  forbidTerms(failures, productionPaths.migrationDryRun, files.migrationDryRun, ['--overwrite'])
+  forbidTerms(failures, productionPaths.migrationApply, files.migrationApply, ['--overwrite'])
   requireTerms(failures, productionPaths.migrationAudit, files.migrationAudit, [
+    "allowedWorkspaceFiles = new Set(['MEMORY.md', 'USER.md'])",
     "allowedWorkspaceDirectories = new Set(['memory', 'skills'])",
+    "requiredMigrationPaths = new Set(['workspace/USER.md', 'workspace/memory'])",
     'source root must be a real directory',
     'source contains no approved files',
     'requiredMigrationPaths',
@@ -415,6 +438,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
     'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
+    '`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, and `HEARTBEAT.md` remain GitOps-owned',
     'An audit failure blocks migration:',
     'redact or remove only the',
     'flagged material in `$hermes_stage_dir`',
@@ -423,11 +447,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n hermes delete "$dry_run_job" --wait=true',
     'kubectl -n hermes delete "$migration_job" --wait=true',
     'kubectl -n hermes delete "$restore_job" --wait=true',
-    'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory; do test -r "$path"; done',
+    'for path in USER.md memory; do test -r "$path"; done',
+    'vm/openclaw </dev/null | tar -xzf -',
+    'migration_preview_verified=true conflicts=0 secrets=false',
+    'migration_report_verified=true conflicts=0 errors=0',
+    'operator_owned_identity_unchanged=true secrets=false',
     'The CronJob must remain suspended until every prior backup',
     'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
     'direct public egress unexpectedly succeeded',
-    "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
+    "'rm -rf -- /opt/data/migration/source && mkdir -p /opt/data/migration/source'",
     "find /opt/backups -maxdepth 1 -type f -name 'hermes-backup-*.zip' -print",
     'test "$sidecar_archive" = "$archive_name"',
     'test "$sidecar_archive" = "$archive"',
@@ -479,6 +507,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
     '--ignore-failed-read',
     'kubectl -n hermes exec hermes-0 -c hermes -- mkdir -p /opt/data/migration/openclaw',
+    'for path in AGENTS.md SOUL.md IDENTITY.md USER.md TOOLS.md HEARTBEAT.md memory',
+    "'rm -rf -- /opt/data/migration/openclaw && mkdir -p /opt/data/migration/openclaw'",
+    'vm/openclaw | tar -xzf -',
     'kubectl -n hermes exec hermes-restore-stage -c stage -- ls -1 /opt/backups/hermes-backup-*.zip',
   ])
   const suspendBackupCommand =
@@ -493,7 +524,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   const migrationSection = files.runbook.match(/## Phase 2:[\s\S]*?## Phase 3:/)?.[0] ?? ''
   if (
-    migrationSection.indexOf(suspendBackupCommand) > migrationSection.indexOf('rm -rf -- /opt/data/migration/openclaw')
+    migrationSection.indexOf(suspendBackupCommand) > migrationSection.indexOf('rm -rf -- /opt/data/migration/source')
   ) {
     failures.push(`${productionPaths.runbook}: migration must quiesce backups before replacing the staging tree`)
   }

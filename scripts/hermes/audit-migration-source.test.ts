@@ -12,9 +12,7 @@ async function makeFixture(): Promise<string> {
   temporaryRoots.push(root)
   await mkdir(join(root, 'workspace', 'memory'), { recursive: true })
   await mkdir(join(root, 'workspace', 'skills'), { recursive: true })
-  for (const name of ['AGENTS.md', 'HEARTBEAT.md', 'IDENTITY.md', 'SOUL.md', 'TOOLS.md', 'USER.md']) {
-    await writeFile(join(root, 'workspace', name), `Safe ${name} content.\n`)
-  }
+  await writeFile(join(root, 'workspace', 'USER.md'), 'Safe user profile content.\n')
   await writeFile(join(root, 'workspace', 'MEMORY.md'), 'Safe memory note. API tokens are never stored here.\n')
   return root
 }
@@ -40,18 +38,28 @@ describe('OpenClaw migration source audit', () => {
     await writeFile(join(root, 'workspace', 'skills', 'example.md'), 'A safe skill with no credentials.\n')
 
     const result = await auditMigrationSource(root)
-    expect(result.files).toBe(8)
+    expect(result.files).toBe(3)
     expect(result.totalBytes).toBeGreaterThan(0)
     expect(result.issues).toEqual([])
   })
 
-  test('rejects a missing required identity path', async () => {
+  test('rejects a missing required user profile', async () => {
     const root = await makeFixture()
-    await rm(join(root, 'workspace', 'IDENTITY.md'))
+    await rm(join(root, 'workspace', 'USER.md'))
 
     expect((await auditMigrationSource(root)).issues).toContainEqual({
-      path: 'workspace/IDENTITY.md',
+      path: 'workspace/USER.md',
       reason: 'required migration path is missing',
+    })
+  })
+
+  test('rejects GitOps-owned identity and policy files', async () => {
+    const root = await makeFixture()
+    await writeFile(join(root, 'workspace', 'AGENTS.md'), 'Unsafe source policy.\n')
+
+    expect((await auditMigrationSource(root)).issues).toContainEqual({
+      path: 'workspace/AGENTS.md',
+      reason: 'path is outside the approved user-data allowlist',
     })
   })
 

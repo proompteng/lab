@@ -35,19 +35,44 @@ spec:
           image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
           imagePullPolicy: IfNotPresent
           command:
-            - /opt/hermes/.venv/bin/hermes
+            - /bin/sh
+            - -ec
           args:
-            - claw
-            - migrate
-            - --source
-            - /opt/data/migration/openclaw
-            - --preset
-            - user-data
-            - --workspace-target
-            - /opt/data/workspace/tuslagch
-            - --skill-conflict
-            - skip
-            - --dry-run
+            - |
+              if migration_output=$(
+                /opt/hermes/.venv/bin/hermes claw migrate \
+                  --source /opt/data/migration/source \
+                  --preset user-data \
+                  --workspace-target /opt/data/workspace/tuslagch \
+                  --skill-conflict skip \
+                  --dry-run 2>&1
+              ); then
+                :
+              else
+                migration_status=$?
+                printf '%s\n' "$migration_output" >&2
+                exit "$migration_status"
+              fi
+              printf '%s\n' "$migration_output"
+              case "$migration_output" in
+                *"Secrets:     no"*) ;;
+                *) echo 'migration preview did not prove that secret migration is disabled' >&2; exit 1 ;;
+              esac
+              case "$migration_output" in
+                *"Conflicts ("*|*" conflict(s)"*|*"Refusing to apply"*|*"Migration preview failed"*|*"OpenClaw directory not found"*)
+                  echo 'migration preview contains a conflict or refusal' >&2
+                  exit 1
+                  ;;
+              esac
+              case "$migration_output" in
+                *"user-profile"*) ;;
+                *) echo 'migration preview is missing the audited user profile' >&2; exit 1 ;;
+              esac
+              case "$migration_output" in
+                *"daily-memory"*) ;;
+                *) echo 'migration preview is missing the audited daily memory' >&2; exit 1 ;;
+              esac
+              printf '%s\n' 'migration_preview_verified=true conflicts=0 secrets=false'
           env:
             - name: HERMES_HOME
               value: /opt/data
