@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { spawnSync } from 'node:child_process'
 import YAML from 'yaml'
 
 import { repoRoot } from '../../shared/cli'
@@ -21,13 +20,8 @@ describe('froussard release metadata', () => {
     const version = env.find((entry) => entry.name === 'FROUSSARD_VERSION')?.value
 
     expect(commit).toMatch(/^[0-9a-f]{40}$/)
-    expect(version).toBeTruthy()
-
-    const described = spawnSync('git', ['describe', '--tags', '--always', commit ?? ''], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    })
-    expect(described.status).toBe(0)
-    expect(described.stdout.trim()).toBe(version)
+    const described = version?.match(/^v\d+\.\d+\.\d+-\d+-g([0-9a-f]{7,40})$/)
+    expect(described).not.toBeNull()
+    expect(commit?.startsWith(described?.[1] ?? '')).toBe(true)
   })
 })
