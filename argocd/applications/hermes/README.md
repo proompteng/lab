@@ -1,8 +1,9 @@
 # Hermes production
 
-Hermes is the production runtime for the Tuslagch assistant. The initial GitOps state exposes only the authenticated
-cluster-local API. Discord remains disabled until migration and API canary gates pass; the cutover is a separate reviewed
-change so Hermes and OpenClaw never use the Discord token concurrently.
+Hermes is the planned production runtime for the Tuslagch assistant. The initial GitOps state exposes only the authenticated
+cluster-local API. Keep the manual application unsynced until the live NetworkPolicy enforcement probe passes. Discord
+remains disabled until migration and API canary gates pass; the cutover is a separate reviewed change so Hermes and OpenClaw
+never use the Discord token concurrently.
 
 ## Release and supply chain
 
@@ -21,7 +22,9 @@ smoke test, manifest change, and normal CI/Codex review.
 - Root filesystems are read-only, all Linux capabilities are dropped, seccomp is `RuntimeDefault`, and no pod receives a
   Kubernetes service-account token.
 - The namespace enforces the Kubernetes `restricted` Pod Security profile.
-- Default-deny network policy permits the gateway to reach only cluster DNS, Flamingo, and the allowlisted Squid proxy.
+- Default-deny NetworkPolicies permit the gateway to reach only cluster DNS, Flamingo, and the allowlisted Squid proxy once
+  a compatible policy engine is present. Flannel alone does not enforce these objects; the runbook's disposable live probe
+  must pass before the first sync.
 - Squid permits HTTPS `CONNECT` only to Discord-owned domains and blocks private, tailnet, metadata, and multicast ranges.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.

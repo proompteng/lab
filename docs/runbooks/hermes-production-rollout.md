@@ -12,6 +12,7 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 - Never start migration or restore until the backup CronJob is suspended and every active backup Job has finished.
 - Never create a migration or restore Job until every earlier Hermes maintenance Job is terminal.
 - Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.
+- Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.
 - Every API key rotation must restart `hermes-0` and prove the old key is rejected and the new key is accepted.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
@@ -52,7 +53,20 @@ The expected mirrored amd64 manifest digest is
    kubectl -n flamingo rollout status deployment/flamingo --timeout=10m
    ```
 
-2. Create a minimum 32-byte API key in the `infra` 1Password vault. Do this from a private shell with 1Password unlocked;
+2. Empirically prove the live CNI enforces `networking.k8s.io/v1` policies. The probe creates an isolated disposable
+   namespace, schedules its bounded client and server on different nodes, first proves Pod-to-Pod connectivity, applies a
+   client egress deny, proves that same request fails while both endpoints remain healthy, removes the policy, proves
+   connectivity returns, and then deletes the namespace. A rendered or accepted NetworkPolicy object is not enforcement
+   evidence:
+
+   ```bash
+   bash scripts/hermes/verify-network-policy-enforcement.sh
+   ```
+
+   `NetworkPolicy is not enforced` is a hard rollout blocker. Do not sync Hermes or weaken the containment test; install
+   and validate a compatible policy engine first.
+
+3. Create a minimum 32-byte API key in the `infra` 1Password vault. Do this from a private shell with 1Password unlocked;
    do not echo the generated value:
 
    ```bash
@@ -63,7 +77,7 @@ The expected mirrored amd64 manifest digest is
    unset hermes_api_key
    ```
 
-3. Wait for the ApplicationSet to create the manual Hermes app, sync it, and verify the secret bridge without reading the
+4. Wait for the ApplicationSet to create the manual Hermes app, sync it, and verify the secret bridge without reading the
    value:
 
    ```bash
