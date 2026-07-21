@@ -12,6 +12,7 @@ export const productionPaths = {
   backupScript: 'argocd/applications/hermes/backup-once.sh',
   config: 'argocd/applications/hermes/config.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
+  discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   serviceAccount: 'argocd/applications/hermes/serviceaccount.yaml',
@@ -77,6 +78,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- backup-cronjob.yaml',
     '- network-policy.yaml',
     '- external-secret.yaml',
+    '- discord-sealed-secret.yaml',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
@@ -117,11 +119,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '        - name: backup\n',
   ])
   for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
+    const reference = [
+      `            - name: ${key}`,
+      '              valueFrom:',
+      '                secretKeyRef:',
+      '                  name: hermes-discord-auth',
+      `                  key: ${key}`,
+    ].join('\n')
     if (
       count(files.statefulSet, `            - name: ${key}\n`) !== 1 ||
-      count(files.statefulSet, `                  key: ${key}\n`) !== 1
+      count(files.statefulSet, `                  key: ${key}\n`) !== 1 ||
+      count(files.statefulSet, reference) !== 1
     ) {
-      failures.push(`${productionPaths.statefulSet}: ${key} must have exactly one matching SecretKeyRef`)
+      failures.push(
+        `${productionPaths.statefulSet}: ${key} must have exactly one matching hermes-discord-auth SecretKeyRef`,
+      )
     }
   }
 
@@ -191,19 +203,54 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
     'name: onepassword-infra',
     'deletionPolicy: Retain',
+    'secretKey: API_SERVER_KEY',
     'key: hermes-runtime/API_SERVER_KEY',
-    'secretKey: DISCORD_BOT_TOKEN',
-    'key: hermes-runtime/DISCORD_BOT_TOKEN',
-    'secretKey: DISCORD_ALLOWED_USERS',
-    'key: hermes-runtime/DISCORD_ALLOWED_USERS',
   ])
-  forbidTerms(failures, productionPaths.externalSecret, files.externalSecret, ['dataFrom:', 'kind: Secret'])
-  for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
-    if (
-      count(files.externalSecret, `    - secretKey: ${key}\n`) !== 1 ||
-      count(files.externalSecret, `        key: hermes-runtime/${key}\n`) !== 1
-    ) {
-      failures.push(`${productionPaths.externalSecret}: ${key} must have exactly one 1Password mapping`)
+  forbidTerms(failures, productionPaths.externalSecret, files.externalSecret, [
+    'dataFrom:',
+    'kind: Secret',
+    'DISCORD_BOT_TOKEN',
+    'DISCORD_ALLOWED_USERS',
+  ])
+  if (
+    count(files.externalSecret, '    - secretKey: API_SERVER_KEY\n') !== 1 ||
+    count(files.externalSecret, '        key: hermes-runtime/API_SERVER_KEY\n') !== 1
+  ) {
+    failures.push(`${productionPaths.externalSecret}: API_SERVER_KEY must have exactly one 1Password mapping`)
+  }
+
+  requireTerms(failures, productionPaths.discordSealedSecret, files.discordSealedSecret, [
+    'apiVersion: bitnami.com/v1alpha1',
+    'kind: SealedSecret',
+    'name: hermes-discord-auth',
+    'namespace: hermes',
+    'argocd.argoproj.io/sync-wave: "-3"',
+    '  encryptedData:',
+    '  template:',
+    '    type: Opaque',
+  ])
+  forbidTerms(failures, productionPaths.discordSealedSecret, files.discordSealedSecret, [
+    'kind: Secret',
+    '\n  data:',
+    '\n  stringData:',
+    'sealedsecrets.bitnami.com/cluster-wide',
+    'sealedsecrets.bitnami.com/namespace-wide',
+  ])
+  const sealedDiscordKeys = [...files.discordSealedSecret.matchAll(/^    (DISCORD_[A-Z_]+): (\S+)$/gm)]
+  if (
+    sealedDiscordKeys.length !== 2 ||
+    sealedDiscordKeys
+      .map(([_, key]) => key)
+      .sort()
+      .join(',') !== 'DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN'
+  ) {
+    failures.push(
+      `${productionPaths.discordSealedSecret}: encryptedData must contain exactly the Discord token and allowlist`,
+    )
+  }
+  for (const [_, key, ciphertext] of sealedDiscordKeys) {
+    if (!/^Ag[A-Za-z0-9+/=]{100,}$/.test(ciphertext)) {
+      failures.push(`${productionPaths.discordSealedSecret}: ${key} must contain non-placeholder sealed ciphertext`)
     }
   }
 
@@ -719,12 +766,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.runbook, cutoverSection, [
     'cleanup_discord_credentials() {',
     'trap cleanup_discord_credentials EXIT',
+    'kubeseal --raw --from-file=/dev/stdin',
+    '--namespace hermes --name hermes-discord-auth --scope strict',
+    'argocd/applications/hermes/discord-sealed-secret.yaml',
+    'kubeseal --validate --controller-name sealed-secrets --controller-namespace sealed-secrets',
+    '--resource bitnami.com:SealedSecret:hermes-discord-auth',
+    'wait sealedsecret/hermes-discord-auth --for=condition=Synced',
     '.channels.discord.token | select(type == "string" and length >= 20)',
     '.channels.discord.allowFrom[]?',
     '.channels.discord.guilds[]?.users[]?',
     'numeric Discord allowlist required',
     'test "${#discord_bot_token}" -ge 20',
     'case "$discord_allowed_users" in ""|,*|*,|*,,*|*[!0-9,]*) exit 1 ;; esac',
+    'test "$sealed_discord_bot_token" = "$discord_bot_token"',
+    'test "$sealed_discord_allowed_users" = "$discord_allowed_users"',
+    'test "$hermes_discord_ref_count" = 0',
     'test "$(systemctl --user show openclaw-gateway.service --property=KillMode --value)" = control-group',
     'systemctl --user stop openclaw-gateway.service',
     'test "$(systemctl --user is-active openclaw-gateway.service || true)" = inactive',
@@ -734,7 +790,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Do not reuse the earlier archive.',
     'do not run Phase 2 step 5 because merged `main` now enables',
     'Keep the same Phase 2 shell and Lease open through',
-    'cutover step 5.',
+    'cutover step 4.',
     'if kubectl -n openclaw get clusterrolebinding openclaw-vm-cluster-admin >/dev/null 2>&1; then',
     'argocd app sync openclaw --prune \\\n       --resource rbac.authorization.k8s.io:ClusterRoleBinding:openclaw-vm-cluster-admin',
     'get clusterrolebinding openclaw-vm-cluster-admin --ignore-not-found -o name',
@@ -748,35 +804,25 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'jq -e \'.spec.runStrategy == "Halted" and (.spec | has("running") | not)\'',
     'argocd app sync openclaw --prune=false',
     'openclaw_vmi_name=$(kubectl -n openclaw get virtualmachineinstance openclaw --ignore-not-found -o name)',
-    'op item get --vault infra hermes-runtime --format json',
-    'jq --rawfile discord_bot_token <(printf \'%s\' "$discord_bot_token")',
-    '--rawfile discord_allowed_users <(printf \'%s\' "$discord_allowed_users")',
-    'def upsert_field($id; $type; $label; $value):',
-    'error("duplicate field: " + $label)',
-    'upsert_field("DISCORD_BOT_TOKEN"; "CONCEALED"; "DISCORD_BOT_TOKEN"; $discord_bot_token)',
-    'upsert_field("DISCORD_ALLOWED_USERS"; "STRING"; "DISCORD_ALLOWED_USERS"; $discord_allowed_users)',
-    'op item edit --vault infra hermes-runtime',
-    'jq -e --rawfile expected_discord_bot_token <(printf \'%s\' "$discord_bot_token")',
-    '--rawfile expected_discord_allowed_users <(printf \'%s\' "$discord_allowed_users")',
-    '.value == $expected_discord_bot_token',
-    '.value == $expected_discord_allowed_users',
-    '.label == "DISCORD_BOT_TOKEN"',
-    '.label == "DISCORD_ALLOWED_USERS"',
-    '| length == 1) and',
     'cleanup_discord_credentials',
     'Sync Hermes from merged `main` only after the OpenClaw VMI is gone',
-    'test "$discord_secret_keys" = API_SERVER_KEY,DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN',
+    'test "$api_secret_keys" = API_SERVER_KEY',
+    'test "$discord_secret_keys" = DISCORD_ALLOWED_USERS,DISCORD_BOT_TOKEN',
     "rg -m1 '\\[discord\\] Connected as '",
   ])
   forbidTerms(failures, productionPaths.runbook, cutoverSection, [
     'argocd app sync openclaw --prune=true',
     'allow_all_users: true',
     'pgrep -f "[o]penclaw.*gateway"',
+    'op item ',
   ])
   if (cutoverSection.includes('kubectl -n openclaw wait virtualmachineinstance/openclaw --for=delete')) {
     failures.push(`${productionPaths.runbook}: cutover must treat an already-absent OpenClaw VMI as stopped`)
   }
-  const credentialCaptureIndex = cutoverSection.indexOf('discord_bot_token=$(virtctl ssh')
+  const sealedSecretStageIndex = cutoverSection.indexOf('--resource bitnami.com:SealedSecret:hermes-discord-auth')
+  const credentialCaptureIndex = cutoverSection.lastIndexOf('discord_bot_token=$(virtctl ssh')
+  const credentialMatchIndex = cutoverSection.indexOf('test "$sealed_discord_bot_token" = "$discord_bot_token"')
+  const noHermesDiscordRefIndex = cutoverSection.indexOf('test "$hermes_discord_ref_count" = 0')
   const openClawGatewayStopIndex = cutoverSection.indexOf('systemctl --user stop openclaw-gateway.service')
   const finalReconciliationIndex = cutoverSection.indexOf('repeat Phase 2 steps 1 through 4')
   const clusterAdminPruneIndex = cutoverSection.indexOf('argocd app sync openclaw --prune \\')
@@ -788,9 +834,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   )
   const cutoverOpenClawSyncIndex = cutoverSection.indexOf('argocd app sync openclaw --prune=false')
   const openClawVmiAbsentIndex = cutoverSection.indexOf('if [ -z "$openclaw_vmi_name" ]')
-  const credentialTransferIndex = cutoverSection.indexOf('op item edit --vault infra hermes-runtime')
-  const credentialCleanupIndex = cutoverSection.lastIndexOf('\n   cleanup_discord_credentials\n')
-  const cutoverHermesSyncIndex = cutoverSection.indexOf('argocd app sync hermes --prune=false')
+  const credentialCleanupIndex = cutoverSection.indexOf('\n   cleanup_discord_credentials\n')
+  const cutoverHermesSyncIndex = cutoverSection.indexOf('\n   argocd app sync hermes --prune=false\n')
   const discordConnectedIndex = cutoverSection.indexOf("rg -m1 '\\[discord\\] Connected as '")
   const cutoverReleaseIndex = cutoverSection.lastIndexOf('\n   release_maintenance_lock\n')
   if (
@@ -803,17 +848,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.runbook}: cutover must hold the migration Lease until Hermes is restored`)
   }
   if (
-    credentialCaptureIndex < 0 ||
-    openClawGatewayStopIndex <= credentialCaptureIndex ||
+    sealedSecretStageIndex < 0 ||
+    credentialCaptureIndex <= sealedSecretStageIndex ||
+    credentialMatchIndex <= credentialCaptureIndex ||
+    noHermesDiscordRefIndex <= credentialMatchIndex ||
+    openClawGatewayStopIndex <= noHermesDiscordRefIndex ||
+    credentialCleanupIndex <= openClawGatewayStopIndex ||
     finalReconciliationIndex <= openClawGatewayStopIndex ||
     clusterAdminPruneIndex <= finalReconciliationIndex ||
     clusterAdminAbsentIndex <= clusterAdminPruneIndex ||
     openClawRunStrategyTransitionIndex <= clusterAdminAbsentIndex ||
     cutoverOpenClawSyncIndex <= openClawRunStrategyTransitionIndex ||
     openClawVmiAbsentIndex <= cutoverOpenClawSyncIndex ||
-    credentialTransferIndex <= openClawVmiAbsentIndex ||
-    credentialCleanupIndex <= credentialTransferIndex ||
-    cutoverHermesSyncIndex <= credentialCleanupIndex ||
+    cutoverHermesSyncIndex <= openClawVmiAbsentIndex ||
     discordConnectedIndex <= cutoverHermesSyncIndex
   ) {
     failures.push(`${productionPaths.runbook}: Discord cutover operations are out of order`)
