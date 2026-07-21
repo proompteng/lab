@@ -301,6 +301,11 @@ describe('TigerBeetle replica addresses', () => {
     )
     expect(
       Effect.runPromise(
+        resolveReplicaAddresses(['unordered-headless-service:3000'], () => Effect.succeed(['10.0.0.1', '10.0.0.2'])),
+      ),
+    ).rejects.toThrow('must resolve to exactly one IPv4 address')
+    expect(
+      Effect.runPromise(
         resolveReplicaAddresses(['replica-0:3000', 'replica-1:3000'], () => Effect.succeed(['10.0.0.1'])),
       ),
     ).rejects.toThrow('resolved to duplicate IPv4 addresses')

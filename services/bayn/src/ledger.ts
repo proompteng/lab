@@ -109,7 +109,16 @@ const resolveReplicaAddress = (
         ),
       )
     }
-    return ipv4Addresses.map((ipv4Address) => `${ipv4Address}:${port}`)
+    if (ipv4Addresses.length !== 1) {
+      return yield* Effect.fail(
+        operationalError(
+          'journal',
+          'resolve-replica-addresses',
+          `TigerBeetle replica hostname must resolve to exactly one IPv4 address: ${hostname}`,
+        ),
+      )
+    }
+    return [`${ipv4Addresses[0]}:${port}`]
   })
 
 export const resolveReplicaAddresses = (
