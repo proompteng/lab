@@ -62,7 +62,7 @@ spec:
                 *) echo 'migration apply did not prove that secret migration is disabled' >&2; exit 1 ;;
               esac
               case "$migration_output" in
-                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"directory not found"*)
+                *"Refusing to apply"*|*"Migration failed"*|*"Migration preview failed"*|*"directory not found: /opt/data/migration/source"*)
                   echo 'migration command reported a refusal or failure' >&2
                   exit 1
                   ;;
