@@ -64,6 +64,9 @@ set -eu
 
 case "\${1:-}" in
   --version)
+    if [ -e "\${GH_CONFIG_DIR:-}/hosts.yml" ]; then
+      printf '\\n' >>"$GH_CONFIG_DIR/hosts.yml"
+    fi
     printf 'gh version ${version} (test)\\n'
     ;;
   auth)
@@ -126,7 +129,7 @@ esac
   expect((await stat(installedGh)).mode & 0o777).toBe(0o555)
   expect((await stat(tools)).mode & 0o777).toBe(0o775)
   expect((await stat(ghConfigDir)).mode & 0o777).toBe(0o775)
-  expect((await stat(ghHosts)).mode & 0o777).toBe(0o400)
+  expect((await stat(ghHosts)).mode & 0o777).toBe(0o600)
   expect(await readFile(ghHosts, 'utf8')).toContain(`oauth_token: ${testToken}`)
   expect(await run([installedGh, '--version'])).toContain(`gh version ${version}`)
   expect(
@@ -146,6 +149,7 @@ esac
   ).toContain(`!${installedGh} auth git-credential`)
   expect(await readFile(gitConfig, 'utf8')).not.toMatch(/gh[opsu]_[A-Za-z0-9]+/)
 
+  await chmod(ghHosts, 0o400)
   await chmod(installedGh, 0o755)
   await writeFile(installedGh, 'corrupt')
   await run(['/bin/sh', bootstrapScript], environment)

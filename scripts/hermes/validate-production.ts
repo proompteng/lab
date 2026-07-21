@@ -498,6 +498,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'token: $(cat',
     'certificate-authority-data:',
   ])
+  const configCheckPosition = files.bootstrap.indexOf(
+    '/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log',
+  )
+  const githubBootstrapPosition = files.bootstrap.indexOf('/bin/sh /opt/bootstrap/bootstrap-github.sh')
+  if (configCheckPosition < 0 || githubBootstrapPosition <= configCheckPosition) {
+    failures.push(`${productionPaths.bootstrap}: GitHub auth must be the final bootstrap step`)
+  }
   requireTerms(failures, productionPaths.labCheckout, files.labCheckout, [
     'set -eu',
     'GIT_TERMINAL_PROMPT',
@@ -524,6 +531,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'if [ ! -d "$gh_install_dir" ]; then',
     'if [ ! -w "$gh_install_dir" ]; then',
     'if [ ! -w "$gh_config_dir" ]; then',
+    'rm -f -- "$gh_hosts_path"',
     'git config --file "$git_config_tmp" user.name tuslagch',
     'git config --file "$git_config_tmp" user.email 241203724+tuslagch@users.noreply.github.com',
     'git config --file "$git_config_tmp" commit.gpgsign false',
@@ -531,7 +539,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'env -u GH_TOKEN -u GITHUB_TOKEN',
     '--with-token',
     '--insecure-storage',
-    'chmod 0400 "$gh_auth_stage_dir/hosts.yml"',
+    'chmod 0600 "$gh_auth_stage_dir/hosts.yml"',
     'if [ "$github_login" != tuslagch ]; then',
     'if [ "$github_permission" != ADMIN ]; then',
     'github_bootstrap_ready=true',
@@ -839,7 +847,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'git config --global --get-all credential.https://github.com.helper',
     '! grep -Eq "gh[opsu]_[A-Za-z0-9]+" /opt/data/home/.gitconfig',
     'test -r /opt/github-auth/hosts.yml',
-    'test "$(stat -c %a /opt/github-auth/hosts.yml)" = 400',
+    'test "$(stat -c %a /opt/github-auth/hosts.yml)" = 600',
     'test ! -e /opt/data/home/.config/gh/hosts.yml',
     'git push --dry-run origin HEAD:refs/heads/codex/hermes-github-auth-proof',
     'gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA',

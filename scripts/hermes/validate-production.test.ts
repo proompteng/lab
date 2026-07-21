@@ -99,6 +99,18 @@ test('rejects persisting a service-account token in the kubeconfig', async () =>
   )
 })
 
+test('rejects touching GitHub auth after the final bootstrap step', async () => {
+  const files = await loadProductionFiles()
+  files.bootstrap = files.bootstrap.replace(
+    '/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log\n/bin/sh /opt/bootstrap/bootstrap-github.sh',
+    '/bin/sh /opt/bootstrap/bootstrap-github.sh\n/opt/hermes/.venv/bin/hermes config check >/tmp/hermes-config-check.log',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.bootstrap}: GitHub auth must be the final bootstrap step`,
+  )
+})
+
 test('rejects a mutable Hermes runtime image', async () => {
   const files = await loadProductionFiles()
   files.statefulSet = files.statefulSet.replace(
