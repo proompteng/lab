@@ -108,9 +108,10 @@ describe('Signal publisher GitOps authority contract', () => {
       expect(variables.get('SIGNAL_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
       expect(variables.get('SIGNAL_START_DATE')).toMatchObject(universeRef('HISTORY_START_DATE'))
       expect(variables.get('SIGNAL_ALPACA_FEED')).toMatchObject(universeRef('HISTORY_FEED'))
+      expect(variables.get('SIGNAL_OPERATION_TIMEOUT_MS')).toMatchObject({ value: '180000' })
     }
     expect(backfill.spec).toMatchObject({
-      suspend: false,
+      suspend: true,
       template: { spec: { containers: [{ args: ['backfill', '--start', '2022-01-27', '--end', '2026-07-20'] }] } },
     })
     expect(cronJob.spec.suspend).toBe(true)
@@ -176,6 +177,6 @@ describe('Signal publisher GitOps authority contract', () => {
       ]),
     )
     expect(kustomization.resources).not.toContain('signal-publisher-cronjob.yaml')
-    expect(kustomization.resources).toContain('signal-publisher-bayn-v1-backfill-job.yaml')
+    expect(kustomization.resources).not.toContain('signal-publisher-bayn-v1-backfill-job.yaml')
   })
 })

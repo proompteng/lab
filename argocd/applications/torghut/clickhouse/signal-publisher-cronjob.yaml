@@ -104,7 +104,7 @@ spec:
                 - name: SIGNAL_FINALIZATION_LAG_MINUTES
                   value: "90"
                 - name: SIGNAL_OPERATION_TIMEOUT_MS
-                  value: "60000"
+                  value: "180000"
               resources:
                 requests:
                   cpu: 100m
