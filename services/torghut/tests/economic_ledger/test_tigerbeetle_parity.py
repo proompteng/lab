@@ -5,10 +5,12 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from app.models import BrokerEconomicLedgerReconciliation
 from app.trading.economic_ledger import (
     BrokerEconomicLedgerReplay,
     BrokerEconomicLedgerSnapshot,
@@ -22,6 +24,7 @@ from app.trading.economic_ledger import (
     reduce_and_compare,
 )
 from app.trading.economic_ledger.tigerbeetle_parity import (
+    load_persisted_tigerbeetle_economic_parity,
     validate_tigerbeetle_economic_parity_payload,
 )
 from app.trading.economic_ledger.tigerbeetle_projection import (
@@ -468,3 +471,35 @@ def test_forged_expected_digest_is_rejected_before_persistence() -> None:
                 max_source_age_seconds=300,
             ),
         )
+
+
+@pytest.mark.parametrize(
+    "projection_version",
+    [
+        "torghut.broker-economic-tigerbeetle-projection.v1",
+        "torghut.broker-economic-tigerbeetle-projection.v2",
+    ],
+)
+def test_load_persisted_legacy_projection_is_unsatisfied(
+    projection_version: str,
+) -> None:
+    row = cast(
+        BrokerEconomicLedgerReconciliation,
+        SimpleNamespace(
+            result={
+                "tigerbeetle_economic_parity": {
+                    "projection_version": projection_version,
+                },
+            },
+        ),
+    )
+
+    payload, satisfied, reasons = load_persisted_tigerbeetle_economic_parity(
+        row,
+        scope=_SCOPE,
+        expected_cluster_id=2001,
+    )
+
+    assert payload is None
+    assert satisfied is False
+    assert reasons == ("tigerbeetle_economic_projection_version_stale",)

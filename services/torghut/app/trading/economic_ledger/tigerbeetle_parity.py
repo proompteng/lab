@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 TIGERBEETLE_ECONOMIC_PARITY_SCHEMA_VERSION = (
     "torghut.broker-economic-tigerbeetle-parity.v1"
 )
+_HISTORICAL_PROJECTION_VERSIONS = frozenset(
+    {
+        "torghut.broker-economic-tigerbeetle-projection.v1",
+        "torghut.broker-economic-tigerbeetle-projection.v2",
+    }
+)
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MISMATCH_SAMPLE_LIMIT = 20
 _AUDIT_OPERATION_ERRORS = (
@@ -926,6 +932,12 @@ def load_persisted_tigerbeetle_economic_parity(
         raw_payload,
         "economic_reconciliation_persisted_tigerbeetle_parity_invalid",
     )
+    projection_version = payload.get("projection_version")
+    if (
+        isinstance(projection_version, str)
+        and projection_version in _HISTORICAL_PROJECTION_VERSIONS
+    ):
+        return None, False, ("tigerbeetle_economic_projection_version_stale",)
     sections = _validated_payload_sections(
         payload,
         expected_cluster_id=expected_cluster_id,
