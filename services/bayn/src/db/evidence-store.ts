@@ -1,5 +1,5 @@
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Context, Data, Effect, FileSystem, Layer, Match, Option, Schema } from 'effect'
+import { Context, Data, Effect, FileSystem, Layer, Match, Option, Redacted, Schema } from 'effect'
 import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
@@ -2040,23 +2040,56 @@ const makeEvidenceStore = Effect.gen(function* () {
   } satisfies EvidenceStoreService
 })
 
-export const PostgresClientLive = (config: RuntimeConfig) => {
+export interface PostgresClientOptions {
+  readonly applicationName?: string
+  readonly readOnly?: boolean
+}
+
+const connectionUrl = (
+  url: Redacted.Redacted<string>,
+  readOnly: boolean,
+): Effect.Effect<Redacted.Redacted<string>, DatabaseError> => {
+  if (!readOnly) return Effect.succeed(url)
+  return Effect.try({
+    try: () => {
+      const parsed = new URL(Redacted.value(url))
+      const existing = parsed.searchParams.get('options')?.trim()
+      parsed.searchParams.set(
+        'options',
+        [existing, '-c default_transaction_read_only=on']
+          .filter((value): value is string => value !== undefined && value.length > 0)
+          .join(' '),
+      )
+      return Redacted.make(parsed.toString())
+    },
+    catch: () => databaseError('unavailable', 'connect', 'invalid PostgreSQL connection URL'),
+  })
+}
+
+export const PostgresClientLive = (
+  config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres'>,
+  options: PostgresClientOptions = {},
+) => {
   const readCertificate = Effect.gen(function* () {
     if (!config.postgres.tls) return undefined
     const fileSystem = yield* FileSystem.FileSystem
     return yield* fileSystem.readFileString(config.postgres.caPath)
   })
   return Layer.unwrap(
-    readCertificate.pipe(
-      Effect.mapError((cause) =>
-        databaseError('unavailable', 'tls', 'failed to read PostgreSQL CA certificate', cause),
+    Effect.all({
+      ca: readCertificate.pipe(
+        Effect.mapError((cause) =>
+          databaseError('unavailable', 'tls', 'failed to read PostgreSQL CA certificate', cause),
+        ),
       ),
-      Effect.map((ca) =>
+      url: connectionUrl(config.postgres.url, options.readOnly === true),
+    }).pipe(
+      Effect.map(({ ca, url }) =>
         PgClient.layerFrom(
           PgClient.make({
-            url: config.postgres.url,
+            url,
             ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
-            applicationName: 'bayn',
+            applicationName: options.applicationName ?? 'bayn',
             connectTimeout: config.operationTimeoutMs,
             idleTimeout: '30 seconds',
             maxConnections: 2,
@@ -2158,4 +2191,14 @@ const recoverEvidenceStoreLayer = <R>(layer: Layer.Layer<EvidenceStore, Database
 export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
   recoverEvidenceStoreLayer(
     EvidenceStoreDatabaseLayer(config, migrations, makeEvidenceStore).pipe(Layer.provide(PostgresClientLive(config))),
+  )
+
+export const EvidenceStoreReadOnlyLive = (config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres'>) =>
+  EvidenceStoreDatabaseLayer(config, Effect.void, makeEvidenceStore).pipe(
+    Layer.provideMerge(
+      PostgresClientLive(config, {
+        applicationName: 'bayn-ledger-restore',
+        readOnly: true,
+      }),
+    ),
   )

@@ -71,6 +71,13 @@ const makeEvidenceRuntime = (config = makeConfig()) =>
 const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
 
+const makeReadOnlyClientRuntime = (config = makeConfig()) =>
+  ManagedRuntime.make(
+    PostgresClientLive(config, { applicationName: 'bayn-ledger-restore-test', readOnly: true }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
 const snapshot = makeSnapshot(800)
 const riskBalancedTrendSnapshot = makeRiskBalancedTrendSnapshot(800)
 
@@ -285,6 +292,26 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.mode).toEqual({ isolation: 'repeatable read', read_only: true })
     expect(Exit.isFailure(observed.write)).toBe(true)
     expect(observed.rows).toEqual([{ count: 0 }])
+  })
+
+  test('enforces read-only PostgreSQL sessions for ledger restore', async () => {
+    const scoped = makeReadOnlyClientRuntime()
+    try {
+      const observed = await scoped.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const mode = yield* sql<{ read_only: boolean }>`
+            SELECT current_setting('default_transaction_read_only') = 'on' AS read_only
+          `
+          const write = yield* Effect.exit(sql`CREATE TEMP TABLE ledger_restore_write_probe (id integer)`)
+          return { mode: mode[0], write }
+        }),
+      )
+      expect(observed.mode).toEqual({ read_only: true })
+      expect(Exit.isFailure(observed.write)).toBe(true)
+    } finally {
+      await scoped.dispose()
+    }
   })
 
   test('commits one complete run and deduplicates an exact replay', async () => {
