@@ -35,7 +35,7 @@ const makeSeries = (
   const blocks = options.blocks ?? 90
   const trailingSessions = options.trailingSessions ?? 10
   const observations = Array.from({ length: blocks * 21 + trailingSessions }, (_, index) => {
-    const sharedNoise = 0.001 * Math.sin(index / 3) + 0.0004 * Math.cos(index / 11)
+    const sharedNoise = (((index * 17) % 23) - 11) / 100_000
     return {
       sessionDate: isoDate(index),
       strategyReturn: (options.strategyMean ?? 0.0005) + sharedNoise + (options.strategyShock?.[index] ?? 0),
@@ -141,7 +141,7 @@ describe('deterministic paired block bootstrap', () => {
       nextRebalanceSession: isoDate(90 * 21),
     })
     expect(first.bootstrap.producedSamples).toBe(1_000)
-    expect(first.bootstrap.samplesHash).toBe('0430a03702c5dd4dd0128e51273632c35660541b6e9945e63589a17af2b77737')
+    expect(first.bootstrap.samplesHash).toBe('5dbf17c167343bf235dc61c3f5bbb714cb755baa3c72db22160a89b74937a62e')
     expect(second).toEqual(first)
   })
 
