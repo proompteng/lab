@@ -55,6 +55,7 @@ test('installs a verified GitHub CLI archive and recreates deterministic Git con
   ])
   await writeFile(fakeGh, `#!/bin/sh\nprintf 'gh version ${version} (test)\\n'\n`)
   await chmod(fakeGh, 0o755)
+  await chmod(tools, 0o775)
   await run(['tar', '-czf', archive, '-C', sourceRoot, archiveRootName])
 
   const checksum = createHash('sha256')
@@ -79,6 +80,7 @@ test('installs a verified GitHub CLI archive and recreates deterministic Git con
     `github_bootstrap_ready=true gh_version=${version} git_user=tuslagch`,
   )
   expect((await stat(installedGh)).mode & 0o777).toBe(0o555)
+  expect((await stat(tools)).mode & 0o777).toBe(0o775)
   expect(await run([installedGh, '--version'])).toContain(`gh version ${version}`)
   expect(await run(['git', 'config', '--file', gitConfig, 'user.name'])).toBe('tuslagch\n')
   expect(await run(['git', 'config', '--file', gitConfig, 'user.email'])).toBe(
