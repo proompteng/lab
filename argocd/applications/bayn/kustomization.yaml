@@ -14,6 +14,8 @@ resources:
   - postgres-m1-restore-proof-networkpolicy.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml
+  - ledger-restore-job.yaml
+  - ledger-restore-networkpolicy.yaml
   - deployment.yaml
   - service.yaml
   - networkpolicy.yaml
@@ -26,3 +28,7 @@ images:
     newName: registry.ide-newton.ts.net/lab/bayn
     newTag: "sha-05e08fabbca2cbef071125e364814bcb23ba364b"
     digest: sha256:a838caa7f7426cabfe2d1a8ffcf1f60e938fdd13dce3910a7ff8c853baa3ae89
+  - name: bayn-ledger-restore
+    newName: registry.ide-newton.ts.net/lab/bayn
+    newTag: "sha-09f332cc5048dd8454bafafe1e2ca01e8939524a"
+    digest: sha256:17f73fb9a5665da7f44ba7539983f7a40784d945585aa7b691e700b19092b8f2

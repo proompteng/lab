@@ -18,6 +18,9 @@ spec:
               app.kubernetes.io/name: bayn
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: bayn-ledger-restore
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/instance: bayn-tigerbeetle
         - namespaceSelector:
             matchLabels:

@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bayn-ledger-restore-09f332cc
+  labels:
+    app.kubernetes.io/name: bayn-ledger-restore
+    app.kubernetes.io/part-of: bayn
+    app.kubernetes.io/component: ledger-restore
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bayn-ledger-restore
+        app.kubernetes.io/part-of: bayn
+        app.kubernetes.io/component: ledger-restore
+    spec:
+      serviceAccountName: bayn
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: restore
+          image: bayn-ledger-restore
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - dist/restore-ledger-command.js
+          env:
+            - name: BAYN_LEDGER_RESTORE_RUN_ID
+              value: 42d8bbfaf1a2ce7759b2283384e8f41298fe3a354ba7c0e1756bb8a3e64af177
+            - name: BAYN_LEDGER_RESTORE_EXPECTED_ACCOUNT_COUNT
+              value: "14"
+            - name: BAYN_LEDGER_RESTORE_EXPECTED_TRANSFER_COUNT
+              value: "906"
+            - name: BAYN_OPERATION_TIMEOUT_MS
+              value: "30000"
+            - name: BAYN_CODE_REVISION
+              value: 09f332cc5048dd8454bafafe1e2ca01e8939524a
+            - name: BAYN_IMAGE_REPOSITORY
+              value: registry.ide-newton.ts.net/lab/bayn
+            - name: BAYN_IMAGE_DIGEST
+              value: sha256:17f73fb9a5665da7f44ba7539983f7a40784d945585aa7b691e700b19092b8f2
+            - name: BAYN_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-db-app
+                  key: fqdn-uri
+            - name: BAYN_POSTGRES_TLS
+              value: "true"
+            - name: BAYN_POSTGRES_CA_PATH
+              value: /var/run/secrets/bayn/postgres/ca.crt
+            - name: BAYN_TIGERBEETLE_CLUSTER_ID
+              value: "222397790944575595450310052784555675227"
+            - name: BAYN_TIGERBEETLE_ADDRESSES
+              value: "bayn-tigerbeetle-0.bayn-tigerbeetle-headless.bayn.svc.cluster.local:3000,bayn-tigerbeetle-1.bayn-tigerbeetle-headless.bayn.svc.cluster.local:3000,bayn-tigerbeetle-2.bayn-tigerbeetle-headless.bayn.svc.cluster.local:3000"
+            - name: BAYN_TIGERBEETLE_LEDGER
+              value: "7001"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: postgres-ca
+              mountPath: /var/run/secrets/bayn/postgres
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: postgres-ca
+          secret:
+            secretName: bayn-db-ca
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt

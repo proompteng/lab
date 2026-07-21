@@ -90,6 +90,13 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: bayn-ledger-restore
+      ports:
+        - port: 5432
+          protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
               cnpg.io/cluster: bayn-db
       ports:
         - port: 5432
