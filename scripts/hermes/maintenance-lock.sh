@@ -16,7 +16,7 @@ patch_holder() {
   local expected_holder="$1"
   local replacement_holder="$2"
   local now patch
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(date -u +%Y-%m-%dT%H:%M:%S.000000Z)"
   patch="$(
     jq -cn --arg expected "$expected_holder" --arg replacement "$replacement_holder" --arg now "$now" \
       '[

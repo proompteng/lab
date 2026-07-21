@@ -231,6 +231,16 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: manual
                 enabled: "true"
+                ignoreDifferences:
+                  - group: apps
+                    kind: StatefulSet
+                    namespace: hermes
+                    name: hermes
+                    jqPathExpressions:
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                      - .spec.volumeClaimTemplates[].spec.volumeMode
+                      - .spec.volumeClaimTemplates[].status
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"

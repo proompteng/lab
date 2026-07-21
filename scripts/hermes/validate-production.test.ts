@@ -324,6 +324,18 @@ test('rejects a maintenance lock that cannot bootstrap the Argo-excluded Lease',
   )
 })
 
+test('rejects a Lease renewTime without Kubernetes MicroTime precision', async () => {
+  const files = await loadProductionFiles()
+  files.maintenanceLock = files.maintenanceLock.replace(
+    'date -u +%Y-%m-%dT%H:%M:%S.000000Z',
+    'date -u +%Y-%m-%dT%H:%M:%SZ',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.maintenanceLock}: missing production invariant "date -u +%Y-%m-%dT%H:%M:%S.000000Z"`,
+  )
+})
+
 test('rejects declaring the globally excluded maintenance Lease as an Argo resource', async () => {
   const files = await loadProductionFiles()
   files.kustomization = files.kustomization.replace(
@@ -333,6 +345,19 @@ test('rejects declaring the globally excluded maintenance Lease as an Argo resou
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.kustomization}: contains forbidden production term "maintenance-lease.yaml"`,
+  )
+})
+
+test('rejects incomplete normalization of StatefulSet PVC template defaults', async () => {
+  const files = await loadProductionFiles()
+  const hermesApplication = files.platform.match(/\n\s+- name: hermes\n[\s\S]*?\n\s+- name: workers\n/)?.[0] ?? ''
+  files.platform = files.platform.replace(
+    hermesApplication,
+    hermesApplication.replace('                      - .spec.volumeClaimTemplates[].status\n', ''),
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.platform}: missing production invariant "- .spec.volumeClaimTemplates[].status"`,
   )
 })
 

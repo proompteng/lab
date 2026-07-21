@@ -356,6 +356,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'holderIdentity: ""',
     'leaseDurationSeconds: 14400',
     '    ensure_lease',
+    'date -u +%Y-%m-%dT%H:%M:%S.000000Z',
     '{op: "test", path: "/spec/holderIdentity", value: $expected}',
     '{op: "replace", path: "/spec/holderIdentity", value: $replacement}',
     'patch lease "$lease" --type=json',
@@ -368,6 +369,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'path: argocd/applications/hermes',
     'namespace: hermes',
     'automation: manual',
+    'group: apps',
+    'kind: StatefulSet',
+    'name: hermes',
+    '- .spec.volumeClaimTemplates[].apiVersion',
+    '- .spec.volumeClaimTemplates[].kind',
+    '- .spec.volumeClaimTemplates[].spec.volumeMode',
+    '- .spec.volumeClaimTemplates[].status',
     'external-secrets.proompteng.ai/enabled: "true"',
     'observability.proompteng.ai/hermes-rollout-enabled: "true"',
     'pod-security.kubernetes.io/enforce: restricted',
@@ -377,6 +385,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'group: coordination.k8s.io',
     'kind: Lease',
     'name: hermes-maintenance',
+    '- .spec.volumeClaimTemplates\n',
   ])
 
   requireTerms(failures, productionPaths.runbook, files.runbook, [
