@@ -145,6 +145,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(users['signal_publisher/grants/query']).toEqual([
       'GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT, INSERT ON signal.exchange_sessions_v1',
+      'GRANT INSERT ON signal.intraday_bars_1m_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v2',
     ])
@@ -152,6 +153,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.adjusted_daily_bars_v1',
       'GRANT SELECT ON signal.adjusted_daily_bars_v2',
       'GRANT SELECT ON signal.exchange_sessions_v1',
+      'GRANT SELECT ON signal.intraday_bars_1m_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])
@@ -199,7 +201,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(kustomization.resources).toContain('intraday-bars-schema-job.yaml')
   })
 
-  test('keeps the three-feed archive dormant until its promoted image is available', () => {
+  test('activates the archive for delayed SIP while overnight observation remains disabled', () => {
     const torghutKustomization = parse(
       readFileSync(resolve(root, 'argocd/applications/torghut/kustomization.yaml'), 'utf8'),
     )
@@ -208,8 +210,11 @@ describe('Signal publisher GitOps authority contract', () => {
     const archive = parse(readFileSync(resolve(archiveDirectory, 'flinkdeployment.yaml'), 'utf8'))
     const config = parse(readFileSync(resolve(archiveDirectory, 'configmap.yaml'), 'utf8'))
     const websocket = parse(readWsConfig())
+    const websocketDeployment = parse(
+      readFileSync(resolve(root, 'argocd/applications/torghut/ws/deployment.yaml'), 'utf8'),
+    )
 
-    expect(torghutKustomization.resources).not.toContain('market-data-archive')
+    expect(torghutKustomization.resources).toContain('market-data-archive')
     expect(archiveKustomization.resources).toEqual([
       'configmap.yaml',
       'flinkdeployment.yaml',
@@ -241,7 +246,16 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(archiveEnvironment.get('ARCHIVE_CLICKHOUSE_PASSWORD')).toMatchObject({
       valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'password' } },
     })
-    expect(websocket.data.ALPACA_OBSERVATION_FEEDS).toBe('')
+    expect(websocket.data.ALPACA_OBSERVATION_FEEDS).toBe('delayed_sip')
+    expect(archive.metadata.annotations).toMatchObject({
+      'argocd.argoproj.io/sync-wave': '4',
+    })
+    expect(websocketDeployment.metadata.annotations).toMatchObject({
+      'argocd.argoproj.io/sync-wave': '5',
+    })
+    expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-delayed-sip-v1',
+    })
   })
 
   test('provisions isolated bounded Kafka topics for observation feeds', () => {

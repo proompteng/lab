@@ -10,8 +10,8 @@ data:
   ALPACA_MARKET_TYPE: "equity"
   ALPACA_CRYPTO_LOCATION: "us"
   ALPACA_FEED: "iex"
-  # Observation feeds are rolled out independently after the multi-feed runtime image is proven on IEX.
-  ALPACA_OBSERVATION_FEEDS: ""
+  # Roll out observation feeds independently; overnight remains disabled until delayed SIP is proven live.
+  ALPACA_OBSERVATION_FEEDS: "delayed_sip"
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_TRADE_STREAM_URL: "wss://paper-api.alpaca.markets/stream"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
