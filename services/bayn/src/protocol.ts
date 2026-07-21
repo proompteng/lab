@@ -1,10 +1,9 @@
 import { Effect, Schema } from 'effect'
 
 import { operationalError, type OperationalError } from './errors'
+import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1 } from './hash'
 import type { TsmomProtocol } from './types'
-
-import protocolDocument from '../protocols/tsmom-v1.json' with { type: 'json' }
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
@@ -14,17 +13,78 @@ const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum:
 const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
 const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 const PositiveMicros = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
+const UnsignedMicros = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/))
+const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
+const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
+
+export const ExecutionModelSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-model.v1'),
+  venue: Schema.Literal('alpaca-paper'),
+  assetClass: Schema.Literal('us-equity'),
+  order: Schema.Struct({
+    type: Schema.Literal('market'),
+    timeInForce: Schema.Literal('day'),
+    extendedHours: Schema.Literal(false),
+    submitAfter: Schema.Literal('signal-session-close'),
+    submitBefore: Schema.Literal('next-session-open'),
+    priceReference: Schema.Literal('next-session-open'),
+  }),
+  precision: Schema.Struct({
+    quantityIncrementMicros: PositiveMicros,
+    priceIncrementMicros: PositiveMicros,
+    minimumBuyNotionalMicros: PositiveMicros,
+  }),
+  priceImpact: Schema.Struct({
+    halfSpreadBps: BasisPoints,
+    slippageBps: BasisPoints,
+  }),
+  fees: Schema.Struct({
+    scheduleVersion: Schema.Literal('alpaca-brokerage-2026-07-01'),
+    commissionBps: BasisPoints,
+    secSellBps: BasisPoints,
+    tafSellPerShareMicros: UnsignedMicros,
+    tafMaximumPerOrderMicros: PositiveMicros,
+    catPerShareMicros: UnsignedMicros,
+    aggregation: Schema.Literal('session-by-fee-type'),
+    roundingIncrementMicros: PositiveMicros,
+  }),
+  cash: Schema.Struct({
+    annualYieldBps: BasisPoints,
+    dayCount: Schema.Literal('actual-365'),
+    accrual: Schema.Literal('session-open'),
+  }),
+  partialFills: Schema.Struct({
+    policy: Schema.Literal('deterministic-hash'),
+    probabilityPpm: PartsPerMillion,
+    filledFractionPpm: PartsPerMillion,
+    remainder: Schema.Literal('cancel'),
+  }),
+  doubleCostMultiplier: Schema.Literal(2),
+}).check(
+  Schema.makeFilter((model: typeof ExecutionModelSchema.Type) => {
+    const issues: Schema.FilterIssue[] = []
+    if (model.partialFills.probabilityPpm > 0 && model.partialFills.filledFractionPpm === 0) {
+      issues.push({
+        path: ['partialFills', 'filledFractionPpm'],
+        issue: 'must be positive when partial fills are enabled',
+      })
+    }
+    if (model.partialFills.filledFractionPpm >= 1_000_000) {
+      issues.push({ path: ['partialFills', 'filledFractionPpm'], issue: 'must describe a partial, not complete, fill' })
+    }
+    return issues
+  }),
+)
 
 const TsmomProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.tsmom.protocol.v1'),
+  schemaVersion: Schema.Literal('bayn.tsmom.protocol.v2'),
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
   lookbacks: Schema.Array(PositiveInteger).check(Schema.isMinLength(1)),
   rebalance: Schema.Literal('month-end'),
-  execution: Schema.Literal('next-session-open'),
   positionPolicy: Schema.Literal('long-or-cash'),
   directVolatilityTarget: PositiveUnitInterval,
   initialCapitalMicros: PositiveMicros,
-  transactionCostBps: NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000)),
+  executionModel: ExecutionModelSchema,
   thresholds: Schema.Struct({
     minimumObservations: PositiveInteger,
     minimumAnnualizedReturn: Schema.Finite.check(Schema.isGreaterThan(-1)),
@@ -54,7 +114,24 @@ export const TsmomProtocolSchema = TsmomProtocolBase.check(
   }),
 )
 
-export const defaultProtocolDocument = protocolDocument
+export const defaultProtocolDocument = {
+  schemaVersion: 'bayn.tsmom.protocol.v2',
+  universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
+  lookbacks: [21, 63, 126, 252],
+  rebalance: 'month-end',
+  positionPolicy: 'long-or-cash',
+  directVolatilityTarget: 0.1,
+  initialCapitalMicros: '1000000000000',
+  executionModel: defaultExecutionModel,
+  thresholds: {
+    minimumObservations: 504,
+    minimumAnnualizedReturn: 0,
+    minimumSharpeImprovement: 0,
+    maximumDrawdown: 0.35,
+    maximumAnnualTurnover: 12,
+    requirePositiveDoubleCostReturn: true,
+  },
+} as const
 
 export const loadTsmomProtocol = (input: unknown): Effect.Effect<TsmomProtocol, OperationalError> =>
   Schema.decodeUnknownEffect(

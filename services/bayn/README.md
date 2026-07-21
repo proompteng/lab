@@ -16,8 +16,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   query cancellation.
 - The composition root selects one strategy capability. TSMOM is the first implementation and owns its protocol and
   universe; the HTTP and startup lifecycle do not depend on TSMOM directly.
-- The protocol is committed at `protocols/tsmom-v1.json` and runtime-decoded with Effect Schema before use. JSON holds
-  immutable parameters only; the reviewed TypeScript implementation remains compiled into the image.
+- The typed `bayn.tsmom.protocol.v2` default is compiled into the image and runtime-decoded with Effect Schema before
+  use. It contains the complete versioned execution model; strategies remain reviewed TypeScript rather than JSON.
 - The executable embeds source, repository, and strategy-behavior identity. Startup verifies configured attribution,
   and status exposes the promoted image digest, parameter hash, and contract versions.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
@@ -45,9 +45,9 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   rationale, prior trials, and content-hashed benchmark, threshold, uncertainty, and execution policies. Lock rows are
   append-only, and the result table permits exactly one immutable `QUALIFIED` or `REJECTED` run per lock. No active
   lock or qualification result exists until the remaining M2 policies are complete.
-- The independent reducer rebuilds protocol costs, cash, positions, and every marked-equity point with integer micros.
-  Evaluation and recovery fail if lineage diverges or fees or equity differ by more than one cent; the exact measured
-  differences remain part of the receipt.
+- The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
+  cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
+  recovery require exact zero-difference cash, fee, position, and equity reconstruction.
 - On restart, Bayn derives the expected run ID from the verified Signal manifest and current executable identity. It
   resumes only an exact, complete, runtime-decoded PostgreSQL record; missing evidence triggers one evaluation, while
   partial, altered, or incompatible evidence fails closed without another TigerBeetle mutation.

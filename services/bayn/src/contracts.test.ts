@@ -62,7 +62,7 @@ const material = {
     behaviorHash: sha('e'),
     parameters: {
       lookbacks: [21, 63, 126, 252],
-      transactionCostBps: 5,
+      executionModel: { slippageBps: 5 },
     },
   },
   finalizedSnapshot: snapshot,
@@ -106,7 +106,7 @@ describe('Bayn run identity', () => {
       strategy: {
         ...material.strategy,
         parameters: {
-          transactionCostBps: 5,
+          executionModel: { slippageBps: 5 },
           lookbacks: [21, 63, 126, 252],
         },
       },
@@ -123,7 +123,10 @@ describe('Bayn run identity', () => {
       { ...material, sourceRevision: 'f'.repeat(40) },
       { ...material, image: { ...material.image, digest: `sha256:${sha('1')}` } },
       { ...material, strategy: { ...material.strategy, behaviorHash: sha('2') } },
-      { ...material, strategy: { ...material.strategy, parameters: { lookbacks: [21], transactionCostBps: 5 } } },
+      {
+        ...material,
+        strategy: { ...material.strategy, parameters: { lookbacks: [21], executionModel: { slippageBps: 5 } } },
+      },
       { ...material, finalizedSnapshot: { ...snapshot, contentHash: sha('7') } },
       { ...material, bounds: { ...bounds, evaluationEnd: '2025-12-30' } },
       {
@@ -169,7 +172,7 @@ describe('Bayn runtime provenance', () => {
         name: 'tsmom',
         behaviorHash: sha('e'),
         parameterHash: sha('f'),
-        parameterSchemaVersion: 'bayn.tsmom.protocol.v1',
+        parameterSchemaVersion: 'bayn.tsmom.protocol.v2',
       },
     })
 
@@ -178,7 +181,7 @@ describe('Bayn runtime provenance', () => {
       contractVersions: {
         runtimeProvenance: 'bayn.runtime-provenance.v2',
         inputManifest: 'bayn.input-manifest.v2',
-        evaluation: 'bayn.evaluation.v3',
+        evaluation: 'bayn.evaluation.v4',
       },
     })
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)

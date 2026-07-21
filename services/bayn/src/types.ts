@@ -50,16 +50,60 @@ export interface EconomicThresholds {
   readonly requirePositiveDoubleCostReturn: boolean
 }
 
+export interface ExecutionModel {
+  readonly schemaVersion: 'bayn.execution-model.v1'
+  readonly venue: 'alpaca-paper'
+  readonly assetClass: 'us-equity'
+  readonly order: {
+    readonly type: 'market'
+    readonly timeInForce: 'day'
+    readonly extendedHours: false
+    readonly submitAfter: 'signal-session-close'
+    readonly submitBefore: 'next-session-open'
+    readonly priceReference: 'next-session-open'
+  }
+  readonly precision: {
+    readonly quantityIncrementMicros: string
+    readonly priceIncrementMicros: string
+    readonly minimumBuyNotionalMicros: string
+  }
+  readonly priceImpact: {
+    readonly halfSpreadBps: number
+    readonly slippageBps: number
+  }
+  readonly fees: {
+    readonly scheduleVersion: 'alpaca-brokerage-2026-07-01'
+    readonly commissionBps: number
+    readonly secSellBps: number
+    readonly tafSellPerShareMicros: string
+    readonly tafMaximumPerOrderMicros: string
+    readonly catPerShareMicros: string
+    readonly aggregation: 'session-by-fee-type'
+    readonly roundingIncrementMicros: string
+  }
+  readonly cash: {
+    readonly annualYieldBps: number
+    readonly dayCount: 'actual-365'
+    readonly accrual: 'session-open'
+  }
+  readonly partialFills: {
+    readonly policy: 'deterministic-hash'
+    readonly probabilityPpm: number
+    readonly filledFractionPpm: number
+    readonly remainder: 'cancel'
+  }
+  readonly doubleCostMultiplier: 2
+}
+
 export interface TsmomProtocol {
-  readonly schemaVersion: 'bayn.tsmom.protocol.v1'
+  readonly schemaVersion: 'bayn.tsmom.protocol.v2'
   readonly universe: readonly string[]
   readonly lookbacks: readonly number[]
   readonly rebalance: 'month-end'
-  readonly execution: 'next-session-open'
   readonly positionPolicy: 'long-or-cash'
   readonly directVolatilityTarget: number
   readonly initialCapitalMicros: string
-  readonly transactionCostBps: number
+  readonly executionModel: ExecutionModel
   readonly thresholds: EconomicThresholds
 }
 
@@ -106,13 +150,38 @@ export interface FillEvent {
   readonly symbol: string
   readonly side: 'buy' | 'sell'
   readonly quantityMicros: string
+  readonly referencePriceMicros: string
   readonly priceMicros: string
   readonly notionalMicros: string
-  readonly feeMicros: string
+  readonly spreadCostMicros: string
+  readonly slippageCostMicros: string
   readonly costBasisMicros: string
 }
 
-export type EvaluationEvent = DecisionEvent | FillEvent
+export interface FeeEvent {
+  readonly kind: 'fee'
+  readonly id: string
+  readonly sessionDate: IsoDate
+  readonly commissionMicros: string
+  readonly secMicros: string
+  readonly tafMicros: string
+  readonly catMicros: string
+  readonly totalMicros: string
+}
+
+export interface CashYieldEvent {
+  readonly kind: 'cash-yield'
+  readonly id: string
+  readonly sessionDate: IsoDate
+  readonly elapsedDays: number
+  readonly annualYieldBps: number
+  readonly amountMicros: string
+}
+
+export type EvaluationEvent = DecisionEvent | FillEvent | FeeEvent | CashYieldEvent
+
+export type OrderStatus = 'filled' | 'partially-filled' | 'rejected'
+export type OrderRejectionReason = 'below-minimum-buy-notional' | 'zero-after-rounding'
 
 export interface SimulatedOrder {
   readonly id: string
@@ -122,11 +191,15 @@ export interface SimulatedOrder {
   readonly side: 'buy' | 'sell'
   readonly requestedQuantityMicros: string
   readonly filledQuantityMicros: string
+  readonly status: OrderStatus
+  readonly rejectionReason: OrderRejectionReason | null
+  readonly unfilledRemainder: 'none' | 'canceled'
 }
 
 export interface CashChange {
   readonly id: string
-  readonly fillId: string
+  readonly sourceKind: 'fill' | 'fee' | 'cash-yield'
+  readonly sourceId: string
   readonly sessionDate: IsoDate
   readonly amountMicros: string
   readonly cashAfterMicros: string
@@ -150,6 +223,12 @@ export interface DailyPositionMark {
   readonly cumulativeTurnoverMicros: string
   readonly feeMicros: string
   readonly cumulativeFeesMicros: string
+  readonly spreadCostMicros: string
+  readonly cumulativeSpreadCostMicros: string
+  readonly slippageCostMicros: string
+  readonly cumulativeSlippageCostMicros: string
+  readonly cashYieldMicros: string
+  readonly cumulativeCashYieldMicros: string
   readonly peakEquityMicros: string
   readonly drawdown: number
 }
@@ -162,13 +241,20 @@ export interface DailyPerformancePoint {
   readonly cumulativeTurnoverMicros: string
   readonly feeMicros: string
   readonly cumulativeFeesMicros: string
+  readonly spreadCostMicros: string
+  readonly cumulativeSpreadCostMicros: string
+  readonly slippageCostMicros: string
+  readonly cumulativeSlippageCostMicros: string
+  readonly cashYieldMicros: string
+  readonly cumulativeCashYieldMicros: string
   readonly peakEquityMicros: string
   readonly drawdown: number
 }
 
 export interface SimulationTrace {
-  readonly schemaVersion: 'bayn.simulation-trace.v2'
-  readonly transactionCostBpsMicros: string
+  readonly schemaVersion: 'bayn.simulation-trace.v3'
+  readonly executionModel: ExecutionModel
+  readonly costMultiplierMicros: string
   readonly orders: readonly SimulatedOrder[]
   readonly cashChanges: readonly CashChange[]
   readonly dailyMarks: readonly DailyPositionMark[]
@@ -182,7 +268,7 @@ export interface EquityPoint {
 }
 
 export interface MarkedEquityReconciliation {
-  readonly schemaVersion: 'bayn.marked-equity-reconciliation.v1'
+  readonly schemaVersion: 'bayn.marked-equity-reconciliation.v2'
   readonly runId: string
   readonly toleranceMicros: string
   readonly maximumDailyDifferenceMicros: string
@@ -207,6 +293,9 @@ export interface PerformanceMetrics {
   readonly maximumDrawdown: number
   readonly annualTurnover: number
   readonly totalFeesMicros: string
+  readonly totalSpreadCostMicros: string
+  readonly totalSlippageCostMicros: string
+  readonly totalCashYieldMicros: string
   readonly endingEquityMicros: string
 }
 
@@ -223,7 +312,7 @@ export interface EconomicVerdict {
 }
 
 export interface EvaluationResult {
-  readonly schemaVersion: 'bayn.evaluation.v3'
+  readonly schemaVersion: 'bayn.evaluation.v4'
   readonly runId: string
   readonly codeRevision: string
   readonly protocolHash: string
@@ -247,9 +336,9 @@ export interface EvaluationResult {
 }
 
 export interface EvaluationSummary {
-  readonly schemaVersion: 'bayn.evaluation-summary.v2'
+  readonly schemaVersion: 'bayn.evaluation-summary.v3'
   readonly runId: string
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v3'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v4'
   readonly codeRevision: string
   readonly protocolHash: string
   readonly initialCapitalMicros: string

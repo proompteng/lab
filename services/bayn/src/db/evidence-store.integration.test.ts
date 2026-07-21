@@ -10,6 +10,7 @@ import { buildLedgerPlan } from '../ledger'
 import { makeQualificationLock, makeQualificationPolicyDocument } from '../qualification'
 import { evaluateTsmom } from '../strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../test-fixtures'
+import type { TsmomProtocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -62,13 +63,17 @@ const makeClientRuntime = (config = makeConfig()) =>
 
 const snapshot = makeSnapshot(800)
 
-const makeInput = (sourceRevision = 'a'.repeat(40), behaviorHash = 'c'.repeat(64)): PersistEvaluationInput => {
-  const provenance = makeTestProvenance(fixtureProtocol, { sourceRevision, behaviorHash })
-  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+const makeInput = (
+  sourceRevision = 'a'.repeat(40),
+  behaviorHash = 'c'.repeat(64),
+  protocol: TsmomProtocol = fixtureProtocol,
+): PersistEvaluationInput => {
+  const provenance = makeTestProvenance(protocol, { sourceRevision, behaviorHash })
+  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, protocol, provenance)
   const ledger = buildLedgerPlan(evaluation, 7_001)
   return {
     provenance,
-    parameters: fixtureProtocol,
+    parameters: protocol,
     evaluation,
     reconciliation: {
       runId: evaluation.runId,
@@ -200,6 +205,38 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         required_type: typeof gate.required,
       })),
     )
+  })
+
+  test('persists and recovers fee, partial-fill, and nonzero cash-yield evidence', async () => {
+    const protocol: TsmomProtocol = {
+      ...fixtureProtocol,
+      executionModel: {
+        ...fixtureProtocol.executionModel,
+        cash: { ...fixtureProtocol.executionModel.cash, annualYieldBps: 500 },
+      },
+    }
+    const input = makeInput('a'.repeat(40), 'c'.repeat(64), protocol)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        yield* store.persist(input)
+        return {
+          stored: yield* store.read(input.evaluation.runId),
+          recovered: yield* store.recover(input.evaluation.runId, input.provenance),
+        }
+      }),
+    )
+
+    expect(Option.isSome(result.stored)).toBe(true)
+    expect(Option.isSome(result.recovered)).toBe(true)
+    if (Option.isNone(result.stored) || Option.isNone(result.recovered)) throw new Error('evidence is missing')
+    expect(result.stored.value.events.some((event) => event.kind === 'fee')).toBe(true)
+    expect(result.stored.value.events.some((event) => event.kind === 'cash-yield')).toBe(true)
+    expect(input.evaluation.simulation.orders.some((order) => order.status === 'partially-filled')).toBe(true)
+    expect(result.recovered.value.evaluation.strategy.totalCashYieldMicros).toBe(
+      input.evaluation.strategy.totalCashYieldMicros,
+    )
+    expect(result.recovered.value.evaluation.markedEquityReconciliation.exact).toBe(true)
   })
 
   test('burns observed runs and preserves qualification state as append-only', async () => {
@@ -340,7 +377,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.divergentLock)).toBe(true)
   })
 
-  test('reads and recovers the complete v3 evidence contract without evaluating it again', async () => {
+  test('reads and recovers the complete v4 evidence contract without evaluating it again', async () => {
     const input = makeInput()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -365,7 +402,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       })
       expect(result.stored.value.run).toMatchObject({
         runId: input.evaluation.runId,
-        evaluationSchemaVersion: 'bayn.evaluation.v3',
+        evaluationSchemaVersion: 'bayn.evaluation.v4',
         artifactCount: 17,
         eventCount: input.evaluation.events.length,
       })
@@ -463,7 +500,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(result.items).toEqual([...input.evaluation.simulation.dailyMarks])
     expect(result.contentHash).toBe(
       canonicalHashV1({
-        schemaVersion: 'bayn.daily-position-marks.v2',
+        schemaVersion: 'bayn.daily-position-marks.v3',
         items: input.evaluation.simulation.dailyMarks,
       }),
     )
@@ -488,7 +525,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               ...input.evaluation,
               simulation: {
                 ...input.evaluation.simulation,
-                transactionCostBpsMicros: '6000000',
+                executionModel: {
+                  ...input.evaluation.simulation.executionModel,
+                  priceImpact: {
+                    ...input.evaluation.simulation.executionModel.priceImpact,
+                    slippageBps: input.evaluation.simulation.executionModel.priceImpact.slippageBps + 1,
+                  },
+                },
               },
             },
           })
@@ -499,7 +542,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(error).toBeInstanceOf(DatabaseError)
     expect(error.failure).toBe('invariant')
     expect(error.operation).toBe('plan')
-    expect(error.message).toContain('simulation transaction costs do not match')
+    expect(error.message).toContain('simulation execution model does not match')
   })
 
   test('creates distinct runs when bound runtime provenance changes', async () => {

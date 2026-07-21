@@ -43,6 +43,8 @@ describe('TSMOM economic evaluator', () => {
     expect(first.protocolHash).toBe(makeStrategyProtocolHash(provenance.strategy))
     expect(first.strategy.observations).toBeGreaterThanOrEqual(fixtureProtocol.thresholds.minimumObservations)
     expect(BigInt(first.strategy.totalFeesMicros)).toBeGreaterThan(0n)
+    expect(BigInt(first.strategy.totalSpreadCostMicros)).toBeGreaterThan(0n)
+    expect(BigInt(first.strategy.totalSlippageCostMicros)).toBeGreaterThan(0n)
     expect(first.doubleCostStrategy.endingEquityMicros).not.toBe(first.strategy.endingEquityMicros)
     const firstDecision = first.events.find((event) => event.kind === 'decision')
     expect(firstDecision?.kind).toBe('decision')
@@ -82,7 +84,16 @@ describe('TSMOM economic evaluator', () => {
       fixtureProtocol,
       makeTestProvenance(fixtureProtocol, { behaviorHash: 'f'.repeat(64) }),
     )
-    const changedProtocol = { ...fixtureProtocol, transactionCostBps: fixtureProtocol.transactionCostBps + 1 }
+    const changedProtocol = {
+      ...fixtureProtocol,
+      executionModel: {
+        ...fixtureProtocol.executionModel,
+        priceImpact: {
+          ...fixtureProtocol.executionModel.priceImpact,
+          slippageBps: fixtureProtocol.executionModel.priceImpact.slippageBps + 1,
+        },
+      },
+    }
     const protocolChanged = evaluateTsmom(
       snapshot.bars,
       snapshot.manifest,
@@ -109,11 +120,28 @@ describe('TSMOM economic evaluator', () => {
     expect(protocolChanged.runId).not.toBe(baseline.runId)
     expect(protocolChanged.protocolHash).not.toBe(baseline.protocolHash)
     expect(inputChanged.runId).not.toBe(baseline.runId)
+    const outcomes = (evaluation: typeof baseline) =>
+      evaluation.simulation.orders.map(({ id: _, decisionId: __, ...outcome }) => outcome)
+    expect(sourceChanged.strategy).toEqual(baseline.strategy)
+    expect(imageChanged.strategy).toEqual(baseline.strategy)
+    expect(behaviorChanged.strategy).toEqual(baseline.strategy)
+    expect(outcomes(sourceChanged)).toEqual(outcomes(baseline))
+    expect(outcomes(imageChanged)).toEqual(outcomes(baseline))
+    expect(outcomes(behaviorChanged)).toEqual(outcomes(baseline))
   })
 
   test('rejects a false parameter attribution before evaluation', () => {
     const snapshot = makeSnapshot()
-    const changedProtocol = { ...fixtureProtocol, transactionCostBps: fixtureProtocol.transactionCostBps + 1 }
+    const changedProtocol = {
+      ...fixtureProtocol,
+      executionModel: {
+        ...fixtureProtocol.executionModel,
+        priceImpact: {
+          ...fixtureProtocol.executionModel.priceImpact,
+          slippageBps: fixtureProtocol.executionModel.priceImpact.slippageBps + 1,
+        },
+      },
+    }
 
     expect(() => evaluateTsmom(snapshot.bars, snapshot.manifest, changedProtocol, makeTestProvenance())).toThrow(
       'parameter hash does not match',
@@ -166,5 +194,27 @@ describe('TSMOM economic evaluator', () => {
       ),
     ).toBe(true)
     expect(Buffer.byteLength(serializedEvidence)).toBeLessThan(10 * 1024 * 1024)
+  })
+
+  test('accrues and reconciles an explicitly nonzero cash yield without changing authority', () => {
+    const protocol = {
+      ...fixtureProtocol,
+      executionModel: {
+        ...fixtureProtocol.executionModel,
+        cash: { ...fixtureProtocol.executionModel.cash, annualYieldBps: 500 },
+      },
+    }
+    const snapshot = makeSnapshot(800)
+    const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, protocol, makeTestProvenance(protocol))
+    const yieldEvents = evaluation.events.filter((event) => event.kind === 'cash-yield')
+
+    expect(yieldEvents.length).toBeGreaterThan(0)
+    expect(evaluation.strategy.totalCashYieldMicros).toBe(
+      yieldEvents.reduce((sum, event) => sum + BigInt(event.amountMicros), 0n).toString(),
+    )
+    expect(evaluation.markedEquityReconciliation.exact).toBe(true)
+    expect(evaluation.simulation.cashChanges.filter((change) => change.sourceKind === 'cash-yield')).toHaveLength(
+      yieldEvents.length,
+    )
   })
 })

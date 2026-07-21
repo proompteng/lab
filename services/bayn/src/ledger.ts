@@ -16,9 +16,9 @@ import { Context, Effect, Layer } from 'effect'
 import type { RuntimeConfig } from './config'
 import { operationalError, type OperationalError } from './errors'
 import { hashObject, stableU128, stableU64 } from './hash'
-import type { EvaluationResult, FillEvent, ReconciliationResult } from './types'
+import type { CashYieldEvent, EvaluationResult, FeeEvent, FillEvent, ReconciliationResult } from './types'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const BATCH_MAX = 8_189
 
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
@@ -133,6 +133,7 @@ const AccountCode = {
   inventory: 120,
   equity: 310,
   realizedGain: 410,
+  cashYieldIncome: 420,
   feeExpense: 510,
   realizedLoss: 520,
 } as const
@@ -144,6 +145,7 @@ const TransferCode = {
   realizedGain: 4,
   realizedLoss: 5,
   fee: 6,
+  cashYield: 7,
 } as const
 
 export interface LedgerPlan {
@@ -229,6 +231,7 @@ export const buildLedgerPlan = (result: EvaluationResult, ledger: number): Ledge
   const cash = addAccount('cash', AccountCode.cash)
   const equity = addAccount('equity', AccountCode.equity)
   const fees = addAccount('fee-expense', AccountCode.feeExpense)
+  const cashYieldIncome = addAccount('cash-yield-income', AccountCode.cashYieldIncome)
   const realizedGain = addAccount('realized-gain', AccountCode.realizedGain)
   const realizedLoss = addAccount('realized-loss', AccountCode.realizedLoss)
   for (const symbol of result.inputManifest.symbols.map((coverage) => coverage.symbol).sort()) {
@@ -260,7 +263,6 @@ export const buildLedgerPlan = (result: EvaluationResult, ledger: number): Ledge
     if (!inventory) throw new Error(`missing inventory account for ${fill.symbol}`)
     const notional = positiveAmount(fill.notionalMicros, 'fill notional')
     const costBasis = positiveAmount(fill.costBasisMicros, 'fill cost basis')
-    const fee = positiveAmount(fill.feeMicros, 'fill fee')
     if (notional === 0n) continue
 
     if (fill.side === 'buy') {
@@ -330,9 +332,33 @@ export const buildLedgerPlan = (result: EvaluationResult, ledger: number): Ledge
         ),
       )
     }
-    if (fee > 0n) {
+  }
+  const feeEvents = result.events.filter((event): event is FeeEvent => event.kind === 'fee')
+  for (const fee of feeEvents) {
+    const amount = positiveAmount(fee.totalMicros, 'fee total')
+    if (amount > 0n) {
       transfers.push(
-        transfer(result.runId, runTag, ledger, fill.id, 'fee', fees.id, cash.id, fee, TransferCode.fee, fill),
+        transfer(result.runId, runTag, ledger, fee.id, 'fee', fees.id, cash.id, amount, TransferCode.fee, fee),
+      )
+    }
+  }
+  const cashYieldEvents = result.events.filter((event): event is CashYieldEvent => event.kind === 'cash-yield')
+  for (const cashYield of cashYieldEvents) {
+    const amount = positiveAmount(cashYield.amountMicros, 'cash yield')
+    if (amount > 0n) {
+      transfers.push(
+        transfer(
+          result.runId,
+          runTag,
+          ledger,
+          cashYield.id,
+          'cash-yield',
+          cash.id,
+          cashYieldIncome.id,
+          amount,
+          TransferCode.cashYield,
+          cashYield,
+        ),
       )
     }
   }

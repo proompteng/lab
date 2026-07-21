@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 
 import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1 } from './hash'
+import { ExecutionModelSchema } from './protocol'
 import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
@@ -79,6 +80,9 @@ const PerformanceMetricsSchema = Schema.Struct({
   maximumDrawdown: Schema.Finite,
   annualTurnover: Schema.Finite,
   totalFeesMicros: Micros,
+  totalSpreadCostMicros: Micros,
+  totalSlippageCostMicros: Micros,
+  totalCashYieldMicros: Micros,
   endingEquityMicros: Micros,
 })
 
@@ -95,7 +99,7 @@ const VerdictSchema = Schema.Struct({
 })
 
 export const MarkedEquityReconciliationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.marked-equity-reconciliation.v1'),
+  schemaVersion: Schema.Literal('bayn.marked-equity-reconciliation.v2'),
   runId: Sha256Schema,
   toleranceMicros: Schema.Literal(MARKED_EQUITY_TOLERANCE_MICROS.toString()),
   maximumDailyDifferenceMicros: Micros,
@@ -112,9 +116,9 @@ export const MarkedEquityReconciliationSchema = Schema.Struct({
 })
 
 export const EvaluationSummarySchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.evaluation-summary.v2'),
+  schemaVersion: Schema.Literal('bayn.evaluation-summary.v3'),
   runId: Sha256Schema,
-  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v3'),
+  evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v4'),
   codeRevision: SourceRevision,
   protocolHash: Sha256Schema,
   initialCapitalMicros: Micros,
@@ -169,17 +173,42 @@ const FillEventSchema = Schema.Struct({
   symbol: Schema.String,
   side: Schema.Literals(['buy', 'sell']),
   quantityMicros: Micros,
+  referencePriceMicros: Micros,
   priceMicros: Micros,
   notionalMicros: Micros,
-  feeMicros: Micros,
+  spreadCostMicros: Micros,
+  slippageCostMicros: Micros,
   costBasisMicros: Micros,
 })
 
-export const EvaluationEventsSchema = Schema.Array(Schema.Union([DecisionEventSchema, FillEventSchema]))
+const FeeEventSchema = Schema.Struct({
+  kind: Schema.Literal('fee'),
+  id: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  commissionMicros: Micros,
+  secMicros: Micros,
+  tafMicros: Micros,
+  catMicros: Micros,
+  totalMicros: Micros,
+})
+
+const CashYieldEventSchema = Schema.Struct({
+  kind: Schema.Literal('cash-yield'),
+  id: Sha256Schema,
+  sessionDate: IsoDateSchema,
+  elapsedDays: PositiveInteger,
+  annualYieldBps: Schema.Finite,
+  amountMicros: Micros,
+})
+
+export const EvaluationEventsSchema = Schema.Array(
+  Schema.Union([DecisionEventSchema, FillEventSchema, FeeEventSchema, CashYieldEventSchema]),
+)
 
 export const SimulatedOrdersArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-orders.v1'),
-  transactionCostBpsMicros: Micros,
+  schemaVersion: Schema.Literal('bayn.simulated-orders.v2'),
+  executionModel: ExecutionModelSchema,
+  costMultiplierMicros: Micros,
   items: Schema.Array(
     Schema.Struct({
       id: Sha256Schema,
@@ -189,16 +218,20 @@ export const SimulatedOrdersArtifactSchema = Schema.Struct({
       side: Schema.Literals(['buy', 'sell']),
       requestedQuantityMicros: Micros,
       filledQuantityMicros: Micros,
+      status: Schema.Literals(['filled', 'partially-filled', 'rejected']),
+      rejectionReason: Schema.NullOr(Schema.Literals(['below-minimum-buy-notional', 'zero-after-rounding'])),
+      unfilledRemainder: Schema.Literals(['none', 'canceled']),
     }),
   ).check(Schema.isMinLength(1)),
 })
 
 export const CashChangesArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.cash-changes.v1'),
+  schemaVersion: Schema.Literal('bayn.cash-changes.v2'),
   items: Schema.Array(
     Schema.Struct({
       id: Sha256Schema,
-      fillId: Sha256Schema,
+      sourceKind: Schema.Literals(['fill', 'fee', 'cash-yield']),
+      sourceId: Sha256Schema,
       sessionDate: IsoDateSchema,
       amountMicros: SignedMicros,
       cashAfterMicros: SignedMicros,
@@ -214,6 +247,12 @@ const DailyPerformanceFields = {
   cumulativeTurnoverMicros: Micros,
   feeMicros: Micros,
   cumulativeFeesMicros: Micros,
+  spreadCostMicros: Micros,
+  cumulativeSpreadCostMicros: Micros,
+  slippageCostMicros: Micros,
+  cumulativeSlippageCostMicros: Micros,
+  cashYieldMicros: Micros,
+  cumulativeCashYieldMicros: Micros,
   peakEquityMicros: Micros,
   drawdown: Schema.Finite,
 } as const
@@ -221,7 +260,7 @@ const DailyPerformanceFields = {
 const DailyPerformancePointSchema = Schema.Struct(DailyPerformanceFields)
 
 export const DailyPositionMarksArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.daily-position-marks.v2'),
+  schemaVersion: Schema.Literal('bayn.daily-position-marks.v3'),
   items: Schema.Array(
     Schema.Struct({
       ...DailyPerformanceFields,
@@ -277,7 +316,7 @@ export const QualificationArtifactManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
   identity: Schema.Struct({
     runId: Sha256Schema,
-    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v3'),
+    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v4'),
     protocolHash: Sha256Schema,
     sourceRevision: SourceRevision,
     image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),
@@ -290,8 +329,9 @@ export const QualificationArtifactManifestSchema = Schema.Struct({
   execution: Schema.Struct({
     parameterSchemaVersion: Schema.String,
     parameterHash: Sha256Schema,
-    simulationSchemaVersion: Schema.Literal('bayn.simulation-trace.v2'),
-    transactionCostBpsMicros: Micros,
+    simulationSchemaVersion: Schema.Literal('bayn.simulation-trace.v3'),
+    executionModel: ExecutionModelSchema,
+    costMultiplierMicros: Micros,
   }),
   artifacts: Schema.Array(
     Schema.Struct({

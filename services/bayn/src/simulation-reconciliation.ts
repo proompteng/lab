@@ -1,20 +1,20 @@
+import { accrueCashYield, calculateSessionFees, makeFillTerms, notionalMicros, type FeeInput } from './execution-model'
+import { hashObject } from './hash'
 import type {
   CashChange,
+  CashYieldEvent,
   DailyPositionMark,
   DecisionEvent,
   EquityPoint,
   EvaluationEvent,
+  FeeEvent,
   FillEvent,
   MarkedEquityReconciliation,
   SimulatedOrder,
   SimulationTrace,
 } from './types'
-import { hashObject } from './hash'
 
-const MICROS = 1_000_000n
-const BASIS_POINTS = 10_000n
-export const MARKED_EQUITY_TOLERANCE_MICROS = 10_000n
-const POSITION_QUANTITY_TOLERANCE_MICROS = 100n
+export const MARKED_EQUITY_TOLERANCE_MICROS = 0n
 
 const ensure = (condition: boolean, message: string): void => {
   if (!condition) throw new Error(message)
@@ -32,14 +32,6 @@ const signed = (value: string, name: string): bigint => {
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 
-const roundedMicrosProduct = (quantityMicros: bigint, priceMicros: bigint): bigint =>
-  (quantityMicros * priceMicros + MICROS / 2n) / MICROS
-
-const roundedFee = (notionalMicros: bigint, transactionCostBpsMicros: bigint): bigint => {
-  const denominator = BASIS_POINTS * MICROS
-  return (notionalMicros * transactionCostBpsMicros + denominator / 2n) / denominator
-}
-
 const uniqueById = <A extends { readonly id: string }>(values: readonly A[], name: string): Map<string, A> => {
   const byId = new Map<string, A>()
   for (const value of values) {
@@ -50,12 +42,6 @@ const uniqueById = <A extends { readonly id: string }>(values: readonly A[], nam
   return byId
 }
 
-const expectedCashAmount = (fill: FillEvent): bigint => {
-  const notional = unsigned(fill.notionalMicros, 'fill notional')
-  const fee = unsigned(fill.feeMicros, 'fill fee')
-  return fill.side === 'buy' ? -(notional + fee) : notional - fee
-}
-
 const validateDecisionIdentity = (runId: string, decision: DecisionEvent): void => {
   const { id: _, kind: __, ...payload } = decision
   ensure(
@@ -64,54 +50,115 @@ const validateDecisionIdentity = (runId: string, decision: DecisionEvent): void 
   )
 }
 
-const validateOrder = (
-  runId: string,
-  order: SimulatedOrder,
-  fill: FillEvent,
-  decisions: ReadonlyMap<string, DecisionEvent>,
-  transactionCostBpsMicros: bigint,
-): void => {
-  const decision = decisions.get(order.decisionId)
-  if (decision === undefined) throw new Error(`order ${order.id} references an unknown decision`)
+const validateFill = (runId: string, fill: FillEvent, order: SimulatedOrder, trace: SimulationTrace): void => {
   ensure(fill.orderId === order.id, `fill ${fill.id} does not reference its order`)
   ensure(fill.decisionId === order.decisionId, `fill ${fill.id} and order ${order.id} disagree on decision`)
   ensure(fill.sessionDate === order.sessionDate, `fill ${fill.id} and order ${order.id} disagree on session`)
   ensure(fill.symbol === order.symbol, `fill ${fill.id} and order ${order.id} disagree on symbol`)
   ensure(fill.side === order.side, `fill ${fill.id} and order ${order.id} disagree on side`)
+  const filledQuantity = unsigned(fill.quantityMicros, 'fill quantity')
+  ensure(filledQuantity === unsigned(order.filledQuantityMicros, 'filled order quantity'), 'order and fill diverge')
+  const terms = makeFillTerms(
+    fill.side,
+    filledQuantity,
+    unsigned(fill.referencePriceMicros, 'fill reference price'),
+    trace.executionModel,
+    unsigned(trace.costMultiplierMicros, 'cost multiplier'),
+  )
+  ensure(terms.fillPriceMicros === unsigned(fill.priceMicros, 'fill price'), `fill ${fill.id} price diverges`)
+  ensure(terms.notionalMicros === unsigned(fill.notionalMicros, 'fill notional'), `fill ${fill.id} notional diverges`)
+  ensure(
+    terms.spreadCostMicros === unsigned(fill.spreadCostMicros, 'fill spread cost'),
+    `fill ${fill.id} spread cost diverges`,
+  )
+  ensure(
+    terms.slippageCostMicros === unsigned(fill.slippageCostMicros, 'fill slippage cost'),
+    `fill ${fill.id} slippage cost diverges`,
+  )
+  unsigned(fill.costBasisMicros, 'fill cost basis')
+  const { id: _, kind: __, ...payload } = fill
+  ensure(fill.id === hashObject({ runId, kind: 'fill', ...payload }), `fill ${fill.id} has an invalid identity`)
+}
+
+const validateOrder = (
+  runId: string,
+  order: SimulatedOrder,
+  fill: FillEvent | undefined,
+  decisions: ReadonlyMap<string, DecisionEvent>,
+  trace: SimulationTrace,
+): void => {
+  const decision = decisions.get(order.decisionId)
+  if (decision === undefined) throw new Error(`order ${order.id} references an unknown decision`)
   ensure(decision.executionDate === order.sessionDate, `order ${order.id} is outside its decision execution session`)
   const requested = unsigned(order.requestedQuantityMicros, 'requested order quantity')
   const filled = unsigned(order.filledQuantityMicros, 'filled order quantity')
-  ensure(filled > 0n, `order ${order.id} has no filled quantity`)
   ensure(filled <= requested, `order ${order.id} filled more than requested`)
-  ensure(filled === unsigned(fill.quantityMicros, 'fill quantity'), `order ${order.id} and fill quantity diverge`)
-  const { id: _, ...orderPayload } = order
-  ensure(
-    order.id === hashObject({ runId, kind: 'order', ...orderPayload }),
-    `order ${order.id} has an invalid identity`,
-  )
-  const { id: __, kind: ___, ...fillPayload } = fill
-  ensure(fill.id === hashObject({ runId, kind: 'fill', ...fillPayload }), `fill ${fill.id} has an invalid identity`)
-  const reconstructedNotional = roundedMicrosProduct(filled, unsigned(fill.priceMicros, 'fill price'))
-  ensure(
-    absolute(reconstructedNotional - unsigned(fill.notionalMicros, 'fill notional')) <= MARKED_EQUITY_TOLERANCE_MICROS,
-    `fill ${fill.id} notional diverges from quantity and price`,
-  )
-  ensure(
-    absolute(unsigned(fill.feeMicros, 'fill fee') - roundedFee(reconstructedNotional, transactionCostBpsMicros)) <=
-      MARKED_EQUITY_TOLERANCE_MICROS,
-    `fill ${fill.id} fee diverges from the declared transaction-cost model`,
-  )
+  if (order.status === 'filled') {
+    ensure(requested > 0n && filled === requested, `filled order ${order.id} has inconsistent quantities`)
+    ensure(
+      order.rejectionReason === null && order.unfilledRemainder === 'none',
+      `filled order ${order.id} is malformed`,
+    )
+  } else if (order.status === 'partially-filled') {
+    ensure(filled > 0n && filled < requested, `partial order ${order.id} has inconsistent quantities`)
+    ensure(
+      order.rejectionReason === null && order.unfilledRemainder === 'canceled',
+      `partial order ${order.id} is malformed`,
+    )
+  } else {
+    ensure(filled === 0n && order.rejectionReason !== null, `rejected order ${order.id} is malformed`)
+    ensure(order.unfilledRemainder === 'canceled', `rejected order ${order.id} must cancel its remainder`)
+  }
+  ensure((fill === undefined) === (filled === 0n), `order ${order.id} fill presence diverges from its status`)
+  const { id: _, ...payload } = order
+  ensure(order.id === hashObject({ runId, kind: 'order', ...payload }), `order ${order.id} has an invalid identity`)
+  if (fill !== undefined) validateFill(runId, fill, order, trace)
 }
 
-const validateCashChange = (runId: string, change: CashChange, fill: FillEvent, expectedCash: bigint): void => {
-  ensure(change.fillId === fill.id, `cash change ${change.id} references the wrong fill`)
-  ensure(change.sessionDate === fill.sessionDate, `cash change ${change.id} references the wrong session`)
-  ensure(
-    signed(change.amountMicros, 'cash change amount') === expectedCashAmount(fill),
-    `cash change ${change.id} diverges`,
+const validateFee = (
+  runId: string,
+  fee: FeeEvent,
+  sessionFills: readonly FillEvent[],
+  trace: SimulationTrace,
+): void => {
+  const components =
+    unsigned(fee.commissionMicros, 'commission fee') +
+    unsigned(fee.secMicros, 'SEC fee') +
+    unsigned(fee.tafMicros, 'TAF fee') +
+    unsigned(fee.catMicros, 'CAT fee')
+  ensure(components === unsigned(fee.totalMicros, 'total fee'), `fee ${fee.id} components do not sum`)
+  const inputs: FeeInput[] = sessionFills.map((fill) => ({
+    side: fill.side,
+    quantityMicros: unsigned(fill.quantityMicros, 'fill quantity'),
+    notionalMicros: unsigned(fill.notionalMicros, 'fill notional'),
+  }))
+  const expected = calculateSessionFees(
+    inputs,
+    trace.executionModel,
+    unsigned(trace.costMultiplierMicros, 'cost multiplier'),
   )
+  ensure(expected.commissionMicros === BigInt(fee.commissionMicros), `fee ${fee.id} commission diverges`)
+  ensure(expected.secMicros === BigInt(fee.secMicros), `fee ${fee.id} SEC component diverges`)
+  ensure(expected.tafMicros === BigInt(fee.tafMicros), `fee ${fee.id} TAF component diverges`)
+  ensure(expected.catMicros === BigInt(fee.catMicros), `fee ${fee.id} CAT component diverges`)
+  ensure(expected.totalMicros === BigInt(fee.totalMicros), `fee ${fee.id} total diverges`)
+  const { id: _, kind: __, ...payload } = fee
+  ensure(fee.id === hashObject({ runId, kind: 'fee', ...payload }), `fee ${fee.id} has an invalid identity`)
+}
+
+const validateCashChange = (
+  runId: string,
+  change: CashChange,
+  event: FillEvent | FeeEvent | CashYieldEvent,
+  amount: bigint,
+  expectedCash: bigint,
+): void => {
+  ensure(change.sourceKind === event.kind, `cash change ${change.id} references the wrong source kind`)
+  ensure(change.sourceId === event.id, `cash change ${change.id} references the wrong source`)
+  ensure(change.sessionDate === event.sessionDate, `cash change ${change.id} references the wrong session`)
+  ensure(signed(change.amountMicros, 'cash change amount') === amount, `cash change ${change.id} amount diverges`)
   ensure(
-    signed(change.cashAfterMicros, 'cash after fill') === expectedCash,
+    signed(change.cashAfterMicros, 'cash after event') === expectedCash,
     `cash change ${change.id} balance diverges`,
   )
   const { id: _, ...payload } = change
@@ -152,9 +199,8 @@ export const reconcileMarkedEquity = (input: {
   const tolerance = input.toleranceMicros ?? MARKED_EQUITY_TOLERANCE_MICROS
   ensure(tolerance >= 0n, 'marked-equity tolerance must not be negative')
   ensure(/^[0-9a-f]{64}$/.test(input.runId), 'marked-equity run ID is invalid')
-  ensure(input.simulation.schemaVersion === 'bayn.simulation-trace.v2', 'simulation trace version is unsupported')
-  const transactionCostBpsMicros = unsigned(input.simulation.transactionCostBpsMicros, 'transaction cost basis points')
-  ensure(transactionCostBpsMicros <= BASIS_POINTS * MICROS, 'transaction cost basis points exceed 100%')
+  ensure(input.simulation.schemaVersion === 'bayn.simulation-trace.v3', 'simulation trace version is unsupported')
+  ensure(unsigned(input.simulation.costMultiplierMicros, 'cost multiplier') > 0n, 'cost multiplier must be positive')
 
   const decisions = uniqueById(
     input.events.filter((event): event is DecisionEvent => event.kind === 'decision'),
@@ -162,76 +208,150 @@ export const reconcileMarkedEquity = (input: {
   )
   for (const decision of decisions.values()) validateDecisionIdentity(input.runId, decision)
   const fills = input.events.filter((event): event is FillEvent => event.kind === 'fill')
-  const fillsById = uniqueById(fills, 'fill events')
-  const orders = uniqueById(input.simulation.orders, 'simulated orders')
-  const changes = uniqueById(input.simulation.cashChanges, 'cash changes')
-  const changesByFill = new Map<string, CashChange>()
-  for (const change of changes.values()) {
-    ensure(!changesByFill.has(change.fillId), `fill ${change.fillId} has multiple cash changes`)
-    changesByFill.set(change.fillId, change)
-  }
-  ensure(orders.size === fills.length, 'simulated order count does not match fill count')
-  ensure(changes.size === fills.length, 'cash change count does not match fill count')
-  const filledOrderIds = new Set<string>()
+  uniqueById(fills, 'fill events')
+  const fillsByOrder = new Map<string, FillEvent>()
   for (const fill of fills) {
-    const order = orders.get(fill.orderId)
-    if (order === undefined) throw new Error(`fill ${fill.id} references an unknown order`)
-    ensure(!filledOrderIds.has(order.id), `order ${order.id} has multiple fills`)
-    filledOrderIds.add(order.id)
-    validateOrder(input.runId, order, fill, decisions, transactionCostBpsMicros)
-    ensure(changesByFill.has(fill.id), `fill ${fill.id} has no cash change`)
+    ensure(!fillsByOrder.has(fill.orderId), `order ${fill.orderId} has multiple fills`)
+    fillsByOrder.set(fill.orderId, fill)
   }
-  ensure(filledOrderIds.size === orders.size, 'simulation contains an unfilled order')
-  for (const change of changes.values()) ensure(fillsById.has(change.fillId), `cash change ${change.id} has no fill`)
+  const orders = uniqueById(input.simulation.orders, 'simulated orders')
+  for (const order of orders.values()) {
+    validateOrder(input.runId, order, fillsByOrder.get(order.id), decisions, input.simulation)
+  }
+  for (const fill of fills) ensure(orders.has(fill.orderId), `fill ${fill.id} references an unknown order`)
+
+  const fees = input.events.filter((event): event is FeeEvent => event.kind === 'fee')
+  const cashYields = input.events.filter((event): event is CashYieldEvent => event.kind === 'cash-yield')
+  uniqueById(fees, 'fee events')
+  uniqueById(cashYields, 'cash-yield events')
+  for (const fee of fees) {
+    validateFee(
+      input.runId,
+      fee,
+      fills.filter((fill) => fill.sessionDate === fee.sessionDate),
+      input.simulation,
+    )
+  }
+
+  const monetaryEvents = input.events.filter(
+    (event): event is FillEvent | FeeEvent | CashYieldEvent => event.kind !== 'decision',
+  )
+  const changes = uniqueById(input.simulation.cashChanges, 'cash changes')
+  const changesBySource = new Map<string, CashChange>()
+  for (const change of changes.values()) {
+    ensure(!changesBySource.has(change.sourceId), `event ${change.sourceId} has multiple cash changes`)
+    changesBySource.set(change.sourceId, change)
+  }
+  ensure(changes.size === monetaryEvents.length, 'cash change count does not match monetary event count')
+  for (const event of monetaryEvents) ensure(changesBySource.has(event.id), `event ${event.id} has no cash change`)
   validateMarks(input.simulation.dailyMarks)
 
   let cash = unsigned(input.initialCapitalMicros, 'initial capital')
   const quantities = new Map<string, bigint>()
-  let fillIndex = 0
-  let previousFillDate: string | undefined
+  let eventIndex = 0
   let maximumDifference = 0n
   let finalPositionValue = 0n
   let reconstructedTotalFees = 0n
+  let cumulativeTurnover = 0n
+  let cumulativeSpread = 0n
+  let cumulativeSlippage = 0n
+  let cumulativeCashYield = 0n
   const equitySeries: EquityPoint[] = []
 
   for (const mark of input.simulation.dailyMarks) {
-    while (fillIndex < fills.length && fills[fillIndex].sessionDate <= mark.sessionDate) {
-      const fill = fills[fillIndex]
-      if (previousFillDate !== undefined) ensure(previousFillDate <= fill.sessionDate, 'fill events are not ordered')
-      previousFillDate = fill.sessionDate
-      ensure(fill.sessionDate === mark.sessionDate, `fill ${fill.id} has no mark for its session`)
-      cash += expectedCashAmount(fill)
-      reconstructedTotalFees += unsigned(fill.feeMicros, 'fill fee')
-      ensure(cash >= -tolerance, `fill ${fill.id} spends unavailable reconstructed cash`)
-      const quantity = unsigned(fill.quantityMicros, 'fill quantity')
-      const current = quantities.get(fill.symbol) ?? 0n
-      const next = fill.side === 'buy' ? current + quantity : current - quantity
-      ensure(next >= -POSITION_QUANTITY_TOLERANCE_MICROS, `fill ${fill.id} creates a negative long-only position`)
-      quantities.set(fill.symbol, next < 0n ? 0n : next)
-      validateCashChange(input.runId, changesByFill.get(fill.id)!, fill, cash)
-      fillIndex += 1
+    const turnoverBefore = cumulativeTurnover
+    const feesBefore = reconstructedTotalFees
+    const spreadBefore = cumulativeSpread
+    const slippageBefore = cumulativeSlippage
+    const yieldBefore = cumulativeCashYield
+    while (eventIndex < monetaryEvents.length && monetaryEvents[eventIndex].sessionDate <= mark.sessionDate) {
+      const event = monetaryEvents[eventIndex]
+      ensure(event.sessionDate === mark.sessionDate, `event ${event.id} has no mark for its session`)
+      let amount: bigint
+      if (event.kind === 'fill') {
+        const notional = unsigned(event.notionalMicros, 'fill notional')
+        amount = event.side === 'buy' ? -notional : notional
+        cumulativeTurnover += notional
+        cumulativeSpread += unsigned(event.spreadCostMicros, 'fill spread cost')
+        cumulativeSlippage += unsigned(event.slippageCostMicros, 'fill slippage cost')
+        const quantity = unsigned(event.quantityMicros, 'fill quantity')
+        const current = quantities.get(event.symbol) ?? 0n
+        const next = event.side === 'buy' ? current + quantity : current - quantity
+        ensure(next >= 0n, `fill ${event.id} creates a negative long-only position`)
+        quantities.set(event.symbol, next)
+      } else if (event.kind === 'fee') {
+        const total = unsigned(event.totalMicros, 'fee total')
+        amount = -total
+        reconstructedTotalFees += total
+      } else {
+        ensure(
+          event.annualYieldBps === input.simulation.executionModel.cash.annualYieldBps,
+          `cash-yield event ${event.id} rate diverges from the model`,
+        )
+        const expected = accrueCashYield(cash, event.elapsedDays, input.simulation.executionModel)
+        ensure(expected === unsigned(event.amountMicros, 'cash-yield amount'), `cash-yield event ${event.id} diverges`)
+        amount = expected
+        cumulativeCashYield += expected
+        const { id: _, kind: __, ...payload } = event
+        ensure(
+          event.id === hashObject({ runId: input.runId, kind: 'cash-yield', ...payload }),
+          `cash-yield event ${event.id} has an invalid identity`,
+        )
+      }
+      cash += amount
+      ensure(cash >= -tolerance, `event ${event.id} spends unavailable reconstructed cash`)
+      validateCashChange(input.runId, changesBySource.get(event.id)!, event, amount, cash)
+      eventIndex += 1
     }
 
+    ensure(
+      unsigned(mark.turnoverMicros, 'daily turnover') === cumulativeTurnover - turnoverBefore,
+      'daily turnover diverges',
+    )
+    ensure(
+      unsigned(mark.cumulativeTurnoverMicros, 'cumulative turnover') === cumulativeTurnover,
+      'cumulative turnover diverges',
+    )
+    ensure(unsigned(mark.feeMicros, 'daily fees') === reconstructedTotalFees - feesBefore, 'daily fees diverge')
+    ensure(unsigned(mark.cumulativeFeesMicros, 'cumulative fees') === reconstructedTotalFees, 'cumulative fees diverge')
+    ensure(unsigned(mark.spreadCostMicros, 'daily spread') === cumulativeSpread - spreadBefore, 'daily spread diverges')
+    ensure(
+      unsigned(mark.cumulativeSpreadCostMicros, 'cumulative spread') === cumulativeSpread,
+      'cumulative spread diverges',
+    )
+    ensure(
+      unsigned(mark.slippageCostMicros, 'daily slippage') === cumulativeSlippage - slippageBefore,
+      'daily slippage diverges',
+    )
+    ensure(
+      unsigned(mark.cumulativeSlippageCostMicros, 'cumulative slippage') === cumulativeSlippage,
+      'cumulative slippage diverges',
+    )
+    ensure(
+      unsigned(mark.cashYieldMicros, 'daily cash yield') === cumulativeCashYield - yieldBefore,
+      'daily cash yield diverges',
+    )
+    ensure(
+      unsigned(mark.cumulativeCashYieldMicros, 'cumulative cash yield') === cumulativeCashYield,
+      'cumulative cash yield diverges',
+    )
     const markCash = unsigned(mark.cashMicros, 'daily cash')
-    const cashDifference = absolute(markCash - cash)
-    ensure(cashDifference <= tolerance, `daily cash diverges on ${mark.sessionDate}`)
+    ensure(absolute(markCash - cash) <= tolerance, `daily cash diverges on ${mark.sessionDate}`)
     let reconstructedPositionValue = 0n
     const markedSymbols = new Set<string>()
     for (const position of mark.positions) {
       markedSymbols.add(position.symbol)
       const price = unsigned(position.priceMicros, 'position mark price')
       const reconstructedQuantity = quantities.get(position.symbol) ?? 0n
-      const evaluatorQuantity = unsigned(position.quantityMicros, 'position quantity')
       ensure(
-        absolute(evaluatorQuantity - reconstructedQuantity) <= POSITION_QUANTITY_TOLERANCE_MICROS,
+        unsigned(position.quantityMicros, 'position quantity') === reconstructedQuantity,
         `position quantity diverges for ${position.symbol} on ${mark.sessionDate}`,
       )
       unsigned(position.costBasisMicros, 'position cost basis')
-      const reconstructedValue = roundedMicrosProduct(reconstructedQuantity, price)
+      const reconstructedValue = notionalMicros(reconstructedQuantity, price)
       reconstructedPositionValue += reconstructedValue
-      const evaluatorValue = unsigned(position.marketValueMicros, 'position market value')
       ensure(
-        absolute(evaluatorValue - reconstructedValue) <= tolerance,
+        unsigned(position.marketValueMicros, 'position market value') === reconstructedValue,
         `position value diverges for ${position.symbol} on ${mark.sessionDate}`,
       )
     }
@@ -254,7 +374,7 @@ export const reconcileMarkedEquity = (input: {
       differenceMicros: difference.toString(),
     })
   }
-  ensure(fillIndex === fills.length, 'simulation has fills after its final daily mark')
+  ensure(eventIndex === monetaryEvents.length, 'simulation has monetary events after its final daily mark')
 
   const evaluatorEnding = unsigned(input.evaluatorEndingEquityMicros, 'evaluator ending equity')
   const evaluatorTotalFees = unsigned(input.evaluatorTotalFeesMicros, 'evaluator total fees')
@@ -267,7 +387,7 @@ export const reconcileMarkedEquity = (input: {
 
   return {
     reconciliation: {
-      schemaVersion: 'bayn.marked-equity-reconciliation.v1',
+      schemaVersion: 'bayn.marked-equity-reconciliation.v2',
       runId: input.runId,
       toleranceMicros: tolerance.toString(),
       maximumDailyDifferenceMicros: maximumDifference.toString(),
