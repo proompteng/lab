@@ -231,16 +231,50 @@ const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): Qualificat
     manifest: snapshot.manifest,
     protocol,
     database,
+    signalReplicas: ['replica-0', 'replica-1'],
     signalAccess: [
       {
+        replica: 'replica-0',
         queryId: 'publisher',
         queryStartTime: '2026-07-20T11:59:58.000000Z',
         user: 'signal-publisher',
         kind: 'bars',
       },
-      { queryId: 'manifest', queryStartTime: '2026-07-20T11:59:59.000000Z', user: 'bayn', kind: 'manifest' },
-      { queryId: 'sessions', queryStartTime: '2026-07-20T12:00:01.000000Z', user: 'bayn', kind: 'sessions' },
-      { queryId: 'bars', queryStartTime: '2026-07-20T12:00:01.100000Z', user: 'bayn', kind: 'bars' },
+      {
+        replica: 'replica-0',
+        queryId: 'manifest-inspect',
+        queryStartTime: '2026-07-20T11:59:59.000000Z',
+        user: 'bayn',
+        kind: 'manifest',
+      },
+      {
+        replica: 'replica-1',
+        queryId: 'sessions-inspect',
+        queryStartTime: '2026-07-20T11:59:59.100000Z',
+        user: 'bayn',
+        kind: 'sessions',
+      },
+      {
+        replica: 'replica-1',
+        queryId: 'manifest-load',
+        queryStartTime: '2026-07-20T12:00:01.000000Z',
+        user: 'bayn',
+        kind: 'manifest',
+      },
+      {
+        replica: 'replica-0',
+        queryId: 'sessions-load',
+        queryStartTime: '2026-07-20T12:00:01.050000Z',
+        user: 'bayn',
+        kind: 'sessions',
+      },
+      {
+        replica: 'replica-1',
+        queryId: 'bars',
+        queryStartTime: '2026-07-20T12:00:01.100000Z',
+        user: 'bayn',
+        kind: 'bars',
+      },
     ],
     signalPrincipals: { candidate: 'bayn', publishers: ['signal-publisher'] },
     repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: true, preLockResultReferences: [] },
@@ -333,7 +367,7 @@ describe('qualification audit', () => {
     expect(report.checks.find((check) => check.name === 'reference-strategy')?.passed).toBe(false)
   })
 
-  test('fails closed when candidate data was read before the lock', () => {
+  test('fails closed when candidate bars were read before the lock', () => {
     const input = fixture()
     const signalAccess = input.signalAccess.map((record) =>
       record.user === 'bayn' && record.kind === 'bars'
@@ -343,7 +377,7 @@ describe('qualification audit', () => {
     const report = auditQualification({ ...input, signalAccess })
 
     expect(report.status).toBe('FAIL')
-    expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-data')?.passed).toBe(false)
+    expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(false)
   })
 
   test.each([
@@ -438,8 +472,20 @@ describe('qualification audit', () => {
           const input = fixture()
           return { ...input, signalAccess: input.signalAccess.filter((record) => record.queryId !== 'bars') }
         })(),
-        'signal-lock-before-candidate-data',
+        'signal-lock-before-candidate-bars',
       ],
+      [
+        'calendar-preflight',
+        (() => {
+          const input = fixture()
+          return {
+            ...input,
+            signalAccess: input.signalAccess.filter((record) => record.queryId !== 'sessions-inspect'),
+          }
+        })(),
+        'signal-calendar-inspected-before-lock',
+      ],
+      ['replica-coverage', { ...fixture(), signalReplicas: ['replica-0'] }, 'signal-query-log-replica-coverage'],
       [
         'principal',
         (() => {
@@ -449,6 +495,7 @@ describe('qualification audit', () => {
             signalAccess: [
               ...input.signalAccess,
               {
+                replica: 'replica-0',
                 queryId: 'unknown',
                 queryStartTime: '2026-07-20T11:59:59.500000Z',
                 user: 'notebook',
@@ -491,7 +538,8 @@ describe('qualification dossier', () => {
     const second = makeQualificationDossier(fixture())
     const { dossierHash, ...material } = first
 
-    expect(first.schemaVersion).toBe('bayn.qualification-dossier.v1')
+    expect(first.schemaVersion).toBe('bayn.qualification-dossier.v2')
+    expect(first.audit.schemaVersion).toBe('bayn.qualification-audit.v2')
     expect(first.audit.status).toBe('PASS')
     expect(first.audit.checks.every((check) => check.passed)).toBe(true)
     expect(first.subject.run.runId).toBe(first.qualification.result.runId)

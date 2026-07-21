@@ -81,6 +81,7 @@ export interface AuditDatabaseSnapshot {
 }
 
 export interface SignalAccessRecord {
+  readonly replica: string
   readonly queryId: string
   readonly queryStartTime: string
   readonly user: string
@@ -103,6 +104,7 @@ export interface QualificationAuditInput {
   readonly manifest: InputManifest
   readonly protocol: StrategyProtocol
   readonly database: AuditDatabaseSnapshot
+  readonly signalReplicas: readonly string[]
   readonly signalAccess: readonly SignalAccessRecord[]
   readonly signalPrincipals: SignalPrincipals
   readonly repository: RepositoryAudit
@@ -115,7 +117,7 @@ export interface AuditCheck {
 }
 
 export interface QualificationAuditReport {
-  readonly schemaVersion: 'bayn.qualification-audit.v1'
+  readonly schemaVersion: 'bayn.qualification-audit.v2'
   readonly runId: string
   readonly status: 'PASS' | 'FAIL'
   readonly reference: {
@@ -144,6 +146,7 @@ export interface QualificationAuditReport {
   readonly contamination: {
     readonly lockCreatedAt: string
     readonly resultCommittedAt: string
+    readonly replicas: readonly string[]
     readonly principals: SignalPrincipals
     readonly access: readonly SignalAccessRecord[]
   }
@@ -627,34 +630,64 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `verdict=${String(result.verdict)} reasons=${reasonCodes.join(',')}`,
   )
 
-  const sortedAccess = [...input.signalAccess].sort((left, right) =>
-    left.queryStartTime === right.queryStartTime
-      ? left.queryId.localeCompare(right.queryId)
-      : left.queryStartTime.localeCompare(right.queryStartTime),
-  )
+  const sortedReplicas = [...input.signalReplicas].sort()
+  const sortedAccess = [...input.signalAccess].sort((left, right) => {
+    if (left.queryStartTime !== right.queryStartTime) return left.queryStartTime.localeCompare(right.queryStartTime)
+    if (left.replica !== right.replica) return left.replica.localeCompare(right.replica)
+    return left.queryId.localeCompare(right.queryId)
+  })
   const candidateAccess = sortedAccess.filter((value) => value.user === input.signalPrincipals.candidate)
-  const candidateReads = candidateAccess.filter((value) => value.kind === 'sessions' || value.kind === 'bars')
+  const candidateBarReads = candidateAccess.filter((value) => value.kind === 'bars')
+  const candidateSessionReads = candidateAccess.filter((value) => value.kind === 'sessions')
   const manifestReads = candidateAccess.filter((value) => value.kind === 'manifest')
-  const preLockCandidateReads = candidateReads.filter(
+  const preLockBarReads = candidateBarReads.filter(
     (value) => value.queryStartTime < database.qualification.lockCreatedAt,
   )
+  const preLockSessionReads = candidateSessionReads.filter(
+    (value) => value.queryStartTime < database.qualification.lockCreatedAt,
+  )
+  const preLockManifestReads = manifestReads.filter(
+    (value) => value.queryStartTime < database.qualification.lockCreatedAt,
+  )
+  const lockedSessionReads = candidateSessionReads.filter(
+    (value) =>
+      value.queryStartTime >= database.qualification.lockCreatedAt &&
+      value.queryStartTime <= database.qualification.resultCommittedAt,
+  )
+  const lockedManifestReads = manifestReads.filter(
+    (value) =>
+      value.queryStartTime >= database.qualification.lockCreatedAt &&
+      value.queryStartTime <= database.qualification.resultCommittedAt,
+  )
   check(
-    'signal-lock-before-candidate-data',
-    preLockCandidateReads.length === 0 &&
-      candidateReads.length === 2 &&
-      candidateReads.every(
+    'signal-query-log-replica-coverage',
+    sortedReplicas.length >= 2 &&
+      new Set(sortedReplicas).size === sortedReplicas.length &&
+      sortedAccess.every((value) => sortedReplicas.includes(value.replica)),
+    `${sortedReplicas.length} replicas=${sortedReplicas.join(',')}`,
+  )
+  check(
+    'signal-lock-before-candidate-bars',
+    preLockBarReads.length === 0 &&
+      candidateBarReads.length === 1 &&
+      candidateBarReads.every(
         (value) =>
           value.queryStartTime >= database.qualification.lockCreatedAt &&
           value.queryStartTime <= database.qualification.resultCommittedAt,
       ),
-    `lock=${database.qualification.lockCreatedAt} candidateReads=${candidateReads
-      .map((value) => `${value.kind}@${value.queryStartTime}`)
+    `lock=${database.qualification.lockCreatedAt} barReads=${candidateBarReads
+      .map((value) => `${value.replica}@${value.queryStartTime}`)
       .join(',')}`,
   )
   check(
+    'signal-calendar-inspected-before-lock',
+    preLockSessionReads.length >= 1 && lockedSessionReads.length >= 1,
+    `preLock=${preLockSessionReads.length} locked=${lockedSessionReads.length}`,
+  )
+  check(
     'signal-manifest-inspected-before-lock',
-    manifestReads.some((value) => value.queryStartTime < database.qualification.lockCreatedAt),
-    `${manifestReads.length} manifest reads`,
+    preLockManifestReads.length >= 1 && lockedManifestReads.length >= 1,
+    `preLock=${preLockManifestReads.length} locked=${lockedManifestReads.length}`,
   )
   check(
     'signal-read-principals',
@@ -680,7 +713,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   )
 
   const material = {
-    schemaVersion: 'bayn.qualification-audit.v1' as const,
+    schemaVersion: 'bayn.qualification-audit.v2' as const,
     runId: database.run.runId,
     status: checks.every((value) => value.passed) ? ('PASS' as const) : ('FAIL' as const),
     reference: {
@@ -704,6 +737,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     contamination: {
       lockCreatedAt: database.qualification.lockCreatedAt,
       resultCommittedAt: database.qualification.resultCommittedAt,
+      replicas: sortedReplicas,
       principals: input.signalPrincipals,
       access: sortedAccess,
     },
