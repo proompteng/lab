@@ -85,6 +85,30 @@ bun run --filter @proompteng/bayn build
 bun run --filter @proompteng/bayn lint:oxlint
 ```
 
+For a terminal locked candidate, `audit:qualification` performs an operator-side, read-only reproduction. It reads the
+evidence graph in one PostgreSQL `REPEATABLE READ, READ ONLY` transaction, reloads the finalized Signal snapshot,
+replays the candidate and all benchmarks without importing the production strategy, checks ClickHouse query-start
+chronology with a separately supplied audit principal, and checks authoritative `origin/main` history. It emits one
+`bayn.qualification-audit.v1` JSON report and exits nonzero on any failed check. Run it twice and require identical
+`auditHash` values.
+
+```sh
+BAYN_AUDIT_RUN_ID=<run-id> \
+BAYN_AUDIT_POSTGRES_URL=<authenticated-postgres-uri> \
+BAYN_AUDIT_SIGNAL_URL=<signal-clickhouse-url> \
+BAYN_AUDIT_SIGNAL_USERNAME=<readonly-bayn-user> \
+BAYN_AUDIT_SIGNAL_PASSWORD=<readonly-bayn-password> \
+BAYN_AUDIT_CLICKHOUSE_URL=<clickhouse-audit-url> \
+BAYN_AUDIT_CLICKHOUSE_USERNAME=<query-log-audit-user> \
+BAYN_AUDIT_CLICKHOUSE_PASSWORD=<query-log-audit-password> \
+BAYN_AUDIT_REPOSITORY_PATH=<lab-checkout> \
+  bun run --filter @proompteng/bayn audit:qualification
+```
+
+The audit command is not part of the deployed runtime and never calls TigerBeetle or a broker. Its privileged
+ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal
+read-only identity.
+
 The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
 
 ```sh
