@@ -33,6 +33,12 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 - After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
   snapshot reference, run identity, metrics, simulated orders, fills, cash changes, daily position marks, the full
   equity series, independent marked-equity proof, reconciliation receipt, gate outcomes, and status history.
+- Every completed pre-qualification run is recorded once as a burned trial. Observed results cannot later be presented
+  as an untouched qualification window, and the trial record cannot be updated or deleted.
+- A future qualification lock must bind the exact protocol, source and image, finalized snapshot and bounds, universe
+  rationale, prior trials, and content-hashed benchmark, threshold, uncertainty, and execution policies. Lock rows are
+  append-only, and the result table permits exactly one immutable `QUALIFIED` or `REJECTED` run per lock. No active
+  lock or qualification result exists until the remaining M2 policies are complete.
 - The independent reducer rebuilds protocol costs, cash, positions, and every marked-equity point with integer micros.
   Evaluation and recovery fail if lineage diverges or fees or equity differ by more than one cent; the exact measured
   differences remain part of the receipt.
