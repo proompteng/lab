@@ -24,7 +24,7 @@ export default Effect.gen(function* () {
         SELECT 1
         FROM protocol_locks
         WHERE strategy_name <> 'tsmom'
-          OR schema_version <> 'bayn.tsmom.protocol.v2'
+          OR schema_version NOT IN ('bayn.tsmom.protocol.v1', 'bayn.tsmom.protocol.v2')
       ) THEN
         RAISE EXCEPTION 'hard migration requires an empty database or legacy TSMOM-only evidence'
           USING ERRCODE = '55000';
