@@ -531,9 +531,24 @@ def load_broker_account_activity_status(
         }
     observed = as_utc(observed_at)
     updated_at = as_utc(cursor.updated_at)
-    age_seconds = max(0, int((observed - updated_at).total_seconds()))
+    last_completed_at = (
+        as_utc(cursor.last_completed_at)
+        if cursor.last_completed_at is not None
+        else None
+    )
+    freshness_at = (
+        last_completed_at
+        if cursor.status in {"complete", "scanning"} and last_completed_at is not None
+        else updated_at
+    )
+    age_seconds = max(0, int((observed - freshness_at).total_seconds()))
     reasons: list[str] = []
-    if cursor.status != "complete":
+    has_completed_scan = (
+        last_completed_at is not None and cursor.last_completed_scan_until is not None
+    )
+    if cursor.status != "complete" and not (
+        cursor.status == "scanning" and has_completed_scan
+    ):
         reasons.append(f"broker_account_activity_{cursor.status}")
     if age_seconds > _FRESHNESS_MAX_AGE_SECONDS:
         reasons.append("broker_account_activity_cursor_stale")
