@@ -428,92 +428,91 @@ describe('qualification audit', () => {
     expect(report.checks.find((check) => check.name === 'reference-gates')?.passed).toBe(false)
   })
 
-  test('fails closed on policy, trial-lineage, repository, access-coverage, and principal defects', () => {
-    const cases: readonly [string, QualificationAuditInput, string][] = [
-      [
-        'policy',
-        (() => {
-          const input = fixture()
-          const lock = structuredClone(input.database.qualification.lock) as Record<string, unknown>
-          const policies = lock.policies as Record<string, Record<string, unknown>>
-          lock.policies = {
-            ...policies,
-            thresholds: { ...policies.thresholds, content: { schemaVersion: 'tampered' } },
-          }
-          return {
-            ...input,
-            database: {
-              ...input.database,
-              qualification: { ...input.database.qualification, lock },
+  test.each([
+    [
+      'policy',
+      () => {
+        const input = fixture()
+        const lock = structuredClone(input.database.qualification.lock) as Record<string, unknown>
+        const policies = lock.policies as Record<string, Record<string, unknown>>
+        lock.policies = {
+          ...policies,
+          thresholds: { ...policies.thresholds, content: { schemaVersion: 'tampered' } },
+        }
+        return {
+          ...input,
+          database: {
+            ...input.database,
+            qualification: { ...input.database.qualification, lock },
+          },
+        }
+      },
+      'lock-policy-hashes',
+    ],
+    [
+      'trial-lineage',
+      () => {
+        const input = fixture()
+        return { ...input, database: { ...input.database, priorTrialRunIds: ['0'.repeat(64)] } }
+      },
+      'locked-prior-trial-lineage',
+    ],
+    [
+      'repository',
+      () => ({
+        ...fixture(),
+        repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: false, preLockResultReferences: [] },
+      }),
+      'source-revision-in-repository',
+    ],
+    [
+      'access-coverage',
+      () => {
+        const input = fixture()
+        return { ...input, signalAccess: input.signalAccess.filter((record) => record.queryId !== 'bars') }
+      },
+      'signal-lock-before-candidate-bars',
+    ],
+    [
+      'calendar-preflight',
+      () => {
+        const input = fixture()
+        return {
+          ...input,
+          signalAccess: input.signalAccess.filter((record) => record.queryId !== 'sessions-inspect'),
+        }
+      },
+      'signal-calendar-inspected-before-lock',
+    ],
+    ['replica-coverage', () => ({ ...fixture(), signalReplicas: ['replica-0'] }), 'signal-query-log-replica-coverage'],
+    [
+      'principal',
+      () => {
+        const input = fixture()
+        return {
+          ...input,
+          signalAccess: [
+            ...input.signalAccess,
+            {
+              replica: 'replica-0',
+              queryId: 'unknown',
+              queryStartTime: '2026-07-20T11:59:59.500000Z',
+              user: 'notebook',
+              kind: 'manifest' as const,
             },
-          }
-        })(),
-        'lock-policy-hashes',
-      ],
-      [
-        'trial-lineage',
-        (() => {
-          const input = fixture()
-          return { ...input, database: { ...input.database, priorTrialRunIds: ['0'.repeat(64)] } }
-        })(),
-        'locked-prior-trial-lineage',
-      ],
-      [
-        'repository',
-        {
-          ...fixture(),
-          repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: false, preLockResultReferences: [] },
-        },
-        'source-revision-in-repository',
-      ],
-      [
-        'access-coverage',
-        (() => {
-          const input = fixture()
-          return { ...input, signalAccess: input.signalAccess.filter((record) => record.queryId !== 'bars') }
-        })(),
-        'signal-lock-before-candidate-bars',
-      ],
-      [
-        'calendar-preflight',
-        (() => {
-          const input = fixture()
-          return {
-            ...input,
-            signalAccess: input.signalAccess.filter((record) => record.queryId !== 'sessions-inspect'),
-          }
-        })(),
-        'signal-calendar-inspected-before-lock',
-      ],
-      ['replica-coverage', { ...fixture(), signalReplicas: ['replica-0'] }, 'signal-query-log-replica-coverage'],
-      [
-        'principal',
-        (() => {
-          const input = fixture()
-          return {
-            ...input,
-            signalAccess: [
-              ...input.signalAccess,
-              {
-                replica: 'replica-0',
-                queryId: 'unknown',
-                queryStartTime: '2026-07-20T11:59:59.500000Z',
-                user: 'notebook',
-                kind: 'manifest' as const,
-              },
-            ],
-          }
-        })(),
-        'signal-read-principals',
-      ],
-    ]
-
-    for (const [name, input, checkName] of cases) {
-      const report = auditQualification(input)
+          ],
+        }
+      },
+      'signal-read-principals',
+    ],
+  ] satisfies readonly [string, () => QualificationAuditInput, string][])(
+    'fails closed on a %s defect',
+    (name, makeInput, checkName) => {
+      const report = auditQualification(makeInput())
       expect(report.status, name).toBe('FAIL')
       expect(report.checks.find((check) => check.name === checkName)?.passed, name).toBe(false)
-    }
-  })
+    },
+  )
 })
 
 describe('qualification dossier', () => {

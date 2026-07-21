@@ -19,8 +19,8 @@ import ./bun-workspace-service.nix {
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
   depsHash = {
-    x86_64-linux = "sha256-hy7Ahylm6c2lJCvVT9TofRe377xOcLSsRatg+jXFxZ8=";
-    aarch64-linux = "sha256-lWIf2A69EbXcfg8o7ejS7LPhA0Gv+m3UF8Yq5Ham/Zc=";
+    x86_64-linux = "sha256-HOivxpn3uqVZlCG3XM/zeh9sg7yNXUzh1nHcLpNsBmA=";
+    aarch64-linux = "sha256-d5QZaVMgc+DgKfwaoiXKulU/iBV8VVBbhEQWdXd6dzk=";
   };
   installFilters = [
     "@proompteng/bayn"
@@ -31,7 +31,7 @@ import ./bun-workspace-service.nix {
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/restore-ledger-command.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts --target=node "
       + "--external tigerbeetle-node --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -41,8 +41,6 @@ import ./bun-workspace-service.nix {
     )
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restore-ledger-command.js"
-    "grep -F -- ${lib.escapeShellArg imageRepository} services/bayn/dist/restore-ledger-command.js"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
