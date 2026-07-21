@@ -59,6 +59,13 @@ const successfulJournal: JournalService = {
 
 const marketDataService = (load: MarketDataService['load']): MarketDataService => ({
   check: Effect.sync(() => makeSnapshot().manifest.finalizedSnapshot),
+  inspect: Effect.sync(() => {
+    const snapshot = makeSnapshot()
+    return {
+      manifest: snapshot.manifest,
+      sessionDates: [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort(),
+    }
+  }),
   load,
 })
 
@@ -67,6 +74,9 @@ const successfulEvidenceStore: EvidenceStoreService = {
   read: () => Effect.succeed(Option.none()),
   readArtifactItems: () => Effect.succeed(Option.none()),
   recover: () => Effect.succeed(Option.none()),
+  listPriorTrials: Effect.succeed([]),
+  openQualification: ({ lock }) => Effect.succeed({ state: 'ACQUIRED', lock }),
+  readQualification: () => Effect.succeed(Option.none()),
   persist: ({ evaluation }) =>
     Effect.succeed({
       runId: evaluation.runId,

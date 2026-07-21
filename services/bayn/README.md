@@ -24,9 +24,10 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
   it does not change lifecycle or authority. The Nix image starts in the default production mode and fails closed if
   embedded facts are absent.
-- The reader selects one configured finalized Signal snapshot by content-addressed ID. It verifies the publisher
-  manifest, sessions, every bar, exact SIP/all provenance, the canonical universe, content hashes, and explicit data,
-  lookback, and evaluation bounds before exposing numeric bars.
+- The reader selects one configured finalized Signal snapshot by content-addressed ID. Before reading bars, it verifies
+  the publisher manifest and exact exchange calendar and derives the candidate identity and evaluation window. After
+  lock acquisition it verifies every bar, SIP/all provenance, the canonical universe, content hashes, and explicit
+  data, lookback, and evaluation bounds before exposing numeric bars.
 - The run ID binds source and image identity, compiled strategy behavior and decoded parameters, complete finalized
   snapshot provenance, calendar version, and explicit bounds.
 - One pure compiled TSMOM decision function records each lookback return, direction vote, score, active symbol, and
@@ -39,18 +40,26 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
   artifact, event, and gate hash to the exact source, image, protocol, snapshot, calendar, and execution contract.
 - Ordered artifacts can be read internally through contiguous pages capped at 256 items. PostgreSQL triggers make the
   complete evidence graph append-only and permit an evaluation row only its exact `WRITING` to `COMPLETE` transition.
-- Every completed pre-qualification run is recorded once as a burned trial. Observed results cannot later be presented
-  as an untouched qualification window, and the trial record cannot be updated or deleted.
-- A future qualification lock must bind the exact protocol, source and image, finalized snapshot and bounds, universe
-  rationale, prior trials, and content-hashed benchmark, threshold, uncertainty, and execution policies. Lock rows are
-  append-only, and the result table permits exactly one immutable `QUALIFIED` or `REJECTED` run per lock. No active
-  lock or qualification result exists until the remaining M2 policies are complete.
+- Every completed evaluation without a qualification lock is recorded once as a burned trial. Observed results cannot
+  later be presented as untouched evidence, and the trial record cannot be updated, deleted, or truncated.
+- Before reading candidate bars, Bayn atomically opens one immutable lock for the exact candidate run and snapshot. The
+  lock binds the protocol, source and image, finalized data and bounds, universe rationale, every prior burned trial,
+  every prior terminal qualification attempt, and content-hashed benchmark, threshold, statistical, and execution
+  policies. Concurrent attempts converge on that same lock; a different lock for the candidate or snapshot fails
+  closed.
+- Qualification uses deterministic paired complete-rebalance-block bootstrap inference, Bonferroni-adjusted one-sided
+  bounds, an explicit power requirement, and expanding-origin walk-forward gates. `QUALIFIED` requires both the
+  economic evaluation and every statistical gate to pass; every other terminal outcome is `REJECTED`.
+- The complete evaluation graph and its single terminal qualification result commit in one PostgreSQL transaction.
+  Any terminal-result failure rolls the evaluation graph back and leaves the lock visibly incomplete. An incomplete
+  lock is never silently retried and blocks every new candidate; a locked candidate cannot bypass the terminal result
+  through the ordinary persistence path.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.
-- On restart, Bayn derives the expected run ID from the verified Signal manifest and current executable identity. It
-  resumes only an exact, complete, runtime-decoded PostgreSQL record; missing evidence triggers one evaluation, while
-  partial, altered, or incompatible evidence fails closed without another TigerBeetle mutation.
+- On restart, Bayn derives the expected run ID from the verified Signal manifest and current executable identity. An
+  exact terminal lock recovers the complete runtime-decoded PostgreSQL record without reading bars or mutating
+  TigerBeetle. An opened lock without a terminal result, or altered or incompatible evidence, fails closed.
 - After startup, one scoped Effect loop continuously checks PostgreSQL, the configured Signal manifest, the active
   TigerBeetle run, and the complete durable evidence record without loading bars or writing accounting state. Readiness
   closes on any defect and reopens only after every check succeeds; the last valid evidence remains observable.
@@ -62,8 +71,8 @@ and journals the resulting simulation to TigerBeetle. It contains no broker clie
 
 - `GET /livez`: process liveness.
 - `GET /readyz`: current dependency, evidence, and accounting readiness.
-- `GET /v1/status`: operational dependencies, data and evidence identity, economic verdict, accounting, build
-  provenance, and fixed observe-only authority.
+- `GET /v1/status`: operational dependencies, data and evidence identity, terminal qualification, economic verdict,
+  accounting, build provenance, and fixed observe-only authority.
 - `GET /v1/evaluations/:runId`: complete content-hashed evidence for one exact run ID. The service is ClusterIP-only
   and the Bayn network policy limits HTTP ingress to the namespace.
 

@@ -6,14 +6,21 @@ import {
   defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
   makeQualificationPolicyDocument,
+  makeQualificationResult,
   QualificationLockSchema,
   type QualificationLockMaterial,
 } from './qualification'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  type QualificationSeries,
+} from './qualification-statistics'
 
 const policy = (name: string) => makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true })
 
 const material: QualificationLockMaterial = {
-  schemaVersion: 'bayn.qualification-lock.v1' as const,
+  schemaVersion: 'bayn.qualification-lock.v2' as const,
+  candidateRunId: 'a'.repeat(64),
   protocolHash: '1'.repeat(64),
   sourceRevision: '2'.repeat(40),
   image: {
@@ -76,6 +83,7 @@ describe('qualification lock', () => {
     const baseline = makeQualificationLock(material).lockId
     const variants = [
       { ...material, sourceRevision: 'a'.repeat(40) },
+      { ...material, candidateRunId: 'b'.repeat(64) },
       { ...material, protocolHash: 'b'.repeat(64) },
       { ...material, image: { ...material.image, digest: `sha256:${'c'.repeat(64)}` } },
       { ...material, universeRationale: `${material.universeRationale} No substitutions.` },
@@ -115,5 +123,81 @@ describe('qualification lock', () => {
 
     const lock = makeQualificationLock(material)
     expect(() => Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, lockId: '0'.repeat(64) })).toThrow()
+  })
+})
+
+const qualificationSeries = (): QualificationSeries => {
+  const sessionDate = (index: number): `${number}-${number}-${number}` => {
+    const date = new Date('2000-01-01T00:00:00.000Z')
+    date.setUTCDate(date.getUTCDate() + index)
+    return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
+  }
+  const blockCount = 90
+  return {
+    schemaVersion: 'bayn.qualification-series.v1',
+    runId: material.candidateRunId,
+    observations: Array.from({ length: blockCount * 21 + 10 }, (_, index) => {
+      const noise = (((index * 17) % 23) - 11) / 100_000
+      return {
+        sessionDate: sessionDate(index),
+        strategyReturn: 0.0005 + noise,
+        cashReturn: 0,
+        buyAndHoldReturn: 0.00015 + noise * 1.1,
+        directVolatilityReturn: 0.0001 + noise * 0.8,
+      }
+    }),
+    rebalanceExecutionDates: Array.from({ length: blockCount + 1 }, (_, index) => sessionDate(index * 21)),
+  }
+}
+
+describe('qualification result', () => {
+  test('qualifies only when both locked economic and statistical gates pass', () => {
+    const lock = makeQualificationLock(material)
+    const analysis = analyzeQualification(
+      qualificationSeries(),
+      defaultQualificationStatisticsPolicy,
+      material.priorTrialRunIds,
+    )
+    const passingVerdict = {
+      status: 'PASS' as const,
+      gates: [{ name: 'benchmark_sharpe_improvement', passed: true, actual: 0.1, required: '>0' }],
+    }
+    const qualified = makeQualificationResult(lock, passingVerdict, analysis)
+    const rejected = makeQualificationResult(
+      lock,
+      {
+        status: 'FAIL_CLOSED',
+        gates: [{ name: 'benchmark_sharpe_improvement', passed: false, actual: -0.1, required: '>0' }],
+      },
+      analysis,
+    )
+
+    expect(analysis.status).toBe('PASS')
+    expect(qualified).toMatchObject({ verdict: 'QUALIFIED', reasonCodes: [] })
+    expect(rejected).toMatchObject({
+      verdict: 'REJECTED',
+      reasonCodes: ['EVALUATION_BENCHMARK_SHARPE_IMPROVEMENT_FAILED'],
+    })
+    expect(qualified.resultHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(() => makeQualificationResult(lock, { ...passingVerdict, status: 'FAIL_CLOSED' }, analysis)).toThrow(
+      'must match every economic gate outcome',
+    )
+  })
+
+  test('rejects analysis from a different candidate or prior-trial lineage', () => {
+    const lock = makeQualificationLock(material)
+    const wrongLineage = analyzeQualification(qualificationSeries(), defaultQualificationStatisticsPolicy, [])
+    const wrongCandidate = analyzeQualification(
+      { ...qualificationSeries(), runId: 'b'.repeat(64) },
+      defaultQualificationStatisticsPolicy,
+      material.priorTrialRunIds,
+    )
+
+    const passingVerdict = {
+      status: 'PASS' as const,
+      gates: [{ name: 'benchmark_sharpe_improvement', passed: true, actual: 0.1, required: '>0' }],
+    }
+    expect(() => makeQualificationResult(lock, passingVerdict, wrongLineage)).toThrow('prior-trial lineage')
+    expect(() => makeQualificationResult(lock, passingVerdict, wrongCandidate)).toThrow('run IDs must match')
   })
 })

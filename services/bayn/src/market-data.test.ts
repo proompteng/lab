@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  verifyFinalizedCalendar,
   verifyFinalizedManifest,
   verifyFinalizedSnapshot,
   type SnapshotRequest,
@@ -188,6 +189,18 @@ describe('finalized Signal snapshot reader', () => {
       sessionCount: 2,
     })
     expect(() => verifyFinalizedManifest([], fixture.request)).toThrow('0 manifests; expected exactly one')
+  })
+
+  test('precommits the exact input manifest from manifest and calendar rows without bars', () => {
+    const fixture = makeFixture()
+    const inspection = verifyFinalizedCalendar(
+      { manifests: fixture.rows.manifests, sessions: fixture.rows.sessions },
+      fixture.request,
+    )
+    const snapshot = verifyFinalizedSnapshot(fixture.rows, fixture.request)
+
+    expect(inspection.manifest).toEqual(snapshot.manifest)
+    expect(inspection.sessionDates).toEqual(['2025-01-02', '2025-01-03'])
   })
 
   test('rejects duplicate manifests, sessions, and bars', () => {
