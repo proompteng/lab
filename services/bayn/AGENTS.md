@@ -57,6 +57,8 @@
 
 - Market-data snapshots must prove dataset version, universe, uniqueness, ordering, and content identity before
   evaluation. Missing, stale, malformed, or mixed-contract data fails closed.
+- Inspect finalized manifest and calendar before candidate bars, then acquire the immutable qualification lock. Commit
+  the evaluation graph and terminal result together; never retry or bypass an opened-incomplete lock.
 - TigerBeetle writes remain deterministic and idempotent. Existing IDs must be verified against the complete expected
   record, and readiness requires exact account, transfer, and balance reconciliation.
 - Select one `Strategy` capability at the composition root; the strategy owns its protocol and universe. Do not add a

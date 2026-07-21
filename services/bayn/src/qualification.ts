@@ -2,7 +2,12 @@ import { Schema } from 'effect'
 
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1, canonicalJsonV1 } from './hash'
-import { defaultQualificationStatisticsPolicy } from './qualification-statistics'
+import {
+  QualificationAnalysisSchema,
+  defaultQualificationStatisticsPolicy,
+  type QualificationAnalysis,
+} from './qualification-statistics'
+import type { EconomicVerdict } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const NonEmptyString = Schema.String.check(
@@ -74,7 +79,8 @@ export const QualificationDataSchema = QualificationDataBase.check(
 )
 
 const QualificationLockMaterialBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.qualification-lock.v1'),
+  schemaVersion: Schema.Literal('bayn.qualification-lock.v2'),
+  candidateRunId: Sha256Schema,
   protocolHash: Sha256Schema,
   sourceRevision: SourceRevision,
   image: Schema.Struct({
@@ -150,3 +156,93 @@ export const defaultQualificationStatisticsPolicyDocument = makeQualificationPol
   defaultQualificationStatisticsPolicy.schemaVersion,
   defaultQualificationStatisticsPolicy,
 )
+
+const GateScalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
+const EconomicVerdictSchema = Schema.Struct({
+  status: Schema.Literals(['PASS', 'FAIL_CLOSED']),
+  gates: Schema.Array(
+    Schema.Struct({
+      name: NonEmptyString,
+      passed: Schema.Boolean,
+      actual: GateScalar,
+      required: GateScalar,
+    }),
+  ).check(Schema.isMinLength(1)),
+})
+
+const QualificationResultMaterial = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-result.v2'),
+  lockId: Sha256Schema,
+  runId: Sha256Schema,
+  verdict: Schema.Literals(['QUALIFIED', 'REJECTED']),
+  evaluationVerdict: EconomicVerdictSchema,
+  analysis: QualificationAnalysisSchema,
+  reasonCodes: Schema.Array(NonEmptyString),
+})
+
+const QualificationResultBase = Schema.Struct({
+  ...QualificationResultMaterial.fields,
+  resultHash: Sha256Schema,
+})
+
+export const QualificationResultSchema = QualificationResultBase.check(
+  Schema.makeFilter((result: typeof QualificationResultBase.Type) => {
+    const { resultHash, ...material } = result
+    const economicPass = result.evaluationVerdict.gates.every((gate) => gate.passed)
+    const shouldQualify = economicPass && result.analysis.status === 'PASS'
+    const issues: Schema.FilterIssue[] = [...canonicalListIssues('reasonCodes', result.reasonCodes)]
+    if (result.runId !== result.analysis.runId) {
+      issues.push({ path: ['runId'], issue: 'must match the statistical analysis run ID' })
+    }
+    if (result.verdict !== (shouldQualify ? 'QUALIFIED' : 'REJECTED')) {
+      issues.push({ path: ['verdict'], issue: 'must match the economic and statistical gates' })
+    }
+    if (result.evaluationVerdict.status !== (economicPass ? 'PASS' : 'FAIL_CLOSED')) {
+      issues.push({ path: ['evaluationVerdict', 'status'], issue: 'must match every economic gate outcome' })
+    }
+    if ((shouldQualify && result.reasonCodes.length !== 0) || (!shouldQualify && result.reasonCodes.length === 0)) {
+      issues.push({ path: ['reasonCodes'], issue: 'must explain every rejection and be empty only when qualified' })
+    }
+    if (resultHash !== canonicalHashV1(material)) {
+      issues.push({ path: ['resultHash'], issue: 'must match the canonical result content hash' })
+    }
+    return issues
+  }),
+)
+export type QualificationResult = typeof QualificationResultSchema.Type
+
+const resultReason = (name: string): string =>
+  `EVALUATION_${name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')}_FAILED`
+
+const decodeResultSync = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
+
+export const makeQualificationResult = (
+  lock: QualificationLock,
+  evaluationVerdict: EconomicVerdict,
+  analysis: QualificationAnalysis,
+): QualificationResult => {
+  if (lock.candidateRunId !== analysis.runId) {
+    throw new TypeError('qualification lock, candidate, and analysis run IDs must match')
+  }
+  if (canonicalHashV1(lock.priorTrialRunIds) !== canonicalHashV1(analysis.priorTrialRunIds)) {
+    throw new TypeError('qualification analysis must use the locked prior-trial lineage')
+  }
+  const economicReasons = evaluationVerdict.gates.filter((gate) => !gate.passed).map((gate) => resultReason(gate.name))
+  const reasonCodes = [...new Set([...economicReasons, ...analysis.reasonCodes])].sort()
+  const material = {
+    schemaVersion: 'bayn.qualification-result.v2' as const,
+    lockId: lock.lockId,
+    runId: lock.candidateRunId,
+    verdict:
+      evaluationVerdict.status === 'PASS' && analysis.status === 'PASS'
+        ? ('QUALIFIED' as const)
+        : ('REJECTED' as const),
+    evaluationVerdict,
+    analysis,
+    reasonCodes,
+  }
+  return decodeResultSync({ ...material, resultHash: canonicalHashV1(material) })
+}

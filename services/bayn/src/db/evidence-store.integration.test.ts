@@ -7,8 +7,9 @@ import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } f
 import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
-import { makeQualificationLock, makeQualificationPolicyDocument } from '../qualification'
+import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
 import { evaluateTsmom } from '../strategy'
+import { makeTsmomStrategy } from '../strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from '../test-fixtures'
 import type { TsmomProtocol } from '../types'
 import {
@@ -84,6 +85,28 @@ const makeInput = (
   }
 }
 
+const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readonly string[] = []) => {
+  const strategy = makeTsmomStrategy(fixtureProtocol, input.provenance)
+  const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+  const lock = strategy.prepareLock(input.evaluation.inputManifest, sessionDates, priorTrialRunIds)
+  const result = makeQualificationResult(
+    lock,
+    input.evaluation.verdict,
+    strategy.analyze(input.evaluation, priorTrialRunIds),
+  )
+  return {
+    open: {
+      lock,
+      inputManifest: input.evaluation.inputManifest,
+      parameters: input.parameters,
+      provenance: input.provenance,
+    },
+    persist: { ...input, qualification: { lock, result } },
+    lock,
+    result,
+  }
+}
+
 describePostgres('PostgreSQL evaluation evidence', () => {
   let runtime: ReturnType<typeof makeEvidenceRuntime>
 
@@ -100,15 +123,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        yield* sql`
-          TRUNCATE
-            bayn_evaluation_runs,
-            bayn_protocol_locks,
-            bayn_snapshot_references
-          RESTART IDENTITY CASCADE
-        `
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
       }),
     )
+    await runtime.dispose()
+    runtime = makeEvidenceRuntime()
+    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
   })
 
   afterAll(async () => {
@@ -207,6 +228,115 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
   })
 
+  test('opens one concurrent lock and commits one terminal qualification result', async () => {
+    const input = makeInput()
+    const qualification = makeLockedInput(input)
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        const opened = yield* Effect.all(
+          [store.openQualification(qualification.open), store.openQualification(qualification.open)],
+          { concurrency: 'unbounded' },
+        )
+        const before = yield* store.readQualification(input.evaluation.runId)
+        const bypass = yield* store.persist(input).pipe(Effect.flip)
+        const receipt = yield* store.persist(qualification.persist)
+        const terminal = yield* store.readQualification(input.evaluation.runId)
+        const reopened = yield* store.openQualification(qualification.open)
+        const trials = yield* store.listPriorTrials
+        const counts = yield* sql<{
+          locks: number
+          results: number
+          runs: number
+          trials: number
+        }>`
+          SELECT
+            (SELECT count(*)::integer FROM bayn_qualification_locks) AS locks,
+            (SELECT count(*)::integer FROM bayn_qualification_results) AS results,
+            (SELECT count(*)::integer FROM bayn_evaluation_runs) AS runs,
+            (SELECT count(*)::integer FROM bayn_qualification_trials) AS trials
+        `
+        return { before, bypass, counts: counts[0], opened, receipt, reopened, terminal, trials }
+      }),
+    )
+
+    expect(observed.opened.map((result) => result.state).sort()).toEqual(['ACQUIRED', 'OPENED_INCOMPLETE'])
+    expect(observed.before).toEqual(Option.some({ state: 'OPENED_INCOMPLETE', lock: qualification.lock }))
+    expect(observed.bypass).toMatchObject({ failure: 'invariant', operation: 'persist-qualification' })
+    expect(observed.receipt).toMatchObject({ runId: input.evaluation.runId, deduplicated: false })
+    expect(observed.terminal).toEqual(
+      Option.some({ state: 'TERMINAL', lock: qualification.lock, result: qualification.result }),
+    )
+    expect(observed.reopened).toEqual({
+      state: 'TERMINAL',
+      lock: qualification.lock,
+      result: qualification.result,
+    })
+    expect(observed.trials).toEqual([input.evaluation.runId])
+    expect(observed.counts).toEqual({ locks: 1, results: 1, runs: 1, trials: 0 })
+  })
+
+  test('rolls back the evaluation graph when terminal qualification insertion fails', async () => {
+    const input = makeInput()
+    const qualification = makeLockedInput(input)
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* EvidenceStore
+        const sql = yield* PgClient.PgClient
+        yield* store.openQualification(qualification.open)
+        yield* sql`
+          CREATE FUNCTION bayn_test_reject_qualification_result()
+          RETURNS trigger
+          LANGUAGE plpgsql
+          AS $function$
+          BEGIN
+            RAISE EXCEPTION 'injected terminal result failure' USING ERRCODE = 'P0001';
+          END
+          $function$
+        `
+        yield* sql`
+          CREATE TRIGGER bayn_test_reject_qualification_result
+          BEFORE INSERT ON bayn_qualification_results
+          FOR EACH ROW EXECUTE FUNCTION bayn_test_reject_qualification_result()
+        `
+        const failure = yield* store.persist(qualification.persist).pipe(Effect.flip)
+        const record = yield* store.readQualification(input.evaluation.runId)
+        const counts = yield* sql<{
+          locks: number
+          results: number
+          runs: number
+          artifacts: number
+          events: number
+          gates: number
+          statuses: number
+        }>`
+          SELECT
+            (SELECT count(*)::integer FROM bayn_qualification_locks) AS locks,
+            (SELECT count(*)::integer FROM bayn_qualification_results) AS results,
+            (SELECT count(*)::integer FROM bayn_evaluation_runs) AS runs,
+            (SELECT count(*)::integer FROM bayn_evaluation_artifacts) AS artifacts,
+            (SELECT count(*)::integer FROM bayn_evaluation_events) AS events,
+            (SELECT count(*)::integer FROM bayn_gate_outcomes) AS gates,
+            (SELECT count(*)::integer FROM bayn_status_history) AS statuses
+        `
+        return { counts: counts[0], failure, record }
+      }),
+    )
+
+    expect(observed.failure).toBeInstanceOf(DatabaseError)
+    expect(observed.record).toEqual(Option.some({ state: 'OPENED_INCOMPLETE', lock: qualification.lock }))
+    expect(observed.counts).toEqual({
+      locks: 1,
+      results: 0,
+      runs: 0,
+      artifacts: 0,
+      events: 0,
+      gates: 0,
+      statuses: 0,
+    })
+  })
+
   test('persists and recovers fee, partial-fill, and nonzero cash-yield evidence', async () => {
     const protocol: TsmomProtocol = {
       ...fixtureProtocol,
@@ -251,7 +381,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const manifest = input.evaluation.inputManifest
         const decisionCount = input.evaluation.events.filter((event) => event.kind === 'decision').length
         const lock = makeQualificationLock({
-          schemaVersion: 'bayn.qualification-lock.v1',
+          schemaVersion: 'bayn.qualification-lock.v2',
+          candidateRunId: input.evaluation.runId,
           protocolHash: input.evaluation.protocolHash,
           sourceRevision: input.provenance.sourceRevision,
           image: input.provenance.image,
@@ -285,6 +416,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           INSERT INTO bayn_qualification_locks (
             lock_id,
             schema_version,
+            candidate_run_id,
             protocol_hash,
             snapshot_id,
             source_revision,
@@ -294,6 +426,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           ) VALUES (
             ${lock.lockId},
             ${lock.schemaVersion},
+            ${lock.candidateRunId},
             ${lock.protocolHash},
             ${lock.data.snapshotId},
             ${lock.sourceRevision},
@@ -338,6 +471,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           INSERT INTO bayn_qualification_locks (
             lock_id,
             schema_version,
+            candidate_run_id,
             protocol_hash,
             snapshot_id,
             source_revision,
@@ -347,6 +481,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           ) VALUES (
             ${'f'.repeat(64)},
             ${lock.schemaVersion},
+            ${lock.candidateRunId},
             ${lock.protocolHash},
             ${lock.data.snapshotId},
             ${lock.sourceRevision},
@@ -649,6 +784,26 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     expect(result.exits.every(Exit.isFailure)).toBe(true)
     expect(Option.isSome(result.read)).toBe(true)
+  })
+
+  test('rejects truncation of evidence and qualification tables', async () => {
+    const exits = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* Effect.forEach(
+          [
+            sql`TRUNCATE bayn_evaluation_runs CASCADE`,
+            sql`TRUNCATE bayn_evaluation_artifacts`,
+            sql`TRUNCATE bayn_qualification_trials`,
+            sql`TRUNCATE bayn_qualification_locks CASCADE`,
+            sql`TRUNCATE bayn_qualification_results`,
+          ],
+          Effect.exit,
+        )
+      }),
+    )
+
+    expect(exits.every(Exit.isFailure)).toBe(true)
   })
 
   test('rolls back every table when a terminal evidence constraint fails', async () => {

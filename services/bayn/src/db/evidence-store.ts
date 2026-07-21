@@ -21,6 +21,12 @@ import {
   makeEquitySeriesArtifact,
 } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
+import {
+  QualificationLockSchema,
+  QualificationResultSchema,
+  type QualificationLock,
+  type QualificationResult,
+} from '../qualification'
 import { reconcileMarkedEquity } from '../simulation-reconciliation'
 import { summarizeEvaluation } from '../strategy'
 import type { EvaluationResult, EvaluationSummary, InputManifest, ReconciliationResult } from '../types'
@@ -48,6 +54,23 @@ export interface PersistEvaluationInput {
   readonly parameters: unknown
   readonly evaluation: EvaluationResult
   readonly reconciliation: ReconciliationResult
+  readonly qualification?: {
+    readonly lock: QualificationLock
+    readonly result: QualificationResult
+  }
+}
+
+export type QualificationRecord =
+  | { readonly state: 'OPENED_INCOMPLETE'; readonly lock: QualificationLock }
+  | { readonly state: 'TERMINAL'; readonly lock: QualificationLock; readonly result: QualificationResult }
+
+export type QualificationOpen = { readonly state: 'ACQUIRED'; readonly lock: QualificationLock } | QualificationRecord
+
+export interface OpenQualificationInput {
+  readonly lock: QualificationLock
+  readonly inputManifest: InputManifest
+  readonly parameters: unknown
+  readonly provenance: RuntimeProvenance
 }
 
 export interface ArtifactItemPage {
@@ -74,6 +97,11 @@ export interface EvidenceStoreService {
     runId: string,
     provenance: RuntimeProvenance,
   ) => Effect.Effect<Option.Option<RecoveredEvaluationEvidence>, DatabaseError>
+  readonly listPriorTrials: Effect.Effect<readonly string[], DatabaseError>
+  readonly openQualification: (input: OpenQualificationInput) => Effect.Effect<QualificationOpen, DatabaseError>
+  readonly readQualification: (
+    candidateRunId: string,
+  ) => Effect.Effect<Option.Option<QualificationRecord>, DatabaseError>
 }
 
 export class EvidenceStore extends Context.Service<EvidenceStore, EvidenceStoreService>()('bayn/EvidenceStore') {}
@@ -250,6 +278,18 @@ const StatusReferenceRow = Schema.Struct({
   status: Schema.Literals(['WRITING', 'COMPLETE']),
   detail: Schema.Unknown,
 })
+const QualificationTrialRow = Schema.Struct({ run_id: Sha256 })
+const QualificationRow = Schema.Struct({
+  lock_payload: Schema.Unknown,
+  result_payload: Schema.NullOr(Schema.Unknown),
+})
+const CandidateRunCountRow = Schema.Struct({ count: NonNegativeInteger })
+const InsertedLockRow = Schema.Struct({ lock_id: Sha256 })
+const InsertedResultRow = Schema.Struct({ lock_id: Sha256 })
+
+const StrictParseOptions = { onExcessProperty: 'error' } as const
+const decodeQualificationLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
+const decodeQualificationResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -328,6 +368,57 @@ const protocolExecutionModel = (parameters: unknown): unknown => {
 const artifactItemCount = (payload: unknown): number => {
   if (typeof payload !== 'object' || payload === null || !('items' in payload)) return 0
   return Array.isArray(payload.items) ? payload.items.length : 0
+}
+
+const validateQualificationOpenInput = (input: OpenQualificationInput): OpenQualificationInput => {
+  const lock = decodeQualificationLock(input.lock)
+  const { inputManifest, parameters, provenance } = input
+  if (canonicalHashV1(parameters) !== provenance.strategy.parameterHash) {
+    throw new TypeError('qualification parameters and provenance disagree')
+  }
+  const protocolHash = makeStrategyProtocolHash(provenance.strategy)
+  const { hash: manifestHash, ...manifestMaterial } = inputManifest
+  if (manifestHash !== canonicalHashV1(manifestMaterial)) {
+    throw new TypeError('qualification input manifest hash does not match its content')
+  }
+  const expectedRunId = makeRunIdentity({
+    schemaVersion: 'bayn.run-identity.v1',
+    sourceRevision: provenance.sourceRevision,
+    image: provenance.image,
+    strategy: {
+      name: provenance.strategy.name,
+      behaviorHash: provenance.strategy.behaviorHash,
+      parameters,
+    },
+    finalizedSnapshot: inputManifest.finalizedSnapshot,
+    calendarVersion: inputManifest.finalizedSnapshot.calendarVersion,
+    bounds: inputManifest.bounds,
+  }).runId
+  const snapshot = inputManifest.finalizedSnapshot
+  const dataMatches =
+    lock.data.snapshotId === snapshot.snapshotId &&
+    lock.data.publicationId === snapshot.publicationId &&
+    lock.data.contentHash === snapshot.contentHash &&
+    lock.data.sessionsContentHash === snapshot.sessionsContentHash &&
+    lock.data.provider === snapshot.source &&
+    lock.data.sourceFeed === snapshot.sourceFeed &&
+    lock.data.adjustment === snapshot.adjustment &&
+    lock.data.calendarVersion === snapshot.calendarVersion &&
+    lock.data.firstSession === snapshot.firstSession &&
+    lock.data.lastSession === snapshot.lastSession &&
+    canonicalHashV1(lock.data.bounds) === canonicalHashV1(inputManifest.bounds)
+  if (
+    lock.candidateRunId !== expectedRunId ||
+    lock.protocolHash !== protocolHash ||
+    lock.sourceRevision !== provenance.sourceRevision ||
+    canonicalHashV1(lock.image) !== canonicalHashV1(provenance.image) ||
+    canonicalHashV1(lock.universe) !== canonicalHashV1(snapshot.symbols) ||
+    !dataMatches ||
+    canonicalHashV1(lock.policies.execution.content) !== canonicalHashV1(protocolExecutionModel(parameters))
+  ) {
+    throw new TypeError('qualification lock diverges from the candidate runtime or finalized snapshot')
+  }
+  return { ...input, lock }
 }
 
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
@@ -503,6 +594,30 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   if (events.length === 0) throw new TypeError('evaluation produced no durable events')
   if (gates.length === 0) throw new TypeError('evaluation produced no economic gate outcomes')
 
+  let qualification = input.qualification
+  if (qualification !== undefined) {
+    const lock = validateQualificationOpenInput({
+      lock: qualification.lock,
+      inputManifest: evaluation.inputManifest,
+      parameters,
+      provenance,
+    }).lock
+    const result = decodeQualificationResult(qualification.result)
+    if (
+      lock.candidateRunId !== evaluation.runId ||
+      lock.data.selectedSessionCount !== evaluation.strategy.observations ||
+      lock.data.selectedSessionCount !== evaluation.simulation.dailyMarks.length ||
+      lock.data.selectedRebalanceCount !== evaluation.signalDecisions.length ||
+      result.lockId !== lock.lockId ||
+      result.runId !== evaluation.runId ||
+      canonicalHashV1(result.evaluationVerdict) !== canonicalHashV1(evaluation.verdict) ||
+      canonicalHashV1(result.analysis.priorTrialRunIds) !== canonicalHashV1(lock.priorTrialRunIds)
+    ) {
+      throw new TypeError('qualification result diverges from the locked evaluation')
+    }
+    qualification = { lock, result }
+  }
+
   const artifactManifest = {
     schemaVersion: 'bayn.qualification-artifact-manifest.v1',
     identity: {
@@ -555,7 +670,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     },
   ]
 
-  return { ...input, strategyName, protocolHash, snapshotId, artifacts, events, gates }
+  return { ...input, qualification, strategyName, protocolHash, snapshotId, artifacts, events, gates }
 }
 
 const makeEvidenceStore = Effect.gen(function* () {
@@ -763,6 +878,237 @@ const makeEvidenceStore = Effect.gen(function* () {
       SELECT status, detail FROM bayn_status_history WHERE run_id = ${runId} ORDER BY sequence
     `,
   })
+  const getPriorTrials = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: QualificationTrialRow,
+    execute: () => sql`
+      SELECT run_id
+      FROM (
+        SELECT run_id FROM bayn_qualification_trials
+        UNION
+        SELECT run_id FROM bayn_qualification_results
+      ) AS trials
+      ORDER BY run_id
+    `,
+  })
+  const getQualificationByCandidate = SqlSchema.findAll({
+    Request: Schema.Struct({ candidateRunId: Sha256 }),
+    Result: QualificationRow,
+    execute: ({ candidateRunId }) => sql`
+      SELECT lock.payload AS lock_payload, result.payload AS result_payload
+      FROM bayn_qualification_locks AS lock
+      LEFT JOIN bayn_qualification_results AS result USING (lock_id)
+      WHERE lock.candidate_run_id = ${candidateRunId}
+    `,
+  })
+  const getQualificationByIdentity = SqlSchema.findAll({
+    Request: Schema.Struct({ candidateRunId: Sha256, snapshotId: Sha256 }),
+    Result: QualificationRow,
+    execute: ({ candidateRunId, snapshotId }) => sql`
+      SELECT lock.payload AS lock_payload, result.payload AS result_payload
+      FROM bayn_qualification_locks AS lock
+      LEFT JOIN bayn_qualification_results AS result USING (lock_id)
+      WHERE lock.candidate_run_id = ${candidateRunId} OR lock.snapshot_id = ${snapshotId}
+      ORDER BY lock.lock_id
+    `,
+  })
+  const insertQualificationLock = SqlSchema.findAll({
+    Request: Schema.Struct({
+      lockId: Sha256,
+      schemaVersion: Schema.Literal('bayn.qualification-lock.v2'),
+      candidateRunId: Sha256,
+      protocolHash: Sha256,
+      snapshotId: Sha256,
+      sourceRevision: GitRevision,
+      imageRepository: Schema.String,
+      imageDigest: ImageDigest,
+      payload: Schema.Unknown,
+    }),
+    Result: InsertedLockRow,
+    execute: (request) => sql`
+      INSERT INTO bayn_qualification_locks (
+        lock_id,
+        schema_version,
+        candidate_run_id,
+        protocol_hash,
+        snapshot_id,
+        source_revision,
+        image_repository,
+        image_digest,
+        payload
+      ) VALUES (
+        ${request.lockId},
+        ${request.schemaVersion},
+        ${request.candidateRunId},
+        ${request.protocolHash},
+        ${request.snapshotId},
+        ${request.sourceRevision},
+        ${request.imageRepository},
+        ${request.imageDigest},
+        ${sql.json(request.payload)}
+      )
+      ON CONFLICT DO NOTHING
+      RETURNING lock_id
+    `,
+  })
+  const insertQualificationResult = SqlSchema.findAll({
+    Request: Schema.Struct({
+      lockId: Sha256,
+      schemaVersion: Schema.Literal('bayn.qualification-result.v2'),
+      runId: Sha256,
+      verdict: Schema.Literals(['QUALIFIED', 'REJECTED']),
+      analysisHash: Sha256,
+      resultHash: Sha256,
+      payload: Schema.Unknown,
+    }),
+    Result: InsertedResultRow,
+    execute: (request) => sql`
+      INSERT INTO bayn_qualification_results (
+        lock_id,
+        schema_version,
+        run_id,
+        verdict,
+        analysis_hash,
+        result_hash,
+        payload
+      ) VALUES (
+        ${request.lockId},
+        ${request.schemaVersion},
+        ${request.runId},
+        ${request.verdict},
+        ${request.analysisHash},
+        ${request.resultHash},
+        ${sql.json(request.payload)}
+      )
+      ON CONFLICT DO NOTHING
+      RETURNING lock_id
+    `,
+  })
+  const getCandidateRunCount = SqlSchema.findOne({
+    Request: Schema.Struct({ candidateRunId: Sha256 }),
+    Result: CandidateRunCountRow,
+    execute: ({ candidateRunId }) => sql`
+      SELECT count(*)::integer AS count FROM bayn_evaluation_runs WHERE run_id = ${candidateRunId}
+    `,
+  })
+  const getIncompleteQualificationCount = SqlSchema.findOne({
+    Request: Schema.Void,
+    Result: CandidateRunCountRow,
+    execute: () => sql`
+      SELECT count(*)::integer AS count
+      FROM bayn_qualification_locks AS lock
+      LEFT JOIN bayn_qualification_results AS result USING (lock_id)
+      WHERE result.lock_id IS NULL
+    `,
+  })
+
+  const decodeQualificationRecord = (row: typeof QualificationRow.Type): QualificationRecord => {
+    const lock = decodeQualificationLock(row.lock_payload)
+    if (row.result_payload === null) return { state: 'OPENED_INCOMPLETE', lock }
+    const result = decodeQualificationResult(row.result_payload)
+    if (result.lockId !== lock.lockId || result.runId !== lock.candidateRunId) {
+      throw new TypeError('stored qualification result diverges from its lock')
+    }
+    return { state: 'TERMINAL', lock, result }
+  }
+
+  const decodeSingleQualification = (
+    rows: readonly (typeof QualificationRow.Type)[],
+    operation: string,
+  ): Effect.Effect<Option.Option<QualificationRecord>, DatabaseError> =>
+    Effect.gen(function* () {
+      if (rows.length === 0) return Option.none<QualificationRecord>()
+      yield* ensure(rows.length === 1, operation, 'qualification identity is duplicated or divergent')
+      return yield* Effect.try({
+        try: () => Option.some(decodeQualificationRecord(rows[0])),
+        catch: (cause) => databaseError('invariant', operation, 'stored qualification evidence is invalid', cause),
+      })
+    })
+
+  const ensureProtocolReference = (input: {
+    readonly protocolHash: string
+    readonly provenance: RuntimeProvenance
+    readonly parameters: unknown
+  }) =>
+    Effect.gen(function* () {
+      yield* sql`
+        INSERT INTO bayn_protocol_locks (
+          protocol_hash,
+          schema_version,
+          strategy_name,
+          behavior_hash,
+          parameter_hash,
+          parameters
+        ) VALUES (
+          ${input.protocolHash},
+          ${input.provenance.strategy.parameterSchemaVersion},
+          ${input.provenance.strategy.name},
+          ${input.provenance.strategy.behaviorHash},
+          ${input.provenance.strategy.parameterHash},
+          ${sql.json(input.parameters)}
+        )
+        ON CONFLICT (protocol_hash) DO NOTHING
+      `
+      const protocol = yield* getProtocol({ protocolHash: input.protocolHash })
+      yield* ensure(
+        protocol.schema_version === input.provenance.strategy.parameterSchemaVersion &&
+          protocol.strategy_name === input.provenance.strategy.name &&
+          protocol.behavior_hash === input.provenance.strategy.behaviorHash &&
+          protocol.parameter_hash === input.provenance.strategy.parameterHash &&
+          canonicalHashV1(protocol.parameters) === input.provenance.strategy.parameterHash &&
+          makeStrategyProtocolHash({
+            name: protocol.strategy_name,
+            behaviorHash: protocol.behavior_hash,
+            parameterHash: protocol.parameter_hash,
+            parameterSchemaVersion: protocol.schema_version,
+          }) === input.protocolHash,
+        'protocol-lock',
+        'stored protocol lock diverged from the evaluated protocol',
+      )
+    })
+
+  const ensureSnapshotReference = (inputManifest: InputManifest) =>
+    Effect.gen(function* () {
+      const snapshot = inputManifest.finalizedSnapshot
+      yield* sql`
+        INSERT INTO bayn_snapshot_references (
+          snapshot_id,
+          schema_version,
+          database_name,
+          table_name,
+          dataset_version,
+          source,
+          source_feed,
+          adjustment,
+          content_hash,
+          row_count,
+          first_session,
+          last_session,
+          manifest
+        ) VALUES (
+          ${snapshot.snapshotId},
+          ${snapshot.schemaVersion},
+          ${inputManifest.database},
+          ${inputManifest.tables.bars},
+          ${snapshot.publicationSchemaVersion},
+          ${snapshot.source},
+          ${snapshot.sourceFeed},
+          ${snapshot.adjustment},
+          ${snapshot.contentHash},
+          ${snapshot.rowCount},
+          ${snapshot.firstSession},
+          ${snapshot.lastSession},
+          ${sql.json(snapshot)}
+        )
+        ON CONFLICT (snapshot_id) DO NOTHING
+      `
+      const storedSnapshot = yield* getSnapshot({ snapshotId: snapshot.snapshotId })
+      yield* ensure(
+        snapshotReferenceMatches(storedSnapshot, inputManifest),
+        'snapshot-reference',
+        'stored snapshot reference diverged from the evaluated input manifest',
+      )
+    })
 
   const readReceipt = (plan: PersistencePlan, deduplicated: boolean) =>
     Effect.gen(function* () {
@@ -1006,6 +1352,110 @@ const makeEvidenceStore = Effect.gen(function* () {
     })
 
   const read = (runId: string) => runDatabase('read-evidence', readStored(runId))
+
+  const listPriorTrials = runDatabase(
+    'list-prior-trials',
+    getPriorTrials(undefined).pipe(Effect.map((rows) => rows.map((row) => row.run_id))),
+  )
+
+  const readQualification: EvidenceStoreService['readQualification'] = (candidateRunId) =>
+    runDatabase(
+      'read-qualification',
+      Effect.gen(function* () {
+        const rows = yield* getQualificationByCandidate({ candidateRunId })
+        return yield* decodeSingleQualification(rows, 'read-qualification')
+      }),
+    )
+
+  const openQualification: EvidenceStoreService['openQualification'] = (input) =>
+    runDatabase(
+      'open-qualification',
+      Effect.gen(function* () {
+        const plan = yield* Effect.try({
+          try: () => validateQualificationOpenInput(input),
+          catch: (cause) => databaseError('invariant', 'open-qualification', 'invalid qualification lock input', cause),
+        })
+        const lock = plan.lock
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* ensureProtocolReference({
+              protocolHash: lock.protocolHash,
+              provenance: plan.provenance,
+              parameters: plan.parameters,
+            })
+            yield* ensureSnapshotReference(plan.inputManifest)
+            yield* sql`LOCK TABLE bayn_qualification_trials IN SHARE MODE`
+            yield* sql`LOCK TABLE bayn_qualification_locks IN SHARE ROW EXCLUSIVE MODE`
+
+            const existingRows = yield* getQualificationByIdentity({
+              candidateRunId: lock.candidateRunId,
+              snapshotId: lock.data.snapshotId,
+            })
+            const existing = yield* decodeSingleQualification(existingRows, 'open-qualification')
+            if (Option.isSome(existing)) {
+              yield* ensure(
+                existing.value.lock.lockId === lock.lockId &&
+                  canonicalHashV1(existing.value.lock) === canonicalHashV1(lock),
+                'open-qualification',
+                'candidate or snapshot is already bound to a different qualification lock',
+              )
+              return existing.value
+            }
+
+            const incompleteCount = yield* getIncompleteQualificationCount(undefined)
+            yield* ensure(
+              incompleteCount.count === 0,
+              'open-qualification',
+              'another qualification lock is opened without a terminal result',
+            )
+
+            const priorTrialRunIds = (yield* getPriorTrials(undefined)).map((row) => row.run_id)
+            yield* ensure(
+              canonicalHashV1(priorTrialRunIds) === canonicalHashV1(lock.priorTrialRunIds),
+              'open-qualification',
+              'qualification prior-trial lineage changed before lock acquisition',
+            )
+            const candidateRunCount = yield* getCandidateRunCount({ candidateRunId: lock.candidateRunId })
+            yield* ensure(
+              candidateRunCount.count === 0,
+              'open-qualification',
+              'candidate evaluation was observed before qualification lock acquisition',
+            )
+
+            const inserted = yield* insertQualificationLock({
+              lockId: lock.lockId,
+              schemaVersion: lock.schemaVersion,
+              candidateRunId: lock.candidateRunId,
+              protocolHash: lock.protocolHash,
+              snapshotId: lock.data.snapshotId,
+              sourceRevision: lock.sourceRevision,
+              imageRepository: lock.image.repository,
+              imageDigest: lock.image.digest,
+              payload: lock,
+            })
+            if (inserted.length === 1) return { state: 'ACQUIRED', lock } as const
+            yield* ensure(inserted.length === 0, 'open-qualification', 'qualification lock insert was duplicated')
+
+            const rows = yield* getQualificationByIdentity({
+              candidateRunId: lock.candidateRunId,
+              snapshotId: lock.data.snapshotId,
+            })
+            const stored = yield* decodeSingleQualification(rows, 'open-qualification')
+            if (Option.isNone(stored)) {
+              return yield* Effect.fail(
+                databaseError('invariant', 'open-qualification', 'conflicting qualification lock is missing'),
+              )
+            }
+            yield* ensure(
+              stored.value.lock.lockId === lock.lockId && canonicalHashV1(stored.value.lock) === canonicalHashV1(lock),
+              'open-qualification',
+              'qualification lock conflict diverges from the requested identity',
+            )
+            return stored.value
+          }),
+        )
+      }),
+    )
 
   const readArtifactItems: EvidenceStoreService['readArtifactItems'] = ({
     runId,
@@ -1307,81 +1757,36 @@ const makeEvidenceStore = Effect.gen(function* () {
 
         return yield* sql.withTransaction(
           Effect.gen(function* () {
-            yield* sql`
-            INSERT INTO bayn_protocol_locks (
-              protocol_hash,
-              schema_version,
-              strategy_name,
-              behavior_hash,
-              parameter_hash,
-              parameters
-            ) VALUES (
-              ${plan.protocolHash},
-              ${plan.provenance.strategy.parameterSchemaVersion},
-              ${plan.strategyName},
-              ${plan.provenance.strategy.behaviorHash},
-              ${plan.provenance.strategy.parameterHash},
-              ${sql.json(plan.parameters)}
-            )
-            ON CONFLICT (protocol_hash) DO NOTHING
-          `
-            const protocol = yield* getProtocol({ protocolHash: plan.protocolHash })
-            yield* ensure(
-              protocol.schema_version === plan.provenance.strategy.parameterSchemaVersion &&
-                protocol.strategy_name === plan.strategyName &&
-                protocol.behavior_hash === plan.provenance.strategy.behaviorHash &&
-                protocol.parameter_hash === plan.provenance.strategy.parameterHash &&
-                canonicalHashV1(protocol.parameters) === plan.provenance.strategy.parameterHash &&
-                makeStrategyProtocolHash({
-                  name: protocol.strategy_name,
-                  behaviorHash: protocol.behavior_hash,
-                  parameterHash: protocol.parameter_hash,
-                  parameterSchemaVersion: protocol.schema_version,
-                }) === plan.protocolHash,
-              'protocol-lock',
-              'stored protocol lock diverged from the evaluated protocol',
-            )
-
-            const inputManifest = plan.evaluation.inputManifest
-            const finalizedSnapshot = inputManifest.finalizedSnapshot
-            yield* sql`
-            INSERT INTO bayn_snapshot_references (
-              snapshot_id,
-              schema_version,
-              database_name,
-              table_name,
-              dataset_version,
-              source,
-              source_feed,
-              adjustment,
-              content_hash,
-              row_count,
-              first_session,
-              last_session,
-              manifest
-            ) VALUES (
-              ${plan.snapshotId},
-              ${finalizedSnapshot.schemaVersion},
-              ${inputManifest.database},
-              ${inputManifest.tables.bars},
-              ${finalizedSnapshot.publicationSchemaVersion},
-              ${finalizedSnapshot.source},
-              ${finalizedSnapshot.sourceFeed},
-              ${finalizedSnapshot.adjustment},
-              ${finalizedSnapshot.contentHash},
-              ${finalizedSnapshot.rowCount},
-              ${finalizedSnapshot.firstSession},
-              ${finalizedSnapshot.lastSession},
-              ${sql.json(finalizedSnapshot)}
-            )
-            ON CONFLICT (snapshot_id) DO NOTHING
-          `
-            const storedSnapshot = yield* getSnapshot({ snapshotId: plan.snapshotId })
-            yield* ensure(
-              snapshotReferenceMatches(storedSnapshot, inputManifest),
-              'snapshot-reference',
-              'stored snapshot reference diverged from the evaluated input manifest',
-            )
+            const qualificationRows = yield* getQualificationByCandidate({
+              candidateRunId: plan.evaluation.runId,
+            })
+            const storedQualification = yield* decodeSingleQualification(qualificationRows, 'persist-qualification')
+            if (plan.qualification !== undefined) {
+              if (Option.isNone(storedQualification)) {
+                return yield* Effect.fail(
+                  databaseError('invariant', 'persist-qualification', 'qualification lock was not opened'),
+                )
+              }
+              yield* ensure(
+                storedQualification.value.state === 'OPENED_INCOMPLETE' &&
+                  storedQualification.value.lock.lockId === plan.qualification.lock.lockId &&
+                  canonicalHashV1(storedQualification.value.lock) === canonicalHashV1(plan.qualification.lock),
+                'persist-qualification',
+                'qualification lock is terminal or diverges from the evaluation',
+              )
+            } else {
+              yield* ensure(
+                Option.isNone(storedQualification),
+                'persist-qualification',
+                'locked qualification candidate requires its terminal result in the same transaction',
+              )
+            }
+            yield* ensureProtocolReference({
+              protocolHash: plan.protocolHash,
+              provenance: plan.provenance,
+              parameters: plan.parameters,
+            })
+            yield* ensureSnapshotReference(plan.evaluation.inputManifest)
 
             const inserted = yield* insertRun({
               runId: plan.evaluation.runId,
@@ -1397,7 +1802,18 @@ const makeEvidenceStore = Effect.gen(function* () {
               eventCount: plan.events.length,
               gateCount: plan.gates.length,
             })
-            if (inserted.length === 0) return yield* readReceipt(plan, true)
+            if (inserted.length === 0) {
+              if (plan.qualification !== undefined) {
+                return yield* Effect.fail(
+                  databaseError(
+                    'invariant',
+                    'persist-qualification',
+                    'locked qualification candidate was already evaluated without a terminal result',
+                  ),
+                )
+              }
+              return yield* readReceipt(plan, true)
+            }
 
             yield* sql`
             INSERT INTO bayn_status_history (run_id, status, detail)
@@ -1488,6 +1904,23 @@ const makeEvidenceStore = Effect.gen(function* () {
               ${sql.json({ reconciliationExact: true, verdict: plan.evaluation.verdict.status })}
             )
           `
+            if (plan.qualification !== undefined) {
+              const result = plan.qualification.result
+              const resultRows = yield* insertQualificationResult({
+                lockId: result.lockId,
+                schemaVersion: result.schemaVersion,
+                runId: result.runId,
+                verdict: result.verdict,
+                analysisHash: result.analysis.analysisHash,
+                resultHash: result.resultHash,
+                payload: result,
+              })
+              yield* ensure(
+                resultRows.length === 1 && resultRows[0].lock_id === result.lockId,
+                'persist-qualification',
+                'terminal qualification result was not inserted exactly once',
+              )
+            }
             return yield* readReceipt(plan, false)
           }),
         )
@@ -1500,6 +1933,9 @@ const makeEvidenceStore = Effect.gen(function* () {
     read,
     readArtifactItems,
     recover,
+    listPriorTrials,
+    openQualification,
+    readQualification,
   } satisfies EvidenceStoreService
 })
 
@@ -1558,6 +1994,9 @@ export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
         read: () => Effect.fail(error),
         readArtifactItems: () => Effect.fail(error),
         recover: () => Effect.fail(error),
+        listPriorTrials: Effect.fail(error),
+        openQualification: () => Effect.fail(error),
+        readQualification: () => Effect.fail(error),
       }),
     ),
   )

@@ -10,12 +10,14 @@ import {
   EvidenceStore,
   type EvidenceStoreService,
   type PersistenceReceipt,
+  type QualificationRecord,
   type RecoveredEvaluationEvidence,
 } from './db/evidence-store'
 import { formatError, operationalError, type Component, type OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
+import { makeQualificationResult, type QualificationResult } from './qualification'
 import { summarizeEvaluation } from './strategy'
 import { Strategy } from './strategy-service'
 import type { EvaluationSummary, ReconciliationResult } from './types'
@@ -26,6 +28,7 @@ export interface RuntimeEvidence {
   readonly evaluation: EvaluationSummary
   readonly reconciliation: ReconciliationResult
   readonly persistence: PersistenceReceipt
+  readonly qualification: QualificationResult
 }
 
 export interface DependencyHealth {
@@ -92,7 +95,7 @@ const publicState = (
   let economic = 'UNKNOWN'
   let accounting = 'UNKNOWN'
   if (state.evidence !== null) {
-    economic = state.evidence.evaluation.verdict.status === 'PASS' ? 'QUALIFIED' : 'REJECTED'
+    economic = state.evidence.qualification.verdict
     if (state.health.dependencies.tigerBeetle.status === 'AVAILABLE') accounting = 'EXACT'
     if (state.health.dependencies.tigerBeetle.status === 'UNAVAILABLE') accounting = 'UNAVAILABLE'
   }
@@ -118,7 +121,15 @@ const publicState = (
     },
     economic: {
       status: economic,
-      verdict: state.evidence?.evaluation.verdict ?? null,
+      verdict: state.evidence?.qualification.evaluationVerdict ?? null,
+    },
+    qualification: {
+      status: state.evidence?.qualification.verdict ?? 'UNKNOWN',
+      lockId: state.evidence?.qualification.lockId ?? null,
+      resultHash: state.evidence?.qualification.resultHash ?? null,
+      analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
+      candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
+      reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
     },
     accounting: {
       status: accounting,
@@ -282,25 +293,74 @@ const evaluateAndJournal = (
       'database',
       'health-check',
     )
-    const snapshot = yield* withinDeadline(marketData.load, config.operationTimeoutMs, 'market-data', 'load')
-    yield* Effect.logInfo('Bayn signal snapshot loaded').pipe(
+    const inspection = yield* withinDeadline(marketData.inspect, config.operationTimeoutMs, 'market-data', 'inspect')
+    yield* Effect.logInfo('Bayn signal snapshot inspected').pipe(
       Effect.annotateLogs({
         service: 'bayn',
-        inputManifestHash: snapshot.manifest.hash,
-        rowCount: snapshot.manifest.rowCount,
+        inputManifestHash: inspection.manifest.hash,
+        rowCount: inspection.manifest.rowCount,
       }),
     )
-    const expectedRunId = yield* Effect.try({
-      try: () => strategy.identify(snapshot.manifest),
-      catch: (cause) => operationalError('strategy', 'identify', `${strategy.name} run identity failed`, cause),
-    })
-    const recovered = yield* withinDeadline(
-      databaseOperation(evidenceStore.recover(expectedRunId, strategy.provenance), 'recover-evaluation'),
+    const priorTrialRunIds = yield* withinDeadline(
+      databaseOperation(evidenceStore.listPriorTrials, 'list-prior-trials'),
       config.operationTimeoutMs,
       'database',
-      'recover-evaluation',
+      'list-prior-trials',
     )
-    if (Option.isSome(recovered)) {
+    const lock = yield* Effect.try({
+      try: () => strategy.prepareLock(inspection.manifest, inspection.sessionDates, priorTrialRunIds),
+      catch: (cause) => operationalError('strategy', 'prepare-lock', `${strategy.name} lock preparation failed`, cause),
+    })
+    const opened = yield* withinDeadline(
+      databaseOperation(
+        evidenceStore.openQualification({
+          lock,
+          inputManifest: inspection.manifest,
+          parameters: strategy.parameters,
+          provenance: strategy.provenance,
+        }),
+        'open-qualification',
+      ),
+      config.operationTimeoutMs,
+      'database',
+      'open-qualification',
+    )
+    if (opened.state === 'OPENED_INCOMPLETE') {
+      return yield* Effect.fail(
+        operationalError(
+          'database',
+          'open-qualification',
+          `qualification ${opened.lock.lockId} was opened without a terminal result`,
+        ),
+      )
+    }
+    if (opened.state === 'TERMINAL') {
+      const recovered = yield* withinDeadline(
+        databaseOperation(evidenceStore.recover(lock.candidateRunId, strategy.provenance), 'recover-evaluation'),
+        config.operationTimeoutMs,
+        'database',
+        'recover-evaluation',
+      )
+      if (Option.isNone(recovered)) {
+        return yield* Effect.fail(
+          operationalError(
+            'database',
+            'recover-evaluation',
+            `terminal qualification run ${lock.candidateRunId} is missing`,
+          ),
+        )
+      }
+      yield* Effect.try({
+        try: () => {
+          if (
+            opened.result.runId !== recovered.value.evaluation.runId ||
+            canonicalHashV1(opened.result.evaluationVerdict) !== canonicalHashV1(recovered.value.evaluation.verdict)
+          ) {
+            throw new Error('terminal qualification differs from the recovered evaluation')
+          }
+        },
+        catch: (cause) => operationalError('database', 'recover-qualification', 'qualification recovery failed', cause),
+      })
       yield* Ref.update(
         state,
         (current): RuntimeState => ({
@@ -311,6 +371,7 @@ const evaluateAndJournal = (
             evaluation: recovered.value.evaluation,
             reconciliation: recovered.value.reconciliation,
             persistence: recovered.value.persistence,
+            qualification: opened.result,
           },
           error: null,
         }),
@@ -318,7 +379,8 @@ const evaluateAndJournal = (
       yield* Effect.logInfo('Bayn startup proof recovered').pipe(
         Effect.annotateLogs({
           service: 'bayn',
-          runId: expectedRunId,
+          runId: lock.candidateRunId,
+          qualification: opened.result.verdict,
           artifactCount: recovered.value.persistence.artifactCount,
           eventCount: recovered.value.persistence.eventCount,
           gateCount: recovered.value.persistence.gateCount,
@@ -326,10 +388,24 @@ const evaluateAndJournal = (
       )
       return
     }
+    const snapshot = yield* withinDeadline(marketData.load, config.operationTimeoutMs, 'market-data', 'load')
+    yield* Effect.try({
+      try: () => {
+        if (canonicalHashV1(snapshot.manifest) !== canonicalHashV1(inspection.manifest)) {
+          throw new Error('loaded Signal manifest differs from the locked inspection')
+        }
+      },
+      catch: (cause) => operationalError('market-data', 'load-locked', 'locked Signal load failed', cause),
+    })
     const evaluation = yield* Effect.try({
       try: () => strategy.evaluate(snapshot.bars, snapshot.manifest),
       catch: (cause) => operationalError('strategy', 'evaluate', `${strategy.name} evaluation failed`, cause),
     })
+    if (evaluation.runId !== lock.candidateRunId) {
+      return yield* Effect.fail(
+        operationalError('strategy', 'evaluate', 'evaluation run identity differs from the qualification lock'),
+      )
+    }
     yield* Effect.logInfo('Bayn strategy evaluation completed').pipe(
       Effect.annotateLogs({
         service: 'bayn',
@@ -345,6 +421,14 @@ const evaluateAndJournal = (
       'journal',
       'journal-and-reconcile',
     )
+    const analysis = yield* Effect.try({
+      try: () => strategy.analyze(evaluation, lock.priorTrialRunIds),
+      catch: (cause) => operationalError('strategy', 'analyze', `${strategy.name} analysis failed`, cause),
+    })
+    const qualification = yield* Effect.try({
+      try: () => makeQualificationResult(lock, evaluation.verdict, analysis),
+      catch: (cause) => operationalError('strategy', 'qualify', `${strategy.name} qualification failed`, cause),
+    })
     const persistence = yield* withinDeadline(
       databaseOperation(
         evidenceStore.persist({
@@ -352,6 +436,7 @@ const evaluateAndJournal = (
           parameters: strategy.parameters,
           evaluation,
           reconciliation,
+          qualification: { lock, result: qualification },
         }),
         'persist-evaluation',
       ),
@@ -369,6 +454,7 @@ const evaluateAndJournal = (
           evaluation: summarizeEvaluation(evaluation),
           reconciliation,
           persistence,
+          qualification,
         },
         error: null,
       }),
@@ -380,6 +466,8 @@ const evaluateAndJournal = (
         accountCount: reconciliation.accountCount,
         transferCount: reconciliation.transferCount,
         persistenceDeduplicated: persistence.deduplicated,
+        qualification: qualification.verdict,
+        qualificationResultHash: qualification.resultHash,
         markedEquityDifferenceMicros: evaluation.markedEquityReconciliation.differenceMicros,
       }),
     )
@@ -435,14 +523,21 @@ const durableMaterial = (evidence: RuntimeEvidence | RecoveredEvaluationEvidence
 
 const ensureDurableEvidence = (
   recovered: Option.Option<RecoveredEvaluationEvidence>,
+  qualification: Option.Option<QualificationRecord>,
   evidence: RuntimeEvidence | null,
 ): Effect.Effect<void, OperationalError> =>
   Effect.try({
     try: () => {
       if (evidence === null) throw new Error('startup evidence is unavailable')
       if (Option.isNone(recovered)) throw new Error(`durable run ${evidence.evaluation.runId} is missing`)
+      if (Option.isNone(qualification) || qualification.value.state !== 'TERMINAL') {
+        throw new Error(`terminal qualification ${evidence.evaluation.runId} is missing`)
+      }
       if (canonicalHashV1(durableMaterial(recovered.value)) !== canonicalHashV1(durableMaterial(evidence))) {
         throw new Error(`durable run ${evidence.evaluation.runId} differs from the active proof`)
+      }
+      if (canonicalHashV1(qualification.value.result) !== canonicalHashV1(evidence.qualification)) {
+        throw new Error(`terminal qualification ${evidence.evaluation.runId} differs from the active proof`)
       }
     },
     catch: (cause) => operationalError('database', 'verify-evidence', 'durable evidence verification failed', cause),
@@ -491,14 +586,24 @@ export const probe = (
           evidence === null
             ? Effect.fail(operationalError('database', 'verify-evidence', 'startup evidence is unavailable'))
             : withinDeadline(
-                databaseOperation(
-                  evidenceStore.recover(evidence.evaluation.runId, evidence.provenance),
-                  'continuous-recovery',
-                ),
+                Effect.all([
+                  databaseOperation(
+                    evidenceStore.recover(evidence.evaluation.runId, evidence.provenance),
+                    'continuous-recovery',
+                  ),
+                  databaseOperation(
+                    evidenceStore.readQualification(evidence.evaluation.runId),
+                    'continuous-qualification',
+                  ),
+                ]),
                 config.operationTimeoutMs,
                 'database',
                 'continuous-recovery',
-              ).pipe(Effect.flatMap((recovered) => ensureDurableEvidence(recovered, evidence))),
+              ).pipe(
+                Effect.flatMap(([recovered, qualification]) =>
+                  ensureDurableEvidence(recovered, qualification, evidence),
+                ),
+              ),
         ),
       ],
       { concurrency: 'unbounded' },

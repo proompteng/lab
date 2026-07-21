@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { makeStrategyProtocolHash } from './contracts'
-import { calculatePerformanceMetrics, evaluateTsmom, makeTsmomDecision } from './strategy'
+import { calculatePerformanceMetrics, evaluateTsmom, makeTsmomDecision, prepareTsmomQualification } from './strategy'
 import { canonicalHashV1 } from './hash'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { FillEvent } from './types'
@@ -61,6 +61,21 @@ describe('TSMOM economic evaluator', () => {
         targetWeights: firstDecision.targetWeights,
       })
     }
+  })
+
+  test('precommits the exact evaluation window from calendar dates without price access', () => {
+    const snapshot = makeSnapshot()
+    const provenance = makeTestProvenance()
+    const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+    const precommit = prepareTsmomQualification(sessionDates, snapshot.manifest, fixtureProtocol, provenance)
+    const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+
+    expect(precommit.candidateRunId).toBe(evaluation.runId)
+    expect(precommit.protocolHash).toBe(evaluation.protocolHash)
+    expect(precommit.selectedSessionCount).toBe(evaluation.simulation.dailyMarks.length)
+    expect(precommit.selectedRebalanceCount).toBe(evaluation.signalDecisions.length)
+    expect(precommit.signalDates).toEqual(evaluation.signalDecisions.map((decision) => decision.signalDate))
+    expect(precommit.executionDates).toEqual(evaluation.signalDecisions.map((decision) => decision.executionDate))
   })
 
   test('changes run identity when source, image, behavior, input, or parameters change', () => {

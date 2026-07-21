@@ -115,8 +115,14 @@ export interface MarketDataSnapshot {
   readonly manifest: InputManifest
 }
 
+export interface MarketDataInspection {
+  readonly manifest: InputManifest
+  readonly sessionDates: readonly IsoDate[]
+}
+
 export interface MarketDataService {
   readonly check: Effect.Effect<FinalizedSnapshotProvenance, OperationalError>
+  readonly inspect: Effect.Effect<MarketDataInspection, OperationalError>
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
 
@@ -265,10 +271,21 @@ export const verifyFinalizedManifest = (
   request: SnapshotRequest,
 ): FinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
 
-export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
-  const { finalizedSnapshot, manifest, universe } = verifyManifest(rows.manifests, request)
+interface VerifiedCalendar {
+  readonly verifiedManifest: VerifiedManifest
+  readonly orderedSessions: readonly SignalSessionRow[]
+  readonly boundedSessions: readonly SignalSessionRow[]
+  readonly inputManifest: InputManifest
+}
 
-  const orderedSessions = [...rows.sessions].sort((left, right) => left.session_date.localeCompare(right.session_date))
+const verifyCalendar = (
+  sessions: readonly SignalSessionRow[],
+  manifests: readonly SignalManifestRow[],
+  request: SnapshotRequest,
+): VerifiedCalendar => {
+  const verifiedManifest = verifyManifest(manifests, request)
+  const { finalizedSnapshot, manifest, universe } = verifiedManifest
+  const orderedSessions = [...sessions].sort((left, right) => left.session_date.localeCompare(right.session_date))
   const sessionDates = new Set<string>()
   for (const session of orderedSessions) {
     if (session.snapshot_id !== request.snapshotId) throw new Error('exchange session has a mixed snapshot ID')
@@ -290,7 +307,51 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   if (canonicalHashV1(orderedSessions.map(withoutSnapshot)) !== manifest.sessions_content_hash) {
     throw new Error('exchange-session content hash is invalid')
   }
+  assertBoundSessions(sessionDates, request.bounds)
+  const boundedSessions = orderedSessions.filter(
+    (session) => session.session_date >= request.bounds.dataStart && session.session_date <= request.bounds.dataEnd,
+  )
+  const symbols: SymbolCoverage[] = universe.map((symbol) => ({
+    symbol,
+    rows: boundedSessions.length,
+    firstSession: boundedSessions[0].session_date as IsoDate,
+    lastSession: boundedSessions.at(-1)!.session_date as IsoDate,
+  }))
+  const manifestMaterial: Omit<InputManifest, 'hash'> = {
+    schemaVersion: 'bayn.input-manifest.v2',
+    database,
+    tables,
+    finalizedSnapshot,
+    bounds: request.bounds,
+    rowCount: boundedSessions.length * universe.length,
+    sessionCount: boundedSessions.length,
+    firstSession: boundedSessions[0].session_date as IsoDate,
+    lastSession: boundedSessions.at(-1)!.session_date as IsoDate,
+    symbols,
+  }
+  return {
+    verifiedManifest,
+    orderedSessions,
+    boundedSessions,
+    inputManifest: { ...manifestMaterial, hash: canonicalHashV1(manifestMaterial) },
+  }
+}
 
+export const verifyFinalizedCalendar = (
+  rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
+  request: SnapshotRequest,
+): MarketDataInspection => {
+  const calendar = verifyCalendar(rows.sessions, rows.manifests, request)
+  return {
+    manifest: calendar.inputManifest,
+    sessionDates: calendar.boundedSessions.map((session) => session.session_date as IsoDate),
+  }
+}
+
+export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
+  const calendar = verifyCalendar(rows.sessions, rows.manifests, request)
+  const { manifest, universe } = calendar.verifiedManifest
+  const sessionDates = new Set(calendar.orderedSessions.map((session) => session.session_date))
   const orderedBars = [...rows.bars].sort((left, right) =>
     left.session_date === right.session_date
       ? left.symbol.localeCompare(right.symbol)
@@ -318,7 +379,7 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   if (orderedBars.length !== manifest.bar_count) throw new Error('adjusted-bar count does not match manifest')
   if ([...actualSymbols].sort().join(',') !== universe.join(','))
     throw new Error('snapshot universe does not match request')
-  for (const session of orderedSessions) {
+  for (const session of calendar.orderedSessions) {
     for (const symbol of universe) {
       if (!barKeys.has(`${symbol}\u001f${session.session_date}`)) {
         throw new Error(`incomplete snapshot: missing ${symbol} ${session.session_date}`)
@@ -328,40 +389,14 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   if (canonicalHashV1(orderedBars.map(withoutSnapshot)) !== manifest.bars_content_hash) {
     throw new Error('adjusted-bar content hash is invalid')
   }
-  assertBoundSessions(sessionDates, request.bounds)
-  const boundedSessions = orderedSessions.filter(
-    (session) => session.session_date >= request.bounds.dataStart && session.session_date <= request.bounds.dataEnd,
-  )
-  const boundedSessionDates = new Set(boundedSessions.map((session) => session.session_date))
+  const boundedSessionDates = new Set(calendar.boundedSessions.map((session) => session.session_date))
   const boundedRows = orderedBars.filter((bar) => boundedSessionDates.has(bar.session_date))
-  if (boundedRows.length !== boundedSessions.length * universe.length) {
+  if (boundedRows.length !== calendar.inputManifest.rowCount) {
     throw new Error('bounded snapshot is not a complete symbol-session product')
-  }
-
-  const symbols: SymbolCoverage[] = universe.map((symbol) => {
-    const symbolRows = boundedRows.filter((bar) => bar.symbol === symbol)
-    return {
-      symbol,
-      rows: symbolRows.length,
-      firstSession: symbolRows[0].session_date as IsoDate,
-      lastSession: symbolRows.at(-1)!.session_date as IsoDate,
-    }
-  })
-  const manifestMaterial: Omit<InputManifest, 'hash'> = {
-    schemaVersion: 'bayn.input-manifest.v2',
-    database,
-    tables,
-    finalizedSnapshot,
-    bounds: request.bounds,
-    rowCount: boundedRows.length,
-    sessionCount: boundedSessions.length,
-    firstSession: boundedSessions[0].session_date as IsoDate,
-    lastSession: boundedSessions.at(-1)!.session_date as IsoDate,
-    symbols,
   }
   return {
     bars: boundedRows.map((row) => toDailyBar(row, manifest.schema_version)),
-    manifest: { ...manifestMaterial, hash: canonicalHashV1(manifestMaterial) },
+    manifest: calendar.inputManifest,
   }
 }
 
@@ -414,11 +449,7 @@ const makeMarketData = (
         WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
         ORDER BY finalized_at
       `.pipe(sql.withQueryId(`bayn-manifest-${config.clickhouse.snapshotId.slice(-32)}`))
-    const loadRows = Effect.gen(function* () {
-      const manifests = yield* loadManifests
-      const [sessions, bars] = yield* Effect.all(
-        [
-          sql`
+    const loadSessions = sql`
             SELECT
               snapshot_id,
               calendar_version,
@@ -430,8 +461,8 @@ const makeMarketData = (
             FROM signal.exchange_sessions_v1
             WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
             ORDER BY session_date
-          `.pipe(sql.withQueryId(`bayn-sessions-${config.clickhouse.snapshotId.slice(-32)}`)),
-          sql`
+          `.pipe(sql.withQueryId(`bayn-sessions-${config.clickhouse.snapshotId.slice(-32)}`))
+    const loadBars = sql`
             SELECT
               snapshot_id,
               symbol,
@@ -450,12 +481,7 @@ const makeMarketData = (
             FROM signal.adjusted_daily_bars_v2
             WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
             ORDER BY session_date, symbol
-          `.pipe(sql.withQueryId(`bayn-bars-${config.clickhouse.snapshotId.slice(-32)}`)),
-        ],
-        { concurrency: 2 },
-      )
-      return { bars, sessions, manifests }
-    })
+          `.pipe(sql.withQueryId(`bayn-bars-${config.clickhouse.snapshotId.slice(-32)}`))
 
     const request = (observedAt: string): SnapshotRequest => ({
       snapshotId: config.clickhouse.snapshotId,
@@ -485,11 +511,25 @@ const makeMarketData = (
             : operationalError('market-data', 'check', 'failed to check finalized Signal snapshot', cause),
         ),
       ),
+      inspect: Effect.gen(function* () {
+        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        const [manifests, sessions] = yield* Effect.all([loadManifests, loadSessions], { concurrency: 2 })
+        const rows = decodeSnapshotRows([], sessions, manifests)
+        return yield* verify('inspect', () => verifyFinalizedCalendar(rows, request(observedAt)))
+      }).pipe(
+        Effect.mapError((cause) =>
+          cause instanceof OperationalError
+            ? cause
+            : operationalError('market-data', 'inspect', 'failed to inspect finalized Signal calendar', cause),
+        ),
+      ),
       load: Effect.gen(function* () {
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const raw = yield* loadRows
+        const [manifests, sessions, bars] = yield* Effect.all([loadManifests, loadSessions, loadBars], {
+          concurrency: 3,
+        })
         return yield* verify('verify', () =>
-          verifyFinalizedSnapshot(decodeSnapshotRows(raw.bars, raw.sessions, raw.manifests), request(observedAt)),
+          verifyFinalizedSnapshot(decodeSnapshotRows(bars, sessions, manifests), request(observedAt)),
         )
       }).pipe(
         Effect.mapError((cause) =>

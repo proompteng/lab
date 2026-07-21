@@ -19,8 +19,9 @@ import {
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { evaluateTsmom, identifyTsmomRun, summarizeEvaluation } from './strategy'
-import { Strategy, TsmomStrategyLayer, type StrategyService } from './strategy-service'
+import { makeQualificationResult } from './qualification'
+import { evaluateTsmom, summarizeEvaluation } from './strategy'
+import { Strategy, TsmomStrategyLayer, makeTsmomStrategy, type StrategyService } from './strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
@@ -102,8 +103,12 @@ const successfulJournal: JournalService = {
     }),
 }
 
-const marketDataService = (load: MarketDataService['load']): MarketDataService => ({
-  check: Effect.sync(() => makeSnapshot().manifest.finalizedSnapshot),
+const marketDataService = (load: MarketDataService['load'], inspectedSnapshot = makeSnapshot()): MarketDataService => ({
+  check: Effect.sync(() => inspectedSnapshot.manifest.finalizedSnapshot),
+  inspect: Effect.sync(() => ({
+    manifest: inspectedSnapshot.manifest,
+    sessionDates: [...new Set(inspectedSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
+  })),
   load,
 })
 
@@ -112,6 +117,9 @@ const successfulEvidenceStore: EvidenceStoreService = {
   read: (runId) => Effect.succeed(runId === historicalRunId ? Option.some(historicalEvidence) : Option.none()),
   readArtifactItems: () => Effect.succeed(Option.none()),
   recover: () => Effect.succeed(Option.none()),
+  listPriorTrials: Effect.succeed([]),
+  openQualification: ({ lock }) => Effect.succeed({ state: 'ACQUIRED', lock }),
+  readQualification: () => Effect.succeed(Option.none()),
   persist: ({ evaluation }) =>
     Effect.succeed({
       runId: evaluation.runId,
@@ -121,6 +129,20 @@ const successfulEvidenceStore: EvidenceStoreService = {
       gateCount: evaluation.verdict.gates.length,
     }),
 }
+
+const fixtureSnapshot = makeSnapshot()
+const fixtureStrategy = makeTsmomStrategy(fixtureProtocol, provenance)
+const fixtureEvaluation = fixtureStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
+const fixtureLock = fixtureStrategy.prepareLock(
+  fixtureSnapshot.manifest,
+  [...new Set(fixtureSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
+  [],
+)
+const fixtureQualification = makeQualificationResult(
+  fixtureLock,
+  fixtureEvaluation.verdict,
+  fixtureStrategy.analyze(fixtureEvaluation, []),
+)
 
 const fetchJson = async (port: number, path: string, method = 'GET') => {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { method })
@@ -163,8 +185,7 @@ const waitForStatus = async (port: number, expectedStatus: string) => {
 }
 
 const readyState = (): RuntimeState => {
-  const snapshot = makeSnapshot()
-  const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+  const evaluation = fixtureEvaluation
   return {
     status: 'READY',
     evidence: {
@@ -184,6 +205,7 @@ const readyState = (): RuntimeState => {
         eventCount: evaluation.events.length,
         gateCount: evaluation.verdict.gates.length,
       },
+      qualification: fixtureQualification,
     },
     health: {
       sequence: 1,
@@ -211,6 +233,8 @@ const recoveringStore = (state: RuntimeState): EvidenceStoreService => {
           persistence: { ...state.evidence!.persistence, deduplicated: true },
         }),
       ),
+    readQualification: () =>
+      Effect.succeed(Option.some({ state: 'TERMINAL', lock: fixtureLock, result: state.evidence!.qualification })),
     persist: () => Effect.die(new Error('health probes must not persist')),
   }
 }
@@ -260,6 +284,11 @@ describe('Bayn HTTP probes', () => {
               data: { status: 'CURRENT' },
               evidence: { status: 'CURRENT' },
               economic: { status: 'REJECTED' },
+              qualification: {
+                status: 'REJECTED',
+                lockId: fixtureQualification.lockId,
+                resultHash: fixtureQualification.resultHash,
+              },
               accounting: { status: 'EXACT' },
             },
           })
@@ -356,6 +385,7 @@ describe('Bayn continuous health', () => {
           ? Effect.succeed(makeSnapshot().manifest.finalizedSnapshot)
           : Effect.die(new Error('Signal connection defect')),
       ),
+      inspect: Effect.die(new Error('health probes must not inspect sessions')),
       load: Effect.die(new Error('health probes must not load bars')),
     }
     const journal: JournalService = {
@@ -412,6 +442,7 @@ describe('Bayn continuous health', () => {
         checks += 1
         return makeSnapshot().manifest.finalizedSnapshot
       }),
+      inspect: Effect.die(new Error('health monitor must not inspect sessions')),
       load: Effect.die(new Error('health monitor must not load bars')),
     }
     const journal: JournalService = { ...successfulJournal, checkRun: () => Effect.void }
@@ -442,6 +473,7 @@ describe('Bayn continuous health', () => {
     let interrupted = false
     const marketData: MarketDataService = {
       check: Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true)))),
+      inspect: Effect.die(new Error('health monitor must not inspect sessions')),
       load: Effect.die(new Error('health monitor must not load bars')),
     }
     const fiber = Effect.runFork(
@@ -465,11 +497,7 @@ describe('Bayn startup lifecycle', () => {
     let journalWrites = 0
     let persistenceWrites = 0
     const strategy: StrategyService = {
-      name: 'tsmom',
-      universe: fixtureProtocol.universe,
-      parameters: fixtureProtocol,
-      provenance,
-      identify: () => evaluation.runId,
+      ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
         return evaluation
@@ -485,6 +513,7 @@ describe('Bayn startup lifecycle', () => {
     }
     const store: EvidenceStoreService = {
       ...successfulEvidenceStore,
+      openQualification: () => Effect.succeed({ state: 'TERMINAL', lock: fixtureLock, result: fixtureQualification }),
       recover: () =>
         Effect.succeed(
           Option.some({
@@ -508,7 +537,10 @@ describe('Bayn startup lifecycle', () => {
 
     await Effect.runPromise(
       initialize(config, state).pipe(
-        Effect.provideService(MarketData, marketDataService(Effect.succeed(snapshot))),
+        Effect.provideService(
+          MarketData,
+          marketDataService(Effect.die(new Error('terminal recovery must not load bars')), snapshot),
+        ),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
         Effect.provideService(Strategy, strategy),
@@ -530,16 +562,66 @@ describe('Bayn startup lifecycle', () => {
     })
   })
 
+  test('fails closed on an opened qualification without reading bars or mutating evidence', async () => {
+    const snapshot = makeSnapshot()
+    let evaluations = 0
+    let journalWrites = 0
+    let persistenceWrites = 0
+    const strategy: StrategyService = {
+      ...fixtureStrategy,
+      evaluate: () => {
+        evaluations += 1
+        throw new Error('incomplete qualification must not evaluate')
+      },
+    }
+    const journal: JournalService = {
+      check: Effect.void,
+      checkRun: () => Effect.void,
+      journalAndReconcile: () => {
+        journalWrites += 1
+        return Effect.die(new Error('incomplete qualification must not journal'))
+      },
+    }
+    const store: EvidenceStoreService = {
+      ...successfulEvidenceStore,
+      openQualification: () => Effect.succeed({ state: 'OPENED_INCOMPLETE', lock: fixtureLock }),
+      persist: () => {
+        persistenceWrites += 1
+        return Effect.die(new Error('incomplete qualification must not persist'))
+      },
+    }
+    const state = await Effect.runPromise(Ref.make(initialState()))
+
+    await Effect.runPromise(
+      initialize(config, state).pipe(
+        Effect.provideService(
+          MarketData,
+          marketDataService(Effect.die(new Error('incomplete qualification must not load bars')), snapshot),
+        ),
+        Effect.provideService(Journal, journal),
+        Effect.provideService(EvidenceStore, store),
+        Effect.provideService(Strategy, strategy),
+      ),
+    )
+
+    expect({ evaluations, journalWrites, persistenceWrites }).toEqual({
+      evaluations: 0,
+      journalWrites: 0,
+      persistenceWrites: 0,
+    })
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAILED',
+      evidence: null,
+      error: expect.stringContaining('database.open-qualification'),
+    })
+  })
+
   test('fails closed instead of re-evaluating a corrupt matching durable run', async () => {
     const snapshot = makeSnapshot()
     let evaluations = 0
     let journalWrites = 0
     const strategy: StrategyService = {
-      name: 'tsmom',
-      universe: fixtureProtocol.universe,
-      parameters: fixtureProtocol,
-      provenance,
-      identify: (manifest) => identifyTsmomRun(manifest, fixtureProtocol, provenance),
+      ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
         throw new Error('corrupt recovery must not fall back to evaluation')
@@ -547,6 +629,7 @@ describe('Bayn startup lifecycle', () => {
     }
     const store: EvidenceStoreService = {
       ...successfulEvidenceStore,
+      openQualification: () => Effect.succeed({ state: 'TERMINAL', lock: fixtureLock, result: fixtureQualification }),
       recover: () =>
         Effect.fail(
           new DatabaseError({
@@ -568,7 +651,10 @@ describe('Bayn startup lifecycle', () => {
 
     await Effect.runPromise(
       initialize(config, state).pipe(
-        Effect.provideService(MarketData, marketDataService(Effect.succeed(snapshot))),
+        Effect.provideService(
+          MarketData,
+          marketDataService(Effect.die(new Error('corrupt recovery must not load bars')), snapshot),
+        ),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
         Effect.provideService(Strategy, strategy),
@@ -588,11 +674,8 @@ describe('Bayn startup lifecycle', () => {
     const snapshot = makeSnapshot()
     const state = await Effect.runPromise(Ref.make(initialState()))
     const strategy: StrategyService = {
+      ...fixtureStrategy,
       name: 'test-strategy',
-      universe: fixtureProtocol.universe,
-      parameters: fixtureProtocol,
-      provenance,
-      identify: (manifest) => identifyTsmomRun(manifest, fixtureProtocol, provenance),
       evaluate: (bars, manifest) => {
         calls += 1
         return evaluateTsmom(bars, manifest, fixtureProtocol, provenance)
@@ -634,9 +717,10 @@ describe('Bayn startup lifecycle', () => {
     }
   })
 
-  test('turns strategy exceptions into an operational failure', async () => {
+  test('rejects an underpowered calendar before opening a qualification lock', async () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
-    const marketData = marketDataService(Effect.succeed(makeSnapshot(700)))
+    const shortSnapshot = makeSnapshot(700)
+    const marketData = marketDataService(Effect.succeed(shortSnapshot), shortSnapshot)
 
     await Effect.runPromise(
       initialize(config, state).pipe(
@@ -649,7 +733,7 @@ describe('Bayn startup lifecycle', () => {
 
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAILED',
-      error: expect.stringContaining('strategy.evaluate'),
+      error: expect.stringContaining('strategy.prepare-lock'),
     })
   })
 
@@ -706,6 +790,9 @@ describe('Bayn startup lifecycle', () => {
       read: () => Effect.succeed(Option.none()),
       readArtifactItems: () => Effect.succeed(Option.none()),
       recover: () => Effect.succeed(Option.none()),
+      listPriorTrials: Effect.succeed([]),
+      openQualification: ({ lock }) => Effect.succeed({ state: 'ACQUIRED', lock }),
+      readQualification: () => Effect.succeed(Option.none()),
       persist: () =>
         Effect.fail(
           new DatabaseError({

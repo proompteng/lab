@@ -119,9 +119,9 @@ const alignBars = (
   return aligned
 }
 
-const isMonthEnd = (sessions: readonly AlignedSession[], index: number): boolean => {
-  const currentMonth = sessions[index].date.slice(0, 7)
-  const nextMonth = sessions[index + 1]?.date.slice(0, 7)
+const isMonthEnd = (sessionDates: readonly IsoDate[], index: number): boolean => {
+  const currentMonth = sessionDates[index].slice(0, 7)
+  const nextMonth = sessionDates[index + 1]?.slice(0, 7)
   return nextMonth !== undefined && currentMonth !== nextMonth
 }
 
@@ -779,11 +779,78 @@ const makeTsmomEvaluationIdentity = (
   return { runId, protocolHash }
 }
 
-export const identifyTsmomRun = (
+interface TsmomEvaluationWindow {
+  readonly signalIndices: readonly number[]
+  readonly startIndex: number
+  readonly evaluationEndExclusive: number
+}
+
+export interface TsmomQualificationPrecommit {
+  readonly candidateRunId: string
+  readonly protocolHash: string
+  readonly selectedSessionCount: number
+  readonly selectedRebalanceCount: number
+  readonly signalDates: readonly IsoDate[]
+  readonly executionDates: readonly IsoDate[]
+}
+
+const selectTsmomEvaluationWindow = (
+  sessionDates: readonly IsoDate[],
+  inputManifest: InputManifest,
+  protocol: TsmomProtocol,
+): TsmomEvaluationWindow => {
+  if (
+    sessionDates.length !== inputManifest.sessionCount ||
+    sessionDates[0] !== inputManifest.firstSession ||
+    sessionDates.at(-1) !== inputManifest.lastSession ||
+    sessionDates.some((date, index) => index > 0 && date <= sessionDates[index - 1])
+  ) {
+    throw new Error('qualification calendar does not match the input manifest')
+  }
+  const maximumLookback = Math.max(...protocol.lookbacks)
+  const signalIndices = sessionDates
+    .map((_, index) => index)
+    .filter(
+      (index) =>
+        index >= maximumLookback &&
+        index < sessionDates.length - 1 &&
+        isMonthEnd(sessionDates, index) &&
+        sessionDates[index - maximumLookback] >= inputManifest.bounds.lookbackStart &&
+        sessionDates[index + 1] >= inputManifest.bounds.evaluationStart &&
+        sessionDates[index + 1] <= inputManifest.bounds.evaluationEnd,
+    )
+  if (signalIndices.length === 0) {
+    throw new Error('dataset has no eligible month-end signal followed by an execution session')
+  }
+  const startIndex = signalIndices[0] + 1
+  const evaluationEndExclusive = sessionDates.findIndex((date) => date > inputManifest.bounds.evaluationEnd)
+  const boundedEnd = evaluationEndExclusive === -1 ? sessionDates.length : evaluationEndExclusive
+  const selectedSessionCount = boundedEnd - startIndex
+  if (selectedSessionCount < protocol.thresholds.minimumObservations) {
+    throw new Error(
+      `dataset has ${selectedSessionCount} comparable observations; ${protocol.thresholds.minimumObservations} required`,
+    )
+  }
+  return { signalIndices, startIndex, evaluationEndExclusive: boundedEnd }
+}
+
+export const prepareTsmomQualification = (
+  sessionDates: readonly IsoDate[],
   inputManifest: InputManifest,
   protocol: TsmomProtocol,
   provenance: RuntimeProvenance,
-): string => makeTsmomEvaluationIdentity(inputManifest, protocol, provenance).runId
+): TsmomQualificationPrecommit => {
+  const { runId, protocolHash } = makeTsmomEvaluationIdentity(inputManifest, protocol, provenance)
+  const window = selectTsmomEvaluationWindow(sessionDates, inputManifest, protocol)
+  return {
+    candidateRunId: runId,
+    protocolHash,
+    selectedSessionCount: window.evaluationEndExclusive - window.startIndex,
+    selectedRebalanceCount: window.signalIndices.length,
+    signalDates: window.signalIndices.map((index) => sessionDates[index]),
+    executionDates: window.signalIndices.map((index) => sessionDates[index + 1]),
+  }
+}
 
 export const evaluateTsmom = (
   bars: readonly DailyBar[],
@@ -793,27 +860,11 @@ export const evaluateTsmom = (
 ): EvaluationResult => {
   const { runId, protocolHash } = makeTsmomEvaluationIdentity(inputManifest, protocol, provenance)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
+  const sessionDates = sessions.map((session) => session.date)
+  const window = selectTsmomEvaluationWindow(sessionDates, inputManifest, protocol)
   const maximumLookback = Math.max(...protocol.lookbacks)
-  const signalIndices = sessions
-    .map((_, index) => index)
-    .filter(
-      (index) =>
-        index >= maximumLookback &&
-        index < sessions.length - 1 &&
-        isMonthEnd(sessions, index) &&
-        sessions[index - maximumLookback].date >= inputManifest.bounds.lookbackStart &&
-        sessions[index + 1].date >= inputManifest.bounds.evaluationStart &&
-        sessions[index + 1].date <= inputManifest.bounds.evaluationEnd,
-    )
-  if (signalIndices.length === 0)
-    throw new Error('dataset has no eligible month-end signal followed by an execution session')
-  const startIndex = signalIndices[0] + 1
-  const evaluationSessions = sessions.filter((session) => session.date <= inputManifest.bounds.evaluationEnd)
-  if (evaluationSessions.length - startIndex < protocol.thresholds.minimumObservations) {
-    throw new Error(
-      `dataset has ${evaluationSessions.length - startIndex} comparable observations; ${protocol.thresholds.minimumObservations} required`,
-    )
-  }
+  const { signalIndices, startIndex } = window
+  const evaluationSessions = sessions.slice(0, window.evaluationEndExclusive)
 
   const strategyTargets: Target[] = signalIndices.map((signalIndex) => {
     const closes = Object.fromEntries(
