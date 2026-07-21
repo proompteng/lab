@@ -49,6 +49,14 @@ data class ReadinessInfo(
   val gates: ReadinessGates,
   @SerialName("alpaca_market_data_ws") val alpacaMarketDataWs: AlpacaMarketDataWebsocketStatus = AlpacaMarketDataWebsocketStatus(),
   @SerialName("market_data_channels") val marketDataChannels: List<MarketDataChannelReadiness> = emptyList(),
+  @SerialName("market_data_universe") val marketDataUniverse: MarketDataUniverseInfo? = null,
+)
+
+@Serializable
+data class MarketDataUniverseInfo(
+  val id: String,
+  @SerialName("symbol_hash") val symbolHash: String,
+  val symbols: List<String>,
 )
 
 @Serializable

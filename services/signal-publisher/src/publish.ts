@@ -164,6 +164,8 @@ const loadPublication = (
           barsBySymbol,
           calendar: boundedCalendar,
           symbols: config.symbols,
+          universeId: config.universe.id,
+          universeSymbolHash: config.universe.symbolHash,
           feed: config.alpaca.feed,
           calendarVersion: config.calendarVersion,
           requestedStart,
@@ -276,6 +278,8 @@ export const publish = (
     yield* Effect.logInfo('Signal snapshot validated').pipe(
       Effect.annotateLogs({
         snapshotId: publication.manifest.snapshot_id,
+        universeId: publication.manifest.universe_id,
+        universeSymbolHash: publication.manifest.universe_symbol_hash,
         publicationAsOf: publication.manifest.publication_asof,
         barCount: publication.manifest.bar_count,
         sessionCount: publication.manifest.session_count,
@@ -285,6 +289,8 @@ export const publish = (
     yield* Effect.logInfo('Signal snapshot finalized').pipe(
       Effect.annotateLogs({
         snapshotId: result.snapshotId,
+        universeId: config.universe.id,
+        universeSymbolHash: config.universe.symbolHash,
         publicationAsOf: result.publicationAsOf,
         reused: result.reused,
         barCount: result.barCount,

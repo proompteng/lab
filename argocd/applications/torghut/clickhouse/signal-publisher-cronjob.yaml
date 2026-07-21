@@ -13,7 +13,7 @@ spec:
   timeZone: America/New_York
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
-  suspend: false
+  suspend: true
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -46,6 +46,31 @@ spec:
               args:
                 - daily
               env:
+                - name: SIGNAL_UNIVERSE_ID
+                  valueFrom:
+                    configMapKeyRef:
+                      name: bayn-universe-v1
+                      key: UNIVERSE_ID
+                - name: SIGNAL_UNIVERSE_SYMBOL_HASH
+                  valueFrom:
+                    configMapKeyRef:
+                      name: bayn-universe-v1
+                      key: UNIVERSE_SYMBOL_HASH
+                - name: SIGNAL_SYMBOLS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: bayn-universe-v1
+                      key: UNIVERSE_SYMBOLS
+                - name: SIGNAL_START_DATE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: bayn-universe-v1
+                      key: HISTORY_START_DATE
+                - name: SIGNAL_ALPACA_FEED
+                  valueFrom:
+                    configMapKeyRef:
+                      name: bayn-universe-v1
+                      key: HISTORY_FEED
                 - name: SIGNAL_CODE_REVISION
                   value: "01ac72aafca390609885c2093236f4a10dd14a32"
                 - name: SIGNAL_IMAGE_REPOSITORY
@@ -74,12 +99,6 @@ spec:
                     secretKeyRef:
                       name: torghut-alpaca
                       key: APCA_API_SECRET_KEY
-                - name: SIGNAL_SYMBOLS
-                  value: DBC,EEM,EFA,GLD,IEF,SPY,TLT,VNQ
-                - name: SIGNAL_START_DATE
-                  value: "2017-01-01"
-                - name: SIGNAL_ALPACA_FEED
-                  value: sip
                 - name: SIGNAL_CALENDAR_VERSION
                   value: alpaca-us-equity-calendar-v1
                 - name: SIGNAL_FINALIZATION_LAG_MINUTES

@@ -22,7 +22,7 @@ on:
         type: string
 
 concurrency:
-  group: torghut-ws-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  group: torghut-ws-release
   cancel-in-progress: true
 
 jobs:
@@ -270,7 +270,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-ws-release-${{ steps.meta.outputs.tag }}
+          branch: codex/torghut-ws-release-current
           base: main
           title: 'chore(torghut): promote ws image ${{ steps.meta.outputs.tag }}'
           commit-message: 'chore(torghut): promote ws image ${{ steps.meta.outputs.tag }}'

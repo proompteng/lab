@@ -8,7 +8,7 @@ on:
       - completed
 
 concurrency:
-  group: signal-publisher-release-${{ github.event.workflow_run.head_sha }}
+  group: signal-publisher-release
   cancel-in-progress: true
 
 jobs:
@@ -95,17 +95,20 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/signal-publisher-release-${{ steps.release.outputs.tag }}
+          branch: codex/signal-publisher-release-current
           base: main
+          delete-branch: true
           title: 'chore(signal): promote publisher ${{ steps.release.outputs.tag }}'
           commit-message: 'chore(signal): promote publisher ${{ steps.release.outputs.tag }}'
           add-paths: |
             argocd/applications/torghut/clickhouse/kustomization.yaml
             argocd/applications/torghut/clickhouse/signal-publisher-cronjob.yaml
+            argocd/applications/torghut/clickhouse/signal-publisher-bayn-v1-backfill-job.yaml
           body: |
             ## Summary
 
-            Promote the immutable Signal adjusted-daily publisher image and activate its GitOps CronJob.
+            Pin the immutable Signal adjusted-daily publisher image and writer provenance. Both writers remain inert;
+            the reviewed rollout first runs the one-shot backfill alone, then removes it and enables the daily schedule.
 
             - Source commit: `${{ steps.release.outputs.source_sha }}`
             - Image tag: `${{ steps.release.outputs.tag }}`
@@ -113,7 +116,7 @@ jobs:
 
             ## Related Issues
 
-            PROOMPT-357
+            PROOMPT-393
 
             ## Testing
 
@@ -125,7 +128,7 @@ jobs:
 
             ## Breaking Changes
 
-            Adds a bounded, idempotent daily publisher. It has no broker or capital authority.
+            Pins a bounded publisher without activating a writer. It has no broker or capital authority.
 
             ## Checklist
 

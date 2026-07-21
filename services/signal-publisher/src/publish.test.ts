@@ -23,6 +23,8 @@ const publication = (
     },
     calendar: [{ date: '2026-07-17', open: '09:30', close: '16:00' }],
     symbols: ['SPY'],
+    universeId: 'equity-infrastructure-v1',
+    universeSymbolHash: '6493341e6b5636b2080fa9a1961f4fd3f1736f4486672060d2ef0e5d59b0f946',
     feed: 'iex',
     calendarVersion: 'alpaca-us-equity-calendar-v1',
     requestedStart: '2026-07-17',

@@ -125,6 +125,7 @@ spec:
         - GRANT SELECT ON signal.adjusted_daily_bars_v2
         - GRANT SELECT ON signal.exchange_sessions_v1
         - GRANT SELECT ON signal.snapshot_manifests_v1
+        - GRANT SELECT ON signal.snapshot_manifests_v2
       signal_publisher/password_sha256_hex:
         valueFrom:
           secretKeyRef:
@@ -140,6 +141,7 @@ spec:
         - GRANT SELECT, INSERT ON signal.adjusted_daily_bars_v2
         - GRANT SELECT, INSERT ON signal.exchange_sessions_v1
         - GRANT SELECT, INSERT ON signal.snapshot_manifests_v1
+        - GRANT SELECT, INSERT ON signal.snapshot_manifests_v2
       default/password_sha256_hex:
         valueFrom:
           secretKeyRef:

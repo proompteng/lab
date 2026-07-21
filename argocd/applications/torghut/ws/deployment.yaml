@@ -37,6 +37,26 @@ spec:
             - configMapRef:
                 name: torghut-ws-config
           env:
+            - name: SYMBOLS
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-universe-v1
+                  key: UNIVERSE_SYMBOLS
+            - name: SYMBOLS_ALLOWLIST
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-universe-v1
+                  key: UNIVERSE_SYMBOLS
+            - name: MARKET_DATA_UNIVERSE_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-universe-v1
+                  key: UNIVERSE_ID
+            - name: MARKET_DATA_UNIVERSE_SYMBOL_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-universe-v1
+                  key: UNIVERSE_SYMBOL_HASH
             - name: ALPACA_KEY_ID
               valueFrom:
                 secretKeyRef:
