@@ -215,6 +215,23 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           )
         `
         yield* sql`
+          INSERT INTO bayn_protocol_locks (
+            protocol_hash,
+            schema_version,
+            strategy_name,
+            behavior_hash,
+            parameter_hash,
+            parameters
+          ) VALUES (
+            ${'e'.repeat(64)},
+            'bayn.tsmom.protocol.v1',
+            'tsmom',
+            ${'f'.repeat(64)},
+            ${'0'.repeat(64)},
+            '{}'::jsonb
+          )
+        `
+        yield* sql`
           INSERT INTO bayn_snapshot_references (
             snapshot_id,
             schema_version,
