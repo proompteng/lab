@@ -9,9 +9,9 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # Immutable identity for bayn.tsmom.behavior.v1. The complete deterministic evaluator fingerprint is locked in
-  # strategy.test.ts, so behavior-preserving refactors do not invalidate the pinned qualification.
-  strategyBehaviorHash = "2d4c83a855a5b43f7f24072b30d4d3e73b2365a6d077baa0a1c72894e6638c7c";
+  # Immutable identity for bayn.risk-balanced-trend.behavior.v1. The deterministic evaluator and decision fingerprints
+  # are locked in risk-balanced-trend.test.ts, so behavior-preserving refactors retain the same identity.
+  strategyBehaviorHash = "43cece33d3db232ffb02ba78826727e50b5795319d09d27e1baa0c04709eb056";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
 in
 import ./bun-workspace-service.nix {

@@ -118,7 +118,12 @@ describe('risk-balanced trend parameter contract', () => {
     )
 
     expect(protocol).toMatchObject({
-      schemaVersion: 'bayn.risk-balanced-trend.protocol.v1',
+      schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+      universeId: 'equity-infrastructure-v1',
+      universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
+      universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
+      historyStart: '2022-01-27',
+      evaluationStart: '2023-01-30',
       horizons: [21, 63, 126, 252],
       volatilityWindow: 63,
       maximumSymbolWeight: 0.35,
@@ -138,6 +143,8 @@ describe('risk-balanced trend parameter contract', () => {
       { ...defaultRiskBalancedTrendProtocolDocument, horizons: [1, 2], volatilityWindow: 2 },
       { ...defaultRiskBalancedTrendProtocolDocument, maximumSymbolWeight: 0 },
       { ...defaultRiskBalancedTrendProtocolDocument, maximumPortfolioVolatility: 1.1 },
+      { ...defaultRiskBalancedTrendProtocolDocument, universeSymbolHash: '0'.repeat(64) },
+      { ...defaultRiskBalancedTrendProtocolDocument, evaluationStart: '2022-01-27' },
       { ...defaultRiskBalancedTrendProtocolDocument, futureField: true },
     ]
 

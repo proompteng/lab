@@ -9,6 +9,7 @@ import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from './strategy-ser
 import { summarizeEvaluation } from './strategy'
 import {
   fixtureProtocol,
+  makeRiskBalancedTrendSnapshot,
   makeRiskBalancedTrendTestProvenance,
   makeSnapshot,
   makeTestProvenance,
@@ -16,7 +17,7 @@ import {
 } from './test-fixtures'
 
 const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): QualificationAuditInput => {
-  const snapshot = makeSnapshot(900)
+  const snapshot = profile === 'tsmom' ? makeSnapshot(900) : makeRiskBalancedTrendSnapshot(900)
   const protocol = profile === 'tsmom' ? fixtureProtocol : riskBalancedTrendFixtureProtocol
   const provenance = profile === 'tsmom' ? makeTestProvenance() : makeRiskBalancedTrendTestProvenance()
   const strategy =
@@ -305,7 +306,7 @@ describe('qualification audit', () => {
     expect(report.reference.rebalanceCount).toBeGreaterThan(0)
     expect(report.checks.every((check) => check.passed)).toBe(true)
     expect(input.database.artifacts.find((artifact) => artifact.name === 'evaluation-summary')?.schemaVersion).toBe(
-      'bayn.evaluation-summary.v4',
+      'bayn.evaluation-summary.v5',
     )
     expect(
       input.database.artifacts.find((artifact) => artifact.name === 'risk-balanced-trend-decisions')?.schemaVersion,

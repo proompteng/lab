@@ -7,7 +7,11 @@ import {
   prepareRiskBalancedTrendQualification,
 } from './risk-balanced-trend'
 import { makeRiskBalancedTrendStrategy } from './strategy-service'
-import { makeRiskBalancedTrendTestProvenance, makeSnapshot, riskBalancedTrendFixtureProtocol } from './test-fixtures'
+import {
+  makeRiskBalancedTrendSnapshot,
+  makeRiskBalancedTrendTestProvenance,
+  riskBalancedTrendFixtureProtocol,
+} from './test-fixtures'
 import type { IsoDate, RiskBalancedTrendProtocol } from './types'
 
 const shortProtocol = (overrides: Partial<RiskBalancedTrendProtocol> = {}): RiskBalancedTrendProtocol => ({
@@ -177,7 +181,7 @@ describe('risk-balanced trend candidate', () => {
       ),
     ).toThrow('ordered sessions')
 
-    const snapshot = makeSnapshot()
+    const snapshot = makeRiskBalancedTrendSnapshot()
     const provenance = makeRiskBalancedTrendTestProvenance()
     const baseline = evaluateRiskBalancedTrend(
       snapshot.bars,
@@ -209,7 +213,7 @@ describe('risk-balanced trend candidate', () => {
   })
 
   test('evaluates deterministically with complete evidence and a calendar-only precommit', () => {
-    const snapshot = makeSnapshot()
+    const snapshot = makeRiskBalancedTrendSnapshot()
     const provenance = makeRiskBalancedTrendTestProvenance()
     const first = evaluateRiskBalancedTrend(
       snapshot.bars,
@@ -232,7 +236,7 @@ describe('risk-balanced trend candidate', () => {
     )
 
     expect(first).toEqual(second)
-    expect(first.schemaVersion).toBe('bayn.evaluation.v5')
+    expect(first.schemaVersion).toBe('bayn.evaluation.v6')
     expect(first.signalDecisions).toHaveLength(first.events.filter((event) => event.kind === 'decision').length)
     expect(first.simulation.dailyMarks).toHaveLength(first.strategy.observations)
     expect(first.equitySeries).toHaveLength(first.strategy.observations)
@@ -281,11 +285,17 @@ describe('risk-balanced trend candidate', () => {
     const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
     const analysis = strategy.analyze(first, priorTrialRunIds)
     expect(lock.priorTrialRunIds).toEqual(priorTrialRunIds)
+    expect(lock).toMatchObject({
+      schemaVersion: 'bayn.qualification-lock.v3',
+      universeId: riskBalancedTrendFixtureProtocol.universeId,
+      universeSymbolHash: riskBalancedTrendFixtureProtocol.universeSymbolHash,
+      data: { inputManifestHash: snapshot.manifest.hash },
+    })
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('3a42d8484f680b4a06a35b287cff14546d3a6f17297c2ae16ea098527e5e0aa8')
+    expect(canonicalHashV1(first)).toBe('879ed10bfcd266f7521a08931f33387b646d9acc40234752c67ec35bb56d9d16')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
-      '10be1e9303a1863cb1d721e5bfe2ec0c854043c4d39656ed9bf191c0dd989acc',
+      'dcced90996d5be9bb75153bdefec3d06f72f198f8de1b7028a3e13e8a6956d10',
     )
   })
 })

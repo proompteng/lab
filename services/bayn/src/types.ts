@@ -1,4 +1,8 @@
-import type { EvaluationBounds, FinalizedSnapshotProvenance } from './contracts'
+import type {
+  EvaluationBounds,
+  LegacyFinalizedSnapshotProvenance,
+  UniverseBoundFinalizedSnapshotProvenance,
+} from './contracts'
 
 export type IsoDate = `${number}-${number}-${number}`
 
@@ -16,6 +20,7 @@ export enum PriceAdjustment {
 
 export enum PublicationSchema {
   AdjustedDailySnapshotV1 = 'signal.adjusted-daily-snapshot.v1',
+  AdjustedDailySnapshotV2 = 'signal.adjusted-daily-snapshot.v2',
 }
 
 export enum ContractVersion {
@@ -23,8 +28,8 @@ export enum ContractVersion {
   EvaluationSummary = 'bayn.evaluation-summary.v3',
   PartialFillSeed = 'bayn.partial-fill-seed.v1',
   RiskBalancedTrendDecisionPlan = 'bayn.risk-balanced-trend-decision-plan.v1',
-  RiskBalancedTrendEvaluation = 'bayn.evaluation.v5',
-  RiskBalancedTrendEvaluationSummary = 'bayn.evaluation-summary.v4',
+  RiskBalancedTrendEvaluation = 'bayn.evaluation.v6',
+  RiskBalancedTrendEvaluationSummary = 'bayn.evaluation-summary.v5',
   RunIdentity = 'bayn.run-identity.v1',
   SimulationTrace = 'bayn.simulation-trace.v3',
   TsmomDecisionPlan = 'bayn.tsmom-decision-plan.v1',
@@ -53,16 +58,9 @@ export interface SymbolCoverage {
   readonly lastSession: IsoDate
 }
 
-export interface InputManifest {
-  readonly schemaVersion: 'bayn.input-manifest.v2'
+interface InputManifestBase {
   readonly hash: string
   readonly database: 'signal'
-  readonly tables: {
-    readonly bars: 'adjusted_daily_bars_v2'
-    readonly sessions: 'exchange_sessions_v1'
-    readonly manifests: 'snapshot_manifests_v1'
-  }
-  readonly finalizedSnapshot: FinalizedSnapshotProvenance
   readonly bounds: EvaluationBounds
   readonly rowCount: number
   readonly sessionCount: number
@@ -70,6 +68,28 @@ export interface InputManifest {
   readonly lastSession: IsoDate
   readonly symbols: readonly SymbolCoverage[]
 }
+
+export interface LegacyInputManifest extends InputManifestBase {
+  readonly schemaVersion: 'bayn.input-manifest.v2'
+  readonly tables: {
+    readonly bars: 'adjusted_daily_bars_v2'
+    readonly sessions: 'exchange_sessions_v1'
+    readonly manifests: 'snapshot_manifests_v1'
+  }
+  readonly finalizedSnapshot: LegacyFinalizedSnapshotProvenance
+}
+
+export interface UniverseBoundInputManifest extends InputManifestBase {
+  readonly schemaVersion: 'bayn.input-manifest.v3'
+  readonly tables: {
+    readonly bars: 'adjusted_daily_bars_v2'
+    readonly sessions: 'exchange_sessions_v1'
+    readonly manifests: 'snapshot_manifests_v2'
+  }
+  readonly finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenance
+}
+
+export type InputManifest = LegacyInputManifest | UniverseBoundInputManifest
 
 export interface EconomicThresholds {
   readonly minimumObservations: number
@@ -138,8 +158,12 @@ export interface TsmomProtocol {
 }
 
 export interface RiskBalancedTrendProtocol {
-  readonly schemaVersion: 'bayn.risk-balanced-trend.protocol.v1'
+  readonly schemaVersion: 'bayn.risk-balanced-trend.protocol.v2'
+  readonly universeId: 'equity-infrastructure-v1'
+  readonly universeSymbolHash: string
   readonly universe: readonly string[]
+  readonly historyStart: IsoDate
+  readonly evaluationStart: IsoDate
   readonly horizons: readonly number[]
   readonly volatilityWindow: number
   readonly rebalance: 'month-end'
@@ -408,12 +432,12 @@ export interface EconomicVerdict {
   readonly gates: readonly GateResult[]
 }
 
-interface EvaluationResultBase {
+interface EvaluationResultBase<Manifest extends InputManifest = InputManifest> {
   readonly runId: string
   readonly codeRevision: string
   readonly protocolHash: string
   readonly initialCapitalMicros: string
-  readonly inputManifest: InputManifest
+  readonly inputManifest: Manifest
   readonly strategy: PerformanceMetrics
   readonly buyAndHold: PerformanceMetrics
   readonly directVolTiming: PerformanceMetrics
@@ -435,8 +459,8 @@ export interface TsmomEvaluationResult extends EvaluationResultBase {
   readonly signalDecisions: readonly TsmomSignalDecision[]
 }
 
-export interface RiskBalancedTrendEvaluationResult extends EvaluationResultBase {
-  readonly schemaVersion: 'bayn.evaluation.v5'
+export interface RiskBalancedTrendEvaluationResult extends EvaluationResultBase<UniverseBoundInputManifest> {
+  readonly schemaVersion: 'bayn.evaluation.v6'
   readonly signalDecisions: readonly RiskBalancedTrendSignalDecision[]
 }
 
@@ -480,8 +504,8 @@ export interface TsmomEvaluationSummary extends EvaluationSummaryBase {
 }
 
 export interface RiskBalancedTrendEvaluationSummary extends EvaluationSummaryBase {
-  readonly schemaVersion: 'bayn.evaluation-summary.v4'
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v5'
+  readonly schemaVersion: 'bayn.evaluation-summary.v5'
+  readonly evaluationSchemaVersion: 'bayn.evaluation.v6'
 }
 
 export type EvaluationSummary = TsmomEvaluationSummary | RiskBalancedTrendEvaluationSummary

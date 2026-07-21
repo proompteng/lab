@@ -6,6 +6,7 @@ import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { evaluateTsmom } from './strategy'
 import {
   fixtureProtocol,
+  makeRiskBalancedTrendSnapshot,
   makeRiskBalancedTrendTestProvenance,
   makeSnapshot,
   makeTestProvenance,
@@ -45,7 +46,7 @@ describe('independent qualification reference', () => {
   })
 
   test('independently reproduces the risk-balanced trend candidate and all persisted evidence', () => {
-    const snapshot = makeSnapshot(900)
+    const snapshot = makeRiskBalancedTrendSnapshot(900)
     const provenance = makeRiskBalancedTrendTestProvenance()
     const actual = evaluateRiskBalancedTrend(
       snapshot.bars,

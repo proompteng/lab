@@ -19,11 +19,11 @@ import {
 import {
   ContractVersion,
   type DailyBar,
-  type InputManifest,
   type IsoDate,
   type RiskBalancedTrendDecisionPlan,
   type RiskBalancedTrendEvaluationResult,
   type RiskBalancedTrendProtocol,
+  type UniverseBoundInputManifest,
 } from './types'
 
 const WEIGHT_SCALE = 1_000_000_000_000
@@ -275,7 +275,7 @@ export interface RiskBalancedTrendQualificationPrecommit {
 
 export const prepareRiskBalancedTrendQualification = (
   sessionDates: readonly IsoDate[],
-  inputManifest: InputManifest,
+  inputManifest: UniverseBoundInputManifest,
   protocol: RiskBalancedTrendProtocol,
   provenance: RuntimeProvenance,
 ): RiskBalancedTrendQualificationPrecommit => {
@@ -304,7 +304,7 @@ export const prepareRiskBalancedTrendQualification = (
 
 export const evaluateRiskBalancedTrend = (
   bars: readonly DailyBar[],
-  inputManifest: InputManifest,
+  inputManifest: UniverseBoundInputManifest,
   protocol: RiskBalancedTrendProtocol,
   provenance: RuntimeProvenance,
 ): RiskBalancedTrendEvaluationResult => {

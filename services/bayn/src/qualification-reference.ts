@@ -40,6 +40,7 @@ import type {
   StrategySignalDecision,
   TsmomDecisionPlan,
   TsmomProtocol,
+  UniverseBoundInputManifest,
 } from './types'
 
 interface Session {
@@ -998,7 +999,7 @@ export const evaluateReferenceTsmom = (
 
 export const evaluateReferenceRiskBalancedTrend = (
   bars: readonly DailyBar[],
-  manifest: InputManifest,
+  manifest: UniverseBoundInputManifest,
   protocol: RiskBalancedTrendProtocol,
   provenance: RuntimeProvenance,
 ): ReferenceEvaluation => {

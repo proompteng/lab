@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from './contracts'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1, sha256 } from './hash'
 import {
   QualificationAnalysisSchema,
   defaultQualificationStatisticsPolicy,
@@ -37,7 +37,7 @@ export const QualificationPolicyDocumentSchema = PolicyDocumentBase.check(
 )
 export type QualificationPolicyDocument = typeof QualificationPolicyDocumentSchema.Type
 
-const QualificationDataBase = Schema.Struct({
+const QualificationDataFields = {
   snapshotId: Sha256Schema,
   publicationId: Sha256Schema,
   contentHash: Sha256Schema,
@@ -51,23 +51,40 @@ const QualificationDataBase = Schema.Struct({
   selectedSessionCount: MinimumSessions,
   selectedRebalanceCount: MinimumRebalances,
   bounds: EvaluationBoundsSchema,
+} as const
+
+const LegacyQualificationDataBase = Schema.Struct(QualificationDataFields)
+
+const UniverseBoundQualificationDataBase = Schema.Struct({
+  ...QualificationDataFields,
+  inputManifestHash: Sha256Schema,
 })
 
-export const QualificationDataSchema = QualificationDataBase.check(
-  Schema.makeFilter((data: typeof QualificationDataBase.Type) => {
-    const issues: Schema.FilterIssue[] = []
-    if (data.firstSession > data.lastSession) {
-      issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
-    }
-    if (data.bounds.dataStart < data.firstSession || data.bounds.dataEnd > data.lastSession) {
-      issues.push({ path: ['bounds'], issue: 'must be contained by the finalized snapshot' })
-    }
-    return issues
-  }),
-)
+const qualificationDataIssues = (
+  data: typeof LegacyQualificationDataBase.Type | typeof UniverseBoundQualificationDataBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (data.firstSession > data.lastSession) {
+    issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
+  }
+  if (data.bounds.dataStart < data.firstSession || data.bounds.dataEnd > data.lastSession) {
+    issues.push({ path: ['bounds'], issue: 'must be contained by the finalized snapshot' })
+  }
+  return issues
+}
 
-const QualificationLockMaterialBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.qualification-lock.v2'),
+export const LegacyQualificationDataSchema = LegacyQualificationDataBase.check(
+  Schema.makeFilter(qualificationDataIssues),
+)
+export const UniverseBoundQualificationDataSchema = UniverseBoundQualificationDataBase.check(
+  Schema.makeFilter(qualificationDataIssues),
+)
+export const QualificationDataSchema = Schema.Union([
+  LegacyQualificationDataSchema,
+  UniverseBoundQualificationDataSchema,
+])
+
+const QualificationLockMaterialFields = {
   candidateRunId: Sha256Schema,
   protocolHash: Sha256Schema,
   sourceRevision: SourceRevision,
@@ -77,7 +94,6 @@ const QualificationLockMaterialBase = Schema.Struct({
   }),
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
   universeRationale: NonEmptyString,
-  data: QualificationDataSchema,
   policies: Schema.Struct({
     benchmark: QualificationPolicyDocumentSchema,
     thresholds: QualificationPolicyDocumentSchema,
@@ -85,6 +101,20 @@ const QualificationLockMaterialBase = Schema.Struct({
     execution: QualificationPolicyDocumentSchema,
   }),
   priorTrialRunIds: Schema.Array(Sha256Schema),
+} as const
+
+const LegacyQualificationLockMaterialBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-lock.v2'),
+  ...QualificationLockMaterialFields,
+  data: LegacyQualificationDataSchema,
+})
+
+const UniverseBoundQualificationLockMaterialBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.qualification-lock.v3'),
+  ...QualificationLockMaterialFields,
+  universeId: Schema.Literal('equity-infrastructure-v1'),
+  universeSymbolHash: Sha256Schema,
+  data: UniverseBoundQualificationDataSchema,
 })
 
 const canonicalListIssues = (path: string, values: readonly string[]): readonly Schema.FilterIssue[] => {
@@ -96,32 +126,62 @@ const canonicalListIssues = (path: string, values: readonly string[]): readonly 
   return []
 }
 
-export const QualificationLockMaterialSchema = QualificationLockMaterialBase.check(
-  Schema.makeFilter((lock: typeof QualificationLockMaterialBase.Type) => [
+const lockMaterialIssues = (
+  lock: typeof LegacyQualificationLockMaterialBase.Type | typeof UniverseBoundQualificationLockMaterialBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues = [
     ...canonicalListIssues('universe', lock.universe),
     ...canonicalListIssues('priorTrialRunIds', lock.priorTrialRunIds),
-  ]),
+  ]
+  if (
+    lock.schemaVersion === 'bayn.qualification-lock.v3' &&
+    lock.universeSymbolHash !== sha256(lock.universe.join(','))
+  ) {
+    issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
+  }
+  return issues
+}
+
+const LegacyQualificationLockMaterialSchema = LegacyQualificationLockMaterialBase.check(
+  Schema.makeFilter(lockMaterialIssues),
 )
+const UniverseBoundQualificationLockMaterialSchema = UniverseBoundQualificationLockMaterialBase.check(
+  Schema.makeFilter(lockMaterialIssues),
+)
+export const QualificationLockMaterialSchema = Schema.Union([
+  LegacyQualificationLockMaterialSchema,
+  UniverseBoundQualificationLockMaterialSchema,
+])
 export type QualificationLockMaterial = typeof QualificationLockMaterialSchema.Type
 
-const QualificationLockBase = Schema.Struct({
-  ...QualificationLockMaterialBase.fields,
+const LegacyQualificationLockBase = Schema.Struct({
+  ...LegacyQualificationLockMaterialBase.fields,
+  lockId: Sha256Schema,
+})
+const UniverseBoundQualificationLockBase = Schema.Struct({
+  ...UniverseBoundQualificationLockMaterialBase.fields,
   lockId: Sha256Schema,
 })
 
-export const QualificationLockSchema = QualificationLockBase.check(
-  Schema.makeFilter((lock: typeof QualificationLockBase.Type) => {
-    const { lockId, ...material } = lock
-    const issues = [
-      ...canonicalListIssues('universe', material.universe),
-      ...canonicalListIssues('priorTrialRunIds', material.priorTrialRunIds),
-    ]
-    if (lockId !== canonicalHashV1(material)) {
-      issues.push({ path: ['lockId'], issue: 'must match the canonical lock material hash' })
-    }
-    return issues
-  }),
+const qualificationLockIssues = (
+  lock: typeof LegacyQualificationLockBase.Type | typeof UniverseBoundQualificationLockBase.Type,
+): readonly Schema.FilterIssue[] => {
+  const { lockId, ...material } = lock
+  const issues = [...lockMaterialIssues(material)]
+  if (lockId !== canonicalHashV1(material)) {
+    issues.push({ path: ['lockId'], issue: 'must match the canonical lock material hash' })
+  }
+  return issues
+}
+
+const LegacyQualificationLockSchema = LegacyQualificationLockBase.check(Schema.makeFilter(qualificationLockIssues))
+const UniverseBoundQualificationLockSchema = UniverseBoundQualificationLockBase.check(
+  Schema.makeFilter(qualificationLockIssues),
 )
+export const QualificationLockSchema = Schema.Union([
+  LegacyQualificationLockSchema,
+  UniverseBoundQualificationLockSchema,
+])
 export type QualificationLock = typeof QualificationLockSchema.Type
 
 const decodePolicyDocumentSync = Schema.decodeUnknownSync(QualificationPolicyDocumentSchema, StrictParseOptions)

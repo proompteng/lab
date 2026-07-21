@@ -5,7 +5,7 @@ import { Cause, Config, Effect, FileSystem, Layer, Logger, Redacted, Schema, Std
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
 import { decodeInputManifestArtifact } from './evidence-contracts'
-import { MarketData, MarketDataLive } from './market-data'
+import { HistoricalMarketDataLive, MarketData, MarketDataLive } from './market-data'
 import { RiskBalancedTrendProtocolSchema, TsmomProtocolSchema } from './protocol'
 import {
   auditQualification,
@@ -307,27 +307,32 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
     )
   })
 
-const loadSignal = (
-  input: AuditConfig,
-  database: AuditDatabaseSnapshot,
-  manifest: InputManifest,
-  protocol: StrategyProtocol,
-) => {
-  const layer = MarketDataLive(
-    {
-      operationTimeoutMs: input.operationTimeoutMs,
-      clickhouse: {
-        url: input.signalUrl,
-        username: input.signalUsername,
-        password: input.signalPassword,
-        snapshotId: manifest.finalizedSnapshot.snapshotId,
-        publicationAsOf: manifest.finalizedSnapshot.asOfSession,
-        calendarVersion: manifest.finalizedSnapshot.calendarVersion,
-        bounds: manifest.bounds,
-      },
+const loadSignal = (input: AuditConfig, manifest: InputManifest, protocol: StrategyProtocol) => {
+  const marketDataConfig = {
+    operationTimeoutMs: input.operationTimeoutMs,
+    clickhouse: {
+      url: input.signalUrl,
+      username: input.signalUsername,
+      password: input.signalPassword,
+      snapshotId: manifest.finalizedSnapshot.snapshotId,
+      publicationAsOf: manifest.finalizedSnapshot.asOfSession,
+      calendarVersion: manifest.finalizedSnapshot.calendarVersion,
+      bounds: manifest.bounds,
     },
-    protocol.universe,
-  ).pipe(
+  }
+  let source: ReturnType<typeof MarketDataLive> | ReturnType<typeof HistoricalMarketDataLive>
+  if (protocol.schemaVersion === 'bayn.tsmom.protocol.v2') {
+    if (manifest.schemaVersion !== 'bayn.input-manifest.v2') {
+      throw new Error('historical TSMOM audit requires bayn.input-manifest.v2')
+    }
+    source = HistoricalMarketDataLive(marketDataConfig, protocol)
+  } else {
+    if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
+      throw new Error('risk-balanced trend audit requires bayn.input-manifest.v3')
+    }
+    source = MarketDataLive(marketDataConfig, protocol)
+  }
+  const layer = source.pipe(
     Layer.provide(
       ClickhouseClient.layer({
         url: input.signalUrl,
@@ -350,6 +355,7 @@ const readSignalAccess = (
   input: AuditConfig,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
+  manifestTable: InputManifest['tables']['manifests'],
 ): Effect.Effect<readonly SignalAccessRecord[], unknown> => {
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
@@ -359,7 +365,7 @@ const readSignalAccess = (
         formatDateTime(toTimeZone(query_start_time_microseconds, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ') AS query_start_time,
         user,
         multiIf(
-          positionCaseInsensitive(query, 'snapshot_manifests_v1') > 0, 'manifest',
+          positionCaseInsensitive(query, ${sql.param('String', manifestTable)}) > 0, 'manifest',
           positionCaseInsensitive(query, 'exchange_sessions_v1') > 0, 'sessions',
           'bars'
         ) AS kind
@@ -372,7 +378,7 @@ const readSignalAccess = (
         )
         AND position(query, ${sql.param('String', database.run.snapshotId)}) > 0
         AND (
-          positionCaseInsensitive(query, 'snapshot_manifests_v1') > 0
+          positionCaseInsensitive(query, ${sql.param('String', manifestTable)}) > 0
           OR positionCaseInsensitive(query, 'exchange_sessions_v1') > 0
           OR positionCaseInsensitive(query, 'adjusted_daily_bars_v2') > 0
         )
@@ -448,8 +454,13 @@ const main = Effect.gen(function* () {
   if (database.protocol.strategyName !== expectedStrategyName || database.run.strategyName !== expectedStrategyName) {
     throw new Error('stored strategy name does not match its protocol schema')
   }
-  const signal = yield* loadSignal(input, database, manifest, protocol)
-  const signalAccess = yield* readSignalAccess(input, database, manifest.finalizedSnapshot.finalizedAt)
+  const signal = yield* loadSignal(input, manifest, protocol)
+  const signalAccess = yield* readSignalAccess(
+    input,
+    database,
+    manifest.finalizedSnapshot.finalizedAt,
+    manifest.tables.manifests,
+  )
   const result = database.qualification.result as Readonly<Record<string, unknown>>
   const analysis = result.analysis as Readonly<Record<string, unknown>>
   const repository = yield* repositoryAudit(

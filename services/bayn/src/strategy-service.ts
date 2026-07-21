@@ -20,8 +20,10 @@ import type {
   EvaluationResult,
   InputManifest,
   IsoDate,
+  LegacyInputManifest,
   RiskBalancedTrendProtocol,
   TsmomProtocol,
+  UniverseBoundInputManifest,
 } from './types'
 
 export interface StrategyService {
@@ -39,6 +41,31 @@ export interface StrategyService {
 }
 
 export class Strategy extends Context.Service<Strategy, StrategyService>()('bayn/Strategy') {}
+
+const requireLegacyManifest = (manifest: InputManifest): LegacyInputManifest => {
+  if (manifest.schemaVersion !== 'bayn.input-manifest.v2') {
+    throw new TypeError('TSMOM requires a bayn.input-manifest.v2 snapshot')
+  }
+  return manifest
+}
+
+const requireUniverseBoundManifest = (
+  manifest: InputManifest,
+  protocol: RiskBalancedTrendProtocol,
+): UniverseBoundInputManifest => {
+  if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
+    throw new TypeError('risk-balanced trend requires a bayn.input-manifest.v3 snapshot')
+  }
+  const snapshot = manifest.finalizedSnapshot
+  if (
+    snapshot.universeId !== protocol.universeId ||
+    snapshot.universeSymbolHash !== protocol.universeSymbolHash ||
+    snapshot.symbols.join(',') !== protocol.universe.join(',')
+  ) {
+    throw new TypeError('Signal snapshot universe does not match the compiled strategy universe')
+  }
+  return manifest
+}
 
 export const makeTsmomStrategy = (protocol: TsmomProtocol, provenance: RuntimeProvenance): StrategyService => {
   const benchmarkPolicy = makeQualificationPolicyDocument('bayn.tsmom-benchmark-policy.v1', {
@@ -62,10 +89,11 @@ export const makeTsmomStrategy = (protocol: TsmomProtocol, provenance: RuntimePr
     universe: protocol.universe,
     parameters: protocol,
     provenance,
-    evaluate: (bars, manifest) => evaluateTsmom(bars, manifest, protocol, provenance),
+    evaluate: (bars, manifest) => evaluateTsmom(bars, requireLegacyManifest(manifest), protocol, provenance),
     prepareLock: (manifest, sessionDates, priorTrialRunIds) => {
-      const precommit = prepareTsmomQualification(sessionDates, manifest, protocol, provenance)
-      const snapshot = manifest.finalizedSnapshot
+      const legacyManifest = requireLegacyManifest(manifest)
+      const precommit = prepareTsmomQualification(sessionDates, legacyManifest, protocol, provenance)
+      const snapshot = legacyManifest.finalizedSnapshot
       return makeQualificationLock({
         schemaVersion: 'bayn.qualification-lock.v2',
         candidateRunId: precommit.candidateRunId,
@@ -88,7 +116,7 @@ export const makeTsmomStrategy = (protocol: TsmomProtocol, provenance: RuntimePr
           lastSession: snapshot.lastSession,
           selectedSessionCount: precommit.selectedSessionCount,
           selectedRebalanceCount: precommit.selectedRebalanceCount,
-          bounds: manifest.bounds,
+          bounds: legacyManifest.bounds,
         },
         policies: {
           benchmark: benchmarkPolicy,
@@ -136,22 +164,27 @@ export const makeRiskBalancedTrendStrategy = (
     universe: protocol.universe,
     parameters: protocol,
     provenance,
-    evaluate: (bars, manifest) => evaluateRiskBalancedTrend(bars, manifest, protocol, provenance),
+    evaluate: (bars, manifest) =>
+      evaluateRiskBalancedTrend(bars, requireUniverseBoundManifest(manifest, protocol), protocol, provenance),
     prepareLock: (manifest, sessionDates, priorTrialRunIds) => {
-      const precommit = prepareRiskBalancedTrendQualification(sessionDates, manifest, protocol, provenance)
-      const snapshot = manifest.finalizedSnapshot
+      const universeBoundManifest = requireUniverseBoundManifest(manifest, protocol)
+      const precommit = prepareRiskBalancedTrendQualification(sessionDates, universeBoundManifest, protocol, provenance)
+      const snapshot = universeBoundManifest.finalizedSnapshot
       return makeQualificationLock({
-        schemaVersion: 'bayn.qualification-lock.v2',
+        schemaVersion: 'bayn.qualification-lock.v3',
         candidateRunId: precommit.candidateRunId,
         protocolHash: precommit.protocolHash,
         sourceRevision: provenance.sourceRevision,
         image: provenance.image,
+        universeId: protocol.universeId,
+        universeSymbolHash: protocol.universeSymbolHash,
         universe: protocol.universe,
         universeRationale:
-          'Precommitted comparison universe inherited from TSMOM; finalized SIP/all daily coverage is complete, but this lock does not claim universe optimization or websocket execution coverage.',
+          'Bayn uses the exact source-controlled Signal universe identified by universe ID and symbol hash; it does not select or optimize symbols during evaluation.',
         data: {
           snapshotId: snapshot.snapshotId,
           publicationId: snapshot.publicationId,
+          inputManifestHash: universeBoundManifest.hash,
           contentHash: snapshot.contentHash,
           sessionsContentHash: snapshot.sessionsContentHash,
           provider: snapshot.source,
@@ -162,7 +195,7 @@ export const makeRiskBalancedTrendStrategy = (
           lastSession: snapshot.lastSession,
           selectedSessionCount: precommit.selectedSessionCount,
           selectedRebalanceCount: precommit.selectedRebalanceCount,
-          bounds: manifest.bounds,
+          bounds: universeBoundManifest.bounds,
         },
         policies: {
           benchmark: benchmarkPolicy,
