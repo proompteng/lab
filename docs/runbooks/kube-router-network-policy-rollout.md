@@ -67,8 +67,10 @@ kubectl -n kube-system rollout status daemonset/kube-router --timeout=10m
 The sync hook must print `All existing NetworkPolicy namespaces have a traffic-neutral activation policy.` If it fails,
 the DaemonSet wave is not applied. Update the declared safety coverage through Git and rerun CI; do not bypass the hook.
 
-Verify every desired node has one ready controller, the pinned platform image is running, health is green, and policy
-metrics exist:
+Verify every desired node has one ready controller, the pinned image index or its architecture-specific child manifest
+is running, the process architecture matches the node, health is green, and policy metrics exist. Container runtimes
+may report either the index digest or the selected child manifest as `imageID`, so the check deliberately accepts both
+forms while still rejecting any unpinned digest:
 
 ```bash
 set -euo pipefail
@@ -77,25 +79,46 @@ ready=$(kubectl -n kube-system get daemonset kube-router -o jsonpath='{.status.n
 test "$desired" -gt 0
 test "$ready" = "$desired"
 
-kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
-  jq -e '
-    all(.items[];
-      .status.containerStatuses[0].ready == true and
-      (.status.containerStatuses[0].imageID |
-        endswith("sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f") or
-        endswith("sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8")))'
-
-while IFS= read -r pod; do
+kube_router_index_digest=sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22
+while IFS=$'\t' read -r pod node pod_ready restart_count image_id; do
+  test "$pod_ready" = true
+  test "$restart_count" = 0
+  node_arch=$(kubectl get node "$node" -o jsonpath='{.status.nodeInfo.architecture}')
+  case "$node_arch" in
+    amd64)
+      platform_digest=sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f
+      expected_runtime_arch=x86_64
+      ;;
+    arm64)
+      platform_digest=sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8
+      expected_runtime_arch=aarch64
+      ;;
+    *)
+      echo "unsupported node architecture: $node_arch" >&2
+      exit 1
+      ;;
+  esac
+  case "$image_id" in
+    *"@$kube_router_index_digest"|*"@$platform_digest") ;;
+    *)
+      echo "unexpected kube-router imageID on $pod: $image_id" >&2
+      exit 1
+      ;;
+  esac
+  test "$(kubectl -n kube-system exec "$pod" -c kube-router -- uname -m)" = "$expected_runtime_arch"
   kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20244/healthz
-  kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics |
-    grep -Eq '^kube_router_controller_policy_(chains|ipsets) '
-done < <(kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o name)
+  metrics=$(kubectl -n kube-system exec "$pod" -c kube-router -- wget -qO- http://127.0.0.1:20241/metrics)
+  grep -Eq '^kube_router_controller_policy_(chains|ipsets) ' <<< "$metrics"
+done < <(
+  kubectl -n kube-system get pods -l app.kubernetes.io/name=kube-router -o json |
+    jq -r '.items[] | [.metadata.name,.spec.nodeName,.status.containerStatuses[0].ready,.status.containerStatuses[0].restartCount,.status.containerStatuses[0].imageID] | @tsv'
+)
+unset expected_runtime_arch image_id kube_router_index_digest metrics node node_arch platform_digest pod pod_ready restart_count
 
-kubectl -n kube-system logs -l app.kubernetes.io/name=kube-router -c kube-router --prefix --tail=500 |
-  tee /tmp/kube-router-rollout.log
+controller_logs=$(kubectl -n kube-system logs -l app.kubernetes.io/name=kube-router -c kube-router --prefix --tail=500)
 ! grep -Eiq 'panic|fatal|permission denied|operation not permitted|failed to (sync|restore|create)' \
-  /tmp/kube-router-rollout.log
-rm -f /tmp/kube-router-rollout.log
+  <<< "$controller_logs"
+unset controller_logs
 ```
 
 ## 3. Enforcement and regression proof
