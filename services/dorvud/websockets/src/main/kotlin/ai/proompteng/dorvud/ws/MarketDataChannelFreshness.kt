@@ -92,6 +92,7 @@ internal class MarketDataChannelFreshnessTracker(
   fun clearSubscription() {
     subscribedSymbolsByChannel.set(emptyMap())
     latestSubscriptionAckAtMsByChannel.clear()
+    latestByChannel.values.forEach(ChannelFreshnessState::clearPendingDeliveries)
     subscribedSinceMs.set(0)
   }
 
@@ -105,16 +106,15 @@ internal class MarketDataChannelFreshnessTracker(
   fun recordSerializedEvent(
     channel: String,
     symbol: String?,
-  ) {
-    state(channel)?.recordSerializedEvent(nowMs(), symbol)
-  }
+  ): Long? = state(channel)?.recordSerializedEvent(nowMs(), symbol)
 
   fun recordKafkaSuccess(
     channel: String?,
     symbol: String?,
+    serializedSequence: Long? = null,
   ) {
     if (channel == null) return
-    state(channel)?.recordKafkaSuccess(nowMs(), symbol)
+    state(channel)?.recordKafkaSuccess(nowMs(), symbol, serializedSequence)
   }
 
   fun ready(): Boolean = snapshot().all { it.ready }
@@ -216,12 +216,20 @@ internal class MarketDataChannelFreshnessTracker(
           latestObservedInputForReadiness != null &&
           !kafkaSuccessCoversLatestObservedInput &&
           now - latestObservedInputForReadiness > maxLagMs
+      val pendingKafkaSince =
+        state?.pendingKafkaSinceMsBySymbol?.mapValues { (_, sinceAt) -> sinceAt.get() }.orEmpty()
+      val equityBarKafkaSuccessMissing =
+        equityBarMayBeAbsent &&
+          pendingKafkaSince.any { (symbol, sinceAt) ->
+            symbol in channelSymbols && sinceAt > 0 && now - sinceAt > maxLagMs
+          }
       val ready =
         when {
           !gateActive -> true
           channelSymbols.isEmpty() -> false
           !freshnessRequired -> !conditionalKafkaSuccessMissing
           latestKafkaSuccessAt == null -> false
+          equityBarKafkaSuccessMissing -> false
           gatedMissingSymbols.isNotEmpty() -> false
           gatedStaleSymbols.isNotEmpty() -> false
           lagMs == null -> false
@@ -262,6 +270,7 @@ internal class MarketDataChannelFreshnessTracker(
             ready -> "market_data_channel_fresh"
             channelSymbols.isEmpty() -> "market_data_channel_not_subscribed"
             conditionalKafkaSuccessMissing -> "market_data_channel_conditional_missing_kafka_success"
+            equityBarKafkaSuccessMissing -> "market_data_channel_observed_symbol_missing_kafka_success"
             freshnessRequired && latestKafkaSuccessAt == null -> "market_data_channel_missing_kafka_success"
             gatedMissingSymbols.isNotEmpty() -> "market_data_channel_missing_symbol_coverage"
             gatedStaleSymbols.isNotEmpty() -> "market_data_channel_stale_symbol_coverage"
@@ -278,12 +287,16 @@ internal class MarketDataChannelFreshnessTracker(
   }
 
   private class ChannelFreshnessState {
+    private val serializedSequence = AtomicLong(0)
     val latestProviderEventAtMs = AtomicLong(0)
     val latestSerializedAtMs = AtomicLong(0)
     val latestKafkaSuccessAtMs = AtomicLong(0)
     val latestSymbol = AtomicReference<String?>(null)
     val latestObservedInputAtMsBySymbol = ConcurrentHashMap<String, AtomicLong>()
     val latestKafkaSuccessAtMsBySymbol = ConcurrentHashMap<String, AtomicLong>()
+    val pendingKafkaSinceMsBySymbol = ConcurrentHashMap<String, AtomicLong>()
+    private val latestSerializedSequenceBySymbol = ConcurrentHashMap<String, AtomicLong>()
+    private val latestKafkaSuccessSequenceBySymbol = ConcurrentHashMap<String, AtomicLong>()
 
     fun recordProviderEvent(
       atMs: Long,
@@ -297,15 +310,23 @@ internal class MarketDataChannelFreshnessTracker(
     fun recordSerializedEvent(
       atMs: Long,
       symbol: String?,
-    ) {
+    ): Long? {
       latestSerializedAtMs.set(atMs)
       recordObservedInputSymbol(atMs, symbol)
       updateSymbol(symbol)
+      val normalized = normalizeSymbol(symbol) ?: return null
+      val sequence = serializedSequence.incrementAndGet()
+      latestSerializedSequenceBySymbol
+        .computeIfAbsent(normalized) { AtomicLong(0) }
+        .set(sequence)
+      pendingKafkaSinceMsBySymbol.computeIfAbsent(normalized) { AtomicLong(atMs) }
+      return sequence
     }
 
     fun recordKafkaSuccess(
       atMs: Long,
       symbol: String?,
+      serializedSequence: Long?,
     ) {
       latestKafkaSuccessAtMs.set(atMs)
       updateSymbol(symbol)
@@ -313,6 +334,21 @@ internal class MarketDataChannelFreshnessTracker(
       latestKafkaSuccessAtMsBySymbol
         .computeIfAbsent(normalized) { AtomicLong(0) }
         .set(atMs)
+      val acknowledgedSequence =
+        serializedSequence ?: latestSerializedSequenceBySymbol[normalized]?.get()
+      if (acknowledgedSequence != null) {
+        val latestAcknowledged =
+          latestKafkaSuccessSequenceBySymbol.computeIfAbsent(normalized) { AtomicLong(0) }
+        latestAcknowledged.accumulateAndGet(acknowledgedSequence, ::maxOf)
+        val latestSerialized = latestSerializedSequenceBySymbol[normalized]?.get()
+        if (latestSerialized != null && latestAcknowledged.get() >= latestSerialized) {
+          pendingKafkaSinceMsBySymbol.remove(normalized)
+        }
+      }
+    }
+
+    fun clearPendingDeliveries() {
+      pendingKafkaSinceMsBySymbol.clear()
     }
 
     private fun updateSymbol(symbol: String?) {

@@ -1526,8 +1526,8 @@ class ForwarderApp(
 
     val topic = feed.config.topicFor(env.channel, config.alpacaMarketType) ?: return null
 
-    feed.channelFreshness.recordSerializedEvent(env.channel, env.symbol)
-    sendKafka(producer, topic, env, env.channel, feed)
+    val serializedSequence = feed.channelFreshness.recordSerializedEvent(env.channel, env.symbol)
+    sendKafka(producer, topic, env, env.channel, feed, serializedSequence)
     return env.channel
   }
 
@@ -1537,6 +1537,7 @@ class ForwarderApp(
     env: Envelope<JsonElement>,
     marketDataChannel: String? = null,
     feed: MarketDataFeedRuntimeState? = null,
+    serializedSequence: Long? = null,
   ) {
     val payload = json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
@@ -1550,7 +1551,11 @@ class ForwarderApp(
           recordKafkaFailure(exception, topic, feed)
         } else {
           metrics.recordKafkaProduceSuccess(topic)
-          feed?.channelFreshness?.recordKafkaSuccess(marketDataFreshnessChannelFor(env, marketDataChannel), env.symbol)
+          feed?.channelFreshness?.recordKafkaSuccess(
+            marketDataFreshnessChannelFor(env, marketDataChannel),
+            env.symbol,
+            serializedSequence,
+          )
           recordKafkaSuccess(feed)
         }
       }

@@ -353,6 +353,42 @@ class MarketDataChannelFreshnessTrackerTest {
   }
 
   @Test
+  fun `observed equity bars still require per-symbol kafka delivery`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("bars"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("bars" to listOf("NVDA", "CRDO")))
+    tracker.recordProviderEvent("bars", "CRDO")
+    val firstCrdoSequence = requireNotNull(tracker.recordSerializedEvent("bars", "CRDO"))
+
+    nowMs += 30_000
+    tracker.recordProviderEvent("bars", "CRDO")
+    tracker.recordSerializedEvent("bars", "CRDO")
+    tracker.recordKafkaSuccess("bars", "CRDO", firstCrdoSequence)
+
+    nowMs += 31_000
+    tracker.recordProviderEvent("bars", "NVDA")
+    tracker.recordSerializedEvent("bars", "NVDA")
+    tracker.recordKafkaSuccess("bars", "NVDA")
+
+    val readiness = tracker.snapshot().single()
+
+    assertFalse(tracker.ready())
+    assertFalse(readiness.ready)
+    assertFalse(readiness.symbolCoverageRequired)
+    assertEquals("market_data_channel_observed_symbol_missing_kafka_success", readiness.reason)
+    assertEquals(emptyList(), readiness.missingSymbols)
+    assertEquals(listOf("CRDO", "NVDA"), readiness.freshSymbols)
+  }
+
+  @Test
   fun `post-session readiness exposes inactive gate and stale channel diagnostics`() {
     val nowMs = Instant.parse("2026-07-07T22:00:00Z").toEpochMilli()
     val tracker =
