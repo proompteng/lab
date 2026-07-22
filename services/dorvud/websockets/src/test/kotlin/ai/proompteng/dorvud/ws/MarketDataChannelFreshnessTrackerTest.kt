@@ -8,6 +8,34 @@ import kotlin.test.assertTrue
 
 class MarketDataChannelFreshnessTrackerTest {
   @Test
+  fun `read idle reconnects only while the feed session is active`() {
+    val regularSession = Instant.parse("2026-07-07T14:00:00Z")
+    val overnightSession = Instant.parse("2026-07-08T01:00:00Z")
+
+    assertTrue(
+      marketDataIdleRequiresReconnect(true, regularSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Iex),
+    )
+    assertFalse(
+      marketDataIdleRequiresReconnect(true, overnightSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Iex),
+    )
+    assertTrue(
+      marketDataIdleRequiresReconnect(true, regularSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.DelayedSip),
+    )
+    assertFalse(
+      marketDataIdleRequiresReconnect(true, overnightSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.DelayedSip),
+    )
+    assertFalse(
+      marketDataIdleRequiresReconnect(true, regularSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Overnight),
+    )
+    assertTrue(
+      marketDataIdleRequiresReconnect(true, overnightSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Overnight),
+    )
+    assertTrue(
+      marketDataIdleRequiresReconnect(false, overnightSession, AlpacaMarketType.EQUITY, emptySet(), EquityFeed.Iex),
+    )
+  }
+
+  @Test
   fun `observation freshness gates follow the feed active session`() {
     val delayedSipPre =
       MarketDataChannelFreshnessTracker(
