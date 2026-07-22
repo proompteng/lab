@@ -27,6 +27,7 @@ const currentBindings = {
 interface FixtureOptions {
   readonly snapshotId?: string
   readonly publicationAsOf?: string
+  readonly tigerBeetleClusterId?: string
   readonly tigerBeetleAddresses?: string
   readonly behaviorHash?: string
   readonly parameterHash?: string
@@ -60,6 +61,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     ...currentBindings,
     BAYN_SIGNAL_SNAPSHOT_ID: options.snapshotId ?? currentBindings.BAYN_SIGNAL_SNAPSHOT_ID,
     BAYN_SIGNAL_PUBLICATION_ASOF: options.publicationAsOf ?? currentBindings.BAYN_SIGNAL_PUBLICATION_ASOF,
+    BAYN_TIGERBEETLE_CLUSTER_ID: options.tigerBeetleClusterId ?? currentBindings.BAYN_TIGERBEETLE_CLUSTER_ID,
     BAYN_TIGERBEETLE_ADDRESSES: options.tigerBeetleAddresses ?? currentBindings.BAYN_TIGERBEETLE_ADDRESSES,
   }
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
@@ -112,7 +114,7 @@ describe('Bayn manifest promotion', () => {
     expect(result).toMatchObject({
       qualificationMode: 'preserve',
       hadQualificationPin: true,
-      runtimeBindingsMatch: true,
+      qualificationBindingsMatch: true,
       snapshotChanged: false,
       deployedSnapshotId: currentSnapshotId,
       candidateSnapshotId: currentSnapshotId,
@@ -139,21 +141,28 @@ describe('Bayn manifest promotion', () => {
     expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   })
 
-  test('restores replica-index-ordered TigerBeetle addresses for a fresh qualification snapshot', () => {
+  test('preserves qualification while restoring replica-index-ordered TigerBeetle transport addresses', () => {
     const paths = makeFixture({
-      snapshotId: '4'.repeat(64),
-      publicationAsOf: '2026-07-19',
       tigerBeetleAddresses: 'ledger.bayn.svc.cluster.local:3000',
     })
 
     expect(promote(paths)).toMatchObject({
-      qualificationMode: 'replace',
-      runtimeBindingsMatch: false,
-      snapshotChanged: true,
+      qualificationMode: 'preserve',
+      qualificationBindingsMatch: true,
+      snapshotChanged: false,
     })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
+    )
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_TIGERBEETLE_ADDRESSES', currentBindings.BAYN_TIGERBEETLE_ADDRESSES).trim(),
     )
+  })
+
+  test('rejects a TigerBeetle cluster identity change against an already-qualified snapshot', () => {
+    const paths = makeFixture({ tigerBeetleClusterId: '2001' })
+
+    expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   })
 
   test('replaces a pin for a fresh snapshot and rejects a second unpinned source release', () => {
@@ -164,7 +173,7 @@ describe('Bayn manifest promotion', () => {
     expect(first).toMatchObject({
       qualificationMode: 'replace',
       hadQualificationPin: true,
-      runtimeBindingsMatch: false,
+      qualificationBindingsMatch: false,
       snapshotChanged: true,
       deployedSnapshotId: '4'.repeat(64),
       candidateSnapshotId: currentSnapshotId,

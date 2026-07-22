@@ -7,7 +7,7 @@ const digestPattern = /^sha256:[0-9a-f]{64}$/
 const hashPattern = /^[0-9a-f]{64}$/
 const sourceShaPattern = /^[0-9a-f]{40}$/
 const tagPattern = /^[A-Za-z0-9._-]{1,128}$/
-const currentRuntimeConfiguration = {
+const currentQualificationIdentity = {
   BAYN_SIGNAL_SNAPSHOT_ID: '98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292',
   BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-20',
   BAYN_SIGNAL_CALENDAR_VERSION: 'alpaca-us-equity-calendar-v1',
@@ -17,9 +17,17 @@ const currentRuntimeConfiguration = {
   BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
   BAYN_SIGNAL_EVALUATION_END: '2026-07-20',
   BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
+  BAYN_TIGERBEETLE_LEDGER: '7001',
+} as const
+
+const currentTransportConfiguration = {
   BAYN_TIGERBEETLE_ADDRESSES:
     'ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000',
-  BAYN_TIGERBEETLE_LEDGER: '7001',
+} as const
+
+const currentRuntimeConfiguration = {
+  ...currentQualificationIdentity,
+  ...currentTransportConfiguration,
 } as const
 
 export interface UpdateBaynManifestOptions {
@@ -37,7 +45,7 @@ export interface UpdateBaynManifestOptions {
 export interface BaynManifestUpdate {
   readonly qualificationMode: 'preserve' | 'replace'
   readonly hadQualificationPin: boolean
-  readonly runtimeBindingsMatch: boolean
+  readonly qualificationBindingsMatch: boolean
   readonly snapshotChanged: boolean
   readonly deployedSnapshotId: string
   readonly candidateSnapshotId: string
@@ -103,13 +111,13 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const deployedSnapshotId = environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID')
   const candidateSnapshotId = currentRuntimeConfiguration.BAYN_SIGNAL_SNAPSHOT_ID
   const snapshotChanged = deployedSnapshotId !== candidateSnapshotId
-  const runtimeBindingsMatch = Object.entries(currentRuntimeConfiguration).every(
+  const qualificationBindingsMatch = Object.entries(currentQualificationIdentity).every(
     ([name, value]) => environmentValue(deployment, name) === value,
   )
   const strategyIdentityMatches =
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
   const qualificationMode =
-    hadQualificationPin && strategyIdentityMatches && runtimeBindingsMatch ? 'preserve' : 'replace'
+    hadQualificationPin && strategyIdentityMatches && qualificationBindingsMatch ? 'preserve' : 'replace'
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
@@ -179,7 +187,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   return {
     qualificationMode,
     hadQualificationPin,
-    runtimeBindingsMatch,
+    qualificationBindingsMatch,
     snapshotChanged,
     deployedSnapshotId,
     candidateSnapshotId,
