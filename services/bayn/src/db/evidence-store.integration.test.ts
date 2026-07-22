@@ -244,6 +244,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(schema.tables.map((row) => row.table_name)).toEqual([
       'account_snapshots',
       'accounting_receipts',
+      'accounting_transactions',
       'authority_state',
       'broker_errors',
       'broker_events',
@@ -255,6 +256,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'intents',
       'mutation_events',
       'orders',
+      'position_snapshots',
       'positions',
       'protocol_locks',
       'qualification_locks',
@@ -275,6 +277,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 4, name: 'deterministic_intents' },
       { migration_id: 5, name: 'mutation_recovery' },
       { migration_id: 6, name: 'current_risk_clock' },
+      { migration_id: 7, name: 'accounting' },
     ])
   })
 
@@ -1371,6 +1374,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const eventId = '1'.repeat(64)
+        const fillEventId = 'c'.repeat(64)
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`
@@ -1392,6 +1396,38 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                 1000000, 1000000, 2000000
               )
             `
+            yield* sql`
+              INSERT INTO broker_events (
+                event_id, schema_version, content_hash, event_kind, broker, account_id,
+                source_event_id, source_sequence, occurred_at, observed_at
+              ) VALUES (
+                ${fillEventId}, 'bayn.paper-broker-event.v1', ${'d'.repeat(64)}, 'FILL', 'ALPACA',
+                'paper-account-1', 'source-fill-1', 2,
+                '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:00.000Z'
+              )
+            `
+            yield* sql`
+              INSERT INTO fills (
+                event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id,
+                symbol, side, quantity_micros, price_micros, fee_micros
+              ) VALUES (
+                ${fillEventId}, 'paper-account-1', 'bayn.paper-fill.v1', 'fill-1', 'broker-order-1',
+                'client-order-1', 'NVDA', 'BUY', 1000000, 1250000, 0
+              )
+            `
+            yield* sql`
+              INSERT INTO accounting_transactions (
+                transaction_id, schema_version, broker_event_id, account_id, symbol, side,
+                quantity_micros, price_micros, notional_micros, fee_micros, cost_basis_micros,
+                realized_pnl_micros, quantity_delta_micros, cost_basis_delta_micros, cash_delta_micros,
+                ledger_plan_hash, content_hash, occurred_at
+              ) VALUES (
+                ${'e'.repeat(64)}, 'bayn.paper-accounting-transaction.v1', ${fillEventId},
+                'paper-account-1', 'NVDA', 'BUY', 1000000, 1250000, 1250000, 0, 1250000,
+                0, 1000000, 1250000, -1250000, ${'f'.repeat(64)}, ${'0'.repeat(64)},
+                '2026-07-22T06:00:30.000Z'
+              )
+            `
           }),
         )
         yield* sql`
@@ -1399,7 +1435,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
             account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
           ) VALUES (
-            ${'3'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ${'3'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${fillEventId}, 2001, 7001,
             ARRAY[1, 2]::numeric[], ARRAY[3]::numeric[], 1250000, 1250000, ${'4'.repeat(64)},
             '2026-07-22T06:01:00.000Z'
           )
@@ -1436,7 +1472,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
             account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
           ) VALUES (
-            ${'b'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ${'b'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${fillEventId}, 2001, 7001,
             ARRAY[1, 2]::numeric[], ARRAY[3]::numeric[], 1250000, 1249999, ${'c'.repeat(64)},
             '2026-07-22T06:01:00.000Z'
           )
@@ -1446,7 +1482,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
             account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
           ) VALUES (
-            ${'d'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ${'d'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${fillEventId}, 2001, 7001,
             ARRAY[2, 1]::numeric[], ARRAY[3]::numeric[], 1250000, 1250000, ${'e'.repeat(64)},
             '2026-07-22T06:01:00.000Z'
           )
@@ -1456,7 +1492,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
             account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
           ) VALUES (
-            ${'e'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ${'e'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${fillEventId}, 2001, 7001,
             ARRAY[1, NULL, 2]::numeric[], ARRAY[3]::numeric[], 1250000, 1250000, ${'f'.repeat(64)},
             '2026-07-22T06:01:00.000Z'
           )
@@ -2342,6 +2378,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           [
             sql`TRUNCATE evaluation_runs CASCADE`,
             sql`TRUNCATE evaluation_artifacts`,
+            sql`TRUNCATE accounting_transactions`,
+            sql`TRUNCATE position_snapshots CASCADE`,
             sql`TRUNCATE qualification_trials`,
             sql`TRUNCATE qualification_locks CASCADE`,
             sql`TRUNCATE qualification_results`,

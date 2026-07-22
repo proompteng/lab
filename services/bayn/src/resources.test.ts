@@ -56,6 +56,7 @@ const config: RuntimeConfig = {
 }
 
 const successfulJournal: JournalService = {
+  post: () => Effect.void,
   check: Effect.void,
   checkRun: () => Effect.void,
   journalAndReconcile: (evaluation) =>

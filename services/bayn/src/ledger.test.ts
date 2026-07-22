@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Redacted } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
+import { prepareAccounting } from './accounting'
 import type { RuntimeConfig } from './config'
-import { Authority } from './paper'
+import { Authority, OrderSide, type Fill } from './paper'
 import {
   assertReconciled,
   buildLedgerPlan,
@@ -175,6 +176,44 @@ describe('TigerBeetle simulation journal', () => {
     })
     expect(target.accounts.size).toBe(plan.accounts.length)
     expect(target.transfers.size).toBe(plan.transfers.length)
+  })
+
+  test('posts one paper fill idempotently and rejects a conflicting transfer', async () => {
+    const fill: Fill = {
+      schemaVersion: 'bayn.paper-fill.v1',
+      accountId: 'paper-account',
+      fillId: 'activity-1',
+      brokerOrderId: 'broker-order-1',
+      clientOrderId: 'client-order-1',
+      symbol: 'NVDA',
+      side: OrderSide.Buy,
+      quantityMicros: '1000000',
+      priceMicros: '100000000',
+      feeMicros: '100',
+      occurredAt: '2026-07-22T15:30:00.000Z',
+    }
+    const plan = prepareAccounting(
+      'a'.repeat(64),
+      fill,
+      { quantityMicros: '0', costMicros: '0' },
+      journalConfig.tigerBeetle.ledger,
+    ).ledger
+    const target = makeLedgerClient()
+
+    await Effect.runPromise(
+      withJournal(target.client, (journal) => journal.post(plan).pipe(Effect.andThen(journal.post(plan)))),
+    )
+    expect(target.accounts.size).toBe(plan.accounts.length)
+    expect(target.transfers.size).toBe(plan.transfers.length)
+
+    const conflict = makeLedgerClient()
+    conflict.transfers.set(plan.transfers[0].id, {
+      ...plan.transfers[0],
+      amount: plan.transfers[0].amount + 1n,
+      timestamp: 1n,
+    })
+    const error = await Effect.runPromise(Effect.flip(withJournal(conflict.client, (journal) => journal.post(plan))))
+    expect(error.message).toContain('does not match its plan')
   })
 
   test('rejects a mismatched existing account before creating transfers', async () => {

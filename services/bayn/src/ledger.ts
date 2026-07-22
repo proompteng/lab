@@ -18,6 +18,7 @@ import {
   LEDGER_BATCH_MAX as BATCH_MAX,
   LEDGER_SCHEMA_VERSION as SCHEMA_VERSION,
   type LedgerInput,
+  type LedgerPlan,
 } from './ledger-plan'
 import {
   makeTigerBeetleRequestClient,
@@ -27,6 +28,7 @@ import {
 import type { ReconciliationResult } from './types'
 
 export interface JournalService {
+  readonly post: (plan: LedgerPlan) => Effect.Effect<void, OperationalError>
   readonly journalAndReconcile: (result: LedgerInput) => Effect.Effect<ReconciliationResult, OperationalError>
   readonly check: Effect.Effect<void, OperationalError>
   readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, OperationalError>
@@ -225,6 +227,35 @@ const journalAndReconcile = (
     return { runId: result.runId, accountCount: accounts.length, transferCount: transfers.length, exact: true }
   })
 
+const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect<void, OperationalError> =>
+  Effect.gen(function* () {
+    if (plan.accounts.length === 0 || plan.transfers.length === 0) {
+      return yield* Effect.fail(
+        operationalError('journal', 'post', 'TigerBeetle posting plan must contain accounts and transfers'),
+      )
+    }
+    if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
+      return yield* Effect.fail(operationalError('journal', 'post', 'TigerBeetle posting plan exceeds batch limits'))
+    }
+    yield* createAndVerifyAccounts(client, plan.accounts)
+    yield* createAndVerifyTransfers(client, plan.transfers)
+    const [accounts, transfers] = yield* Effect.all(
+      [
+        client.request('verify-posted-accounts', (active) =>
+          active.lookupAccounts(plan.accounts.map((account) => account.id)),
+        ),
+        client.request('verify-posted-transfers', (active) =>
+          active.lookupTransfers(plan.transfers.map((transfer) => transfer.id)),
+        ),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    yield* validate('verify-posted-plan', () => {
+      assertAccountsMatch('posted account', accounts, plan.accounts)
+      assertTransfersMatch('posted transfer', transfers, plan.transfers)
+    })
+  })
+
 export const JournalLive = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   dependencies?: JournalDependencies,
@@ -234,6 +265,7 @@ export const JournalLive = (
     Effect.gen(function* () {
       const client = yield* makeTigerBeetleRequestClient(config, dependencies)
       return {
+        post: (plan) => post(client, plan),
         check: client
           .request('connectivity-check', (active) => active.lookupAccounts([stableU128('bayn-connectivity-probe')]))
           .pipe(Effect.asVoid),

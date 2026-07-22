@@ -6,6 +6,7 @@ import intentRiskClock from '../../migrations/0003_intent_risk_clock'
 import deterministicIntents from '../../migrations/0004_deterministic_intents'
 import mutationRecovery from '../../migrations/0005_mutation_recovery'
 import currentRiskClock from '../../migrations/0006_current_risk_clock'
+import accounting from '../../migrations/0007_accounting'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -14,4 +15,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '4_deterministic_intents': deterministicIntents,
   '5_mutation_recovery': mutationRecovery,
   '6_current_risk_clock': currentRiskClock,
+  '7_accounting': accounting,
 })
