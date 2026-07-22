@@ -106,6 +106,7 @@ interface HarnessOptions {
   readonly unknownSubmit?: boolean
   readonly submitError?: BrokerMutationError
   readonly submittedOrder?: Order
+  readonly lookupOrder?: Order
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -359,9 +360,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
         )
       }
       const value =
-        latest.get(MutationOperation.Cancel) === undefined
+        options.lookupOrder ??
+        (latest.get(MutationOperation.Cancel) === undefined
           ? brokerOrder(OrderStatus.Accepted)
-          : brokerOrder(OrderStatus.Canceled)
+          : brokerOrder(OrderStatus.Canceled))
       return Effect.succeed({ value, evidence: evidence(200, '1970-01-01T00:00:02.000Z') })
     },
     fillActivities: () => Effect.die(new Error('unexpected fill read')),
@@ -395,6 +397,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
     state: () => stored.intent.state,
   }
 }
+
+const mismatchedSubmissionError = () =>
+  new BrokerMutationError({
+    operation: MutationOperation.Submit,
+    failure: MutationFailure.Unknown,
+    outcome: MutationOutcome.Unknown,
+    message: 'accepted order differs from durable intent',
+    requestHash: canonicalHashV1(orderRequestBody(intent)),
+    evidence: evidence(200, '1970-01-01T00:00:00.100Z'),
+    brokerOrderId: orderId,
+  })
 
 describe('paper execution coordinator', () => {
   test('records before submission and never calls the broker again for a replayed intent', async () => {
@@ -430,18 +443,10 @@ describe('paper execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Unknown)
   })
 
-  test('can cancel a mismatched accepted order while the intent remains UNKNOWN', async () => {
-    const response = evidence(200, '1970-01-01T00:00:00.100Z')
+  test('cancels and closes a zero-fill mismatched accepted order by its broker ID', async () => {
     const harness = makeHarness({
-      submitError: new BrokerMutationError({
-        operation: MutationOperation.Submit,
-        failure: MutationFailure.Unknown,
-        outcome: MutationOutcome.Unknown,
-        message: 'accepted order differs from durable intent',
-        requestHash: canonicalHashV1(orderRequestBody(intent)),
-        evidence: response,
-        brokerOrderId: orderId,
-      }),
+      lookupOrder: { ...brokerOrder(OrderStatus.Canceled), symbol: 'NVDA' },
+      submitError: mismatchedSubmissionError(),
     })
 
     const result = await Effect.runPromise(
@@ -449,7 +454,9 @@ describe('paper execution coordinator', () => {
         Effect.gen(function* () {
           const unknown = yield* submit(intentId, 1_000)
           const canceled = yield* cancel(intentId, 1_000)
-          return { unknown, canceled }
+          yield* TestClock.adjust(3_000)
+          const found = yield* recover(intentId, MutationOperation.Cancel)
+          return { unknown, canceled, found }
         }),
       ),
     )
@@ -459,7 +466,34 @@ describe('paper execution coordinator', () => {
       brokerOrderId: orderId,
     })
     expect(result.canceled.eventType).toBe(MutationEventType.CancelAccepted)
-    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 0 })
+    expect(result.found.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 1 })
+    expect(harness.state()).toBe(IntentState.Terminal)
+  })
+
+  test('keeps a partially filled mismatched order UNKNOWN after cancellation', async () => {
+    const harness = makeHarness({
+      lookupOrder: {
+        ...brokerOrder(OrderStatus.Canceled),
+        symbol: 'NVDA',
+        filledQuantityMicros: '1',
+      },
+      submitError: mismatchedSubmissionError(),
+    })
+
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* cancel(intentId, 1_000)
+          yield* TestClock.adjust(3_000)
+          return yield* recover(intentId, MutationOperation.Cancel)
+        }),
+      ),
+    )
+
+    expect(result.eventType).toBe(MutationEventType.RecoveryUnknown)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 1 })
     expect(harness.state()).toBe(IntentState.Unknown)
   })
 

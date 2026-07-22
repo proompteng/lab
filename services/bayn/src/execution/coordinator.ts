@@ -327,7 +327,14 @@ export const recover = (intentId: string, operation: MutationOperation) =>
         },
         onSuccess: (result) => {
           const evidence = mutationEvidence(result.evidence)
-          if (!exactOrder(stored.intent, result.value)) {
+          const outcome = terminalOutcome(result.value.status)
+          const neutralizedMismatchedOrder =
+            operation === MutationOperation.Cancel &&
+            interrupted.brokerOrderId === result.value.brokerOrderId &&
+            result.value.filledQuantityMicros === '0' &&
+            outcome !== undefined &&
+            outcome !== TerminalOutcome.Filled
+          if (!exactOrder(stored.intent, result.value) && !neutralizedMismatchedOrder) {
             return mutations.recoveryUnknown(
               intentId,
               operation,
@@ -342,7 +349,7 @@ export const recover = (intentId: string, operation: MutationOperation) =>
             interrupted.requestHash,
             result.value.brokerOrderId,
             evidence,
-            terminalOutcome(result.value.status),
+            outcome,
           )
         },
       }),
