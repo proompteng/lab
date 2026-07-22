@@ -60,21 +60,6 @@ spec:
               value: "b88f53887a31b6696f5bf6b56e4e10d9966057c6109a1d0721dc94677e566ec7"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
-            - name: BAYN_ALPACA_ACCOUNT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: account-id
-            - name: BAYN_ALPACA_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: key-id
-            - name: BAYN_ALPACA_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: secret-key
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS
@@ -119,7 +104,7 @@ spec:
             - name: BAYN_TIGERBEETLE_CLUSTER_ID
               value: "122731676035874920802382025803517750735"
             - name: BAYN_TIGERBEETLE_ADDRESSES
-              value: "ledger.bayn.svc.cluster.local:3000"
+              value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
             - name: NODE_ENV
