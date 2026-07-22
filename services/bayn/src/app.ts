@@ -1,4 +1,5 @@
 import { Cause, Clock, Duration, Effect, Exit, Layer, Option, Ref, Schedule } from 'effect'
+import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from './config'
 import { makeRuntimeProvenance, type FinalizedSnapshotProvenance, type RuntimeProvenance } from './contracts'
@@ -23,6 +24,15 @@ import {
   type RuntimeState,
 } from './runtime-state'
 import type { Strategy } from './strategy-service'
+
+export const acquireSqlLayer = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
+  Layer.build(layer).pipe(
+    Effect.retry({
+      times: 2,
+      schedule: Schedule.spaced(Duration.seconds(1)),
+      while: (error) => isSqlError(error) && error.isRetryable,
+    }),
+  )
 
 const withinDeadline = <A, R>(
   effect: Effect.Effect<A, OperationalError, R>,
