@@ -70,7 +70,7 @@ export default Effect.gen(function* () {
       END IF;
 
       IF OLD.state = 'PLANNED' OR NEW.state = 'IO_STARTED' THEN
-        decision_checked_at := statement_timestamp();
+        decision_checked_at := clock_timestamp();
 
         SELECT outcome, decided_at, expires_at
         INTO decision_outcome, decision_decided_at, decision_expires_at

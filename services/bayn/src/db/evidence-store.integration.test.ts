@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
@@ -310,6 +310,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('enforces intent transitions, risk binding, and immutable decisions', async () => {
+    const observerRuntime = makeClientRuntime()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -393,7 +394,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               ) VALUES (
                 ${staleDecisionId}, 'bayn.paper-risk-decision.v1', ${'4'.repeat(64)}, ${staleIntentId},
                 ${'3'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
-                statement_timestamp(), statement_timestamp() + interval '500 milliseconds'
+                statement_timestamp(), statement_timestamp() + interval '5 seconds'
               )
             `
             yield* sql`
@@ -404,21 +405,88 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             `
           }),
         )
-        yield* sql`
-          SELECT pg_sleep_until(expires_at + interval '10 milliseconds')
-          FROM risk_decisions
-          WHERE decision_id = ${staleDecisionId}
-        `
-        const backdatedExpiredIo = yield* Effect.exit(sql`
-          UPDATE intents
-          SET state = 'IO_STARTED', state_version = 3,
-              updated_at = (
-                SELECT expires_at - interval '1 microsecond'
-                FROM risk_decisions
-                WHERE decision_id = ${staleDecisionId}
+        const lockHeld = yield* Deferred.make<void>()
+        const releaseLock = yield* Deferred.make<void>()
+        const lockHolder = yield* Effect.forkChild(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT intent_id FROM intents WHERE intent_id = ${staleIntentId} FOR UPDATE`
+              yield* Deferred.succeed(lockHeld, undefined)
+              yield* Deferred.await(releaseLock)
+            }),
+          ),
+          { startImmediately: true },
+        )
+        yield* Deferred.await(lockHeld)
+        const { backdatedExpiredIo, lockWait } = yield* Effect.gen(function* () {
+          const update = yield* Effect.forkChild(
+            Effect.exit(sql`
+              UPDATE intents /* bayn_test_lock_wait */
+              SET state = 'IO_STARTED', state_version = 3,
+                  updated_at = (
+                    SELECT expires_at - interval '1 microsecond'
+                    FROM risk_decisions
+                    WHERE decision_id = ${staleDecisionId}
+                  )
+              WHERE intent_id = ${staleIntentId}
+            `),
+            { startImmediately: true },
+          )
+          const lockWait = yield* Effect.gen(function* () {
+            type LockActivity = {
+              query: string
+              started_before_expiry: boolean
+              state: string
+              wait_event_type: string | null
+            }
+            let activities: readonly LockActivity[] = []
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              activities = yield* Effect.promise(() =>
+                observerRuntime.runPromise(
+                  Effect.gen(function* () {
+                    const observerSql = yield* PgClient.PgClient
+                    return yield* observerSql<LockActivity>`
+                      SELECT
+                        activity.query,
+                        activity.state,
+                        activity.wait_event_type,
+                        activity.query_start < decision.expires_at AS started_before_expiry
+                      FROM pg_stat_activity AS activity
+                      CROSS JOIN risk_decisions AS decision
+                      WHERE activity.pid <> pg_backend_pid()
+                        AND activity.usename = current_user
+                        AND activity.datname = current_database()
+                        AND decision.decision_id = ${staleDecisionId}
+                    `
+                  }),
+                ),
               )
-          WHERE intent_id = ${staleIntentId}
-        `)
+              const observed = activities.find(
+                (row) => row.wait_event_type === 'Lock' && row.query.toUpperCase().includes('UPDATE INTENTS'),
+              )
+              if (observed !== undefined) {
+                return { waiting: true, started_before_expiry: observed.started_before_expiry }
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            return yield* Effect.fail(`update is not waiting on the lock: ${JSON.stringify(activities)}`)
+          })
+          yield* Effect.promise(() =>
+            observerRuntime.runPromise(
+              Effect.gen(function* () {
+                const observerSql = yield* PgClient.PgClient
+                yield* observerSql`
+                  SELECT pg_sleep_until(expires_at + interval '10 milliseconds')
+                  FROM risk_decisions
+                  WHERE decision_id = ${staleDecisionId}
+                `
+              }),
+            ),
+          )
+          yield* Deferred.succeed(releaseLock, undefined)
+          return { backdatedExpiredIo: yield* Fiber.join(update), lockWait }
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseLock, undefined).pipe(Effect.ignore)))
+        yield* Fiber.join(lockHolder)
         const blockedApproval = yield* Effect.exit(
           sql.withTransaction(
             Effect.gen(function* () {
@@ -574,6 +642,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           changeIdentity,
           expiredIo,
           backdatedExpiredIo,
+          lockWait,
           blockedApproval,
           invalidTerminal,
           orphan,
@@ -583,7 +652,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           blockedState: blockedState[0],
           staleState: staleState[0],
         }
-      }),
+      }).pipe(Effect.ensuring(Effect.promise(() => observerRuntime.dispose()))),
     )
 
     expect(Exit.isFailure(result.invalidInitial)).toBe(true)
@@ -594,6 +663,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Exit.isFailure(result.backdatedExpiredIo)) {
       expect(Cause.pretty(result.backdatedExpiredIo.cause)).toContain('current risk decision')
     }
+    expect(result.lockWait).toEqual({ waiting: true, started_before_expiry: true })
     expect(Exit.isFailure(result.blockedApproval)).toBe(true)
     expect(Exit.isFailure(result.invalidTerminal)).toBe(true)
     expect(Exit.isFailure(result.orphan)).toBe(true)
