@@ -1,116 +1,119 @@
 # Bayn architecture
 
-## Purpose and boundary
+## Boundary
 
-Bayn is being built as an autonomous quantitative evaluation, execution, and accounting service. Its first strategy is
-adjusted-ETF time-series momentum. The deployed runtime currently stops at evaluation and simulation accounting: it may
-not call a broker, submit an order, or promote capital. Later authority is unlocked only by the roadmap's economic,
-recovery, reconciliation, and observation gates.
+Bayn is a single-writer, paper-only quantitative qualification runtime. It evaluates one compiled
+`risk-balanced-trend` candidate against one immutable Signal snapshot, journals the deterministic simulation, verifies
+the accounting result, and exposes the resulting qualification evidence. It has no broker client, broker credential,
+order-submission path, or capital-promotion authority. Public status always reports maximum authority `observe`.
 
-The current deployment retains TigerBeetle as the deterministic simulation journal while Bayn-owned PostgreSQL stores
-the durable evaluation evidence. Signal input is an exact finalized, content-addressed snapshot. Simulation accounting
-is replaced incrementally before any paper mutation work begins.
+The runtime has three external I/O boundaries:
 
-## Critical path
+- Signal ClickHouse, read-only, for the configured finalized publication;
+- a dedicated Bayn TigerBeetle cluster for deterministic simulation accounting; and
+- the existing `EvidenceStore` interface for durable qualification evidence.
 
-1. A Signal-owned publisher captures adjusted daily bars and exchange sessions into an immutable snapshot and writes
-   its manifest last. Historical and daily modes use the same validation and finalization path. V2 manifests also bind
-   the authoritative universe ID and canonical symbol hash.
-2. The runtime's dedicated ClickHouse identity has `SELECT` only. The currently pinned TSMOM evidence reads V1
-   manifests; the staged universe publication uses `snapshot_manifests_v2`, `exchange_sessions_v1`, and
-   `adjusted_daily_bars_v2`. A later strategy integration must explicitly move Bayn to that V2 contract.
-3. Bayn reproduces the publisher's manifest, session, bar, and snapshot hashes; rejects mixed, duplicate, unexpected,
-   incomplete, future, or out-of-bound input; and emits a bounded immutable input manifest.
-4. The committed `tsmom-v1` protocol forms signals at month-end close and executes at the next common session open.
-5. One evaluator produces strategy, buy-and-hold, direct-volatility, and doubled-cost results on comparable dates.
-6. Deterministic events become double-entry transfers in a Bayn-owned TigerBeetle ledger. Existing IDs are accepted
-   only after object lookup and field comparison; accounts, transfers, and posted balances must reconcile exactly.
-7. After exact reconciliation, a single PostgreSQL transaction records the immutable protocol and snapshot references,
-   run identity, metrics, reconciliation receipt, ordered events, gate outcomes, and status history. The transaction
-   changes the run from `WRITING` to `COMPLETE` only after exact child-row counts match.
-8. Kubernetes readiness opens only after data validation, evaluation, journaling, reconciliation, and the durable
-   PostgreSQL commit complete.
+The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
+that interface and every persisted evidence contract.
 
-There is one `apps/v1 Deployment`, one replica, and one container. It has no scheduler, CronJob, Knative revision,
-broker secret, or Kubernetes API token. `maxSurge: 0` prevents overlapping runtime writers during rollout.
+## Runtime flow
 
-## Reproducibility
+1. The composition root loads Effect Config, decodes the compiled protocol, verifies its parameter hash against the
+   build, and constructs one pure `Strategy` value.
+2. Startup inspects the configured finalized Signal V2 publication before loading bars. The manifest must match the
+   compiled universe, symbol hash, feed, adjustment, calendar, and evaluation bounds.
+3. Bayn derives the candidate identity and opens the immutable qualification lock through the existing evidence
+   boundary. A terminal result is recovered; an incomplete lock fails closed.
+4. For a new candidate, Bayn loads the locked bars, evaluates the strategy and benchmarks, journals the simulation to
+   TigerBeetle, and requires exact reconciliation.
+5. The evaluation graph and one terminal qualification result are committed through the existing evidence boundary.
+6. A health probe then verifies Signal identity, TigerBeetle state, durable evidence, and dependency connectivity.
+   Readiness opens only when startup evidence exists and every probe is available.
 
-The executable embeds its full source revision, OCI repository, and the versioned selected-strategy behavior identity.
-The TSMOM identity is guarded by a deterministic evaluator fingerprint so behavior-preserving refactors do not break a
-pinned qualification. Startup strictly decodes the committed TypeScript protocol, hashes the decoded value with
-canonical JSON, and refuses to run when configured source/repository attribution differs from the embedded build.
-GitOps supplies the immutable image-index digest after publication. Status and the in-memory evidence envelope expose
-all of those facts and their contract versions.
+`BAYN_QUALIFICATION_RUN_ID` selects the recovery path. That path verifies the stored strategy, Signal, and execution
+bindings and does not load bars, open a new lock, evaluate, journal, or persist. Continuous health checks still verify
+the recovered run after startup.
 
-Local package entry points remain usable through an explicit `development-configured` provenance mode. It is reported
-in HTTP status with an unverified behavior marker, forces evaluation and journaling off, and cannot override embedded
-build facts. The production Nix image does not enable that mode: absent, partial, or mismatched embedded attribution
-prevents startup.
+A strategy rejection is terminal economic evidence, not an operational crash. Startup or dependency defects leave the
+HTTP process live for diagnosis while readiness remains closed.
 
-The run ID is the SHA-256 hash of:
+## Effect composition
 
-- source revision and immutable OCI image identity;
-- compiled strategy behavior and the complete decoded protocol;
-- complete finalized Signal snapshot and exchange-calendar provenance; and
-- explicit data, lookback, and evaluation bounds.
+Effect is used at resource and failure boundaries, not as a container for ordinary TypeScript:
 
-Decision and fill IDs derive from canonical event payloads. TigerBeetle account and transfer IDs derive from the run ID,
-event ID, and journal leg. Repeating the same run is idempotent; a changed price, protocol, or source revision creates a
-different run namespace.
+- `Strategy`, protocol values, calculations, hashing, and qualification analysis are plain immutable values and pure
+  functions.
+- `MarketData`, `Journal`, and `EvidenceStore` are Effect services because they own external I/O and resource
+  lifecycles.
+- `src/index.ts` is the only composition root. It loads configuration, builds the pure strategy, assembles the three
+  I/O layers, and hands them to `run`.
+- `run` owns one scoped lifetime. It starts the HTTP layer, performs initialization, and forks the repeating health
+  monitor with `forkScoped`; scope closure releases the server and clients.
+- Operational timeouts and typed `OperationalError` values are applied where an external operation enters the
+  lifecycle. Domain functions throw only inside an `Effect.try` boundary that assigns the owning component and
+  operation.
+- HTTP receives the runtime state and the narrow evidence-read callback it needs. It does not depend on the strategy or
+  the complete evidence service.
 
-PostgreSQL uses the same run ID as its primary idempotency key. Exact replay returns the existing `COMPLETE` receipt
-only after verifying its protocol, snapshot, source revision, image, strategy, status sequence, child-row counts, and
-every stored payload against its content hash. A collision, partial run, altered payload, or divergent immutable
-reference fails closed. Protocol locks and snapshot references are inserted and read back inside the same transaction
-as the run, so no partial evidence survives a failed write.
+Do not introduce a `Context.Service` or `Layer` for a pure value merely to make it injectable. Add an Effect service
+only when a capability needs acquisition, release, configuration, retry, concurrency, or typed I/O failure.
 
-## Versioned contract boundary
+## Runtime state and probes
 
-The target evaluation path uses the executable v1 contracts in [`contracts/v1.md`](contracts/v1.md). They strictly
-decode finalized-snapshot provenance, evaluation bounds, run identity, evidence freshness, independent status axes, and
-authority. Unknown versions and excess fields fail closed. Run identity binds the full source revision, OCI image
-digest, compiled strategy behavior hash, decoded strategy parameters, finalized snapshot, exchange-calendar version,
-and explicit bounds through canonical JSON and SHA-256.
+The internal operational states are `STARTING`, `READY`, `DEGRADED`, and `FAILED`. Each health observation
+records one sequence number and independent `UNKNOWN`, `AVAILABLE`, or `UNAVAILABLE` results for PostgreSQL,
+Signal, TigerBeetle, and durable evidence. Readiness requires:
 
-Runtime provenance, finalized-snapshot identity, bounded reads, strict TSMOM parameter decoding, run identity, and
-transactional evaluation persistence are adopted contract slices. Continuous health and removal of the legacy
-TigerBeetle dependency remain separate roadmap tickets with their own rollout evidence.
+- operational state `READY`;
+- an active evaluation or recovered qualification; and
+- every dependency result `AVAILABLE`.
 
-## Economic test
+The monitor runs immediately after initialization and then at `BAYN_HEALTH_INTERVAL_MS`. A transient defect moves a
+previously ready runtime to `DEGRADED`; a later complete probe can reopen readiness without discarding the last valid
+evidence. `BAYN_OPERATION_TIMEOUT_MS` bounds every external startup and health operation.
 
-The protocol is long-or-cash across DBC, EEM, EFA, GLD, IEF, SPY, TLT, and VNQ. Direction is the majority sign across
-21, 63, 126, and 252-session momentum lookbacks. Rebalancing is monthly and the cost model is charged on every buy and
-sell. The verdict fails closed unless all committed gates pass: sufficient observations, positive return after costs,
-Sharpe improvement over both benchmarks, bounded drawdown, bounded turnover, and positive return with doubled costs.
+`GET /livez` proves only that the process and HTTP server are alive. `GET /readyz` exposes the current readiness
+decision. `GET /v1/status` keeps operational health, data identity, evidence, economic verdict, qualification,
+accounting, build provenance, and fixed authority separate.
 
-This evaluator result is not the excluded locked out-of-sample verdict. Changing the strategy because of the current
-result would contaminate that later test.
+## Strategy and economic contract
 
-## Accounting model
+The compiled `bayn.risk-balanced-trend.protocol.v2` uses the exact `equity-infrastructure-v1` universe:
 
-All USD amounts use integer micros in TigerBeetle. Per-run accounts are cash, equity, fees, realized gain, realized loss,
-and inventory cost per symbol. Buys move cash to inventory cost. Sells remove cost basis, move proceeds to cash, and
-separate realized gain or loss. Fees move cash to fee expense. Quantities and prices remain in the immutable evaluation
-event payload hash.
+`AMD, AVGO, COHR, CRDO, LITE, MRVL, MU, NVDA, WDC`.
 
-TigerBeetle is currently a single-replica shared dependency. Exact Bayn reconciliation is an accounting-integrity gate;
-it does not make that dependency highly available and does not grant trading authority. PostgreSQL durably records the
-result and receipt, but does not replace the double-entry ledger in this slice.
+At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
+averages them into a composite score, and assigns weight only to positive scores. Weights are redistributed under a 35%
+per-symbol cap, quantized deterministically, and scaled down when estimated portfolio volatility exceeds 10%. Residual
+exposure remains cash. Decisions execute only at the next exchange-session open under the compiled paper execution
+model.
 
-## Deployment and recovery
+The evaluator compares the candidate with buy-and-hold, direct-volatility timing, and doubled-cost results over aligned
+dates. Qualification also applies the committed statistical and walk-forward policy. Every decision, benchmark,
+execution assumption, gate, and result remains bound to the run identity; refactoring composition must not alter those
+values.
 
-The image is built for AMD64 and ARM64 with Nix, published under a source-SHA tag, and pinned in GitOps by digest. Argo
-CD owns the `bayn` namespace and Deployment. The ClickHouse credential is separately sealed, reflected only into the
-Bayn namespace, and granted table-level `SELECT`. Alpaca credentials and the insert/select-only Signal writer identity
-are mounted only into the Signal publisher CronJob and are never mounted into the Bayn runtime.
+## Reproducibility and failure semantics
 
-Bayn connects to `bayn-db-rw` with the CNPG-generated `bayn-db-app` URI and a read-only mount containing only
-`bayn-db-ca/ca.crt`; the CA private key is not mounted. TLS hostname and certificate verification are mandatory in a
-production artifact. Effect SQL owns the scoped two-connection pool and additive migrations. CNPG backup, retention,
-and isolated restore evidence are defined in [`cnpg-backup-restore.md`](cnpg-backup-restore.md).
+The executable embeds the source revision, image repository, strategy behavior hash, and parameter hash. Production
+startup rejects absent or mismatched embedded facts. GitOps supplies the immutable image-index digest, and the run ID
+also binds the complete decoded protocol, finalized Signal provenance, calendar, and explicit bounds.
 
-On restart, Bayn recomputes the deterministic run, verifies any existing TigerBeetle objects, and reconciles the full
-run again before reading or writing the matching PostgreSQL receipt. If ClickHouse, TigerBeetle, PostgreSQL, data
-validation, evaluation, reconciliation, migration, or persistence fails, the process remains live for diagnosis but
-readiness stays closed.
+The local `dev` and `start` scripts select `development-configured` provenance because those artifacts do not
+contain production build metadata. This changes only how provenance is verified and reported; it does not disable
+evaluation, journaling, health checks, or fail-closed behavior.
+
+Repeated execution of the same inputs is deterministic and must either recover exact terminal evidence or reproduce
+the same journal objects. Any mismatched manifest, universe, build identity, lock, journal object, reconciliation,
+qualification, or durable evidence closes readiness and never expands authority.
+
+## Deployment status
+
+GitOps owns one `apps/v1 Deployment` and a dedicated three-replica TigerBeetle cluster. When Bayn is active, the
+Deployment is a single writer and `maxSurge: 0` prevents overlapping writers during rollout. The pod has no broker
+secret and no Kubernetes API token.
+
+As of 2026-07-21, the Deployment is intentionally quiesced at zero replicas for the separately owned database
+reset/restore workstream. The non-database cleanup does not change replicas, the qualification pin, PostgreSQL
+resources, or stored evidence. Live acceptance remains pending until that workstream restores one coherent writer and
+the promoted image proves startup, readiness, status, and sustained health.
