@@ -17,7 +17,8 @@ const currentRuntimeConfiguration = {
   BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
   BAYN_SIGNAL_EVALUATION_END: '2026-07-20',
   BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
-  BAYN_TIGERBEETLE_ADDRESSES: 'ledger.bayn.svc.cluster.local:3000',
+  BAYN_TIGERBEETLE_ADDRESSES:
+    'ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000',
   BAYN_TIGERBEETLE_LEDGER: '7001',
 } as const
 

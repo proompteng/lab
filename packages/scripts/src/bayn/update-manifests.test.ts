@@ -19,13 +19,15 @@ const currentBindings = {
   BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
   BAYN_SIGNAL_EVALUATION_END: '2026-07-20',
   BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
-  BAYN_TIGERBEETLE_ADDRESSES: 'ledger.bayn.svc.cluster.local:3000',
+  BAYN_TIGERBEETLE_ADDRESSES:
+    'ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000',
   BAYN_TIGERBEETLE_LEDGER: '7001',
 } as const
 
 interface FixtureOptions {
   readonly snapshotId?: string
   readonly publicationAsOf?: string
+  readonly tigerBeetleAddresses?: string
   readonly behaviorHash?: string
   readonly parameterHash?: string
   readonly qualificationRunId?: string | undefined
@@ -58,6 +60,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     ...currentBindings,
     BAYN_SIGNAL_SNAPSHOT_ID: options.snapshotId ?? currentBindings.BAYN_SIGNAL_SNAPSHOT_ID,
     BAYN_SIGNAL_PUBLICATION_ASOF: options.publicationAsOf ?? currentBindings.BAYN_SIGNAL_PUBLICATION_ASOF,
+    BAYN_TIGERBEETLE_ADDRESSES: options.tigerBeetleAddresses ?? currentBindings.BAYN_TIGERBEETLE_ADDRESSES,
   }
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
   const environment = [
@@ -134,6 +137,23 @@ describe('Bayn manifest promotion', () => {
     const paths = makeFixture({ publicationAsOf: '2026-07-19' })
 
     expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+  })
+
+  test('restores replica-index-ordered TigerBeetle addresses for a fresh qualification snapshot', () => {
+    const paths = makeFixture({
+      snapshotId: '4'.repeat(64),
+      publicationAsOf: '2026-07-19',
+      tigerBeetleAddresses: 'ledger.bayn.svc.cluster.local:3000',
+    })
+
+    expect(promote(paths)).toMatchObject({
+      qualificationMode: 'replace',
+      runtimeBindingsMatch: false,
+      snapshotChanged: true,
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      environmentBlock('BAYN_TIGERBEETLE_ADDRESSES', currentBindings.BAYN_TIGERBEETLE_ADDRESSES).trim(),
+    )
   })
 
   test('replaces a pin for a fresh snapshot and rejects a second unpinned source release', () => {
