@@ -253,8 +253,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-j5l62hDf+S8Mj6DUADWjEL1j+tOf8ZuLh6Acj3+Qs+c=";
-    aarch64-linux = "sha256-e4JzqFcTPfksh5X+wrNfJ/PPHCNnjf82Up03j6CClKY=";
+    x86_64-linux = "sha256-EY+nZK3pCullEk0zPkKQVY54wMFO/WzPPSitfZlhe5M=";
+    aarch64-linux = lib.fakeHash;
   };
 
   installFilters = [
