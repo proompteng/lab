@@ -305,7 +305,7 @@ The expected mirrored amd64 manifest digest is
 
    ```bash
    set -euo pipefail
-   kubectl -n hermes exec hermes-0 -c hermes -- sh -c '
+   kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc '
      set -eu
      test "$(command -v gh)" = /opt/tools/gh
      gh --version | grep -F "gh version 2.96.0"

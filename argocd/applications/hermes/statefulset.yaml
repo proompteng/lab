@@ -250,6 +250,10 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           volumeMounts:
+            - name: bootstrap
+              mountPath: /etc/profile.d/hermes-tools.sh
+              subPath: terminal-profile.sh
+              readOnly: true
             - name: data
               mountPath: /opt/data
             - name: config

@@ -7,6 +7,8 @@ const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
 const githubCliVersion = '2.96.0'
 const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
+const terminalPath =
+  '/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
 export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
@@ -25,6 +27,7 @@ export const productionPaths = {
   bootstrap: 'argocd/applications/hermes/bootstrap.sh',
   labCheckout: 'argocd/applications/hermes/bootstrap-lab-checkout.sh',
   githubBootstrap: 'argocd/applications/hermes/bootstrap-github.sh',
+  terminalProfile: 'argocd/applications/hermes/terminal-profile.sh',
   workspaceAgents: 'argocd/applications/hermes/bootstrap/AGENTS.md',
   workspaceTools: 'argocd/applications/hermes/bootstrap/TOOLS.md',
   readme: 'argocd/applications/hermes/README.md',
@@ -95,6 +98,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- github-sealed-secret.yaml',
     '- bootstrap-lab-checkout.sh',
     '- bootstrap-github.sh',
+    '- terminal-profile.sh',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
@@ -130,6 +134,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mountPath: /opt/kubectl-image',
     'mountPath: /opt/tools',
     'mountPath: /opt/github-auth',
+    'mountPath: /etc/profile.d/hermes-tools.sh\n              subPath: terminal-profile.sh\n              readOnly: true',
     'sizeLimit: 1Mi',
     'value: /opt/tools:/opt/hermes/bin:',
     'name: KUBECONFIG',
@@ -147,6 +152,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'value: main',
     'value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1',
   ])
+  if (count(files.statefulSet, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
+    failures.push(`${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`)
+  }
   forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
     ':latest',
     'privileged: true',
@@ -260,6 +268,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '_config_version: 33',
     'base_url: http://flamingo.flamingo.svc.cluster.local/v1',
     'terminal:\n  backend: local\n  cwd: /opt/data/workspace/tuslagch/lab',
+    'shell_init_files:\n    - /etc/profile.d/hermes-tools.sh',
     'discord:\n    enabled: true',
     'api_server:\n    enabled: true',
     'cron_mode: deny',
@@ -582,6 +591,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'wget ',
     ':latest',
   ])
+  requireTerms(failures, productionPaths.terminalProfile, files.terminalProfile, [`export PATH='${terminalPath}'`])
   requireTerms(failures, productionPaths.workspaceAgents, files.workspaceAgents, [
     'Kubernetes access is cluster-wide read-only.',
     'Kubernetes Secrets and service-account token subresources are outside your authority.',
@@ -604,6 +614,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'GitHub CLI `2.96.0`',
     'per-Pod `emptyDir`',
     'bounded retries for transient pod-network startup races',
+    '/etc/profile.d/hermes-tools.sh',
     githubCliArchiveSha256,
   ])
 
@@ -881,6 +892,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'git -C /opt/data/workspace/tuslagch/lab remote get-url origin',
     'cat /opt/data/workspace/tuslagch/.lab-source-revision',
     'git -C /opt/data/workspace/tuslagch/lab cat-file -e HEAD:AGENTS.md',
+    'kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc \'\n     set -eu\n     test "$(command -v gh)" = /opt/tools/gh',
     'test "$(command -v gh)" = /opt/tools/gh',
     'gh --version | grep -F "gh version 2.96.0"',
     'test "$(env -u GH_TOKEN -u GITHUB_TOKEN gh api user --jq .login)" = tuslagch',

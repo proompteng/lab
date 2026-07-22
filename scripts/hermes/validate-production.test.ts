@@ -216,6 +216,53 @@ test('rejects persisting GitHub CLI auth on the Hermes data volume', async () =>
   )
 })
 
+test('rejects a terminal login profile that omits the production tools path', async () => {
+  const files = await loadProductionFiles()
+  const expectedExport =
+    "export PATH='/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'"
+  files.terminalProfile = files.terminalProfile.replace(expectedExport, "export PATH='/usr/local/bin:/usr/bin:/bin'")
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.terminalProfile}: missing production invariant ${JSON.stringify(expectedExport)}`,
+  )
+})
+
+test('rejects a gateway that does not mount the immutable terminal login profile', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'mountPath: /etc/profile.d/hermes-tools.sh',
+    'mountPath: /etc/profile.d/hermes-tools-disabled.sh',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`,
+  )
+})
+
+test('rejects terminal sessions that do not source the immutable tools profile', async () => {
+  const files = await loadProductionFiles()
+  const expectedShellInit = 'shell_init_files:\n    - /etc/profile.d/hermes-tools.sh'
+  files.config = files.config.replace(expectedShellInit, 'auto_source_bashrc: true')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: missing production invariant ${JSON.stringify(expectedShellInit)}`,
+  )
+})
+
+test('rejects a GitHub rollout check that bypasses the Hermes login-shell boundary', async () => {
+  const files = await loadProductionFiles()
+  const expectedLoginProof =
+    'kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc \'\n     set -eu\n     test "$(command -v gh)" = /opt/tools/gh'
+  files.runbook = files.runbook.replace(
+    expectedLoginProof,
+    'kubectl -n hermes exec hermes-0 -c hermes -- sh -c \'\n     set -eu\n     test "$(command -v gh)" = /opt/tools/gh',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant ${JSON.stringify(expectedLoginProof)}`,
+  )
+})
+
 test('rejects plaintext GitHub credentials', async () => {
   const files = await loadProductionFiles()
   files.githubSealedSecret = files.githubSealedSecret.replace(

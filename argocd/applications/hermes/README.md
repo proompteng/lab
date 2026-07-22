@@ -44,6 +44,9 @@ smoke test, manifest change, and normal CI/Codex review.
   `83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60`, caches the verified archive, and recreates the
   `tuslagch` Git identity, GitHub CLI authentication, and `gh auth git-credential` helper on every start. Bootstrap fails
   closed unless `gh api user` returns `tuslagch` and repository permission is `ADMIN`.
+- The immutable `/etc/profile.d/hermes-tools.sh` restores `/opt/tools` and the pinned Hermes paths after Debian's login
+  profile resets `PATH`; Hermes explicitly sources it while capturing each terminal session, so bare `gh` and `kubectl`
+  resolve consistently from API and Discord terminals.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.
 - The API is cluster-local and requires bearer authentication for model requests and detailed health.
 - Plugins, MCP servers, delegation, cron, hooks, and speech-to-text remain disabled. Terminal access is explicit for CLI,

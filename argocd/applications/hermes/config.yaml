@@ -13,6 +13,8 @@ terminal:
   timeout: 180
   lifetime_seconds: 900
   home_mode: profile
+  shell_init_files:
+    - /etc/profile.d/hermes-tools.sh
 
 tool_loop_guardrails:
   warnings_enabled: true

@@ -17,6 +17,7 @@ configMapGenerator:
       - bootstrap.sh
       - bootstrap-lab-checkout.sh
       - bootstrap-github.sh
+      - terminal-profile.sh
       - backup-once.sh
       - AGENTS.md=bootstrap/AGENTS.md
       - HEARTBEAT.md=bootstrap/HEARTBEAT.md
