@@ -1,8 +1,24 @@
+import { Schema } from 'effect'
+
+import { makeRuntimeProvenance } from './contracts'
+import { ReconciliationResultSchema } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
+import type { QualificationLock, QualificationResult } from './qualification'
 import { evaluateReference, type ReferenceEvaluation } from './qualification-reference'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
-import { makeRuntimeProvenance } from './contracts'
-import { ContractVersion, type DailyBar, type InputManifest, type Protocol, type SimulationTrace } from './types'
+import {
+  ContractVersion,
+  type DailyBar,
+  type EconomicVerdict,
+  type EvaluationEvent,
+  type InputManifest,
+  type Protocol,
+  type SimulationTrace,
+} from './types'
+
+const StrictParseOptions = { onExcessProperty: 'error' } as const
+const decodeReconciliation = Schema.decodeUnknownSync(ReconciliationResultSchema, StrictParseOptions)
+type GateScalar = EconomicVerdict['gates'][number]['actual']
 
 export interface StoredArtifact {
   readonly name: string
@@ -14,17 +30,17 @@ export interface StoredArtifact {
 export interface StoredEvent {
   readonly ordinal: number
   readonly id: string
-  readonly kind: string
+  readonly kind: EvaluationEvent['kind']
   readonly contentHash: string
-  readonly payload: unknown
+  readonly payload: EvaluationEvent
 }
 
 export interface StoredGate {
   readonly ordinal: number
   readonly name: string
   readonly passed: boolean
-  readonly actual: unknown
-  readonly required: unknown
+  readonly actual: GateScalar
+  readonly required: GateScalar
   readonly contentHash: string
 }
 
@@ -36,7 +52,7 @@ export interface AuditDatabaseSnapshot {
     readonly strategyName: string
     readonly behaviorHash: string
     readonly parameterHash: string
-    readonly parameters: unknown
+    readonly parameters: Protocol
   }
   readonly run: {
     readonly runId: string
@@ -48,7 +64,7 @@ export interface AuditDatabaseSnapshot {
     readonly imageDigest: string
     readonly strategyName: string
     readonly initialCapitalMicros: string
-    readonly status: string
+    readonly status: 'COMPLETE'
     readonly artifactCount: number
     readonly eventCount: number
     readonly gateCount: number
@@ -56,7 +72,16 @@ export interface AuditDatabaseSnapshot {
   readonly artifacts: readonly StoredArtifact[]
   readonly events: readonly StoredEvent[]
   readonly gates: readonly StoredGate[]
-  readonly statuses: readonly { readonly status: string; readonly detail: unknown }[]
+  readonly statuses: readonly (
+    | {
+        readonly status: 'WRITING'
+        readonly detail: { readonly artifactCount: number; readonly eventCount: number; readonly gateCount: number }
+      }
+    | {
+        readonly status: 'COMPLETE'
+        readonly detail: { readonly reconciliationExact: true; readonly verdict: 'PASS' | 'FAIL_CLOSED' }
+      }
+  )[]
   readonly priorTrialRunIds: readonly string[]
   readonly qualification: {
     readonly lockCreatedAt: string
@@ -64,9 +89,9 @@ export interface AuditDatabaseSnapshot {
     readonly storedLockId: string
     readonly storedAnalysisHash: string
     readonly storedResultHash: string
-    readonly storedVerdict: string
-    readonly lock: unknown
-    readonly result: unknown
+    readonly storedVerdict: QualificationResult['verdict']
+    readonly lock: QualificationLock
+    readonly result: QualificationResult
   }
 }
 
@@ -145,32 +170,7 @@ export interface QualificationAuditReport {
   readonly auditHash: string
 }
 
-type JsonObject = Readonly<Record<string, unknown>>
-
-const object = (value: unknown, name: string): JsonObject => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${name} must be an object`)
-  return value as JsonObject
-}
-
-const array = (value: unknown, name: string): readonly unknown[] => {
-  if (!Array.isArray(value)) throw new Error(`${name} must be an array`)
-  return value
-}
-
-const string = (value: unknown, name: string): string => {
-  if (typeof value !== 'string' || value.length === 0) throw new Error(`${name} must be a non-empty string`)
-  return value
-}
-
-const without = (value: JsonObject, key: string): JsonObject =>
-  Object.fromEntries(Object.entries(value).filter(([name]) => name !== key))
-
 const same = (left: unknown, right: unknown): boolean => canonicalHashV1(left) === canonicalHashV1(right)
-
-const itemCount = (payload: unknown): number => {
-  if (typeof payload !== 'object' || payload === null || !('items' in payload)) return 0
-  return Array.isArray(payload.items) ? payload.items.length : 0
-}
 
 const expectedResultReason = (gateName: string): string =>
   `EVALUATION_${gateName
@@ -234,10 +234,12 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   }
   const database = input.database
   const artifact = new Map(database.artifacts.map((value) => [value.name, value]))
-  const lock = object(database.qualification.lock, 'qualification lock')
-  const result = object(database.qualification.result, 'qualification result')
-  const lockId = string(lock.lockId, 'qualification lock ID')
-  const resultHash = string(result.resultHash, 'qualification result hash')
+  const lock = database.qualification.lock
+  const { lockId, ...lockMaterial } = lock
+  const result = database.qualification.result
+  const { resultHash, ...resultMaterial } = result
+  const analysis = result.analysis
+  const { analysisHash, ...analysisMaterial } = analysis
   if (
     database.protocol.strategyName !== contract.name ||
     database.run.strategyName !== contract.name ||
@@ -326,15 +328,13 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   )
   check(
     'event-hashes-and-order',
-    database.events.every((value, index) => {
-      const payload = object(value.payload, `event ${index}`)
-      return (
+    database.events.every(
+      (value, index) =>
         value.ordinal === index &&
-        value.id === payload.id &&
-        value.kind === payload.kind &&
-        canonicalHashV1(payload) === value.contentHash
-      )
-    }),
+        value.id === value.payload.id &&
+        value.kind === value.payload.kind &&
+        canonicalHashV1(value.payload) === value.contentHash,
+    ),
     `${database.events.length} events`,
   )
   check(
@@ -433,12 +433,35 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `economicStatus=${reference.verdict.status}`,
   )
 
-  const reconciliation = object(artifact.get('reconciliation')?.payload, 'TigerBeetle reconciliation artifact')
+  const reconciliation = decodeReconciliation(artifact.get('reconciliation')?.payload)
   check(
     'accounting-reconciliation-identity',
     reconciliation.runId === database.run.runId && reconciliation.exact === true,
-    `runId=${String(reconciliation.runId)} exact=${String(reconciliation.exact)}`,
+    `runId=${reconciliation.runId} exact=${reconciliation.exact}`,
   )
+  const artifactItemCounts = new Map<string, number>([
+    ['evaluation-summary', 0],
+    ['input-manifest', 0],
+    ['strategy', 0],
+    ['buy-and-hold', 0],
+    ['direct-volatility-timing', 0],
+    ['double-cost-strategy', 0],
+    ['simulated-orders', reference.strategy.trace.orders.length],
+    ['cash-changes', reference.strategy.trace.cashChanges.length],
+    ['daily-position-marks', reference.strategy.trace.dailyMarks.length],
+    [contract.decisionArtifactName, reference.strategy.decisions.length],
+    ['buy-and-hold-series', reference.buyAndHold.daily.length],
+    ['direct-volatility-timing-series', reference.directVolTiming.daily.length],
+    ['double-cost-strategy-series', reference.doubleCostStrategy.daily.length],
+    ['equity-series', markedEquity.equitySeries.length],
+    ['marked-equity-reconciliation', 0],
+    ['reconciliation', 0],
+  ])
+  const artifactItemCount = (name: string): number => {
+    const count = artifactItemCounts.get(name)
+    if (count === undefined) throw new Error(`unsupported qualification artifact: ${name}`)
+    return count
+  }
   const baseArtifacts = database.artifacts.filter((value) => value.name !== 'qualification-artifact-manifest')
   const qualificationManifest = {
     schemaVersion: 'bayn.qualification-artifact-manifest.v1',
@@ -462,11 +485,11 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       costMultiplierMicros: MICROS_STRING,
     },
     artifacts: [...baseArtifacts]
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
       .map((value) => ({
         name: value.name,
         schemaVersion: value.schemaVersion,
-        itemCount: itemCount(value.payload),
+        itemCount: artifactItemCount(value.name),
         contentHash: value.contentHash,
       })),
     events: {
@@ -488,34 +511,29 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `contentHash=${canonicalHashV1(qualificationManifest)}`,
   )
 
-  check('lock-hash', canonicalHashV1(without(lock, 'lockId')) === lockId, `lockId=${lockId}`)
+  check('lock-hash', canonicalHashV1(lockMaterial) === lockId, `lockId=${lockId}`)
   check(
     'qualification-row-binding',
     database.qualification.storedLockId === lockId &&
-      database.qualification.storedAnalysisHash ===
-        string(object(result.analysis, 'qualification analysis').analysisHash, 'analysis hash') &&
+      database.qualification.storedAnalysisHash === result.analysis.analysisHash &&
       database.qualification.storedResultHash === resultHash &&
       database.qualification.storedVerdict === result.verdict,
     `storedResultHash=${database.qualification.storedResultHash}`,
   )
-  const lockData = object(lock.data, 'qualification lock data')
+  const lockData = lock.data
   const lockContractBinding =
     lock.schemaVersion === 'bayn.qualification-lock.v3' &&
     lock.universeId === input.protocol.universeId &&
     lock.universeSymbolHash === input.protocol.universeSymbolHash &&
     lockData.inputManifestHash === input.manifest.hash
-  const lockPolicies = object(lock.policies, 'qualification lock policies')
-  const policyDocuments = Object.entries(lockPolicies)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => {
-      const policy = object(value, `qualification policy ${name}`)
-      return {
-        name,
-        schemaVersion: string(policy.schemaVersion, `qualification policy ${name} schema version`),
-        contentHash: string(policy.contentHash, `qualification policy ${name} content hash`),
-        content: policy.content,
-      }
-    })
+  const policyDocuments = (
+    [
+      ['benchmark', lock.policies.benchmark],
+      ['execution', lock.policies.execution],
+      ['thresholds', lock.policies.thresholds],
+      ['uncertainty', lock.policies.uncertainty],
+    ] as const
+  ).map(([name, policy]) => ({ name, ...policy }))
   check(
     'lock-candidate-binding',
     lock.candidateRunId === database.run.runId &&
@@ -551,26 +569,16 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `${database.priorTrialRunIds.length} prior trials`,
   )
 
-  const analysis = object(result.analysis, 'qualification analysis')
-  const analysisHash = string(analysis.analysisHash, 'qualification analysis hash')
-  check(
-    'analysis-hash',
-    canonicalHashV1(without(analysis, 'analysisHash')) === analysisHash,
-    `analysisHash=${analysisHash}`,
-  )
-  check('result-hash', canonicalHashV1(without(result, 'resultHash')) === resultHash, `resultHash=${resultHash}`)
+  check('analysis-hash', canonicalHashV1(analysisMaterial) === analysisHash, `analysisHash=${analysisHash}`)
+  check('result-hash', canonicalHashV1(resultMaterial) === resultHash, `resultHash=${resultHash}`)
   const economicPass = reference.verdict.gates.every((gate) => gate.passed)
   const analysisPass = analysis.status === 'PASS'
   const expectedQualification = economicPass && analysisPass ? 'QUALIFIED' : 'REJECTED'
   const expectedEconomicReasons = reference.verdict.gates
     .filter((gate) => !gate.passed)
     .map((gate) => expectedResultReason(gate.name))
-  const reasonCodes = array(result.reasonCodes, 'qualification reason codes').map((value) =>
-    string(value, 'reason code'),
-  )
-  const analysisReasonCodes = array(analysis.reasonCodes, 'qualification analysis reason codes').map((value) =>
-    string(value, 'analysis reason code'),
-  )
+  const reasonCodes = result.reasonCodes
+  const analysisReasonCodes = analysis.reasonCodes
   const expectedReasonCodes = [...new Set([...expectedEconomicReasons, ...analysisReasonCodes])].sort()
   check(
     'analysis-lineage',
@@ -591,9 +599,9 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
 
   const sortedReplicas = [...input.signalReplicas].sort()
   const sortedAccess = [...input.signalAccess].sort((left, right) => {
-    if (left.queryStartTime !== right.queryStartTime) return left.queryStartTime.localeCompare(right.queryStartTime)
-    if (left.replica !== right.replica) return left.replica.localeCompare(right.replica)
-    return left.queryId.localeCompare(right.queryId)
+    if (left.queryStartTime !== right.queryStartTime) return left.queryStartTime < right.queryStartTime ? -1 : 1
+    if (left.replica !== right.replica) return left.replica < right.replica ? -1 : 1
+    return left.queryId < right.queryId ? -1 : left.queryId > right.queryId ? 1 : 0
   })
   const candidateAccess = sortedAccess.filter((value) => value.user === input.signalPrincipals.candidate)
   const candidateBarReads = candidateAccess.filter((value) => value.kind === 'bars')

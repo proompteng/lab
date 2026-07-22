@@ -175,6 +175,81 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(schema.migrations).toEqual([{ migration_id: 1, name: 'initial_schema' }])
   })
 
+  test('rejects the legacy migration tracker instead of creating a parallel schema', async () => {
+    await runtime.dispose()
+    const client = makeClientRuntime()
+    await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`CREATE TABLE bayn_schema_migrations (migration_id integer PRIMARY KEY)`
+      }),
+    )
+
+    const legacyRuntime = makeEvidenceRuntime()
+    const exit = await legacyRuntime.runPromiseExit(Effect.flatMap(EvidenceStore, (store) => store.check))
+    await legacyRuntime.dispose()
+
+    const trackers = await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ current_exists: boolean; legacy_exists: boolean }>`
+          SELECT
+            to_regclass('public.schema_migrations') IS NOT NULL AS current_exists,
+            to_regclass('public.bayn_schema_migrations') IS NOT NULL AS legacy_exists
+        `
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        return rows[0]
+      }),
+    )
+    await client.dispose()
+    runtime = makeEvidenceRuntime()
+    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('legacy migration tracker is unsupported')
+    expect(trackers).toEqual({ current_exists: false, legacy_exists: true })
+  })
+
+  test('rejects the retired migration history instead of skipping the initial schema', async () => {
+    await runtime.dispose()
+    const client = makeClientRuntime()
+    await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`
+          CREATE TABLE schema_migrations (
+            migration_id integer PRIMARY KEY,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            name text NOT NULL
+          )
+        `
+        yield* sql`INSERT INTO schema_migrations (migration_id, name) VALUES (1, 'evaluation_evidence')`
+      }),
+    )
+
+    const legacyRuntime = makeEvidenceRuntime()
+    const exit = await legacyRuntime.runPromiseExit(Effect.flatMap(EvidenceStore, (store) => store.check))
+    await legacyRuntime.dispose()
+    await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+      }),
+    )
+    await client.dispose()
+    runtime = makeEvidenceRuntime()
+    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('legacy migration history is unsupported')
+  })
+
   test('accepts only the current protocol contract', async () => {
     const exits = await runtime.runPromise(
       Effect.gen(function* () {

@@ -5,6 +5,7 @@ import {
   AccountFlags,
   type Account,
   type Client,
+  type ClientInitArgs,
   CreateAccountStatus,
   CreateTransferStatus,
   type QueryFilter,
@@ -15,7 +16,7 @@ import { Context, Effect, Layer, Option, ScopedRef, Semaphore } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { operationalError, type OperationalError } from './errors'
-import { canonicalHashV1, hashObject, stableU128, stableU64 } from './hash'
+import { canonicalHashV1, stableU128, stableU64 } from './hash'
 import type { CashYieldEvent, EvaluationEvent, FeeEvent, FillEvent, InputManifest, ReconciliationResult } from './types'
 
 const SCHEMA_VERSION = 2
@@ -233,7 +234,7 @@ const transfer = (
   credit_account_id: creditAccountId,
   amount,
   pending_id: 0n,
-  user_data_128: stableU128('bayn-event-v1', hashObject(event)),
+  user_data_128: stableU128('bayn-event-v1', canonicalHashV1(event)),
   user_data_64: runTag,
   user_data_32: SCHEMA_VERSION,
   timeout: 0,
@@ -492,7 +493,7 @@ export const assertReconciled = (
 interface LedgerClient {
   readonly request: <A>(
     operation: string,
-    execute: (client: Client) => Promise<A>,
+    execute: (client: TigerBeetleClient) => Promise<A>,
   ) => Effect.Effect<A, OperationalError>
 }
 
@@ -692,11 +693,22 @@ const journalAndReconcile = (
   })
 
 export interface JournalDependencies {
-  readonly createClient: typeof createClient
+  readonly createClient: (options: ClientInitArgs) => TigerBeetleClient
   readonly resolveReplicaAddresses: (
     configuredAddresses: readonly string[],
   ) => Effect.Effect<string[], OperationalError>
 }
+
+export type TigerBeetleClient = Pick<
+  Client,
+  | 'createAccounts'
+  | 'createTransfers'
+  | 'lookupAccounts'
+  | 'lookupTransfers'
+  | 'queryAccounts'
+  | 'queryTransfers'
+  | 'destroy'
+>
 
 const defaultDependencies: JournalDependencies = { createClient, resolveReplicaAddresses }
 
@@ -744,57 +756,61 @@ export const JournalLive = (
           ),
       )
       const clients = yield* ScopedRef.fromAcquire(acquireClient.pipe(Effect.map(Option.some)))
-      const semaphore = yield* Semaphore.make(1)
+      const clientState = yield* Semaphore.make(1)
       const installClient = ScopedRef.set(clients, acquireClient.pipe(Effect.map(Option.some)))
-      const refresh = (trigger: string): Effect.Effect<void> =>
-        ScopedRef.set(clients, Effect.succeed(Option.none<Client>())).pipe(
-          Effect.andThen(
-            installClient.pipe(
-              Effect.tap(() => Effect.logInfo('TigerBeetle client refreshed').pipe(Effect.annotateLogs({ trigger }))),
-              Effect.catch((error) =>
-                Effect.logWarning('TigerBeetle client refresh failed').pipe(
-                  Effect.annotateLogs({
-                    trigger,
-                    component: error.component,
-                    operation: error.operation,
-                    error: error.message,
-                  }),
-                ),
-              ),
-            ),
-          ),
-        )
+      const getInstalledClient = ScopedRef.get(clients).pipe(
+        Effect.flatMap(
+          Option.match({
+            onSome: Effect.succeed,
+            onNone: () => Effect.fail(operationalError('journal', 'connect', 'TigerBeetle client is unavailable')),
+          }),
+        ),
+      )
       const getClient = ScopedRef.get(clients).pipe(
         Effect.flatMap(
           Option.match({
             onSome: Effect.succeed,
             onNone: () =>
-              installClient.pipe(
-                Effect.andThen(ScopedRef.get(clients)),
-                Effect.flatMap(
-                  Option.match({
-                    onSome: Effect.succeed,
-                    onNone: () =>
-                      Effect.fail(
-                        operationalError('journal', 'connect', 'TigerBeetle client unavailable after refresh'),
-                      ),
-                  }),
+              clientState.withPermit(
+                ScopedRef.get(clients).pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onSome: Effect.succeed,
+                      onNone: () => installClient.pipe(Effect.andThen(getInstalledClient)),
+                    }),
+                  ),
                 ),
               ),
           }),
         ),
       )
+      const invalidateClient = (active: TigerBeetleClient, trigger: string): Effect.Effect<void> =>
+        clientState
+          .withPermitsIfAvailable(1)(
+            ScopedRef.get(clients).pipe(
+              Effect.flatMap((current) =>
+                Option.isSome(current) && current.value === active
+                  ? ScopedRef.set(clients, Effect.succeed(Option.none<TigerBeetleClient>())).pipe(
+                      Effect.andThen(
+                        Effect.logWarning('TigerBeetle client invalidated').pipe(Effect.annotateLogs({ trigger })),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          )
+          .pipe(Effect.asVoid)
       const client: LedgerClient = {
-        request: <A>(operation: string, execute: (active: Client) => Promise<A>) =>
-          semaphore.withPermit(
-            getClient.pipe(
-              Effect.flatMap((active) =>
-                Effect.tryPromise({
-                  try: () => execute(active),
-                  catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
-                }).pipe(
-                  Effect.onInterrupt(() => refresh(`interrupted:${operation}`)),
-                  Effect.catch((error) => refresh(`failed:${operation}`).pipe(Effect.andThen(Effect.fail(error)))),
+        request: <A>(operation: string, execute: (active: TigerBeetleClient) => Promise<A>) =>
+          getClient.pipe(
+            Effect.flatMap((active) =>
+              Effect.tryPromise({
+                try: () => execute(active),
+                catch: (cause) => operationalError('journal', operation, `TigerBeetle ${operation} failed`, cause),
+              }).pipe(
+                Effect.onInterrupt(() => invalidateClient(active, `interrupted:${operation}`)),
+                Effect.catch((error) =>
+                  invalidateClient(active, `failed:${operation}`).pipe(Effect.andThen(Effect.fail(error))),
                 ),
               ),
             ),

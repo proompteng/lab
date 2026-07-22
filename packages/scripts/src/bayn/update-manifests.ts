@@ -109,7 +109,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
   const qualificationMode =
     hadQualificationPin && strategyIdentityMatches && runtimeBindingsMatch ? 'preserve' : 'replace'
-  if (qualificationMode === 'replace' && !snapshotChanged) {
+  if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
   const imageBlock =

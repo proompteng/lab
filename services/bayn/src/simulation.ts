@@ -16,7 +16,7 @@ import {
   type FeeInput,
   type FillTerms,
 } from './execution-model'
-import { canonicalHashV1, hashObject } from './hash'
+import { canonicalHashV1 } from './hash'
 import {
   ContractVersion,
   DIRECT_VOLATILITY_WINDOW,
@@ -98,7 +98,7 @@ export const alignBars = (
     session.set(bar.symbol, bar)
     byDate.set(bar.sessionDate, session)
   }
-  const sessions = [...byDate.entries()].sort(([left], [right]) => left.localeCompare(right))
+  const sessions = [...byDate.entries()].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
   if (sessions.length !== inputManifest.sessionCount) {
     throw new Error('strategy input session count does not match manifest')
   }
@@ -251,7 +251,7 @@ const makeOrder = (
     rejectionReason: outcome.rejectionReason,
     unfilledRemainder: outcome.unfilledRemainder,
   }
-  return { id: hashObject({ runId, kind: 'order', ...payload }), ...payload }
+  return { id: canonicalHashV1({ runId, kind: 'order', ...payload }), ...payload }
 }
 
 const makeFill = (
@@ -275,7 +275,7 @@ const makeFill = (
     slippageCostMicros: terms.slippageCostMicros.toString(),
     costBasisMicros: costBasisMicros.toString(),
   }
-  return { kind: 'fill', id: hashObject({ runId, kind: 'fill', ...payload }), ...payload }
+  return { kind: 'fill', id: canonicalHashV1({ runId, kind: 'fill', ...payload }), ...payload }
 }
 
 const makeCashChange = (
@@ -293,7 +293,7 @@ const makeCashChange = (
     amountMicros: amountMicros.toString(),
     cashAfterMicros: cashAfterMicros.toString(),
   }
-  return { id: hashObject({ runId, kind: 'cash-change', ...payload }), ...payload }
+  return { id: canonicalHashV1({ runId, kind: 'cash-change', ...payload }), ...payload }
 }
 
 const makeFeeEvent = (runId: string, sessionDate: IsoDate, fees: ReturnType<typeof calculateSessionFees>): FeeEvent => {
@@ -305,7 +305,7 @@ const makeFeeEvent = (runId: string, sessionDate: IsoDate, fees: ReturnType<type
     catMicros: fees.catMicros.toString(),
     totalMicros: fees.totalMicros.toString(),
   }
-  return { kind: 'fee', id: hashObject({ runId, kind: 'fee', ...payload }), ...payload }
+  return { kind: 'fee', id: canonicalHashV1({ runId, kind: 'fee', ...payload }), ...payload }
 }
 
 const makeCashYieldEvent = (
@@ -316,7 +316,7 @@ const makeCashYieldEvent = (
   amountMicros: bigint,
 ) => {
   const payload = { sessionDate, elapsedDays, annualYieldBps, amountMicros: amountMicros.toString() }
-  return { kind: 'cash-yield' as const, id: hashObject({ runId, kind: 'cash-yield', ...payload }), ...payload }
+  return { kind: 'cash-yield' as const, id: canonicalHashV1({ runId, kind: 'cash-yield', ...payload }), ...payload }
 }
 
 export const simulate = (
@@ -386,7 +386,7 @@ export const simulate = (
       }
       const decision: DecisionEvent = {
         kind: 'decision',
-        id: hashObject({ runId, kind: 'decision', ...decisionPayload }),
+        id: canonicalHashV1({ runId, kind: 'decision', ...decisionPayload }),
         ...decisionPayload,
       }
       if (recordEvents) {
@@ -609,7 +609,7 @@ export const simulate = (
         ...performance,
         cashMicros: cashMicros.toString(),
         positions: Object.entries(session.bars)
-          .sort(([left], [right]) => left.localeCompare(right))
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
           .map(([symbol]) => {
             const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
             const priceMicros = closingPrices[symbol]

@@ -58,7 +58,17 @@ the recovery Cluster has no backup stanza and only reads that archive.
    kubectl -n bayn wait --for=jsonpath='{.status.phase}'=completed backup/bayn-db-proof-UTC_SUFFIX --timeout=30m
    ```
 
-3. Add a temporary, uniquely named recovery `Cluster` and matching ingress-only `NetworkPolicy` to a reviewed GitOps
+3. Remove the proof schema from the primary after the backup completes, then verify that it is absent. The proof remains
+   in the immutable backup selected by the recovery Cluster.
+
+   ```sh
+   kubectl cnpg psql -n bayn bayn-db -- -d bayn -v ON_ERROR_STOP=1 -c "drop schema restore_probe cascade"
+   kubectl cnpg psql -n bayn bayn-db -- -d bayn -Atqc "select to_regnamespace('restore_probe') is null"
+   ```
+
+   The verification query must return `t`.
+
+4. Add a temporary, uniquely named recovery `Cluster` and matching ingress-only `NetworkPolicy` to a reviewed GitOps
    change. The policy permits only its own peers, the CNPG operator on ports 5432/8000, and Alloy on 9187. Use one
    instance, the same pinned image and storage class, and this recovery source:
 
@@ -79,10 +89,10 @@ the recovery Cluster has no backup stanza and only reads that archive.
            serverName: bayn-db-live
    ```
 
-4. After Argo reports the recovery Cluster healthy, query the exact proof row through `kubectl cnpg psql`. Record the
+5. After Argo reports the recovery Cluster healthy, query the exact proof row through `kubectl cnpg psql`. Record the
    primary and recovery Cluster UIDs, backup name/ID, start/end timestamps, source image digest, proof row, and recovery
    duration in PROOMPT-358.
 
-5. Remove the temporary manifest through GitOps only after the evidence is recorded. Deleting the recovery Cluster or
+6. Remove the temporary manifest through GitOps only after the evidence is recorded. Deleting the recovery Cluster or
    its PVC requires explicit approval. Never alter or delete `bayn-db`, `cnpg-bayn-db`, or another service's storage as
    part of the drill.

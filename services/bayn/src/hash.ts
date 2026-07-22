@@ -1,24 +1,6 @@
 import { createHash } from 'node:crypto'
 
-const canonicalizeLegacyValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalizeLegacyValue)
-  }
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonicalizeLegacyValue(nested)]),
-    )
-  }
-  return value
-}
-
-export const canonicalJson = (value: unknown): string => JSON.stringify(canonicalizeLegacyValue(value))
-
 export const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
-
-export const hashObject = (value: unknown): string => sha256(canonicalJson(value))
 
 const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 

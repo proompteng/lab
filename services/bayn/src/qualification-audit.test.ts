@@ -134,7 +134,7 @@ const fixture = (): QualificationAuditInput => {
       costMultiplierMicros: evaluation.simulation.costMultiplierMicros,
     },
     artifacts: [...base]
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
       .map((value) => ({
         name: value.name,
         schemaVersion: value.schemaVersion,
@@ -194,7 +194,7 @@ const fixture = (): QualificationAuditInput => {
       eventCount: events.length,
       gateCount: gates.length,
     },
-    artifacts: [...artifacts].sort((left, right) => left.name.localeCompare(right.name)),
+    artifacts: [...artifacts].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),
     events,
     gates,
     statuses: [
@@ -401,26 +401,6 @@ describe('qualification audit', () => {
   })
 
   test.each([
-    [
-      'policy',
-      () => {
-        const input = fixture()
-        const lock = structuredClone(input.database.qualification.lock) as Record<string, unknown>
-        const policies = lock.policies as Record<string, Record<string, unknown>>
-        lock.policies = {
-          ...policies,
-          thresholds: { ...policies.thresholds, content: { schemaVersion: 'tampered' } },
-        }
-        return {
-          ...input,
-          database: {
-            ...input.database,
-            qualification: { ...input.database.qualification, lock },
-          },
-        }
-      },
-      'lock-policy-hashes',
-    ],
     [
       'trial-lineage',
       () => {

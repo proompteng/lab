@@ -23,6 +23,7 @@ import {
   decodeReconciliationResult,
   decodeRiskBalancedTrendSignalDecisionsArtifact,
   decodeSimulatedOrdersArtifact,
+  EvaluationEventSchema,
   makeEquitySeriesArtifact,
 } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
@@ -35,7 +36,15 @@ import {
 import { ProtocolSchema } from '../protocol'
 import { summarizeEvaluation } from '../risk-balanced-trend'
 import { reconcileMarkedEquity } from '../simulation-reconciliation'
-import type { EvaluationResult, EvaluationSummary, InputManifest, Protocol, ReconciliationResult } from '../types'
+import type {
+  EconomicVerdict,
+  EvaluationEvent,
+  EvaluationResult,
+  EvaluationSummary,
+  InputManifest,
+  Protocol,
+  ReconciliationResult,
+} from '../types'
 import { migrationLoader } from './migrations'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
@@ -85,7 +94,7 @@ export interface ArtifactItemPage {
   readonly schemaVersion: string
   readonly contentHash: string
   readonly itemCount: number
-  readonly items: readonly { readonly ordinal: number; readonly payload: unknown }[]
+  readonly items: readonly { readonly ordinal: number; readonly payload: Schema.Json }[]
   readonly nextAfterOrdinal: number | null
 }
 
@@ -146,20 +155,26 @@ export interface StoredEvaluationEvidence {
     readonly id: string
     readonly kind: 'decision' | 'fill' | 'fee' | 'cash-yield'
     readonly contentHash: string
-    readonly payload: unknown
+    readonly payload: EvaluationEvent
   }[]
   readonly gates: readonly {
     readonly ordinal: number
     readonly name: string
     readonly passed: boolean
-    readonly actual: unknown
-    readonly required: unknown
+    readonly actual: EconomicVerdict['gates'][number]['actual']
+    readonly required: EconomicVerdict['gates'][number]['required']
     readonly contentHash: string
   }[]
-  readonly statuses: readonly {
-    readonly status: 'WRITING' | 'COMPLETE'
-    readonly detail: unknown
-  }[]
+  readonly statuses: readonly (
+    | {
+        readonly status: 'WRITING'
+        readonly detail: { readonly artifactCount: number; readonly eventCount: number; readonly gateCount: number }
+      }
+    | {
+        readonly status: 'COMPLETE'
+        readonly detail: { readonly reconciliationExact: true; readonly verdict: 'PASS' | 'FAIL_CLOSED' }
+      }
+  )[]
 }
 
 export interface RecoveredEvaluationEvidence {
@@ -173,6 +188,7 @@ const GitRevision = Schema.String.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+const GateScalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const RunRequest = Schema.Struct({ runId: Sha256 })
 const InsertedRun = Schema.Struct({ run_id: Sha256 })
 const HealthRow = Schema.Struct({ value: Schema.Literal(1) })
@@ -222,7 +238,7 @@ const ArtifactReferenceRow = Schema.Struct({
   artifact_name: Schema.String,
   schema_version: Schema.String,
   content_hash: Sha256,
-  payload: Schema.Unknown,
+  payload: Schema.Json,
 })
 const ArtifactSeriesMetadataRow = Schema.Struct({
   schema_version: Schema.String,
@@ -231,38 +247,59 @@ const ArtifactSeriesMetadataRow = Schema.Struct({
 })
 const ArtifactItemRow = Schema.Struct({
   ordinal: NonNegativeInteger,
-  payload: Schema.Unknown,
+  payload: Schema.Json,
 })
 const EventReferenceRow = Schema.Struct({
   ordinal: NonNegativeInteger,
   event_id: Sha256,
   event_kind: Schema.Literals(['decision', 'fill', 'fee', 'cash-yield']),
   content_hash: Sha256,
-  payload: Schema.Unknown,
+  payload: EvaluationEventSchema,
 })
 const GateReferenceRow = Schema.Struct({
   ordinal: NonNegativeInteger,
   gate_name: Schema.String,
   passed: Schema.Boolean,
-  actual: Schema.Unknown,
-  required: Schema.Unknown,
+  actual: GateScalar,
+  required: GateScalar,
   content_hash: Sha256,
 })
-const StatusReferenceRow = Schema.Struct({
-  status: Schema.Literals(['WRITING', 'COMPLETE']),
-  detail: Schema.Unknown,
-})
+const StatusReferenceRow = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal('WRITING'),
+    detail: Schema.Struct({
+      artifactCount: PositiveInteger,
+      eventCount: NonNegativeInteger,
+      gateCount: PositiveInteger,
+    }),
+  }),
+  Schema.Struct({
+    status: Schema.Literal('COMPLETE'),
+    detail: Schema.Struct({
+      reconciliationExact: Schema.Literal(true),
+      verdict: Schema.Literals(['PASS', 'FAIL_CLOSED']),
+    }),
+  }),
+])
 const QualificationTrialRow = Schema.Struct({ run_id: Sha256 })
 const QualificationRow = Schema.Struct({
-  lock_payload: Schema.Unknown,
-  result_payload: Schema.NullOr(Schema.Unknown),
+  lock_payload: QualificationLockSchema,
+  result_payload: Schema.NullOr(QualificationResultSchema),
 })
+const MigrationBoundaryRow = Schema.Struct({
+  current_exists: Schema.Boolean,
+  legacy_exists: Schema.Boolean,
+})
+const MigrationIdentityRow = Schema.Struct({ migration_id: PositiveInteger, name: Schema.String })
 const CandidateRunCountRow = Schema.Struct({ count: NonNegativeInteger })
 const InsertedLockRow = Schema.Struct({ lock_id: Sha256 })
 const InsertedResultRow = Schema.Struct({ lock_id: Sha256 })
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const decodeQualificationLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
 const decodeQualificationResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
+const decodeMigrationBoundary = Schema.decodeUnknownEffect(Schema.Tuple([MigrationBoundaryRow]), StrictParseOptions)
+const decodeMigrationIdentities = Schema.decodeUnknownEffect(Schema.Array(MigrationIdentityRow), StrictParseOptions)
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -638,7 +675,7 @@ const makePersistencePlan = (input: PersistEvaluationInput) => {
       costMultiplierMicros: evaluation.simulation.costMultiplierMicros,
     },
     artifacts: [...baseArtifacts]
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
       .map((artifact) => ({
         name: artifact.name,
         schemaVersion: artifact.schemaVersion,
@@ -679,8 +716,7 @@ type PersistencePlan = ReturnType<typeof makePersistencePlan>
 
 const makeEvidenceStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  const jsonScalar = (value: number | boolean | string) =>
-    sql.json(typeof value === 'string' ? JSON.stringify(value) : value)
+  const jsonScalar = (value: number | boolean | string) => sql.json(encodeJson(value))
 
   const health = SqlSchema.findOne({
     Request: Schema.Void,
@@ -926,7 +962,7 @@ const makeEvidenceStore = Effect.gen(function* () {
       sourceRevision: GitRevision,
       imageRepository: Schema.String,
       imageDigest: ImageDigest,
-      payload: Schema.Unknown,
+      payload: QualificationLockSchema,
     }),
     Result: InsertedLockRow,
     execute: (request) => sql`
@@ -963,7 +999,7 @@ const makeEvidenceStore = Effect.gen(function* () {
       verdict: Schema.Literals(['QUALIFIED', 'REJECTED']),
       analysisHash: Sha256,
       resultHash: Sha256,
-      payload: Schema.Unknown,
+      payload: QualificationResultSchema,
     }),
     Result: InsertedResultRow,
     execute: (request) => sql`
@@ -1007,9 +1043,9 @@ const makeEvidenceStore = Effect.gen(function* () {
   })
 
   const decodeQualificationRecord = (row: typeof QualificationRow.Type): QualificationRecord => {
-    const lock = decodeQualificationLock(row.lock_payload)
+    const lock = row.lock_payload
     if (row.result_payload === null) return { state: 'OPENED_INCOMPLETE', lock }
-    const result = decodeQualificationResult(row.result_payload)
+    const result = row.result_payload
     if (result.lockId !== lock.lockId || result.runId !== lock.candidateRunId) {
       throw new TypeError('stored qualification result diverges from its lock')
     }
@@ -1150,7 +1186,9 @@ const makeEvidenceStore = Effect.gen(function* () {
       const events = yield* getEventReferences({ runId: plan.evaluation.runId })
       const gates = yield* getGateReferences({ runId: plan.evaluation.runId })
       const statuses = yield* getStatusReferences({ runId: plan.evaluation.runId })
-      const expectedArtifacts = [...plan.artifacts].sort((left, right) => left.name.localeCompare(right.name))
+      const expectedArtifacts = [...plan.artifacts].sort((left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+      )
       yield* ensure(
         artifacts.every((artifact, index) => {
           const expected = expectedArtifacts[index]
@@ -1284,25 +1322,17 @@ const makeEvidenceStore = Effect.gen(function* () {
         'read-evidence',
         'stored gate content hash or ordering diverged',
       )
-      const completeDetail = statuses[1]?.detail
-      const completeDetailValid =
-        typeof completeDetail === 'object' &&
-        completeDetail !== null &&
-        'reconciliationExact' in completeDetail &&
-        completeDetail.reconciliationExact === true &&
-        'verdict' in completeDetail &&
-        (completeDetail.verdict === 'PASS' || completeDetail.verdict === 'FAIL_CLOSED')
+      const [writing, complete] = statuses
       yield* ensure(
         statuses.length === 2 &&
-          statuses[0].status === 'WRITING' &&
-          canonicalHashV1(statuses[0].detail) ===
+          writing?.status === 'WRITING' &&
+          canonicalHashV1(writing.detail) ===
             canonicalHashV1({
               artifactCount: row.artifact_count,
               eventCount: row.event_count,
               gateCount: row.gate_count,
             }) &&
-          statuses[1].status === 'COMPLETE' &&
-          completeDetailValid,
+          complete?.status === 'COMPLETE',
         'read-evidence',
         'stored status history is incomplete or divergent',
       )
@@ -1631,6 +1661,12 @@ const makeEvidenceStore = Effect.gen(function* () {
         const dailyMarks = yield* decodeDailyPositionMarksArtifact(dailyMarksArtifact.payload)
         const inputManifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
         const artifactItemCounts = new Map<string, number>([
+          ['evaluation-summary', 0],
+          ['input-manifest', 0],
+          ['strategy', 0],
+          ['buy-and-hold', 0],
+          ['direct-volatility-timing', 0],
+          ['double-cost-strategy', 0],
           ['simulated-orders', orders.items.length],
           ['cash-changes', cashChanges.items.length],
           ['daily-position-marks', dailyMarks.items.length],
@@ -1639,7 +1675,25 @@ const makeEvidenceStore = Effect.gen(function* () {
           ['direct-volatility-timing-series', directVolatilitySeries.items.length],
           ['double-cost-strategy-series', doubleCostSeries.items.length],
           ['equity-series', equitySeries.items.length],
+          ['marked-equity-reconciliation', 0],
+          ['reconciliation', 0],
         ])
+        const manifestArtifacts = yield* Effect.forEach(
+          stored.artifacts
+            .filter((artifact) => artifact.name !== 'qualification-artifact-manifest')
+            .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),
+          (artifact) =>
+            Effect.fromOption(Option.fromUndefinedOr(artifactItemCounts.get(artifact.name)), () =>
+              databaseError('invariant', 'recover-evidence', `unsupported qualification artifact: ${artifact.name}`),
+            ).pipe(
+              Effect.map((itemCount) => ({
+                name: artifact.name,
+                schemaVersion: artifact.schemaVersion,
+                itemCount,
+                contentHash: artifact.contentHash,
+              })),
+            ),
+        )
         const expectedArtifactManifest = {
           schemaVersion: 'bayn.qualification-artifact-manifest.v1',
           identity: {
@@ -1661,15 +1715,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             executionModel: orders.executionModel,
             costMultiplierMicros: orders.costMultiplierMicros,
           },
-          artifacts: stored.artifacts
-            .filter((artifact) => artifact.name !== 'qualification-artifact-manifest')
-            .sort((left, right) => left.name.localeCompare(right.name))
-            .map((artifact) => ({
-              name: artifact.name,
-              schemaVersion: artifact.schemaVersion,
-              itemCount: artifactItemCounts.get(artifact.name) ?? 0,
-              contentHash: artifact.contentHash,
-            })),
+          artifacts: manifestArtifacts,
           events: {
             count: stored.events.length,
             contentHash: canonicalHashV1(
@@ -2017,7 +2063,33 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
   )
 }
 
-const migrate = PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
+const migrate = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const [boundary] = yield* decodeMigrationBoundary(
+    yield* sql`
+      SELECT
+        to_regclass('public.schema_migrations') IS NOT NULL AS current_exists,
+        to_regclass('public.bayn_schema_migrations') IS NOT NULL AS legacy_exists
+    `,
+  )
+  if (boundary.legacy_exists) {
+    return yield* Effect.fail(
+      databaseError('migration', 'migrate', 'legacy migration tracker is unsupported after the hard cut'),
+    )
+  }
+  if (boundary.current_exists) {
+    const identities = yield* decodeMigrationIdentities(
+      yield* sql`SELECT migration_id, name FROM schema_migrations WHERE migration_id = 1`,
+    )
+    const [initial] = identities
+    if (identities.length !== 1 || initial?.name !== 'initial_schema') {
+      return yield* Effect.fail(
+        databaseError('migration', 'migrate', 'legacy migration history is unsupported after the hard cut'),
+      )
+    }
+  }
+  yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
+})
 
 const migrations = migrate.pipe(
   Effect.mapError((cause) =>

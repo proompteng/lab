@@ -341,7 +341,9 @@ const verifyCalendar = (
 ): VerifiedCalendar => {
   const verifiedManifest = verifyManifest(manifests, request)
   const { finalizedSnapshot, manifest, universe } = verifiedManifest
-  const orderedSessions = [...sessions].sort((left, right) => left.session_date.localeCompare(right.session_date))
+  const orderedSessions = [...sessions].sort((left, right) =>
+    left.session_date < right.session_date ? -1 : left.session_date > right.session_date ? 1 : 0,
+  )
   const sessionDates = new Set<string>()
   for (const session of orderedSessions) {
     if (session.snapshot_id !== request.snapshotId) throw new Error('exchange session has a mixed snapshot ID')
@@ -419,8 +421,14 @@ export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotReq
   const sessionDates = new Set(calendar.orderedSessions.map((session) => session.session_date))
   const orderedBars = [...rows.bars].sort((left, right) =>
     left.session_date === right.session_date
-      ? left.symbol.localeCompare(right.symbol)
-      : left.session_date.localeCompare(right.session_date),
+      ? left.symbol < right.symbol
+        ? -1
+        : 1
+      : left.session_date < right.session_date
+        ? -1
+        : left.session_date > right.session_date
+          ? 1
+          : 0,
   )
   const barKeys = new Set<string>()
   const actualSymbols = new Set<string>()
@@ -470,14 +478,14 @@ const decodeSnapshotRows = (
   sessions: readonly unknown[],
   manifests: readonly unknown[],
 ): SnapshotRows => ({
-  bars: decodeBars(bars) as readonly SignalBarRow[],
-  sessions: decodeSessions(sessions) as readonly SignalSessionRow[],
+  bars: decodeBars(bars),
+  sessions: decodeSessions(sessions),
   manifests: decodeManifests(manifests).map((manifest) => ({
     ...manifest,
     symbol_count: asCount(manifest.symbol_count, 'symbol_count'),
     session_count: asCount(manifest.session_count, 'session_count'),
     bar_count: asCount(manifest.bar_count, 'bar_count'),
-  })) as readonly SignalManifestRow[],
+  })),
 })
 
 const makeMarketData = (

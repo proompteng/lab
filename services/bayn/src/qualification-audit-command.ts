@@ -1,12 +1,13 @@
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Config, Effect, FileSystem, Layer, Logger, Redacted, Schema, Stdio, Stream } from 'effect'
+import { Config, Effect, FileSystem, Layer, Logger, Redacted, Schema, Stdio, Stream } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
-import { decodeInputManifestArtifact } from './evidence-contracts'
+import { EvaluationEventSchema, decodeInputManifestArtifact } from './evidence-contracts'
 import { MarketData, MarketDataLive } from './market-data'
 import { ProtocolSchema } from './protocol'
+import { QualificationLockSchema, QualificationResultSchema } from './qualification'
 import {
   auditQualification,
   type AuditDatabaseSnapshot,
@@ -21,50 +22,68 @@ const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const IsoInstant = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/))
-const ReplicaName = Schema.Trim.check(Schema.isMinLength(1))
+const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
+const ReplicaName = NonEmptyString
+const GateScalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const AuditClickhouseUrls = Config.Array(Schema.URLFromString).check(Schema.isMinLength(2), Schema.isUnique())
 
 const RunRow = Schema.Struct({
   run_id: Sha256,
   protocol_hash: Sha256,
   snapshot_id: Sha256,
-  evaluation_schema_version: Schema.String,
-  source_revision: Schema.String,
-  image_repository: Schema.String,
-  image_digest: Schema.String,
-  strategy_name: Schema.String,
+  evaluation_schema_version: NonEmptyString,
+  source_revision: NonEmptyString,
+  image_repository: NonEmptyString,
+  image_digest: NonEmptyString,
+  strategy_name: Schema.Literal('risk-balanced-trend'),
   initial_capital_micros: Schema.String,
-  status: Schema.String,
+  status: Schema.Literal('COMPLETE'),
   artifact_count: PositiveInteger,
   event_count: NonNegativeInteger,
   gate_count: PositiveInteger,
-  schema_version: Schema.String,
+  schema_version: NonEmptyString,
   behavior_hash: Sha256,
   parameter_hash: Sha256,
-  parameters: Schema.Unknown,
+  parameters: ProtocolSchema,
 })
 const ArtifactRow = Schema.Struct({
-  artifact_name: Schema.String,
-  schema_version: Schema.String,
+  artifact_name: NonEmptyString,
+  schema_version: NonEmptyString,
   content_hash: Sha256,
-  payload: Schema.Unknown,
+  payload: Schema.Json,
 })
 const EventRow = Schema.Struct({
   ordinal: NonNegativeInteger,
   event_id: Sha256,
-  event_kind: Schema.String,
+  event_kind: Schema.Literals(['decision', 'fill', 'fee', 'cash-yield']),
   content_hash: Sha256,
-  payload: Schema.Unknown,
+  payload: EvaluationEventSchema,
 })
 const GateRow = Schema.Struct({
   ordinal: NonNegativeInteger,
-  gate_name: Schema.String,
+  gate_name: NonEmptyString,
   passed: Schema.Boolean,
-  actual: Schema.Unknown,
-  required: Schema.Unknown,
+  actual: GateScalar,
+  required: GateScalar,
   content_hash: Sha256,
 })
-const StatusRow = Schema.Struct({ status: Schema.String, detail: Schema.Unknown })
+const StatusRow = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal('WRITING'),
+    detail: Schema.Struct({
+      artifactCount: PositiveInteger,
+      eventCount: NonNegativeInteger,
+      gateCount: PositiveInteger,
+    }),
+  }),
+  Schema.Struct({
+    status: Schema.Literal('COMPLETE'),
+    detail: Schema.Struct({
+      reconciliationExact: Schema.Literal(true),
+      verdict: Schema.Literals(['PASS', 'FAIL_CLOSED']),
+    }),
+  }),
+])
 const TrialRow = Schema.Struct({ run_id: Sha256 })
 const QualificationRow = Schema.Struct({
   lock_created_at: IsoInstant,
@@ -73,34 +92,31 @@ const QualificationRow = Schema.Struct({
   analysis_hash: Sha256,
   result_hash: Sha256,
   verdict: Schema.Literals(['QUALIFIED', 'REJECTED']),
-  lock_payload: Schema.Unknown,
-  result_payload: Schema.Unknown,
+  lock_payload: QualificationLockSchema,
+  result_payload: QualificationResultSchema,
 })
 const ReadOnlyRow = Schema.Struct({ read_only: Schema.Boolean })
 const AccessRow = Schema.Struct({
   replica: ReplicaName,
-  query_id: Schema.String,
+  query_id: NonEmptyString,
   query_start_time: IsoInstant,
-  user: Schema.String,
+  user: NonEmptyString,
   kind: Schema.Literals(['manifest', 'sessions', 'bars']),
 })
 const ReplicaRow = Schema.Struct({ replica: ReplicaName })
 
-const decodeRunRows = Schema.decodeUnknownSync(Schema.Array(RunRow), StrictParseOptions)
-const decodeArtifactRows = Schema.decodeUnknownSync(Schema.Array(ArtifactRow), StrictParseOptions)
-const decodeEventRows = Schema.decodeUnknownSync(Schema.Array(EventRow), StrictParseOptions)
-const decodeGateRows = Schema.decodeUnknownSync(Schema.Array(GateRow), StrictParseOptions)
-const decodeStatusRows = Schema.decodeUnknownSync(Schema.Array(StatusRow), StrictParseOptions)
-const decodeTrialRows = Schema.decodeUnknownSync(Schema.Array(TrialRow), StrictParseOptions)
-const decodeQualificationRows = Schema.decodeUnknownSync(Schema.Array(QualificationRow), StrictParseOptions)
-const decodeReadOnlyRows = Schema.decodeUnknownSync(Schema.Array(ReadOnlyRow), StrictParseOptions)
-const decodeAccessRows = Schema.decodeUnknownSync(Schema.Array(AccessRow), StrictParseOptions)
-const decodeReplicaRows = Schema.decodeUnknownSync(Schema.Array(ReplicaRow), StrictParseOptions)
-
-const exactlyOne = <A>(values: readonly A[], name: string): A => {
-  if (values.length !== 1) throw new Error(`${name} returned ${values.length} rows; expected exactly one`)
-  return values[0]
-}
+const decodeRunRow = Schema.decodeUnknownEffect(Schema.Tuple([RunRow]), StrictParseOptions)
+const decodeArtifactRows = Schema.decodeUnknownEffect(Schema.Array(ArtifactRow), StrictParseOptions)
+const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), StrictParseOptions)
+const decodeGateRows = Schema.decodeUnknownEffect(Schema.Array(GateRow), StrictParseOptions)
+const decodeStatusRows = Schema.decodeUnknownEffect(Schema.Array(StatusRow), StrictParseOptions)
+const decodeTrialRows = Schema.decodeUnknownEffect(Schema.Array(TrialRow), StrictParseOptions)
+const decodeQualificationRow = Schema.decodeUnknownEffect(Schema.Tuple([QualificationRow]), StrictParseOptions)
+const decodeReadOnlyRow = Schema.decodeUnknownEffect(Schema.Tuple([ReadOnlyRow]), StrictParseOptions)
+const decodeAccessRows = Schema.decodeUnknownEffect(Schema.Array(AccessRow), StrictParseOptions)
+const decodeReplicaRow = Schema.decodeUnknownEffect(Schema.Tuple([ReplicaRow]), StrictParseOptions)
+const decodeReplicaRows = Schema.decodeUnknownEffect(Schema.Array(ReplicaRow), StrictParseOptions)
+const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 
 const config = Config.all({
   output: Config.schema(Schema.Literals(['audit', 'dossier']), 'BAYN_AUDIT_OUTPUT').pipe(Config.withDefault('audit')),
@@ -126,7 +142,9 @@ type AuditConfig = Config.Success<typeof config>
 const postgresLayer = (input: AuditConfig) => {
   const readCertificate = Effect.gen(function* () {
     if (!input.postgresTls) return undefined
-    if (input.postgresCaPath.length === 0) throw new Error('BAYN_AUDIT_POSTGRES_CA_PATH is required with TLS')
+    if (input.postgresCaPath.length === 0) {
+      return yield* Effect.fail(new Error('BAYN_AUDIT_POSTGRES_CA_PATH is required with TLS'))
+    }
     const fileSystem = yield* FileSystem.FileSystem
     return yield* fileSystem.readFileString(input.postgresCaPath)
   })
@@ -150,19 +168,16 @@ const postgresLayer = (input: AuditConfig) => {
   )
 }
 
-const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unknown, PgClient.PgClient> =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`
-        const readOnly = exactlyOne(
-          decodeReadOnlyRows(yield* sql`SELECT current_setting('transaction_read_only') = 'on' AS read_only`),
-          'transaction mode',
-        )
-        const run = exactlyOne(
-          decodeRunRows(
-            yield* sql`
+const readDatabase = Effect.fnUntraced(function* (runId: string) {
+  const sql = yield* PgClient.PgClient
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`
+      const [readOnly] = yield* decodeReadOnlyRow(
+        yield* sql`SELECT current_setting('transaction_read_only') = 'on' AS read_only`,
+      )
+      const [run] = yield* decodeRunRow(
+        yield* sql`
               SELECT
                 run.run_id,
                 run.protocol_hash,
@@ -185,43 +200,41 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
               JOIN protocol_locks AS protocol USING (protocol_hash)
               WHERE run.run_id = ${runId}
             `,
-          ),
-          'evaluation run',
-        )
-        const artifacts = decodeArtifactRows(
-          yield* sql`
+      )
+      const artifacts = yield* decodeArtifactRows(
+        yield* sql`
             SELECT artifact_name, schema_version, content_hash, payload
             FROM evaluation_artifacts
             WHERE run_id = ${runId}
             ORDER BY artifact_name
           `,
-        )
-        const events = decodeEventRows(
-          yield* sql`
+      )
+      const events = yield* decodeEventRows(
+        yield* sql`
             SELECT ordinal, event_id, event_kind, content_hash, payload
             FROM evaluation_events
             WHERE run_id = ${runId}
             ORDER BY ordinal
           `,
-        )
-        const gates = decodeGateRows(
-          yield* sql`
+      )
+      const gates = yield* decodeGateRows(
+        yield* sql`
             SELECT ordinal, gate_name, passed, actual, required, content_hash
             FROM gate_outcomes
             WHERE run_id = ${runId}
             ORDER BY ordinal
           `,
-        )
-        const statuses = decodeStatusRows(
-          yield* sql`
+      )
+      const statuses = yield* decodeStatusRows(
+        yield* sql`
             SELECT status, detail
             FROM status_history
             WHERE run_id = ${runId}
             ORDER BY sequence
           `,
-        )
-        const trials = decodeTrialRows(
-          yield* sql`
+      )
+      const trials = yield* decodeTrialRows(
+        yield* sql`
             SELECT run_id
             FROM qualification_trials
             WHERE observed_at < (
@@ -229,10 +242,9 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
             )
             ORDER BY run_id
           `,
-        )
-        const qualification = exactlyOne(
-          decodeQualificationRows(
-            yield* sql`
+      )
+      const [qualification] = yield* decodeQualificationRow(
+        yield* sql`
               SELECT
                 to_char(lock.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS lock_created_at,
                 to_char(result.committed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS result_committed_at,
@@ -246,71 +258,69 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
               JOIN qualification_results AS result USING (lock_id)
               WHERE lock.candidate_run_id = ${runId}
             `,
-          ),
-          'terminal qualification',
-        )
-        return {
-          transactionReadOnly: readOnly.read_only,
-          protocol: {
-            protocolHash: run.protocol_hash,
-            schemaVersion: run.schema_version,
-            strategyName: run.strategy_name,
-            behaviorHash: run.behavior_hash,
-            parameterHash: run.parameter_hash,
-            parameters: run.parameters,
-          },
-          run: {
-            runId: run.run_id,
-            protocolHash: run.protocol_hash,
-            snapshotId: run.snapshot_id,
-            evaluationSchemaVersion: run.evaluation_schema_version,
-            sourceRevision: run.source_revision,
-            imageRepository: run.image_repository,
-            imageDigest: run.image_digest,
-            strategyName: run.strategy_name,
-            initialCapitalMicros: run.initial_capital_micros,
-            status: run.status,
-            artifactCount: run.artifact_count,
-            eventCount: run.event_count,
-            gateCount: run.gate_count,
-          },
-          artifacts: artifacts.map((row) => ({
-            name: row.artifact_name,
-            schemaVersion: row.schema_version,
-            contentHash: row.content_hash,
-            payload: row.payload,
-          })),
-          events: events.map((row) => ({
-            ordinal: row.ordinal,
-            id: row.event_id,
-            kind: row.event_kind,
-            contentHash: row.content_hash,
-            payload: row.payload,
-          })),
-          gates: gates.map((row) => ({
-            ordinal: row.ordinal,
-            name: row.gate_name,
-            passed: row.passed,
-            actual: row.actual,
-            required: row.required,
-            contentHash: row.content_hash,
-          })),
-          statuses,
-          priorTrialRunIds: trials.map((row) => row.run_id),
-          qualification: {
-            lockCreatedAt: qualification.lock_created_at,
-            resultCommittedAt: qualification.result_committed_at,
-            storedLockId: qualification.lock_id,
-            storedAnalysisHash: qualification.analysis_hash,
-            storedResultHash: qualification.result_hash,
-            storedVerdict: qualification.verdict,
-            lock: qualification.lock_payload,
-            result: qualification.result_payload,
-          },
-        }
-      }),
-    )
-  })
+      )
+      return {
+        transactionReadOnly: readOnly.read_only,
+        protocol: {
+          protocolHash: run.protocol_hash,
+          schemaVersion: run.schema_version,
+          strategyName: run.strategy_name,
+          behaviorHash: run.behavior_hash,
+          parameterHash: run.parameter_hash,
+          parameters: run.parameters,
+        },
+        run: {
+          runId: run.run_id,
+          protocolHash: run.protocol_hash,
+          snapshotId: run.snapshot_id,
+          evaluationSchemaVersion: run.evaluation_schema_version,
+          sourceRevision: run.source_revision,
+          imageRepository: run.image_repository,
+          imageDigest: run.image_digest,
+          strategyName: run.strategy_name,
+          initialCapitalMicros: run.initial_capital_micros,
+          status: run.status,
+          artifactCount: run.artifact_count,
+          eventCount: run.event_count,
+          gateCount: run.gate_count,
+        },
+        artifacts: artifacts.map((row) => ({
+          name: row.artifact_name,
+          schemaVersion: row.schema_version,
+          contentHash: row.content_hash,
+          payload: row.payload,
+        })),
+        events: events.map((row) => ({
+          ordinal: row.ordinal,
+          id: row.event_id,
+          kind: row.event_kind,
+          contentHash: row.content_hash,
+          payload: row.payload,
+        })),
+        gates: gates.map((row) => ({
+          ordinal: row.ordinal,
+          name: row.gate_name,
+          passed: row.passed,
+          actual: row.actual,
+          required: row.required,
+          contentHash: row.content_hash,
+        })),
+        statuses,
+        priorTrialRunIds: trials.map((row) => row.run_id),
+        qualification: {
+          lockCreatedAt: qualification.lock_created_at,
+          resultCommittedAt: qualification.result_committed_at,
+          storedLockId: qualification.lock_id,
+          storedAnalysisHash: qualification.analysis_hash,
+          storedResultHash: qualification.result_hash,
+          storedVerdict: qualification.verdict,
+          lock: qualification.lock_payload,
+          result: qualification.result_payload,
+        },
+      } satisfies AuditDatabaseSnapshot
+    }),
+  )
+})
 
 const loadSignal = (input: AuditConfig, manifest: InputManifest, protocol: Protocol) => {
   const marketDataConfig = {
@@ -354,31 +364,28 @@ interface SignalReplicaAccess {
 const readSignalReplicaAccess = (
   input: AuditConfig,
   url: URL,
-  ordinal: number,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
   manifestTable: InputManifest['tables']['manifests'],
 ): Effect.Effect<SignalReplicaAccess, unknown> => {
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
-    const replica = exactlyOne(
-      decodeReplicaRows(
-        yield* sql`
+    const [replicaRow] = yield* decodeReplicaRow(
+      yield* sql`
           SELECT host_name AS replica
           FROM system.clusters
           WHERE cluster = 'default' AND is_local
         `,
-      ),
-      `ClickHouse audit endpoint ${ordinal}`,
-    ).replica
-    const topology = decodeReplicaRows(
+    )
+    const replica = replicaRow.replica
+    const topology = (yield* decodeReplicaRows(
       yield* sql`
         SELECT host_name AS replica
         FROM system.clusters
         WHERE cluster = 'default'
         ORDER BY shard_num, replica_num
       `,
-    ).map((row) => row.replica)
+    )).map((row) => row.replica)
     const rows = yield* sql`
       SELECT
         ${sql.param('String', replica)} AS replica,
@@ -408,7 +415,7 @@ const readSignalReplicaAccess = (
     return {
       replica,
       topology,
-      access: decodeAccessRows(rows).map((row) => ({
+      access: (yield* decodeAccessRows(rows)).map((row) => ({
         replica: row.replica,
         queryId: row.query_id,
         queryStartTime: row.query_start_time,
@@ -439,9 +446,7 @@ const readSignalAccess = (
   manifestTable: InputManifest['tables']['manifests'],
 ): Effect.Effect<{ readonly replicas: readonly string[]; readonly access: readonly SignalAccessRecord[] }, unknown> =>
   Effect.all(
-    input.auditClickhouseUrls.map((url, ordinal) =>
-      readSignalReplicaAccess(input, url, ordinal, database, finalizedAt, manifestTable),
-    ),
+    input.auditClickhouseUrls.map((url) => readSignalReplicaAccess(input, url, database, finalizedAt, manifestTable)),
     { concurrency: 'unbounded' },
   ).pipe(
     Effect.flatMap((sources) =>
@@ -509,15 +514,11 @@ const main = Effect.gen(function* () {
   const input = yield* config
   const database = yield* readDatabase(input.runId).pipe(Effect.provide(postgresLayer(input)))
   const inputManifestArtifact = database.artifacts.find((artifact) => artifact.name === 'input-manifest')
-  if (inputManifestArtifact === undefined) throw new Error('input-manifest artifact is missing')
+  if (inputManifestArtifact === undefined) {
+    return yield* Effect.fail(new Error('input-manifest artifact is missing'))
+  }
   const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
-  if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
-    throw new Error('qualification audit requires the current universe-bound input manifest')
-  }
-  const protocol = yield* Schema.decodeUnknownEffect(ProtocolSchema, StrictParseOptions)(database.protocol.parameters)
-  if (database.protocol.strategyName !== 'risk-balanced-trend' || database.run.strategyName !== 'risk-balanced-trend') {
-    throw new Error('stored strategy name does not match its protocol schema')
-  }
+  const protocol = database.protocol.parameters
   const signal = yield* loadSignal(input, manifest, protocol)
   const signalAccess = yield* readSignalAccess(
     input,
@@ -525,13 +526,12 @@ const main = Effect.gen(function* () {
     manifest.finalizedSnapshot.finalizedAt,
     manifest.tables.manifests,
   )
-  const result = database.qualification.result as Readonly<Record<string, unknown>>
-  const analysis = result.analysis as Readonly<Record<string, unknown>>
+  const result = database.qualification.result
   const repository = yield* repositoryAudit(
     input.repositoryPath,
     database.run.sourceRevision,
     database.qualification.lockCreatedAt,
-    [database.run.runId, String(result.resultHash), String(analysis.analysisHash)],
+    [database.run.runId, result.resultHash, result.analysis.analysisHash],
   )
   const auditInput = {
     bars: signal.bars,
@@ -543,24 +543,22 @@ const main = Effect.gen(function* () {
     signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
   }
-  const report = input.output === 'dossier' ? makeQualificationDossier(auditInput) : auditQualification(auditInput)
+  const report = yield* Effect.try({
+    try: () => (input.output === 'dossier' ? makeQualificationDossier(auditInput) : auditQualification(auditInput)),
+    catch: (cause) => cause,
+  })
+  const output = yield* encodeJson(report)
   const stdio = yield* Stdio.Stdio
-  yield* Stream.run(Stream.make(`${JSON.stringify(report)}\n`), stdio.stdout())
+  yield* Stream.run(Stream.make(`${output}\n`), stdio.stdout())
   if (input.output === 'audit' && 'status' in report && report.status !== 'PASS') {
     return yield* Effect.fail(new Error('qualification audit failed'))
   }
 })
 
 const program = main.pipe(
-  Effect.tapCause((cause) =>
-    Cause.hasInterruptsOnly(cause)
-      ? Effect.void
-      : Effect.logError('Bayn qualification audit failed').pipe(
-          Effect.annotateLogs({ service: 'bayn-qualification-audit', cause: Cause.pretty(cause) }),
-        ),
-  ),
+  Effect.annotateLogs({ service: 'bayn-qualification-audit' }),
   Effect.provide(Logger.layer([Logger.consoleJson])),
   Effect.provide(NodeServices.layer),
 )
 
-NodeRuntime.runMain(program, { disableErrorReporting: true })
+NodeRuntime.runMain(program)

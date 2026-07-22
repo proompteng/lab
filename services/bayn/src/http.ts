@@ -6,12 +6,12 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
+import type { StoredEvaluationEvidence } from './db/evidence-store'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
-type ReadEvidence = (runId: string) => Effect.Effect<Option.Option<unknown>, { readonly message: string }>
-
-const json = (value: unknown): string =>
-  JSON.stringify(value, (_, nested) => (typeof nested === 'bigint' ? nested.toString() : nested))
+type ReadEvidence = (
+  runId: string,
+) => Effect.Effect<Option.Option<StoredEvaluationEvidence>, { readonly message: string }>
 
 const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
   if (state.evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
@@ -83,7 +83,7 @@ const publicState = (
 }
 
 const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<string, string>>) =>
-  HttpServerResponse.text(json(body), { status, contentType: 'application/json', headers })
+  HttpServerResponse.json(body, { status, headers }).pipe(Effect.orDie)
 
 export const makeHttpLayer = (
   config: Pick<RuntimeConfig, 'host' | 'operationTimeoutMs' | 'port'>,
@@ -93,7 +93,7 @@ export const makeHttpLayer = (
   readEvidence: ReadEvidence,
 ): ReturnType<typeof NodeHttpServer.layer> => {
   const ready = Ref.get(state).pipe(
-    Effect.map((current) => {
+    Effect.flatMap((current) => {
       const ready = isReady(current)
       const failedDependencies = Object.entries(current.health.dependencies)
         .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
@@ -111,19 +111,19 @@ export const makeHttpLayer = (
     }),
   )
   const status = Ref.get(state).pipe(
-    Effect.map((current) => jsonResponse(publicState(current, provenance, provenanceVerification))),
+    Effect.flatMap((current) => jsonResponse(publicState(current, provenance, provenanceVerification))),
   )
   const historicalEvaluation = HttpRouter.params.pipe(
     Effect.flatMap(({ runId }) => {
       if (runId === undefined || !/^[0-9a-f]{64}$/.test(runId)) {
-        return Effect.succeed(jsonResponse({ error: 'invalid_run_id' }, 400))
+        return jsonResponse({ error: 'invalid_run_id' }, 400)
       }
       return readEvidence(runId).pipe(
         Effect.timeoutOrElse({
           duration: config.operationTimeoutMs,
           orElse: () => Effect.fail(new Error(`evidence read timed out after ${config.operationTimeoutMs}ms`)),
         }),
-        Effect.map((stored) =>
+        Effect.flatMap((stored) =>
           Option.match(stored, {
             onNone: () => jsonResponse({ error: 'evaluation_not_found' }, 404),
             onSome: (evidence) => jsonResponse(evidence),
@@ -132,7 +132,7 @@ export const makeHttpLayer = (
         Effect.catch((error) =>
           Effect.logError('Bayn historical evidence read failed').pipe(
             Effect.annotateLogs({ service: 'bayn', runId, error: error.message }),
-            Effect.as(jsonResponse({ error: 'evidence_unavailable' }, 503)),
+            Effect.andThen(jsonResponse({ error: 'evidence_unavailable' }, 503)),
           ),
         ),
       )
@@ -141,20 +141,18 @@ export const makeHttpLayer = (
   const fallback = (
     request: HttpServerRequest.HttpServerRequest,
   ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-    Effect.succeed(
-      request.method === 'GET'
-        ? jsonResponse({ error: 'not_found' }, 404)
-        : jsonResponse({ error: 'method_not_allowed' }, 405, { allow: 'GET' }),
-    )
-  const routes: Layer.Layer<never, never, HttpRouter.HttpRouter> = HttpRouter.addAll([
-    HttpRouter.route<never, never>('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
-    HttpRouter.route<never, never>('GET', '/readyz', ready),
-    HttpRouter.route<never, never>('GET', '/v1/status', status),
+    request.method === 'GET'
+      ? jsonResponse({ error: 'not_found' }, 404)
+      : jsonResponse({ error: 'method_not_allowed' }, 405, { allow: 'GET' })
+  const routes = HttpRouter.addAll([
+    HttpRouter.route('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
+    HttpRouter.route('GET', '/readyz', ready),
+    HttpRouter.route('GET', '/v1/status', status),
     HttpRouter.route('GET', '/v1/evaluations/:runId', historicalEvaluation),
-    HttpRouter.route<never, never>('*', '*', fallback),
+    HttpRouter.route('*', '*', fallback),
   ] as const)
 
   return HttpRouter.serve(routes, { disableLogger: true }).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(() => createServer(), { host: config.host, port: config.port })),
+    Layer.provideMerge(NodeHttpServer.layer(createServer, { host: config.host, port: config.port })),
   )
 }
