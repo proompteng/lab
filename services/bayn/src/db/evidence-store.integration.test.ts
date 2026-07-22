@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
@@ -188,6 +188,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(schema.migrations).toEqual([
       { migration_id: 1, name: 'initial_schema' },
       { migration_id: 2, name: 'paper_contracts' },
+      { migration_id: 3, name: 'intent_risk_clock' },
     ])
   })
 
@@ -309,6 +310,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('enforces intent transitions, risk binding, and immutable decisions', async () => {
+    const observerRuntime = makeClientRuntime()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -344,7 +346,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               ) VALUES (
                 ${decisionId}, 'bayn.paper-risk-decision.v1', ${'5'.repeat(64)}, ${intentId},
                 ${'6'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
-                '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                '2026-07-22T06:00:30.000Z', '2099-01-01T00:00:00.000Z'
               )
             `
             yield* sql`
@@ -368,9 +370,123 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `)
         const expiredIo = yield* Effect.exit(sql`
           UPDATE intents
-          SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-07-22T06:01:30.000Z'
+          SET state = 'IO_STARTED', state_version = 3, updated_at = '2099-01-01T00:00:00.000Z'
           WHERE intent_id = ${intentId}
         `)
+        const staleIntentId = '4'.repeat(64)
+        const staleDecisionId = '3'.repeat(64)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO intents (
+                intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+              ) VALUES (
+                ${staleIntentId}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-stale',
+                'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                statement_timestamp() - interval '1 minute', statement_timestamp() - interval '1 minute'
+              )
+            `
+            yield* sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                reason_codes, decided_at, expires_at
+              ) VALUES (
+                ${staleDecisionId}, 'bayn.paper-risk-decision.v1', ${'4'.repeat(64)}, ${staleIntentId},
+                ${'3'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
+                statement_timestamp(), statement_timestamp() + interval '5 seconds'
+              )
+            `
+            yield* sql`
+              UPDATE intents
+              SET state = 'APPROVED', risk_decision_id = ${staleDecisionId}, state_version = 2,
+                  updated_at = statement_timestamp()
+              WHERE intent_id = ${staleIntentId}
+            `
+          }),
+        )
+        const lockHeld = yield* Deferred.make<void>()
+        const releaseLock = yield* Deferred.make<void>()
+        const lockHolder = yield* Effect.forkChild(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT intent_id FROM intents WHERE intent_id = ${staleIntentId} FOR UPDATE`
+              yield* Deferred.succeed(lockHeld, undefined)
+              yield* Deferred.await(releaseLock)
+            }),
+          ),
+          { startImmediately: true },
+        )
+        yield* Deferred.await(lockHeld)
+        const { backdatedExpiredIo, lockWait } = yield* Effect.gen(function* () {
+          const update = yield* Effect.forkChild(
+            Effect.exit(sql`
+              UPDATE intents /* bayn_test_lock_wait */
+              SET state = 'IO_STARTED', state_version = 3,
+                  updated_at = (
+                    SELECT expires_at - interval '1 microsecond'
+                    FROM risk_decisions
+                    WHERE decision_id = ${staleDecisionId}
+                  )
+              WHERE intent_id = ${staleIntentId}
+            `),
+            { startImmediately: true },
+          )
+          const lockWait = yield* Effect.gen(function* () {
+            type LockActivity = {
+              query: string
+              started_before_expiry: boolean
+              state: string
+              wait_event_type: string | null
+            }
+            let activities: readonly LockActivity[] = []
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              activities = yield* Effect.promise(() =>
+                observerRuntime.runPromise(
+                  Effect.gen(function* () {
+                    const observerSql = yield* PgClient.PgClient
+                    return yield* observerSql<LockActivity>`
+                      SELECT
+                        activity.query,
+                        activity.state,
+                        activity.wait_event_type,
+                        activity.query_start < decision.expires_at AS started_before_expiry
+                      FROM pg_stat_activity AS activity
+                      CROSS JOIN risk_decisions AS decision
+                      WHERE activity.pid <> pg_backend_pid()
+                        AND activity.usename = current_user
+                        AND activity.datname = current_database()
+                        AND decision.decision_id = ${staleDecisionId}
+                    `
+                  }),
+                ),
+              )
+              const observed = activities.find(
+                (row) => row.wait_event_type === 'Lock' && row.query.toUpperCase().includes('UPDATE INTENTS'),
+              )
+              if (observed !== undefined) {
+                return { waiting: true, started_before_expiry: observed.started_before_expiry }
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            return yield* Effect.fail(`update is not waiting on the lock: ${JSON.stringify(activities)}`)
+          })
+          yield* Effect.promise(() =>
+            observerRuntime.runPromise(
+              Effect.gen(function* () {
+                const observerSql = yield* PgClient.PgClient
+                yield* observerSql`
+                  SELECT pg_sleep_until(expires_at + interval '10 milliseconds')
+                  FROM risk_decisions
+                  WHERE decision_id = ${staleDecisionId}
+                `
+              }),
+            ),
+          )
+          yield* Deferred.succeed(releaseLock, undefined)
+          return { backdatedExpiredIo: yield* Fiber.join(update), lockWait }
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseLock, undefined).pipe(Effect.ignore)))
+        yield* Fiber.join(lockHolder)
         const blockedApproval = yield* Effect.exit(
           sql.withTransaction(
             Effect.gen(function* () {
@@ -391,7 +507,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                 ) VALUES (
                   ${'c'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'d'.repeat(64)}, ${'b'.repeat(64)},
                   ${'e'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
-                  '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                  '2026-07-22T06:00:30.000Z', '2099-01-01T00:00:00.000Z'
                 )
               `
               yield* sql`
@@ -423,7 +539,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                 ) VALUES (
                   ${'0'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'1'.repeat(64)}, ${'f'.repeat(64)},
                   ${'2'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
-                  '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                  '2026-07-22T06:00:30.000Z', '2099-01-01T00:00:00.000Z'
                 )
               `
               yield* sql`
@@ -454,7 +570,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               ) VALUES (
                 ${'9'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'8'.repeat(64)}, ${'a'.repeat(64)},
                 ${'7'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
-                '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                '2026-07-22T06:00:30.000Z', '2099-01-01T00:00:00.000Z'
               )
             `
             yield* sql`
@@ -485,7 +601,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                 ) VALUES (
                   ${'8'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'9'.repeat(64)}, ${'7'.repeat(64)},
                   ${'a'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
-                  '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                  '2026-07-22T06:00:30.000Z', '2099-01-01T00:00:00.000Z'
                 )
               `
             }),
@@ -505,11 +621,28 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const blockedState = yield* sql<{ state: string; terminal_outcome: string }>`
           SELECT state, terminal_outcome FROM intents WHERE intent_id = ${'a'.repeat(64)}
         `
+        const staleState = yield* sql<{
+          database_after_expiry: boolean
+          event_before_expiry: boolean
+          state: string
+          state_version: number
+        }>`
+          SELECT
+            intent.state,
+            intent.state_version::integer,
+            intent.updated_at < decision.expires_at AS event_before_expiry,
+            statement_timestamp() >= decision.expires_at AS database_after_expiry
+          FROM intents AS intent
+          JOIN risk_decisions AS decision ON decision.decision_id = intent.risk_decision_id
+          WHERE intent.intent_id = ${staleIntentId}
+        `
         return {
           invalidInitial,
           skipState,
           changeIdentity,
           expiredIo,
+          backdatedExpiredIo,
+          lockWait,
           blockedApproval,
           invalidTerminal,
           orphan,
@@ -517,14 +650,20 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           deleteIntent,
           state: state[0],
           blockedState: blockedState[0],
+          staleState: staleState[0],
         }
-      }),
+      }).pipe(Effect.ensuring(Effect.promise(() => observerRuntime.dispose()))),
     )
 
     expect(Exit.isFailure(result.invalidInitial)).toBe(true)
     expect(Exit.isFailure(result.skipState)).toBe(true)
     expect(Exit.isFailure(result.changeIdentity)).toBe(true)
     expect(Exit.isFailure(result.expiredIo)).toBe(true)
+    expect(Exit.isFailure(result.backdatedExpiredIo)).toBe(true)
+    if (Exit.isFailure(result.backdatedExpiredIo)) {
+      expect(Cause.pretty(result.backdatedExpiredIo.cause)).toContain('current risk decision')
+    }
+    expect(result.lockWait).toEqual({ waiting: true, started_before_expiry: true })
     expect(Exit.isFailure(result.blockedApproval)).toBe(true)
     expect(Exit.isFailure(result.invalidTerminal)).toBe(true)
     expect(Exit.isFailure(result.orphan)).toBe(true)
@@ -532,7 +671,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.deleteIntent)).toBe(true)
     expect(result.state).toEqual({ state: 'APPROVED', state_version: 2, decision_id: '2'.repeat(64) })
     expect(result.blockedState).toEqual({ state: 'TERMINAL', terminal_outcome: 'BLOCKED' })
-  })
+    expect(result.staleState).toEqual({
+      state: 'APPROVED',
+      state_version: 2,
+      event_before_expiry: true,
+      database_after_expiry: true,
+    })
+  }, 15_000)
 
   test('enforces exact accounting evidence and downward-only authority', async () => {
     const result = await runtime.runPromise(
