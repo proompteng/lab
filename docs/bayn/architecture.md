@@ -114,7 +114,8 @@ GitOps owns one `apps/v1 Deployment` configured as a single writer and a dedicat
 Scaling to zero is a maintenance state, not a second deployment mode.
 
 Every promoted image requires live acceptance against one coherent writer: the pod spec's digest-pinned image reference
-must match the GitOps OCI index digest, and the running image ID must match that index's published platform digest for
-the scheduled node architecture. Startup must produce or recover durable terminal evidence, readiness must remain open
-across continuous probes, all dependencies must remain available, accounting must be exact, and HTTP status must retain
-observe-only authority. An Argo `Synced/Healthy` result without those observations is not sufficient.
+must match the GitOps OCI index digest. The runtime image ID is supporting evidence: its digest must be either that same
+index digest or the matching platform manifest declared by that index for the scheduled node architecture. Startup must
+produce or recover durable terminal evidence, readiness must remain open across continuous probes, all dependencies
+must remain available, accounting must be exact, and HTTP status must retain observe-only authority. An Argo
+`Synced/Healthy` result without those observations is not sufficient.
