@@ -96,7 +96,10 @@ describe('Bayn SQL dependency acquisition', () => {
       operation: 'connect',
       message: 'PostgreSQL operation failed',
       cause: new SqlError({
-        reason: new UnknownError({ cause: new Error('connect ECONNREFUSED'), operation: 'connect' }),
+        reason: new UnknownError({
+          cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+          operation: 'connect',
+        }),
       }),
     })
     const dependencies = Layer.effectDiscard(
@@ -117,6 +120,54 @@ describe('Bayn SQL dependency acquisition', () => {
     ).pipe(Effect.provide(TestClock.layer()))
 
     await Effect.runPromise(program)
+  })
+
+  test('keeps unverified and non-PostgreSQL unknown connect errors terminal', async () => {
+    const countAttempts = (failure: unknown) => {
+      let attempts = 0
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* acquireSqlLayer(
+            Layer.effectDiscard(
+              Effect.sync(() => {
+                attempts += 1
+              }).pipe(Effect.andThen(Effect.fail(failure))),
+            ),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.yieldNow
+          yield* TestClock.adjust('3 seconds')
+          const exit = yield* Fiber.await(fiber)
+          return { attempts, exit }
+        }),
+      ).pipe(Effect.provide(TestClock.layer()))
+    }
+    const rawRefusal = new SqlError({
+      reason: new UnknownError({
+        cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+        operation: 'connect',
+      }),
+    })
+    const invalidTls = new DatabaseError({
+      failure: 'unavailable',
+      operation: 'connect',
+      message: 'PostgreSQL operation failed',
+      cause: new SqlError({
+        reason: new UnknownError({
+          cause: Object.assign(new Error('invalid certificate'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }),
+          operation: 'connect',
+        }),
+      }),
+    })
+
+    const [raw, tls] = await Promise.all([
+      Effect.runPromise(countAttempts(rawRefusal)),
+      Effect.runPromise(countAttempts(invalidTls)),
+    ])
+
+    expect(Exit.isFailure(raw.exit)).toBe(true)
+    expect(raw.attempts).toBe(1)
+    expect(Exit.isFailure(tls.exit)).toBe(true)
+    expect(tls.attempts).toBe(1)
   })
 
   test('interrupts a pending retry', async () => {
