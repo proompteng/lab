@@ -369,6 +369,77 @@ describe('bounded paper risk', () => {
     )
   })
 
+  test('projects short exposure at the current quote instead of the lower expected sell price', () => {
+    const positions = [
+      baseState().positions[0],
+      {
+        ...baseState().positions[1],
+        quantityMicros: '-1000000',
+        averageEntryPriceMicros: '200000000',
+        marketPriceMicros: '200000000',
+        marketValueMicros: '-200000000',
+        unrealizedPnlMicros: '0',
+      },
+    ]
+    const state = makeState({
+      account: { ...baseState().account, buyingPowerMicros: '200000000' },
+      positions,
+      referencePriceMicros: '200000000',
+      expectedExecutionPriceMicros: '198000000',
+    })
+    const intent = makeIntent({ side: OrderSide.Sell, notionalLimitMicros: '198000000' })
+    const policy = makePolicy({
+      maxOrderNotionalMicros: '198000000',
+      maxSymbolExposureMicros: '400000000',
+      maxGrossExposureMicros: '500000000',
+      maxNetExposureMicros: '300000000',
+      maxDailyTradedNotionalMicros: '298000000',
+    })
+    const result = evaluate(intent, state, policy)
+
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(result.metrics.orderNotionalMicros).toBe('198000000')
+    expect(result.metrics.postTradeSymbolExposureMicros).toBe('-400000000')
+    expectBlocked(
+      Reason.SymbolExposureExceeded,
+      intent,
+      state,
+      makePolicy({ ...policy, maxSymbolExposureMicros: '399999999' }),
+    )
+  })
+
+  test('rounds final net exposure outward after cross-symbol offsets', () => {
+    const state = makeState({
+      account: { ...baseState().account, buyingPowerMicros: '50' },
+      positions: [
+        {
+          ...baseState().positions[0],
+          quantityMicros: '2',
+          averageEntryPriceMicros: '50000000',
+          marketPriceMicros: '50000000',
+          marketValueMicros: '100',
+          unrealizedPnlMicros: '0',
+        },
+        {
+          ...baseState().positions[1],
+          quantityMicros: '-1',
+          averageEntryPriceMicros: '49100000',
+          marketPriceMicros: '49100000',
+          marketValueMicros: '-49',
+          unrealizedPnlMicros: '0',
+        },
+      ],
+      referencePriceMicros: '49100000',
+      expectedExecutionPriceMicros: '49100000',
+    })
+    const intent = makeIntent({ side: OrderSide.Sell, quantityMicros: '1', notionalLimitMicros: '50' })
+    const result = evaluate(intent, state, makePolicy())
+
+    expect(result.metrics.postTradeSymbolExposureMicros).toBe('-99')
+    expect(result.metrics.postTradeNetExposureMicros).toBe('2')
+    expectBlocked(Reason.NetExposureExceeded, intent, state, makePolicy({ maxNetExposureMicros: '1' }))
+  })
+
   test('fails closed on identity, authority, reconciliation, freshness, session, and mutation state', () => {
     expectBlocked(Reason.AccountMismatch, makeIntent(), makeState(), makePolicy({ accountId: 'another-account' }))
     expectBlocked(

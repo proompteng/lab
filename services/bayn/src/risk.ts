@@ -316,23 +316,28 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
   const expectedPrice = BigInt(state.expectedExecutionPriceMicros)
   const orderNotional = divideUp(BigInt(intent.quantityMicros) * expectedPrice, QUANTITY_SCALE)
   const direction = intent.side === OrderSide.Buy ? 1n : -1n
-  const markedExposure = (position: State['positions'][number]): bigint =>
-    position.symbol === intent.symbol
-      ? divideAwayFromZero(BigInt(position.quantityMicros) * referencePrice, QUANTITY_SCALE)
-      : BigInt(position.marketValueMicros)
-  const currentSymbolExposure = state.positions
+  const currentSymbolQuantity = state.positions
     .filter((position) => position.symbol === intent.symbol)
-    .reduce((total, position) => total + markedExposure(position), 0n)
-  const currentGrossExposure = state.positions.reduce(
-    (total, position) => total + absolute(markedExposure(position)),
-    0n,
+    .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
+  const currentSymbolExposureNumerator = currentSymbolQuantity * referencePrice
+  const postTradeSymbolExposureNumerator =
+    (currentSymbolQuantity + direction * BigInt(intent.quantityMicros)) * referencePrice
+  const postTradeSymbolExposure = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
+  const postTradeSymbolExposureMagnitude = divideUp(absolute(postTradeSymbolExposureNumerator), QUANTITY_SCALE)
+  const otherGrossExposure = state.positions
+    .filter((position) => position.symbol !== intent.symbol)
+    .reduce((total, position) => total + absolute(BigInt(position.marketValueMicros)), 0n)
+  const otherNetExposure = state.positions
+    .filter((position) => position.symbol !== intent.symbol)
+    .reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
+  const postTradeGrossExposure = otherGrossExposure + postTradeSymbolExposureMagnitude
+  const postTradeNetExposureNumerator = otherNetExposure * QUANTITY_SCALE + postTradeSymbolExposureNumerator
+  const postTradeNetExposure = divideAwayFromZero(postTradeNetExposureNumerator, QUANTITY_SCALE)
+  const postTradeNetExposureMagnitude = divideUp(absolute(postTradeNetExposureNumerator), QUANTITY_SCALE)
+  const exposureIncrease = divideUp(
+    positiveDifference(absolute(postTradeSymbolExposureNumerator), absolute(currentSymbolExposureNumerator)),
+    QUANTITY_SCALE,
   )
-  const currentNetExposure = state.positions.reduce((total, position) => total + markedExposure(position), 0n)
-  const postTradeSymbolExposure = currentSymbolExposure + direction * orderNotional
-  const exposureIncrease = positiveDifference(absolute(postTradeSymbolExposure), absolute(currentSymbolExposure))
-  const postTradeGrossExposure =
-    currentGrossExposure - absolute(currentSymbolExposure) + absolute(postTradeSymbolExposure)
-  const postTradeNetExposure = currentNetExposure + direction * orderNotional
   const dailyTradedNotional = BigInt(state.dailyTradedNotionalMicros) + orderNotional
   const dailyLoss = positiveDifference(BigInt(state.dayStartEquityMicros), BigInt(state.account.equityMicros))
   const drawdown = positiveDifference(BigInt(state.peakEquityMicros), BigInt(state.account.equityMicros))
@@ -518,8 +523,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.SymbolExposure,
       Reason.SymbolExposureExceeded,
-      absolute(postTradeSymbolExposure) <= BigInt(policy.maxSymbolExposureMicros),
-      absolute(postTradeSymbolExposure),
+      postTradeSymbolExposureMagnitude <= BigInt(policy.maxSymbolExposureMicros),
+      postTradeSymbolExposureMagnitude,
       `<=${policy.maxSymbolExposureMicros}`,
     ),
     makeGate(
@@ -532,8 +537,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.NetExposure,
       Reason.NetExposureExceeded,
-      absolute(postTradeNetExposure) <= BigInt(policy.maxNetExposureMicros),
-      absolute(postTradeNetExposure),
+      postTradeNetExposureMagnitude <= BigInt(policy.maxNetExposureMicros),
+      postTradeNetExposureMagnitude,
       `<=${policy.maxNetExposureMicros}`,
     ),
     makeGate(
