@@ -5,8 +5,10 @@ repo_root=$(git rev-parse --show-toplevel)
 safety_manifest="$repo_root/argocd/applications/kube-router/safety-policies.yaml"
 
 desired_namespaces=$(
-  yq eval-all --no-doc --unwrapScalar 'select(.kind == "NetworkPolicy") | .metadata.namespace' "$safety_manifest" |
-    sort -u
+  {
+    yq eval-all --no-doc --unwrapScalar 'select(.kind == "NetworkPolicy") | .metadata.namespace' "$safety_manifest"
+    printf '%s\n' hermes
+  } | sort -u
 )
 actual_namespaces=$(
   kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json |
