@@ -193,7 +193,8 @@ class MarketDataChannelFreshnessTrackerTest {
     val byChannel = tracker.snapshot().associateBy { it.channel }
 
     assertFalse(tracker.ready())
-    assertFalse(byChannel.getValue("bars").ready)
+    assertTrue(byChannel.getValue("bars").ready)
+    assertFalse(byChannel.getValue("bars").symbolCoverageRequired)
     assertEquals(2, byChannel.getValue("bars").subscribedSymbolCount)
     assertEquals(listOf("AMD", "NVDA"), byChannel.getValue("bars").subscribedSymbols)
     assertEquals(nowMs, byChannel.getValue("bars").latestSubscriptionAckAtMs)
@@ -263,7 +264,8 @@ class MarketDataChannelFreshnessTrackerTest {
     val byChannel = tracker.snapshot().associateBy { it.channel }
 
     assertFalse(tracker.ready())
-    assertFalse(byChannel.getValue("bars").ready)
+    assertTrue(byChannel.getValue("bars").ready)
+    assertFalse(byChannel.getValue("bars").symbolCoverageRequired)
     assertEquals(2, byChannel.getValue("bars").subscribedSymbolCount)
     assertEquals(listOf("AMD", "NVDA"), byChannel.getValue("bars").subscribedSymbols)
     assertEquals(nowMs, byChannel.getValue("bars").latestSubscriptionAckAtMs)
@@ -314,6 +316,40 @@ class MarketDataChannelFreshnessTrackerTest {
     assertEquals("market_data_channel_stale_symbol_coverage", staleCoverage.reason)
     assertEquals(listOf("NVDA"), staleCoverage.staleSymbols)
     assertEquals(listOf("AMD"), staleCoverage.freshSymbols)
+  }
+
+  @Test
+  fun `quiet equity bar symbols remain diagnostic without restarting a fresh channel`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("bars"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("bars" to listOf("NVDA", "CRDO")))
+    listOf("NVDA", "CRDO").forEach { symbol ->
+      tracker.recordProviderEvent("bars", symbol)
+      tracker.recordSerializedEvent("bars", symbol)
+      tracker.recordKafkaSuccess("bars", symbol)
+    }
+
+    nowMs += 61_000
+    tracker.recordProviderEvent("bars", "NVDA")
+    tracker.recordSerializedEvent("bars", "NVDA")
+    tracker.recordKafkaSuccess("bars", "NVDA")
+
+    val readiness = tracker.snapshot().single()
+
+    assertTrue(tracker.ready())
+    assertTrue(readiness.ready)
+    assertFalse(readiness.symbolCoverageRequired)
+    assertEquals("market_data_channel_fresh", readiness.reason)
+    assertEquals(listOf("CRDO"), readiness.staleSymbols)
+    assertEquals(listOf("NVDA"), readiness.freshSymbols)
   }
 
   @Test

@@ -134,9 +134,13 @@ internal class MarketDataChannelFreshnessTracker(
       val channelSymbols = symbolsByChannel[channel].orEmpty()
       val readinessMode = readinessModeFor(channel, marketType)
       val freshnessRequired = readinessMode == MarketDataChannelReadinessMode.CONTINUOUS
+      // Alpaca omits a stock minute bar when that symbol has no qualifying trades in the interval.
+      // Keep the channel freshness gate, but do not turn an expected per-symbol bar gap into a restart loop.
+      val equityBarMayBeAbsent = marketType == AlpacaMarketType.EQUITY && channel == "bars"
       val symbolCoverageRequired =
         readinessMode == MarketDataChannelReadinessMode.CONTINUOUS &&
-          marketType != AlpacaMarketType.OPTIONS
+          marketType != AlpacaMarketType.OPTIONS &&
+          !equityBarMayBeAbsent
       val state = latestByChannel[channel]
       val latestKafkaSuccessAt = state?.latestKafkaSuccessAtMs?.get()?.takeIf { it > 0 }
       val latestProviderAt = state?.latestProviderEventAtMs?.get()?.takeIf { it > 0 }
@@ -152,7 +156,10 @@ internal class MarketDataChannelFreshnessTracker(
           .filter { symbol -> symbol in channelSymbols }
           .sorted()
       val lagMs = latestKafkaSuccessAt?.let { (now - it).coerceAtLeast(0) }
-      val symbolCoverageDiagnostic = symbolCoverageRequired || marketType == AlpacaMarketType.OPTIONS
+      val symbolCoverageDiagnostic =
+        symbolCoverageRequired ||
+          marketType == AlpacaMarketType.OPTIONS ||
+          equityBarMayBeAbsent
       val symbolLagMs =
         channelSymbols
           .mapNotNull { symbol ->
