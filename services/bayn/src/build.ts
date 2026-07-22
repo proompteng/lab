@@ -1,4 +1,6 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
+
+import { operationalError, type OperationalError } from './errors'
 
 declare const __BAYN_BUILD_SOURCE_REVISION__: string
 declare const __BAYN_BUILD_IMAGE_REPOSITORY__: string
@@ -40,3 +42,11 @@ export const embeddedBuildMetadata: EmbeddedBuildMetadata | undefined = hasNoEmb
       strategyBehaviorHash: strategyBehaviorHash ?? 'incomplete',
       strategyParameterHash: strategyParameterHash ?? 'incomplete',
     }
+
+export const verifyParameterHash = (
+  metadata: EmbeddedBuildMetadata,
+  actualParameterHash: string,
+): Effect.Effect<void, OperationalError> =>
+  metadata.strategyParameterHash === actualParameterHash
+    ? Effect.void
+    : Effect.fail(operationalError('config', 'provenance', 'compiled strategy parameters do not match build metadata'))

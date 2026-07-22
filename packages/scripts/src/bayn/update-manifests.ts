@@ -37,6 +37,9 @@ export interface BaynManifestUpdate {
   readonly qualificationMode: 'preserve' | 'replace'
   readonly hadQualificationPin: boolean
   readonly runtimeBindingsMatch: boolean
+  readonly snapshotChanged: boolean
+  readonly deployedSnapshotId: string
+  readonly candidateSnapshotId: string
   readonly deployedSourceSha: string
   readonly deployedBehaviorHash: string
   readonly deployedParameterHash: string
@@ -96,6 +99,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
   const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
   const deployedParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')
+  const deployedSnapshotId = environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID')
+  const candidateSnapshotId = currentRuntimeConfiguration.BAYN_SIGNAL_SNAPSHOT_ID
+  const snapshotChanged = deployedSnapshotId !== candidateSnapshotId
   const runtimeBindingsMatch = Object.entries(currentRuntimeConfiguration).every(
     ([name, value]) => environmentValue(deployment, name) === value,
   )
@@ -103,6 +109,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
   const qualificationMode =
     hadQualificationPin && strategyIdentityMatches && runtimeBindingsMatch ? 'preserve' : 'replace'
+  if (qualificationMode === 'replace' && !snapshotChanged) {
+    throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+  }
   const imageBlock =
     /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
   const updatedKustomization = replaceExactlyOnce(
@@ -167,6 +176,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     qualificationMode,
     hadQualificationPin,
     runtimeBindingsMatch,
+    snapshotChanged,
+    deployedSnapshotId,
+    candidateSnapshotId,
     deployedSourceSha,
     deployedBehaviorHash,
     deployedParameterHash,
