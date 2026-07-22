@@ -53,16 +53,12 @@ const QualificationDataFields = {
   bounds: EvaluationBoundsSchema,
 } as const
 
-const LegacyQualificationDataBase = Schema.Struct(QualificationDataFields)
-
-const UniverseBoundQualificationDataBase = Schema.Struct({
+const QualificationDataBase = Schema.Struct({
   ...QualificationDataFields,
   inputManifestHash: Sha256Schema,
 })
 
-const qualificationDataIssues = (
-  data: typeof LegacyQualificationDataBase.Type | typeof UniverseBoundQualificationDataBase.Type,
-): readonly Schema.FilterIssue[] => {
+const qualificationDataIssues = (data: typeof QualificationDataBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (data.firstSession > data.lastSession) {
     issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
@@ -73,16 +69,7 @@ const qualificationDataIssues = (
   return issues
 }
 
-export const LegacyQualificationDataSchema = LegacyQualificationDataBase.check(
-  Schema.makeFilter(qualificationDataIssues),
-)
-export const UniverseBoundQualificationDataSchema = UniverseBoundQualificationDataBase.check(
-  Schema.makeFilter(qualificationDataIssues),
-)
-export const QualificationDataSchema = Schema.Union([
-  LegacyQualificationDataSchema,
-  UniverseBoundQualificationDataSchema,
-])
+export const QualificationDataSchema = QualificationDataBase.check(Schema.makeFilter(qualificationDataIssues))
 
 const QualificationLockMaterialFields = {
   candidateRunId: Sha256Schema,
@@ -103,18 +90,12 @@ const QualificationLockMaterialFields = {
   priorTrialRunIds: Schema.Array(Sha256Schema),
 } as const
 
-const LegacyQualificationLockMaterialBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.qualification-lock.v2'),
-  ...QualificationLockMaterialFields,
-  data: LegacyQualificationDataSchema,
-})
-
-const UniverseBoundQualificationLockMaterialBase = Schema.Struct({
+const QualificationLockMaterialBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.qualification-lock.v3'),
   ...QualificationLockMaterialFields,
   universeId: Schema.Literal('equity-infrastructure-v1'),
   universeSymbolHash: Sha256Schema,
-  data: UniverseBoundQualificationDataSchema,
+  data: QualificationDataSchema,
 })
 
 const canonicalListIssues = (path: string, values: readonly string[]): readonly Schema.FilterIssue[] => {
@@ -126,46 +107,28 @@ const canonicalListIssues = (path: string, values: readonly string[]): readonly 
   return []
 }
 
-const lockMaterialIssues = (
-  lock: typeof LegacyQualificationLockMaterialBase.Type | typeof UniverseBoundQualificationLockMaterialBase.Type,
-): readonly Schema.FilterIssue[] => {
+const lockMaterialIssues = (lock: typeof QualificationLockMaterialBase.Type): readonly Schema.FilterIssue[] => {
   const issues = [
     ...canonicalListIssues('universe', lock.universe),
     ...canonicalListIssues('priorTrialRunIds', lock.priorTrialRunIds),
   ]
-  if (
-    lock.schemaVersion === 'bayn.qualification-lock.v3' &&
-    lock.universeSymbolHash !== sha256(lock.universe.join(','))
-  ) {
+  if (lock.universeSymbolHash !== sha256(lock.universe.join(','))) {
     issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
   }
   return issues
 }
 
-const LegacyQualificationLockMaterialSchema = LegacyQualificationLockMaterialBase.check(
+export const QualificationLockMaterialSchema = QualificationLockMaterialBase.check(
   Schema.makeFilter(lockMaterialIssues),
 )
-const UniverseBoundQualificationLockMaterialSchema = UniverseBoundQualificationLockMaterialBase.check(
-  Schema.makeFilter(lockMaterialIssues),
-)
-export const QualificationLockMaterialSchema = Schema.Union([
-  LegacyQualificationLockMaterialSchema,
-  UniverseBoundQualificationLockMaterialSchema,
-])
 export type QualificationLockMaterial = typeof QualificationLockMaterialSchema.Type
 
-const LegacyQualificationLockBase = Schema.Struct({
-  ...LegacyQualificationLockMaterialBase.fields,
-  lockId: Sha256Schema,
-})
-const UniverseBoundQualificationLockBase = Schema.Struct({
-  ...UniverseBoundQualificationLockMaterialBase.fields,
+const QualificationLockBase = Schema.Struct({
+  ...QualificationLockMaterialBase.fields,
   lockId: Sha256Schema,
 })
 
-const qualificationLockIssues = (
-  lock: typeof LegacyQualificationLockBase.Type | typeof UniverseBoundQualificationLockBase.Type,
-): readonly Schema.FilterIssue[] => {
+const qualificationLockIssues = (lock: typeof QualificationLockBase.Type): readonly Schema.FilterIssue[] => {
   const { lockId, ...material } = lock
   const issues = [...lockMaterialIssues(material)]
   if (lockId !== canonicalHashV1(material)) {
@@ -174,14 +137,7 @@ const qualificationLockIssues = (
   return issues
 }
 
-const LegacyQualificationLockSchema = LegacyQualificationLockBase.check(Schema.makeFilter(qualificationLockIssues))
-export const UniverseBoundQualificationLockSchema = UniverseBoundQualificationLockBase.check(
-  Schema.makeFilter(qualificationLockIssues),
-)
-export const QualificationLockSchema = Schema.Union([
-  LegacyQualificationLockSchema,
-  UniverseBoundQualificationLockSchema,
-])
+export const QualificationLockSchema = QualificationLockBase.check(Schema.makeFilter(qualificationLockIssues))
 export type QualificationLock = typeof QualificationLockSchema.Type
 
 const decodePolicyDocumentSync = Schema.decodeUnknownSync(QualificationPolicyDocumentSchema, StrictParseOptions)

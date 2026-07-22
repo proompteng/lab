@@ -13,7 +13,7 @@ import {
   type QualificationStatisticsPolicy,
 } from './qualification-statistics'
 import { canonicalHashV1 } from './hash'
-import { evaluateTsmom } from './strategy'
+import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const isoDate = (index: number): `${number}-${number}-${number}` => {
@@ -141,7 +141,7 @@ describe('deterministic paired block bootstrap', () => {
       nextRebalanceSession: isoDate(90 * 21),
     })
     expect(first.bootstrap.producedSamples).toBe(1_000)
-    expect(first.bootstrap.samplesHash).toBe('5dbf17c167343bf235dc61c3f5bbb714cb755baa3c72db22160a89b74937a62e')
+    expect(first.bootstrap.samplesHash).toBe('e7e3f0e6947361137b7eb2376100fdb559fbcb268b3482474b3e311adf80109a')
     expect(second).toEqual(first)
   })
 
@@ -162,7 +162,7 @@ describe('deterministic paired block bootstrap', () => {
         bootstrap: {
           ...defaultQualificationStatisticsPolicy.bootstrap,
           samples: 1_000,
-          seedNamespace: 'bayn-tsmom-qualification-v1-alternate',
+          seedNamespace: 'bayn-risk-balanced-trend-qualification-v1-alternate',
         },
       }),
       [],
@@ -295,7 +295,12 @@ describe('walk-forward and terminal qualification semantics', () => {
 describe('evaluation adapter', () => {
   test('prepares exact aligned strategy, cash, benchmark, and rebalance dates from decoded evidence', () => {
     const snapshot = makeSnapshot()
-    const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const evaluation = evaluateRiskBalancedTrend(
+      snapshot.bars,
+      snapshot.manifest,
+      fixtureProtocol,
+      makeTestProvenance(),
+    )
     const series = prepareQualificationSeries(evaluation)
 
     expect(series.runId).toBe(evaluation.runId)

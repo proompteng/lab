@@ -19,7 +19,7 @@ import {
   resolveReplicaAddresses,
   type JournalService,
 } from './ledger'
-import { evaluateTsmom } from './strategy'
+import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const materializeAccounts = (plan: ReturnType<typeof buildLedgerPlan>): Account[] => {
@@ -115,7 +115,7 @@ const withJournal = <A, E>(client: Client, use: (journal: JournalService) => Eff
 describe('TigerBeetle simulation journal', () => {
   test('plans deterministic double-entry transfers and reconciles exact sets and balances', () => {
     const snapshot = makeSnapshot()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const first = buildLedgerPlan(result, 7001)
     const second = buildLedgerPlan(result, 7001)
     expect(first).toEqual(second)
@@ -129,7 +129,7 @@ describe('TigerBeetle simulation journal', () => {
 
   test('fails closed on extra transfers or mismatched balances', () => {
     const snapshot = makeSnapshot()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const plan = buildLedgerPlan(result, 7001)
     const accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
@@ -147,7 +147,7 @@ describe('TigerBeetle simulation journal', () => {
 
   test('creates an empty target exactly once and verifies an idempotent replay', async () => {
     const snapshot = makeSnapshot()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const plan = buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)
     const target = makeLedgerClient()
 
@@ -170,7 +170,7 @@ describe('TigerBeetle simulation journal', () => {
 
   test('rejects a mismatched existing account before creating transfers', async () => {
     const snapshot = makeSnapshot()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
+    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance())
     const plan = buildLedgerPlan(result, journalConfig.tigerBeetle.ledger)
     const target = makeLedgerClient()
     target.accounts.set(plan.accounts[0].id, { ...plan.accounts[0], code: plan.accounts[0].code + 1, timestamp: 1n })
@@ -186,7 +186,7 @@ describe('TigerBeetle simulation journal', () => {
   test('checks the persisted run read-only and rejects changed TigerBeetle balances', async () => {
     const snapshot = makeSnapshot()
     const provenance = makeTestProvenance()
-    const result = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const result = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     const plan = buildLedgerPlan(result, 7001)
     let accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)

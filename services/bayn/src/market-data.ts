@@ -2,12 +2,7 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Clock, Context, Effect, Layer, Schema } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import {
-  UniverseBoundFinalizedSnapshotProvenanceSchema,
-  type EvaluationBounds,
-  type FinalizedSnapshotProvenance,
-  type UniverseBoundFinalizedSnapshotProvenance,
-} from './contracts'
+import { type EvaluationBounds, type FinalizedSnapshotProvenance, FinalizedSnapshotProvenanceSchema } from './contracts'
 import { OperationalError, operationalError } from './errors'
 import { canonicalHashV1, sha256 } from './hash'
 import {
@@ -18,9 +13,8 @@ import {
   type DailyBar,
   type InputManifest,
   type IsoDate,
-  type RiskBalancedTrendProtocol,
+  type Protocol,
   type SymbolCoverage,
-  type UniverseBoundInputManifest,
 } from './types'
 
 const database = 'signal' as const
@@ -135,10 +129,8 @@ export interface SnapshotRequest {
   readonly evaluationStart: IsoDate
 }
 
-export type UniverseBoundSnapshotRequest = SnapshotRequest
-
 type MarketDataContract = Pick<
-  RiskBalancedTrendProtocol,
+  Protocol,
   'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
 >
 
@@ -169,10 +161,7 @@ const asCount = (value: string | number, name: string): number => {
 const decodeBars = Schema.decodeUnknownSync(Schema.Array(SignalBarRowSchema), StrictParseOptions)
 const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SignalSessionRowSchema), StrictParseOptions)
 const decodeManifests = Schema.decodeUnknownSync(Schema.Array(SignalManifestRowSchema), StrictParseOptions)
-const decodeUniverseBoundFinalizedSnapshot = Schema.decodeUnknownSync(
-  UniverseBoundFinalizedSnapshotProvenanceSchema,
-  StrictParseOptions,
-)
+const decodeFinalizedSnapshot = Schema.decodeUnknownSync(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
 
 const canonicalUniverse = (universe: readonly string[]): readonly string[] => {
   const canonical = [...new Set(universe)].sort()
@@ -227,7 +216,7 @@ const assertBoundSessions = (sessions: ReadonlySet<string>, bounds: EvaluationBo
 
 interface VerifiedManifest {
   readonly manifest: SignalManifestRow
-  readonly finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenance
+  readonly finalizedSnapshot: FinalizedSnapshotProvenance
   readonly universe: readonly string[]
 }
 
@@ -324,7 +313,7 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
   return {
     manifest,
     universe,
-    finalizedSnapshot: decodeUniverseBoundFinalizedSnapshot({
+    finalizedSnapshot: decodeFinalizedSnapshot({
       schemaVersion: 'bayn.finalized-snapshot.v3',
       universeId: manifest.universe_id,
       universeSymbolHash: manifest.universe_symbol_hash,
@@ -336,13 +325,13 @@ const verifyManifest = (manifests: readonly SignalManifestRow[], request: Snapsh
 export const verifyFinalizedManifest = (
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
-): UniverseBoundFinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
+): FinalizedSnapshotProvenance => verifyManifest(manifests, request).finalizedSnapshot
 
 interface VerifiedCalendar {
   readonly verifiedManifest: VerifiedManifest
   readonly orderedSessions: readonly SignalSessionRow[]
   readonly boundedSessions: readonly SignalSessionRow[]
-  readonly inputManifest: UniverseBoundInputManifest
+  readonly inputManifest: InputManifest
 }
 
 const verifyCalendar = (
@@ -398,7 +387,7 @@ const verifyCalendar = (
     lastSession: lastBoundedSession.session_date,
     symbols,
   } as const
-  const material: Omit<UniverseBoundInputManifest, 'hash'> = {
+  const material: Omit<InputManifest, 'hash'> = {
     schemaVersion: 'bayn.input-manifest.v3',
     tables,
     ...manifestFields,

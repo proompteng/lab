@@ -70,7 +70,7 @@ export const defaultQualificationStatisticsPolicy: QualificationStatisticsPolicy
   bootstrap: {
     method: 'paired-complete-rebalance-blocks',
     samples: 5_000,
-    seedNamespace: 'bayn-tsmom-qualification-v1',
+    seedNamespace: 'bayn-risk-balanced-trend-qualification-v1',
     lowerQuantile: 'nearest-rank',
   },
   power: {

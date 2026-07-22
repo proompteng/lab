@@ -13,10 +13,6 @@ resources:
   - deployment.yaml
   - service.yaml
   - networkpolicy.yaml
-configMapGenerator:
-  - name: bayn-qualification-dossier
-    files:
-      - qualification-dossier.json
 images:
   - name: registry.ide-newton.ts.net/lab/bayn
     newName: registry.ide-newton.ts.net/lab/bayn

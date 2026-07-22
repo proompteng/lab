@@ -12,7 +12,7 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
-  runs additive Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
+  runs versioned Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
   query cancellation.
 - The composition root selects one strategy capability. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its
   authoritative universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
@@ -119,8 +119,7 @@ read-only identity.
 
 Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
 binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
-verdict, and observe-only authority. GitOps publishes the reviewed JSON as the content-hashed
-`bayn-qualification-dossier` ConfigMap.
+verdict, and observe-only authority. It is an operator evidence artifact, not runtime configuration.
 
 The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
 

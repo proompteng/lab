@@ -6,16 +6,12 @@ import {
   makeRiskBalancedTrendDecision,
   prepareRiskBalancedTrendQualification,
 } from './risk-balanced-trend'
-import { makeRiskBalancedTrendStrategy } from './strategy-service'
-import {
-  makeRiskBalancedTrendSnapshot,
-  makeRiskBalancedTrendTestProvenance,
-  riskBalancedTrendFixtureProtocol,
-} from './test-fixtures'
-import type { IsoDate, RiskBalancedTrendProtocol } from './types'
+import { makeStrategy } from './strategy-service'
+import { makeSnapshot, makeTestProvenance, fixtureProtocol } from './test-fixtures'
+import type { IsoDate, Protocol } from './types'
 
-const shortProtocol = (overrides: Partial<RiskBalancedTrendProtocol> = {}): RiskBalancedTrendProtocol => ({
-  ...riskBalancedTrendFixtureProtocol,
+const shortProtocol = (overrides: Partial<Protocol> = {}): Protocol => ({
+  ...fixtureProtocol,
   universe: ['DBC', 'EEM', 'EFA'],
   horizons: [1, 2],
   volatilityWindow: 2,
@@ -181,14 +177,9 @@ describe('risk-balanced trend candidate', () => {
       ),
     ).toThrow('ordered sessions')
 
-    const snapshot = makeRiskBalancedTrendSnapshot()
-    const provenance = makeRiskBalancedTrendTestProvenance()
-    const baseline = evaluateRiskBalancedTrend(
-      snapshot.bars,
-      snapshot.manifest,
-      riskBalancedTrendFixtureProtocol,
-      provenance,
-    )
+    const snapshot = makeSnapshot()
+    const provenance = makeTestProvenance()
+    const baseline = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     const finalSession = snapshot.manifest.lastSession
     const changedFuture = snapshot.bars.map((bar) =>
       bar.sessionDate === finalSession && bar.symbol === 'DBC'
@@ -201,37 +192,22 @@ describe('risk-balanced trend candidate', () => {
           }
         : bar,
     )
-    const changed = evaluateRiskBalancedTrend(
-      changedFuture,
-      snapshot.manifest,
-      riskBalancedTrendFixtureProtocol,
-      provenance,
-    )
+    const changed = evaluateRiskBalancedTrend(changedFuture, snapshot.manifest, fixtureProtocol, provenance)
 
     expect(baseline.signalDecisions[0].signalDate < finalSession).toBe(true)
     expect(changed.signalDecisions[0]).toEqual(baseline.signalDecisions[0])
   })
 
   test('evaluates deterministically with complete evidence and a calendar-only precommit', () => {
-    const snapshot = makeRiskBalancedTrendSnapshot()
-    const provenance = makeRiskBalancedTrendTestProvenance()
-    const first = evaluateRiskBalancedTrend(
-      snapshot.bars,
-      snapshot.manifest,
-      riskBalancedTrendFixtureProtocol,
-      provenance,
-    )
-    const second = evaluateRiskBalancedTrend(
-      snapshot.bars,
-      snapshot.manifest,
-      riskBalancedTrendFixtureProtocol,
-      provenance,
-    )
+    const snapshot = makeSnapshot()
+    const provenance = makeTestProvenance()
+    const first = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const second = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
     const precommit = prepareRiskBalancedTrendQualification(
       sessionDates,
       snapshot.manifest,
-      riskBalancedTrendFixtureProtocol,
+      fixtureProtocol,
       provenance,
     )
 
@@ -263,7 +239,7 @@ describe('risk-balanced trend candidate', () => {
       snapshot.bars.map((bar) => [`${bar.symbol}\u001f${bar.sessionDate}`, bar.close] as const),
     )
     const retainedCloses = Object.fromEntries(
-      riskBalancedTrendFixtureProtocol.universe.map((symbol) => [
+      fixtureProtocol.universe.map((symbol) => [
         symbol,
         retainedDates.map((date) => {
           const close = closesBySymbolAndDate.get(`${symbol}\u001f${date}`)
@@ -276,19 +252,19 @@ describe('risk-balanced trend candidate', () => {
       retained.signalDate,
       retainedDates,
       retainedCloses,
-      riskBalancedTrendFixtureProtocol,
+      fixtureProtocol,
     )
     const { decisionId: _, executionDate: __, ...retainedPlan } = retained
     expect(retainedPlan).toEqual(expectedDecision)
     const priorTrialRunIds = Array.from({ length: 8 }, (_, index) => index.toString(16).repeat(64))
-    const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, provenance)
+    const strategy = makeStrategy(fixtureProtocol, provenance)
     const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
     const analysis = strategy.analyze(first, priorTrialRunIds)
     expect(lock.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(lock).toMatchObject({
       schemaVersion: 'bayn.qualification-lock.v3',
-      universeId: riskBalancedTrendFixtureProtocol.universeId,
-      universeSymbolHash: riskBalancedTrendFixtureProtocol.universeSymbolHash,
+      universeId: fixtureProtocol.universeId,
+      universeSymbolHash: fixtureProtocol.universeSymbolHash,
       data: { inputManifestHash: snapshot.manifest.hash },
     })
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)

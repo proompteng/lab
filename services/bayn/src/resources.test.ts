@@ -9,7 +9,7 @@ import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { TsmomStrategyLayer } from './strategy-service'
+import { StrategyLayer } from './strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
@@ -217,7 +217,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
-          Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+          Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
         ),
       ),
     )
@@ -243,7 +243,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
-          Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+          Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
         ),
       ),
     )
@@ -276,7 +276,7 @@ describe('Bayn resource lifecycle', () => {
         initialize(config, state).pipe(
           Effect.provideService(MarketData, marketData),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
-          Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+          Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
             JournalLive(config, {
               createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,

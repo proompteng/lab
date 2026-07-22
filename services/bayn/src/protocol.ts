@@ -4,7 +4,7 @@ import { IsoDateSchema, Sha256Schema } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1, sha256 } from './hash'
-import { DIRECT_VOLATILITY_WINDOW, type RiskBalancedTrendProtocol, type TsmomProtocol } from './types'
+import { DIRECT_VOLATILITY_WINDOW, type Protocol } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
@@ -85,37 +85,6 @@ export const ExecutionModelSchema = Schema.Struct({
   }),
 )
 
-const TsmomProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.tsmom.protocol.v2'),
-  universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
-  lookbacks: Schema.Array(PositiveInteger).check(Schema.isMinLength(1)),
-  rebalance: Schema.Literal('month-end'),
-  positionPolicy: Schema.Literal('long-or-cash'),
-  directVolatilityTarget: PositiveUnitInterval,
-  initialCapitalMicros: PositiveMicros,
-  executionModel: ExecutionModelSchema,
-  thresholds: EconomicThresholdsSchema,
-})
-
-export const TsmomProtocolSchema = TsmomProtocolBase.check(
-  Schema.makeFilter((parameters: typeof TsmomProtocolBase.Type) => {
-    const issues: Schema.FilterIssue[] = []
-    const sortedUniverse = [...new Set(parameters.universe)].sort()
-    if (sortedUniverse.length !== parameters.universe.length) {
-      issues.push({ path: ['universe'], issue: 'must not contain duplicate symbols' })
-    } else if (sortedUniverse.some((symbol, index) => symbol !== parameters.universe[index])) {
-      issues.push({ path: ['universe'], issue: 'must be sorted in canonical order' })
-    }
-    for (let index = 1; index < parameters.lookbacks.length; index += 1) {
-      if (parameters.lookbacks[index] <= parameters.lookbacks[index - 1]) {
-        issues.push({ path: ['lookbacks', index], issue: 'must be unique and strictly increasing' })
-        break
-      }
-    }
-    return issues
-  }),
-)
-
 const defaultEconomicThresholds = {
   minimumObservations: 504,
   minimumAnnualizedReturn: 0,
@@ -125,31 +94,7 @@ const defaultEconomicThresholds = {
   requirePositiveDoubleCostReturn: true,
 } as const
 
-export const defaultProtocolDocument = {
-  schemaVersion: 'bayn.tsmom.protocol.v2',
-  universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
-  lookbacks: [21, 63, 126, 252],
-  rebalance: 'month-end',
-  positionPolicy: 'long-or-cash',
-  directVolatilityTarget: 0.1,
-  initialCapitalMicros: '1000000000000',
-  executionModel: defaultExecutionModel,
-  thresholds: defaultEconomicThresholds,
-} as const
-
-export const loadTsmomProtocol = (input: unknown): Effect.Effect<TsmomProtocol, OperationalError> =>
-  Schema.decodeUnknownEffect(
-    TsmomProtocolSchema,
-    StrictParseOptions,
-  )(input).pipe(
-    Effect.mapError((cause) => operationalError('strategy', 'parameters', 'invalid TSMOM parameters', cause)),
-  )
-
-export const loadDefaultProtocol = loadTsmomProtocol(defaultProtocolDocument)
-
-export const hashTsmomParameters = (parameters: TsmomProtocol): string => canonicalHashV1(parameters)
-
-const RiskBalancedTrendProtocolBase = Schema.Struct({
+const ProtocolBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
   universeId: Schema.Literal('equity-infrastructure-v1'),
   universeSymbolHash: Sha256Schema,
@@ -168,8 +113,8 @@ const RiskBalancedTrendProtocolBase = Schema.Struct({
   thresholds: EconomicThresholdsSchema,
 })
 
-export const RiskBalancedTrendProtocolSchema = RiskBalancedTrendProtocolBase.check(
-  Schema.makeFilter((parameters: typeof RiskBalancedTrendProtocolBase.Type) => {
+export const ProtocolSchema = ProtocolBase.check(
+  Schema.makeFilter((parameters: typeof ProtocolBase.Type) => {
     const issues: Schema.FilterIssue[] = []
     const sortedUniverse = [...new Set(parameters.universe)].sort()
     if (sortedUniverse.length !== parameters.universe.length) {
@@ -202,7 +147,7 @@ export const RiskBalancedTrendProtocolSchema = RiskBalancedTrendProtocolBase.che
   }),
 )
 
-export const defaultRiskBalancedTrendProtocolDocument = {
+export const defaultProtocolDocument = {
   schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
   universeId: 'equity-infrastructure-v1',
   universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
@@ -221,11 +166,9 @@ export const defaultRiskBalancedTrendProtocolDocument = {
   thresholds: defaultEconomicThresholds,
 } as const
 
-export const loadRiskBalancedTrendProtocol = (
-  input: unknown,
-): Effect.Effect<RiskBalancedTrendProtocol, OperationalError> =>
+export const loadProtocol = (input: unknown): Effect.Effect<Protocol, OperationalError> =>
   Schema.decodeUnknownEffect(
-    RiskBalancedTrendProtocolSchema,
+    ProtocolSchema,
     StrictParseOptions,
   )(input).pipe(
     Effect.mapError((cause) =>
@@ -233,9 +176,6 @@ export const loadRiskBalancedTrendProtocol = (
     ),
   )
 
-export const loadDefaultRiskBalancedTrendProtocol = loadRiskBalancedTrendProtocol(
-  defaultRiskBalancedTrendProtocolDocument,
-)
+export const loadDefaultProtocol = loadProtocol(defaultProtocolDocument)
 
-export const hashRiskBalancedTrendParameters = (parameters: RiskBalancedTrendProtocol): string =>
-  canonicalHashV1(parameters)
+export const hashParameters = (parameters: Protocol): string => canonicalHashV1(parameters)

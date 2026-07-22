@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
 import { decodeInputManifestArtifact } from './evidence-contracts'
 import { MarketData, MarketDataLive } from './market-data'
-import { RiskBalancedTrendProtocolSchema } from './protocol'
+import { ProtocolSchema } from './protocol'
 import {
   auditQualification,
   type AuditDatabaseSnapshot,
@@ -14,7 +14,7 @@ import {
   type SignalAccessRecord,
 } from './qualification-audit'
 import { makeQualificationDossier } from './qualification-dossier'
-import type { RiskBalancedTrendProtocol, UniverseBoundInputManifest } from './types'
+import type { Protocol, InputManifest } from './types'
 
 const StrictParseOptions = { onExcessProperty: 'error' } as const
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
@@ -312,7 +312,7 @@ const readDatabase = (runId: string): Effect.Effect<AuditDatabaseSnapshot, unkno
     )
   })
 
-const loadSignal = (input: AuditConfig, manifest: UniverseBoundInputManifest, protocol: RiskBalancedTrendProtocol) => {
+const loadSignal = (input: AuditConfig, manifest: InputManifest, protocol: Protocol) => {
   const marketDataConfig = {
     operationTimeoutMs: input.operationTimeoutMs,
     clickhouse: {
@@ -357,7 +357,7 @@ const readSignalReplicaAccess = (
   ordinal: number,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
-  manifestTable: UniverseBoundInputManifest['tables']['manifests'],
+  manifestTable: InputManifest['tables']['manifests'],
 ): Effect.Effect<SignalReplicaAccess, unknown> => {
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
@@ -436,7 +436,7 @@ const readSignalAccess = (
   input: AuditConfig,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
-  manifestTable: UniverseBoundInputManifest['tables']['manifests'],
+  manifestTable: InputManifest['tables']['manifests'],
 ): Effect.Effect<{ readonly replicas: readonly string[]; readonly access: readonly SignalAccessRecord[] }, unknown> =>
   Effect.all(
     input.auditClickhouseUrls.map((url, ordinal) =>
@@ -514,10 +514,7 @@ const main = Effect.gen(function* () {
   if (manifest.schemaVersion !== 'bayn.input-manifest.v3') {
     throw new Error('qualification audit requires the current universe-bound input manifest')
   }
-  const protocol = yield* Schema.decodeUnknownEffect(
-    RiskBalancedTrendProtocolSchema,
-    StrictParseOptions,
-  )(database.protocol.parameters)
+  const protocol = yield* Schema.decodeUnknownEffect(ProtocolSchema, StrictParseOptions)(database.protocol.parameters)
   if (database.protocol.strategyName !== 'risk-balanced-trend' || database.run.strategyName !== 'risk-balanced-trend') {
     throw new Error('stored strategy name does not match its protocol schema')
   }

@@ -8,12 +8,12 @@ import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreRuntimeLive } from './db/evidence-store'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
-import { hashRiskBalancedTrendParameters, loadDefaultRiskBalancedTrendProtocol } from './protocol'
-import { makeRiskBalancedTrendStrategy, Strategy } from './strategy-service'
+import { hashParameters, loadDefaultProtocol } from './protocol'
+import { makeStrategy, Strategy } from './strategy-service'
 
 const main = Effect.gen(function* () {
   const config = yield* loadConfig()
-  const protocol = yield* loadDefaultRiskBalancedTrendProtocol
+  const protocol = yield* loadDefaultProtocol
   const provenance = makeRuntimeProvenance({
     sourceRevision: config.build.sourceRevision,
     image: {
@@ -23,11 +23,11 @@ const main = Effect.gen(function* () {
     strategy: {
       name: 'risk-balanced-trend',
       behaviorHash: config.build.strategyBehaviorHash,
-      parameterHash: hashRiskBalancedTrendParameters(protocol),
+      parameterHash: hashParameters(protocol),
       parameterSchemaVersion: protocol.schemaVersion,
     },
   })
-  const strategy = makeRiskBalancedTrendStrategy(protocol, provenance)
+  const strategy = makeStrategy(protocol, provenance)
   const marketData = MarketDataLive(config, protocol).pipe(
     Layer.provide(
       ClickhouseClient.layer({

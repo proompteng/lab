@@ -31,16 +31,12 @@ import type {
   InputManifest,
   IsoDate,
   PerformanceMetrics,
-  RiskBalancedTrendDecisionPlan,
-  RiskBalancedTrendProtocol,
+  DecisionPlan,
+  Protocol,
+  SignalDecision,
   SimulatedOrder,
   SimulationProtocol,
   SimulationTrace,
-  StrategyDecisionPlan,
-  StrategySignalDecision,
-  TsmomDecisionPlan,
-  TsmomProtocol,
-  UniverseBoundInputManifest,
 } from './types'
 
 interface Session {
@@ -52,7 +48,7 @@ interface Target {
   readonly signalIndex: number
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
-  readonly plan?: StrategyDecisionPlan
+  readonly plan?: DecisionPlan
 }
 
 interface Position {
@@ -63,7 +59,7 @@ interface Position {
 interface Replay {
   readonly metrics: PerformanceMetrics
   readonly events: readonly EvaluationEvent[]
-  readonly decisions: readonly StrategySignalDecision[]
+  readonly decisions: readonly SignalDecision[]
   readonly daily: readonly DailyPerformancePoint[]
   readonly trace: SimulationTrace | null
 }
@@ -135,42 +131,7 @@ const monthEnds = (dates: readonly IsoDate[]): readonly number[] => {
   return result
 }
 
-const decisionPlan = (
-  signalIndex: number,
-  sessions: readonly Session[],
-  protocol: TsmomProtocol,
-): TsmomDecisionPlan => {
-  const maximumLookback = Math.max(...protocol.lookbacks)
-  const signals = protocol.universe.map((symbol) => {
-    const current = sessions[signalIndex].bars[symbol].close
-    const lookbacks = protocol.lookbacks.map((lookbackSessions) => {
-      const prior = sessions[signalIndex - lookbackSessions].bars[symbol].close
-      if (![current, prior].every((price) => Number.isFinite(price) && price > 0)) {
-        throw new Error(`reference TSMOM decision has an invalid close for ${symbol}`)
-      }
-      const value = current / prior - 1
-      return {
-        lookbackSessions,
-        return: value,
-        direction: value > 0 ? ('positive' as const) : ('non-positive' as const),
-      }
-    })
-    const score = lookbacks.reduce((sum, lookback) => sum + (lookback.return > 0 ? 1 : -1), 0)
-    return { symbol, lookbacks, score, active: score > 0, targetWeight: 0 }
-  })
-  if (signalIndex < maximumLookback) throw new Error('reference TSMOM decision has insufficient history')
-  const activeCount = signals.filter((signal) => signal.active).length
-  const weight = activeCount === 0 ? 0 : roundWeight(1 / activeCount)
-  const weighted = signals.map((signal) => ({ ...signal, targetWeight: signal.active ? weight : 0 }))
-  return {
-    schemaVersion: 'bayn.tsmom-decision-plan.v1',
-    signalDate: sessions[signalIndex].date,
-    targetWeights: Object.fromEntries(weighted.map((signal) => [signal.symbol, signal.targetWeight])),
-    signals: weighted,
-  }
-}
-
-const riskBalancedHistoryLength = (protocol: RiskBalancedTrendProtocol): number =>
+const riskBalancedHistoryLength = (protocol: Protocol): number =>
   Math.max(protocol.volatilityWindow, ...protocol.horizons)
 
 const allocateCapped = (
@@ -271,8 +232,8 @@ const portfolioVolatility = (
 const riskBalancedDecisionPlan = (
   signalIndex: number,
   sessions: readonly Session[],
-  protocol: RiskBalancedTrendProtocol,
-): RiskBalancedTrendDecisionPlan => {
+  protocol: Protocol,
+): DecisionPlan => {
   const requiredHistory = riskBalancedHistoryLength(protocol)
   if (signalIndex < requiredHistory) throw new Error('reference risk-balanced trend has insufficient history')
   const history = sessions.slice(signalIndex - requiredHistory, signalIndex + 1)
@@ -543,7 +504,7 @@ const replay = (
   let previousDate: IsoDate | undefined
   const equity: bigint[] = []
   const events: EvaluationEvent[] = []
-  const decisions: StrategySignalDecision[] = []
+  const decisions: SignalDecision[] = []
   const orders: SimulatedOrder[] = []
   const changes: CashChange[] = []
   const marks: DailyPositionMark[] = []
@@ -899,108 +860,10 @@ const verdict = (
   return { status: gates.every((gate) => gate.passed) ? 'PASS' : 'FAIL_CLOSED', gates }
 }
 
-export const evaluateReferenceTsmom = (
+export const evaluateReference = (
   bars: readonly DailyBar[],
   manifest: InputManifest,
-  protocol: TsmomProtocol,
-  provenance: RuntimeProvenance,
-): ReferenceEvaluation => {
-  const sessions = align(bars, manifest, protocol.universe)
-  const dates = sessions.map((session) => session.date)
-  const maximumLookback = Math.max(...protocol.lookbacks)
-  const eligibleSignals = monthEnds(dates).filter(
-    (index) =>
-      index >= maximumLookback &&
-      index < dates.length - 1 &&
-      dates[index - maximumLookback] >= manifest.bounds.lookbackStart &&
-      dates[index + 1] >= manifest.bounds.evaluationStart &&
-      dates[index + 1] <= manifest.bounds.evaluationEnd,
-  )
-  if (eligibleSignals.length === 0) throw new Error('reference dataset has no eligible signal session')
-  const startIndex = eligibleSignals[0] + 1
-  const firstAfterEnd = dates.findIndex((date) => date > manifest.bounds.evaluationEnd)
-  const endExclusive = firstAfterEnd === -1 ? dates.length : firstAfterEnd
-  const boundedSessions = sessions.slice(0, endExclusive)
-  if (endExclusive - startIndex < protocol.thresholds.minimumObservations) {
-    throw new Error('reference dataset has too few evaluation observations')
-  }
-
-  const parameterHash = canonicalHashV1(protocol)
-  const strategyIdentity = {
-    name: provenance.strategy.name,
-    behaviorHash: provenance.strategy.behaviorHash,
-    parameterHash,
-    parameterSchemaVersion: protocol.schemaVersion,
-  }
-  if (canonicalHashV1(protocol) !== provenance.strategy.parameterHash || provenance.strategy.name !== 'tsmom') {
-    throw new Error('reference protocol does not match runtime provenance')
-  }
-  const runId = makeRunIdentity({
-    schemaVersion: 'bayn.run-identity.v1',
-    sourceRevision: provenance.sourceRevision,
-    image: provenance.image,
-    strategy: {
-      name: provenance.strategy.name,
-      behaviorHash: provenance.strategy.behaviorHash,
-      parameters: protocol,
-    },
-    finalizedSnapshot: manifest.finalizedSnapshot,
-    calendarVersion: manifest.finalizedSnapshot.calendarVersion,
-    bounds: manifest.bounds,
-  }).runId
-  const protocolHash = makeStrategyProtocolHash(strategyIdentity)
-  const candidateTargets = eligibleSignals.map((signalIndex): Target => {
-    const plan = decisionPlan(signalIndex, sessions, protocol)
-    return { signalIndex, executionIndex: signalIndex + 1, weights: plan.targetWeights, plan }
-  })
-  const equalWeight = roundWeight(1 / protocol.universe.length)
-  const buyAndHoldTargets: readonly Target[] = [
-    {
-      signalIndex: startIndex - 1,
-      executionIndex: startIndex,
-      weights: Object.fromEntries(protocol.universe.map((symbol) => [symbol, equalWeight])),
-    },
-  ]
-  const directVolTargets = eligibleSignals.map(
-    (signalIndex): Target => ({
-      signalIndex,
-      executionIndex: signalIndex + 1,
-      weights: directVolatilityTarget(sessions, signalIndex, protocol),
-    }),
-  )
-  const strategy = replay(boundedSessions, candidateTargets, startIndex, protocol, MICROS, runId, true)
-  const buyAndHold = replay(boundedSessions, buyAndHoldTargets, startIndex, protocol, MICROS, runId, false)
-  const directVolTiming = replay(boundedSessions, directVolTargets, startIndex, protocol, MICROS, runId, false)
-  const doubleCostStrategy = replay(
-    boundedSessions,
-    candidateTargets,
-    startIndex,
-    protocol,
-    BigInt(protocol.executionModel.doubleCostMultiplier) * MICROS,
-    runId,
-    false,
-  )
-  return {
-    runId,
-    protocolHash,
-    strategy,
-    buyAndHold,
-    directVolTiming,
-    doubleCostStrategy,
-    verdict: verdict(
-      strategy.metrics,
-      buyAndHold.metrics,
-      directVolTiming.metrics,
-      doubleCostStrategy.metrics,
-      protocol,
-    ),
-  }
-}
-
-export const evaluateReferenceRiskBalancedTrend = (
-  bars: readonly DailyBar[],
-  manifest: UniverseBoundInputManifest,
-  protocol: RiskBalancedTrendProtocol,
+  protocol: Protocol,
   provenance: RuntimeProvenance,
 ): ReferenceEvaluation => {
   const sessions = align(bars, manifest, protocol.universe)

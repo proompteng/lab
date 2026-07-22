@@ -19,7 +19,7 @@ import {
 const policy = (name: string) => makeQualificationPolicyDocument(`bayn.${name}.v1`, { name, enabled: true })
 
 const material: QualificationLockMaterial = {
-  schemaVersion: 'bayn.qualification-lock.v2' as const,
+  schemaVersion: 'bayn.qualification-lock.v3' as const,
   candidateRunId: 'a'.repeat(64),
   protocolHash: '1'.repeat(64),
   sourceRevision: '2'.repeat(40),
@@ -27,11 +27,14 @@ const material: QualificationLockMaterial = {
     repository: 'registry.example.test/lab/bayn',
     digest: `sha256:${'3'.repeat(64)}`,
   },
-  universe: ['DBC', 'EEM', 'EFA', 'GLD', 'IEF', 'SPY', 'TLT', 'VNQ'],
-  universeRationale: 'Liquid cross-asset ETFs with complete point-in-time coverage.',
+  universeId: 'equity-infrastructure-v1',
+  universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
+  universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
+  universeRationale: 'Exact source-controlled Signal universe.',
   data: {
     snapshotId: '4'.repeat(64),
     publicationId: '5'.repeat(64),
+    inputManifestHash: '0'.repeat(64),
     contentHash: '6'.repeat(64),
     sessionsContentHash: '7'.repeat(64),
     provider: 'alpaca',

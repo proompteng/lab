@@ -19,7 +19,7 @@ import { canonicalHashV1 } from './hash'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { makeQualificationResult, type QualificationResult } from './qualification'
-import { summarizeEvaluation } from './strategy'
+import { summarizeEvaluation } from './risk-balanced-trend'
 import { Strategy } from './strategy-service'
 import type { EvaluationSummary, ReconciliationResult } from './types'
 
@@ -268,8 +268,14 @@ const databaseOperation = <A, R>(effect: Effect.Effect<A, { readonly message: st
     Effect.mapError((cause) => operationalError('database', operation, `PostgreSQL ${operation} failed`, cause)),
   )
 
-const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenance =>
-  makeRuntimeProvenance({
+const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenance => {
+  if (
+    stored.protocol.strategyName !== 'risk-balanced-trend' ||
+    stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2'
+  ) {
+    throw new Error('stored evaluation uses an unsupported strategy contract')
+  }
+  return makeRuntimeProvenance({
     sourceRevision: stored.run.sourceRevision,
     image: { repository: stored.run.imageRepository, digest: stored.run.imageDigest },
     strategy: {
@@ -279,6 +285,7 @@ const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenan
       parameterSchemaVersion: stored.protocol.schemaVersion,
     },
   })
+}
 
 const recoverPinnedQualification = (
   config: RuntimeConfig,
