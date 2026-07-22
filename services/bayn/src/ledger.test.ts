@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Redacted } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { prepareAccounting } from './accounting'
+import { prepareAccounting, rebuildAccountingLedger } from './accounting'
 import type { RuntimeConfig } from './config'
 import { Authority, OrderSide, type Fill } from './paper'
 import {
@@ -200,9 +200,14 @@ describe('TigerBeetle simulation journal', () => {
     ).ledger
     const target = makeLedgerClient()
 
-    await Effect.runPromise(
-      withJournal(target.client, (journal) => journal.post(plan).pipe(Effect.andThen(journal.post(plan)))),
+    const exact = await Effect.runPromise(
+      withJournal(target.client, (journal) =>
+        journal
+          .post(plan)
+          .pipe(Effect.andThen(journal.post(plan)), Effect.andThen(journal.verifyAccount(fill.accountId, [plan]))),
+      ),
     )
+    expect(exact).toBeTrue()
     expect(target.accounts.size).toBe(plan.accounts.length)
     expect(target.transfers.size).toBe(plan.transfers.length)
 
@@ -214,6 +219,52 @@ describe('TigerBeetle simulation journal', () => {
     })
     const error = await Effect.runPromise(Effect.flip(withJournal(conflict.client, (journal) => journal.post(plan))))
     expect(error.message).toContain('does not match its plan')
+
+    target.transfers.set(plan.transfers[0].id + 1n, { ...plan.transfers[0], id: plan.transfers[0].id + 1n })
+    const extra = await Effect.runPromise(
+      withJournal(target.client, (journal) => journal.verifyAccount(fill.accountId, [plan])),
+    )
+    expect(extra).toBeFalse()
+
+    const unavailable = makeTigerBeetleClient({
+      queryAccounts: async () => {
+        throw new Error('unavailable')
+      },
+    })
+    const failure = await Effect.runPromise(
+      Effect.flip(withJournal(unavailable, (journal) => journal.verifyAccount(fill.accountId, [plan]))),
+    )
+    expect(failure.message).toContain('TigerBeetle verify-account-accounts failed')
+  })
+
+  test('rebuilds a paper transaction into the exact read-only ledger plan', () => {
+    const fill: Fill = {
+      schemaVersion: 'bayn.paper-fill.v1',
+      accountId: 'paper-account',
+      fillId: 'activity-2',
+      brokerOrderId: 'broker-order-2',
+      clientOrderId: 'client-order-2',
+      symbol: 'AMD',
+      side: OrderSide.Buy,
+      quantityMicros: '2000000',
+      priceMicros: '50000000',
+      feeMicros: '0',
+      occurredAt: '2026-07-22T15:31:00.000Z',
+    }
+    const prepared = prepareAccounting(
+      'b'.repeat(64),
+      fill,
+      { quantityMicros: '0', costMicros: '0' },
+      journalConfig.tigerBeetle.ledger,
+    )
+
+    expect(rebuildAccountingLedger(prepared.transaction, journalConfig.tigerBeetle.ledger)).toEqual(prepared.ledger)
+    expect(() =>
+      rebuildAccountingLedger(
+        { ...prepared.transaction, contentHash: 'c'.repeat(64) },
+        journalConfig.tigerBeetle.ledger,
+      ),
+    ).toThrow('content hash')
   })
 
   test('rejects a mismatched existing account before creating transfers', async () => {

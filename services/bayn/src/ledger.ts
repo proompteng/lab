@@ -29,6 +29,7 @@ import type { ReconciliationResult } from './types'
 
 export interface JournalService {
   readonly post: (plan: LedgerPlan) => Effect.Effect<void, OperationalError>
+  readonly verifyAccount: (accountId: string, plans: readonly LedgerPlan[]) => Effect.Effect<boolean, OperationalError>
   readonly journalAndReconcile: (result: LedgerInput) => Effect.Effect<ReconciliationResult, OperationalError>
   readonly check: Effect.Effect<void, OperationalError>
   readonly checkRun: (result: ReconciliationResult) => Effect.Effect<void, OperationalError>
@@ -256,6 +257,75 @@ const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect
     })
   })
 
+const accountPlan = (accountId: string, plans: readonly LedgerPlan[]): LedgerPlan => {
+  const runKey = stableU128('bayn-paper-account-v1', accountId)
+  const runTag = stableU64('bayn-paper-account-v1', accountId)
+  const accounts = new Map<bigint, Account>()
+  const transfers = new Map<bigint, Transfer>()
+  for (const plan of plans) {
+    if (plan.runKey !== runKey || plan.runTag !== runTag) {
+      throw new Error(`accounting plan does not belong to paper account ${accountId}`)
+    }
+    for (const account of plan.accounts) {
+      const existing = accounts.get(account.id)
+      if (existing !== undefined) assertAccountsMatch('accounting account', [account], [existing])
+      else accounts.set(account.id, account)
+    }
+    for (const transfer of plan.transfers) {
+      if (transfers.has(transfer.id)) throw new Error(`duplicate accounting transfer ${transfer.id}`)
+      transfers.set(transfer.id, transfer)
+    }
+  }
+  return {
+    runKey,
+    runTag,
+    accounts: [...accounts.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
+    transfers: [...transfers.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
+  }
+}
+
+const verifyAccount = (
+  client: TigerBeetleRequestClient,
+  ledger: number,
+  accountId: string,
+  plans: readonly LedgerPlan[],
+): Effect.Effect<boolean, OperationalError> =>
+  Effect.gen(function* () {
+    const expected = yield* validate('build-account-reconciliation', () => accountPlan(accountId, plans))
+    if (expected.accounts.length >= BATCH_MAX || expected.transfers.length >= BATCH_MAX) {
+      return yield* Effect.fail(
+        operationalError('journal', 'verify-account', 'paper account exceeds the exact reconciliation limit'),
+      )
+    }
+    const [accounts, transfers] = yield* Effect.all(
+      [
+        client.request('verify-account-accounts', (active) =>
+          active.queryAccounts({
+            ...queryFilter(ledger),
+            user_data_128: expected.runKey,
+            limit: expected.accounts.length + 1,
+          }),
+        ),
+        client.request('verify-account-transfers', (active) =>
+          active.queryTransfers({
+            ...queryFilter(ledger),
+            user_data_64: expected.runTag,
+            limit: expected.transfers.length + 1,
+          }),
+        ),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    return yield* Effect.sync(() => {
+      try {
+        assertReconciled(expected, accounts, transfers)
+        return true
+      } catch {
+        return false
+      }
+    })
+  })
+
 export const JournalLive = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   dependencies?: JournalDependencies,
@@ -266,6 +336,7 @@ export const JournalLive = (
       const client = yield* makeTigerBeetleRequestClient(config, dependencies)
       return {
         post: (plan) => post(client, plan),
+        verifyAccount: (accountId, plans) => verifyAccount(client, config.tigerBeetle.ledger, accountId, plans),
         check: client
           .request('connectivity-check', (active) => active.lookupAccounts([stableU128('bayn-connectivity-probe')]))
           .pipe(Effect.asVoid),

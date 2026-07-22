@@ -160,6 +160,9 @@ describe('paper broker observations', () => {
       filledQuantityMicros: '1000000',
       intentId: 'b'.repeat(64),
     })
+    expect(() => orderObservation({ ...order, extendedHours: true }, evidence)).toThrow(
+      'paper execution requires extended hours to be disabled',
+    )
   })
 
   test('binds a fill to its order and defaults paper fees to zero', () => {

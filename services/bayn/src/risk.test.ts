@@ -19,6 +19,7 @@ import {
   TimeInForce,
   type Intent,
 } from './paper'
+import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, PolicySchema, Reason, StateSchema, evaluate, type Policy, type State } from './risk'
 import { strictParseOptions } from './schemas'
 
@@ -91,21 +92,13 @@ const baseState = (): State => {
   ]
   const orders: readonly ReturnType<typeof openOrder>[] = []
   const accountingHash = hash('a')
-  const brokerStateHash = canonicalHashV1({
-    schemaVersion: 'bayn.paper-risk-broker-state.v1',
+  const reconciledStateHashValue = reconciledStateHash({
     account,
     positions,
     positionsObservedAt: observedAt,
     orders,
     ordersObservedAt: observedAt,
-  })
-  const reconciledStateHash = canonicalHashV1({
-    schemaVersion: 'bayn.paper-risk-reconciled-state.v1',
-    brokerStateHash,
     accountingHash,
-    dailyTradedNotionalMicros: '100000000',
-    dayStartEquityMicros: '1000000000',
-    peakEquityMicros: '1050000000',
   })
   return decodeState({
     schemaVersion: 'bayn.paper-risk-state.v1',
@@ -119,8 +112,8 @@ const baseState = (): State => {
       schemaVersion: 'bayn.paper-reconciliation.v1',
       reconciliationId: hash('1'),
       accountId: 'paper-account-1',
-      expectedHash: reconciledStateHash,
-      observedHash: reconciledStateHash,
+      expectedHash: reconciledStateHashValue,
+      observedHash: reconciledStateHashValue,
       contentHash: hash('3'),
       status: ReconciliationStatus.Exact,
       discrepancies: [],
@@ -155,28 +148,20 @@ const baseState = (): State => {
 const makeState = (overrides: Partial<State> = {}): State => {
   const merged = { ...baseState(), ...overrides }
   if (overrides.reconciliation !== undefined) return decodeState(merged)
-  const brokerStateHash = canonicalHashV1({
-    schemaVersion: 'bayn.paper-risk-broker-state.v1',
+  const reconciledStateHashValue = reconciledStateHash({
     account: merged.account,
     positions: merged.positions,
     positionsObservedAt: merged.positionsObservedAt,
     orders: merged.orders,
     ordersObservedAt: merged.ordersObservedAt,
-  })
-  const reconciledStateHash = canonicalHashV1({
-    schemaVersion: 'bayn.paper-risk-reconciled-state.v1',
-    brokerStateHash,
     accountingHash: merged.accountingHash,
-    dailyTradedNotionalMicros: merged.dailyTradedNotionalMicros,
-    dayStartEquityMicros: merged.dayStartEquityMicros,
-    peakEquityMicros: merged.peakEquityMicros,
   })
   return decodeState({
     ...merged,
     reconciliation: {
       ...merged.reconciliation,
-      expectedHash: reconciledStateHash,
-      observedHash: reconciledStateHash,
+      expectedHash: reconciledStateHashValue,
+      observedHash: reconciledStateHashValue,
     },
   })
 }
@@ -258,6 +243,14 @@ describe('bounded paper risk', () => {
       }),
     ).toThrow()
     expect(() => decodeState({ ...state, marketDataObservedAt: '2026-07-22T14:00:00.001Z' })).toThrow()
+
+    const earlierOrderObservation = '2026-07-22T13:59:29.000Z'
+    const paginated = makeState({
+      orders: [{ ...openOrder('broker-1'), observedAt: earlierOrderObservation }, openOrder('broker-2')],
+      ordersObservedAt: observedAt,
+    })
+    expect(paginated.orders.map((order) => order.observedAt)).toEqual([earlierOrderObservation, observedAt])
+    expect(() => decodeState({ ...paginated, ordersObservedAt: earlierOrderObservation })).toThrow()
     expect(() => decodeState({ ...state, submissionCutoffAt: state.sessionOpenAt })).toThrow()
   })
 
@@ -512,7 +505,16 @@ describe('bounded paper risk', () => {
           observedHash: hash('8'),
           status: ReconciliationStatus.Discrepancy,
           discrepancies: [
-            { kind: DiscrepancyKind.Account, identity: 'paper-account-1', expected: 'expected', observed: 'observed' },
+            {
+              discrepancyId: hash('9'),
+              kind: DiscrepancyKind.Account,
+              identity: 'paper-account-1',
+              expected: 'expected',
+              observed: 'observed',
+              evidenceHash: hash('b'),
+              firstObservedAt: observedAt,
+              lastObservedAt: observedAt,
+            },
           ],
         },
       }),

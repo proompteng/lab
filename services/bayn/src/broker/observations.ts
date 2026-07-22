@@ -260,6 +260,7 @@ export const orderObservation = (value: AlpacaOrder, evidence: ReadEvidence, int
   if (value.quantityMicros === undefined || value.notionalMicros !== undefined) {
     throw new Error('paper accounting requires a quantity order')
   }
+  if (value.extendedHours) throw new Error('paper execution requires extended hours to be disabled')
   const order = {
     schemaVersion: 'bayn.paper-order.v1' as const,
     accountId: value.accountId,

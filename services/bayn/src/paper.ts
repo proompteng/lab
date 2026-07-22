@@ -129,6 +129,7 @@ export enum DiscrepancyKind {
   Position = 'POSITION',
   Order = 'ORDER',
   Fill = 'FILL',
+  Mutation = 'MUTATION',
   Accounting = 'ACCOUNTING',
   Valuation = 'VALUATION',
 }
@@ -526,12 +527,28 @@ export const ValuationSchema = ValuationBase.check(
 )
 export type Valuation = typeof ValuationSchema.Type
 
-export const DiscrepancySchema = Schema.Struct({
+const DiscrepancyBase = Schema.Struct({
+  discrepancyId: Sha256,
   kind: Schema.Enum(DiscrepancyKind),
   identity: NonEmptyString,
   expected: NonEmptyString,
   observed: NonEmptyString,
+  evidenceHash: Sha256,
+  firstObservedAt: UtcInstant,
+  lastObservedAt: UtcInstant,
 })
+export const DiscrepancySchema = DiscrepancyBase.check(
+  Schema.makeFilter((value: typeof DiscrepancyBase.Type): readonly Schema.FilterIssue[] => {
+    const issues: Schema.FilterIssue[] = []
+    if (value.lastObservedAt < value.firstObservedAt) {
+      issues.push({ path: ['lastObservedAt'], issue: 'must not precede firstObservedAt' })
+    }
+    if (value.expected === value.observed) {
+      issues.push({ path: ['observed'], issue: 'must differ while the discrepancy is open' })
+    }
+    return issues
+  }),
+)
 export type Discrepancy = typeof DiscrepancySchema.Type
 
 const ReconciliationBase = Schema.Struct({
