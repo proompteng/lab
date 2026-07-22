@@ -32,6 +32,7 @@ interface FixtureOptions {
   readonly behaviorHash?: string
   readonly parameterHash?: string
   readonly qualificationRunId?: string | undefined
+  readonly qualificationDossierRunId?: string
 }
 
 interface FixturePaths {
@@ -68,7 +69,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
   const dossierGenerator =
     pin === undefined
       ? ''
-      : `configMapGenerator:\n  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier.json=qualification-dossiers/${pin}.json\n`
+      : `configMapGenerator:\n  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier.json=qualification-dossiers/${options.qualificationDossierRunId ?? pin}.json\n`
   const dossierMounts =
     pin === undefined
       ? ''
@@ -142,6 +143,14 @@ describe('Bayn manifest promotion', () => {
     expect(() => promote(paths, { strategyParameterHash: '3'.repeat(64) })).toThrow(
       'qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID',
     )
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  test('rejects a dossier that does not belong to the pinned run without writing files', () => {
+    const paths = makeFixture({ qualificationDossierRunId: '8'.repeat(64) })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() => promote(paths)).toThrow('qualification dossier run ID must match the pinned run ID')
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 

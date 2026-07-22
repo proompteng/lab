@@ -73,7 +73,7 @@ const environmentValue = (deployment: string, name: string): string => {
 
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
 const qualificationDossierGenerator =
-  /  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier\.json=qualification-dossiers\/[0-9a-f]{64}\.json\n/
+  /  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier\.json=qualification-dossiers\/([0-9a-f]{64})\.json\n/
 const qualificationDossierMount =
   /            - name: qualification-dossier\n              mountPath: \/var\/run\/bayn\/qualification\n              readOnly: true\n/
 const qualificationDossierVolume =
@@ -125,6 +125,11 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const hadQualificationDossier = dossierPartCounts[0] === 1
   if (hadQualificationDossier !== hadQualificationPin) {
     throw new Error('qualification pin and dossier must occur together')
+  }
+  if (hadQualificationPin) {
+    const pinnedRunId = environmentValue(deployment, 'BAYN_QUALIFICATION_RUN_ID')
+    const dossierRunId = kustomization.match(qualificationDossierGenerator)?.[1]
+    if (dossierRunId !== pinnedRunId) throw new Error('qualification dossier run ID must match the pinned run ID')
   }
   const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
   const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
