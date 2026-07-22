@@ -4,7 +4,12 @@ import { SqlSchema } from 'effect/unstable/sql'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
-import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
+import {
+  FinalizedSnapshotProvenanceSchema,
+  makeRunIdentity,
+  makeStrategyProtocolHash,
+  type RuntimeProvenance,
+} from '../contracts'
 import {
   decodeCashChangesArtifact,
   decodeDailyPerformanceSeriesArtifact,
@@ -27,9 +32,10 @@ import {
   type QualificationLock,
   type QualificationResult,
 } from '../qualification'
+import { ProtocolSchema } from '../protocol'
 import { summarizeEvaluation } from '../risk-balanced-trend'
 import { reconcileMarkedEquity } from '../simulation-reconciliation'
-import type { EvaluationResult, EvaluationSummary, InputManifest, ReconciliationResult } from '../types'
+import type { EvaluationResult, EvaluationSummary, InputManifest, Protocol, ReconciliationResult } from '../types'
 import { migrationLoader } from './migrations'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
@@ -51,7 +57,7 @@ export interface PersistenceReceipt {
 
 export interface PersistEvaluationInput {
   readonly provenance: RuntimeProvenance
-  readonly parameters: unknown
+  readonly parameters: Protocol
   readonly evaluation: EvaluationResult
   readonly reconciliation: ReconciliationResult
   readonly qualification?: {
@@ -69,7 +75,7 @@ export type QualificationOpen = { readonly state: 'ACQUIRED'; readonly lock: Qua
 export interface OpenQualificationInput {
   readonly lock: QualificationLock
   readonly inputManifest: InputManifest
-  readonly parameters: unknown
+  readonly parameters: Protocol
   readonly provenance: RuntimeProvenance
 }
 
@@ -113,7 +119,7 @@ export interface StoredEvaluationEvidence {
     readonly strategyName: string
     readonly behaviorHash: string
     readonly parameterHash: string
-    readonly parameters: unknown
+    readonly parameters: Protocol
   }
   readonly run: {
     readonly runId: string
@@ -162,39 +168,6 @@ export interface RecoveredEvaluationEvidence {
   readonly persistence: PersistenceReceipt
 }
 
-interface ArtifactPlan {
-  readonly name: string
-  readonly schemaVersion: string
-  readonly contentHash: string
-  readonly payload: unknown
-}
-
-interface EventPlan {
-  readonly ordinal: number
-  readonly id: string
-  readonly kind: 'decision' | 'fill' | 'fee' | 'cash-yield'
-  readonly contentHash: string
-  readonly payload: unknown
-}
-
-interface GatePlan {
-  readonly ordinal: number
-  readonly name: string
-  readonly passed: boolean
-  readonly actual: number | boolean | string
-  readonly required: number | boolean | string
-  readonly contentHash: string
-}
-
-interface PersistencePlan extends PersistEvaluationInput {
-  readonly strategyName: string
-  readonly protocolHash: string
-  readonly snapshotId: string
-  readonly artifacts: readonly ArtifactPlan[]
-  readonly events: readonly EventPlan[]
-  readonly gates: readonly GatePlan[]
-}
-
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
 const GitRevision = Schema.String.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/))
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
@@ -209,23 +182,24 @@ const ProtocolRow = Schema.Struct({
   strategy_name: Schema.String,
   behavior_hash: Sha256,
   parameter_hash: Sha256,
-  parameters: Schema.Unknown,
+  parameters: ProtocolSchema,
 })
 const SnapshotRow = Schema.Struct({
   snapshot_id: Sha256,
-  schema_version: Schema.String,
-  database_name: Schema.String,
-  table_name: Schema.String,
-  dataset_version: Schema.String,
-  source: Schema.String,
-  source_feed: Schema.String,
-  adjustment: Schema.String,
+  schema_version: Schema.Literal('bayn.finalized-snapshot.v3'),
+  database_name: Schema.Literal('signal'),
+  table_name: Schema.Literal('adjusted_daily_bars_v2'),
+  dataset_version: Schema.Literal('signal.adjusted-daily-snapshot.v2'),
+  source: Schema.Literal('alpaca'),
+  source_feed: Schema.Literal('sip'),
+  adjustment: Schema.Literal('all'),
   content_hash: Sha256,
   row_count: PositiveInteger,
   first_session: Schema.String,
   last_session: Schema.String,
-  manifest: Schema.Unknown,
+  manifest: FinalizedSnapshotProvenanceSchema,
 })
+const snapshotRowEquivalence = Schema.toEquivalence(SnapshotRow)
 const ReceiptRow = Schema.Struct({
   run_id: Sha256,
   protocol_hash: Sha256,
@@ -337,39 +311,21 @@ const ensure = (condition: boolean, operation: string, message: string): Effect.
 
 const snapshotReferenceMatches = (row: typeof SnapshotRow.Type, inputManifest: InputManifest): boolean => {
   const snapshot = inputManifest.finalizedSnapshot
-  return (
-    row.snapshot_id === snapshot.snapshotId &&
-    row.schema_version === snapshot.schemaVersion &&
-    row.database_name === inputManifest.database &&
-    row.table_name === inputManifest.tables.bars &&
-    row.dataset_version === snapshot.publicationSchemaVersion &&
-    row.source === snapshot.source &&
-    row.source_feed === snapshot.sourceFeed &&
-    row.adjustment === snapshot.adjustment &&
-    row.content_hash === snapshot.contentHash &&
-    row.row_count === snapshot.rowCount &&
-    row.first_session === snapshot.firstSession &&
-    row.last_session === snapshot.lastSession &&
-    canonicalHashV1(row.manifest) === canonicalHashV1(snapshot)
-  )
-}
-
-const protocolExecutionModel = (parameters: unknown): unknown => {
-  if (
-    typeof parameters !== 'object' ||
-    parameters === null ||
-    !('executionModel' in parameters) ||
-    typeof parameters.executionModel !== 'object' ||
-    parameters.executionModel === null
-  ) {
-    throw new TypeError('strategy parameters do not declare an execution model')
-  }
-  return parameters.executionModel
-}
-
-const artifactItemCount = (payload: unknown): number => {
-  if (typeof payload !== 'object' || payload === null || !('items' in payload)) return 0
-  return Array.isArray(payload.items) ? payload.items.length : 0
+  return snapshotRowEquivalence(row, {
+    snapshot_id: snapshot.snapshotId,
+    schema_version: snapshot.schemaVersion,
+    database_name: inputManifest.database,
+    table_name: inputManifest.tables.bars,
+    dataset_version: snapshot.publicationSchemaVersion,
+    source: snapshot.source,
+    source_feed: snapshot.sourceFeed,
+    adjustment: snapshot.adjustment,
+    content_hash: snapshot.contentHash,
+    row_count: snapshot.rowCount,
+    first_session: snapshot.firstSession,
+    last_session: snapshot.lastSession,
+    manifest: snapshot,
+  })
 }
 
 const evidenceContract = {
@@ -380,6 +336,14 @@ const evidenceContract = {
   signalDecisionsArtifactName: 'risk-balanced-trend-decisions',
   signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
 } as const
+
+const makeArtifact = (name: string, schemaVersion: string, payload: unknown, itemCount = 0) => ({
+  name,
+  schemaVersion,
+  contentHash: canonicalHashV1(payload),
+  payload,
+  itemCount,
+})
 
 const validateQualificationOpenInput = (input: OpenQualificationInput) => {
   const lock = decodeQualificationLock(input.lock)
@@ -433,14 +397,14 @@ const validateQualificationOpenInput = (input: OpenQualificationInput) => {
     !contractMatches ||
     canonicalHashV1(lock.universe) !== canonicalHashV1(snapshot.symbols) ||
     !dataMatches ||
-    canonicalHashV1(lock.policies.execution.content) !== canonicalHashV1(protocolExecutionModel(parameters))
+    canonicalHashV1(lock.policies.execution.content) !== canonicalHashV1(parameters.executionModel)
   ) {
     throw new TypeError('qualification lock diverges from the candidate runtime or finalized snapshot')
   }
   return { ...input, lock }
 }
 
-const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
+const makePersistencePlan = (input: PersistEvaluationInput) => {
   const { evaluation, parameters, provenance, reconciliation } = input
   if (evaluation.schemaVersion !== provenance.contractVersions.evaluation) {
     throw new TypeError('evaluation schema version does not match runtime provenance')
@@ -455,7 +419,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   if (parameterHash !== provenance.strategy.parameterHash) {
     throw new TypeError('strategy parameters and provenance disagree on parameter hash')
   }
-  if (canonicalHashV1(evaluation.simulation.executionModel) !== canonicalHashV1(protocolExecutionModel(parameters))) {
+  if (canonicalHashV1(evaluation.simulation.executionModel) !== canonicalHashV1(parameters.executionModel)) {
     throw new TypeError('simulation execution model does not match strategy parameters')
   }
   if (evaluation.simulation.costMultiplierMicros !== '1000000') {
@@ -532,13 +496,13 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }
 
   const baseArtifacts = [
-    ['evaluation-summary', evidenceContract.summarySchemaVersion, summarizeEvaluation(evaluation)],
-    ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
-    ['strategy', 'bayn.performance-metrics.v2', evaluation.strategy],
-    ['buy-and-hold', 'bayn.performance-metrics.v2', evaluation.buyAndHold],
-    ['direct-volatility-timing', 'bayn.performance-metrics.v2', evaluation.directVolTiming],
-    ['double-cost-strategy', 'bayn.performance-metrics.v2', evaluation.doubleCostStrategy],
-    [
+    makeArtifact('evaluation-summary', evidenceContract.summarySchemaVersion, summarizeEvaluation(evaluation)),
+    makeArtifact('input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest),
+    makeArtifact('strategy', 'bayn.performance-metrics.v2', evaluation.strategy),
+    makeArtifact('buy-and-hold', 'bayn.performance-metrics.v2', evaluation.buyAndHold),
+    makeArtifact('direct-volatility-timing', 'bayn.performance-metrics.v2', evaluation.directVolTiming),
+    makeArtifact('double-cost-strategy', 'bayn.performance-metrics.v2', evaluation.doubleCostStrategy),
+    makeArtifact(
       'simulated-orders',
       'bayn.simulated-orders.v2',
       {
@@ -547,23 +511,27 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
         costMultiplierMicros: evaluation.simulation.costMultiplierMicros,
         items: evaluation.simulation.orders,
       },
-    ],
-    [
+      evaluation.simulation.orders.length,
+    ),
+    makeArtifact(
       'cash-changes',
       'bayn.cash-changes.v2',
       { schemaVersion: 'bayn.cash-changes.v2', items: evaluation.simulation.cashChanges },
-    ],
-    [
+      evaluation.simulation.cashChanges.length,
+    ),
+    makeArtifact(
       'daily-position-marks',
       'bayn.daily-position-marks.v3',
       { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
-    ],
-    [
+      evaluation.simulation.dailyMarks.length,
+    ),
+    makeArtifact(
       evidenceContract.signalDecisionsArtifactName,
       evidenceContract.signalDecisionsSchemaVersion,
       { schemaVersion: evidenceContract.signalDecisionsSchemaVersion, items: evaluation.signalDecisions },
-    ],
-    [
+      evaluation.signalDecisions.length,
+    ),
+    makeArtifact(
       'buy-and-hold-series',
       'bayn.daily-performance-series.v1',
       {
@@ -571,8 +539,9 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
         series: 'buy-and-hold',
         items: evaluation.benchmarkSeries.buyAndHold,
       },
-    ],
-    [
+      evaluation.benchmarkSeries.buyAndHold.length,
+    ),
+    makeArtifact(
       'direct-volatility-timing-series',
       'bayn.daily-performance-series.v1',
       {
@@ -580,8 +549,9 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
         series: 'direct-volatility-timing',
         items: evaluation.benchmarkSeries.directVolTiming,
       },
-    ],
-    [
+      evaluation.benchmarkSeries.directVolTiming.length,
+    ),
+    makeArtifact(
       'double-cost-strategy-series',
       'bayn.daily-performance-series.v1',
       {
@@ -589,20 +559,21 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
         series: 'double-cost-strategy',
         items: evaluation.benchmarkSeries.doubleCostStrategy,
       },
-    ],
-    ['equity-series', 'bayn.equity-series.v1', makeEquitySeriesArtifact(evaluation.equitySeries)],
-    [
+      evaluation.benchmarkSeries.doubleCostStrategy.length,
+    ),
+    makeArtifact(
+      'equity-series',
+      'bayn.equity-series.v1',
+      makeEquitySeriesArtifact(evaluation.equitySeries),
+      evaluation.equitySeries.length,
+    ),
+    makeArtifact(
       'marked-equity-reconciliation',
       evaluation.markedEquityReconciliation.schemaVersion,
       evaluation.markedEquityReconciliation,
-    ],
-    ['reconciliation', 'bayn.reconciliation.v1', reconciliation],
-  ].map(([name, schemaVersion, payload]) => ({
-    name: name as string,
-    schemaVersion: schemaVersion as string,
-    contentHash: canonicalHashV1(payload),
-    payload,
-  })) satisfies ArtifactPlan[]
+    ),
+    makeArtifact('reconciliation', 'bayn.reconciliation.v1', reconciliation),
+  ]
   const events = evaluation.events.map((event, ordinal) => ({
     ordinal,
     id: event.id,
@@ -671,7 +642,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
       .map((artifact) => ({
         name: artifact.name,
         schemaVersion: artifact.schemaVersion,
-        itemCount: artifactItemCount(artifact.payload),
+        itemCount: artifact.itemCount,
         contentHash: artifact.contentHash,
       })),
     events: {
@@ -689,12 +660,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }
   const artifacts = [
     ...baseArtifacts,
-    {
-      name: 'qualification-artifact-manifest',
-      schemaVersion: artifactManifest.schemaVersion,
-      contentHash: canonicalHashV1(artifactManifest),
-      payload: artifactManifest,
-    },
+    makeArtifact('qualification-artifact-manifest', artifactManifest.schemaVersion, artifactManifest),
   ]
 
   return {
@@ -708,6 +674,8 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     gates,
   }
 }
+
+type PersistencePlan = ReturnType<typeof makePersistencePlan>
 
 const makeEvidenceStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -1064,7 +1032,7 @@ const makeEvidenceStore = Effect.gen(function* () {
   const ensureProtocolReference = (input: {
     readonly protocolHash: string
     readonly provenance: RuntimeProvenance
-    readonly parameters: unknown
+    readonly parameters: Protocol
   }) =>
     Effect.gen(function* () {
       yield* sql`
@@ -1648,17 +1616,13 @@ const makeEvidenceStore = Effect.gen(function* () {
         )
         const doubleCostSeries = yield* decodeDailyPerformanceSeriesArtifact(doubleCostSeriesArtifact.payload)
         const artifactManifest = yield* decodeQualificationArtifactManifest(artifactManifestArtifact.payload)
-        const storedExecutionModel = yield* Effect.try({
-          try: () => protocolExecutionModel(stored.protocol.parameters),
-          catch: (cause) => databaseError('invariant', 'recover-evidence', 'stored execution model is invalid', cause),
-        })
         yield* ensure(
           stored.protocol.schemaVersion === provenance.strategy.parameterSchemaVersion &&
             stored.protocol.strategyName === provenance.strategy.name &&
             stored.protocol.behaviorHash === provenance.strategy.behaviorHash &&
             stored.protocol.parameterHash === provenance.strategy.parameterHash &&
             canonicalHashV1(stored.protocol.parameters) === provenance.strategy.parameterHash &&
-            canonicalHashV1(storedExecutionModel) === canonicalHashV1(orders.executionModel) &&
+            canonicalHashV1(stored.protocol.parameters.executionModel) === canonicalHashV1(orders.executionModel) &&
             orders.costMultiplierMicros === '1000000',
           'recover-evidence',
           'stored protocol lock or execution model diverged',
@@ -1666,6 +1630,16 @@ const makeEvidenceStore = Effect.gen(function* () {
         const cashChanges = yield* decodeCashChangesArtifact(cashChangesArtifact.payload)
         const dailyMarks = yield* decodeDailyPositionMarksArtifact(dailyMarksArtifact.payload)
         const inputManifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
+        const artifactItemCounts = new Map<string, number>([
+          ['simulated-orders', orders.items.length],
+          ['cash-changes', cashChanges.items.length],
+          ['daily-position-marks', dailyMarks.items.length],
+          [evidenceContract.signalDecisionsArtifactName, signalDecisions.items.length],
+          ['buy-and-hold-series', buyAndHoldSeries.items.length],
+          ['direct-volatility-timing-series', directVolatilitySeries.items.length],
+          ['double-cost-strategy-series', doubleCostSeries.items.length],
+          ['equity-series', equitySeries.items.length],
+        ])
         const expectedArtifactManifest = {
           schemaVersion: 'bayn.qualification-artifact-manifest.v1',
           identity: {
@@ -1693,7 +1667,7 @@ const makeEvidenceStore = Effect.gen(function* () {
             .map((artifact) => ({
               name: artifact.name,
               schemaVersion: artifact.schemaVersion,
-              itemCount: artifactItemCount(artifact.payload),
+              itemCount: artifactItemCounts.get(artifact.name) ?? 0,
               contentHash: artifact.contentHash,
             })),
           events: {
@@ -2043,20 +2017,7 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
   )
 }
 
-const migrate = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`
-    DO $block$
-    BEGIN
-      IF to_regclass('public.bayn_schema_migrations') IS NOT NULL THEN
-        RAISE EXCEPTION 'legacy migration tracker is unsupported after the hard cut'
-          USING ERRCODE = '55000';
-      END IF;
-    END
-    $block$
-  `
-  yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
-})
+const migrate = PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
 
 const migrations = migrate.pipe(
   Effect.mapError((cause) =>
