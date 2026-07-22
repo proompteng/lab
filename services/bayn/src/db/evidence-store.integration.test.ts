@@ -160,19 +160,377 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     )
 
     expect(schema.tables.map((row) => row.table_name)).toEqual([
+      'account_snapshots',
+      'accounting_receipts',
+      'authority_state',
+      'broker_errors',
+      'broker_events',
       'evaluation_artifacts',
       'evaluation_events',
       'evaluation_runs',
+      'fills',
       'gate_outcomes',
+      'intents',
+      'orders',
+      'positions',
       'protocol_locks',
       'qualification_locks',
       'qualification_results',
       'qualification_trials',
+      'rate_limits',
+      'reconciliations',
+      'risk_decisions',
       'schema_migrations',
       'snapshot_references',
       'status_history',
+      'valuations',
     ])
-    expect(schema.migrations).toEqual([{ migration_id: 1, name: 'initial_schema' }])
+    expect(schema.migrations).toEqual([
+      { migration_id: 1, name: 'initial_schema' },
+      { migration_id: 2, name: 'paper_contracts' },
+    ])
+  })
+
+  test('requires one typed append-only payload and unique broker source ordering', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const insertAccount = (eventId: string, sourceEventId: string, sourceSequence: string, cash = '1000000') =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${'f'.repeat(64)}, 'ACCOUNT', 'ALPACA',
+                  'paper-account-1', ${sourceEventId}, ${sourceSequence},
+                  '2026-07-22T06:00:00.000Z', '2026-07-22T06:01:00.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO account_snapshots (
+                  event_id, account_id, schema_version, status, currency,
+                  cash_micros, equity_micros, buying_power_micros
+                ) VALUES (
+                  ${eventId}, 'paper-account-1', 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                  ${cash}, 1000000, 2000000
+                )
+              `
+            }),
+          )
+
+        yield* insertAccount('1'.repeat(64), 'source-1', '1')
+        const duplicateSource = yield* Effect.exit(insertAccount('2'.repeat(64), 'source-1', '2'))
+        const duplicateSequence = yield* Effect.exit(insertAccount('3'.repeat(64), 'source-3', '1'))
+        const overflow = yield* Effect.exit(
+          insertAccount('4'.repeat(64), 'source-4', '4', '170141183460469231731687303715884105728'),
+        )
+        const missingPayload = yield* Effect.exit(
+          sql.withTransaction(
+            sql`
+              INSERT INTO broker_events (
+                event_id, schema_version, content_hash, event_kind, broker, account_id,
+                source_event_id, source_sequence, occurred_at, observed_at
+              ) VALUES (
+                ${'5'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'e'.repeat(64)}, 'FILL', 'ALPACA',
+                'paper-account-1', 'source-5', 5,
+                '2026-07-22T06:00:00.000Z', '2026-07-22T06:01:00.000Z'
+              )
+            `,
+          ),
+        )
+        const update = yield* Effect.exit(sql`
+          UPDATE account_snapshots SET cash_micros = 2 WHERE event_id = ${'1'.repeat(64)}
+        `)
+        const deletion = yield* Effect.exit(sql`
+          DELETE FROM broker_events WHERE event_id = ${'1'.repeat(64)}
+        `)
+        const counts = yield* sql<{ events: number; accounts: number }>`
+          SELECT
+            (SELECT count(*)::integer FROM broker_events) AS events,
+            (SELECT count(*)::integer FROM account_snapshots) AS accounts
+        `
+        return { duplicateSequence, duplicateSource, overflow, missingPayload, update, deletion, counts: counts[0] }
+      }),
+    )
+
+    expect(Exit.isFailure(result.duplicateSource)).toBe(true)
+    expect(Exit.isFailure(result.duplicateSequence)).toBe(true)
+    expect(Exit.isFailure(result.overflow)).toBe(true)
+    expect(Exit.isFailure(result.missingPayload)).toBe(true)
+    expect(Exit.isFailure(result.update)).toBe(true)
+    expect(Exit.isFailure(result.deletion)).toBe(true)
+    expect(result.counts).toEqual({ events: 1, accounts: 1 })
+  })
+
+  test('enforces intent transitions, risk binding, and immutable decisions', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const intentId = '1'.repeat(64)
+        const decisionId = '2'.repeat(64)
+        yield* sql`
+          INSERT INTO intents (
+            intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+            time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+          ) VALUES (
+            ${intentId}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-1', 'NVDA', 'BUY',
+            'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+            '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+          )
+        `
+        const invalidInitial = yield* Effect.exit(sql`
+          INSERT INTO intents (
+            intent_id, schema_version, risk_decision_id, account_id, client_order_id, symbol, side,
+            order_type, time_in_force, quantity_micros, notional_limit_micros, state,
+            created_at, updated_at
+          ) VALUES (
+            ${'3'.repeat(64)}, 'bayn.paper-intent.v1', ${'4'.repeat(64)}, 'paper-account-1',
+            'client-order-2', 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'APPROVED',
+            '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+          )
+        `)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                reason_codes, decided_at, expires_at
+              ) VALUES (
+                ${decisionId}, 'bayn.paper-risk-decision.v1', ${'5'.repeat(64)}, ${intentId},
+                ${'6'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
+                '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+              )
+            `
+            yield* sql`
+              UPDATE intents
+              SET state = 'APPROVED', risk_decision_id = ${decisionId}, state_version = 2,
+                  updated_at = '2026-07-22T06:00:30.000Z'
+              WHERE intent_id = ${intentId}
+            `
+          }),
+        )
+        const skipState = yield* Effect.exit(sql`
+          UPDATE intents
+          SET state = 'ACKNOWLEDGED', state_version = 3, updated_at = '2026-07-22T06:00:40.000Z'
+          WHERE intent_id = ${intentId}
+        `)
+        const changeIdentity = yield* Effect.exit(sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', symbol = 'AMD', state_version = 3,
+              updated_at = '2026-07-22T06:00:40.000Z'
+          WHERE intent_id = ${intentId}
+        `)
+        const orphan = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO intents (
+                  intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                  time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+                ) VALUES (
+                  ${'7'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-3',
+                  'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                  '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO risk_decisions (
+                  decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                  reason_codes, decided_at, expires_at
+                ) VALUES (
+                  ${'8'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'9'.repeat(64)}, ${'7'.repeat(64)},
+                  ${'a'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
+                  '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                )
+              `
+            }),
+          ),
+        )
+        const mutateDecision = yield* Effect.exit(sql`
+          UPDATE risk_decisions SET outcome = 'BLOCKED', reason_codes = ARRAY['CHANGED']
+          WHERE decision_id = ${decisionId}
+        `)
+        const deleteIntent = yield* Effect.exit(sql`DELETE FROM intents WHERE intent_id = ${intentId}`)
+        const state = yield* sql<{ state: string; state_version: number; decision_id: string }>`
+          SELECT intent.state, intent.state_version::integer, decision.decision_id
+          FROM intents AS intent
+          JOIN risk_decisions AS decision ON decision.intent_id = intent.intent_id
+          WHERE intent.intent_id = ${intentId}
+        `
+        return { invalidInitial, skipState, changeIdentity, orphan, mutateDecision, deleteIntent, state: state[0] }
+      }),
+    )
+
+    expect(Exit.isFailure(result.invalidInitial)).toBe(true)
+    expect(Exit.isFailure(result.skipState)).toBe(true)
+    expect(Exit.isFailure(result.changeIdentity)).toBe(true)
+    expect(Exit.isFailure(result.orphan)).toBe(true)
+    expect(Exit.isFailure(result.mutateDecision)).toBe(true)
+    expect(Exit.isFailure(result.deleteIntent)).toBe(true)
+    expect(result.state).toEqual({ state: 'APPROVED', state_version: 2, decision_id: '2'.repeat(64) })
+  })
+
+  test('enforces exact accounting evidence and downward-only authority', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const eventId = '1'.repeat(64)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO broker_events (
+                event_id, schema_version, content_hash, event_kind, broker, account_id,
+                source_event_id, source_sequence, occurred_at, observed_at
+              ) VALUES (
+                ${eventId}, 'bayn.paper-broker-event.v1', ${'2'.repeat(64)}, 'ACCOUNT', 'ALPACA',
+                'paper-account-1', 'source-account-1', 1,
+                '2026-07-22T06:00:00.000Z', '2026-07-22T06:01:00.000Z'
+              )
+            `
+            yield* sql`
+              INSERT INTO account_snapshots (
+                event_id, account_id, schema_version, status, currency,
+                cash_micros, equity_micros, buying_power_micros
+              ) VALUES (
+                ${eventId}, 'paper-account-1', 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                1000000, 1000000, 2000000
+              )
+            `
+          }),
+        )
+        yield* sql`
+          INSERT INTO accounting_receipts (
+            receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
+            account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
+          ) VALUES (
+            ${'3'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ARRAY[1, 2]::numeric[], ARRAY[3]::numeric[], 1250000, 1250000, ${'4'.repeat(64)},
+            '2026-07-22T06:01:00.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO valuations (
+            valuation_id, schema_version, account_id, source_hash, cash_micros,
+            long_market_value_micros, short_market_value_micros, equity_micros, as_of
+          ) VALUES (
+            ${'5'.repeat(64)}, 'bayn.paper-valuation.v1', 'paper-account-1', ${'6'.repeat(64)},
+            1000000, 2500000, -500000, 3000000, '2026-07-22T06:01:00.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${'7'.repeat(64)}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
+            ${'8'.repeat(64)}, ${'8'.repeat(64)}, ${'9'.repeat(64)}, 'EXACT', '[]'::jsonb,
+            '2026-07-22T06:01:00.000Z'
+          )
+        `
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'a'.repeat(64)}, 'OBSERVE', 'OBSERVE', 'CLEAR', 1,
+            '2026-07-22T06:00:00.000Z'
+          )
+        `
+        const unbalanced = yield* Effect.exit(sql`
+          INSERT INTO accounting_receipts (
+            receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
+            account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
+          ) VALUES (
+            ${'b'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ARRAY[1, 2]::numeric[], ARRAY[3]::numeric[], 1250000, 1249999, ${'c'.repeat(64)},
+            '2026-07-22T06:01:00.000Z'
+          )
+        `)
+        const unordered = yield* Effect.exit(sql`
+          INSERT INTO accounting_receipts (
+            receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
+            account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
+          ) VALUES (
+            ${'d'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ARRAY[2, 1]::numeric[], ARRAY[3]::numeric[], 1250000, 1250000, ${'e'.repeat(64)},
+            '2026-07-22T06:01:00.000Z'
+          )
+        `)
+        const badValuation = yield* Effect.exit(sql`
+          INSERT INTO valuations (
+            valuation_id, schema_version, account_id, source_hash, cash_micros,
+            long_market_value_micros, short_market_value_micros, equity_micros, as_of
+          ) VALUES (
+            ${'f'.repeat(64)}, 'bayn.paper-valuation.v1', 'paper-account-1', ${'0'.repeat(64)},
+            1000000, 2500000, -500000, 3000001, '2026-07-22T06:01:00.000Z'
+          )
+        `)
+        const badReconciliation = yield* Effect.exit(sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${'0'.repeat(64)}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
+            ${'1'.repeat(64)}, ${'2'.repeat(64)}, ${'3'.repeat(64)}, 'EXACT', '[]'::jsonb,
+            '2026-07-22T06:01:00.000Z'
+          )
+        `)
+        yield* sql`
+          UPDATE authority_state
+          SET generation_hash = ${'b'.repeat(64)}, maximum = 'PAPER', effective = 'PAPER',
+              version = 2, updated_at = '2026-07-22T06:01:00.000Z'
+        `
+        yield* sql`
+          UPDATE authority_state
+          SET effective = 'OBSERVE', version = 3, updated_at = '2026-07-22T06:02:00.000Z'
+        `
+        const escalation = yield* Effect.exit(sql`
+          UPDATE authority_state
+          SET effective = 'PAPER', version = 4, updated_at = '2026-07-22T06:03:00.000Z'
+        `)
+        yield* sql`
+          UPDATE authority_state
+          SET kill_state = 'ACTIVE', reason = 'operator kill', version = 4,
+              updated_at = '2026-07-22T06:03:00.000Z'
+        `
+        const clearKill = yield* Effect.exit(sql`
+          UPDATE authority_state
+          SET kill_state = 'CLEAR', reason = NULL, version = 5,
+              updated_at = '2026-07-22T06:04:00.000Z'
+        `)
+        const mutateReceipt = yield* Effect.exit(sql`
+          UPDATE accounting_receipts SET debit_micros = 1 WHERE receipt_id = ${'3'.repeat(64)}
+        `)
+        const authority = yield* sql<{
+          maximum: string
+          effective: string
+          kill_state: string
+          version: number
+        }>`
+          SELECT maximum, effective, kill_state, version::integer FROM authority_state
+        `
+        return {
+          unbalanced,
+          unordered,
+          badValuation,
+          badReconciliation,
+          escalation,
+          clearKill,
+          mutateReceipt,
+          authority: authority[0],
+        }
+      }),
+    )
+
+    expect(Exit.isFailure(result.unbalanced)).toBe(true)
+    expect(Exit.isFailure(result.unordered)).toBe(true)
+    expect(Exit.isFailure(result.badValuation)).toBe(true)
+    expect(Exit.isFailure(result.badReconciliation)).toBe(true)
+    expect(Exit.isFailure(result.escalation)).toBe(true)
+    expect(Exit.isFailure(result.clearKill)).toBe(true)
+    expect(Exit.isFailure(result.mutateReceipt)).toBe(true)
+    expect(result.authority).toEqual({ maximum: 'PAPER', effective: 'OBSERVE', kill_state: 'ACTIVE', version: 4 })
   })
 
   test('rejects the legacy migration tracker instead of creating a parallel schema', async () => {
