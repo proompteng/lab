@@ -183,8 +183,12 @@ const makeState = (overrides: Partial<State> = {}): State => {
 
 const makeIntent = (overrides: Partial<Intent> = {}): Intent =>
   decodeIntent({
-    schemaVersion: 'bayn.paper-intent.v1',
+    schemaVersion: 'bayn.paper-intent.v2',
     intentId: hash('6'),
+    strategyName: 'risk-balanced-trend',
+    cycleId: hash('7'),
+    decisionHash: hash('8'),
+    policyHash: canonicalHashV1(makePolicy()),
     accountId: 'paper-account-1',
     clientOrderId: 'risk-test-order-1',
     symbol: 'NVDA',
