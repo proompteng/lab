@@ -4,7 +4,21 @@ import { readFile } from 'node:fs/promises'
 const kubeRouterImage =
   'docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22'
 const kubectlImage = 'docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7'
-const safetyNamespaces = ['agents', 'argocd', 'bayn', 'bilig', 'kafka', 'media', 'pgadmin', 'synthesis', 'torghut']
+const trafficNeutralSafetyNamespaces = [
+  'agents',
+  'argocd',
+  'bilig',
+  'kafka',
+  'media',
+  'pgadmin',
+  'synthesis',
+  'torghut',
+]
+const retiredSafetyNamespace = 'bayn'
+const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]
+const retiredSafetySelector = {
+  'network-policy.proompteng.ai/retired-rollout-policy': retiredSafetyNamespace,
+}
 
 export const productionPaths = {
   kustomization: 'argocd/applications/kube-router/kustomization.yaml',
@@ -175,16 +189,35 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   for (const policy of safetyPolicies) {
     const namespace = policy.metadata?.namespace ?? '<missing>'
-    if (
+    const invalidMetadata =
       policy.apiVersion !== 'networking.k8s.io/v1' ||
       policy.kind !== 'NetworkPolicy' ||
       policy.metadata?.name !== 'kube-router-rollout-allow-all' ||
-      JSON.stringify(policy.spec?.podSelector) !== '{}' ||
       JSON.stringify(sortedStrings(policy.spec?.policyTypes)) !== JSON.stringify(['Egress', 'Ingress']) ||
-      JSON.stringify(policy.spec?.ingress) !== '[{}]' ||
-      JSON.stringify(policy.spec?.egress) !== '[{}]' ||
       policy.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-3' ||
       policy.metadata?.annotations?.['argocd.argoproj.io/sync-options'] !== 'Prune=false'
+
+    if (invalidMetadata) {
+      failures.push(`${productionPaths.safetyPolicies}: ${namespace} is not a retained traffic-neutral safety policy`)
+      continue
+    }
+
+    if (namespace === retiredSafetyNamespace) {
+      if (
+        JSON.stringify(policy.spec?.podSelector?.matchLabels) !== JSON.stringify(retiredSafetySelector) ||
+        policy.spec?.ingress !== undefined ||
+        policy.spec?.egress !== undefined
+      ) {
+        failures.push(`${productionPaths.safetyPolicies}: ${namespace} is not an inert retired rollout policy`)
+      }
+      continue
+    }
+
+    if (
+      !trafficNeutralSafetyNamespaces.includes(namespace) ||
+      JSON.stringify(policy.spec?.podSelector) !== '{}' ||
+      JSON.stringify(policy.spec?.ingress) !== '[{}]' ||
+      JSON.stringify(policy.spec?.egress) !== '[{}]'
     ) {
       failures.push(`${productionPaths.safetyPolicies}: ${namespace} is not a retained traffic-neutral safety policy`)
     }
@@ -207,6 +240,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
+    'if [[ "$namespace" == bayn ]]',
+    'network-policy.proompteng.ai/retired-rollout-policy',
+    "kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json",
     '.spec.podSelector == {}',
     '.spec.ingress == [{}]',
     '.spec.egress == [{}]',
@@ -218,6 +254,17 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     if (verbs.some((verb: string) => ['*', 'create', 'delete', 'deletecollection', 'patch', 'update'].includes(verb))) {
       failures.push(`${productionPaths.rbac}: ${role.metadata?.name} must remain read-only`)
     }
+  }
+  const preflightRole = roles.find((role) => role.metadata?.name === 'kube-router-policy-preflight')
+  const hasExactReadRule = (apiGroup: string, resource: string): boolean =>
+    (preflightRole?.rules ?? []).some(
+      (rule: YamlObject) =>
+        JSON.stringify(sortedStrings(rule.apiGroups)) === JSON.stringify([apiGroup]) &&
+        JSON.stringify(sortedStrings(rule.resources)) === JSON.stringify([resource]) &&
+        JSON.stringify(sortedStrings(rule.verbs)) === JSON.stringify(['get', 'list']),
+    )
+  if (!hasExactReadRule('', 'pods') || !hasExactReadRule('networking.k8s.io', 'networkpolicies')) {
+    failures.push(`${productionPaths.rbac}: preflight must read policy state and retired-selector Pod matches`)
   }
   requireTerms(failures, productionPaths.rbac, files.rbac, [
     '- endpointslices',
