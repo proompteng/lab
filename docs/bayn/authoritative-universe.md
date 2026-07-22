@@ -1,8 +1,8 @@
 # Bayn authoritative universe
 
-Status: **selected, published, and compiled; Bayn runtime proof paused by the separate database workstream**
+Status: **selected, published, compiled, and live-verified**
 
-Last verified: 2026-07-21
+Last verified: 2026-07-22T04:25:49.456Z
 
 ## Decision
 
@@ -127,7 +127,7 @@ supported limit-order semantics; this milestone submits no orders. The external 
 [24/5 feed specification](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api), and
 [extended-hours order rules](https://docs.alpaca.markets/us/docs/orders-at-alpaca).
 
-## Current integration and remaining proof
+## Current integration and live proof
 
 - The versioned ConfigMap supplies the exact universe to the websocket, archive pipeline, and Signal publisher.
 - GitOps renders the scheduled Signal publisher with delayed SIP history and the V2 finalization contract.
@@ -135,13 +135,15 @@ supported limit-order semantics; this milestone submits no orders. The external 
   hash.
 - Bayn GitOps selects finalized snapshot
   `98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292` through 2026-07-20.
-- The Bayn Deployment is intentionally at zero replicas while the separate database workstream performs its
-  reset/restore. This document does not authorize changing that state.
-
-After that workstream restores one writer, live acceptance must prove the promoted image digest, the exact snapshot and
-universe binding, one ready endpoint, an observable terminal qualification, all continuous dependencies available, and
-fixed observe-only authority. Until then, Git and prior publication evidence prove integration but not current Bayn
-runtime behavior.
+- Live verification observed one ready, zero-restart Bayn writer at source revision
+  `407d9d20b47374efd0c53f94befd9aac719e3bee` and image-index digest
+  `sha256:3cacc27ace90ce637362f0dcf408d43c03e69c6018461bd1fd72b9cc24c82cbf`.
+- Run `b88f53887a31b6696f5bf6b56e4e10d9966057c6109a1d0721dc94677e566ec7` evaluated the exact nine-symbol snapshot.
+  Data and evidence were `CURRENT`, all four continuous dependencies were `AVAILABLE`, accounting was `EXACT`, and
+  readiness remained open through probe sequence 19.
+- The economic evaluation passed all seven gates, while the terminal qualification correctly remained `REJECTED` and
+  non-executable for insufficient statistical power. Status retained maximum authority `observe`, with broker orders
+  and capital promotion disabled.
 
 Rollback remains fail-closed: stop the active Signal writer through GitOps, preserve finalized and partially staged
 publications, and revert only after no publication Job is active. A rollback does not grant broker or capital
