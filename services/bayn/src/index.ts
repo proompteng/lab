@@ -14,6 +14,7 @@ import { operationalError } from './errors'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { acquireSqlLayer } from './operations'
+import { Authority } from './paper'
 import { hashParameters, loadDefaultProtocol } from './protocol'
 import { runContinuously } from './reconciler'
 import { makeStrategy } from './strategy'
@@ -55,15 +56,6 @@ const main = Effect.gen(function* () {
   const journal = yield* acquireSqlLayer(JournalLive(config))
   let reconciliation = Effect.void
   if (config.alpaca !== undefined) {
-    const storage = Layer.mergeAll(Layer.succeedContext(evidenceStore), Layer.succeedContext(journal))
-    const paperStore = yield* Layer.build(PaperStoreLive(config).pipe(Layer.provide(storage)))
-    const writerFence = yield* Layer.build(
-      WriterFenceLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore))),
-    ).pipe(
-      Effect.mapError((cause) =>
-        operationalError('database', 'writer-fence', 'paper writer fence acquisition failed', cause),
-      ),
-    )
     const brokerRead = yield* Layer.build(
       AlpacaReadLive({
         expectedAccountId: config.alpaca.accountId,
@@ -76,14 +68,25 @@ const main = Effect.gen(function* () {
     ).pipe(
       Effect.mapError((cause) => operationalError('config', 'alpaca', 'Alpaca paper account binding failed', cause)),
     )
-    const reconciliationDependencies = Layer.mergeAll(
-      Layer.succeedContext(brokerRead),
-      Layer.succeedContext(paperStore),
-      Layer.succeedContext(writerFence),
-    )
-    reconciliation = runContinuously(config.alpaca.reconciliationIntervalMs).pipe(
-      Effect.provide(reconciliationDependencies),
-    )
+    if (config.maximumAuthority === Authority.Paper) {
+      const storage = Layer.mergeAll(Layer.succeedContext(evidenceStore), Layer.succeedContext(journal))
+      const paperStore = yield* Layer.build(PaperStoreLive(config).pipe(Layer.provide(storage)))
+      const writerFence = yield* Layer.build(
+        WriterFenceLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore))),
+      ).pipe(
+        Effect.mapError((cause) =>
+          operationalError('database', 'writer-fence', 'paper writer fence acquisition failed', cause),
+        ),
+      )
+      const reconciliationDependencies = Layer.mergeAll(
+        Layer.succeedContext(brokerRead),
+        Layer.succeedContext(paperStore),
+        Layer.succeedContext(writerFence),
+      )
+      reconciliation = runContinuously(config.alpaca.reconciliationIntervalMs).pipe(
+        Effect.provide(reconciliationDependencies),
+      )
+    }
   }
   const dependencies = Layer.mergeAll(marketData, Layer.succeedContext(journal), Layer.succeedContext(evidenceStore))
   return yield* run(config, strategy, reconciliation).pipe(Effect.provide(dependencies))

@@ -364,6 +364,20 @@ export interface BrokerReadShape {
 
 export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()('bayn/BrokerRead') {}
 
+export interface ReadPreflight {
+  readonly accountId: string
+  readonly accountHash: string
+  readonly positionCount: number
+  readonly positionsHash: string
+  readonly openOrderCount: number
+  readonly recentOrderCount: number
+  readonly ordersHash: string
+  readonly fillCount: number
+  readonly fillsHash: string
+  readonly orderById: 'MATCHED' | 'NOT_FOUND'
+  readonly orderByClientId: 'MATCHED' | 'NOT_FOUND'
+}
+
 const AccountResponseSchema = Schema.Struct({
   id: Uuid,
   account_number: NonEmptyString,
@@ -1125,8 +1139,111 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     return { account, positions, orders, orderById, orderByClientId, fillActivities }
   })
 
+const missingOrderId = '00000000-0000-4000-8000-000000000000'
+const missingClientOrderId = 'bayn-observe-read-proof-does-not-exist'
+
+const expectNotFound = (
+  operation: 'order-by-id' | 'order-by-client-id',
+  read: Effect.Effect<ReadResult<Order>, BrokerReadError>,
+): Effect.Effect<'NOT_FOUND', BrokerReadError> =>
+  read.pipe(
+    Effect.matchEffect({
+      onFailure: (error) =>
+        error.kind === BrokerReadErrorKind.NotFound ? Effect.succeed('NOT_FOUND' as const) : Effect.fail(error),
+      onSuccess: (result) =>
+        Effect.fail(
+          invalidResponse(
+            operation,
+            `Alpaca ${operation} unexpectedly resolved the observe-only proof identity`,
+            result.evidence,
+            result.value,
+          ),
+        ),
+    }),
+  )
+
+const verifyOrderLookup = (
+  operation: 'order-by-id' | 'order-by-client-id',
+  expected: Order,
+  read: Effect.Effect<ReadResult<Order>, BrokerReadError>,
+): Effect.Effect<'MATCHED', BrokerReadError> =>
+  read.pipe(
+    Effect.flatMap((result) =>
+      result.value.brokerOrderId === expected.brokerOrderId && result.value.clientOrderId === expected.clientOrderId
+        ? Effect.succeed('MATCHED' as const)
+        : Effect.fail(
+            invalidResponse(
+              operation,
+              `Alpaca ${operation} returned a different order during observe-only preflight`,
+              result.evidence,
+              result.value,
+            ),
+          ),
+    ),
+  )
+
+export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPreflight, BrokerReadError> =>
+  Effect.gen(function* () {
+    const account = yield* read.account
+    const responses = yield* Effect.all(
+      {
+        positions: read.positions,
+        openOrders: read.orders({ status: OrderCollection.Open, limit: 1 }),
+        recentOrders: read.orders({
+          status: OrderCollection.All,
+          limit: 1,
+          direction: SortDirection.Descending,
+        }),
+        fills: read.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
+      },
+      { concurrency: 4 },
+    )
+    const order = responses.recentOrders.value[0] ?? responses.openOrders.value[0]
+    const lookups =
+      order === undefined
+        ? yield* Effect.all({
+            orderById: expectNotFound('order-by-id', read.orderById(missingOrderId)),
+            orderByClientId: expectNotFound('order-by-client-id', read.orderByClientId(missingClientOrderId)),
+          })
+        : yield* Effect.all({
+            orderById: verifyOrderLookup('order-by-id', order, read.orderById(order.brokerOrderId)),
+            orderByClientId: verifyOrderLookup('order-by-client-id', order, read.orderByClientId(order.clientOrderId)),
+          })
+    const proof: ReadPreflight = {
+      accountId: account.value.id,
+      accountHash: canonicalHashV1(account.value),
+      positionCount: responses.positions.value.length,
+      positionsHash: canonicalHashV1(responses.positions.value),
+      openOrderCount: responses.openOrders.value.length,
+      recentOrderCount: responses.recentOrders.value.length,
+      ordersHash: canonicalHashV1({
+        open: responses.openOrders.value,
+        recent: responses.recentOrders.value,
+      }),
+      fillCount: responses.fills.value.items.length,
+      fillsHash: canonicalHashV1(responses.fills.value.items),
+      ...lookups,
+    }
+    yield* Effect.logInfo('Alpaca observe-only read preflight passed').pipe(
+      Effect.annotateLogs({
+        accountId: proof.accountId,
+        accountHash: proof.accountHash,
+        positionCount: proof.positionCount,
+        positionsHash: proof.positionsHash,
+        openOrderCount: proof.openOrderCount,
+        recentOrderCount: proof.recentOrderCount,
+        ordersHash: proof.ordersHash,
+        fillCount: proof.fillCount,
+        fillsHash: proof.fillsHash,
+        orderById: proof.orderById,
+        orderByClientId: proof.orderByClientId,
+      }),
+    )
+    return proof
+  }).pipe(Effect.withLogSpan('broker.read.preflight'))
+
 export const layer = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError, HttpClient.HttpClient> =>
-  Layer.effect(BrokerRead, make(options).pipe(Effect.tap((read) => read.account)))
+  Layer.effect(BrokerRead, make(options).pipe(Effect.tap(verifyReadAccess)))
 
 export const live = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError> =>
   layer(options).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))

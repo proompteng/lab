@@ -23,6 +23,7 @@ import {
   layer,
   make,
   makeProxyDispatcher,
+  verifyReadAccess,
   type BrokerReadShape,
   type ReadOptions,
 } from './alpaca'
@@ -203,6 +204,48 @@ describe('Alpaca paper reads', () => {
         retryAfter: undefined,
       },
     })
+  })
+
+  test('preflights the complete GET-only surface without persisting or inventing an order', async () => {
+    const requests: Array<{ method: string; url: URL }> = []
+    const client = HttpClient.make((request, url) => {
+      requests.push({ method: request.method, url })
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/positions') return Effect.succeed(jsonResponse(request, []))
+      if (url.pathname === '/v2/orders' || url.pathname === '/v2/account/activities/FILL') {
+        return Effect.succeed(jsonResponse(request, []))
+      }
+      return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
+    })
+
+    const proof = await Effect.runPromise(withClient(client, verifyReadAccess))
+
+    expect(proof).toMatchObject({
+      accountId,
+      positionCount: 0,
+      openOrderCount: 0,
+      recentOrderCount: 0,
+      fillCount: 0,
+      orderById: 'NOT_FOUND',
+      orderByClientId: 'NOT_FOUND',
+    })
+    expect(proof.accountHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(proof.positionsHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(proof.fillsHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(requests).toHaveLength(7)
+    expect(requests.every(({ method }) => method === 'GET')).toBe(true)
+    expect(
+      requests
+        .filter(({ url }) => url.pathname === '/v2/orders')
+        .map(({ url }) => url.searchParams.get('status'))
+        .sort(),
+    ).toEqual(['all', 'open'])
+    expect(requests.some(({ url }) => url.pathname === `/v2/orders/00000000-0000-4000-8000-000000000000`)).toBe(true)
+    expect(requests.some(({ url }) => url.pathname === '/v2/orders:by_client_order_id')).toBe(true)
+    const fill = requests.find(({ url }) => url.pathname === '/v2/account/activities/FILL')
+    expect(fill?.url.searchParams.get('page_size')).toBe('1')
+    expect(fill?.url.searchParams.get('direction')).toBe('desc')
   })
 
   test('normalizes equity positions exactly and rejects precision loss', async () => {

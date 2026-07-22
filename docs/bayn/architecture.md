@@ -4,10 +4,10 @@
 
 Bayn is a single-writer, paper-only quantitative qualification runtime. It evaluates one compiled
 `risk-balanced-trend` candidate against one immutable Signal snapshot, journals the deterministic simulation, verifies
-the accounting result, and exposes the resulting qualification evidence. It has no runtime broker credential,
-order-submission entry point, or capital-promotion authority. The source tree includes dormant paper-only read and
-mutation adapters plus a recovery coordinator; the composition root does not build them and the pod has no broker
-credential. Public status currently reports maximum authority `observe` independently of that dormant code.
+the accounting result, and exposes the resulting qualification evidence. It has no order-submission entry point or
+capital-promotion authority. A dedicated paper credential may build the GET-only Alpaca read adapter while authority
+remains `OBSERVE`; paper mutation and recovery remain dormant. Public status reports maximum authority independently
+of credential presence.
 
 The runtime has three external I/O boundaries:
 
@@ -15,8 +15,8 @@ The runtime has three external I/O boundaries:
 - a dedicated Bayn TigerBeetle cluster for deterministic simulation accounting; and
 - the existing `EvidenceStore` interface for durable qualification evidence.
 
-The dormant paper path would add Alpaca through the existing egress proxy only after a qualified strategy, a dedicated
-paper account, a reviewed credential, and explicit GitOps authority are present.
+Alpaca is reachable only through the existing paper-host CONNECT proxy. Credential binding first performs a bounded,
+runtime-decoded GET-only preflight. Paper reconciliation and mutation remain separate authority-gated steps.
 
 The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
 that interface and every persisted evidence contract.
@@ -66,9 +66,10 @@ order identity, and consistency delay in PostgreSQL. Any unresolved submit or ca
 intents; terminal recovery releases that block. There is no scheduler, public order route, arbitrary order API, blind
 flatten, runtime registry, or alternate writer.
 
-This path is intentionally dormant: `src/index.ts` does not provide `BrokerMutation` or invoke the coordinator, GitOps
-does not mount an Alpaca credential, and the current qualification is not execution authority. Enabling paper operation
-requires a separate reviewed change and live readback against the dedicated paper account.
+This path is intentionally dormant: `src/index.ts` does not provide `BrokerMutation` or invoke the coordinator, and the
+current qualification is not execution authority. A credential mounted under `OBSERVE` performs GET-only preflight;
+the paper store, writer fence, and reconciliation loop are built only under `PAPER`. Enabling paper operation requires
+a separate reviewed change and an audited qualified result.
 
 ## Effect composition
 
@@ -91,9 +92,9 @@ Effect is used at resource and failure boundaries, not as a container for ordina
   operation.
 - HTTP receives the runtime state and the narrow evidence-read callback it needs. It does not depend on the strategy or
   the complete evidence service.
-- The Alpaca read and mutation adapters, risk evaluator, intent and mutation stores, writer fence, and recovery
-  coordinator remain outside the runtime composition until the qualification and authority gates explicitly permit a
-  paper slice.
+- The Alpaca read adapter may enter runtime composition for GET-only preflight under `OBSERVE`. The mutation adapter,
+  intent and mutation stores, writer fence, reconciliation loop, and recovery coordinator remain outside composition
+  until the authority gates explicitly permit a paper slice.
 
 Do not introduce a `Context.Service` or `Layer` for a pure value merely to make it injectable. Add an Effect service
 only when a capability needs acquisition, release, configuration, retry, concurrency, or typed I/O failure.
@@ -152,8 +153,9 @@ qualification, or durable evidence closes readiness and never expands authority.
 ## Deployment contract
 
 GitOps owns one `apps/v1 Deployment` configured as a single writer and a dedicated three-replica TigerBeetle cluster.
-`maxSurge: 0` prevents overlapping writers during rollout. The pod has no broker secret and no Kubernetes API token.
-Scaling to zero is a maintenance state, not a second deployment mode.
+`maxSurge: 0` prevents overlapping writers during rollout. The pod has no Kubernetes API token. A broker Secret may be
+consumed only by this Deployment and does not expand authority. Scaling to zero is a maintenance state, not a second
+deployment mode.
 
 Every promoted image requires live acceptance against one coherent writer: the pod spec's digest-pinned image reference
 must match the GitOps OCI index digest. The runtime image ID is supporting evidence: its digest must be either that same
