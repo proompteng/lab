@@ -1,0 +1,40 @@
+name: hermes-toolchain-build-push
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/hermes-toolchain-build-push.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'flake.lock'
+      - 'flake.nix'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/images/hermes-toolchain.nix'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
+      - 'nix/packages.nix'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix-image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: hermes-toolchain
+      package_attr: hermes-toolchain-image
+      tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      publish_on_dispatch: true
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'hermes-toolchain-release-contract' || '' }}
+    secrets: inherit
