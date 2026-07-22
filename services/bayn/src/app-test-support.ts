@@ -6,6 +6,7 @@ import type { RuntimeConfig } from './config'
 import type { EvidenceStoreService, StoredEvaluationEvidence } from './db/evidence-store'
 import type { JournalService } from './ledger'
 import type { MarketDataService } from './market-data'
+import { Authority } from './paper'
 import { makeQualificationResult } from './qualification'
 import { summarizeEvaluation } from './risk-balanced-trend'
 import type { RuntimeState } from './runtime-state'
@@ -46,6 +47,7 @@ export const historicalEvidence: StoredEvaluationEvidence = {
 export const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
+  maximumAuthority: Authority.Observe,
   build: {
     sourceRevision: provenance.sourceRevision,
     imageRepository: provenance.image.repository,

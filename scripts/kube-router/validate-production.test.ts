@@ -75,6 +75,17 @@ test('rejects a safety policy that can deny traffic', async () => {
   )
 })
 
+test('rejects a retired safety policy that can select Bayn pods', async () => {
+  const files = copy(await loadProductionFiles())
+  files.safetyPolicies = files.safetyPolicies.replace(
+    '      network-policy.proompteng.ai/retired-rollout-policy: bayn',
+    '      app.kubernetes.io/name: bayn',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.safetyPolicies}: bayn is not an inert retired rollout policy`,
+  )
+})
+
 test('rejects bypassing the live namespace preflight', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
@@ -125,6 +136,17 @@ test('rejects write-capable controller RBAC', async () => {
   const files = copy(await loadProductionFiles())
   files.rbac = files.rbac.replace('      - watch', '      - watch\n      - update')
   expect(validateProductionContent(files)).toContain(`${productionPaths.rbac}: kube-router must remain read-only`)
+})
+
+test('rejects a preflight that cannot prove the retired selector matches no Pods', async () => {
+  const files = copy(await loadProductionFiles())
+  files.rbac = files.rbac.replace(
+    /rules:\n  - apiGroups:\n      - ""\n    resources:\n      - pods\n    verbs:\n      - get\n      - list\n  - apiGroups:\n      - networking\.k8s\.io/,
+    'rules:\n  - apiGroups:\n      - networking.k8s.io',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.rbac}: preflight must read policy state and retired-selector Pod matches`,
+  )
 })
 
 test('rejects telemetry that drops DaemonSet readiness', async () => {

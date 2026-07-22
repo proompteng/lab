@@ -6,6 +6,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
+import { Authority } from './paper'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
 type ReadEvidence = (runId: string) => Effect.Effect<Option.Option<unknown>, { readonly message: string }>
@@ -17,6 +18,7 @@ const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
 
 const publicState = (
   state: RuntimeState,
+  maximumAuthority: Authority,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ) => {
@@ -62,7 +64,7 @@ const publicState = (
       reconciliation: state.evidence?.reconciliation ?? null,
     },
     authority: {
-      maximum: 'observe',
+      maximum: maximumAuthority === Authority.Paper ? 'paper' : 'observe',
       brokerOrders: false,
       capitalPromotion: false,
     },
@@ -79,7 +81,7 @@ const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<str
   HttpServerResponse.json(body, { status, headers }).pipe(Effect.orDie)
 
 export const makeHttpLayer = (
-  config: Pick<RuntimeConfig, 'host' | 'operationTimeoutMs' | 'port'>,
+  config: Pick<RuntimeConfig, 'host' | 'maximumAuthority' | 'operationTimeoutMs' | 'port'>,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
@@ -104,7 +106,9 @@ export const makeHttpLayer = (
     }),
   )
   const status = Ref.get(state).pipe(
-    Effect.flatMap((current) => jsonResponse(publicState(current, provenance, provenanceVerification))),
+    Effect.flatMap((current) =>
+      jsonResponse(publicState(current, config.maximumAuthority, provenance, provenanceVerification)),
+    ),
   )
   const historicalEvaluation = HttpRouter.params.pipe(
     Effect.flatMap(({ runId }) => {

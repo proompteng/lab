@@ -7,6 +7,7 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
+import { Authority } from '../paper'
 import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy-service'
@@ -27,6 +28,7 @@ const describePostgres = postgresUrl === undefined ? describe.skip : describe
 const makeConfig = (url = testUrl): RuntimeConfig => ({
   host: '127.0.0.1',
   port: 8080,
+  maximumAuthority: Authority.Observe,
   build: {
     sourceRevision: 'a'.repeat(40),
     imageRepository: 'registry.ide-newton.ts.net/lab/bayn',

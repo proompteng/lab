@@ -3,6 +3,7 @@ import { Config, Effect, Option, Redacted, Schema, SchemaTransformation } from '
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
 import { operationalError, type OperationalError } from './errors'
+import { Authority } from './paper'
 import {
   GitSourceRevisionSchema as SourceRevision,
   ImageDigestSchema as ImageDigest,
@@ -21,6 +22,7 @@ export interface RuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId?: string
+  readonly maximumAuthority: Authority
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
@@ -77,6 +79,9 @@ const runtimeConfig = Config.all({
   strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
+  maximumAuthority: Config.schema(Schema.Enum(Authority), 'BAYN_MAXIMUM_AUTHORITY').pipe(
+    Config.withDefault(Authority.Observe),
+  ),
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
@@ -105,6 +110,7 @@ const runtimeConfig = Config.all({
     host: config.host,
     port: config.port,
     qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
+    maximumAuthority: config.maximumAuthority,
     configuredBuild: {
       sourceRevision: config.sourceRevision,
       imageRepository: config.imageRepository,

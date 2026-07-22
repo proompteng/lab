@@ -64,8 +64,10 @@ argocd app sync kube-router --revision "$main_revision" --prune=false --timeout 
 kubectl -n kube-system rollout status daemonset/kube-router --timeout=10m
 ```
 
-The sync hook must print `All existing NetworkPolicy namespaces have a traffic-neutral activation policy.` If it fails,
-the DaemonSet wave is not applied. Update the declared safety coverage through Git and rerun CI; do not bypass the hook.
+The sync hook must print `All existing NetworkPolicy namespaces have an approved rollout policy state.` It requires
+traffic-neutral rollout policies everywhere except Bayn, whose retained `Prune=false` object must use the inert retired
+selector and match no Pods. If the hook fails, the DaemonSet wave is not applied. Update the declared policy state
+through Git and rerun CI; do not bypass the hook.
 
 Verify every desired node has one ready controller, the pinned image index or its architecture-specific child manifest
 is running, the process architecture matches the node, health is green, and policy metrics exist. Container runtimes

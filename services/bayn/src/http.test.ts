@@ -13,6 +13,7 @@ import {
 } from './app-test-support'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import { makeHttpLayer } from './http'
+import { Authority } from './paper'
 import { initialState } from './runtime-state'
 
 describe('Bayn HTTP probes', () => {
@@ -24,7 +25,12 @@ describe('Bayn HTTP probes', () => {
           const state = yield* Ref.make(initialState())
           const context = yield* Layer.build(
             makeHttpLayer(
-              { host: '127.0.0.1', operationTimeoutMs: 250, port: 0 },
+              {
+                host: '127.0.0.1',
+                maximumAuthority: Authority.Observe,
+                operationTimeoutMs: 250,
+                port: 0,
+              },
               state,
               provenance,
               'embedded',
@@ -135,7 +141,12 @@ describe('Bayn HTTP probes', () => {
           const state = yield* Ref.make(initialState())
           const context = yield* Layer.build(
             makeHttpLayer(
-              { host: '127.0.0.1', operationTimeoutMs: 250, port: 0 },
+              {
+                host: '127.0.0.1',
+                maximumAuthority: Authority.Observe,
+                operationTimeoutMs: 250,
+                port: 0,
+              },
               state,
               provenance,
               'embedded',
@@ -148,6 +159,32 @@ describe('Bayn HTTP probes', () => {
           expect(
             yield* Effect.promise(() => fetchJson(address.port, `/v1/evaluations/${historicalRunId}`)),
           ).toMatchObject({ status: 503, body: { error: 'evidence_unavailable' } })
+        }),
+      ),
+    )
+  })
+
+  test('reports the configured ceiling without implying broker capability', async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* Ref.make(initialState())
+          const context = yield* Layer.build(
+            makeHttpLayer(
+              { host: '127.0.0.1', maximumAuthority: Authority.Paper, operationTimeoutMs: 250, port: 0 },
+              state,
+              provenance,
+              'embedded',
+              successfulEvidenceStore.read,
+            ),
+          )
+          const address = Context.get(context, HttpServer.HttpServer).address
+          if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
+
+          expect(yield* Effect.promise(() => fetchJson(address.port, '/v1/status'))).toMatchObject({
+            status: 200,
+            body: { authority: { maximum: 'paper', brokerOrders: false, capitalPromotion: false } },
+          })
         }),
       ),
     )

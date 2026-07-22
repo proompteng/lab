@@ -37,6 +37,9 @@ spec:
   egress:
     - {}
 ---
+# Bayn has namespace-specific policies and no longer uses the traffic-neutral
+# rollout exception. Keep this retained object inert because its original
+# Prune=false annotation prevents one-step deletion.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -46,14 +49,12 @@ metadata:
     argocd.argoproj.io/sync-wave: "-3"
     argocd.argoproj.io/sync-options: Prune=false
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels:
+      network-policy.proompteng.ai/retired-rollout-policy: bayn
   policyTypes:
     - Ingress
     - Egress
-  ingress:
-    - {}
-  egress:
-    - {}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

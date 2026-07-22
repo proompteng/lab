@@ -57,16 +57,32 @@ spec:
               fi
 
               while IFS= read -r namespace; do
+                if [[ "$namespace" == bayn ]]; then
+                  kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
+                    jq -e '
+                      .spec.podSelector.matchLabels == {
+                        "network-policy.proompteng.ai/retired-rollout-policy": "bayn"
+                      } and
+                      (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
+                      (.spec | has("ingress") | not) and
+                      (.spec | has("egress") | not)
+                    ' >/dev/null
+                  continue
+                fi
+
                 kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
-                  jq -e '
-                    .spec.podSelector == {} and
-                    (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
-                    .spec.ingress == [{}] and
-                    .spec.egress == [{}]
-                  ' >/dev/null
+                    jq -e '
+                      .spec.podSelector == {} and
+                      (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
+                      .spec.ingress == [{}] and
+                      .spec.egress == [{}]
+                    ' >/dev/null
               done <<< "$expected_namespaces"
 
-              echo 'All existing NetworkPolicy namespaces have a traffic-neutral activation policy.'
+              kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json |
+                jq -e '.items | length == 0' >/dev/null
+
+              echo 'All existing NetworkPolicy namespaces have an approved rollout policy state.'
           resources:
             requests:
               cpu: 25m
