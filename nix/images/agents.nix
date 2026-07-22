@@ -254,7 +254,7 @@ let
 
   depsHash = {
     x86_64-linux = "sha256-EY+nZK3pCullEk0zPkKQVY54wMFO/WzPPSitfZlhe5M=";
-    aarch64-linux = lib.fakeHash;
+    aarch64-linux = "sha256-uA8804g8MEmdyARzsVe4VrSoIlwunEq8rEcxkvdh1ek=";
   };
 
   installFilters = [
