@@ -284,7 +284,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: true,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/tigresse@sha256:a357c07d629f9561f04b3452c1d9c41b81b9d816d29de415bd0141e859e92e39',
+        'registry.ide-newton.ts.net/lab/tigresse@sha256:b04308528a46291e2c65562d04c2ac7644c4e7f25f2c247dae282b70f8856e2c',
       ],
     })
     expect(entry('tigresse').deferredReason).toContain('proompteng/tigresse')
