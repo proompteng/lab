@@ -20,12 +20,13 @@ import {
   ReconciliationStatus,
   TimeInForce,
 } from '../paper'
-import type {
-  BrokerEventInput,
-  FillEventInput,
-  PositionEventInput,
-  PositionSnapshotInput,
-  ValuationInput,
+import {
+  sourceTimestamp,
+  type BrokerEventInput,
+  type FillEventInput,
+  type PositionEventInput,
+  type PositionSnapshotInput,
+  type ValuationInput,
 } from '../broker/observations'
 import { EvidenceStore, EvidenceStoreLive, PostgresClientLive } from './evidence-store'
 import { PaperStore, PaperStoreLive } from './paper-store'
@@ -154,6 +155,7 @@ const fillEvent = (
   quantityMicros: string,
   priceMicros: string,
   eventOccurredAt = occurredAt,
+  brokerTimestamp = sourceTimestamp(eventOccurredAt),
 ): FillEventInput => {
   const fill = {
     schemaVersion: 'bayn.paper-fill.v1' as const,
@@ -173,7 +175,12 @@ const fillEvent = (
     broker: Broker.Alpaca,
     accountId,
     sourceEventId: id,
-    contentHash: canonicalHashV1({ schemaVersion: 'bayn.paper-fill-source.v1', fill }),
+    sourceTimestamp: brokerTimestamp,
+    contentHash: canonicalHashV1({
+      schemaVersion: 'bayn.paper-fill-source.v1',
+      fill,
+      brokerTransactionTime: brokerTimestamp,
+    }),
     occurredAt: eventOccurredAt,
     observedAt,
     fill,
@@ -582,9 +589,30 @@ describePostgres('paper accounting persistence', () => {
   test('derives cost basis in broker economic order and rejects a late predecessor', async () => {
     const control: JournalControl = { fail: false, planHashes: [] }
     const runtime = makeStoreRuntime(control)
-    const first = fillEvent('fill-a', OrderSide.Buy, '3000000', '100000000', '2026-07-22T15:29:59.000Z')
-    const second = fillEvent('fill-b', OrderSide.Sell, '1000000', '120000000')
-    const latePredecessor = fillEvent('fill-0', OrderSide.Buy, '1000000', '90000000', '2026-07-22T15:29:58.000Z')
+    const first = fillEvent(
+      'fill-z',
+      OrderSide.Buy,
+      '3000000',
+      '100000000',
+      occurredAt,
+      '2026-07-22T15:30:00.000100000Z',
+    )
+    const second = fillEvent(
+      'fill-a',
+      OrderSide.Sell,
+      '1000000',
+      '120000000',
+      occurredAt,
+      '2026-07-22T15:30:00.000900000Z',
+    )
+    const latePredecessor = fillEvent(
+      'fill-0',
+      OrderSide.Buy,
+      '1000000',
+      '90000000',
+      occurredAt,
+      '2026-07-22T15:30:00.000050000Z',
+    )
     try {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
@@ -610,7 +638,8 @@ describePostgres('paper accounting persistence', () => {
               transaction.realized_pnl_micros::text
             FROM accounting_transactions AS transaction
             JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
-            ORDER BY event.occurred_at, event.source_event_id COLLATE "C"
+            JOIN fills AS fill ON fill.event_id = event.event_id
+            ORDER BY fill.source_timestamp COLLATE "C", fill.fill_id COLLATE "C"
           `
           const [counts] = yield* sql<{ events: number; transactions: number }>`
             SELECT
@@ -625,14 +654,14 @@ describePostgres('paper accounting persistence', () => {
       expect(result.replay).toEqual(result.firstReceipt)
       expect(result.transactions).toEqual([
         {
-          source_event_id: 'fill-a',
+          source_event_id: 'fill-z',
           source_sequence: '1',
           side: 'BUY',
           cost_basis_micros: '300000000',
           realized_pnl_micros: '0',
         },
         {
-          source_event_id: 'fill-b',
+          source_event_id: 'fill-a',
           source_sequence: '0',
           side: 'SELL',
           cost_basis_micros: '100000000',

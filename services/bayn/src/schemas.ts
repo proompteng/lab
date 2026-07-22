@@ -14,6 +14,13 @@ const isUtcInstant = (value: string): boolean => {
   return !Number.isNaN(date.getTime()) && date.toISOString() === value
 }
 
+const isUtcOrderTimestamp = (value: string): boolean => {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.(\d{9})Z$/.exec(value)
+  if (match === null) return false
+  const date = new Date(`${match[1]}.${match[2].slice(0, 3)}Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 19) === match[1]
+}
+
 export const StrictNonEmptyStringSchema = Schema.String.check(
   Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value, {
     expected: 'a non-empty string without surrounding whitespace',
@@ -24,6 +31,11 @@ export const IsoDateSchema = Schema.String.pipe(Schema.refine(isIsoDate, { expec
 export type IsoDate = typeof IsoDateSchema.Type
 export const UtcInstantSchema = Schema.String.check(
   Schema.makeFilter(isUtcInstant, { expected: 'a canonical UTC instant (YYYY-MM-DDTHH:mm:ss.sssZ)' }),
+)
+export const UtcOrderTimestampSchema = Schema.String.check(
+  Schema.makeFilter(isUtcOrderTimestamp, {
+    expected: 'a canonical UTC ordering timestamp (YYYY-MM-DDTHH:mm:ss.nnnnnnnnnZ)',
+  }),
 )
 export const Sha256Schema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 export const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))

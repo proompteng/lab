@@ -5,6 +5,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
   UtcInstantSchema as UtcInstant,
+  UtcOrderTimestampSchema as UtcOrderTimestamp,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 
@@ -290,7 +291,7 @@ const BrokerEventBase = Schema.TaggedUnion({
   Account: { ...SourceFields, account: AccountSnapshotSchema },
   Position: { ...SourceFields, position: PositionSchema },
   Order: { ...SourceFields, order: OrderSchema },
-  Fill: { ...SourceFields, fill: FillSchema },
+  Fill: { ...SourceFields, sourceTimestamp: UtcOrderTimestamp, fill: FillSchema },
   Error: { ...SourceFields, error: BrokerErrorSchema },
   RateLimit: { ...SourceFields, rateLimit: RateLimitSchema },
 })

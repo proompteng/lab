@@ -23,7 +23,7 @@ The paper mutation capability, execution entry point, and capital-promotion path
   response identity, and the lookup delay are committed before use; unresolved outcomes block later exposure. The
   deployed observe-only runtime does not create mutation rows.
 - Paper execution is long-only: risk blocks an existing short or a sell beyond reconciled long inventory before broker
-  I/O. Fill accounting follows broker occurrence time with a stable source-identity tie-breaker, rejects late
+  I/O. Fill accounting persists Alpaca's full source timestamp and orders equal timestamps by fill ID, rejects late
   predecessors, and records a receipt only after the complete TigerBeetle transaction-tag transfer set matches.
 - The composition root builds one pure strategy value and passes it explicitly to the lifecycle. Effect services and
   layers are reserved for I/O resources. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its authoritative

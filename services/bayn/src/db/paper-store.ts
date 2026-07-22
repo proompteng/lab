@@ -300,12 +300,12 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           return sql`
             INSERT INTO fills (
               event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
-              symbol, side, quantity_micros, price_micros, fee_micros
+              symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
             ) VALUES (
               ${eventId}, ${input.fill.accountId}, ${input.fill.schemaVersion}, ${input.fill.fillId},
               ${input.fill.brokerOrderId}, ${input.fill.clientOrderId}, ${input.fill.intentId ?? null},
               ${input.fill.symbol}, ${input.fill.side}, ${input.fill.quantityMicros}, ${input.fill.priceMicros},
-              ${input.fill.feeMicros}
+              ${input.fill.feeMicros}, ${input.sourceTimestamp}
             )
           `.pipe(Effect.asVoid)
       }
@@ -365,20 +365,20 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
 
     const economicallyPrecedes = (input: FillEventInput) => sql`
       (
-        event.occurred_at < ${input.occurredAt}
+        candidate_fill.source_timestamp COLLATE "C" < (${input.sourceTimestamp}::text COLLATE "C")
         OR (
-          event.occurred_at = ${input.occurredAt}
-          AND event.source_event_id COLLATE "C" < (${input.sourceEventId}::text COLLATE "C")
+          candidate_fill.source_timestamp = ${input.sourceTimestamp}
+          AND candidate_fill.fill_id COLLATE "C" < (${input.fill.fillId}::text COLLATE "C")
         )
       )
     `
 
     const economicallyFollows = (input: FillEventInput) => sql`
       (
-        event.occurred_at > ${input.occurredAt}
+        candidate_fill.source_timestamp COLLATE "C" > (${input.sourceTimestamp}::text COLLATE "C")
         OR (
-          event.occurred_at = ${input.occurredAt}
-          AND event.source_event_id COLLATE "C" > (${input.sourceEventId}::text COLLATE "C")
+          candidate_fill.source_timestamp = ${input.sourceTimestamp}
+          AND candidate_fill.fill_id COLLATE "C" > (${input.fill.fillId}::text COLLATE "C")
         )
       )
     `
@@ -391,7 +391,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
             COALESCE(sum(transaction.quantity_delta_micros), 0)::text AS quantity_micros,
             COALESCE(sum(transaction.cost_basis_delta_micros), 0)::text AS cost_micros
           FROM accounting_transactions AS transaction
-          JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+          JOIN fills AS candidate_fill ON candidate_fill.event_id = transaction.broker_event_id
           WHERE transaction.account_id = ${input.accountId}
             AND transaction.symbol = ${input.fill.symbol}
             AND ${economicallyPrecedes(input)}
@@ -411,6 +411,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           SELECT EXISTS (
             SELECT 1
             FROM broker_events AS event
+            JOIN fills AS candidate_fill ON candidate_fill.event_id = event.event_id
             LEFT JOIN accounting_transactions AS transaction ON transaction.broker_event_id = event.event_id
             LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = transaction.broker_event_id
             WHERE event.broker = ${input.broker}
@@ -436,7 +437,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           SELECT EXISTS (
             SELECT 1
             FROM accounting_transactions AS transaction
-            JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+            JOIN fills AS candidate_fill ON candidate_fill.event_id = transaction.broker_event_id
             WHERE transaction.account_id = ${input.accountId}
               AND transaction.symbol = ${input.fill.symbol}
               AND ${economicallyFollows(input)}

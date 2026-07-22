@@ -177,6 +177,7 @@ describe('paper broker observations', () => {
       intentId: 'b'.repeat(64),
       occurredAt: '2026-07-22T15:30:00.000Z',
     })
+    expect(event.sourceTimestamp).toBe('2026-07-22T15:30:00.000987000Z')
     expect(() => fillObservation({ ...activity, symbol: 'AMD' }, order, evidence)).toThrow(
       'Alpaca fill activity does not match its order',
     )
