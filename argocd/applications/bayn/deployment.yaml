@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-22T20:52:13Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-22T22:38:10Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -56,8 +56,6 @@ spec:
               value: "43cece33d3db232ffb02ba78826727e50b5795319d09d27e1baa0c04709eb056"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "cf639d3692da65271b12423f9b7c6c9663e1fb13ae7290dc56fcfa3acf16eb69"
-            - name: BAYN_QUALIFICATION_RUN_ID
-              value: "b88f53887a31b6696f5bf6b56e4e10d9966057c6109a1d0721dc94677e566ec7"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
             - name: BAYN_HEALTH_INTERVAL_MS
@@ -77,21 +75,21 @@ spec:
                   name: bayn-clickhouse-auth
                   key: password
             - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: "98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292"
+              value: "0945e3331d67437a072d5eb33f65e469b9883a5e762e29e80f7acb389864c79f"
             - name: BAYN_SIGNAL_PUBLICATION_ASOF
-              value: "2026-07-20"
+              value: "2026-07-22"
             - name: BAYN_SIGNAL_CALENDAR_VERSION
               value: "alpaca-us-equity-calendar-v1"
             - name: BAYN_SIGNAL_DATA_START
               value: "2022-01-27"
             - name: BAYN_SIGNAL_DATA_END
-              value: "2026-07-20"
+              value: "2026-07-22"
             - name: BAYN_SIGNAL_LOOKBACK_START
               value: "2022-01-27"
             - name: BAYN_SIGNAL_EVALUATION_START
               value: "2023-01-30"
             - name: BAYN_SIGNAL_EVALUATION_END
-              value: "2026-07-20"
+              value: "2026-07-22"
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
