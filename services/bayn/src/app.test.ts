@@ -7,7 +7,7 @@ import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Redacted, Ref } fro
 import { TestClock } from 'effect/testing'
 import { HttpServer } from 'effect/unstable/http'
 
-import { initialState, initialize, makeHttpLayer, monitor, probe, run, type RuntimeState } from './app'
+import { initialize, monitor, probe, run } from './app'
 import type { RuntimeConfig } from './config'
 import {
   DatabaseError,
@@ -18,11 +18,13 @@ import {
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { operationalError } from './errors'
+import { makeHttpLayer } from './http'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { makeQualificationResult } from './qualification'
 import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
-import { Strategy, StrategyLayer, makeStrategy, type StrategyService } from './strategy-service'
+import { initialState, type RuntimeState } from './runtime-state'
+import { makeStrategy, type Strategy } from './strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
@@ -343,7 +345,7 @@ describe('Bayn HTTP probes', () => {
               state,
               provenance,
               'embedded',
-              successfulEvidenceStore,
+              successfulEvidenceStore.read,
             ),
           )
           const address = Context.get(context, HttpServer.HttpServer).address
@@ -451,7 +453,7 @@ describe('Bayn HTTP probes', () => {
               state,
               provenance,
               'embedded',
-              unavailableStore,
+              unavailableStore.read,
             ),
           )
           const address = Context.get(context, HttpServer.HttpServer).address
@@ -595,7 +597,7 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(pinnedRuntimeConfig, state).pipe(
+      initialize(pinnedRuntimeConfig, state, fixtureStrategy).pipe(
         Effect.provideService(MarketData, {
           check: forbidden('pinned startup must not check Signal'),
           inspect: forbidden('pinned startup must not inspect Signal'),
@@ -613,7 +615,6 @@ describe('Bayn startup lifecycle', () => {
           openQualification: () => forbidden('pinned startup must not open a qualification lock'),
           persist: () => forbidden('pinned startup must not persist evidence'),
         }),
-        Effect.provideService(Strategy, fixtureStrategy),
       ),
     )
 
@@ -669,11 +670,10 @@ describe('Bayn startup lifecycle', () => {
     for (const testCase of cases) {
       const state = await Effect.runPromise(Ref.make(initialState()))
       await Effect.runPromise(
-        initialize(testCase.config, state).pipe(
+        initialize(testCase.config, state, testCase.strategy).pipe(
           Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, testCase.store),
-          Effect.provideService(Strategy, testCase.strategy),
         ),
       )
       expect(await Effect.runPromise(Ref.get(state)), testCase.name).toMatchObject({
@@ -690,7 +690,7 @@ describe('Bayn startup lifecycle', () => {
     let evaluations = 0
     let journalWrites = 0
     let persistenceWrites = 0
-    const strategy: StrategyService = {
+    const strategy: Strategy = {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
@@ -730,14 +730,13 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, strategy).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('terminal recovery must not load bars')), snapshot),
         ),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
-        Effect.provideService(Strategy, strategy),
       ),
     )
 
@@ -761,7 +760,7 @@ describe('Bayn startup lifecycle', () => {
     let evaluations = 0
     let journalWrites = 0
     let persistenceWrites = 0
-    const strategy: StrategyService = {
+    const strategy: Strategy = {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
@@ -787,14 +786,13 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, strategy).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('incomplete qualification must not load bars')), snapshot),
         ),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
-        Effect.provideService(Strategy, strategy),
       ),
     )
 
@@ -814,7 +812,7 @@ describe('Bayn startup lifecycle', () => {
     const snapshot = makeSnapshot()
     let evaluations = 0
     let journalWrites = 0
-    const strategy: StrategyService = {
+    const strategy: Strategy = {
       ...fixtureStrategy,
       evaluate: () => {
         evaluations += 1
@@ -844,14 +842,13 @@ describe('Bayn startup lifecycle', () => {
     const state = await Effect.runPromise(Ref.make(initialState()))
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, strategy).pipe(
         Effect.provideService(
           MarketData,
           marketDataService(Effect.die(new Error('corrupt recovery must not load bars')), snapshot),
         ),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, store),
-        Effect.provideService(Strategy, strategy),
       ),
     )
 
@@ -867,7 +864,7 @@ describe('Bayn startup lifecycle', () => {
     let calls = 0
     const snapshot = makeSnapshot()
     const state = await Effect.runPromise(Ref.make(initialState()))
-    const strategy: StrategyService = {
+    const strategy: Strategy = {
       ...fixtureStrategy,
       name: 'test-strategy',
       evaluate: (bars, manifest) => {
@@ -877,11 +874,10 @@ describe('Bayn startup lifecycle', () => {
     }
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, strategy).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.succeed(snapshot))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provideService(Strategy, strategy),
       ),
     )
 
@@ -895,11 +891,10 @@ describe('Bayn startup lifecycle', () => {
     const marketData = marketDataService(Effect.succeed(snapshot))
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -917,11 +912,10 @@ describe('Bayn startup lifecycle', () => {
     const marketData = marketDataService(Effect.succeed(shortSnapshot), shortSnapshot)
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -939,11 +933,10 @@ describe('Bayn startup lifecycle', () => {
     )
 
     await Effect.runPromise(
-      initialize({ ...config, operationTimeoutMs: 10 }, state).pipe(
+      initialize({ ...config, operationTimeoutMs: 10 }, state, fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -957,11 +950,10 @@ describe('Bayn startup lifecycle', () => {
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
     const marketData = marketDataService(Effect.die(new Error('unexpected startup defect')))
     const exit = await Effect.runPromiseExit(
-      run(config).pipe(
+      run(config, fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -998,11 +990,10 @@ describe('Bayn startup lifecycle', () => {
     }
 
     await Effect.runPromise(
-      initialize(config, state).pipe(
+      initialize(config, state, fixtureStrategy).pipe(
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, unavailable),
-        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -1028,9 +1019,8 @@ describe('Bayn startup lifecycle', () => {
       Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
       Layer.succeed(Journal, successfulJournal),
       EvidenceStoreRuntimeLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)),
-      StrategyLayer(fixtureProtocol, provenance),
     )
-    const fiber = Effect.runFork(run(unavailableDatabase).pipe(Effect.provide(dependencies)))
+    const fiber = Effect.runFork(run(unavailableDatabase, fixtureStrategy).pipe(Effect.provide(dependencies)))
 
     try {
       const status = await waitForStatus(port, 'FAILED')
@@ -1064,9 +1054,8 @@ describe('Bayn startup lifecycle', () => {
       Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
       Layer.succeed(Journal, successfulJournal),
       makeEvidenceStoreRuntimeLayer(timedOutDatabase, stalledMigration, Effect.succeed(successfulEvidenceStore)),
-      StrategyLayer(fixtureProtocol, provenance),
     )
-    const fiber = Effect.runFork(run(timedOutDatabase).pipe(Effect.provide(dependencies)))
+    const fiber = Effect.runFork(run(timedOutDatabase, fixtureStrategy).pipe(Effect.provide(dependencies)))
 
     try {
       const status = await waitForStatus(port, 'FAILED')

@@ -10,7 +10,7 @@ import { EvidenceStoreRuntimeLive } from './db/evidence-store'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { hashParameters, loadDefaultProtocol } from './protocol'
-import { makeStrategy, Strategy } from './strategy-service'
+import { makeStrategy } from './strategy-service'
 
 const main = Effect.gen(function* () {
   const config = yield* loadConfig()
@@ -48,9 +48,8 @@ const main = Effect.gen(function* () {
     marketData,
     JournalLive(config),
     EvidenceStoreRuntimeLive(config).pipe(Layer.provide(NodeServices.layer)),
-    Layer.succeed(Strategy, strategy),
   )
-  return yield* run(config).pipe(Effect.provide(dependencies))
+  return yield* run(config, strategy).pipe(Effect.provide(dependencies))
 })
 
 const program = main.pipe(Effect.annotateLogs({ service: 'bayn' }), Effect.provide(Logger.layer([Logger.consoleJson])))

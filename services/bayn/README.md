@@ -14,8 +14,9 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
   runs versioned Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
   query cancellation.
-- The composition root selects one strategy capability. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its
-  authoritative universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
+- The composition root builds one pure strategy value and passes it explicitly to the lifecycle. Effect services and
+  layers are reserved for I/O resources. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its authoritative
+  universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
 - The typed protocol is compiled into the image and runtime-decoded with Effect Schema. Strategies remain reviewed
   TypeScript rather than JSON.
 - The executable embeds source, repository, and strategy-behavior identity. Startup verifies configured attribution,
