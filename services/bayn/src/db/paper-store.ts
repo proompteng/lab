@@ -502,14 +502,14 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         sql.withTransaction(
           Effect.gen(function* () {
             const event = yield* append(input)
+            const stored = yield* readPrepared(event.eventId)
             yield* requirePostedPredecessors(input)
-            yield* requireNoPreparedSuccessors(input)
+            if (stored === undefined) yield* requireNoPreparedSuccessors(input)
             const position = yield* priorPosition(input)
             const expected = yield* Effect.try({
               try: () => prepareAccounting(event.eventId, input.fill, position, config.tigerBeetle.ledger),
               catch: (cause) => error('account', 'invariant', 'fill accounting plan is invalid', cause),
             })
-            const stored = yield* readPrepared(event.eventId)
             if (stored === undefined) {
               yield* insertPrepared(expected)
               return expected

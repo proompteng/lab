@@ -256,9 +256,9 @@ const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect
     if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
       return yield* Effect.fail(operationalError('journal', 'post', 'TigerBeetle posting plan exceeds batch limits'))
     }
+    const transferQuery = yield* validate('build-transaction-transfer-query', () => transactionTransferQuery(plan))
     yield* createAndVerifyAccounts(client, plan.accounts)
     yield* createAndVerifyTransfers(client, plan.transfers)
-    const transferQuery = yield* validate('build-transaction-transfer-query', () => transactionTransferQuery(plan))
     const [accounts, transfers] = yield* Effect.all(
       [
         client.request('verify-posted-accounts', (active) =>

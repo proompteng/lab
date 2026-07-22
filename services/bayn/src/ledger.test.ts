@@ -199,6 +199,18 @@ describe('TigerBeetle simulation journal', () => {
       { quantityMicros: '0', costMicros: '0' },
       journalConfig.tigerBeetle.ledger,
     ).ledger
+    const invalidTarget = makeLedgerClient()
+    const invalidPlan = {
+      ...plan,
+      transfers: plan.transfers.map((transfer, index) => (index === 0 ? { ...transfer, user_data_128: 0n } : transfer)),
+    }
+    const invalid = await Effect.runPromise(
+      Effect.flip(withJournal(invalidTarget.client, (journal) => journal.post(invalidPlan))),
+    )
+    expect(invalid.message).toContain('nonzero transaction tag')
+    expect(invalidTarget.accounts.size).toBe(0)
+    expect(invalidTarget.transfers.size).toBe(0)
+
     const target = makeLedgerClient()
 
     const exact = await Effect.runPromise(

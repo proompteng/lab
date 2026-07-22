@@ -590,8 +590,9 @@ describePostgres('paper accounting persistence', () => {
         Effect.gen(function* () {
           const store = yield* PaperStore
           const arrivedFirst = yield* store.ingest(second)
-          yield* store.account(first)
+          const firstReceipt = yield* store.account(first)
           yield* store.account(second)
+          const replay = yield* store.account(first)
           const rejected = yield* Effect.exit(store.account(latePredecessor))
           const sql = yield* PgClient.PgClient
           const transactions = yield* sql<{
@@ -616,11 +617,12 @@ describePostgres('paper accounting persistence', () => {
               (SELECT count(*)::integer FROM broker_events) AS events,
               (SELECT count(*)::integer FROM accounting_transactions) AS transactions
           `
-          return { arrivedFirst, rejected, transactions, counts }
+          return { arrivedFirst, firstReceipt, replay, rejected, transactions, counts }
         }),
       )
 
       expect(result.arrivedFirst).toMatchObject({ sourceSequence: '0', deduplicated: false })
+      expect(result.replay).toEqual(result.firstReceipt)
       expect(result.transactions).toEqual([
         {
           source_event_id: 'fill-a',
@@ -642,7 +644,7 @@ describePostgres('paper accounting persistence', () => {
         expect(Cause.pretty(result.rejected.cause)).toContain('later fill was already accounted')
       }
       expect(result.counts).toEqual({ events: 2, transactions: 2 })
-      expect(control.planHashes).toHaveLength(2)
+      expect(control.planHashes).toHaveLength(3)
     } finally {
       await runtime.dispose()
     }

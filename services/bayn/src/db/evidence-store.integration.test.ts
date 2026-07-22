@@ -23,7 +23,7 @@ import {
 } from '../paper'
 import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
-import { makeStrategy } from '../strategy-service'
+import { makeStrategy } from '../strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
 import type { Protocol } from '../types'
 import {
