@@ -36,9 +36,9 @@ import {
   type SimulatedOrder,
   type SimulationProtocol,
   type SimulationTrace,
-  type StrategyDecisionPlan,
-  type StrategyProtocol,
-  type StrategySignalDecision,
+  type DecisionPlan,
+  type Protocol,
+  type SignalDecision,
 } from './types'
 
 export interface AlignedSession {
@@ -55,13 +55,13 @@ export interface SimulationTarget {
   readonly signalIndex: number
   readonly executionIndex: number
   readonly weights: Readonly<Record<string, number>>
-  readonly decision?: StrategyDecisionPlan
+  readonly decision?: DecisionPlan
 }
 
 export interface SimulationResult {
   readonly metrics: PerformanceMetrics
   readonly events: readonly EvaluationEvent[]
-  readonly signalDecisions: readonly StrategySignalDecision[]
+  readonly signalDecisions: readonly SignalDecision[]
   readonly dailyPerformance: readonly DailyPerformancePoint[]
   readonly simulation: SimulationTrace | null
 }
@@ -339,7 +339,7 @@ export const simulate = (
   let totalCashYieldMicros = 0n
   const equityMicros: bigint[] = []
   const events: EvaluationEvent[] = []
-  const signalDecisions: StrategySignalDecision[] = []
+  const signalDecisions: SignalDecision[] = []
   const orders: SimulatedOrder[] = []
   const cashChanges: CashChange[] = []
   const dailyMarks: DailyPositionMark[] = []
@@ -712,18 +712,16 @@ export const buildVerdict = (
 
 export const makeEvaluationIdentity = (
   inputManifest: InputManifest,
-  protocol: StrategyProtocol,
+  protocol: Protocol,
   provenance: RuntimeProvenance,
-  expectedStrategyName: string,
-  parameterHash: string,
 ): { readonly runId: string; readonly protocolHash: string } => {
-  if (provenance.strategy.name !== expectedStrategyName) {
-    throw new Error(`runtime provenance strategy must be ${expectedStrategyName}`)
+  if (provenance.strategy.name !== 'risk-balanced-trend') {
+    throw new Error('runtime provenance strategy must be risk-balanced-trend')
   }
   if (provenance.strategy.parameterSchemaVersion !== protocol.schemaVersion) {
     throw new Error('runtime provenance parameter schema does not match decoded strategy parameters')
   }
-  if (provenance.strategy.parameterHash !== parameterHash) {
+  if (provenance.strategy.parameterHash !== canonicalHashV1(protocol)) {
     throw new Error('runtime provenance parameter hash does not match decoded strategy parameters')
   }
   const protocolHash = makeStrategyProtocolHash(provenance.strategy)

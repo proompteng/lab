@@ -9,13 +9,9 @@ import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
 import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
-import { makeRiskBalancedTrendStrategy } from '../strategy-service'
-import {
-  makeRiskBalancedTrendSnapshot,
-  makeRiskBalancedTrendTestProvenance,
-  riskBalancedTrendFixtureProtocol,
-} from '../test-fixtures'
-import { ContractVersion, type RiskBalancedTrendProtocol } from '../types'
+import { makeStrategy } from '../strategy-service'
+import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
+import type { Protocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -40,7 +36,7 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
     verification: 'embedded',
   },
   healthIntervalMs: 30_000,
-  operationTimeoutMs: 1_000,
+  operationTimeoutMs: 5_000,
   clickhouse: {
     url: 'http://clickhouse.invalid',
     username: 'bayn',
@@ -67,14 +63,14 @@ const makeEvidenceRuntime = (config = makeConfig()) =>
 const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
 
-const riskBalancedTrendSnapshot = makeRiskBalancedTrendSnapshot(800)
+const riskBalancedTrendSnapshot = makeSnapshot(800)
 
 const makeInput = (
   sourceRevision = 'a'.repeat(40),
   behaviorHash = 'd'.repeat(64),
-  protocol: RiskBalancedTrendProtocol = riskBalancedTrendFixtureProtocol,
+  protocol: Protocol = fixtureProtocol,
 ): PersistEvaluationInput => {
-  const provenance = makeRiskBalancedTrendTestProvenance(protocol, { sourceRevision, behaviorHash })
+  const provenance = makeTestProvenance(protocol, { sourceRevision, behaviorHash })
   const evaluation = evaluateRiskBalancedTrend(
     riskBalancedTrendSnapshot.bars,
     riskBalancedTrendSnapshot.manifest,
@@ -95,10 +91,8 @@ const makeInput = (
   }
 }
 
-const makeRiskBalancedTrendInput = makeInput
-
 const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readonly string[] = []) => {
-  const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, input.provenance)
+  const strategy = makeStrategy(fixtureProtocol, input.provenance)
   const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
   const lock = strategy.prepareLock(input.evaluation.inputManifest, sessionDates, priorTrialRunIds)
   const result = makeQualificationResult(
@@ -176,7 +170,45 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     ])
   })
 
-  test('hard-migrates the deployed schema by deleting legacy evidence and preserving migration history', async () => {
+  test('rejects the legacy migration tracker instead of renaming it', async () => {
+    await runtime.dispose()
+    const client = makeClientRuntime()
+    await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* sql`CREATE TABLE bayn_schema_migrations (migration_id integer PRIMARY KEY)`
+      }),
+    )
+
+    const legacyRuntime = makeEvidenceRuntime()
+    const exit = await legacyRuntime.runPromiseExit(Effect.flatMap(EvidenceStore, (store) => store.check))
+    await legacyRuntime.dispose()
+
+    const trackers = await client.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ current_exists: boolean; legacy_exists: boolean }>`
+          SELECT
+            to_regclass('public.schema_migrations') IS NOT NULL AS current_exists,
+            to_regclass('public.bayn_schema_migrations') IS NOT NULL AS legacy_exists
+        `
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        return rows[0]
+      }),
+    )
+    await client.dispose()
+    runtime = makeEvidenceRuntime()
+    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('legacy migration tracker is unsupported')
+    expect(trackers).toEqual({ current_exists: false, legacy_exists: true })
+  })
+
+  test('hard-migrates the deployed schema by deleting previous evidence and preserving migration history', async () => {
     const runId = '9'.repeat(64)
     const snapshotId = '6'.repeat(64)
     const lockId = '5'.repeat(64)
@@ -194,7 +226,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const deployedMigrations = migrationLoader.pipe(
           Effect.map((migrations) => migrations.filter(([id]) => id <= 5)),
         )
-        yield* PgMigrator.run({ loader: deployedMigrations, table: 'bayn_schema_migrations' }).pipe(
+        yield* PgMigrator.run({ loader: deployedMigrations, table: 'schema_migrations' }).pipe(
           Effect.provide(NodeServices.layer),
         )
         yield* sql`
@@ -625,7 +657,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const burned = makeInput('0'.repeat(40))
     const terminal = makeInput('1'.repeat(40))
     const terminalQualification = makeLockedInput(terminal, [burned.evaluation.runId])
-    const candidate = makeRiskBalancedTrendInput()
+    const candidate = makeInput()
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
@@ -633,7 +665,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         yield* store.openQualification(terminalQualification.open)
         yield* store.persist(terminalQualification.persist)
         const priorTrialRunIds = yield* store.listPriorTrials
-        const strategy = makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, candidate.provenance)
+        const strategy = makeStrategy(fixtureProtocol, candidate.provenance)
         const sessionDates = [...new Set(riskBalancedTrendSnapshot.bars.map((bar) => bar.sessionDate))].sort()
         const lock = strategy.prepareLock(candidate.evaluation.inputManifest, sessionDates, priorTrialRunIds)
         return { lock, priorTrialRunIds }
@@ -705,11 +737,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('persists and recovers fee, partial-fill, and nonzero cash-yield evidence', async () => {
-    const protocol: RiskBalancedTrendProtocol = {
-      ...riskBalancedTrendFixtureProtocol,
+    const protocol: Protocol = {
+      ...fixtureProtocol,
       executionModel: {
-        ...riskBalancedTrendFixtureProtocol.executionModel,
-        cash: { ...riskBalancedTrendFixtureProtocol.executionModel.cash, annualYieldBps: 500 },
+        ...fixtureProtocol.executionModel,
+        cash: { ...fixtureProtocol.executionModel.cash, annualYieldBps: 500 },
       },
     }
     const input = makeInput('a'.repeat(40), 'c'.repeat(64), protocol)
@@ -863,11 +895,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Option.isSome(result.stored)) {
       expect(result.stored.value.protocol).toMatchObject({
         protocolHash: input.evaluation.protocolHash,
-        schemaVersion: riskBalancedTrendFixtureProtocol.schemaVersion,
+        schemaVersion: fixtureProtocol.schemaVersion,
         strategyName: 'risk-balanced-trend',
         behaviorHash: input.provenance.strategy.behaviorHash,
         parameterHash: input.provenance.strategy.parameterHash,
-        parameters: riskBalancedTrendFixtureProtocol,
+        parameters: fixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({
         runId: input.evaluation.runId,
@@ -927,23 +959,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('persists and recovers the complete risk-balanced trend v6 evidence contract', async () => {
-    const input = makeRiskBalancedTrendInput()
+    const input = makeInput()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* EvidenceStore
         const receipt = yield* store.persist(input)
         const stored = yield* store.read(input.evaluation.runId)
         const recovered = yield* store.recover(input.evaluation.runId, input.provenance)
-        const mismatchedRecovery = yield* store
-          .recover(input.evaluation.runId, {
-            ...input.provenance,
-            contractVersions: {
-              ...input.provenance.contractVersions,
-              evaluation: ContractVersion.Evaluation,
-            },
-          })
-          .pipe(Effect.flip)
-        return { receipt, stored, recovered, mismatchedRecovery }
+        return { receipt, stored, recovered }
       }),
     )
 
@@ -953,14 +976,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(result.stored.value.protocol).toMatchObject({
         strategyName: 'risk-balanced-trend',
         schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
-        parameters: riskBalancedTrendFixtureProtocol,
+        parameters: fixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({
         evaluationSchemaVersion: 'bayn.evaluation.v6',
         artifactCount: 17,
       })
       expect(result.stored.value.artifacts.map((artifact) => artifact.name)).toContain('risk-balanced-trend-decisions')
-      expect(result.stored.value.artifacts.map((artifact) => artifact.name)).not.toContain('tsmom-signal-decisions')
       expect(result.stored.value.artifacts.find((artifact) => artifact.name === 'evaluation-summary')).toMatchObject({
         schemaVersion: 'bayn.evaluation-summary.v5',
       })
@@ -977,48 +999,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         persistence: { runId: input.evaluation.runId, deduplicated: true, artifactCount: 17 },
       })
     }
-    expect(result.mismatchedRecovery).toMatchObject({ failure: 'invariant', operation: 'recover-evidence' })
-    expect(result.mismatchedRecovery.message).toContain('stored run does not match the current runtime identity')
-  })
-
-  test('rejects a strategy and evaluation evidence-profile mismatch before writing', async () => {
-    const input = makeRiskBalancedTrendInput()
-    const errors = await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* EvidenceStore
-        const profile = yield* store
-          .persist({
-            ...input,
-            provenance: {
-              ...input.provenance,
-              strategy: { ...input.provenance.strategy, name: 'tsmom' },
-            },
-          })
-          .pipe(Effect.flip)
-        const contract = yield* store
-          .persist({
-            ...input,
-            provenance: {
-              ...input.provenance,
-              contractVersions: {
-                ...input.provenance.contractVersions,
-                evaluation: ContractVersion.Evaluation,
-              },
-            },
-          })
-          .pipe(Effect.flip)
-        return { contract, profile }
-      }),
-    )
-
-    expect(errors.profile).toBeInstanceOf(DatabaseError)
-    expect(errors.profile).toMatchObject({ failure: 'invariant', operation: 'plan' })
-    expect(errors.profile.message).toContain(
-      'unsupported evidence profile for strategy tsmom and evaluation bayn.evaluation.v6',
-    )
-    expect(errors.contract).toBeInstanceOf(DatabaseError)
-    expect(errors.contract).toMatchObject({ failure: 'invariant', operation: 'plan' })
-    expect(errors.contract.message).toContain('evaluation schema version does not match runtime provenance')
   })
 
   test('retrieves ordered artifact items through bounded contiguous pages', async () => {

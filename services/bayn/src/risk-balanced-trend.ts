@@ -1,7 +1,6 @@
 import type { RuntimeProvenance } from './contracts'
 import { MICROS } from './execution-model'
 import { canonicalHashV1 } from './hash'
-import { hashRiskBalancedTrendParameters } from './protocol'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
 import {
   alignBars,
@@ -19,17 +18,17 @@ import {
 import {
   ContractVersion,
   type DailyBar,
+  type EvaluationResult,
+  type EvaluationSummary,
+  type InputManifest,
   type IsoDate,
-  type RiskBalancedTrendDecisionPlan,
-  type RiskBalancedTrendEvaluationResult,
-  type RiskBalancedTrendProtocol,
-  type UniverseBoundInputManifest,
+  type DecisionPlan,
+  type Protocol,
 } from './types'
 
 const WEIGHT_SCALE = 1_000_000_000_000
 
-const requiredHistory = (protocol: RiskBalancedTrendProtocol): number =>
-  Math.max(protocol.volatilityWindow, ...protocol.horizons)
+const requiredHistory = (protocol: Protocol): number => Math.max(protocol.volatilityWindow, ...protocol.horizons)
 
 const requireFinite = (value: number, description: string): number => {
   if (!Number.isFinite(value)) throw new Error(`${description} is not finite`)
@@ -143,8 +142,8 @@ export const makeRiskBalancedTrendDecision = (
   signalDate: IsoDate,
   sessionDates: readonly IsoDate[],
   closes: Readonly<Record<string, readonly number[]>>,
-  protocol: RiskBalancedTrendProtocol,
-): RiskBalancedTrendDecisionPlan => {
+  protocol: Protocol,
+): DecisionPlan => {
   const historyLength = requiredHistory(protocol) + 1
   if (
     sessionDates.length !== historyLength ||
@@ -249,7 +248,7 @@ export const makeRiskBalancedTrendDecision = (
     targetWeight: targetWeights[signal.symbol],
   }))
   return {
-    schemaVersion: ContractVersion.RiskBalancedTrendDecisionPlan,
+    schemaVersion: ContractVersion.DecisionPlan,
     signalDate,
     covarianceWindow: {
       returnCount: protocol.volatilityWindow,
@@ -264,7 +263,7 @@ export const makeRiskBalancedTrendDecision = (
   }
 }
 
-export interface RiskBalancedTrendQualificationPrecommit {
+export interface QualificationPrecommit {
   readonly candidateRunId: string
   readonly protocolHash: string
   readonly selectedSessionCount: number
@@ -275,17 +274,11 @@ export interface RiskBalancedTrendQualificationPrecommit {
 
 export const prepareRiskBalancedTrendQualification = (
   sessionDates: readonly IsoDate[],
-  inputManifest: UniverseBoundInputManifest,
-  protocol: RiskBalancedTrendProtocol,
+  inputManifest: InputManifest,
+  protocol: Protocol,
   provenance: RuntimeProvenance,
-): RiskBalancedTrendQualificationPrecommit => {
-  const { runId, protocolHash } = makeEvaluationIdentity(
-    inputManifest,
-    protocol,
-    provenance,
-    'risk-balanced-trend',
-    hashRiskBalancedTrendParameters(protocol),
-  )
+): QualificationPrecommit => {
+  const { runId, protocolHash } = makeEvaluationIdentity(inputManifest, protocol, provenance)
   const window = selectEvaluationWindow(
     sessionDates,
     inputManifest,
@@ -304,17 +297,11 @@ export const prepareRiskBalancedTrendQualification = (
 
 export const evaluateRiskBalancedTrend = (
   bars: readonly DailyBar[],
-  inputManifest: UniverseBoundInputManifest,
-  protocol: RiskBalancedTrendProtocol,
+  inputManifest: InputManifest,
+  protocol: Protocol,
   provenance: RuntimeProvenance,
-): RiskBalancedTrendEvaluationResult => {
-  const { runId, protocolHash } = makeEvaluationIdentity(
-    inputManifest,
-    protocol,
-    provenance,
-    'risk-balanced-trend',
-    hashRiskBalancedTrendParameters(protocol),
-  )
+): EvaluationResult => {
+  const { runId, protocolHash } = makeEvaluationIdentity(inputManifest, protocol, provenance)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const sessionDates = sessions.map((session) => session.date)
   const historySessions = requiredHistory(protocol)
@@ -365,7 +352,7 @@ export const evaluateRiskBalancedTrend = (
   )
   if (strategy.simulation === null) throw new Error('candidate simulation did not retain its evidence trace')
   const signalDecisions = strategy.signalDecisions.map((decision) => {
-    if (decision.schemaVersion !== ContractVersion.RiskBalancedTrendDecisionPlan) {
+    if (decision.schemaVersion !== ContractVersion.DecisionPlan) {
       throw new Error('risk-balanced trend simulation retained a decision from another strategy')
     }
     return decision
@@ -380,7 +367,7 @@ export const evaluateRiskBalancedTrend = (
   })
 
   return {
-    schemaVersion: ContractVersion.RiskBalancedTrendEvaluation,
+    schemaVersion: ContractVersion.Evaluation,
     runId,
     codeRevision: provenance.sourceRevision,
     protocolHash,
@@ -403,3 +390,37 @@ export const evaluateRiskBalancedTrend = (
     markedEquityReconciliation: markedEquity.reconciliation,
   }
 }
+
+export const summarizeEvaluation = (evaluation: EvaluationResult): EvaluationSummary => ({
+  schemaVersion: ContractVersion.EvaluationSummary,
+  evaluationSchemaVersion: ContractVersion.Evaluation,
+  runId: evaluation.runId,
+  codeRevision: evaluation.codeRevision,
+  protocolHash: evaluation.protocolHash,
+  initialCapitalMicros: evaluation.initialCapitalMicros,
+  input: {
+    snapshotId: evaluation.inputManifest.finalizedSnapshot.snapshotId,
+    publicationId: evaluation.inputManifest.finalizedSnapshot.publicationId,
+    manifestHash: evaluation.inputManifest.hash,
+    bounds: evaluation.inputManifest.bounds,
+    rowCount: evaluation.inputManifest.rowCount,
+    sessionCount: evaluation.inputManifest.sessionCount,
+    symbols: evaluation.inputManifest.symbols.map((coverage) => coverage.symbol),
+  },
+  strategy: evaluation.strategy,
+  buyAndHold: evaluation.buyAndHold,
+  directVolTiming: evaluation.directVolTiming,
+  doubleCostStrategy: evaluation.doubleCostStrategy,
+  verdict: evaluation.verdict,
+  eventCount: evaluation.events.length,
+  signalDecisionCount: evaluation.signalDecisions.length,
+  orderCount: evaluation.simulation.orders.length,
+  cashChangeCount: evaluation.simulation.cashChanges.length,
+  dailyMarkCount: evaluation.simulation.dailyMarks.length,
+  benchmarkSeriesCounts: {
+    buyAndHold: evaluation.benchmarkSeries.buyAndHold.length,
+    directVolTiming: evaluation.benchmarkSeries.directVolTiming.length,
+    doubleCostStrategy: evaluation.benchmarkSeries.doubleCostStrategy.length,
+  },
+  markedEquityReconciliation: evaluation.markedEquityReconciliation,
+})

@@ -1,11 +1,6 @@
 import { Schema } from 'effect'
 
-import {
-  EvaluationBoundsSchema,
-  IsoDateSchema,
-  Sha256Schema,
-  UniverseBoundFinalizedSnapshotProvenanceSchema,
-} from './contracts'
+import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { ExecutionModelSchema } from './protocol'
 import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation'
@@ -40,7 +35,7 @@ const InputManifestFields = {
   ).check(Schema.isMinLength(1)),
 } as const
 
-const UniverseBoundInputManifestBase = Schema.Struct({
+const InputManifestBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.input-manifest.v3'),
   ...InputManifestFields,
   tables: Schema.Struct({
@@ -48,10 +43,10 @@ const UniverseBoundInputManifestBase = Schema.Struct({
     sessions: Schema.Literal('exchange_sessions_v1'),
     manifests: Schema.Literal('snapshot_manifests_v2'),
   }),
-  finalizedSnapshot: UniverseBoundFinalizedSnapshotProvenanceSchema,
+  finalizedSnapshot: FinalizedSnapshotProvenanceSchema,
 })
 
-const inputManifestIssues = (manifest: typeof UniverseBoundInputManifestBase.Type): readonly Schema.FilterIssue[] => {
+const inputManifestIssues = (manifest: typeof InputManifestBase.Type): readonly Schema.FilterIssue[] => {
   const { hash, ...material } = manifest
   const symbolNames = manifest.symbols.map((coverage) => coverage.symbol)
   const issues: Schema.FilterIssue[] = []
@@ -80,7 +75,7 @@ const inputManifestIssues = (manifest: typeof UniverseBoundInputManifestBase.Typ
   return issues
 }
 
-export const InputManifestArtifactSchema = UniverseBoundInputManifestBase.check(Schema.makeFilter(inputManifestIssues))
+export const InputManifestArtifactSchema = InputManifestBase.check(Schema.makeFilter(inputManifestIssues))
 
 const PerformanceMetricsSchema = Schema.Struct({
   observations: PositiveInteger,

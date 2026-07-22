@@ -60,13 +60,7 @@ const FinalizedSnapshotFields = {
   sessionsContentHash: Sha256Schema,
 } as const
 
-const LegacyFinalizedSnapshotBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.finalized-snapshot.v2'),
-  publicationSchemaVersion: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV1),
-  ...FinalizedSnapshotFields,
-})
-
-const UniverseBoundFinalizedSnapshotBase = Schema.Struct({
+const FinalizedSnapshotBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.finalized-snapshot.v3'),
   publicationSchemaVersion: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV2),
   universeId: UniverseId,
@@ -74,9 +68,7 @@ const UniverseBoundFinalizedSnapshotBase = Schema.Struct({
   ...FinalizedSnapshotFields,
 })
 
-const finalizedSnapshotIssues = (
-  snapshot: typeof LegacyFinalizedSnapshotBase.Type | typeof UniverseBoundFinalizedSnapshotBase.Type,
-): readonly Schema.FilterIssue[] => {
+const finalizedSnapshotIssues = (snapshot: typeof FinalizedSnapshotBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (snapshot.firstSession > snapshot.lastSession) {
     issues.push({ path: ['firstSession'], issue: 'must not be after lastSession' })
@@ -96,29 +88,13 @@ const finalizedSnapshotIssues = (
   if (snapshot.rowCount !== snapshot.sessionCount * snapshot.symbols.length) {
     issues.push({ path: ['rowCount'], issue: 'must equal sessionCount multiplied by the symbol count' })
   }
-  if (
-    snapshot.schemaVersion === 'bayn.finalized-snapshot.v3' &&
-    snapshot.universeSymbolHash !== sha256(snapshot.symbols.join(','))
-  ) {
+  if (snapshot.universeSymbolHash !== sha256(snapshot.symbols.join(','))) {
     issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical symbol list' })
   }
   return issues
 }
 
-export const LegacyFinalizedSnapshotProvenanceSchema = LegacyFinalizedSnapshotBase.check(
-  Schema.makeFilter(finalizedSnapshotIssues),
-)
-export type LegacyFinalizedSnapshotProvenance = typeof LegacyFinalizedSnapshotProvenanceSchema.Type
-
-export const UniverseBoundFinalizedSnapshotProvenanceSchema = UniverseBoundFinalizedSnapshotBase.check(
-  Schema.makeFilter(finalizedSnapshotIssues),
-)
-export type UniverseBoundFinalizedSnapshotProvenance = typeof UniverseBoundFinalizedSnapshotProvenanceSchema.Type
-
-export const FinalizedSnapshotProvenanceSchema = Schema.Union([
-  LegacyFinalizedSnapshotProvenanceSchema,
-  UniverseBoundFinalizedSnapshotProvenanceSchema,
-])
+export const FinalizedSnapshotProvenanceSchema = FinalizedSnapshotBase.check(Schema.makeFilter(finalizedSnapshotIssues))
 export type FinalizedSnapshotProvenance = typeof FinalizedSnapshotProvenanceSchema.Type
 
 const EvaluationBoundsBase = Schema.Struct({
@@ -161,7 +137,7 @@ const RunIdentityFields = {
     digest: ImageDigest,
   }),
   strategy: Schema.Struct({
-    name: NonEmptyString,
+    name: Schema.Literal('risk-balanced-trend'),
     behaviorHash: Sha256Schema,
     parameters: CanonicalJson,
   }),
@@ -203,21 +179,6 @@ export const RunIdentitySchema = RunIdentityBase.check(
 )
 export type RunIdentity = typeof RunIdentitySchema.Type
 
-interface StrategyContractVersions {
-  readonly inputManifest: 'bayn.input-manifest.v2' | 'bayn.input-manifest.v3'
-  readonly evaluation: ContractVersion.Evaluation | ContractVersion.RiskBalancedTrendEvaluation
-}
-
-const contractVersionsForStrategy = (strategyName: string): StrategyContractVersions | undefined => {
-  if (strategyName === 'tsmom') {
-    return { inputManifest: 'bayn.input-manifest.v2', evaluation: ContractVersion.Evaluation }
-  }
-  if (strategyName === 'risk-balanced-trend') {
-    return { inputManifest: 'bayn.input-manifest.v3', evaluation: ContractVersion.RiskBalancedTrendEvaluation }
-  }
-  return undefined
-}
-
 const RuntimeProvenanceBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.runtime-provenance.v2'),
   sourceRevision: SourceRevision,
@@ -226,34 +187,19 @@ const RuntimeProvenanceBase = Schema.Struct({
     digest: ImageDigest,
   }),
   strategy: Schema.Struct({
-    name: NonEmptyString,
+    name: Schema.Literal('risk-balanced-trend'),
     behaviorHash: Sha256Schema,
     parameterHash: Sha256Schema,
-    parameterSchemaVersion: NonEmptyString,
+    parameterSchemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
   }),
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),
-    inputManifest: Schema.Literals(['bayn.input-manifest.v2', 'bayn.input-manifest.v3']),
-    evaluation: Schema.Literals([ContractVersion.Evaluation, ContractVersion.RiskBalancedTrendEvaluation]),
+    inputManifest: Schema.Literal('bayn.input-manifest.v3'),
+    evaluation: Schema.Literal(ContractVersion.Evaluation),
   }),
 })
 
-export const RuntimeProvenanceSchema = RuntimeProvenanceBase.check(
-  Schema.makeFilter((provenance: typeof RuntimeProvenanceBase.Type) => {
-    const expected = contractVersionsForStrategy(provenance.strategy.name)
-    if (expected === undefined) {
-      return [{ path: ['strategy', 'name'], issue: 'is not a supported compiled strategy' }]
-    }
-    const issues: Schema.FilterIssue[] = []
-    if (provenance.contractVersions.inputManifest !== expected.inputManifest) {
-      issues.push({ path: ['contractVersions', 'inputManifest'], issue: 'does not match the compiled strategy' })
-    }
-    if (provenance.contractVersions.evaluation !== expected.evaluation) {
-      issues.push({ path: ['contractVersions', 'evaluation'], issue: 'does not match the compiled strategy' })
-    }
-    return issues
-  }),
-)
+export const RuntimeProvenanceSchema = RuntimeProvenanceBase
 export type RuntimeProvenance = typeof RuntimeProvenanceSchema.Type
 export type RuntimeProvenanceInput = Omit<RuntimeProvenance, 'schemaVersion' | 'contractVersions'>
 
@@ -281,14 +227,13 @@ export const makeRunIdentity = (input: RunIdentityMaterial): RunIdentity => {
 }
 
 export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance => {
-  const contractVersions = contractVersionsForStrategy(input.strategy.name)
-  if (contractVersions === undefined) throw new TypeError(`unsupported compiled strategy: ${input.strategy.name}`)
   return decodeRuntimeProvenanceSync({
     schemaVersion: 'bayn.runtime-provenance.v2',
     ...input,
     contractVersions: {
       runtimeProvenance: 'bayn.runtime-provenance.v2',
-      ...contractVersions,
+      inputManifest: 'bayn.input-manifest.v3',
+      evaluation: ContractVersion.Evaluation,
     },
   })
 }

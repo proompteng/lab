@@ -2,13 +2,18 @@ import { describe, expect, test } from 'bun:test'
 
 import { MARKED_EQUITY_TOLERANCE_MICROS, reconcileMarkedEquity } from './simulation-reconciliation'
 import { hashObject } from './hash'
-import { evaluateTsmom } from './strategy'
+import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { EvaluationEvent, SimulationTrace } from './types'
 
 const evaluation = (() => {
   const snapshot = makeSnapshot(800)
-  return evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, makeTestProvenance(fixtureProtocol))
+  return evaluateRiskBalancedTrend(
+    snapshot.bars,
+    snapshot.manifest,
+    fixtureProtocol,
+    makeTestProvenance(fixtureProtocol),
+  )
 })()
 
 const reconcile = (

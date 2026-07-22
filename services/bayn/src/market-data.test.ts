@@ -5,7 +5,7 @@ import {
   verifyFinalizedManifest,
   verifyFinalizedSnapshot,
   type SnapshotRows,
-  type UniverseBoundSnapshotRequest,
+  type SnapshotRequest,
 } from './market-data'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
@@ -156,7 +156,7 @@ const authoritativeManifest = {
 
 const makeFixture = (): {
   readonly rows: SnapshotRows
-  readonly request: UniverseBoundSnapshotRequest
+  readonly request: SnapshotRequest
 } => {
   return {
     rows: producerRows,

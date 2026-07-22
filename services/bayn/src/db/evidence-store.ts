@@ -22,13 +22,13 @@ import {
 } from '../evidence-contracts'
 import { canonicalHashV1 } from '../hash'
 import {
+  QualificationLockSchema,
   QualificationResultSchema,
-  UniverseBoundQualificationLockSchema,
   type QualificationLock,
   type QualificationResult,
 } from '../qualification'
+import { summarizeEvaluation } from '../risk-balanced-trend'
 import { reconcileMarkedEquity } from '../simulation-reconciliation'
-import { summarizeEvaluation } from '../strategy'
 import type { EvaluationResult, EvaluationSummary, InputManifest, ReconciliationResult } from '../types'
 import { migrationLoader } from './migrations'
 
@@ -286,13 +286,8 @@ const QualificationRow = Schema.Struct({
 const CandidateRunCountRow = Schema.Struct({ count: NonNegativeInteger })
 const InsertedLockRow = Schema.Struct({ lock_id: Sha256 })
 const InsertedResultRow = Schema.Struct({ lock_id: Sha256 })
-const MigrationTablesRow = Schema.Struct({
-  current_exists: Schema.Boolean,
-  legacy_exists: Schema.Boolean,
-})
-
 const StrictParseOptions = { onExcessProperty: 'error' } as const
-const decodeQualificationLock = Schema.decodeUnknownSync(UniverseBoundQualificationLockSchema, StrictParseOptions)
+const decodeQualificationLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
 const decodeQualificationResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
@@ -377,28 +372,14 @@ const artifactItemCount = (payload: unknown): number => {
   return Array.isArray(payload.items) ? payload.items.length : 0
 }
 
-interface EvidenceProfile {
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v6'
-  readonly summarySchemaVersion: 'bayn.evaluation-summary.v5'
-  readonly inputManifestSchemaVersion: 'bayn.input-manifest.v3'
-  readonly signalDecisionsArtifactName: 'risk-balanced-trend-decisions'
-  readonly signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1'
-}
-
-const evidenceProfileFor = (strategyName: string, evaluationSchemaVersion: string): EvidenceProfile => {
-  if (strategyName === 'risk-balanced-trend' && evaluationSchemaVersion === 'bayn.evaluation.v6') {
-    return {
-      evaluationSchemaVersion,
-      summarySchemaVersion: 'bayn.evaluation-summary.v5',
-      inputManifestSchemaVersion: 'bayn.input-manifest.v3',
-      signalDecisionsArtifactName: 'risk-balanced-trend-decisions',
-      signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
-    }
-  }
-  throw new TypeError(
-    `unsupported evidence profile for strategy ${strategyName} and evaluation ${evaluationSchemaVersion}`,
-  )
-}
+const evidenceContract = {
+  strategyName: 'risk-balanced-trend',
+  evaluationSchemaVersion: 'bayn.evaluation.v6',
+  summarySchemaVersion: 'bayn.evaluation-summary.v5',
+  inputManifestSchemaVersion: 'bayn.input-manifest.v3',
+  signalDecisionsArtifactName: 'risk-balanced-trend-decisions',
+  signalDecisionsSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
+} as const
 
 const validateQualificationOpenInput = (input: OpenQualificationInput) => {
   const lock = decodeQualificationLock(input.lock)
@@ -461,16 +442,14 @@ const validateQualificationOpenInput = (input: OpenQualificationInput) => {
 
 const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => {
   const { evaluation, parameters, provenance, reconciliation } = input
-  const strategyName = provenance.strategy.name
   if (evaluation.schemaVersion !== provenance.contractVersions.evaluation) {
     throw new TypeError('evaluation schema version does not match runtime provenance')
   }
-  const evidenceProfile = evidenceProfileFor(strategyName, evaluation.schemaVersion)
   if (
-    evaluation.inputManifest.schemaVersion !== evidenceProfile.inputManifestSchemaVersion ||
-    provenance.contractVersions.inputManifest !== evidenceProfile.inputManifestSchemaVersion
+    evaluation.inputManifest.schemaVersion !== evidenceContract.inputManifestSchemaVersion ||
+    provenance.contractVersions.inputManifest !== evidenceContract.inputManifestSchemaVersion
   ) {
-    throw new TypeError('input manifest schema version does not match the strategy evidence profile')
+    throw new TypeError('input manifest schema version does not match the evidence contract')
   }
   const parameterHash = canonicalHashV1(parameters)
   if (parameterHash !== provenance.strategy.parameterHash) {
@@ -501,7 +480,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     sourceRevision: provenance.sourceRevision,
     image: provenance.image,
     strategy: {
-      name: strategyName,
+      name: provenance.strategy.name,
       behaviorHash: provenance.strategy.behaviorHash,
       parameters,
     },
@@ -553,7 +532,7 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
   }
 
   const baseArtifacts = [
-    ['evaluation-summary', evidenceProfile.summarySchemaVersion, summarizeEvaluation(evaluation)],
+    ['evaluation-summary', evidenceContract.summarySchemaVersion, summarizeEvaluation(evaluation)],
     ['input-manifest', evaluation.inputManifest.schemaVersion, evaluation.inputManifest],
     ['strategy', 'bayn.performance-metrics.v2', evaluation.strategy],
     ['buy-and-hold', 'bayn.performance-metrics.v2', evaluation.buyAndHold],
@@ -580,9 +559,9 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
       { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
     ],
     [
-      evidenceProfile.signalDecisionsArtifactName,
-      evidenceProfile.signalDecisionsSchemaVersion,
-      { schemaVersion: evidenceProfile.signalDecisionsSchemaVersion, items: evaluation.signalDecisions },
+      evidenceContract.signalDecisionsArtifactName,
+      evidenceContract.signalDecisionsSchemaVersion,
+      { schemaVersion: evidenceContract.signalDecisionsSchemaVersion, items: evaluation.signalDecisions },
     ],
     [
       'buy-and-hold-series',
@@ -718,7 +697,16 @@ const makePersistencePlan = (input: PersistEvaluationInput): PersistencePlan => 
     },
   ]
 
-  return { ...input, qualification, strategyName, protocolHash, snapshotId, artifacts, events, gates }
+  return {
+    ...input,
+    qualification,
+    strategyName: provenance.strategy.name,
+    protocolHash,
+    snapshotId,
+    artifacts,
+    events,
+    gates,
+  }
 }
 
 const makeEvidenceStore = Effect.gen(function* () {
@@ -1559,10 +1547,12 @@ const makeEvidenceStore = Effect.gen(function* () {
         const storedOption = yield* readStored(runId)
         if (Option.isNone(storedOption)) return Option.none<RecoveredEvaluationEvidence>()
         const stored = storedOption.value
-        const evidenceProfile = yield* Effect.try({
-          try: () => evidenceProfileFor(stored.run.strategyName, stored.run.evaluationSchemaVersion),
-          catch: (cause) => databaseError('invariant', 'recover-evidence', 'stored evidence profile is invalid', cause),
-        })
+        yield* ensure(
+          stored.run.strategyName === evidenceContract.strategyName &&
+            stored.run.evaluationSchemaVersion === evidenceContract.evaluationSchemaVersion,
+          'recover-evidence',
+          'stored run does not use the current evidence contract',
+        )
         const requiredArtifacts = new Map([
           ['buy-and-hold', 'bayn.performance-metrics.v2'],
           ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
@@ -1573,14 +1563,14 @@ const makeEvidenceStore = Effect.gen(function* () {
           ['double-cost-strategy', 'bayn.performance-metrics.v2'],
           ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
           ['equity-series', 'bayn.equity-series.v1'],
-          ['evaluation-summary', evidenceProfile.summarySchemaVersion],
-          ['input-manifest', evidenceProfile.inputManifestSchemaVersion],
+          ['evaluation-summary', evidenceContract.summarySchemaVersion],
+          ['input-manifest', evidenceContract.inputManifestSchemaVersion],
           ['marked-equity-reconciliation', 'bayn.marked-equity-reconciliation.v2'],
           ['qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1'],
           ['reconciliation', 'bayn.reconciliation.v1'],
           ['simulated-orders', 'bayn.simulated-orders.v2'],
           ['strategy', 'bayn.performance-metrics.v2'],
-          [evidenceProfile.signalDecisionsArtifactName, evidenceProfile.signalDecisionsSchemaVersion],
+          [evidenceContract.signalDecisionsArtifactName, evidenceContract.signalDecisionsSchemaVersion],
         ])
         const artifacts = new Map(stored.artifacts.map((artifact) => [artifact.name, artifact]))
         const requiredValue = <A>(value: A | undefined, description: string): Effect.Effect<A, DatabaseError> =>
@@ -1598,7 +1588,7 @@ const makeEvidenceStore = Effect.gen(function* () {
         )
         yield* ensure(
           stored.run.runId === runId &&
-            stored.run.evaluationSchemaVersion === evidenceProfile.evaluationSchemaVersion &&
+            stored.run.evaluationSchemaVersion === evidenceContract.evaluationSchemaVersion &&
             stored.run.evaluationSchemaVersion === provenance.contractVersions.evaluation &&
             stored.run.sourceRevision === provenance.sourceRevision &&
             stored.run.imageRepository === provenance.image.repository &&
@@ -1632,7 +1622,7 @@ const makeEvidenceStore = Effect.gen(function* () {
           requiredArtifact('marked-equity-reconciliation'),
           requiredArtifact('equity-series'),
           requiredArtifact('simulated-orders'),
-          requiredArtifact(evidenceProfile.signalDecisionsArtifactName),
+          requiredArtifact(evidenceContract.signalDecisionsArtifactName),
           requiredArtifact('buy-and-hold-series'),
           requiredArtifact('direct-volatility-timing-series'),
           requiredArtifact('double-cost-strategy-series'),
@@ -2055,25 +2045,17 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
 
 const migrate = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  const inspectMigrationTables = SqlSchema.findOne({
-    Request: Schema.Void,
-    Result: MigrationTablesRow,
-    execute: () => sql`
-      SELECT
-        to_regclass('public.schema_migrations') IS NOT NULL AS current_exists,
-        to_regclass('public.bayn_schema_migrations') IS NOT NULL AS legacy_exists
-    `,
-  })
-  const state = yield* inspectMigrationTables(undefined)
-  if (state.current_exists && state.legacy_exists) {
-    return yield* Effect.fail(databaseError('migration', 'migrate', 'both current and legacy migration tables exist'))
-  }
-
-  const table = state.legacy_exists ? 'bayn_schema_migrations' : 'schema_migrations'
-  yield* PgMigrator.run({ loader: migrationLoader, table })
-  if (state.legacy_exists) {
-    yield* sql`ALTER TABLE bayn_schema_migrations RENAME TO schema_migrations`
-  }
+  yield* sql`
+    DO $block$
+    BEGIN
+      IF to_regclass('public.bayn_schema_migrations') IS NOT NULL THEN
+        RAISE EXCEPTION 'legacy migration tracker is unsupported after the hard cut'
+          USING ERRCODE = '55000';
+      END IF;
+    END
+    $block$
+  `
+  yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
 })
 
 const migrations = migrate.pipe(

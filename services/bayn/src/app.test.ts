@@ -21,21 +21,9 @@ import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { makeQualificationResult } from './qualification'
-import { evaluateTsmom, summarizeEvaluation } from './strategy'
-import {
-  Strategy,
-  TsmomStrategyLayer,
-  makeRiskBalancedTrendStrategy,
-  makeTsmomStrategy,
-  type StrategyService,
-} from './strategy-service'
-import {
-  fixtureProtocol,
-  makeRiskBalancedTrendTestProvenance,
-  makeSnapshot,
-  makeTestProvenance,
-  riskBalancedTrendFixtureProtocol,
-} from './test-fixtures'
+import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
+import { Strategy, StrategyLayer, makeStrategy, type StrategyService } from './strategy-service'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
 const historicalRunId = '9'.repeat(64)
@@ -43,7 +31,7 @@ const historicalEvidence: StoredEvaluationEvidence = {
   protocol: {
     protocolHash: '8'.repeat(64),
     schemaVersion: fixtureProtocol.schemaVersion,
-    strategyName: 'tsmom',
+    strategyName: 'risk-balanced-trend',
     behaviorHash: provenance.strategy.behaviorHash,
     parameterHash: provenance.strategy.parameterHash,
     parameters: fixtureProtocol,
@@ -52,11 +40,11 @@ const historicalEvidence: StoredEvaluationEvidence = {
     runId: historicalRunId,
     protocolHash: '8'.repeat(64),
     snapshotId: '7'.repeat(64),
-    evaluationSchemaVersion: 'bayn.evaluation.v2',
+    evaluationSchemaVersion: 'bayn.evaluation.v6',
     sourceRevision: provenance.sourceRevision,
     imageRepository: provenance.image.repository,
     imageDigest: provenance.image.digest,
-    strategyName: 'tsmom',
+    strategyName: 'risk-balanced-trend',
     initialCapitalMicros: '1000000000000',
     artifactCount: 0,
     eventCount: 0,
@@ -144,7 +132,7 @@ const successfulEvidenceStore: EvidenceStoreService = {
 }
 
 const fixtureSnapshot = makeSnapshot()
-const fixtureStrategy = makeTsmomStrategy(fixtureProtocol, provenance)
+const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
 const fixtureEvaluation = fixtureStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
 const fixtureLock = fixtureStrategy.prepareLock(
   fixtureSnapshot.manifest,
@@ -161,7 +149,7 @@ const pinnedExecutionProvenance = {
   sourceRevision: 'e'.repeat(40),
   image: { repository: provenance.image.repository, digest: `sha256:${'f'.repeat(64)}` },
 }
-const pinnedStrategy = makeTsmomStrategy(fixtureProtocol, pinnedExecutionProvenance)
+const pinnedStrategy = makeStrategy(fixtureProtocol, pinnedExecutionProvenance)
 const pinnedEvaluation = pinnedStrategy.evaluate(fixtureSnapshot.bars, fixtureSnapshot.manifest)
 const pinnedLock = pinnedStrategy.prepareLock(
   fixtureSnapshot.manifest,
@@ -186,7 +174,7 @@ const pinnedStoredEvidence: StoredEvaluationEvidence = {
     runId: pinnedEvaluation.runId,
     protocolHash: pinnedEvaluation.protocolHash,
     snapshotId: fixtureSnapshot.manifest.finalizedSnapshot.snapshotId,
-    evaluationSchemaVersion: 'bayn.evaluation.v4',
+    evaluationSchemaVersion: 'bayn.evaluation.v6',
     sourceRevision: pinnedExecutionProvenance.sourceRevision,
     imageRepository: pinnedExecutionProvenance.image.repository,
     imageDigest: pinnedExecutionProvenance.image.digest,
@@ -323,19 +311,20 @@ const readyState = (): RuntimeState => {
 }
 
 const recoveringStore = (state: RuntimeState): EvidenceStoreService => {
-  if (state.evidence === null) throw new Error('test state must contain evidence')
+  const evidence = state.evidence
+  if (evidence === null) throw new Error('test state must contain evidence')
   return {
     ...successfulEvidenceStore,
     recover: () =>
       Effect.succeed(
         Option.some({
-          evaluation: state.evidence!.evaluation,
-          reconciliation: state.evidence!.reconciliation,
-          persistence: { ...state.evidence!.persistence, deduplicated: true },
+          evaluation: evidence.evaluation,
+          reconciliation: evidence.reconciliation,
+          persistence: { ...evidence.persistence, deduplicated: true },
         }),
       ),
     readQualification: () =>
-      Effect.succeed(Option.some({ state: 'TERMINAL', lock: fixtureLock, result: state.evidence!.qualification })),
+      Effect.succeed(Option.some({ state: 'TERMINAL', lock: fixtureLock, result: evidence.qualification })),
     persist: () => Effect.die(new Error('health probes must not persist')),
   }
 }
@@ -479,6 +468,8 @@ describe('Bayn HTTP probes', () => {
 describe('Bayn continuous health', () => {
   test('degrades on a probe defect, preserves evidence, and recovers only after a complete success', async () => {
     const initial = readyState()
+    const initialEvidence = initial.evidence
+    if (initialEvidence === null) throw new Error('ready fixture must contain evidence')
     const state = await Effect.runPromise(Ref.make(initial))
     let signalAvailable = false
     let accountingChecks = 0
@@ -506,7 +497,7 @@ describe('Bayn continuous health', () => {
     await Effect.runPromise(dependencies(probe(config, state)))
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'DEGRADED',
-      evidence: { evaluation: { runId: initial.evidence!.evaluation.runId } },
+      evidence: { evaluation: { runId: initialEvidence.evaluation.runId } },
       health: {
         sequence: 2,
         dependencies: {
@@ -637,51 +628,6 @@ describe('Bayn startup lifecycle', () => {
     })
   })
 
-  test('rejects a pinned TSMOM qualification under the candidate-composed runtime before dependency mutation', async () => {
-    let forbiddenCalls = 0
-    const forbidden = (message: string) =>
-      Effect.sync(() => {
-        forbiddenCalls += 1
-        throw new Error(message)
-      })
-    const state = await Effect.runPromise(Ref.make(initialState()))
-    const candidate = makeRiskBalancedTrendStrategy(
-      riskBalancedTrendFixtureProtocol,
-      makeRiskBalancedTrendTestProvenance(),
-    )
-
-    await Effect.runPromise(
-      initialize(pinnedRuntimeConfig, state).pipe(
-        Effect.provideService(MarketData, {
-          check: forbidden('strategy mismatch must not check Signal'),
-          inspect: forbidden('strategy mismatch must not inspect Signal'),
-          load: forbidden('strategy mismatch must not load Signal bars'),
-        }),
-        Effect.provideService(Journal, {
-          check: forbidden('strategy mismatch must not check TigerBeetle'),
-          checkRun: () => forbidden('strategy mismatch must not check a TigerBeetle run'),
-          journalAndReconcile: () => forbidden('strategy mismatch must not write TigerBeetle'),
-        }),
-        Effect.provideService(EvidenceStore, {
-          ...pinnedStore(),
-          recover: () => forbidden('strategy mismatch must not recover or mutate evidence'),
-          check: forbidden('strategy mismatch must not run a separate database check'),
-          listPriorTrials: forbidden('strategy mismatch must not list or create trials'),
-          openQualification: () => forbidden('strategy mismatch must not open a qualification lock'),
-          persist: () => forbidden('strategy mismatch must not persist evidence'),
-        }),
-        Effect.provideService(Strategy, candidate),
-      ),
-    )
-
-    expect(forbiddenCalls).toBe(0)
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAILED',
-      evidence: null,
-      error: expect.stringContaining('compiled strategy differs from the pinned qualification protocol'),
-    })
-  })
-
   test('fails pinned recovery closed on strategy, snapshot, terminal-result, and durable-evidence drift', async () => {
     const cases = [
       {
@@ -739,7 +685,7 @@ describe('Bayn startup lifecycle', () => {
 
   test('recovers a complete run without evaluating, journaling, or persisting again', async () => {
     const snapshot = makeSnapshot()
-    const evaluation = evaluateTsmom(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const evaluation = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
     let evaluations = 0
     let journalWrites = 0
     let persistenceWrites = 0
@@ -925,7 +871,7 @@ describe('Bayn startup lifecycle', () => {
       name: 'test-strategy',
       evaluate: (bars, manifest) => {
         calls += 1
-        return evaluateTsmom(bars, manifest, fixtureProtocol, provenance)
+        return evaluateRiskBalancedTrend(bars, manifest, fixtureProtocol, provenance)
       },
     }
 
@@ -952,7 +898,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -974,7 +920,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -996,7 +942,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -1014,7 +960,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -1055,7 +1001,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, unavailable),
-        Effect.provide(TsmomStrategyLayer(fixtureProtocol, provenance)),
+        Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
       ),
     )
 
@@ -1081,7 +1027,7 @@ describe('Bayn startup lifecycle', () => {
       Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
       Layer.succeed(Journal, successfulJournal),
       EvidenceStoreRuntimeLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)),
-      TsmomStrategyLayer(fixtureProtocol, provenance),
+      StrategyLayer(fixtureProtocol, provenance),
     )
     const fiber = Effect.runFork(run(unavailableDatabase).pipe(Effect.provide(dependencies)))
 
@@ -1117,7 +1063,7 @@ describe('Bayn startup lifecycle', () => {
       Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
       Layer.succeed(Journal, successfulJournal),
       makeEvidenceStoreRuntimeLayer(timedOutDatabase, stalledMigration, Effect.succeed(successfulEvidenceStore)),
-      TsmomStrategyLayer(fixtureProtocol, provenance),
+      StrategyLayer(fixtureProtocol, provenance),
     )
     const fiber = Effect.runFork(run(timedOutDatabase).pipe(Effect.provide(dependencies)))
 

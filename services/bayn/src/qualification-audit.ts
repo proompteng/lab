@@ -1,18 +1,8 @@
 import { canonicalHashV1 } from './hash'
-import {
-  evaluateReferenceRiskBalancedTrend,
-  evaluateReferenceTsmom,
-  type ReferenceEvaluation,
-} from './qualification-reference'
+import { evaluateReference, type ReferenceEvaluation } from './qualification-reference'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
 import { makeRuntimeProvenance } from './contracts'
-import {
-  ContractVersion,
-  type DailyBar,
-  type InputManifest,
-  type SimulationTrace,
-  type StrategyProtocol,
-} from './types'
+import { ContractVersion, type DailyBar, type InputManifest, type Protocol, type SimulationTrace } from './types'
 
 export interface StoredArtifact {
   readonly name: string
@@ -102,7 +92,7 @@ export interface RepositoryAudit {
 export interface QualificationAuditInput {
   readonly bars: readonly DailyBar[]
   readonly manifest: InputManifest
-  readonly protocol: StrategyProtocol
+  readonly protocol: Protocol
   readonly database: AuditDatabaseSnapshot
   readonly signalReplicas: readonly string[]
   readonly signalAccess: readonly SignalAccessRecord[]
@@ -188,46 +178,13 @@ const expectedResultReason = (gateName: string): string =>
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')}_FAILED`
 
-interface AuditStrategyProfile {
-  readonly name: 'tsmom' | 'risk-balanced-trend'
-  readonly evaluationSchemaVersion: 'bayn.evaluation.v4' | 'bayn.evaluation.v6'
-  readonly summarySchemaVersion: 'bayn.evaluation-summary.v3' | 'bayn.evaluation-summary.v5'
-  readonly decisionArtifactName: 'tsmom-signal-decisions' | 'risk-balanced-trend-decisions'
-  readonly decisionArtifactSchemaVersion: 'bayn.tsmom-signal-decisions.v1' | 'bayn.risk-balanced-trend-decisions.v1'
-}
-
-const auditStrategyProfile = (protocol: StrategyProtocol): AuditStrategyProfile =>
-  protocol.schemaVersion === 'bayn.tsmom.protocol.v2'
-    ? {
-        name: 'tsmom',
-        evaluationSchemaVersion: ContractVersion.Evaluation,
-        summarySchemaVersion: ContractVersion.EvaluationSummary,
-        decisionArtifactName: 'tsmom-signal-decisions',
-        decisionArtifactSchemaVersion: 'bayn.tsmom-signal-decisions.v1',
-      }
-    : {
-        name: 'risk-balanced-trend',
-        evaluationSchemaVersion: ContractVersion.RiskBalancedTrendEvaluation,
-        summarySchemaVersion: ContractVersion.RiskBalancedTrendEvaluationSummary,
-        decisionArtifactName: 'risk-balanced-trend-decisions',
-        decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
-      }
-
-const evaluateReference = (
-  input: QualificationAuditInput,
-  provenance: ReturnType<typeof makeRuntimeProvenance>,
-): ReferenceEvaluation => {
-  if (input.protocol.schemaVersion === 'bayn.tsmom.protocol.v2') {
-    if (input.manifest.schemaVersion !== 'bayn.input-manifest.v2') {
-      throw new Error('TSMOM audit requires bayn.input-manifest.v2')
-    }
-    return evaluateReferenceTsmom(input.bars, input.manifest, input.protocol, provenance)
-  }
-  if (input.manifest.schemaVersion !== 'bayn.input-manifest.v3') {
-    throw new Error('risk-balanced trend audit requires bayn.input-manifest.v3')
-  }
-  return evaluateReferenceRiskBalancedTrend(input.bars, input.manifest, input.protocol, provenance)
-}
+const contract = {
+  name: 'risk-balanced-trend',
+  evaluationSchemaVersion: ContractVersion.Evaluation,
+  summarySchemaVersion: ContractVersion.EvaluationSummary,
+  decisionArtifactName: 'risk-balanced-trend-decisions',
+  decisionArtifactSchemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
+} as const
 
 const makeSummary = (
   input: QualificationAuditInput,
@@ -235,11 +192,10 @@ const makeSummary = (
   trace: SimulationTrace,
   markedEquity: ReturnType<typeof reconcileMarkedEquity>['reconciliation'],
 ) => {
-  const profile = auditStrategyProfile(input.protocol)
   return {
-    schemaVersion: profile.summarySchemaVersion,
+    schemaVersion: contract.summarySchemaVersion,
     runId: reference.runId,
-    evaluationSchemaVersion: profile.evaluationSchemaVersion,
+    evaluationSchemaVersion: contract.evaluationSchemaVersion,
     codeRevision: input.database.run.sourceRevision,
     protocolHash: reference.protocolHash,
     initialCapitalMicros: input.protocol.initialCapitalMicros,
@@ -282,7 +238,13 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   const result = object(database.qualification.result, 'qualification result')
   const lockId = string(lock.lockId, 'qualification lock ID')
   const resultHash = string(result.resultHash, 'qualification result hash')
-  const profile = auditStrategyProfile(input.protocol)
+  if (
+    database.protocol.strategyName !== contract.name ||
+    database.run.strategyName !== contract.name ||
+    database.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2'
+  ) {
+    throw new Error('stored qualification uses an unsupported strategy contract')
+  }
   const provenance = makeRuntimeProvenance({
     sourceRevision: database.run.sourceRevision,
     image: { repository: database.run.imageRepository, digest: database.run.imageDigest },
@@ -293,7 +255,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       parameterSchemaVersion: database.protocol.schemaVersion,
     },
   })
-  const reference = evaluateReference(input, provenance)
+  const reference = evaluateReference(input.bars, input.manifest, input.protocol, provenance)
   if (reference.strategy.trace === null) throw new Error('reference evaluation omitted its candidate trace')
   const markedEquity = reconcileMarkedEquity({
     runId: reference.runId,
@@ -317,10 +279,10 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     reference.runId === database.run.runId &&
       reference.protocolHash === database.run.protocolHash &&
       input.manifest.finalizedSnapshot.snapshotId === database.run.snapshotId &&
-      database.protocol.strategyName === profile.name &&
-      database.run.strategyName === profile.name &&
-      database.run.evaluationSchemaVersion === profile.evaluationSchemaVersion &&
-      provenance.contractVersions.evaluation === profile.evaluationSchemaVersion &&
+      database.protocol.strategyName === contract.name &&
+      database.run.strategyName === contract.name &&
+      database.run.evaluationSchemaVersion === contract.evaluationSchemaVersion &&
+      provenance.contractVersions.evaluation === contract.evaluationSchemaVersion &&
       database.run.initialCapitalMicros === input.protocol.initialCapitalMicros &&
       database.run.status === 'COMPLETE',
     `runId=${database.run.runId}`,
@@ -338,7 +300,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `${database.artifacts.length} artifacts`,
   )
   const expectedArtifactSchemas = new Map<string, string>([
-    ['evaluation-summary', profile.summarySchemaVersion],
+    ['evaluation-summary', contract.summarySchemaVersion],
     ['input-manifest', input.manifest.schemaVersion],
     ['strategy', 'bayn.performance-metrics.v2'],
     ['buy-and-hold', 'bayn.performance-metrics.v2'],
@@ -347,7 +309,7 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     ['simulated-orders', 'bayn.simulated-orders.v2'],
     ['cash-changes', 'bayn.cash-changes.v2'],
     ['daily-position-marks', 'bayn.daily-position-marks.v3'],
-    [profile.decisionArtifactName, profile.decisionArtifactSchemaVersion],
+    [contract.decisionArtifactName, contract.decisionArtifactSchemaVersion],
     ['buy-and-hold-series', 'bayn.daily-performance-series.v1'],
     ['direct-volatility-timing-series', 'bayn.daily-performance-series.v1'],
     ['double-cost-strategy-series', 'bayn.daily-performance-series.v1'],
@@ -421,8 +383,8 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       { schemaVersion: 'bayn.daily-position-marks.v3', items: reference.strategy.trace.dailyMarks },
     ],
     [
-      profile.decisionArtifactName,
-      { schemaVersion: profile.decisionArtifactSchemaVersion, items: reference.strategy.decisions },
+      contract.decisionArtifactName,
+      { schemaVersion: contract.decisionArtifactSchemaVersion, items: reference.strategy.decisions },
     ],
     [
       'buy-and-hold-series',
@@ -538,13 +500,10 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   )
   const lockData = object(lock.data, 'qualification lock data')
   const lockContractBinding =
-    input.protocol.schemaVersion === 'bayn.tsmom.protocol.v2'
-      ? lock.schemaVersion === 'bayn.qualification-lock.v2' && input.manifest.schemaVersion === 'bayn.input-manifest.v2'
-      : lock.schemaVersion === 'bayn.qualification-lock.v3' &&
-        input.manifest.schemaVersion === 'bayn.input-manifest.v3' &&
-        lock.universeId === input.protocol.universeId &&
-        lock.universeSymbolHash === input.protocol.universeSymbolHash &&
-        lockData.inputManifestHash === input.manifest.hash
+    lock.schemaVersion === 'bayn.qualification-lock.v3' &&
+    lock.universeId === input.protocol.universeId &&
+    lock.universeSymbolHash === input.protocol.universeSymbolHash &&
+    lockData.inputManifestHash === input.manifest.hash
   const lockPolicies = object(lock.policies, 'qualification lock policies')
   const policyDocuments = Object.entries(lockPolicies)
     .sort(([left], [right]) => left.localeCompare(right))

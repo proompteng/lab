@@ -52,6 +52,8 @@ spec:
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
               value: sha256:8eb055cf228e0339ee0c0df550846d57be21eade7ee18d5cc032560902d08e4e
+            - name: BAYN_QUALIFICATION_RUN_ID
+              value: "082669c8d9547911e39b7e3a8a6399978894114a5eacc9fc113b0c7b99b6bd88"
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS

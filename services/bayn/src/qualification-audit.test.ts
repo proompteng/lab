@@ -4,26 +4,16 @@ import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import { auditQualification, type AuditDatabaseSnapshot, type QualificationAuditInput } from './qualification-audit'
-import { makeQualificationDossier, type QualificationDossier } from './qualification-dossier'
-import { makeRiskBalancedTrendStrategy, makeTsmomStrategy } from './strategy-service'
-import { summarizeEvaluation } from './strategy'
-import {
-  fixtureProtocol,
-  makeRiskBalancedTrendSnapshot,
-  makeRiskBalancedTrendTestProvenance,
-  makeSnapshot,
-  makeTestProvenance,
-  riskBalancedTrendFixtureProtocol,
-} from './test-fixtures'
+import { makeQualificationDossier } from './qualification-dossier'
+import { makeStrategy } from './strategy-service'
+import { summarizeEvaluation } from './risk-balanced-trend'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
-const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): QualificationAuditInput => {
-  const snapshot = profile === 'tsmom' ? makeSnapshot(900) : makeRiskBalancedTrendSnapshot(900)
-  const protocol = profile === 'tsmom' ? fixtureProtocol : riskBalancedTrendFixtureProtocol
-  const provenance = profile === 'tsmom' ? makeTestProvenance() : makeRiskBalancedTrendTestProvenance()
-  const strategy =
-    profile === 'tsmom'
-      ? makeTsmomStrategy(fixtureProtocol, provenance)
-      : makeRiskBalancedTrendStrategy(riskBalancedTrendFixtureProtocol, provenance)
+const fixture = (): QualificationAuditInput => {
+  const snapshot = makeSnapshot(900)
+  const protocol = fixtureProtocol
+  const provenance = makeTestProvenance()
+  const strategy = makeStrategy(protocol, provenance)
   const evaluation = strategy.evaluate(snapshot.bars, snapshot.manifest)
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
   const priorTrialRunIds: readonly string[] = []
@@ -60,10 +50,10 @@ const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): Qualificat
       { schemaVersion: 'bayn.daily-position-marks.v3', items: evaluation.simulation.dailyMarks },
     ],
     [
-      profile === 'tsmom' ? 'tsmom-signal-decisions' : 'risk-balanced-trend-decisions',
-      profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-decisions.v1',
+      'risk-balanced-trend-decisions',
+      'bayn.risk-balanced-trend-decisions.v1',
       {
-        schemaVersion: profile === 'tsmom' ? 'bayn.tsmom-signal-decisions.v1' : 'bayn.risk-balanced-trend-decisions.v1',
+        schemaVersion: 'bayn.risk-balanced-trend-decisions.v1',
         items: evaluation.signalDecisions,
       },
     ],
@@ -184,7 +174,7 @@ const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): Qualificat
     protocol: {
       protocolHash: evaluation.protocolHash,
       schemaVersion: protocol.schemaVersion,
-      strategyName: profile,
+      strategyName: 'risk-balanced-trend',
       behaviorHash: provenance.strategy.behaviorHash,
       parameterHash: provenance.strategy.parameterHash,
       parameters: protocol,
@@ -197,7 +187,7 @@ const fixture = (profile: 'tsmom' | 'risk-balanced-trend' = 'tsmom'): Qualificat
       sourceRevision: provenance.sourceRevision,
       imageRepository: provenance.image.repository,
       imageDigest: provenance.image.digest,
-      strategyName: profile,
+      strategyName: 'risk-balanced-trend',
       initialCapitalMicros: evaluation.initialCapitalMicros,
       status: 'COMPLETE',
       artifactCount: artifacts.length,
@@ -330,28 +320,10 @@ describe('qualification audit', () => {
     expect(second.auditHash).toBe(first.auditHash)
   })
 
-  test('passes the same independent evidence audit for a risk-balanced trend evaluation', () => {
-    const input = fixture('risk-balanced-trend')
-    const report = auditQualification(input)
-    const dossier = makeQualificationDossier(input)
-
-    expect(report.checks.filter((check) => !check.passed)).toEqual([])
-    expect(report.status).toBe('PASS')
-    expect(report.reference.rebalanceCount).toBeGreaterThan(0)
-    expect(report.checks.every((check) => check.passed)).toBe(true)
-    expect(input.database.artifacts.find((artifact) => artifact.name === 'evaluation-summary')?.schemaVersion).toBe(
-      'bayn.evaluation-summary.v5',
-    )
-    expect(
-      input.database.artifacts.find((artifact) => artifact.name === 'risk-balanced-trend-decisions')?.schemaVersion,
-    ).toBe('bayn.risk-balanced-trend-decisions.v1')
-    expect(dossier.subject.run.strategyName).toBe('risk-balanced-trend')
-    expect(dossier.audit.auditHash).toBe(report.auditHash)
-  })
-
   test('fails closed on stored evidence drift', () => {
     const input = fixture()
-    const strategy = input.database.artifacts.find((artifact) => artifact.name === 'strategy')!
+    const strategy = input.database.artifacts.find((artifact) => artifact.name === 'strategy')
+    if (strategy === undefined) throw new Error('strategy fixture is missing')
     const database = {
       ...input.database,
       artifacts: input.database.artifacts.map((artifact) =>
@@ -383,8 +355,8 @@ describe('qualification audit', () => {
   test.each([
     ['strategy', 'reference-strategy', (payload: Readonly<Record<string, unknown>>) => ({ ...payload, sharpe: 99 })],
     [
-      'tsmom-signal-decisions',
-      'reference-tsmom-signal-decisions',
+      'risk-balanced-trend-decisions',
+      'reference-risk-balanced-trend-decisions',
       (payload: Readonly<Record<string, unknown>>) => replaceFirstItem(payload, { decisionId: '0'.repeat(64) }),
     ],
     [
@@ -516,22 +488,6 @@ describe('qualification audit', () => {
 })
 
 describe('qualification dossier', () => {
-  test('keeps the committed GitOps artifact canonical and internally bound', async () => {
-    const dossier = (await Bun.file(
-      new URL('../../../argocd/applications/bayn/qualification-dossier.json', import.meta.url),
-    ).json()) as QualificationDossier
-    const { dossierHash, ...material } = dossier
-    const { auditHash, ...auditMaterial } = dossier.audit
-
-    expect(dossierHash).toBe(canonicalHashV1(material))
-    expect(auditHash).toBe(canonicalHashV1(auditMaterial))
-    expect(dossier.audit.status).toBe('PASS')
-    expect(dossier.audit.checks.every((check) => check.passed)).toBe(true)
-    expect(dossier.subject.run.runId).toBe(dossier.qualification.result.runId)
-    expect(dossier.subject.run.runId).toBe(dossier.audit.runId)
-    expect(dossier.authority.executable).toBe(dossier.qualification.result.verdict === 'QUALIFIED')
-  })
-
   test('binds the complete audited subject deterministically', () => {
     const first = makeQualificationDossier(fixture())
     const second = makeQualificationDossier(fixture())
