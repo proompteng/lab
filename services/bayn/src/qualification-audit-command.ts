@@ -13,16 +13,18 @@ import {
   type AuditDatabaseSnapshot,
   type RepositoryAudit,
   type SignalAccessRecord,
-} from './qualification-audit'
-import { makeQualificationDossier } from './qualification-dossier'
+} from './audit/audit'
+import { makeQualificationDossier } from './audit/dossier'
+import {
+  NonNegativeIntegerSchema as NonNegativeInteger,
+  PositiveIntegerSchema as PositiveInteger,
+  Sha256Schema as Sha256,
+  TrimmedNonEmptyStringSchema as NonEmptyString,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 import type { Protocol, InputManifest } from './types'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
-const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const IsoInstant = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/))
-const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
 const ReplicaName = NonEmptyString
 const GateScalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const AuditClickhouseUrls = Config.Array(Schema.URLFromString).check(Schema.isMinLength(2), Schema.isUnique())

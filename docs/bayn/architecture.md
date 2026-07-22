@@ -34,8 +34,11 @@ that interface and every persisted evidence contract.
 bindings and does not load bars, open a new lock, evaluate, journal, or persist. Continuous health checks still verify
 the recovered run after startup.
 
-A strategy rejection is terminal economic evidence, not an operational crash. Startup or dependency defects leave the
-HTTP process live for diagnosis while readiness remains closed.
+A strategy rejection is terminal economic evidence, not an operational crash. ClickHouse layer acquisition retries a
+retryable SQL failure twice at one-second intervals; authentication and other terminal failures fail immediately. A
+transient startup dependency failure that remains after bounded acquisition escapes the scoped runtime, closes HTTP
+and acquired clients, and lets the Deployment restart the process. A deterministic contract or evidence failure
+enters `FAILED` and keeps HTTP available for diagnosis with readiness closed.
 
 ## Effect composition
 
@@ -49,6 +52,10 @@ Effect is used at resource and failure boundaries, not as a container for ordina
   I/O layers, and hands them to `run`.
 - `run` owns one scoped lifetime. It starts the HTTP layer, performs initialization, and forks the repeating health
   monitor with `forkScoped`; scope closure releases the server and clients.
+- `startup.ts` and `health.ts` own lifecycle decisions; `ledger-plan.ts` is deterministic accounting, while
+  `tigerbeetle-client.ts` owns DNS, client acquisition, invalidation, and release.
+- Versioned protocol and evidence types come from their Effect Schemas. `types.ts` is a compatibility export surface,
+  not a second hand-written contract.
 - Operational timeouts and typed `OperationalError` values are applied where an external operation enters the
   lifecycle. Domain functions throw only inside an `Effect.try` boundary that assigns the owning component and
   operation.
@@ -74,7 +81,9 @@ evidence. `BAYN_OPERATION_TIMEOUT_MS` bounds every external startup and health o
 
 `GET /livez` proves only that the process and HTTP server are alive. `GET /readyz` exposes the current readiness
 decision. `GET /v1/status` keeps operational health, data identity, evidence, economic verdict, qualification,
-accounting, build provenance, and fixed authority separate.
+accounting, build provenance, and fixed authority separate. `economic.verdict` is the economic gate result;
+`qualification.verdict` is the terminal qualification result. Neither field implies execution authority, which is
+fixed exclusively by `authority`.
 
 ## Strategy and economic contract
 

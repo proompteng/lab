@@ -72,6 +72,9 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - After startup, one scoped Effect loop continuously checks PostgreSQL, the configured Signal manifest, the active
   TigerBeetle run, and the complete durable evidence record without loading bars or writing accounting state. Readiness
   closes on any defect and reopens only after every check succeeds; the last valid evidence remains observable.
+- A transient dependency failure during startup exits the scoped process after releasing HTTP and clients so the
+  Deployment can restart it. Deterministic contract, identity, or evidence failures remain observable as `FAILED`
+  with readiness closed.
 - A run becomes ready only after ClickHouse validation, evaluation, TigerBeetle journal creation, exact reconciliation,
   the PostgreSQL commit, and one successful continuous check. Strategy rejection is an auditable economic
   `FAIL_CLOSED`; it remains separate from operational health and never expands authority.
@@ -81,8 +84,7 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - `GET /livez`: process liveness.
 - `GET /readyz`: current dependency, evidence, and accounting readiness.
 - `GET /v1/status`: operational dependencies, data and evidence identity, terminal qualification, economic verdict,
-  accounting, current build provenance, qualification-execution provenance, explicit execution eligibility, and fixed
-  observe-only authority.
+  accounting, current build provenance, qualification-execution provenance, and fixed observe-only authority.
 - `GET /v1/evaluations/:runId`: complete content-hashed evidence for one exact run ID. The service is ClusterIP-only
   and the Bayn network policy limits HTTP ingress to the namespace.
 

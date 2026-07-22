@@ -17,9 +17,9 @@ import {
   type FillTerms,
 } from './execution-model'
 import { canonicalHashV1 } from './hash'
+import { DIRECT_VOLATILITY_WINDOW } from './protocol'
 import {
   ContractVersion,
-  DIRECT_VOLATILITY_WINDOW,
   type CashChange,
   type DailyBar,
   type DailyPerformancePoint,

@@ -1,4 +1,4 @@
-import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
+import { makeRunIdentity, makeStrategyProtocolHash, type RuntimeProvenance } from '../contracts'
 import {
   MICROS,
   accrueCashYield,
@@ -15,8 +15,8 @@ import {
   scaleQuantityMicros,
   type FeeInput,
   type FillTerms,
-} from './execution-model'
-import { canonicalHashV1 } from './hash'
+} from '../execution-model'
+import { canonicalHashV1 } from '../hash'
 import type {
   CashChange,
   DailyBar,
@@ -37,7 +37,7 @@ import type {
   SimulatedOrder,
   SimulationProtocol,
   SimulationTrace,
-} from './types'
+} from '../types'
 
 interface Session {
   readonly date: IsoDate

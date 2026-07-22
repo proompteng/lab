@@ -1,20 +1,24 @@
 import { Effect, Schema } from 'effect'
 
-import { IsoDateSchema, Sha256Schema } from './contracts'
 import { operationalError, type OperationalError } from './errors'
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1, sha256 } from './hash'
-import { DIRECT_VOLATILITY_WINDOW, type Protocol } from './types'
+import {
+  IsoDateSchema,
+  NonNegativeFiniteSchema as NonNegativeFinite,
+  PositiveFiniteSchema as PositiveFinite,
+  PositiveIntegerSchema as PositiveInteger,
+  PositiveMicrosSchema as PositiveMicros,
+  Sha256Schema,
+  SymbolSchema as SymbolName,
+  UnitIntervalSchema as UnitInterval,
+  UnsignedMicrosSchema as UnsignedMicros,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
-const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
-const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
+export const DIRECT_VOLATILITY_WINDOW = 63
+
 const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
-const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
-const PositiveMicros = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
-const UnsignedMicros = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/))
 const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
 const EconomicThresholdsSchema = Schema.Struct({
@@ -25,6 +29,7 @@ const EconomicThresholdsSchema = Schema.Struct({
   maximumAnnualTurnover: PositiveFinite,
   requirePositiveDoubleCostReturn: Schema.Boolean,
 })
+export type EconomicThresholds = typeof EconomicThresholdsSchema.Type
 
 export const ExecutionModelSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-model.v1'),
@@ -84,6 +89,7 @@ export const ExecutionModelSchema = Schema.Struct({
     return issues
   }),
 )
+export type ExecutionModel = typeof ExecutionModelSchema.Type
 
 const defaultEconomicThresholds = {
   minimumObservations: 504,
@@ -146,6 +152,7 @@ export const ProtocolSchema = ProtocolBase.check(
     return issues
   }),
 )
+export type Protocol = typeof ProtocolSchema.Type
 
 export const defaultProtocolDocument = {
   schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',

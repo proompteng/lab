@@ -1,11 +1,11 @@
 import { Schema } from 'effect'
 
-import { makeRuntimeProvenance } from './contracts'
-import { ReconciliationResultSchema } from './evidence-contracts'
-import { canonicalHashV1 } from './hash'
-import type { QualificationLock, QualificationResult } from './qualification'
-import { evaluateReference, type ReferenceEvaluation } from './qualification-reference'
-import { reconcileMarkedEquity } from './simulation-reconciliation'
+import { makeRuntimeProvenance } from '../contracts'
+import { ReconciliationResultSchema } from '../evidence-contracts'
+import { canonicalHashV1 } from '../hash'
+import type { QualificationLock, QualificationResult } from '../qualification'
+import { strictParseOptions as StrictParseOptions } from '../schemas'
+import { reconcileMarkedEquity } from '../simulation-reconciliation'
 import {
   ContractVersion,
   type DailyBar,
@@ -14,9 +14,9 @@ import {
   type InputManifest,
   type Protocol,
   type SimulationTrace,
-} from './types'
+} from '../types'
+import { evaluateReference, type ReferenceEvaluation } from './reference'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
 const decodeReconciliation = Schema.decodeUnknownSync(ReconciliationResultSchema, StrictParseOptions)
 type GateScalar = EconomicVerdict['gates'][number]['actual']
 
