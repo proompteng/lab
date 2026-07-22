@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Effect, Exit, Layer, Option, Ref } from 'effect'
+import { AuthenticationError, SqlError } from 'effect/unstable/sql/SqlError'
 
 import {
   provenance,
@@ -475,6 +476,39 @@ describe('Bayn startup lifecycle', () => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('database unavailable')
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', evidence: null, error: null })
+  })
+
+  test('keeps PostgreSQL authentication failures observable as terminal startup failures', async () => {
+    const state = await Effect.runPromise(Ref.make(initialState()))
+    const authentication = new SqlError({
+      reason: new AuthenticationError({ cause: new Error('invalid credentials'), operation: 'persist' }),
+    })
+    const unauthorized: EvidenceStoreService = {
+      ...successfulEvidenceStore,
+      persist: () =>
+        Effect.fail(
+          new DatabaseError({
+            failure: 'unavailable',
+            operation: 'persist',
+            message: 'database authentication failed',
+            cause: authentication,
+          }),
+        ),
+    }
+
+    await Effect.runPromise(
+      initialize(config, state, fixtureStrategy).pipe(
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, unauthorized),
+      ),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAILED',
+      evidence: null,
+      error: expect.stringContaining('database authentication failed'),
+    })
   })
 
   test('fails layer construction when database setup fails', async () => {

@@ -33,8 +33,11 @@ export const databaseOperation = <A, R>(
 ): Effect.Effect<A, OperationalError, R> =>
   effect.pipe(
     Effect.mapError((cause) => {
-      const makeError =
-        cause instanceof DatabaseError && cause.failure === 'unavailable' ? retryableOperationalError : operationalError
+      const retryable =
+        cause instanceof DatabaseError &&
+        cause.failure === 'unavailable' &&
+        (!isSqlError(cause.cause) || cause.cause.isRetryable)
+      const makeError = retryable ? retryableOperationalError : operationalError
       return makeError('database', operation, `PostgreSQL ${operation} failed`, cause)
     }),
   )

@@ -2,9 +2,10 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Fiber, Layer } from 'effect'
 import { TestClock } from 'effect/testing'
-import { AuthenticationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
+import { AuthenticationError, AuthorizationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
 
-import { acquireSqlLayer } from './operations'
+import { DatabaseError } from './db/evidence-store'
+import { acquireSqlLayer, databaseOperation } from './operations'
 
 describe('Bayn SQL dependency acquisition', () => {
   test('retries only retryable SQL failures', async () => {
@@ -94,5 +95,48 @@ describe('Bayn SQL dependency acquisition', () => {
     )
 
     expect(releases).toBe(1)
+  })
+})
+
+describe('Bayn database operation failures', () => {
+  test('keeps authentication and authorization terminal while retrying transient availability failures', async () => {
+    const classify = (cause: SqlError) =>
+      Effect.runPromise(
+        Effect.flip(
+          databaseOperation(
+            Effect.fail(
+              new DatabaseError({
+                failure: 'unavailable',
+                operation: 'recover-evaluation',
+                message: cause.message,
+                cause,
+              }),
+            ),
+            'recover-evaluation',
+          ),
+        ),
+      )
+
+    const [authentication, authorization, connection] = await Promise.all([
+      classify(
+        new SqlError({
+          reason: new AuthenticationError({ cause: new Error('invalid credentials'), operation: 'connect' }),
+        }),
+      ),
+      classify(
+        new SqlError({
+          reason: new AuthorizationError({ cause: new Error('permission denied'), operation: 'query' }),
+        }),
+      ),
+      classify(
+        new SqlError({
+          reason: new ConnectionError({ cause: new Error('connection reset'), operation: 'query' }),
+        }),
+      ),
+    ])
+
+    expect(authentication.retryable).toBe(false)
+    expect(authorization.retryable).toBe(false)
+    expect(connection.retryable).toBe(true)
   })
 })
