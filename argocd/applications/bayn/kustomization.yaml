@@ -4,6 +4,7 @@ namespace: bayn
 resources:
   - serviceaccount.yaml
   - clickhouse-secret.yaml
+  - alpaca-sealedsecret.yaml
   - objectbucketclaim.yaml
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
