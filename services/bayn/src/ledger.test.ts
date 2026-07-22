@@ -3,6 +3,7 @@ import { Effect, Redacted } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import type { RuntimeConfig } from './config'
+import { Authority } from './paper'
 import {
   assertReconciled,
   buildLedgerPlan,
@@ -215,6 +216,7 @@ describe('TigerBeetle simulation journal', () => {
     const config: RuntimeConfig = {
       host: '127.0.0.1',
       port: 0,
+      maximumAuthority: Authority.Observe,
       build: {
         sourceRevision: provenance.sourceRevision,
         imageRepository: provenance.image.repository,

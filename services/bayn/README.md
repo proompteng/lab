@@ -9,6 +9,10 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - Node.js is the production runtime; Effect owns dependency acquisition, failure handling, and shutdown.
 - Effect Config validates environment input. `BAYN_OPERATION_TIMEOUT_MS` bounds dependency operations, and
   `BAYN_HEALTH_INTERVAL_MS` controls the continuous health interval; both default to 30 seconds.
+- `BAYN_MAXIMUM_AUTHORITY` is a closed `OBSERVE`/`PAPER` process ceiling and defaults to `OBSERVE`. It never creates a
+  broker capability; the deployed runtime remains `OBSERVE` and contains no submit, cancel, or replace path.
+- Public egress is denied from the Bayn Pod. A separate CONNECT proxy permits only
+  `paper-api.alpaca.markets:443`; the service has no broker credential or client until a later reviewed slice.
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
@@ -84,7 +88,7 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - `GET /livez`: process liveness.
 - `GET /readyz`: current dependency, evidence, and accounting readiness.
 - `GET /v1/status`: operational dependencies, data and evidence identity, terminal qualification, economic verdict,
-  accounting, current build provenance, qualification-execution provenance, and fixed observe-only authority.
+  accounting, current build provenance, qualification-execution provenance, and the configured authority ceiling.
 - `GET /v1/evaluations/:runId`: complete content-hashed evidence for one exact run ID. The service is ClusterIP-only
   and the Bayn network policy limits HTTP ingress to the namespace.
 

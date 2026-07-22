@@ -4,6 +4,7 @@ import { ConfigProvider, Effect, Redacted } from 'effect'
 
 import type { EmbeddedBuildMetadata } from './build'
 import { loadConfig } from './config'
+import { Authority } from './paper'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -48,6 +49,7 @@ describe('Effect configuration', () => {
     expect(config.host).toBe('0.0.0.0')
     expect(config.port).toBe(8080)
     expect(config.qualificationRunId).toBeUndefined()
+    expect(config.maximumAuthority).toBe(Authority.Observe)
     expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
     expect(config.clickhouse).toMatchObject({
@@ -134,6 +136,23 @@ describe('Effect configuration', () => {
     invalid.set('BAYN_QUALIFICATION_RUN_ID', 'not-a-run-id')
 
     const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'load',
+    })
+  })
+
+  test('accepts only the closed broker-authority vocabulary', async () => {
+    const paper = new Map(runtimeEnvironment)
+    paper.set('BAYN_MAXIMUM_AUTHORITY', Authority.Paper)
+    expect((await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), paper))).maximumAuthority).toBe(
+      Authority.Paper,
+    )
+
+    const live = new Map(runtimeEnvironment)
+    live.set('BAYN_MAXIMUM_AUTHORITY', 'LIVE')
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), live)))
     expect(error).toMatchObject({
       _tag: 'OperationalError',
       component: 'config',

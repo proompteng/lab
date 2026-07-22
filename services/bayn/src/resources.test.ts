@@ -9,6 +9,7 @@ import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
+import { Authority } from './paper'
 import { initialState } from './runtime-state'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
@@ -19,6 +20,7 @@ const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
 const config: RuntimeConfig = {
   host: '127.0.0.1',
   port: 0,
+  maximumAuthority: Authority.Observe,
   build: {
     sourceRevision: provenance.sourceRevision,
     imageRepository: provenance.image.repository,

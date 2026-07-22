@@ -58,6 +58,8 @@ spec:
               value: "cf639d3692da65271b12423f9b7c6c9663e1fb13ae7290dc56fcfa3acf16eb69"
             - name: BAYN_QUALIFICATION_RUN_ID
               value: "b88f53887a31b6696f5bf6b56e4e10d9966057c6109a1d0721dc94677e566ec7"
+            - name: BAYN_MAXIMUM_AUTHORITY
+              value: OBSERVE
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS

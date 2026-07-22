@@ -10,9 +10,14 @@ resources:
   - postgres-scheduled-backup.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml
+  - egress-proxy.yaml
   - deployment.yaml
   - service.yaml
   - networkpolicy.yaml
+configMapGenerator:
+  - name: bayn-egress-proxy
+    files:
+      - squid.conf
 images:
   - name: registry.ide-newton.ts.net/lab/bayn
     newName: registry.ide-newton.ts.net/lab/bayn
