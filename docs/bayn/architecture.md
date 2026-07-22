@@ -40,10 +40,11 @@ bindings and does not load bars, open a new lock, evaluate, journal, or persist.
 the recovered run after startup.
 
 A strategy rejection is terminal economic evidence, not an operational crash. ClickHouse and PostgreSQL layer
-acquisition retry a retryable SQL failure twice at one-second intervals; authentication and other terminal failures
-fail immediately. A transient startup dependency failure that remains after bounded acquisition escapes the scoped
-runtime, closes HTTP and acquired clients, and lets the Deployment restart the process. A deterministic contract or
-evidence failure enters `FAILED` and keeps HTTP available for diagnosis with readiness closed.
+acquisition retry a transient SQL failure twice at one-second intervals. PostgreSQL connection failures reported by
+the driver as `UnknownError` are retryable only for its `connect` operation; authentication and other terminal
+failures fail immediately. A transient startup dependency failure that remains after bounded acquisition escapes the
+scoped runtime, closes HTTP and acquired clients, and lets the Deployment restart the process. A deterministic
+contract or evidence failure enters `FAILED` and keeps HTTP available for diagnosis with readiness closed.
 
 ## Dormant paper mutation boundary
 

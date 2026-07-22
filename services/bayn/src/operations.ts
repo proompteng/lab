@@ -5,13 +5,9 @@ import { DatabaseError } from './db/evidence-store'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
 
 const isRetryableSqlAcquisition = (error: unknown): boolean => {
-  if (isSqlError(error)) return error.isRetryable
-  return (
-    error instanceof DatabaseError &&
-    error.failure === 'unavailable' &&
-    isSqlError(error.cause) &&
-    error.cause.isRetryable
-  )
+  const cause = error instanceof DatabaseError && error.failure === 'unavailable' ? error.cause : error
+  if (!isSqlError(cause)) return false
+  return cause.isRetryable || (cause.reason._tag === 'UnknownError' && cause.reason.operation === 'connect')
 }
 
 export const acquireSqlLayer = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
