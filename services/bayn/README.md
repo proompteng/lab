@@ -2,8 +2,8 @@
 
 Bayn is a single-writer, paper-only quantitative qualification runtime. Its current protocol evaluates the frozen
 risk-balanced trend candidate on the authoritative infrastructure-equity universe and journals the resulting simulation
-to TigerBeetle. Its source contains a dormant, paper-only Alpaca mutation capability, but the deployed composition has
-no broker credentials, mutation layer, execution entry point, or capital-promotion path.
+to TigerBeetle. Alpaca credentials may enable a bounded GET-only account preflight while authority remains `OBSERVE`.
+The paper mutation capability, execution entry point, and capital-promotion path remain dormant.
 
 ## Runtime contract
 
@@ -13,7 +13,8 @@ no broker credentials, mutation layer, execution entry point, or capital-promoti
 - `BAYN_MAXIMUM_AUTHORITY` is a closed `OBSERVE`/`PAPER` process ceiling and defaults to `OBSERVE`. It never creates a
   broker capability; the deployed runtime remains `OBSERVE` and does not compose the submit/cancel capability.
 - Public egress is denied from the Bayn Pod. A separate CONNECT proxy permits only
-  `paper-api.alpaca.markets:443`. The pod has no broker credential, so the dormant client cannot authenticate or run.
+  `paper-api.alpaca.markets:443`. A configured Alpaca credential is accepted only after account, position, order,
+  order-lookup, and fill reads pass the runtime-decoded preflight through that proxy.
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
@@ -70,10 +71,9 @@ no broker credentials, mutation layer, execution entry point, or capital-promoti
 - The current-only migration chain owns the unprefixed evidence, qualification, intent, and mutation schema. Startup
   rejects a legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or
   falls back to legacy records.
-- Alpaca read and mutation adapters, deterministic risk, intent and mutation persistence, the writer fence, and the
-  recovery coordinator remain dormant source foundations. The composition root does not acquire broker credentials,
-  construct either adapter, reserve the writer fence, or expose the stores or coordinator while qualification is
-  rejected and maximum authority is `OBSERVE`.
+- The Alpaca read adapter may be acquired while maximum authority is `OBSERVE`, but it performs GET-only preflight and
+  does not build the paper store, reserve the writer fence, start reconciliation, or change PostgreSQL or TigerBeetle.
+  The mutation adapter and recovery coordinator remain dormant source foundations.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.

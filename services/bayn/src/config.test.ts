@@ -86,7 +86,7 @@ describe('Effect configuration', () => {
     expect(config.qualificationRunId).toBe('e'.repeat(64))
   })
 
-  test('enables reconciliation only with one complete redacted Alpaca credential binding', async () => {
+  test('loads one complete redacted Alpaca read binding', async () => {
     const configured = new Map(runtimeEnvironment)
     configured.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
     configured.set('BAYN_ALPACA_KEY_ID', 'paper-key')
