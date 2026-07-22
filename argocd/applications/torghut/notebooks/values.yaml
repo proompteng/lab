@@ -94,7 +94,7 @@ singleuser:
   cmd: null
   image:
     name: registry.ide-newton.ts.net/lab/torghut-notebook@sha256
-    tag: '2e76ecf7d4bfaf9dba2c07440089441b7b5ad99a5064e18998ee489f5abb5b06'
+    tag: 'b12dc0108776ce0cc548e464ec5608dae2048839fb76a636c2bc154f451351bb'
     pullPolicy: IfNotPresent
   defaultUrl: /lab/tree/work/00-system-flow.ipynb
   startTimeout: 600
