@@ -8,7 +8,7 @@ tables, and Bayn consumes them read-only.
 The same binary supports `daily` and the explicitly bounded `backfill --start DATE --end DATE` command. Production
 runs use immutable promoted images. The one-shot backfill and scheduled writer are activated separately and never run
 concurrently. See
-[`docs/signal/adjusted-daily-publications.md`](../../docs/signal/adjusted-daily-publications.md) for the data
+[`docs/bayn/signal-adjusted-daily-publications.md`](../../docs/bayn/signal-adjusted-daily-publications.md) for the data
 contract and operating procedure.
 
 ```sh
