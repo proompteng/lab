@@ -193,9 +193,9 @@ jobs:
 
             This is a one-way current-contract runtime release. Databases with the old migration tracker are rejected;
             there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
-            behavior, protocol parameters, Signal inputs, and TigerBeetle bindings all match. `replace` removes the
-            pin only for a fresh Signal snapshot. After that qualification, another image requires its terminal run
-            to be pinned or another fresh snapshot.
+            behavior, protocol parameters, Signal inputs, and TigerBeetle bindings all match. `replace` removes an
+            existing incompatible pin only for a fresh Signal snapshot; when no pin exists, later releases may remain
+            unqualified on the same snapshot. Promotion never creates a qualification pin.
 
             ## Checklist
 
