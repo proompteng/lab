@@ -5,19 +5,19 @@ import { join } from 'node:path'
 
 import { updateBaynManifests, type UpdateBaynManifestOptions } from './update-manifests'
 
-const currentSnapshotId = '98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292'
+const currentSnapshotId = '0945e3331d67437a072d5eb33f65e469b9883a5e762e29e80f7acb389864c79f'
 const strategyBehaviorHash = '1'.repeat(64)
 const strategyParameterHash = '2'.repeat(64)
 const qualificationRunId = '9'.repeat(64)
 const currentBindings = {
   BAYN_SIGNAL_SNAPSHOT_ID: currentSnapshotId,
-  BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-20',
+  BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-22',
   BAYN_SIGNAL_CALENDAR_VERSION: 'alpaca-us-equity-calendar-v1',
   BAYN_SIGNAL_DATA_START: '2022-01-27',
-  BAYN_SIGNAL_DATA_END: '2026-07-20',
+  BAYN_SIGNAL_DATA_END: '2026-07-22',
   BAYN_SIGNAL_LOOKBACK_START: '2022-01-27',
   BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
-  BAYN_SIGNAL_EVALUATION_END: '2026-07-20',
+  BAYN_SIGNAL_EVALUATION_END: '2026-07-22',
   BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
   BAYN_TIGERBEETLE_ADDRESSES:
     'ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000',
