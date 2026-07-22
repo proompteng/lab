@@ -18,7 +18,7 @@ import {
   type ReadEvidence,
 } from './alpaca'
 import { AccountStatus, OrderSide, OrderStatus } from '../paper'
-import { accountObservation, fillObservation, orderObservation, positionObservations } from './observations'
+import { accountObservation, fillObservation, orderObservation, positionSnapshot } from './observations'
 
 const observedAt = '2026-07-22T15:30:01.000Z'
 const evidence: ReadEvidence = {
@@ -130,21 +130,23 @@ describe('paper broker observations', () => {
         observedAt,
       },
     ]
-    const events = positionObservations({ value: positions, evidence })
+    const snapshot = positionSnapshot(account.id, { value: positions, evidence })
+    const events = snapshot.positions
 
     expect(events).toHaveLength(2)
     expect(events.map((event) => (event._tag === 'Position' ? event.position.symbol : ''))).toEqual(['AMD', 'NVDA'])
     expect(new Set(events.map((event) => event.sourceEventId)).size).toBe(2)
     const laterObservedAt = '2026-07-22T15:31:01.000Z'
-    const later = positionObservations({
+    const later = positionSnapshot(account.id, {
       value: positions.map((position) => ({ ...position, observedAt: laterObservedAt })),
       evidence: { ...evidence, observedAt: laterObservedAt },
-    })
+    }).positions
     expect(later.map((event) => event.sourceEventId)).not.toEqual(events.map((event) => event.sourceEventId))
     expect(later.map((event) => event.contentHash)).toEqual(events.map((event) => event.contentHash))
     expect(() =>
-      positionObservations({ value: [positions[0], { ...positions[1], symbol: 'NVDA' }], evidence }),
+      positionSnapshot(account.id, { value: [positions[0], { ...positions[1], symbol: 'NVDA' }], evidence }),
     ).toThrow('duplicate Alpaca position symbol')
+    expect(positionSnapshot(account.id, { value: [], evidence }).positions).toEqual([])
   })
 
   test('maps a partially filled pending order without discarding fill state', () => {

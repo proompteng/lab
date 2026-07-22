@@ -10,7 +10,13 @@ import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlan } from '../ledger-plan'
 import { Journal, type JournalService } from '../ledger'
 import { AccountStatus, Authority, Broker, OrderSide, OrderStatus, OrderType, TimeInForce } from '../paper'
-import type { BrokerEventInput, FillEventInput, ValuationInput } from '../broker/observations'
+import type {
+  BrokerEventInput,
+  FillEventInput,
+  PositionEventInput,
+  PositionSnapshotInput,
+  ValuationInput,
+} from '../broker/observations'
 import { EvidenceStore, EvidenceStoreLive, PostgresClientLive } from './evidence-store'
 import { PaperStore, PaperStoreLive } from './paper-store'
 
@@ -163,11 +169,11 @@ const positionEvent = (
   symbol: string,
   quantityMicros: string,
   marketValueMicros: string,
-): BrokerEventInput => ({
+): PositionEventInput => ({
   _tag: 'Position',
   broker: Broker.Alpaca,
   accountId,
-  sourceEventId: `position:${sourceHash}:${assetId}`,
+  sourceEventId: `position:${sourceHash}:${observedAt}:${assetId}`,
   contentHash: hash(`position:${assetId}`),
   occurredAt: observedAt,
   observedAt,
@@ -182,6 +188,16 @@ const positionEvent = (
     unrealizedPnlMicros: '0',
     observedAt,
   },
+})
+
+const positionSnapshotInput = (
+  sourceHash: string,
+  positions: readonly PositionEventInput[],
+): PositionSnapshotInput => ({
+  accountId,
+  sourceHash,
+  observedAt,
+  positions,
 })
 
 describePostgres('paper accounting persistence', () => {
@@ -327,34 +343,56 @@ describePostgres('paper accounting persistence', () => {
   test('persists one valuation from a complete account and position observation set', async () => {
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
     const positionsSourceHash = hash('positions-response-1')
+    const positions = [
+      positionEvent(positionsSourceHash, 'asset-1', 'NVDA', '2000000', '200000000'),
+      positionEvent(positionsSourceHash, 'asset-2', 'AMD', '-500000', '-50000000'),
+    ] as const
+    const snapshotInput = positionSnapshotInput(positionsSourceHash, positions)
     try {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
           const account = yield* store.ingest(accountEvent())
-          const long = yield* store.ingest(
-            positionEvent(positionsSourceHash, 'asset-1', 'NVDA', '2000000', '200000000'),
-          )
-          const short = yield* store.ingest(
-            positionEvent(positionsSourceHash, 'asset-2', 'AMD', '-500000', '-50000000'),
+          const directPosition = yield* Effect.exit(store.ingest(positions[0]))
+          const snapshot = yield* store.ingestPositions(snapshotInput)
+          const snapshotReplay = yield* store.ingestPositions(snapshotInput)
+          const conflictingSnapshot = yield* Effect.exit(
+            store.ingestPositions(positionSnapshotInput(positionsSourceHash, [positions[0]])),
           )
           const input: ValuationInput = {
             accountEventId: account.eventId,
-            positionEventIds: [long.eventId, short.eventId],
-            positionsSourceHash,
-            positionsObservedAt: observedAt,
+            positionSnapshotId: snapshot.snapshotId,
           }
           const valuation = yield* store.value(input)
           const replay = yield* store.value(input)
-          const incomplete = yield* Effect.exit(
-            store.value({ ...input, positionEventIds: [...input.positionEventIds, hash('missing-position')] }),
+          const missingSnapshot = yield* Effect.exit(
+            store.value({ ...input, positionSnapshotId: hash('missing-position-snapshot') }),
           )
-          const wrongSource = yield* Effect.exit(store.value({ ...input, positionsSourceHash: hash('wrong-source') }))
+          const emptySnapshot = yield* store.ingestPositions(
+            positionSnapshotInput(hash('empty-positions-response'), []),
+          )
+          const emptyValuation = yield* store.value({
+            accountEventId: account.eventId,
+            positionSnapshotId: emptySnapshot.snapshotId,
+          })
           const sql = yield* PgClient.PgClient
-          const [count] = yield* sql<{ valuations: number }>`
-            SELECT count(*)::integer AS valuations FROM valuations
+          const [counts] = yield* sql<{ position_snapshots: number; positions: number; valuations: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM position_snapshots) AS position_snapshots,
+              (SELECT count(*)::integer FROM positions) AS positions,
+              (SELECT count(*)::integer FROM valuations) AS valuations
           `
-          return { valuation, replay, incomplete, wrongSource, count }
+          return {
+            valuation,
+            replay,
+            snapshot,
+            snapshotReplay,
+            directPosition,
+            conflictingSnapshot,
+            missingSnapshot,
+            emptyValuation,
+            counts,
+          }
         }),
       )
 
@@ -366,9 +404,18 @@ describePostgres('paper accounting persistence', () => {
         equityMicros: '1150000000',
       })
       expect(result.replay).toEqual(result.valuation)
-      expect(Exit.isFailure(result.incomplete)).toBe(true)
-      expect(Exit.isFailure(result.wrongSource)).toBe(true)
-      expect(result.count).toEqual({ valuations: 1 })
+      expect(result.snapshot).toMatchObject({ eventIds: expect.any(Array), deduplicated: false })
+      expect(result.snapshotReplay).toEqual({ ...result.snapshot, deduplicated: true })
+      expect(Exit.isFailure(result.directPosition)).toBe(true)
+      expect(Exit.isFailure(result.conflictingSnapshot)).toBe(true)
+      expect(Exit.isFailure(result.missingSnapshot)).toBe(true)
+      expect(result.emptyValuation).toMatchObject({
+        cashMicros: '1000000000',
+        longMarketValueMicros: '0',
+        shortMarketValueMicros: '0',
+        equityMicros: '1000000000',
+      })
+      expect(result.counts).toEqual({ position_snapshots: 2, positions: 2, valuations: 2 })
     } finally {
       await runtime.dispose()
     }

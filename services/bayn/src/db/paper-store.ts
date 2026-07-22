@@ -11,9 +11,11 @@ import {
 import {
   BrokerEventInputSchema,
   FillEventInputSchema,
+  PositionSnapshotInputSchema,
   ValuationInputSchema,
   type BrokerEventInput,
   type FillEventInput,
+  type PositionSnapshotInput,
   type ValuationInput,
 } from '../broker/observations'
 import type { RuntimeConfig } from '../config'
@@ -21,6 +23,7 @@ import { canonicalHashV1 } from '../hash'
 import { Journal } from '../ledger'
 import {
   AccountingReceiptSchema,
+  Broker,
   BrokerEventSchema,
   OrderSide,
   ValuationSchema,
@@ -37,8 +40,14 @@ export interface EventReceipt {
   readonly deduplicated: boolean
 }
 
+export interface PositionSnapshotReceipt {
+  readonly snapshotId: string
+  readonly eventIds: readonly string[]
+  readonly deduplicated: boolean
+}
+
 export class PaperStoreError extends Data.TaggedError('PaperStoreError')<{
-  readonly operation: 'ingest' | 'account' | 'receipt' | 'valuation'
+  readonly operation: 'ingest' | 'positions' | 'account' | 'receipt' | 'valuation'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'ledger' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -46,6 +55,7 @@ export class PaperStoreError extends Data.TaggedError('PaperStoreError')<{
 
 export interface PaperStoreShape {
   readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, PaperStoreError>
+  readonly ingestPositions: (input: PositionSnapshotInput) => Effect.Effect<PositionSnapshotReceipt, PaperStoreError>
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, PaperStoreError>
   readonly value: (input: ValuationInput) => Effect.Effect<Valuation, PaperStoreError>
 }
@@ -113,6 +123,17 @@ const PositionRow = Schema.Struct({
   market_value_micros: Schema.String,
   observed_at: Schema.DateValid,
 })
+const PositionSnapshotRow = Schema.Struct({
+  snapshot_id: Sha256,
+  schema_version: Schema.Literal('bayn.paper-position-snapshot.v1'),
+  account_id: NonEmptyString,
+  source_hash: Sha256,
+  observed_at: Schema.DateValid,
+  position_count: Schema.Int,
+  content_hash: Sha256,
+})
+const EventIdRow = Schema.Struct({ event_id: Sha256 })
+const SnapshotIdRow = Schema.Struct({ snapshot_id: Sha256 })
 const ValuationRow = Schema.Struct({
   schema_version: Schema.Literal('bayn.paper-valuation.v1'),
   valuation_id: Sha256,
@@ -127,6 +148,7 @@ const ValuationRow = Schema.Struct({
 
 const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
 const decodeFillInput = Schema.decodeUnknownEffect(FillEventInputSchema, strictParseOptions)
+const decodePositionSnapshotInput = Schema.decodeUnknownEffect(PositionSnapshotInputSchema, strictParseOptions)
 const decodeValuationInput = Schema.decodeUnknownEffect(ValuationInputSchema, strictParseOptions)
 const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
@@ -136,6 +158,9 @@ const decodeTransactionRows = Schema.decodeUnknownEffect(Schema.Array(Transactio
 const decodeReceiptRows = Schema.decodeUnknownEffect(Schema.Array(ReceiptRow), strictParseOptions)
 const decodeAccountRows = Schema.decodeUnknownEffect(AccountRow, strictParseOptions)
 const decodePositionRows = Schema.decodeUnknownEffect(Schema.Array(PositionRow), strictParseOptions)
+const decodePositionSnapshotRows = Schema.decodeUnknownEffect(Schema.Array(PositionSnapshotRow), strictParseOptions)
+const decodeEventIdRows = Schema.decodeUnknownEffect(Schema.Array(EventIdRow), strictParseOptions)
+const decodeSnapshotIdRows = Schema.decodeUnknownEffect(Schema.Array(SnapshotIdRow), strictParseOptions)
 const decodeValuationRows = Schema.decodeUnknownEffect(Schema.Array(ValuationRow), strictParseOptions)
 const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, strictParseOptions)
 const decodeReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
@@ -265,7 +290,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
     const sql = yield* PgClient.PgClient
     const journal = yield* Journal
 
-    const insertPayload = (eventId: string, input: BrokerEventInput) => {
+    const insertPayload = (eventId: string, input: BrokerEventInput, positionSnapshotId?: string) => {
       switch (input._tag) {
         case 'Account':
           return sql`
@@ -279,15 +304,17 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
             )
           `.pipe(Effect.asVoid)
         case 'Position':
+          if (positionSnapshotId === undefined) {
+            return fail('ingest', 'invariant', 'position events require a complete position snapshot')
+          }
           return sql`
             INSERT INTO positions (
-              event_id, account_id, schema_version, symbol, quantity_micros,
+              event_id, account_id, snapshot_id, schema_version, symbol, quantity_micros,
               average_entry_price_micros, market_price_micros, market_value_micros, unrealized_pnl_micros
             ) VALUES (
-              ${eventId}, ${input.position.accountId}, ${input.position.schemaVersion}, ${input.position.symbol},
-              ${input.position.quantityMicros}, ${input.position.averageEntryPriceMicros},
-              ${input.position.marketPriceMicros}, ${input.position.marketValueMicros},
-              ${input.position.unrealizedPnlMicros}
+              ${eventId}, ${input.position.accountId}, ${positionSnapshotId}, ${input.position.schemaVersion},
+              ${input.position.symbol}, ${input.position.quantityMicros}, ${input.position.averageEntryPriceMicros},
+              ${input.position.marketPriceMicros}, ${input.position.marketValueMicros}, ${input.position.unrealizedPnlMicros}
             )
           `.pipe(Effect.asVoid)
         case 'Order':
@@ -317,7 +344,10 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       }
     }
 
-    const append = (input: BrokerEventInput): Effect.Effect<EventReceipt, PaperStoreError> =>
+    const append = (
+      input: BrokerEventInput,
+      positionSnapshotId?: string,
+    ): Effect.Effect<EventReceipt, PaperStoreError> =>
       run(
         'ingest',
         Effect.gen(function* () {
@@ -361,7 +391,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
               ${input.accountId}, ${input.sourceEventId}, ${sourceSequence}, ${input.occurredAt}, ${input.observedAt}
             )
           `
-          yield* insertPayload(eventId, input)
+          yield* insertPayload(eventId, input, positionSnapshotId)
           return { eventId, sourceSequence, deduplicated: false }
         }),
       )
@@ -565,7 +595,125 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       )
 
     const ingest = (input: BrokerEventInput): Effect.Effect<EventReceipt, PaperStoreError> =>
-      run('ingest', decodeEventInput(input).pipe(Effect.flatMap((decoded) => sql.withTransaction(append(decoded)))))
+      run(
+        'ingest',
+        decodeEventInput(input).pipe(
+          Effect.flatMap((decoded) =>
+            decoded._tag === 'Position'
+              ? fail('ingest', 'invariant', 'position events require a complete position snapshot')
+              : sql.withTransaction(append(decoded)),
+          ),
+        ),
+      )
+
+    const ingestPositions = (input: PositionSnapshotInput): Effect.Effect<PositionSnapshotReceipt, PaperStoreError> =>
+      run(
+        'positions',
+        decodePositionSnapshotInput(input).pipe(
+          Effect.flatMap((decoded) =>
+            sql.withTransaction(
+              Effect.gen(function* () {
+                const sourcePrefix = `position:${decoded.sourceHash}:${decoded.observedAt}:`
+                const sourceIds = new Set<string>()
+                const symbols = new Set<string>()
+                for (const position of decoded.positions) {
+                  if (
+                    position.accountId !== decoded.accountId ||
+                    position.position.accountId !== decoded.accountId ||
+                    position.observedAt !== decoded.observedAt ||
+                    position.position.observedAt !== decoded.observedAt ||
+                    !position.sourceEventId.startsWith(sourcePrefix) ||
+                    position.sourceEventId.length === sourcePrefix.length
+                  ) {
+                    return yield* fail('positions', 'conflict', 'position snapshot identity is inconsistent')
+                  }
+                  if (sourceIds.has(position.sourceEventId) || symbols.has(position.position.symbol)) {
+                    return yield* fail(
+                      'positions',
+                      'conflict',
+                      'position snapshot contains a duplicate source or symbol',
+                    )
+                  }
+                  sourceIds.add(position.sourceEventId)
+                  symbols.add(position.position.symbol)
+                }
+
+                const eventIds = decoded.positions.map(eventIdOf).sort()
+                const snapshotId = canonicalHashV1({
+                  schemaVersion: 'bayn.paper-position-snapshot-id.v1',
+                  accountId: decoded.accountId,
+                  sourceHash: decoded.sourceHash,
+                  observedAt: decoded.observedAt,
+                })
+                const contentHash = canonicalHashV1({
+                  schemaVersion: 'bayn.paper-position-snapshot.v1',
+                  accountId: decoded.accountId,
+                  sourceHash: decoded.sourceHash,
+                  observedAt: decoded.observedAt,
+                  eventIds,
+                })
+
+                yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${Broker.Alpaca}:${decoded.accountId}`}, 0))`
+                const inserted = yield* sql<Record<string, unknown>>`
+                  INSERT INTO position_snapshots (
+                    snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+                  ) VALUES (
+                    ${snapshotId}, 'bayn.paper-position-snapshot.v1', ${decoded.accountId}, ${decoded.sourceHash},
+                    ${decoded.observedAt}, ${eventIds.length}, ${contentHash}
+                  )
+                  ON CONFLICT (account_id, source_hash, observed_at) DO NOTHING
+                  RETURNING snapshot_id
+                `.pipe(Effect.flatMap(decodeSnapshotIdRows))
+                if (inserted.length > 1) {
+                  return yield* fail('positions', 'invariant', 'position snapshot insert returned multiple rows')
+                }
+
+                if (inserted.length === 1) {
+                  yield* Effect.forEach(decoded.positions, (position) => append(position, snapshotId), {
+                    discard: true,
+                  })
+                }
+
+                const snapshots = yield* sql<Record<string, unknown>>`
+                  SELECT
+                    snapshot_id, schema_version, account_id, source_hash, observed_at,
+                    position_count::integer AS position_count, content_hash
+                  FROM position_snapshots
+                  WHERE account_id = ${decoded.accountId}
+                    AND source_hash = ${decoded.sourceHash}
+                    AND observed_at = ${decoded.observedAt}
+                `.pipe(Effect.flatMap(decodePositionSnapshotRows))
+                if (snapshots.length !== 1) {
+                  return yield* fail('positions', 'invariant', 'position snapshot was not persisted exactly once')
+                }
+                const stored = snapshots[0]
+                if (
+                  stored.snapshot_id !== snapshotId ||
+                  stored.account_id !== decoded.accountId ||
+                  stored.source_hash !== decoded.sourceHash ||
+                  stored.observed_at.toISOString() !== decoded.observedAt ||
+                  stored.position_count !== eventIds.length ||
+                  stored.content_hash !== contentHash
+                ) {
+                  return yield* fail('positions', 'conflict', 'stored position snapshot differs from replay')
+                }
+
+                const storedEvents = yield* sql<Record<string, unknown>>`
+                  SELECT event_id FROM positions WHERE snapshot_id = ${snapshotId} ORDER BY event_id
+                `.pipe(Effect.flatMap(decodeEventIdRows))
+                const storedEventIds = storedEvents.map((row) => row.event_id)
+                if (
+                  storedEventIds.length !== eventIds.length ||
+                  storedEventIds.some((eventId, index) => eventId !== eventIds[index])
+                ) {
+                  return yield* fail('positions', 'conflict', 'stored position snapshot membership is incomplete')
+                }
+                return { snapshotId, eventIds, deduplicated: inserted.length === 0 }
+              }),
+            ),
+          ),
+        ),
+      )
 
     const account = (input: FillEventInput): Effect.Effect<AccountingReceipt, PaperStoreError> =>
       run(
@@ -598,27 +746,39 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                   JOIN broker_events AS event ON event.event_id = snapshot.event_id
                   WHERE snapshot.event_id = ${decoded.accountEventId}
                 `.pipe(Effect.flatMap(decodeAccountRows))
-                const positionRows =
-                  decoded.positionEventIds.length === 0
-                    ? []
-                    : yield* sql<Record<string, unknown>>`
-                        SELECT
-                          position.event_id, position.account_id, position.symbol, event.source_event_id,
-                          position.market_value_micros::text AS market_value_micros, event.observed_at
-                        FROM positions AS position
-                        JOIN broker_events AS event ON event.event_id = position.event_id
-                        WHERE ${sql.in('position.event_id', decoded.positionEventIds)}
-                        ORDER BY position.event_id
-                      `.pipe(Effect.flatMap(decodePositionRows))
-                if (positionRows.length !== decoded.positionEventIds.length) {
+                const positionSnapshots = yield* sql<Record<string, unknown>>`
+                  SELECT
+                    snapshot_id, schema_version, account_id, source_hash, observed_at,
+                    position_count::integer AS position_count, content_hash
+                  FROM position_snapshots
+                  WHERE snapshot_id = ${decoded.positionSnapshotId}
+                `.pipe(Effect.flatMap(decodePositionSnapshotRows))
+                if (positionSnapshots.length !== 1) {
+                  return yield* fail('valuation', 'conflict', 'valuation position snapshot does not exist')
+                }
+                const positionSnapshot = positionSnapshots[0]
+                if (positionSnapshot.account_id !== accountSnapshot.account_id) {
+                  return yield* fail('valuation', 'conflict', 'valuation snapshots belong to different accounts')
+                }
+                const positionRows = yield* sql<Record<string, unknown>>`
+                  SELECT
+                    position.event_id, position.account_id, position.symbol, event.source_event_id,
+                    position.market_value_micros::text AS market_value_micros, event.observed_at
+                  FROM positions AS position
+                  JOIN broker_events AS event ON event.event_id = position.event_id
+                  WHERE position.snapshot_id = ${positionSnapshot.snapshot_id}
+                  ORDER BY position.event_id
+                `.pipe(Effect.flatMap(decodePositionRows))
+                if (positionRows.length !== positionSnapshot.position_count) {
                   return yield* fail('valuation', 'conflict', 'valuation position snapshot is incomplete')
                 }
-                const positionSourcePrefix = `position:${decoded.positionsSourceHash}:`
+                const positionsObservedAt = positionSnapshot.observed_at.toISOString()
+                const positionSourcePrefix = `position:${positionSnapshot.source_hash}:${positionsObservedAt}:`
                 if (
                   positionRows.some(
                     (position) =>
                       position.account_id !== accountSnapshot.account_id ||
-                      position.observed_at.toISOString() !== decoded.positionsObservedAt ||
+                      position.observed_at.toISOString() !== positionsObservedAt ||
                       !position.source_event_id.startsWith(positionSourcePrefix) ||
                       position.source_event_id.length === positionSourcePrefix.length,
                   )
@@ -634,7 +794,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                 }
                 const accountObservedAt = accountSnapshot.observed_at.toISOString()
                 const accountTime = accountSnapshot.observed_at.getTime()
-                const positionTime = Date.parse(decoded.positionsObservedAt)
+                const positionTime = positionSnapshot.observed_at.getTime()
                 if (Math.abs(accountTime - positionTime) > VALUATION_SNAPSHOT_MAX_SKEW_MS) {
                   return yield* fail('valuation', 'conflict', 'valuation snapshots exceed the maximum observation skew')
                 }
@@ -649,10 +809,11 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                 const source = {
                   schemaVersion: 'bayn.paper-valuation-source.v1' as const,
                   accountEventId: decoded.accountEventId,
-                  positionEventIds: [...decoded.positionEventIds].sort(),
-                  positionsSourceHash: decoded.positionsSourceHash,
+                  positionSnapshotId: positionSnapshot.snapshot_id,
+                  positionEventIds: positionRows.map((position) => position.event_id),
+                  positionsSourceHash: positionSnapshot.source_hash,
                   accountObservedAt,
-                  positionsObservedAt: decoded.positionsObservedAt,
+                  positionsObservedAt,
                 }
                 const sourceHash = canonicalHashV1(source)
                 const valuationId = canonicalHashV1({
@@ -704,7 +865,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         ),
       )
 
-    return { ingest, account, value } satisfies PaperStoreShape
+    return { ingest, ingestPositions, account, value } satisfies PaperStoreShape
   })
 
 export const PaperStoreLive = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>

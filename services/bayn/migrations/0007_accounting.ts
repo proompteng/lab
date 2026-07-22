@@ -5,6 +5,40 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
 
   yield* sql`
+    CREATE TABLE position_snapshots (
+      snapshot_id text PRIMARY KEY CHECK (snapshot_id ~ '^[0-9a-f]{64}$'),
+      schema_version text NOT NULL CHECK (schema_version = 'bayn.paper-position-snapshot.v1'),
+      account_id text NOT NULL CHECK (length(account_id) > 0 AND account_id = btrim(account_id)),
+      source_hash text NOT NULL CHECK (source_hash ~ '^[0-9a-f]{64}$'),
+      observed_at timestamptz NOT NULL,
+      position_count integer NOT NULL CHECK (position_count >= 0),
+      content_hash text NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
+      UNIQUE (snapshot_id, account_id),
+      UNIQUE (account_id, source_hash, observed_at)
+    )
+  `
+
+  yield* sql`
+    ALTER TABLE positions
+    ADD COLUMN snapshot_id text NOT NULL,
+    ADD CONSTRAINT positions_snapshot_fk
+      FOREIGN KEY (snapshot_id, account_id)
+      REFERENCES position_snapshots(snapshot_id, account_id) ON DELETE RESTRICT
+  `
+  yield* sql`CREATE INDEX positions_snapshot_idx ON positions(snapshot_id)`
+
+  yield* sql`
+    CREATE TRIGGER position_snapshots_append_only
+    BEFORE UPDATE OR DELETE ON position_snapshots
+    FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()
+  `
+  yield* sql`
+    CREATE TRIGGER position_snapshots_reject_truncate
+    BEFORE TRUNCATE ON position_snapshots
+    FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()
+  `
+
+  yield* sql`
     CREATE TABLE accounting_transactions (
       transaction_id text PRIMARY KEY CHECK (transaction_id ~ '^[0-9a-f]{64}$'),
       schema_version text NOT NULL CHECK (schema_version = 'bayn.paper-accounting-transaction.v1'),

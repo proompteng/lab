@@ -57,16 +57,31 @@ export const FillEventInputSchema = Schema.Struct({
 })
 export type FillEventInput = typeof FillEventInputSchema.Type
 
+export const PositionEventInputSchema = Schema.Struct({
+  _tag: Schema.Literal('Position'),
+  ...CommonEventInput,
+  position: PositionSchema,
+})
+export type PositionEventInput = typeof PositionEventInputSchema.Type
+
+export const PositionSnapshotInputSchema = Schema.Struct({
+  accountId: NonEmptyString,
+  sourceHash: Sha256,
+  observedAt: UtcInstant,
+  positions: Schema.Array(PositionEventInputSchema),
+})
+export type PositionSnapshotInput = typeof PositionSnapshotInputSchema.Type
+
 export const ValuationInputSchema = Schema.Struct({
   accountEventId: Sha256,
-  positionEventIds: Schema.Array(Sha256).check(Schema.isUnique()),
-  positionsSourceHash: Sha256,
-  positionsObservedAt: UtcInstant,
+  positionSnapshotId: Sha256,
 })
 export type ValuationInput = typeof ValuationInputSchema.Type
 
 const decodeEvent = Schema.decodeUnknownSync(BrokerEventInputSchema, strictParseOptions)
 const decodeFill = Schema.decodeUnknownSync(FillEventInputSchema, strictParseOptions)
+const decodePosition = Schema.decodeUnknownSync(PositionEventInputSchema, strictParseOptions)
+const decodePositionSnapshot = Schema.decodeUnknownSync(PositionSnapshotInputSchema, strictParseOptions)
 
 const assertObservationTime = (observedAt: string, evidence: ReadEvidence): void => {
   if (observedAt !== evidence.observedAt) throw new Error('normalized broker payload and response evidence disagree')
@@ -186,7 +201,7 @@ export const accountObservation = (result: ReadResult<AlpacaAccount>): BrokerEve
   })
 }
 
-export const positionObservations = (result: ReadResult<readonly AlpacaPosition[]>): readonly BrokerEventInput[] => {
+const positionObservations = (result: ReadResult<readonly AlpacaPosition[]>): readonly PositionEventInput[] => {
   const identities = new Set<string>()
   const symbols = new Set<string>()
   return [...result.value]
@@ -208,7 +223,7 @@ export const positionObservations = (result: ReadResult<readonly AlpacaPosition[
         unrealizedPnlMicros: value.unrealizedPnlMicros,
         observedAt: value.observedAt,
       }
-      return decodeEvent({
+      return decodePosition({
         _tag: 'Position',
         broker: Broker.Alpaca,
         accountId: position.accountId,
@@ -223,6 +238,21 @@ export const positionObservations = (result: ReadResult<readonly AlpacaPosition[
         position,
       })
     })
+}
+
+export const positionSnapshot = (
+  accountId: string,
+  result: ReadResult<readonly AlpacaPosition[]>,
+): PositionSnapshotInput => {
+  if (result.value.some((position) => position.accountId !== accountId)) {
+    throw new Error('Alpaca position response contains another account')
+  }
+  return decodePositionSnapshot({
+    accountId,
+    sourceHash: result.evidence.contentHash,
+    observedAt: result.evidence.observedAt,
+    positions: positionObservations(result),
+  })
 }
 
 export const orderObservation = (value: AlpacaOrder, evidence: ReadEvidence, intentId?: string): BrokerEventInput => {
