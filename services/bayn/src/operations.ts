@@ -4,12 +4,22 @@ import { isSqlError } from 'effect/unstable/sql/SqlError'
 import { DatabaseError } from './db/evidence-store'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
 
+const isRetryableSqlAcquisition = (error: unknown): boolean => {
+  if (isSqlError(error)) return error.isRetryable
+  return (
+    error instanceof DatabaseError &&
+    error.failure === 'unavailable' &&
+    isSqlError(error.cause) &&
+    error.cause.isRetryable
+  )
+}
+
 export const acquireSqlLayer = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
   Layer.build(layer).pipe(
     Effect.retry({
       times: 2,
       schedule: Schedule.spaced(Duration.seconds(1)),
-      while: (error) => isSqlError(error) && error.isRetryable,
+      while: isRetryableSqlAcquisition,
     }),
   )
 

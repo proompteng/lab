@@ -46,8 +46,8 @@ const main = Effect.gen(function* () {
     Layer.provide(Layer.succeedContext(clickhouse)),
     Layer.provide(NodeHttpClient.layerNodeHttp),
   )
-  const database = EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer))
-  const dependencies = Layer.mergeAll(marketData, JournalLive(config), database)
+  const evidenceStore = yield* acquireSqlLayer(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
+  const dependencies = Layer.mergeAll(marketData, JournalLive(config), Layer.succeedContext(evidenceStore))
   return yield* run(config, strategy).pipe(Effect.provide(dependencies))
 }).pipe(Effect.scoped)
 

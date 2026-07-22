@@ -52,6 +52,37 @@ describe('Bayn SQL dependency acquisition', () => {
     expect(attempts).toBe(1)
   })
 
+  test('retries retryable SQL failures wrapped by the database layer', async () => {
+    let attempts = 0
+    const connection = new SqlError({
+      reason: new ConnectionError({ cause: new Error('connection refused'), operation: 'connect' }),
+    })
+    const unavailable = new DatabaseError({
+      failure: 'unavailable',
+      operation: 'connect',
+      message: 'PostgreSQL operation failed',
+      cause: connection,
+    })
+    const dependencies = Layer.effectDiscard(
+      Effect.suspend(() => {
+        attempts += 1
+        return attempts === 1 ? Effect.fail(unavailable) : Effect.void
+      }),
+    )
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const fiber = yield* acquireSqlLayer(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
+        yield* Effect.yieldNow
+        expect(attempts).toBe(1)
+        yield* TestClock.adjust('1 second')
+        yield* Fiber.join(fiber)
+        expect(attempts).toBe(2)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
   test('interrupts a pending retry', async () => {
     let attempts = 0
     const retryable = new SqlError({

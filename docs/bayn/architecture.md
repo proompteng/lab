@@ -39,11 +39,11 @@ that interface and every persisted evidence contract.
 bindings and does not load bars, open a new lock, evaluate, journal, or persist. Continuous health checks still verify
 the recovered run after startup.
 
-A strategy rejection is terminal economic evidence, not an operational crash. ClickHouse layer acquisition retries a
-retryable SQL failure twice at one-second intervals; authentication and other terminal failures fail immediately. A
-transient startup dependency failure that remains after bounded acquisition escapes the scoped runtime, closes HTTP
-and acquired clients, and lets the Deployment restart the process. A deterministic contract or evidence failure
-enters `FAILED` and keeps HTTP available for diagnosis with readiness closed.
+A strategy rejection is terminal economic evidence, not an operational crash. ClickHouse and PostgreSQL layer
+acquisition retry a retryable SQL failure twice at one-second intervals; authentication and other terminal failures
+fail immediately. A transient startup dependency failure that remains after bounded acquisition escapes the scoped
+runtime, closes HTTP and acquired clients, and lets the Deployment restart the process. A deterministic contract or
+evidence failure enters `FAILED` and keeps HTTP available for diagnosis with readiness closed.
 
 ## Dormant paper mutation boundary
 
