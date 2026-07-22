@@ -341,6 +341,34 @@ describe('bounded paper risk', () => {
     expect(result.metrics.postTradeSymbolExposureMicros).toBe('0')
   })
 
+  test('revalues the current symbol at the current reference price before projecting exposure', () => {
+    const state = makeState({
+      account: { ...baseState().account, buyingPowerMicros: '200000000' },
+      referencePriceMicros: '200000000',
+      expectedExecutionPriceMicros: '200000000',
+    })
+    const intent = makeIntent({ notionalLimitMicros: '200000000' })
+    const policy = makePolicy({
+      maxOrderNotionalMicros: '200000000',
+      maxSymbolExposureMicros: '400000000',
+      maxGrossExposureMicros: '500000000',
+      maxNetExposureMicros: '500000000',
+      maxDailyTradedNotionalMicros: '300000000',
+    })
+    const result = evaluate(intent, state, policy)
+
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(result.metrics.postTradeSymbolExposureMicros).toBe('400000000')
+    expect(result.metrics.postTradeGrossExposureMicros).toBe('500000000')
+    expect(result.metrics.postTradeNetExposureMicros).toBe('500000000')
+    expectBlocked(
+      Reason.SymbolExposureExceeded,
+      intent,
+      state,
+      makePolicy({ ...policy, maxSymbolExposureMicros: '399999999' }),
+    )
+  })
+
   test('fails closed on identity, authority, reconciliation, freshness, session, and mutation state', () => {
     expectBlocked(Reason.AccountMismatch, makeIntent(), makeState(), makePolicy({ accountId: 'another-account' }))
     expectBlocked(
