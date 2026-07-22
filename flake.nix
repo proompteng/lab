@@ -213,6 +213,17 @@
             "arc-runner-image" = import ./nix/images/arc-runner.nix {
               inherit pkgs lib ciToolchain;
             };
+            "hermes-toolchain-image" = import ./nix/images/hermes-toolchain.nix {
+              inherit pkgs lib nodejs go;
+              inherit (exact)
+                bun
+                helm
+                kubeconform
+                kustomize
+                shellcheck
+                yq
+                ;
+            };
             "oirat-image" = import ./nix/images/oirat.nix {
               inherit pkgs lib nodejs;
               repoRoot = ./.;
