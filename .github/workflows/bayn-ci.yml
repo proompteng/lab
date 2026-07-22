@@ -64,4 +64,6 @@ jobs:
           --filter @proompteng/source
           --filter @proompteng/bayn
       - name: Verify durable evidence on PostgreSQL 18
-        run: bun test services/bayn/src/db/evidence-store.integration.test.ts
+        run: |
+          bun test services/bayn/src/db/evidence-store.integration.test.ts
+          bun test services/bayn/src/db/paper-store.integration.test.ts

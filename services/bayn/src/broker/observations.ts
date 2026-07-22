@@ -17,6 +17,7 @@ import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcOrderTimestampSchema as UtcOrderTimestamp,
   strictParseOptions,
 } from '../schemas'
 import {
@@ -46,13 +47,14 @@ export const BrokerEventInputSchema = Schema.TaggedUnion({
   Account: { ...CommonEventInput, account: AccountSnapshotSchema },
   Position: { ...CommonEventInput, position: PositionSchema },
   Order: { ...CommonEventInput, order: OrderSchema },
-  Fill: { ...CommonEventInput, fill: FillSchema },
+  Fill: { ...CommonEventInput, sourceTimestamp: UtcOrderTimestamp, fill: FillSchema },
 })
 export type BrokerEventInput = typeof BrokerEventInputSchema.Type
 
 export const FillEventInputSchema = Schema.Struct({
   _tag: Schema.Literal('Fill'),
   ...CommonEventInput,
+  sourceTimestamp: UtcOrderTimestamp,
   fill: FillSchema,
 })
 export type FillEventInput = typeof FillEventInputSchema.Type
@@ -84,6 +86,12 @@ const decodePosition = Schema.decodeUnknownSync(PositionEventInputSchema, strict
 const decodePositionSnapshot = Schema.decodeUnknownSync(PositionSnapshotInputSchema, strictParseOptions)
 
 const canonicalInstant = (value: string): string => new Date(value).toISOString()
+
+export const sourceTimestamp = (value: string): string => {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
+  if (match === null) throw new Error('broker timestamp is not a UTC RFC 3339 instant')
+  return `${match[1]}.${(match[2] ?? '').padEnd(9, '0')}Z`
+}
 
 const assertObservationTime = (observedAt: string, evidence: ReadEvidence): void => {
   if (observedAt !== evidence.observedAt) throw new Error('normalized broker payload and response evidence disagree')
@@ -330,6 +338,7 @@ export const fillObservation = (
     broker: Broker.Alpaca,
     accountId: fill.accountId,
     sourceEventId: fill.fillId,
+    sourceTimestamp: sourceTimestamp(activity.transactionTime),
     contentHash: canonicalHashV1({
       schemaVersion: 'bayn.paper-fill-source.v1',
       fill,

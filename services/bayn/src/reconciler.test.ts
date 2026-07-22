@@ -269,12 +269,12 @@ describe('paper reconciliation loop', () => {
     const laterOrder = { ...order(1), submittedAt: '2026-07-22T12:00:01.000Z' }
     const earlierFill = {
       ...fill(0, earlierOrder),
-      activityId: 'fill-earlier',
+      activityId: 'fill-z',
       transactionTime: '2026-07-22T12:00:00.1Z',
     }
     const laterFill = {
       ...fill(1, laterOrder),
-      activityId: 'fill-later',
+      activityId: 'fill-a',
       transactionTime: '2026-07-22T12:00:00.100001Z',
     }
     const read: BrokerReadShape = {

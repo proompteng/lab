@@ -100,6 +100,7 @@ const makeLedgerClient = () => {
         .filter(
           (transfer) =>
             transfer.ledger === filter.ledger &&
+            (filter.user_data_128 === 0n || transfer.user_data_128 === filter.user_data_128) &&
             (filter.user_data_64 === 0n || transfer.user_data_64 === filter.user_data_64),
         )
         .slice(0, filter.limit),
@@ -198,6 +199,18 @@ describe('TigerBeetle simulation journal', () => {
       { quantityMicros: '0', costMicros: '0' },
       journalConfig.tigerBeetle.ledger,
     ).ledger
+    const invalidTarget = makeLedgerClient()
+    const invalidPlan = {
+      ...plan,
+      transfers: plan.transfers.map((transfer, index) => (index === 0 ? { ...transfer, user_data_128: 0n } : transfer)),
+    }
+    const invalid = await Effect.runPromise(
+      Effect.flip(withJournal(invalidTarget.client, (journal) => journal.post(invalidPlan))),
+    )
+    expect(invalid.message).toContain('nonzero transaction tag')
+    expect(invalidTarget.accounts.size).toBe(0)
+    expect(invalidTarget.transfers.size).toBe(0)
+
     const target = makeLedgerClient()
 
     const exact = await Effect.runPromise(
@@ -221,6 +234,10 @@ describe('TigerBeetle simulation journal', () => {
     expect(error.message).toContain('does not match its plan')
 
     target.transfers.set(plan.transfers[0].id + 1n, { ...plan.transfers[0], id: plan.transfers[0].id + 1n })
+    const postWithExtra = await Effect.runPromise(
+      Effect.flip(withJournal(target.client, (journal) => journal.post(plan))),
+    )
+    expect(postWithExtra.message).toContain('transfer set mismatch')
     const extra = await Effect.runPromise(
       withJournal(target.client, (journal) => journal.verifyAccount(fill.accountId, [plan])),
     )

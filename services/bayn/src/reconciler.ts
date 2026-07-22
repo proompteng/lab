@@ -15,6 +15,7 @@ import {
   fillObservation,
   orderObservation,
   positionSnapshot,
+  sourceTimestamp,
   type BrokerEventInput,
   type FillEventInput,
 } from './broker/observations'
@@ -54,11 +55,7 @@ const failure = (operation: ReconciliationError['operation'], message: string, c
 const attempt = <A>(operation: ReconciliationError['operation'], message: string, evaluate: () => A) =>
   Effect.try({ try: evaluate, catch: (cause) => failure(operation, message, cause) })
 
-const timestampOrderKey = (value: string): string => {
-  const separator = value.indexOf('.')
-  if (separator === -1) return `${value.slice(0, -1)}.000000000Z`
-  return `${value.slice(0, separator)}.${value.slice(separator + 1, -1).padEnd(9, '0')}Z`
-}
+const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
 const readOrders = (
   read: BrokerReadShape,
@@ -90,11 +87,11 @@ const readOrders = (
       for (const order of page.value) {
         if (
           previousSubmittedAt !== undefined &&
-          timestampOrderKey(order.submittedAt) < timestampOrderKey(previousSubmittedAt)
+          sourceTimestamp(order.submittedAt) < sourceTimestamp(previousSubmittedAt)
         ) {
           return yield* Effect.fail(failure('pagination', 'Alpaca order history is not ascending'))
         }
-        if (cursor !== undefined && timestampOrderKey(order.submittedAt) <= timestampOrderKey(cursor)) {
+        if (cursor !== undefined && sourceTimestamp(order.submittedAt) <= sourceTimestamp(cursor)) {
           return yield* Effect.fail(failure('pagination', 'Alpaca order timestamp cursor did not advance'))
         }
         if (ids.has(order.brokerOrderId)) {
@@ -236,10 +233,11 @@ const run = (
 
           const fillEvents = [...fills]
             .sort((left, right) => {
-              const byTime = timestampOrderKey(left.value.transactionTime).localeCompare(
-                timestampOrderKey(right.value.transactionTime),
+              const byTime = compareText(
+                sourceTimestamp(left.value.transactionTime),
+                sourceTimestamp(right.value.transactionTime),
               )
-              return byTime === 0 ? left.value.activityId.localeCompare(right.value.activityId) : byTime
+              return byTime === 0 ? compareText(left.value.activityId, right.value.activityId) : byTime
             })
             .map((observed): FillEventInput => {
               const order = orderById.get(observed.value.brokerOrderId)

@@ -171,7 +171,7 @@ describe('paper contracts', () => {
       { _tag: 'Account' as const, ...source, account },
       { _tag: 'Position' as const, ...source, position },
       { _tag: 'Order' as const, ...source, order },
-      { _tag: 'Fill' as const, ...source, fill },
+      { _tag: 'Fill' as const, ...source, sourceTimestamp: '2026-07-22T06:00:00.000000000Z', fill },
       { _tag: 'Error' as const, ...source, error: brokerError },
       { _tag: 'RateLimit' as const, ...source, rateLimit },
     ]

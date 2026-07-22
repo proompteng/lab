@@ -300,12 +300,12 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           return sql`
             INSERT INTO fills (
               event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
-              symbol, side, quantity_micros, price_micros, fee_micros
+              symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
             ) VALUES (
               ${eventId}, ${input.fill.accountId}, ${input.fill.schemaVersion}, ${input.fill.fillId},
               ${input.fill.brokerOrderId}, ${input.fill.clientOrderId}, ${input.fill.intentId ?? null},
               ${input.fill.symbol}, ${input.fill.side}, ${input.fill.quantityMicros}, ${input.fill.priceMicros},
-              ${input.fill.feeMicros}
+              ${input.fill.feeMicros}, ${input.sourceTimestamp}
             )
           `.pipe(Effect.asVoid)
       }
@@ -363,10 +363,27 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         }),
       )
 
-    const priorPosition = (
-      input: FillEventInput,
-      sourceSequence: string,
-    ): Effect.Effect<PositionCost, PaperStoreError> =>
+    const economicallyPrecedes = (input: FillEventInput) => sql`
+      (
+        candidate_fill.source_timestamp COLLATE "C" < (${input.sourceTimestamp}::text COLLATE "C")
+        OR (
+          candidate_fill.source_timestamp = ${input.sourceTimestamp}
+          AND candidate_fill.fill_id COLLATE "C" < (${input.fill.fillId}::text COLLATE "C")
+        )
+      )
+    `
+
+    const economicallyFollows = (input: FillEventInput) => sql`
+      (
+        candidate_fill.source_timestamp COLLATE "C" > (${input.sourceTimestamp}::text COLLATE "C")
+        OR (
+          candidate_fill.source_timestamp = ${input.sourceTimestamp}
+          AND candidate_fill.fill_id COLLATE "C" > (${input.fill.fillId}::text COLLATE "C")
+        )
+      )
+    `
+
+    const priorPosition = (input: FillEventInput): Effect.Effect<PositionCost, PaperStoreError> =>
       run(
         'account',
         sql<Record<string, unknown>>`
@@ -374,10 +391,10 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
             COALESCE(sum(transaction.quantity_delta_micros), 0)::text AS quantity_micros,
             COALESCE(sum(transaction.cost_basis_delta_micros), 0)::text AS cost_micros
           FROM accounting_transactions AS transaction
-          JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+          JOIN fills AS candidate_fill ON candidate_fill.event_id = transaction.broker_event_id
           WHERE transaction.account_id = ${input.accountId}
             AND transaction.symbol = ${input.fill.symbol}
-            AND event.source_sequence < ${sourceSequence}
+            AND ${economicallyPrecedes(input)}
         `.pipe(
           Effect.flatMap(decodePositionCost),
           Effect.map(([position]) => ({
@@ -387,27 +404,49 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         ),
       )
 
-    const requirePostedPredecessors = (
-      input: FillEventInput,
-      sourceSequence: string,
-    ): Effect.Effect<void, PaperStoreError> =>
+    const requirePostedPredecessors = (input: FillEventInput): Effect.Effect<void, PaperStoreError> =>
       run(
         'account',
         sql<Record<string, unknown>>`
           SELECT EXISTS (
             SELECT 1
-            FROM accounting_transactions AS transaction
-            JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+            FROM broker_events AS event
+            JOIN fills AS candidate_fill ON candidate_fill.event_id = event.event_id
+            LEFT JOIN accounting_transactions AS transaction ON transaction.broker_event_id = event.event_id
             LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = transaction.broker_event_id
-            WHERE transaction.account_id = ${input.accountId}
-              AND event.source_sequence < ${sourceSequence}
-              AND receipt.receipt_id IS NULL
+            WHERE event.broker = ${input.broker}
+              AND event.account_id = ${input.accountId}
+              AND event.event_kind = 'FILL'
+              AND ${economicallyPrecedes(input)}
+              AND (transaction.transaction_id IS NULL OR receipt.receipt_id IS NULL)
           ) AS unresolved
         `.pipe(
           Effect.flatMap(decodeUnresolvedPredecessor),
           Effect.flatMap(([result]) =>
             result.unresolved
               ? fail('account', 'conflict', 'an earlier fill has not been posted to TigerBeetle')
+              : Effect.void,
+          ),
+        ),
+      )
+
+    const requireNoPreparedSuccessors = (input: FillEventInput): Effect.Effect<void, PaperStoreError> =>
+      run(
+        'account',
+        sql<Record<string, unknown>>`
+          SELECT EXISTS (
+            SELECT 1
+            FROM accounting_transactions AS transaction
+            JOIN fills AS candidate_fill ON candidate_fill.event_id = transaction.broker_event_id
+            WHERE transaction.account_id = ${input.accountId}
+              AND transaction.symbol = ${input.fill.symbol}
+              AND ${economicallyFollows(input)}
+          ) AS unresolved
+        `.pipe(
+          Effect.flatMap(decodeUnresolvedPredecessor),
+          Effect.flatMap(([result]) =>
+            result.unresolved
+              ? fail('account', 'conflict', 'a later fill was already accounted before this economic predecessor')
               : Effect.void,
           ),
         ),
@@ -464,13 +503,14 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         sql.withTransaction(
           Effect.gen(function* () {
             const event = yield* append(input)
-            yield* requirePostedPredecessors(input, event.sourceSequence)
-            const position = yield* priorPosition(input, event.sourceSequence)
+            const stored = yield* readPrepared(event.eventId)
+            yield* requirePostedPredecessors(input)
+            if (stored === undefined) yield* requireNoPreparedSuccessors(input)
+            const position = yield* priorPosition(input)
             const expected = yield* Effect.try({
               try: () => prepareAccounting(event.eventId, input.fill, position, config.tigerBeetle.ledger),
               catch: (cause) => error('account', 'invariant', 'fill accounting plan is invalid', cause),
             })
-            const stored = yield* readPrepared(event.eventId)
             if (stored === undefined) {
               yield* insertPrepared(expected)
               return expected

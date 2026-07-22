@@ -338,6 +338,16 @@ describe('bounded paper risk', () => {
     expect(result.metrics.postTradeSymbolExposureMicros).toBe('0')
   })
 
+  test('blocks a sell that would open a short position', () => {
+    const intent = makeIntent({ side: OrderSide.Sell, quantityMicros: '2000000', notionalLimitMicros: '200000000' })
+    const policy = makePolicy({
+      maxOrderNotionalMicros: '200000000',
+      maxDailyTradedNotionalMicros: '300000000',
+    })
+
+    expectBlocked(Reason.ShortPositionNotAllowed, intent, makeState(), policy)
+  })
+
   test('revalues the current symbol at the current reference price before projecting exposure', () => {
     const state = makeState({
       account: { ...baseState().account, buyingPowerMicros: '200000000' },
@@ -366,7 +376,7 @@ describe('bounded paper risk', () => {
     )
   })
 
-  test('projects short exposure at the current quote instead of the lower expected sell price', () => {
+  test('blocks an existing short while retaining conservative exposure metrics', () => {
     const positions = [
       baseState().positions[0],
       {
@@ -394,7 +404,8 @@ describe('bounded paper risk', () => {
     })
     const result = evaluate(intent, state, policy)
 
-    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(result.decision.outcome).toBe(RiskOutcome.Blocked)
+    expect(result.decision.reasonCodes).toContain(Reason.ShortPositionNotAllowed)
     expect(result.metrics.orderNotionalMicros).toBe('198000000')
     expect(result.metrics.postTradeSymbolExposureMicros).toBe('-400000000')
     expectBlocked(

@@ -23,7 +23,7 @@ import {
 } from '../paper'
 import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
-import { makeStrategy } from '../strategy-service'
+import { makeStrategy } from '../strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
 import type { Protocol } from '../types'
 import {
@@ -279,6 +279,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 6, name: 'current_risk_clock' },
       { migration_id: 7, name: 'accounting' },
       { migration_id: 8, name: 'identified_submit_unknown' },
+      { migration_id: 9, name: 'fill_source_timestamp' },
     ])
   })
 
@@ -1500,10 +1501,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             yield* sql`
               INSERT INTO fills (
                 event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id,
-                symbol, side, quantity_micros, price_micros, fee_micros
+                symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
               ) VALUES (
                 ${fillEventId}, 'paper-account-1', 'bayn.paper-fill.v1', 'fill-1', 'broker-order-1',
-                'client-order-1', 'NVDA', 'BUY', 1000000, 1250000, 0
+                'client-order-1', 'NVDA', 'BUY', 1000000, 1250000, 0,
+                '2026-07-22T06:00:30.000000000Z'
               )
             `
             yield* sql`

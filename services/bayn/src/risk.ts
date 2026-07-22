@@ -88,6 +88,7 @@ export enum Gate {
   OrderNotional = 'order_notional',
   BuyingPower = 'buying_power',
   AdverseSlippage = 'adverse_slippage',
+  LongOnly = 'long_only',
   SymbolExposure = 'symbol_exposure',
   GrossExposure = 'gross_exposure',
   NetExposure = 'net_exposure',
@@ -119,6 +120,7 @@ export enum Reason {
   OrderNotionalExceeded = 'ORDER_NOTIONAL_EXCEEDED',
   BuyingPowerExceeded = 'BUYING_POWER_EXCEEDED',
   AdverseSlippageExceeded = 'ADVERSE_SLIPPAGE_EXCEEDED',
+  ShortPositionNotAllowed = 'SHORT_POSITION_NOT_ALLOWED',
   SymbolExposureExceeded = 'SYMBOL_EXPOSURE_EXCEEDED',
   GrossExposureExceeded = 'GROSS_EXPOSURE_EXCEEDED',
   NetExposureExceeded = 'NET_EXPOSURE_EXCEEDED',
@@ -328,8 +330,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     .filter((position) => position.symbol === intent.symbol)
     .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
   const currentSymbolExposureNumerator = currentSymbolQuantity * referencePrice
-  const postTradeSymbolExposureNumerator =
-    (currentSymbolQuantity + direction * BigInt(intent.quantityMicros)) * referencePrice
+  const postTradeSymbolQuantity = currentSymbolQuantity + direction * BigInt(intent.quantityMicros)
+  const postTradeSymbolExposureNumerator = postTradeSymbolQuantity * referencePrice
   const postTradeSymbolExposure = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
   const postTradeSymbolExposureMagnitude = divideUp(absolute(postTradeSymbolExposureNumerator), QUANTITY_SCALE)
   const otherGrossExposure = state.positions
@@ -520,6 +522,13 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
       adverseSlippageBps <= BigInt(policy.maxAdverseSlippageBps),
       adverseSlippageBps,
       `<=${policy.maxAdverseSlippageBps}`,
+    ),
+    makeGate(
+      Gate.LongOnly,
+      Reason.ShortPositionNotAllowed,
+      currentSymbolQuantity >= 0n && postTradeSymbolQuantity >= 0n,
+      `${currentSymbolQuantity}:${postTradeSymbolQuantity}`,
+      '>=0:>=0',
     ),
     makeGate(
       Gate.SymbolExposure,

@@ -113,6 +113,24 @@ const queryFilter = (ledger: number): QueryFilter => ({
   flags: 0,
 })
 
+const transactionTransferQuery = (plan: LedgerPlan): QueryFilter => {
+  const first = plan.transfers[0]
+  if (first === undefined) throw new Error('accounting plan contains no transfers')
+  if (
+    first.user_data_128 === 0n ||
+    plan.transfers.some(
+      (transfer) => transfer.ledger !== first.ledger || transfer.user_data_128 !== first.user_data_128,
+    )
+  ) {
+    throw new Error('accounting transfers do not share one nonzero transaction tag and ledger')
+  }
+  return {
+    ...queryFilter(first.ledger),
+    user_data_128: first.user_data_128,
+    limit: plan.transfers.length + 1,
+  }
+}
+
 const assertPersistedRun = (
   result: ReconciliationResult,
   ledger: number,
@@ -238,6 +256,7 @@ const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect
     if (plan.accounts.length >= BATCH_MAX || plan.transfers.length >= BATCH_MAX) {
       return yield* Effect.fail(operationalError('journal', 'post', 'TigerBeetle posting plan exceeds batch limits'))
     }
+    const transferQuery = yield* validate('build-transaction-transfer-query', () => transactionTransferQuery(plan))
     yield* createAndVerifyAccounts(client, plan.accounts)
     yield* createAndVerifyTransfers(client, plan.transfers)
     const [accounts, transfers] = yield* Effect.all(
@@ -245,9 +264,7 @@ const post = (client: TigerBeetleRequestClient, plan: LedgerPlan): Effect.Effect
         client.request('verify-posted-accounts', (active) =>
           active.lookupAccounts(plan.accounts.map((account) => account.id)),
         ),
-        client.request('verify-posted-transfers', (active) =>
-          active.lookupTransfers(plan.transfers.map((transfer) => transfer.id)),
-        ),
+        client.request('verify-posted-transfers', (active) => active.queryTransfers(transferQuery)),
       ],
       { concurrency: 'unbounded' },
     )
