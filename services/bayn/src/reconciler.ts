@@ -21,6 +21,7 @@ import {
 import { PaperStore, type PaperStoreError, type PaperStoreShape } from './db/paper-store'
 import type { BrokerSnapshot, ReconciliationReport } from './db/reconciliation'
 import { WriterFence, type WriterFenceError, type WriterFenceService } from './execution/writer-fence'
+import { canonicalHashV1 } from './hash'
 
 const maximumRows = 10_000
 const ordersPageSize = 500
@@ -36,8 +37,13 @@ interface OrderRead {
   readonly observedAt: string
 }
 
+interface BrokerHistory {
+  readonly orders: OrderRead
+  readonly fills: readonly Observed<FillActivity>[]
+}
+
 export class ReconciliationError extends Data.TaggedError('ReconciliationError')<{
-  readonly operation: 'pagination' | 'normalization'
+  readonly operation: 'pagination' | 'normalization' | 'snapshot'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -153,17 +159,41 @@ const readFills = (
     }
   })
 
+const readHistory = (
+  read: BrokerReadShape,
+  until: string,
+): Effect.Effect<BrokerHistory, BrokerReadError | ReconciliationError> =>
+  Effect.all({ orders: readOrders(read, until), fills: readFills(read, until) }, { concurrency: 2 })
+
+const historyHash = (history: BrokerHistory): string =>
+  canonicalHashV1({
+    schemaVersion: 'bayn.paper-broker-history.v1',
+    orders: history.orders.rows
+      .map(({ value }) => {
+        const { observedAt: _observedAt, ...material } = value
+        return material
+      })
+      .sort((left, right) => left.brokerOrderId.localeCompare(right.brokerOrderId)),
+    fills: history.fills
+      .map(({ value }) => value)
+      .sort((left, right) => left.activityId.localeCompare(right.activityId)),
+  })
+
 const run = (
   read: BrokerReadShape,
   store: PaperStoreShape,
   fence: WriterFenceService,
 ): Effect.Effect<ReconciliationReport, BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError> =>
   Effect.gen(function* () {
-    const until = new Date(yield* Clock.currentTimeMillis).toISOString()
-    const [orders, fills, accountResult, positionsResult] = yield* Effect.all(
-      [readOrders(read, until), readFills(read, until), read.account, read.positions],
-      { concurrency: 4 },
-    )
+    const beforeUntil = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const before = yield* readHistory(read, beforeUntil)
+    const [accountResult, positionsResult] = yield* Effect.all([read.account, read.positions], { concurrency: 2 })
+    const afterUntil = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const history = yield* readHistory(read, afterUntil)
+    if (historyHash(before) !== historyHash(history)) {
+      return yield* Effect.fail(failure('snapshot', 'broker history changed during reconciliation'))
+    }
+    const { orders, fills } = history
 
     return yield* fence.transaction(
       Effect.gen(function* () {

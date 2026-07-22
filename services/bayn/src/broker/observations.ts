@@ -83,6 +83,8 @@ const decodeFill = Schema.decodeUnknownSync(FillEventInputSchema, strictParseOpt
 const decodePosition = Schema.decodeUnknownSync(PositionEventInputSchema, strictParseOptions)
 const decodePositionSnapshot = Schema.decodeUnknownSync(PositionSnapshotInputSchema, strictParseOptions)
 
+const canonicalInstant = (value: string): string => new Date(value).toISOString()
+
 const assertObservationTime = (observedAt: string, evidence: ReadEvidence): void => {
   if (observedAt !== evidence.observedAt) throw new Error('normalized broker payload and response evidence disagree')
 }
@@ -277,6 +279,7 @@ export const orderObservation = (value: AlpacaOrder, evidence: ReadEvidence, int
     status: orderStatus(value.status, value.filledQuantityMicros, value.quantityMicros),
     observedAt: value.observedAt,
   }
+  const occurredAt = canonicalInstant(value.updatedAt)
   return decodeEvent({
     _tag: 'Order',
     broker: Broker.Alpaca,
@@ -287,7 +290,7 @@ export const orderObservation = (value: AlpacaOrder, evidence: ReadEvidence, int
       order: withoutObservedAt(order),
       brokerUpdatedAt: value.updatedAt,
     }),
-    occurredAt: value.updatedAt,
+    occurredAt,
     observedAt: order.observedAt,
     order,
   })
@@ -307,6 +310,7 @@ export const fillObservation = (
   ) {
     throw new Error('Alpaca fill activity does not match its order')
   }
+  const occurredAt = canonicalInstant(activity.transactionTime)
   const fill = {
     schemaVersion: 'bayn.paper-fill.v1' as const,
     accountId: activity.accountId,
@@ -319,14 +323,18 @@ export const fillObservation = (
     quantityMicros: activity.quantityMicros,
     priceMicros: activity.priceMicros,
     feeMicros: options.feeMicros ?? '0',
-    occurredAt: activity.transactionTime,
+    occurredAt,
   }
   return decodeFill({
     _tag: 'Fill',
     broker: Broker.Alpaca,
     accountId: fill.accountId,
     sourceEventId: fill.fillId,
-    contentHash: canonicalHashV1({ schemaVersion: 'bayn.paper-fill-source.v1', fill }),
+    contentHash: canonicalHashV1({
+      schemaVersion: 'bayn.paper-fill-source.v1',
+      fill,
+      brokerTransactionTime: activity.transactionTime,
+    }),
     occurredAt: fill.occurredAt,
     observedAt: evidence.observedAt,
     fill,

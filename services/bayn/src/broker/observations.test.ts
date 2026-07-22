@@ -46,7 +46,7 @@ const order: AlpacaOrder = {
   brokerOrderId: '8efc7b9a-8b2b-4000-9955-d36e7db0df74',
   clientOrderId: 'bayn-order-1',
   createdAt: '2026-07-22T15:29:59.000Z',
-  updatedAt: '2026-07-22T15:30:00.500Z',
+  updatedAt: '2026-07-22T15:30:00.500123Z',
   submittedAt: '2026-07-22T15:29:59.100Z',
   assetId: '9f1f6f68-9d4b-4db5-9b24-3fe1c15b5b4c',
   symbol: 'NVDA',
@@ -72,7 +72,7 @@ const activity: FillActivity = {
   quantityMicros: '1000000',
   side: AlpacaOrderSide.Buy,
   symbol: 'NVDA',
-  transactionTime: '2026-07-22T15:30:00.000Z',
+  transactionTime: '2026-07-22T15:30:00.000987Z',
   brokerOrderId: order.brokerOrderId,
   type: TradeActivityType.PartialFill,
   orderStatus: AlpacaOrderStatus.PartiallyFilled,
@@ -160,6 +160,8 @@ describe('paper broker observations', () => {
       filledQuantityMicros: '1000000',
       intentId: 'b'.repeat(64),
     })
+    expect(event.occurredAt).toBe('2026-07-22T15:30:00.500Z')
+    expect(event.sourceEventId).toBe(`order:${order.brokerOrderId}:${order.updatedAt}`)
     expect(() => orderObservation({ ...order, extendedHours: true }, evidence)).toThrow(
       'paper execution requires extended hours to be disabled',
     )
@@ -173,6 +175,7 @@ describe('paper broker observations', () => {
       clientOrderId: order.clientOrderId,
       feeMicros: '0',
       intentId: 'b'.repeat(64),
+      occurredAt: '2026-07-22T15:30:00.000Z',
     })
     expect(() => fillObservation({ ...activity, symbol: 'AMD' }, order, evidence)).toThrow(
       'Alpaca fill activity does not match its order',

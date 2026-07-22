@@ -231,8 +231,8 @@ describe('paper reconciliation loop', () => {
 
     await Effect.runPromise(provide(read, makeStore(control)))
 
-    expect(orderCursors).toEqual([undefined, allOrders[499].submittedAt])
-    expect(fillCursors).toEqual([undefined, allFills[99].activityId])
+    expect(orderCursors).toEqual([undefined, allOrders[499].submittedAt, undefined, allOrders[499].submittedAt])
+    expect(fillCursors).toEqual([undefined, allFills[99].activityId, undefined, allFills[99].activityId])
     expect(control.reconciliations).toHaveLength(1)
     expect(control.reconciliations[0].orders).toHaveLength(501)
     expect(control.reconciliations[0].fills).toHaveLength(101)
@@ -255,6 +255,44 @@ describe('paper reconciliation loop', () => {
 
     const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
     expect(failure).toBeInstanceOf(ReconciliationError)
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('rejects a broker mutation that races the account snapshot before any durable write', async () => {
+    const racedOrder = order(0)
+    const racedFill = fill(0, racedOrder)
+    let orderReads = 0
+    let fillReads = 0
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => {
+        orderReads += 1
+        return Effect.succeed({
+          value: orderReads === 1 ? [] : [racedOrder],
+          evidence: evidence(`orders-${orderReads}`),
+        })
+      },
+      fillActivities: () => {
+        fillReads += 1
+        return Effect.succeed({
+          value: { items: fillReads === 1 ? [] : [racedFill] },
+          evidence: evidence(`fills-${fillReads}`),
+        })
+      },
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+
+    expect(failure).toMatchObject({
+      _tag: 'ReconciliationError',
+      operation: 'snapshot',
+      message: 'broker history changed during reconciliation',
+    })
+    expect(orderReads).toBe(2)
+    expect(fillReads).toBe(2)
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
