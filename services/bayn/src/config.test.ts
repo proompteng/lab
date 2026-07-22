@@ -12,12 +12,15 @@ const buildMetadata: EmbeddedBuildMetadata = {
   sourceRevision,
   imageRepository,
   strategyBehaviorHash: 'c'.repeat(64),
+  strategyParameterHash: 'f'.repeat(64),
 }
 
 const runtimeEnvironment = new Map([
   ['BAYN_CODE_REVISION', sourceRevision],
   ['BAYN_IMAGE_REPOSITORY', imageRepository],
   ['BAYN_IMAGE_DIGEST', imageDigest],
+  ['BAYN_STRATEGY_BEHAVIOR_HASH', buildMetadata.strategyBehaviorHash],
+  ['BAYN_STRATEGY_PARAMETER_HASH', buildMetadata.strategyParameterHash],
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
@@ -93,6 +96,7 @@ describe('Effect configuration', () => {
       verification: 'development-configured',
     })
     expect(config.build.strategyBehaviorHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(config.build.strategyParameterHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
   test('does not let missing build facts or development mode bypass production verification', async () => {
@@ -165,6 +169,8 @@ describe('Effect configuration', () => {
     for (const [name, value] of [
       ['BAYN_CODE_REVISION', 'd'.repeat(40)],
       ['BAYN_IMAGE_REPOSITORY', 'registry.example.invalid/bayn'],
+      ['BAYN_STRATEGY_BEHAVIOR_HASH', 'd'.repeat(64)],
+      ['BAYN_STRATEGY_PARAMETER_HASH', 'e'.repeat(64)],
     ] as const) {
       const invalid = new Map(runtimeEnvironment)
       invalid.set(name, value)

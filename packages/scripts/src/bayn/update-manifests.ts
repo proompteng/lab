@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import process from 'node:process'
 
 const digestPattern = /^sha256:[0-9a-f]{64}$/
+const hashPattern = /^[0-9a-f]{64}$/
 const sourceShaPattern = /^[0-9a-f]{40}$/
 const tagPattern = /^[A-Za-z0-9._-]{1,128}$/
 const currentRuntimeConfiguration = {
@@ -24,10 +25,23 @@ export interface UpdateBaynManifestOptions {
   readonly sourceSha: string
   readonly tag: string
   readonly digest: string
+  readonly strategyBehaviorHash: string
+  readonly strategyParameterHash: string
   readonly rolloutTimestamp: string
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
   readonly applicationSetPath?: string
+}
+
+export interface BaynManifestUpdate {
+  readonly qualificationMode: 'preserve' | 'replace'
+  readonly hadQualificationPin: boolean
+  readonly runtimeBindingsMatch: boolean
+  readonly deployedSourceSha: string
+  readonly deployedBehaviorHash: string
+  readonly deployedParameterHash: string
+  readonly candidateBehaviorHash: string
+  readonly candidateParameterHash: string
 }
 
 const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string, name: string): string => {
@@ -36,16 +50,59 @@ const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string
   return source.replace(pattern, replacement)
 }
 
-export const updateBaynManifests = (options: UpdateBaynManifestOptions): void => {
+const environmentValue = (deployment: string, name: string): string => {
+  const pattern = new RegExp(`            - name: ${name}\\n              value: ([^\\n]+)\\n`, 'g')
+  const matches = [...deployment.matchAll(pattern)]
+  if (matches.length !== 1) throw new Error(`expected exactly one ${name} value`)
+  const value = matches[0]?.[1]?.trim()
+  if (value === undefined) throw new Error(`missing ${name} value`)
+  return value.startsWith('"') ? String(JSON.parse(value)) : value
+}
+
+const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
+
+const transitionQualificationPin = (
+  deployment: string,
+  mode: 'preserve' | 'replace',
+  hadQualificationPin: boolean,
+): string => {
+  if (mode === 'preserve') {
+    if (!hadQualificationPin) throw new Error('cannot preserve a missing BAYN_QUALIFICATION_RUN_ID block')
+    return deployment
+  }
+  return hadQualificationPin ? deployment.replace(qualificationPin, '') : deployment
+}
+
+export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynManifestUpdate => {
   if (!sourceShaPattern.test(options.sourceSha)) throw new Error(`invalid source SHA: ${options.sourceSha}`)
   if (!tagPattern.test(options.tag)) throw new Error(`invalid image tag: ${options.tag}`)
   if (!digestPattern.test(options.digest)) throw new Error(`invalid image digest: ${options.digest}`)
+  if (!hashPattern.test(options.strategyBehaviorHash)) {
+    throw new Error(`invalid strategy behavior hash: ${options.strategyBehaviorHash}`)
+  }
+  if (!hashPattern.test(options.strategyParameterHash)) {
+    throw new Error(`invalid strategy parameter hash: ${options.strategyParameterHash}`)
+  }
   if (Number.isNaN(Date.parse(options.rolloutTimestamp))) throw new Error('rollout timestamp must be ISO-8601')
 
   const kustomizationPath = options.kustomizationPath ?? 'argocd/applications/bayn/kustomization.yaml'
   const deploymentPath = options.deploymentPath ?? 'argocd/applications/bayn/deployment.yaml'
   const applicationSetPath = options.applicationSetPath ?? 'argocd/applicationsets/product.yaml'
   const kustomization = readFileSync(kustomizationPath, 'utf8')
+  const deployment = readFileSync(deploymentPath, 'utf8')
+  const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
+  if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
+  const hadQualificationPin = qualificationPins.length === 1
+  const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
+  const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
+  const deployedParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')
+  const runtimeBindingsMatch = Object.entries(currentRuntimeConfiguration).every(
+    ([name, value]) => environmentValue(deployment, name) === value,
+  )
+  const strategyIdentityMatches =
+    deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
+  const qualificationMode =
+    hadQualificationPin && strategyIdentityMatches && runtimeBindingsMatch ? 'preserve' : 'replace'
   const imageBlock =
     /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
   const updatedKustomization = replaceExactlyOnce(
@@ -55,7 +112,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
     'Bayn image block',
   )
 
-  const deployment = readFileSync(deploymentPath, 'utf8')
   let updatedDeployment = replaceExactlyOnce(
     deployment,
     /(            - name: BAYN_CODE_REVISION\n              value: )[^\n]+/,
@@ -68,6 +124,19 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
     `$1${options.digest}`,
     'BAYN_IMAGE_DIGEST value',
   )
+  updatedDeployment = replaceExactlyOnce(
+    updatedDeployment,
+    /(            - name: BAYN_STRATEGY_BEHAVIOR_HASH\n              value: )[^\n]+/,
+    `$1${JSON.stringify(options.strategyBehaviorHash)}`,
+    'BAYN_STRATEGY_BEHAVIOR_HASH value',
+  )
+  updatedDeployment = replaceExactlyOnce(
+    updatedDeployment,
+    /(            - name: BAYN_STRATEGY_PARAMETER_HASH\n              value: )[^\n]+/,
+    `$1${JSON.stringify(options.strategyParameterHash)}`,
+    'BAYN_STRATEGY_PARAMETER_HASH value',
+  )
+  updatedDeployment = transitionQualificationPin(updatedDeployment, qualificationMode, hadQualificationPin)
   for (const [name, value] of Object.entries(currentRuntimeConfiguration)) {
     updatedDeployment = replaceExactlyOnce(
       updatedDeployment,
@@ -94,6 +163,16 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
   writeFileSync(kustomizationPath, updatedKustomization)
   writeFileSync(deploymentPath, updatedDeployment)
   writeFileSync(applicationSetPath, updatedApplicationSet)
+  return {
+    qualificationMode,
+    hadQualificationPin,
+    runtimeBindingsMatch,
+    deployedSourceSha,
+    deployedBehaviorHash,
+    deployedParameterHash,
+    candidateBehaviorHash: options.strategyBehaviorHash,
+    candidateParameterHash: options.strategyParameterHash,
+  }
 }
 
 const parseArguments = (argumentsToParse: readonly string[]): UpdateBaynManifestOptions => {
@@ -113,13 +192,15 @@ const parseArguments = (argumentsToParse: readonly string[]): UpdateBaynManifest
     sourceSha: required('--source-sha'),
     tag: required('--tag'),
     digest: required('--digest'),
+    strategyBehaviorHash: required('--strategy-behavior-hash'),
+    strategyParameterHash: required('--strategy-parameter-hash'),
     rolloutTimestamp: required('--rollout-timestamp'),
   }
 }
 
 if (import.meta.main) {
   try {
-    updateBaynManifests(parseArguments(process.argv.slice(2)))
+    process.stdout.write(JSON.stringify(updateBaynManifests(parseArguments(process.argv.slice(2)))))
   } catch (cause) {
     console.error(cause instanceof Error ? cause.message : String(cause))
     process.exitCode = 1

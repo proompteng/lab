@@ -95,6 +95,7 @@ jobs:
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
       - name: Verify and pin image
+        id: promotion
         shell: bash
         env:
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
@@ -102,12 +103,40 @@ jobs:
           IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
         run: |
           set -euo pipefail
+          nix_hash() {
+            local name="$1"
+            local -a hashes
+            mapfile -t hashes < <(
+              git show "${SOURCE_SHA}:nix/images/bayn.nix" |
+                sed -nE "s/^[[:space:]]*${name} = \"([0-9a-f]{64})\";$/\\1/p"
+            )
+            test "${#hashes[@]}" -eq 1
+            printf '%s' "${hashes[0]}"
+          }
+
+          strategy_behavior_hash="$(nix_hash strategyBehaviorHash)"
+          strategy_parameter_hash="$(nix_hash strategyParameterHash)"
           nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/bayn@${IMAGE_DIGEST}" linux/amd64 linux/arm64
-          bun run packages/scripts/src/bayn/update-manifests.ts \
-            --source-sha "$SOURCE_SHA" \
-            --tag "$IMAGE_TAG" \
-            --digest "$IMAGE_DIGEST" \
-            --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          promotion="$(
+            bun packages/scripts/src/bayn/update-manifests.ts \
+              --source-sha "$SOURCE_SHA" \
+              --tag "$IMAGE_TAG" \
+              --digest "$IMAGE_DIGEST" \
+              --strategy-behavior-hash "$strategy_behavior_hash" \
+              --strategy-parameter-hash "$strategy_parameter_hash" \
+              --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          )"
+          jq -e '.qualificationMode == "preserve" or .qualificationMode == "replace"' <<< "$promotion"
+          {
+            echo "qualification_mode=$(jq -r '.qualificationMode' <<< "$promotion")"
+            echo "had_qualification_pin=$(jq -r '.hadQualificationPin' <<< "$promotion")"
+            echo "runtime_bindings_match=$(jq -r '.runtimeBindingsMatch' <<< "$promotion")"
+            echo "deployed_source=$(jq -r '.deployedSourceSha' <<< "$promotion")"
+            echo "deployed_behavior_hash=$(jq -r '.deployedBehaviorHash' <<< "$promotion")"
+            echo "deployed_parameter_hash=$(jq -r '.deployedParameterHash' <<< "$promotion")"
+            echo "candidate_behavior_hash=$(jq -r '.candidateBehaviorHash' <<< "$promotion")"
+            echo "candidate_parameter_hash=$(jq -r '.candidateParameterHash' <<< "$promotion")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create deploy pull request
         uses: peter-evans/create-pull-request@v7
@@ -125,13 +154,19 @@ jobs:
           body: |
             ## Summary
 
-            Promote the immutable Bayn image while preserving the current terminal qualification pin, Signal
-            snapshot, and dedicated Bayn TigerBeetle ledger. The rollout recovers the pinned current-contract
-            evidence and does not create another qualification or accounting journal.
+            Promote the immutable Bayn image against the current Signal snapshot and dedicated Bayn TigerBeetle
+            ledger. Qualification-pin handling is selected from the verified compiled behavior identity.
 
             - Source commit: `${{ steps.release.outputs.source_sha }}`
             - Image tag: `${{ steps.release.outputs.tag }}`
             - Image digest: `${{ steps.release.outputs.digest }}`
+            - Qualification mode: `${{ steps.promotion.outputs.qualification_mode }}`
+            - Existing pin: `${{ steps.promotion.outputs.had_qualification_pin }}`
+            - Runtime bindings match: `${{ steps.promotion.outputs.runtime_bindings_match }}`
+            - Deployed behavior hash: `${{ steps.promotion.outputs.deployed_behavior_hash }}`
+            - Candidate behavior hash: `${{ steps.promotion.outputs.candidate_behavior_hash }}`
+            - Deployed parameter hash: `${{ steps.promotion.outputs.deployed_parameter_hash }}`
+            - Candidate parameter hash: `${{ steps.promotion.outputs.candidate_parameter_hash }}`
 
             ## Related Issues
 
@@ -147,9 +182,10 @@ jobs:
 
             ## Breaking Changes
 
-            This is a one-way current-contract runtime release. Databases with the legacy migration tracker are
-            rejected; there is no schema fallback or automatic rename. The existing terminal qualification remains
-            pinned so a behavior-preserving image release performs read-only recovery.
+            This is a one-way current-contract runtime release. Databases with the old migration tracker are rejected;
+            there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
+            behavior, protocol parameters, Signal inputs, and TigerBeetle bindings all match. `replace` removes the
+            pin, and later unpinned promotions remain valid without reintroducing compatibility state.
 
             ## Checklist
 

@@ -6,6 +6,7 @@ import { run } from './app'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreRuntimeLive } from './db/evidence-store'
+import { operationalError } from './errors'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { hashParameters, loadDefaultProtocol } from './protocol'
@@ -14,6 +15,12 @@ import { makeStrategy, Strategy } from './strategy-service'
 const main = Effect.gen(function* () {
   const config = yield* loadConfig()
   const protocol = yield* loadDefaultProtocol
+  const parameterHash = hashParameters(protocol)
+  if (parameterHash !== config.build.strategyParameterHash) {
+    return yield* Effect.fail(
+      operationalError('config', 'provenance', 'compiled strategy parameters do not match build metadata'),
+    )
+  }
   const provenance = makeRuntimeProvenance({
     sourceRevision: config.build.sourceRevision,
     image: {
@@ -23,7 +30,7 @@ const main = Effect.gen(function* () {
     strategy: {
       name: 'risk-balanced-trend',
       behaviorHash: config.build.strategyBehaviorHash,
-      parameterHash: hashParameters(protocol),
+      parameterHash,
       parameterSchemaVersion: protocol.schemaVersion,
     },
   })

@@ -3,7 +3,6 @@ import { Config, Effect, Option, Redacted, Schema, SchemaTransformation } from '
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
 import { operationalError, type OperationalError } from './errors'
-import { sha256 } from './hash'
 
 export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
   readonly imageDigest: string
@@ -44,7 +43,6 @@ const SourceRevision = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
 const ImageRepository = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
 const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
 const ProvenanceMode = Schema.Literals(['production', 'development'])
-const developmentBehaviorHash = sha256('bayn.development-configured-behavior.v1')
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
     Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
@@ -72,6 +70,8 @@ const runtimeConfig = Config.all({
   sourceRevision: Config.schema(SourceRevision, 'BAYN_CODE_REVISION'),
   imageRepository: Config.schema(ImageRepository, 'BAYN_IMAGE_REPOSITORY'),
   imageDigest: Config.schema(ImageDigest, 'BAYN_IMAGE_DIGEST'),
+  strategyBehaviorHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_BEHAVIOR_HASH'),
+  strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
@@ -106,6 +106,8 @@ const runtimeConfig = Config.all({
       sourceRevision: config.sourceRevision,
       imageRepository: config.imageRepository,
       imageDigest: config.imageDigest,
+      strategyBehaviorHash: config.strategyBehaviorHash,
+      strategyParameterHash: config.strategyParameterHash,
     },
     provenanceMode: config.provenanceMode,
     healthIntervalMs: config.healthIntervalMs,
@@ -176,7 +178,8 @@ export const loadConfig = (
               ? {
                   sourceRevision: config.configuredBuild.sourceRevision,
                   imageRepository: config.configuredBuild.imageRepository,
-                  strategyBehaviorHash: developmentBehaviorHash,
+                  strategyBehaviorHash: config.configuredBuild.strategyBehaviorHash,
+                  strategyParameterHash: config.configuredBuild.strategyParameterHash,
                 }
               : decodeEmbeddedBuildMetadata(embedded)
           if (embedded !== undefined) {
@@ -189,6 +192,12 @@ export const loadConfig = (
               throw new Error(
                 `configured image repository ${config.configuredBuild.imageRepository} does not match embedded repository ${decodedBuild.imageRepository}`,
               )
+            }
+            if (config.configuredBuild.strategyBehaviorHash !== decodedBuild.strategyBehaviorHash) {
+              throw new Error('configured strategy behavior hash does not match embedded build metadata')
+            }
+            if (config.configuredBuild.strategyParameterHash !== decodedBuild.strategyParameterHash) {
+              throw new Error('configured strategy parameter hash does not match embedded build metadata')
             }
           }
           const { configuredBuild, provenanceMode, ...runtime } = config

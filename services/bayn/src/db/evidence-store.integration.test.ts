@@ -33,6 +33,7 @@ const makeConfig = (url = testUrl): RuntimeConfig => ({
     imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
     imageDigest: `sha256:${'b'.repeat(64)}`,
     strategyBehaviorHash: 'c'.repeat(64),
+    strategyParameterHash: 'd'.repeat(64),
     verification: 'embedded',
   },
   healthIntervalMs: 30_000,
