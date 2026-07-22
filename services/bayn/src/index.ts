@@ -40,7 +40,7 @@ const main = Effect.gen(function* () {
       database: 'signal',
       application: 'bayn',
       request_timeout: config.operationTimeoutMs,
-    }),
+    }).pipe(Layer.provide(NodeHttpClient.layerNodeHttp)),
   )
   const marketData = MarketDataLive(config, protocol).pipe(
     Layer.provide(Layer.succeedContext(clickhouse)),
