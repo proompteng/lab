@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Layer, Logger, Redacted } from 'effect'
 
-import { run } from './app'
+import { acquireSqlLayer, run } from './app'
 import { verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
@@ -31,17 +31,18 @@ const main = Effect.gen(function* () {
     },
   })
   const strategy = makeStrategy(protocol, provenance)
+  const clickhouse = yield* acquireSqlLayer(
+    ClickhouseClient.layer({
+      url: config.clickhouse.url,
+      username: config.clickhouse.username,
+      password: Redacted.value(config.clickhouse.password),
+      database: 'signal',
+      application: 'bayn',
+      request_timeout: config.operationTimeoutMs,
+    }),
+  )
   const marketData = MarketDataLive(config, protocol).pipe(
-    Layer.provide(
-      ClickhouseClient.layer({
-        url: config.clickhouse.url,
-        username: config.clickhouse.username,
-        password: Redacted.value(config.clickhouse.password),
-        database: 'signal',
-        application: 'bayn',
-        request_timeout: config.operationTimeoutMs,
-      }),
-    ),
+    Layer.provide(Layer.succeedContext(clickhouse)),
     Layer.provide(NodeHttpClient.layerNodeHttp),
   )
   const dependencies = Layer.mergeAll(
@@ -50,7 +51,7 @@ const main = Effect.gen(function* () {
     EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)),
   )
   return yield* run(config, strategy).pipe(Effect.provide(dependencies))
-})
+}).pipe(Effect.scoped)
 
 const program = main.pipe(Effect.annotateLogs({ service: 'bayn' }), Effect.provide(Logger.layer([Logger.consoleJson])))
 
