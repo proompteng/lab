@@ -107,13 +107,13 @@ Repeated execution of the same inputs is deterministic and must either recover e
 the same journal objects. Any mismatched manifest, universe, build identity, lock, journal object, reconciliation,
 qualification, or durable evidence closes readiness and never expands authority.
 
-## Deployment status
+## Deployment contract
 
-GitOps owns one `apps/v1 Deployment` and a dedicated three-replica TigerBeetle cluster. When Bayn is active, the
-Deployment is a single writer and `maxSurge: 0` prevents overlapping writers during rollout. The pod has no broker
-secret and no Kubernetes API token.
+GitOps owns one `apps/v1 Deployment` configured as a single writer and a dedicated three-replica TigerBeetle cluster.
+`maxSurge: 0` prevents overlapping writers during rollout. The pod has no broker secret and no Kubernetes API token.
+Scaling to zero is a maintenance state, not a second deployment mode.
 
-As of 2026-07-21, the Deployment is intentionally quiesced at zero replicas for the separately owned database
-reset/restore workstream. The non-database cleanup does not change replicas, the qualification pin, PostgreSQL
-resources, or stored evidence. Live acceptance remains pending until that workstream restores one coherent writer and
-the promoted image proves startup, readiness, status, and sustained health.
+Every promoted image requires live acceptance against one coherent writer: the running image ID must match the GitOps
+digest, startup must produce or recover durable terminal evidence, readiness must remain open across continuous probes,
+all dependencies must remain available, accounting must be exact, and HTTP status must retain observe-only authority.
+An Argo `Synced/Healthy` result without those observations is not sufficient.
