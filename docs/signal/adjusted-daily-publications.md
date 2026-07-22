@@ -62,16 +62,16 @@ removed Bayn backfill path or grant Bayn write access.
 
 ## Rollout, evidence, and rollback
 
-GitOps first creates the sealed writer credential, applies the least-privilege ClickHouse user, runs the additive schema
-hook, and leaves both writer templates dormant and unrendered. A suspended CronJob is not retained because Argo marks
-it `Suspended` and waits indefinitely for `Healthy`. The ClickHouse operator may restart replicas sequentially when its
-user configuration changes; verify both replicas before promotion. Image promotion pins the source SHA and
-multi-platform digest in both writer templates but activates nothing.
+GitOps creates the sealed writer credential, applies the least-privilege ClickHouse user, runs the additive schema hook,
+and renders only the scheduled CronJob. A suspended CronJob is not retained because Argo marks it `Suspended` and waits
+indefinitely for `Healthy`. The ClickHouse operator may restart replicas sequentially when its user configuration
+changes; verify both replicas before promotion. Image promotion pins the source SHA and multi-platform digest without
+changing scheduled-writer activation.
 
-A separate reviewed GitOps change adds and starts only the one-shot backfill Job. The CronJob remains absent until the
-bounded snapshot is reproduced from both replicas. Cleanup then removes the completed Job and renders the enabled
-CronJob in one commit. CI rejects a rendered suspended writer, an active unrendered writer, an active writer without
-immutable provenance, or simultaneous active backfill and scheduled writers.
+When a historical publication is required, a separate reviewed GitOps change creates one bounded Job with a unique
+name and leaves the CronJob inactive for that interval. Never resume or reapply a completed Job under the same name;
+Kubernetes Job templates are immutable. Remove the one-off resource after retaining its evidence, then reactivate the
+CronJob in a reviewed change. The base application retains no dormant backfill Job.
 
 Completion evidence requires the bounded backfill plus two distinct scheduled publication observations. For each one,
 retain the Job name, source revision, image digest, universe ID and symbol hash, snapshot ID, publication as-of date,

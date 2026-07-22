@@ -17,14 +17,9 @@ const environment = (container: { env: Array<{ name: string }> }) =>
   new Map(container.env.map((entry) => [entry.name, entry]))
 const universeRef = (key: string) => ({ valueFrom: { configMapKeyRef: { name: 'bayn-universe-v1', key } } })
 
-const writerContainer = (writer: ReturnType<typeof parse>) =>
-  writer.kind === 'CronJob'
-    ? writer.spec.jobTemplate.spec.template.spec.containers[0]
-    : writer.spec.template.spec.containers[0]
-
-const assertActivationProvenance = (writer: ReturnType<typeof parse>, kustomization: ReturnType<typeof parse>) => {
-  if (writer.spec.suspend) return
-  const container = writerContainer(writer)
+const assertActivationProvenance = (cronJob: ReturnType<typeof parse>, kustomization: ReturnType<typeof parse>) => {
+  if (cronJob.spec.suspend) return
+  const container = cronJob.spec.jobTemplate.spec.template.spec.containers[0]
   const environment = new Map(container.env.map((entry: { name: string; value?: string }) => [entry.name, entry]))
   const image = kustomization.images.find(
     (entry: { name: string }) => entry.name === 'registry.ide-newton.ts.net/lab/signal-publisher',
@@ -39,7 +34,6 @@ const assertActivationProvenance = (writer: ReturnType<typeof parse>, kustomizat
 describe('Signal publisher GitOps authority contract', () => {
   test('requires immutable image provenance whenever the publisher is active', () => {
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
-    const backfillJob = parse(read('signal-publisher-bayn-v1-backfill-job.yaml'))
     const kustomization = parse(read('kustomization.yaml'))
     const container = cronJob.spec.jobTemplate.spec.template.spec.containers[0]
     const variables = environment(container)
@@ -50,16 +44,10 @@ describe('Signal publisher GitOps authority contract', () => {
       concurrencyPolicy: 'Forbid',
     })
     expect(typeof cronJob.spec.suspend).toBe('boolean')
-    expect(typeof backfillJob.spec.suspend).toBe('boolean')
     expect(container.args).toEqual(['daily'])
     const cronManaged = kustomization.resources.includes('signal-publisher-cronjob.yaml')
-    const backfillManaged = kustomization.resources.includes('signal-publisher-bayn-v1-backfill-job.yaml')
     expect(cronManaged).toBe(!cronJob.spec.suspend)
-    expect(backfillManaged).toBe(!backfillJob.spec.suspend)
-    expect(cronManaged && backfillManaged).toBe(false)
-    expect(cronJob.spec.suspend || backfillJob.spec.suspend).toBe(true)
     assertActivationProvenance(cronJob, kustomization)
-    assertActivationProvenance(backfillJob, kustomization)
     expect(variables.get('SIGNAL_CLICKHOUSE_USERNAME')).toMatchObject({
       valueFrom: { secretKeyRef: { name: 'signal-publisher-clickhouse-auth', key: 'username' } },
     })
@@ -74,17 +62,15 @@ describe('Signal publisher GitOps authority contract', () => {
     expect([...variables.keys()].filter((name) => /BROKER|TIGERBEETLE|CAPITAL/.test(name))).toEqual([])
   })
 
-  test('binds one exact versioned universe to websocket and both publisher modes', () => {
+  test('binds one exact versioned universe to websocket and the scheduled publisher', () => {
     const universe = parse(read('bayn-universe-v1-configmap.yaml'))
     const websocketConfig = parse(readWsConfig())
     const websocketDeployment = parse(readWsDeployment())
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
-    const backfill = parse(read('signal-publisher-bayn-v1-backfill-job.yaml'))
     const selected = csv(universe.data.UNIVERSE_SYMBOLS)
     const expectedHash = createHash('sha256').update(selected.join(',')).digest('hex')
     const websocketVariables = environment(websocketDeployment.spec.template.spec.containers[0])
     const cronVariables = environment(cronJob.spec.jobTemplate.spec.template.spec.containers[0])
-    const backfillVariables = environment(backfill.spec.template.spec.containers[0])
 
     expect(universe.metadata.annotations['bayn.proompteng.ai/contract']).toBe('equity-infrastructure-v1')
     expect(selected).toEqual(['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'])
@@ -102,34 +88,22 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_SYMBOL_HASH')).toMatchObject(
       universeRef('UNIVERSE_SYMBOL_HASH'),
     )
-    for (const variables of [cronVariables, backfillVariables]) {
-      expect(variables.get('SIGNAL_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
-      expect(variables.get('SIGNAL_UNIVERSE_SYMBOL_HASH')).toMatchObject(universeRef('UNIVERSE_SYMBOL_HASH'))
-      expect(variables.get('SIGNAL_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
-      expect(variables.get('SIGNAL_START_DATE')).toMatchObject(universeRef('HISTORY_START_DATE'))
-      expect(variables.get('SIGNAL_ALPACA_FEED')).toMatchObject(universeRef('HISTORY_FEED'))
-      expect(variables.get('SIGNAL_OPERATION_TIMEOUT_MS')).toMatchObject({ value: '180000' })
-    }
-    expect(backfill.spec).toMatchObject({
-      suspend: true,
-      template: { spec: { containers: [{ args: ['backfill', '--start', '2022-01-27', '--end', '2026-07-20'] }] } },
-    })
+    expect(cronVariables.get('SIGNAL_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
+    expect(cronVariables.get('SIGNAL_UNIVERSE_SYMBOL_HASH')).toMatchObject(universeRef('UNIVERSE_SYMBOL_HASH'))
+    expect(cronVariables.get('SIGNAL_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
+    expect(cronVariables.get('SIGNAL_START_DATE')).toMatchObject(universeRef('HISTORY_START_DATE'))
+    expect(cronVariables.get('SIGNAL_ALPACA_FEED')).toMatchObject(universeRef('HISTORY_FEED'))
+    expect(cronVariables.get('SIGNAL_OPERATION_TIMEOUT_MS')).toMatchObject({ value: '180000' })
     expect(cronJob.spec.suspend).toBe(false)
-    expect(backfill.spec.template.spec.containers[0]).toMatchObject({
-      args: ['backfill', '--start', '2022-01-27', '--end', '2026-07-20'],
-    })
   })
 
   test('always permits a fail-closed suspension', () => {
     const cronJob = structuredClone(parse(read('signal-publisher-cronjob.yaml')))
-    const backfillJob = structuredClone(parse(read('signal-publisher-bayn-v1-backfill-job.yaml')))
     const kustomization = structuredClone(parse(read('kustomization.yaml')))
     cronJob.spec.suspend = true
-    backfillJob.spec.suspend = true
     kustomization.images[0].newTag = 'bootstrap'
     delete kustomization.images[0].digest
     expect(() => assertActivationProvenance(cronJob, kustomization)).not.toThrow()
-    expect(() => assertActivationProvenance(backfillJob, kustomization)).not.toThrow()
   })
 
   test('limits database authority to the versioned append-only publication tables', () => {

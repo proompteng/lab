@@ -18,13 +18,11 @@ export interface ReleaseIdentity {
 export interface SignalPublisherManifests {
   readonly kustomization: string
   readonly cronJob: string
-  readonly backfillJob: string
 }
 
 interface UpdateFilesOptions extends ReleaseIdentity {
   readonly kustomizationPath: string
   readonly cronJobPath: string
-  readonly backfillJobPath: string
 }
 
 const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string, name: string): string => {
@@ -69,25 +67,20 @@ export const updateSignalPublisherManifests = (
   }
 
   const cronJob = pinProvenance(manifests.cronJob, 'Signal publisher CronJob')
-  const backfillJob = pinProvenance(manifests.backfillJob, 'Signal publisher backfill Job')
-  return { kustomization, cronJob, backfillJob }
+  return { kustomization, cronJob }
 }
 
 const updateFiles = (options: UpdateFilesOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem
-    const [kustomization, cronJob, backfillJob] = yield* Effect.all([
+    const [kustomization, cronJob] = yield* Effect.all([
       fileSystem.readFileString(options.kustomizationPath),
       fileSystem.readFileString(options.cronJobPath),
-      fileSystem.readFileString(options.backfillJobPath),
     ])
-    const updated = yield* Effect.try(() =>
-      updateSignalPublisherManifests(options, { kustomization, cronJob, backfillJob }),
-    )
+    const updated = yield* Effect.try(() => updateSignalPublisherManifests(options, { kustomization, cronJob }))
     yield* Effect.all([
       fileSystem.writeFileString(options.kustomizationPath, updated.kustomization),
       fileSystem.writeFileString(options.cronJobPath, updated.cronJob),
-      fileSystem.writeFileString(options.backfillJobPath, updated.backfillJob),
     ])
   })
 
@@ -113,7 +106,6 @@ const parseArguments = (argv: readonly string[]): UpdateFilesOptions => {
     digest: required('--digest'),
     kustomizationPath: 'argocd/applications/torghut/clickhouse/kustomization.yaml',
     cronJobPath: 'argocd/applications/torghut/clickhouse/signal-publisher-cronjob.yaml',
-    backfillJobPath: 'argocd/applications/torghut/clickhouse/signal-publisher-bayn-v1-backfill-job.yaml',
   }
 }
 

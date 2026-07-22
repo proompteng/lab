@@ -121,12 +121,10 @@ jobs:
           add-paths: |
             argocd/applications/torghut/clickhouse/kustomization.yaml
             argocd/applications/torghut/clickhouse/signal-publisher-cronjob.yaml
-            argocd/applications/torghut/clickhouse/signal-publisher-bayn-v1-backfill-job.yaml
           body: |
             ## Summary
 
-            Pin the immutable Signal adjusted-daily publisher image and writer provenance. Both writers remain inert;
-            the reviewed rollout first runs the one-shot backfill alone, then removes it and enables the daily schedule.
+            Pin the immutable Signal adjusted-daily publisher image and scheduled-writer provenance.
 
             - Source commit: `${{ steps.release.outputs.source_sha }}`
             - Image tag: `${{ steps.release.outputs.tag }}`
@@ -146,7 +144,7 @@ jobs:
 
             ## Breaking Changes
 
-            Pins a bounded publisher without activating a writer. It has no broker or capital authority.
+            Pins a bounded publisher without changing scheduled-writer activation. It has no broker or capital authority.
 
             ## Checklist
 

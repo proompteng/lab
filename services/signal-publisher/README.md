@@ -6,8 +6,8 @@ uses delayed consolidated SIP after the session is finalized. It is the only wri
 tables, and Bayn consumes them read-only.
 
 The same binary supports `daily` and the explicitly bounded `backfill --start DATE --end DATE` command. Production
-runs use immutable promoted images. The one-shot backfill and scheduled writer are activated separately and never run
-concurrently. See
+runs use immutable promoted images and renders only the scheduled writer. A historical backfill requires a reviewed
+one-off Job with a unique name; it is removed after completion and never retained as an inert base manifest. See
 [`docs/bayn/signal-adjusted-daily-publications.md`](../../docs/bayn/signal-adjusted-daily-publications.md) for the data
 contract and operating procedure.
 

@@ -27,6 +27,7 @@ export const productionPaths = {
   rbac: 'argocd/applications/kube-router/rbac.yaml',
   safetyPolicies: 'argocd/applications/kube-router/safety-policies.yaml',
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
+  hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
   daemonSet: 'argocd/applications/kube-router/daemonset.yaml',
   readme: 'argocd/applications/kube-router/README.md',
@@ -82,6 +83,25 @@ function sortedStrings(value: unknown): string[] {
     return []
   }
   return [...value].sort()
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalJson(entry)]),
+  )
+}
+
+function hermesPolicyHash(content: string): string {
+  const contract = yamlDocuments(content)
+    .map((policy) => ({ name: policy.metadata?.name, spec: policy.spec }))
+    .sort((left, right) => String(left.name).localeCompare(String(right.name)))
+  return createHash('sha256')
+    .update(`${JSON.stringify(canonicalJson(contract))}\n`)
+    .digest('hex')
 }
 
 export async function loadProductionFiles(): Promise<ProductionFiles> {
@@ -226,6 +246,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   const hook = resource(yamlDocuments(files.preflightHook), 'Job', 'kube-router-policy-preflight')
   const hookContainer = hook?.spec?.template?.spec?.containers?.[0]
+  const expectedHermesPolicyHash = hermesPolicyHash(files.hermesPolicies)
   if (
     hook?.metadata?.annotations?.['argocd.argoproj.io/hook'] !== 'Sync' ||
     hook?.metadata?.annotations?.['argocd.argoproj.io/sync-wave'] !== '-2' ||
@@ -243,7 +264,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
     'case "$namespace" in',
     'network-policy.proompteng.ai/retired-rollout-policy',
-    'Hermes must not have a rollout allow-all exception.',
+    `expected_hermes_policy_hash=${expectedHermesPolicyHash}`,
+    'kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json',
+    "jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)'",
+    'Hermes NetworkPolicies differ from the exact reviewed policy set.',
     "kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json",
     '.spec.podSelector == {}',
     '.spec.ingress == [{}]',

@@ -97,14 +97,39 @@ test('rejects bypassing the live namespace preflight', async () => {
   )
 })
 
-test('rejects a preflight that permits a rollout exception in enforced Hermes', async () => {
+test('rejects a preflight that does not pin the exact Hermes policy set', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
-    'Hermes must not have a rollout allow-all exception.',
-    'Hermes rollout exception accepted.',
+    'expected_hermes_policy_hash=c2379b52d6bc1982f8f11650fed320afe30c3bdcbd7afb4a844cca5059812d1c',
+    `expected_hermes_policy_hash=${'0'.repeat(64)}`,
   )
-  expect(validateProductionContent(files)).toContain(
-    `${productionPaths.preflightHook}: missing production invariant "Hermes must not have a rollout allow-all exception."`,
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining(
+      `${productionPaths.preflightHook}: missing production invariant "expected_hermes_policy_hash=`,
+    ),
+  )
+})
+
+test('rejects an unreviewed Hermes policy without a matching preflight contract', async () => {
+  const files = copy(await loadProductionFiles())
+  files.hermesPolicies += `
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: unreviewed
+  namespace: hermes
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+`
+  expect(validateProductionContent(files)).toContainEqual(
+    expect.stringContaining(
+      `${productionPaths.preflightHook}: missing production invariant "expected_hermes_policy_hash=`,
+    ),
   )
 })
 

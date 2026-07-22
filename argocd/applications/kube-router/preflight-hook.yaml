@@ -70,8 +70,15 @@ spec:
                     ' >/dev/null
                   ;;
                 hermes)
-                  if kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all >/dev/null 2>&1; then
-                    echo 'Hermes must not have a rollout allow-all exception.' >&2
+                  expected_hermes_policy_hash=c2379b52d6bc1982f8f11650fed320afe30c3bdcbd7afb4a844cca5059812d1c
+                  actual_hermes_policy_hash=$(
+                    kubectl -n "$namespace" get networkpolicies.networking.k8s.io -o json |
+                      jq -cS '[.items[] | {name: .metadata.name, spec: .spec}] | sort_by(.name)' |
+                      sha256sum |
+                      cut -d ' ' -f1
+                  )
+                  if [[ "$actual_hermes_policy_hash" != "$expected_hermes_policy_hash" ]]; then
+                    echo 'Hermes NetworkPolicies differ from the exact reviewed policy set.' >&2
                     exit 1
                   fi
                   ;;
