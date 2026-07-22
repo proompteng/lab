@@ -119,3 +119,8 @@ index digest or the matching platform manifest declared by that index for the sc
 produce or recover durable terminal evidence, readiness must remain open across continuous probes, all dependencies
 must remain available, accounting must be exact, and HTTP status must retain observe-only authority. An Argo
 `Synced/Healthy` result without those observations is not sufficient.
+
+Outside an explicit one-shot qualification release, GitOps pins `BAYN_QUALIFICATION_RUN_ID` to one terminal run. The
+release writer preserves that pin while strategy and runtime bindings remain identical. After a fresh snapshot removes
+the pin for its one allowed source revision, promotion rejects a different source revision on that same unpinned
+snapshot; operational releases therefore cannot create extra qualification trials.

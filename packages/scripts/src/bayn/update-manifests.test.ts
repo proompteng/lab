@@ -88,8 +88,8 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
 const promote = (
   paths: FixturePaths,
   overrides: Partial<Pick<UpdateBaynManifestOptions, 'strategyBehaviorHash' | 'strategyParameterHash'>> = {},
+  sourceSha = 'a'.repeat(40),
 ) => {
-  const sourceSha = 'a'.repeat(40)
   return updateBaynManifests({
     sourceSha,
     tag: `sha-${sourceSha}`,
@@ -136,7 +136,7 @@ describe('Bayn manifest promotion', () => {
     expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   })
 
-  test('replaces a pin for a fresh snapshot and permits later releases while unqualified', () => {
+  test('replaces a pin for a fresh snapshot and rejects a second unpinned source release', () => {
     const paths = makeFixture({ snapshotId: '4'.repeat(64), publicationAsOf: '2026-07-19' })
     const changedParameterHash = '3'.repeat(64)
     const first = promote(paths, { strategyParameterHash: changedParameterHash })
@@ -154,14 +154,18 @@ describe('Bayn manifest promotion', () => {
       environmentBlock('BAYN_SIGNAL_SNAPSHOT_ID', currentSnapshotId).trim(),
     )
 
-    const second = promote(paths, { strategyParameterHash: changedParameterHash })
-
-    expect(second).toMatchObject({
+    expect(promote(paths, { strategyParameterHash: changedParameterHash })).toMatchObject({
       qualificationMode: 'replace',
       hadQualificationPin: false,
-      runtimeBindingsMatch: true,
       snapshotChanged: false,
+      deployedSourceSha: 'a'.repeat(40),
     })
+
+    const beforeSecondRelease = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+    expect(() => promote(paths, { strategyParameterHash: changedParameterHash }, 'c'.repeat(40))).toThrow(
+      'an unpinned qualification snapshot cannot accept a second source release',
+    )
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(beforeSecondRelease)
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 

@@ -112,6 +112,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
+  if (!hadQualificationPin && !snapshotChanged && deployedSourceSha !== options.sourceSha) {
+    throw new Error('an unpinned qualification snapshot cannot accept a second source release')
+  }
   const imageBlock =
     /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
   const updatedKustomization = replaceExactlyOnce(
