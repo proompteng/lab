@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
+import { AuthorizationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
+
 import {
+  marketDataOperationError,
   verifyFinalizedCalendar,
   verifyFinalizedManifest,
   verifyFinalizedSnapshot,
@@ -183,6 +186,28 @@ const makeFixture = (): {
 }
 
 describe('finalized Signal snapshot reader', () => {
+  test('preserves ClickHouse retryability for check, inspect, and load failures', () => {
+    for (const operation of ['check', 'inspect', 'load'] as const) {
+      const authorization = marketDataOperationError(
+        operation,
+        'Signal query failed',
+        new SqlError({
+          reason: new AuthorizationError({ cause: new Error('SELECT denied'), operation: 'query' }),
+        }),
+      )
+      const connection = marketDataOperationError(
+        operation,
+        'Signal query failed',
+        new SqlError({
+          reason: new ConnectionError({ cause: new Error('connection reset'), operation: 'query' }),
+        }),
+      )
+
+      expect(authorization).toMatchObject({ component: 'market-data', operation, retryable: false })
+      expect(connection).toMatchObject({ component: 'market-data', operation, retryable: true })
+    }
+  })
+
   test('reproduces the authoritative V2 manifest and snapshot identities', () => {
     const universe = ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'] as const
     const publication = verifyFinalizedManifest([authoritativeManifest], {
