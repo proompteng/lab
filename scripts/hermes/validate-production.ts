@@ -406,10 +406,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'podSelector: {}',
     'namespace: hermes',
     'cidr: 0.0.0.0/0',
+    '- 0.0.0.0/8',
     '- 10.0.0.0/8',
     '- 100.64.0.0/10',
+    '- 127.0.0.0/8',
     '- 169.254.0.0/16',
+    '- 172.16.0.0/12',
     '- 192.168.0.0/16',
+    '- 224.0.0.0/4',
+    '- 240.0.0.0/4',
     'cidr: 10.96.0.1/32',
     'cidr: 100.100.244.141/32',
     'cidr: 100.100.244.142/32',
@@ -431,17 +436,35 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'allowPrivilegeEscalation: false',
   ])
   requireTerms(failures, productionPaths.squidConfig, files.squidConfig, [
-    'acl allowed_discord dstdomain .discord.com',
-    'acl allowed_github dstdomain .github.com',
-    'acl allowed_github dstdomain .githubusercontent.com',
-    'http_access allow CONNECT allowed_discord',
-    'http_access allow CONNECT allowed_github',
+    'acl SSL_ports port 443',
+    'acl CONNECT method CONNECT',
+    'acl blocked_private_v4 dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4',
+    'acl blocked_private_v6 dst ::1/128 fc00::/7 fe80::/10 ff00::/8',
     'http_access deny all',
   ])
   forbidTerms(failures, productionPaths.squidConfig, files.squidConfig, [
     'http_access allow all',
-    'dstdomain .gitlab.com',
+    'http_access allow CONNECT allowed_',
+    'acl allowed_discord dstdomain',
+    'acl allowed_github dstdomain',
   ])
+  const squidAccessRules = files.squidConfig
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('http_access '))
+  const expectedSquidAccessRules = [
+    'http_access deny !CONNECT',
+    'http_access deny CONNECT !SSL_ports',
+    'http_access deny blocked_private_v4',
+    'http_access deny blocked_private_v6',
+    'http_access allow CONNECT',
+    'http_access deny all',
+  ]
+  if (JSON.stringify(squidAccessRules) !== JSON.stringify(expectedSquidAccessRules)) {
+    failures.push(
+      `${productionPaths.squidConfig}: Squid must deny non-HTTPS and private destinations before allowing public HTTPS`,
+    )
+  }
 
   requireTerms(failures, productionPaths.serviceAccount, files.serviceAccount, [
     'kind: ServiceAccount',
@@ -845,6 +868,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
     'direct public egress unexpectedly succeeded',
     'git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main',
+    'opener.open("https://169.254.169.254", timeout=5)',
+    '*"403 Forbidden"*)',
+    'private destination did not receive Squid denial',
     'test "$(kubectl auth can-i list pods --all-namespaces)" = yes',
     'test "$(kubectl auth can-i get secrets --all-namespaces || true)" = no',
     'test "$(kubectl auth can-i create deployments.apps --all-namespaces || true)" = no',

@@ -87,6 +87,30 @@ test('rejects omitting the translated Kubernetes API endpoints', async () => {
   )
 })
 
+test('rejects restoring a domain-only Squid egress allowlist', async () => {
+  const files = await loadProductionFiles()
+  files.squidConfig = files.squidConfig.replace(
+    'http_access allow CONNECT\n',
+    'http_access allow CONNECT allowed_github\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.squidConfig}: contains forbidden production term "http_access allow CONNECT allowed_"`,
+  )
+})
+
+test('rejects allowing public HTTPS before private destinations are denied', async () => {
+  const files = await loadProductionFiles()
+  files.squidConfig = files.squidConfig.replace(
+    'http_access deny blocked_private_v4\nhttp_access deny blocked_private_v6\nhttp_access allow CONNECT\n',
+    'http_access allow CONNECT\nhttp_access deny blocked_private_v4\nhttp_access deny blocked_private_v6\n',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.squidConfig}: Squid must deny non-HTTPS and private destinations before allowing public HTTPS`,
+  )
+})
+
 test('rejects persisting a service-account token in the kubeconfig', async () => {
   const files = await loadProductionFiles()
   files.bootstrap = files.bootstrap.replace(

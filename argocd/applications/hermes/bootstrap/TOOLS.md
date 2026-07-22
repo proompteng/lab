@@ -8,7 +8,8 @@
 - `kubectl` has cluster-wide read access to non-secret resources. Writes, Kubernetes Secrets, exec, attach, copy, proxy, and
   port-forward are denied by RBAC.
 - Host mounts, container sockets, cloud fallbacks, MCP servers, cron, dashboard, and delegation are not available.
-- Discord, GitHub API/Git, and checksum-pinned GitHub release egress are forced through an operator-managed domain allowlist.
+- Public HTTPS egress is forced through the operator-managed proxy. Direct public egress and private, tailnet,
+  link-local/metadata, multicast, and reserved destinations remain blocked.
 - The authenticated API is for canary and operator validation; possession of its key is equivalent to trusted operator access.
 
 Do not add credentials or private infrastructure details to this file.
