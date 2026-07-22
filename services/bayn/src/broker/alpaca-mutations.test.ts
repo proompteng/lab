@@ -193,6 +193,21 @@ describe('Alpaca paper mutations', () => {
     })
   })
 
+  test('preserves the broker order ID when Alpaca accepts a mismatched order', async () => {
+    const mismatched = { ...orderResponse, symbol: 'NVDA' }
+    const client = HttpClient.make((request) => Effect.succeed(response(request, mismatched)))
+
+    const failure = await Effect.runPromise(Effect.flip(withMutation(client, (mutation) => mutation.submit(intent))))
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      brokerOrderId: orderId,
+      evidence: { status: 200, requestId: 'req-123', contentHash: canonicalHashV1(mismatched) },
+    })
+  })
+
   test('fails before I/O for an unmarked intent or unsupported fractional GTC order', async () => {
     let calls = 0
     const client = HttpClient.make((request) => {

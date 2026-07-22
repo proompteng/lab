@@ -87,6 +87,7 @@ export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')
   readonly message: string
   readonly requestHash?: string
   readonly evidence?: Partial<MutationEvidence>
+  readonly brokerOrderId?: string
   readonly brokerCode?: string
   readonly cause?: Readonly<Record<string, string>>
 }> {}
@@ -175,6 +176,17 @@ const knownRejection = (requestHash: string, evidence: MutationEvidence, code: s
     requestHash,
     evidence,
     brokerCode: String(code),
+  })
+
+const mismatchedAcceptedOrder = (requestHash: string, evidence: MutationEvidence, brokerOrderId: string) =>
+  new BrokerMutationError({
+    operation: MutationOperation.Submit,
+    failure: MutationFailure.Unknown,
+    outcome: MutationOutcome.Unknown,
+    message: 'Alpaca accepted an order that does not match the durable intent',
+    requestHash,
+    evidence,
+    brokerOrderId,
   })
 
 const microsToDecimal = (value: string): string => {
@@ -414,14 +426,7 @@ export const makeMutation = (
               order.quantityMicros !== intent.quantityMicros ||
               order.extendedHours
             ) {
-              return yield* Effect.fail(
-                unknownOutcome(
-                  MutationOperation.Submit,
-                  'Alpaca accepted an order that does not match the durable intent',
-                  requestHash,
-                  evidence,
-                ),
-              )
+              return yield* Effect.fail(mismatchedAcceptedOrder(requestHash, evidence, order.brokerOrderId))
             }
             return { requestHash, order, evidence } satisfies SubmitReceipt
           }),

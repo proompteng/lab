@@ -198,6 +198,11 @@ const run = (
     return yield* fence.transaction(
       Effect.gen(function* () {
         const bindings = yield* store.bindings(accountResult.value.id)
+        if (fills.length > 0 && !(yield* store.hasAccountBaseline(accountResult.value.id))) {
+          return yield* Effect.fail(
+            failure('snapshot', 'paper account has fill history before Bayn established an opening cash baseline'),
+          )
+        }
 
         const normalized = yield* attempt('normalization', 'broker snapshot normalization failed', () => {
           const intentByClient = new Map<string, string>()
@@ -231,7 +236,9 @@ const run = (
 
           const fillEvents = [...fills]
             .sort((left, right) => {
-              const byTime = left.value.transactionTime.localeCompare(right.value.transactionTime)
+              const byTime = timestampOrderKey(left.value.transactionTime).localeCompare(
+                timestampOrderKey(right.value.transactionTime),
+              )
               return byTime === 0 ? left.value.activityId.localeCompare(right.value.activityId) : byTime
             })
             .map((observed): FillEventInput => {

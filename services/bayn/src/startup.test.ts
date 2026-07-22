@@ -426,6 +426,26 @@ describe('Bayn startup lifecycle', () => {
     }
   })
 
+  test('terminates the runtime when continuous reconciliation dies', async () => {
+    const exit = await Effect.runPromiseExit(
+      run(config, fixtureStrategy, Effect.die(new Error('unexpected reconciliation defect'))).pipe(
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.timeoutOrElse({
+          duration: 250,
+          orElse: () => Effect.fail(operationalError('http', 'test', 'run remained alive after reconciliation died')),
+        }),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      expect(Cause.pretty(exit.cause)).toContain('unexpected reconciliation defect')
+      expect(Cause.pretty(exit.cause)).not.toContain('remained alive')
+    }
+  })
+
   test('exits the scoped runtime on a retryable startup dependency failure', async () => {
     let interrupted = false
     const journal: JournalService = {

@@ -25,7 +25,7 @@ export const run = (
       ).pipe(Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)))
       yield* initialize(config, state, strategy)
       yield* monitor(config, state).pipe(Effect.forkScoped({ startImmediately: true }))
-      yield* reconciliation.pipe(Effect.forkScoped({ startImmediately: true }))
+      yield* reconciliation
       return yield* Effect.never
     }),
   )

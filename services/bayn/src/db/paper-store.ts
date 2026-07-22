@@ -70,6 +70,7 @@ export class PaperStoreError extends Data.TaggedError('PaperStoreError')<{
     | 'account'
     | 'receipt'
     | 'valuation'
+    | 'baseline'
     | 'bindings'
     | 'reconciliation'
     | 'authority'
@@ -83,6 +84,7 @@ export interface PaperStoreShape {
   readonly ingestPositions: (input: PositionSnapshotInput) => Effect.Effect<PositionSnapshotReceipt, PaperStoreError>
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, PaperStoreError>
   readonly value: (input: ValuationInput) => Effect.Effect<Valuation, PaperStoreError>
+  readonly hasAccountBaseline: (accountId: string) => Effect.Effect<boolean, PaperStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], PaperStoreError>
   readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationReport, PaperStoreError>
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, PaperStoreError>
@@ -100,6 +102,7 @@ const EventRow = Schema.Struct({
 const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 const PositionCostRow = Schema.Tuple([Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String })])
 const UnresolvedPredecessorRow = Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })])
+const AccountBaselineRow = Schema.Tuple([Schema.Struct({ exists: Schema.Boolean })])
 const AccountRow = Schema.Tuple([
   Schema.Struct({
     event_id: Sha256,
@@ -148,6 +151,8 @@ const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), stric
 const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 const decodePositionCost = Schema.decodeUnknownEffect(PositionCostRow, strictParseOptions)
 const decodeUnresolvedPredecessor = Schema.decodeUnknownEffect(UnresolvedPredecessorRow, strictParseOptions)
+const decodeAccountBaseline = Schema.decodeUnknownEffect(AccountBaselineRow, strictParseOptions)
+const decodeAccountId = Schema.decodeUnknownEffect(NonEmptyString, strictParseOptions)
 const decodeTransactionRows = Schema.decodeUnknownEffect(
   Schema.Array(AccountingTransactionRowSchema),
   strictParseOptions,
@@ -827,6 +832,20 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         ),
       )
 
+    const hasAccountBaseline = (accountId: string) =>
+      run(
+        'baseline',
+        decodeAccountId(accountId).pipe(
+          Effect.flatMap((decodedAccountId) =>
+            sql<Record<string, unknown>>`
+              SELECT EXISTS (
+                SELECT 1 FROM account_snapshots WHERE account_id = ${decodedAccountId}
+              ) AS exists
+            `.pipe(Effect.flatMap(decodeAccountBaseline)),
+          ),
+          Effect.map((rows) => rows[0].exists),
+        ),
+      )
     const bindings = (accountId: string) => run('bindings', reconciliation.bindings(accountId))
     const reconcile = (snapshot: BrokerSnapshot) => run('reconciliation', reconciliation.reconcile(snapshot))
     const lowerAuthority = (reason: string, updatedAt: string) =>
@@ -842,6 +861,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       ingestPositions,
       account,
       value,
+      hasAccountBaseline,
       bindings,
       reconcile,
       restrictAuthority: lowerAuthority,
