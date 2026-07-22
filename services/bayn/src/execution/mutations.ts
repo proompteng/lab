@@ -28,6 +28,7 @@ export enum MutationEventType {
 const Sequence = Schema.Int.check(Schema.isGreaterThan(0))
 const HttpStatus = Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))
 const ConsistencyDelay = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 300_000 }))
+const BrokerOrderId = NonEmptyString.check(Schema.isMaxLength(256))
 const MutationEventSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-mutation-event.v1'),
   eventId: Sha256,
@@ -63,10 +64,33 @@ const StoredEventRow = Schema.Struct({
   occurred_at: UtcInstant,
 })
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(StoredEventRow), strictParseOptions)
-const decodeSha = Schema.decodeUnknownEffect(Sha256)
-const decodeTime = Schema.decodeUnknownEffect(UtcInstant)
-const decodeBrokerOrderId = Schema.decodeUnknownEffect(NonEmptyString.check(Schema.isMaxLength(256)))
-const decodeEvidence = Schema.decodeUnknownEffect(MutationEvidenceSchema, strictParseOptions)
+const decodeIntentId = Schema.decodeUnknownEffect(Sha256)
+const StartInputSchema = Schema.Struct({
+  intentId: Sha256,
+  requestHash: Sha256,
+  consistencyDelayMs: ConsistencyDelay,
+  occurredAt: UtcInstant,
+  brokerOrderId: Schema.optionalKey(BrokerOrderId),
+})
+const OutcomeInputSchema = Schema.Struct({
+  intentId: Sha256,
+  requestHash: Sha256,
+  occurredAt: UtcInstant,
+  brokerOrderId: Schema.optionalKey(BrokerOrderId),
+  evidence: Schema.optionalKey(MutationEvidenceSchema),
+})
+const decodeStartInput = Schema.decodeUnknownEffect(StartInputSchema, strictParseOptions)
+const decodeOutcomeInput = Schema.decodeUnknownEffect(OutcomeInputSchema, strictParseOptions)
+const CompleteEvidenceInput = Schema.Struct({
+  requestId: Schema.Unknown,
+  status: Schema.Unknown,
+  contentHash: Schema.Unknown,
+  observedAt: Schema.Unknown,
+})
+const hasCompleteEvidence = Schema.is(CompleteEvidenceInput)
+
+const completeEvidence = (evidence: Partial<MutationEvidence> | undefined): Partial<MutationEvidence> | undefined =>
+  evidence !== undefined && hasCompleteEvidence(evidence) ? evidence : undefined
 
 const eventIdentity = (event: Omit<MutationEvent, 'eventId'>) => ({
   schemaVersion: event.schemaVersion,
@@ -109,14 +133,14 @@ const toEvent = (row: typeof StoredEventRow.Type): MutationEvent => ({
   occurredAt: row.occurred_at,
 })
 
-export class MutationStoreError extends Data.TaggedError('MutationStoreError')<{
+class MutationStoreError extends Data.TaggedError('MutationStoreError')<{
   readonly operation: 'begin-submit' | 'record-submit' | 'begin-cancel' | 'record-cancel' | 'record-recovery' | 'read'
   readonly failure: 'authority' | 'conflict' | 'decode' | 'invariant' | 'query'
   readonly message: string
   readonly cause?: unknown
 }> {}
 
-export interface StartReceipt {
+interface StartReceipt {
   readonly event: MutationEvent
   readonly started: boolean
 }
@@ -242,16 +266,18 @@ const makeStore = Effect.gen(function* () {
 
   const withFence = fence.transaction
 
-  const latest = (intentId: string, operation: MutationOperation) =>
+  const readLatest = (intentId: string, operation: MutationOperation) =>
     Effect.gen(function* () {
-      const decodedIntentId = yield* decodeSha(intentId).pipe(
-        Effect.mapError((cause) => storeError('read', 'decode', 'invalid intent ID', cause)),
-      )
-      const rows = yield* decodeRows(yield* selectLatest(sql, decodedIntentId, operation)).pipe(
+      const rows = yield* decodeRows(yield* selectLatest(sql, intentId, operation)).pipe(
         Effect.mapError((cause) => storeError('read', 'decode', 'stored mutation event failed decoding', cause)),
       )
       return rows[0] === undefined ? undefined : toEvent(rows[0])
-    }).pipe(
+    })
+
+  const latest = (intentId: string, operation: MutationOperation) =>
+    decodeIntentId(intentId).pipe(
+      Effect.mapError((cause) => storeError('read', 'decode', 'invalid intent ID', cause)),
+      Effect.flatMap((decodedIntentId) => readLatest(decodedIntentId, operation)),
       Effect.mapError((cause) =>
         cause instanceof MutationStoreError ? cause : storeError('read', 'query', 'mutation read failed', cause),
       ),
@@ -295,8 +321,9 @@ const makeStore = Effect.gen(function* () {
       event,
     )
 
-  const assertAuthority = (operation: 'submit' | 'cancel') =>
+  const assertAuthority = (operation: MutationOperation) =>
     Effect.gen(function* () {
+      const storeOperation = operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel'
       const rows = yield* sql<{ effective: string; kill_state: string; maximum: string }>`
         SELECT maximum, effective, kill_state
         FROM authority_state
@@ -305,31 +332,19 @@ const makeStore = Effect.gen(function* () {
       `
       const authority = rows[0]
       if (authority === undefined) {
-        return yield* Effect.fail(
-          storeError(
-            operation === 'submit' ? 'begin-submit' : 'begin-cancel',
-            'authority',
-            'paper authority is not initialized',
-          ),
-        )
+        return yield* Effect.fail(storeError(storeOperation, 'authority', 'paper authority is not initialized'))
       }
       if (authority.maximum !== Authority.Paper) {
-        return yield* Effect.fail(
-          storeError(
-            operation === 'submit' ? 'begin-submit' : 'begin-cancel',
-            'authority',
-            'GitOps maximum authority is not PAPER',
-          ),
-        )
+        return yield* Effect.fail(storeError(storeOperation, 'authority', 'GitOps maximum authority is not PAPER'))
       }
       if (
-        operation === 'submit' &&
+        operation === MutationOperation.Submit &&
         (authority.effective !== Authority.Paper || authority.kill_state !== KillState.Clear)
       ) {
         return yield* Effect.fail(storeError('begin-submit', 'authority', 'effective authority is not PAPER and clear'))
       }
       if (
-        operation === 'cancel' &&
+        operation === MutationOperation.Cancel &&
         authority.kill_state === KillState.Clear &&
         authority.effective !== Authority.Paper
       ) {
@@ -387,143 +402,84 @@ const makeStore = Effect.gen(function* () {
     consistencyDelayMs: number,
     occurredAt: string,
     brokerOrderId?: string,
-  ) =>
-    run(
-      operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
+  ) => {
+    const storeOperation = operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel'
+    return run(
+      storeOperation,
       Effect.gen(function* () {
-        const decodedIntentId = yield* decodeSha(intentId).pipe(
-          Effect.mapError((cause) =>
-            storeError(
-              operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-              'decode',
-              'invalid intent ID',
-              cause,
-            ),
-          ),
-        )
-        const decodedRequestHash = yield* decodeSha(requestHash).pipe(
-          Effect.mapError((cause) =>
-            storeError(
-              operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-              'decode',
-              'invalid request hash',
-              cause,
-            ),
-          ),
-        )
-        const decodedConsistencyDelay = yield* Schema.decodeUnknownEffect(ConsistencyDelay)(consistencyDelayMs).pipe(
-          Effect.mapError((cause) =>
-            storeError(
-              operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-              'decode',
-              'invalid broker consistency delay',
-              cause,
-            ),
-          ),
-        )
-        const decodedTime = yield* decodeTime(occurredAt).pipe(
-          Effect.mapError((cause) =>
-            storeError(
-              operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-              'decode',
-              'invalid mutation time',
-              cause,
-            ),
-          ),
-        )
-        const decodedBrokerOrderId =
-          brokerOrderId === undefined
-            ? undefined
-            : yield* decodeBrokerOrderId(brokerOrderId).pipe(
-                Effect.mapError((cause) =>
-                  storeError(
-                    operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-                    'decode',
-                    'invalid broker order ID',
-                    cause,
-                  ),
-                ),
-              )
+        const input = yield* decodeStartInput({
+          intentId,
+          requestHash,
+          consistencyDelayMs,
+          occurredAt,
+          ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+        }).pipe(Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid mutation start', cause)))
         return yield* withFence(
           Effect.gen(function* () {
-            const existing = yield* latest(decodedIntentId, operation)
+            const existing = yield* readLatest(input.intentId, operation)
             if (existing !== undefined) {
               if (
-                existing.requestHash !== decodedRequestHash ||
-                existing.consistencyDelayMs !== decodedConsistencyDelay ||
-                (operation === MutationOperation.Cancel && existing.brokerOrderId !== decodedBrokerOrderId) ||
-                existing.mutationId !== mutationId(decodedIntentId, operation)
+                existing.requestHash !== input.requestHash ||
+                existing.consistencyDelayMs !== input.consistencyDelayMs ||
+                (operation === MutationOperation.Cancel && existing.brokerOrderId !== input.brokerOrderId) ||
+                existing.mutationId !== mutationId(input.intentId, operation)
               ) {
                 return yield* Effect.fail(
-                  storeError(
-                    operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-                    'conflict',
-                    'mutation identity was reused with different request content',
-                  ),
+                  storeError(storeOperation, 'conflict', 'mutation identity was reused with different request content'),
                 )
               }
               return { event: existing, started: false } satisfies StartReceipt
             }
 
-            yield* assertAuthority(operation === MutationOperation.Submit ? 'submit' : 'cancel')
-            if (operation === MutationOperation.Submit) yield* assertNoOtherUnresolved(decodedIntentId)
+            yield* assertAuthority(operation)
+            if (operation === MutationOperation.Submit) yield* assertNoOtherUnresolved(input.intentId)
             const intents = yield* sql<{ state: string; updated_at: string }>`
               SELECT state, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
               FROM intents
-              WHERE intent_id = ${decodedIntentId}
+              WHERE intent_id = ${input.intentId}
               FOR UPDATE
             `
             const intent = intents[0]
             if (intent === undefined) {
-              return yield* Effect.fail(
-                storeError(
-                  operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-                  'invariant',
-                  'intent does not exist',
-                ),
-              )
+              return yield* Effect.fail(storeError(storeOperation, 'invariant', 'intent does not exist'))
             }
             const requiredState =
               operation === MutationOperation.Submit ? IntentState.Approved : IntentState.Acknowledged
             if (intent.state !== requiredState) {
               return yield* Effect.fail(
                 storeError(
-                  operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
+                  storeOperation,
                   'invariant',
                   `${operation.toLowerCase()} requires an ${requiredState} intent`,
                 ),
               )
             }
-            if (decodedTime <= intent.updated_at) {
+            if (input.occurredAt <= intent.updated_at) {
               return yield* Effect.fail(
-                storeError(
-                  operation === MutationOperation.Submit ? 'begin-submit' : 'begin-cancel',
-                  'invariant',
-                  'mutation time must follow the intent state',
-                ),
+                storeError(storeOperation, 'invariant', 'mutation time must follow the intent state'),
               )
             }
 
             const event = makeEvent({
-              mutationId: mutationId(decodedIntentId, operation),
-              intentId: decodedIntentId,
+              mutationId: mutationId(input.intentId, operation),
+              intentId: input.intentId,
               sequence: 1,
               operation,
               eventType:
                 operation === MutationOperation.Submit
                   ? MutationEventType.SubmitStarted
                   : MutationEventType.CancelStarted,
-              requestHash: decodedRequestHash,
-              consistencyDelayMs: decodedConsistencyDelay,
-              ...(decodedBrokerOrderId === undefined ? {} : { brokerOrderId: decodedBrokerOrderId }),
-              occurredAt: decodedTime,
+              requestHash: input.requestHash,
+              consistencyDelayMs: input.consistencyDelayMs,
+              ...(input.brokerOrderId === undefined ? {} : { brokerOrderId: input.brokerOrderId }),
+              occurredAt: input.occurredAt,
             })
             yield* append(event)
             if (operation === MutationOperation.Submit) {
               const transitioned = yield* sql<{ intent_id: string }>`
                 UPDATE intents
-                SET state = ${IntentState.IoStarted}, state_version = state_version + 1, updated_at = ${decodedTime}
-                WHERE intent_id = ${decodedIntentId} AND state = ${IntentState.Approved}
+                SET state = ${IntentState.IoStarted}, state_version = state_version + 1, updated_at = ${input.occurredAt}
+                WHERE intent_id = ${input.intentId} AND state = ${IntentState.Approved}
                 RETURNING intent_id
               `
               if (transitioned.length !== 1) {
@@ -537,6 +493,7 @@ const makeStore = Effect.gen(function* () {
         )
       }),
     )
+  }
 
   const appendOutcome = (
     storeOperation: MutationStoreError['operation'],
@@ -557,57 +514,39 @@ const makeStore = Effect.gen(function* () {
     run(
       storeOperation,
       Effect.gen(function* () {
-        const decodedIntentId = yield* decodeSha(intentId).pipe(
-          Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid intent ID', cause)),
-        )
-        const decodedRequestHash = yield* decodeSha(requestHash).pipe(
-          Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid request hash', cause)),
-        )
-        const decodedTime = yield* decodeTime(occurredAt).pipe(
-          Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid mutation time', cause)),
-        )
-        const decodedBrokerOrderId =
-          fields.brokerOrderId === undefined
-            ? undefined
-            : yield* decodeBrokerOrderId(fields.brokerOrderId).pipe(
-                Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid broker order ID', cause)),
-              )
-        const decodedEvidence =
-          fields.evidence?.requestId === undefined ||
-          fields.evidence.status === undefined ||
-          fields.evidence.contentHash === undefined ||
-          fields.evidence.observedAt === undefined
-            ? undefined
-            : yield* decodeEvidence(fields.evidence).pipe(
-                Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid broker evidence', cause)),
-              )
+        const evidence = completeEvidence(fields.evidence)
+        const input = yield* decodeOutcomeInput({
+          intentId,
+          requestHash,
+          occurredAt,
+          ...(fields.brokerOrderId === undefined ? {} : { brokerOrderId: fields.brokerOrderId }),
+          ...(evidence === undefined ? {} : { evidence }),
+        }).pipe(Effect.mapError((cause) => storeError(storeOperation, 'decode', 'invalid mutation outcome', cause)))
         return yield* withFence(
           Effect.gen(function* () {
-            const previous = yield* latest(decodedIntentId, operation)
+            const previous = yield* readLatest(input.intentId, operation)
             if (previous === undefined) {
               return yield* Effect.fail(
                 storeError(storeOperation, 'invariant', 'mutation STARTED event does not exist'),
               )
             }
-            if (previous.requestHash !== decodedRequestHash) {
+            if (previous.requestHash !== input.requestHash) {
               return yield* Effect.fail(storeError(storeOperation, 'conflict', 'mutation request hash changed'))
             }
-            const eventBrokerOrderId = decodedBrokerOrderId ?? previous.brokerOrderId
+            const eventBrokerOrderId = input.brokerOrderId ?? previous.brokerOrderId
             const event = makeEvent({
               mutationId: previous.mutationId,
-              intentId: decodedIntentId,
+              intentId: input.intentId,
               sequence: previous.sequence + 1,
               operation,
               eventType,
-              requestHash: decodedRequestHash,
+              requestHash: input.requestHash,
               consistencyDelayMs: previous.consistencyDelayMs,
               ...(eventBrokerOrderId === undefined ? {} : { brokerOrderId: eventBrokerOrderId }),
-              ...(decodedEvidence?.requestId === undefined ? {} : { requestId: decodedEvidence.requestId }),
-              ...(decodedEvidence?.status === undefined ? {} : { responseStatus: decodedEvidence.status }),
-              ...(decodedEvidence?.contentHash === undefined
-                ? {}
-                : { responseContentHash: decodedEvidence.contentHash }),
-              occurredAt: decodedTime,
+              ...(input.evidence?.requestId === undefined ? {} : { requestId: input.evidence.requestId }),
+              ...(input.evidence?.status === undefined ? {} : { responseStatus: input.evidence.status }),
+              ...(input.evidence?.contentHash === undefined ? {} : { responseContentHash: input.evidence.contentHash }),
+              occurredAt: input.occurredAt,
             })
             if (
               previous.eventType === event.eventType &&
@@ -623,8 +562,8 @@ const makeStore = Effect.gen(function* () {
             if (fields.recover === true) {
               const recovered = yield* sql<{ intent_id: string }>`
                 UPDATE intents
-                SET state = ${IntentState.Recovered}, state_version = state_version + 1, updated_at = ${decodedTime}
-                WHERE intent_id = ${decodedIntentId} AND state = ${IntentState.Unknown}
+                SET state = ${IntentState.Recovered}, state_version = state_version + 1, updated_at = ${input.occurredAt}
+                WHERE intent_id = ${input.intentId} AND state = ${IntentState.Unknown}
                 RETURNING intent_id
               `
               if (recovered.length !== 1) {
@@ -640,10 +579,10 @@ const makeStore = Effect.gen(function* () {
                     terminal_outcome = ${fields.terminalOutcome ?? null},
                     state_version = state_version + 1,
                     updated_at = GREATEST(
-                      ${decodedTime}::timestamptz + interval '1 microsecond',
+                      ${input.occurredAt}::timestamptz + interval '1 microsecond',
                       updated_at + interval '1 microsecond'
                   )
-                  WHERE intent_id = ${decodedIntentId} AND state = ${IntentState.Recovered}
+                  WHERE intent_id = ${input.intentId} AND state = ${IntentState.Recovered}
                   RETURNING intent_id
                 `
                 if (transitioned.length !== 1) {
@@ -659,8 +598,8 @@ const makeStore = Effect.gen(function* () {
                   state = ${fields.nextState},
                   terminal_outcome = ${fields.terminalOutcome ?? null},
                   state_version = state_version + 1,
-                  updated_at = GREATEST(${decodedTime}::timestamptz, updated_at + interval '1 microsecond')
-                WHERE intent_id = ${decodedIntentId} AND state = ${fields.fromState ?? IntentState.IoStarted}
+                  updated_at = GREATEST(${input.occurredAt}::timestamptz, updated_at + interval '1 microsecond')
+                WHERE intent_id = ${input.intentId} AND state = ${fields.fromState ?? IntentState.IoStarted}
                 RETURNING intent_id
               `
               if (transitioned.length !== 1) {
@@ -674,14 +613,6 @@ const makeStore = Effect.gen(function* () {
         )
       }),
     )
-
-  const completeEvidence = (evidence: Partial<MutationEvidence> | undefined): Partial<MutationEvidence> | undefined =>
-    evidence?.requestId !== undefined &&
-    evidence.status !== undefined &&
-    evidence.contentHash !== undefined &&
-    evidence.observedAt !== undefined
-      ? evidence
-      : undefined
 
   return {
     beginSubmit: (intentId, requestHash, consistencyDelayMs, occurredAt) =>

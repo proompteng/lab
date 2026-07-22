@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Schema } from 'effect'
+import { Cause, Clock, Context, Data, Effect, Redacted, Schema } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
@@ -17,7 +17,6 @@ import {
   OrderSide,
   OrderType,
   TimeInForce,
-  alpacaHttpLayer,
   make as makeRead,
   normalizeOrder,
   paperTradingUrl,
@@ -100,13 +99,13 @@ export interface MutationOptions {
   readonly operationTimeoutMs: number
 }
 
-export interface SubmitReceipt {
+interface SubmitReceipt {
   readonly requestHash: string
   readonly order: Order
   readonly evidence: MutationEvidence
 }
 
-export interface CancelReceipt {
+interface CancelReceipt {
   readonly requestHash: string
   readonly brokerOrderId: string
   readonly evidence: MutationEvidence
@@ -505,11 +504,3 @@ export const makeMutation = (
 
     return { submit, cancel }
   })
-
-export const mutationLayer = (
-  options: MutationOptions,
-): Layer.Layer<BrokerMutation, BrokerMutationError, HttpClient.HttpClient> =>
-  Layer.effect(BrokerMutation, makeMutation(options))
-
-export const mutationLive = (options: MutationOptions) =>
-  mutationLayer(options).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))
