@@ -9,7 +9,7 @@ import {
   SymbolSchema as SymbolName,
 } from '../schemas'
 
-const tradingUrl = 'https://paper-api.alpaca.markets'
+export const paperTradingUrl = 'https://paper-api.alpaca.markets'
 const defaultFillActivitiesPageSize = 100
 const responseParseOptions = { onExcessProperty: 'ignore' } as const
 const inputParseOptions = { onExcessProperty: 'error' } as const
@@ -213,6 +213,7 @@ export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
   readonly status?: number
   readonly requestId?: string
   readonly contentHash?: string
+  readonly observedAt?: string
   readonly cause?: unknown
 }> {}
 
@@ -389,7 +390,7 @@ const PositionResponseSchema = Schema.Struct({
   current_price: Decimal,
 })
 
-const OrderResponseSchema = Schema.Struct({
+export const OrderResponseSchema = Schema.Struct({
   id: Uuid,
   client_order_id: ClientOrderId,
   created_at: Timestamp,
@@ -597,6 +598,7 @@ const statusError = (
   status: number,
   requestId: string,
   contentHash: string,
+  observedAt: string,
   code: string | number,
   detail: string,
 ): BrokerReadError => {
@@ -620,6 +622,7 @@ const statusError = (
     status,
     requestId,
     contentHash,
+    observedAt,
   })
 }
 
@@ -719,7 +722,7 @@ const normalizePosition = (
   }
 }
 
-const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: string, observedAt: string): Order => {
+export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: string, observedAt: string): Order => {
   if (raw.asset_class !== AssetClass.UsEquity) throw new Error(`unsupported order asset class ${raw.asset_class}`)
   if ((raw.qty === null) === (raw.notional === null))
     throw new Error('order must contain exactly one of qty or notional')
@@ -891,7 +894,7 @@ export const makeProxyDispatcher = (
 const proxyLayer = (proxyUrl: string): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
   Layer.effect(NodeHttpClient.Dispatcher, makeProxyDispatcher(proxyUrl))
 
-const httpLayer = (proxyUrl: string): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
+export const alpacaHttpLayer = (proxyUrl: string): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
   NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(proxyUrl)))
 
 export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, BrokerReadError, HttpClient.HttpClient> =>
@@ -978,7 +981,15 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
             ),
           )
           return yield* Effect.fail(
-            statusError(operation, response.status, evidence.requestId, contentHash, failure.code, failure.message),
+            statusError(
+              operation,
+              response.status,
+              evidence.requestId,
+              contentHash,
+              evidence.observedAt,
+              failure.code,
+              failure.message,
+            ),
           )
         }
 
@@ -1007,7 +1018,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
 
-    const account = readJson('account', new URL('/v2/account', tradingUrl), decodeAccount).pipe(
+    const account = readJson('account', new URL('/v2/account', paperTradingUrl), decodeAccount).pipe(
       Effect.flatMap((result) =>
         result.value.id === runtime.expectedAccountId
           ? normalize('account', result.evidence, () =>
@@ -1027,7 +1038,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
       ),
     )
 
-    const positions = readJson('positions', new URL('/v2/positions', tradingUrl), decodePositions).pipe(
+    const positions = readJson('positions', new URL('/v2/positions', paperTradingUrl), decodePositions).pipe(
       Effect.flatMap((result) =>
         normalize('positions', result.evidence, () =>
           result.value.map((position) =>
@@ -1040,7 +1051,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const orders = (query: OrdersQuery = {}) =>
       decodeInput('orders', decodeOrdersQuery, query, 'invalid Alpaca orders query').pipe(
         Effect.flatMap((decoded) => {
-          const url = new URL('/v2/orders', tradingUrl)
+          const url = new URL('/v2/orders', paperTradingUrl)
           if (decoded.status !== undefined) url.searchParams.set('status', decoded.status)
           if (decoded.limit !== undefined) url.searchParams.set('limit', String(decoded.limit))
           if (decoded.after !== undefined) url.searchParams.set('after', decoded.after)
@@ -1060,7 +1071,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const orderById = (orderId: string) =>
       decodeInput('order-by-id', decodeOrderId, orderId, 'invalid Alpaca order ID').pipe(
         Effect.flatMap((decoded) =>
-          readJson('order-by-id', new URL(`/v2/orders/${encodeURIComponent(decoded)}`, tradingUrl), decodeOrder),
+          readJson('order-by-id', new URL(`/v2/orders/${encodeURIComponent(decoded)}`, paperTradingUrl), decodeOrder),
         ),
         Effect.flatMap((result) =>
           normalize('order-by-id', result.evidence, () =>
@@ -1072,7 +1083,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const orderByClientId = (clientOrderId: string) =>
       decodeInput('order-by-client-id', decodeClientOrderId, clientOrderId, 'invalid Alpaca client order ID').pipe(
         Effect.flatMap((decoded) => {
-          const url = new URL('/v2/orders:by_client_order_id', tradingUrl)
+          const url = new URL('/v2/orders:by_client_order_id', paperTradingUrl)
           url.searchParams.set('client_order_id', decoded)
           return readJson('order-by-client-id', url, decodeOrder)
         }),
@@ -1086,7 +1097,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
     const fillActivities = (query: FillActivitiesQuery = {}) =>
       decodeInput('fill-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fill activities query').pipe(
         Effect.flatMap((decoded) => {
-          const url = new URL('/v2/account/activities/FILL', tradingUrl)
+          const url = new URL('/v2/account/activities/FILL', paperTradingUrl)
           const pageSize = decoded.pageSize ?? defaultFillActivitiesPageSize
           if (decoded.date !== undefined) url.searchParams.set('date', decoded.date)
           if (decoded.after !== undefined) url.searchParams.set('after', decoded.after)
@@ -1117,4 +1128,4 @@ export const layer = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadE
   Layer.effect(BrokerRead, make(options).pipe(Effect.tap((read) => read.account)))
 
 export const live = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError> =>
-  layer(options).pipe(Layer.provide(httpLayer(options.proxyUrl)))
+  layer(options).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))

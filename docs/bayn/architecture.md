@@ -4,14 +4,19 @@
 
 Bayn is a single-writer, paper-only quantitative qualification runtime. It evaluates one compiled
 `risk-balanced-trend` candidate against one immutable Signal snapshot, journals the deterministic simulation, verifies
-the accounting result, and exposes the resulting qualification evidence. It has no broker client, broker credential,
-order-submission path, or capital-promotion authority. Public status always reports maximum authority `observe`.
+the accounting result, and exposes the resulting qualification evidence. It has no runtime broker credential,
+order-submission entry point, or capital-promotion authority. The source tree includes a dormant paper-only broker adapter
+and recovery coordinator; the composition root does not build them and the pod has no broker credential. Public status
+continues to report the GitOps authority ceiling independently of that dormant code.
 
 The runtime has three external I/O boundaries:
 
 - Signal ClickHouse, read-only, for the configured finalized publication;
 - a dedicated Bayn TigerBeetle cluster for deterministic simulation accounting; and
 - the existing `EvidenceStore` interface for durable qualification evidence.
+
+The dormant paper path would add Alpaca through the existing egress proxy only after a qualified strategy, a dedicated
+paper account, a reviewed credential, and explicit GitOps authority are present.
 
 The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
 that interface and every persisted evidence contract.
@@ -39,6 +44,29 @@ retryable SQL failure twice at one-second intervals; authentication and other te
 transient startup dependency failure that remains after bounded acquisition escapes the scoped runtime, closes HTTP
 and acquired clients, and lets the Deployment restart the process. A deterministic contract or evidence failure
 enters `FAILED` and keeps HTTP available for diagnosis with readiness closed.
+
+## Dormant paper mutation boundary
+
+Paper mutation uses one deliberately small transaction/I/O boundary:
+
+1. A committed approved intent and current paper authority acquire the single-writer fence.
+2. PostgreSQL records `SUBMIT_STARTED`, the exact request hash, deterministic client-order ID, and immutable broker
+   consistency delay before the first POST.
+3. Exactly one Alpaca request is made. Decoded 4xx rejections are terminal; a timeout, interruption, malformed response,
+   server response, or post-send crash remains `UNKNOWN`.
+4. Recovery waits the committed delay and performs `GET /v2/orders:by_client_order_id`. It never wraps POST or DELETE
+   in a generic retry.
+5. Cancel targets only a recorded broker order ID. A kill may permit that cancellation, but it cannot authorize a new
+   exposure-increasing intent.
+
+`mutation_events` is append-only and enforces the transition sequence, request identity, response identity, broker
+order identity, and consistency delay in PostgreSQL. Any unresolved submit or cancel blocks later exposure-increasing
+intents; terminal recovery releases that block. There is no scheduler, public order route, arbitrary order API, blind
+flatten, runtime registry, or alternate writer.
+
+This path is intentionally dormant: `src/index.ts` does not provide `BrokerMutation` or invoke the coordinator, GitOps
+does not mount an Alpaca credential, and the current qualification is not execution authority. Enabling paper operation
+requires a separate reviewed change and live readback against the dedicated paper account.
 
 ## Effect composition
 

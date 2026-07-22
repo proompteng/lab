@@ -6,10 +6,21 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 
 import type { RuntimeConfig } from '../config'
 import { IntentStore, IntentStoreLive, plan, type IntentPlan } from '../execution/intents'
+import { MutationEventType, MutationStore, MutationStoreLive } from '../execution/mutations'
+import { MutationOperation } from '../broker/alpaca-mutations'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
-import { Authority, decodeRiskDecision, OrderSide, OrderType, RiskOutcome, TimeInForce, type Intent } from '../paper'
+import {
+  Authority,
+  decodeRiskDecision,
+  OrderSide,
+  OrderType,
+  RiskOutcome,
+  TerminalOutcome,
+  TimeInForce,
+  type Intent,
+} from '../paper'
 import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy-service'
@@ -26,6 +37,7 @@ import {
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = postgresUrl === undefined ? describe.skip : describe
+const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 
 const makeConfig = (url = testUrl): RuntimeConfig => ({
   host: '127.0.0.1',
@@ -76,6 +88,15 @@ const makeExecutionRuntime = (config = makeConfig()) =>
     ),
   )
 
+const makeMutationRuntime = (config = makeConfig()) =>
+  ManagedRuntime.make(
+    MutationStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
 const intentPlan = (overrides: Partial<IntentPlan> = {}): IntentPlan => ({
   schemaVersion: 'bayn.paper-intent-plan.v1',
   strategyName: 'risk-balanced-trend',
@@ -112,6 +133,17 @@ const riskDecision = (
   } as const
   return decodeRiskDecision({ ...material, decisionId: canonicalHashV1(material) })
 }
+
+const sqlIntentState = (intentId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const rows = yield* sql<{ state: string; state_version: number }>`
+      SELECT state, state_version::integer
+      FROM intents
+      WHERE intent_id = ${intentId}
+    `
+    return rows[0]
+  })
 
 const riskBalancedTrendSnapshot = makeSnapshot(800)
 
@@ -221,6 +253,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'fills',
       'gate_outcomes',
       'intents',
+      'mutation_events',
       'orders',
       'positions',
       'protocol_locks',
@@ -240,6 +273,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 2, name: 'paper_contracts' },
       { migration_id: 3, name: 'intent_risk_clock' },
       { migration_id: 4, name: 'deterministic_intents' },
+      { migration_id: 5, name: 'mutation_recovery' },
     ])
   })
 
@@ -474,6 +508,275 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(observed.check)).toBe(true)
     expect(Exit.isFailure(observed.commit)).toBe(true)
     expect(observed.count).toBe(0)
+  })
+
+  test('linearizes one submit and records its exact acknowledged outcome', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '1'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const startedAt = new Date(Date.now() + 100).toISOString()
+    const requestHash = '8'.repeat(64)
+    const evidence = {
+      requestId: 'submit-request-1',
+      status: 200,
+      contentHash: '7'.repeat(64),
+      observedAt: new Date(Date.now() + 200).toISOString(),
+    }
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        const starts = yield* Effect.all(
+          [
+            store.beginSubmit(intent.intentId, requestHash, 1_000, startedAt),
+            store.beginSubmit(intent.intentId, requestHash, 1_000, startedAt),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        const changedDelay = yield* Effect.exit(store.beginSubmit(intent.intentId, requestHash, 2_000, startedAt))
+        const accepted = yield* store.submitAccepted(intent.intentId, requestHash, orderId, evidence)
+        const replay = yield* store.submitAccepted(intent.intentId, requestHash, orderId, evidence)
+        const sql = yield* PgClient.PgClient
+        const state = yield* sql<{ events: number; state: string; state_version: number }>`
+          SELECT
+            state,
+            state_version::integer,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { accepted, changedDelay, replay, starts, state: state[0] }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.starts.filter((receipt) => receipt.started)).toHaveLength(1)
+    expect(observed.starts.filter((receipt) => !receipt.started)).toHaveLength(1)
+    expect(Exit.isFailure(observed.changedDelay)).toBe(true)
+    expect(observed.accepted.eventType).toBe(MutationEventType.SubmitAccepted)
+    expect(observed.accepted.consistencyDelayMs).toBe(1_000)
+    expect(observed.replay.eventId).toBe(observed.accepted.eventId)
+    expect(observed.state).toEqual({ state: 'ACKNOWLEDGED', state_version: 4, events: 2 })
+  })
+
+  test('keeps an ambiguous submit UNKNOWN until lookup recovers the exact broker order', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '2'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const requestHash = '6'.repeat(64)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.submitUnknown(intent.intentId, requestHash, new Date(base + 1).toISOString())
+        const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Submit, requestHash, {
+          requestId: 'lookup-request-1',
+          status: 404,
+          contentHash: '5'.repeat(64),
+          observedAt: new Date(base + 2).toISOString(),
+        })
+        const before = yield* sqlIntentState(intent.intentId)
+        const found = yield* store.recoveryFound(intent.intentId, MutationOperation.Submit, requestHash, orderId, {
+          requestId: 'lookup-request-2',
+          status: 200,
+          contentHash: '4'.repeat(64),
+          observedAt: new Date(base + 3).toISOString(),
+        })
+        const after = yield* sqlIntentState(intent.intentId)
+        return { after, before, found, notFound }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.notFound.eventType).toBe(MutationEventType.RecoveryNotFound)
+    expect(observed.before).toEqual({ state: 'UNKNOWN', state_version: 4 })
+    expect(observed.found.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(observed.after).toEqual({ state: 'ACKNOWLEDGED', state_version: 6 })
+  })
+
+  test('allows kill-mode cancellation of an identified order and resolves the cancel race', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const submitHash = '3'.repeat(64)
+    const cancelHash = '2'.repeat(64)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
+          requestId: 'submit-request',
+          status: 200,
+          contentHash: '1'.repeat(64),
+          observedAt: new Date(base + 1).toISOString(),
+        })
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          UPDATE authority_state
+          SET effective = 'OBSERVE', kill_state = 'ACTIVE', reason = 'operator kill', version = 2,
+              updated_at = ${new Date(base + 2).toISOString()}
+          WHERE singleton
+        `
+        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(base + 3).toISOString())
+        yield* store.cancelUnknown(intent.intentId, cancelHash, orderId, new Date(base + 4).toISOString())
+        const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Cancel, cancelHash, {
+          requestId: 'cancel-lookup-not-found',
+          status: 404,
+          contentHash: 'f'.repeat(64),
+          observedAt: new Date(base + 5).toISOString(),
+        })
+        yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Cancel,
+          cancelHash,
+          orderId,
+          {
+            requestId: 'cancel-lookup',
+            status: 200,
+            contentHash: '0'.repeat(64),
+            observedAt: new Date(base + 6).toISOString(),
+          },
+          TerminalOutcome.Canceled,
+        )
+        return { notFound, state: yield* sqlIntentState(intent.intentId) }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.notFound).toMatchObject({
+      eventType: MutationEventType.RecoveryNotFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
+  })
+
+  test('blocks later exposure only while an earlier mutation outcome remains unresolved', async () => {
+    const execution = makeExecutionRuntime()
+    const first = await Effect.runPromise(plan(intentPlan({ cycleId: '4'.repeat(64) })))
+    const second = await Effect.runPromise(plan(intentPlan({ cycleId: '5'.repeat(64) })))
+    const firstDecision = await Effect.runPromise(riskDecision(first, RiskOutcome.Approved))
+    const secondDecision = await Effect.runPromise(riskDecision(second, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        const store = yield* IntentStore
+        yield* store.commit(first, firstDecision)
+        yield* store.commit(second, secondDecision)
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const firstSubmitHash = 'a'.repeat(64)
+    const firstCancelHash = 'b'.repeat(64)
+    const secondSubmitHash = 'c'.repeat(64)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(first.intentId, firstSubmitHash, 1_000, new Date(base).toISOString())
+        yield* store.submitUnknown(first.intentId, firstSubmitHash, new Date(base + 1).toISOString())
+        const blockedBySubmit = yield* Effect.exit(
+          store.beginSubmit(second.intentId, secondSubmitHash, 1_000, new Date(base + 2).toISOString()),
+        )
+        yield* store.recoveryFound(first.intentId, MutationOperation.Submit, firstSubmitHash, orderId, {
+          requestId: 'submit-recovery',
+          status: 200,
+          contentHash: 'd'.repeat(64),
+          observedAt: new Date(base + 3).toISOString(),
+        })
+        yield* store.beginCancel(first.intentId, firstCancelHash, orderId, 1_000, new Date(base + 4).toISOString())
+        yield* store.cancelUnknown(first.intentId, firstCancelHash, orderId, new Date(base + 5).toISOString())
+        const blockedByCancel = yield* Effect.exit(
+          store.beginSubmit(second.intentId, secondSubmitHash, 1_000, new Date(base + 6).toISOString()),
+        )
+        yield* store.recoveryFound(
+          first.intentId,
+          MutationOperation.Cancel,
+          firstCancelHash,
+          orderId,
+          {
+            requestId: 'cancel-recovery',
+            status: 200,
+            contentHash: 'e'.repeat(64),
+            observedAt: new Date(base + 7).toISOString(),
+          },
+          TerminalOutcome.Canceled,
+        )
+        const secondStart = yield* store.beginSubmit(
+          second.intentId,
+          secondSubmitHash,
+          1_000,
+          new Date(base + 8).toISOString(),
+        )
+        return { blockedByCancel, blockedBySubmit, secondStart }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.blockedBySubmit)).toBe(true)
+    expect(Exit.isFailure(observed.blockedByCancel)).toBe(true)
+    expect(observed.secondStart.started).toBe(true)
   })
 
   test('requires one typed append-only payload and unique broker source ordering', async () => {

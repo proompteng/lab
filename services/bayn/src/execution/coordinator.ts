@@ -1,0 +1,344 @@
+import { Clock, Data, Effect, Option, Schema } from 'effect'
+
+import {
+  BrokerMutation,
+  MutationEvidenceSchema,
+  MutationFailure,
+  MutationOperation,
+  cancelRequestHash,
+  orderRequestBody,
+  type MutationEvidence,
+} from '../broker/alpaca-mutations'
+import {
+  BrokerRead,
+  BrokerReadError,
+  BrokerReadErrorKind,
+  OrderStatus,
+  type Order,
+  type ReadEvidence,
+} from '../broker/alpaca'
+import { canonicalHashV1 } from '../hash'
+import { IntentState, TerminalOutcome, type Intent } from '../paper'
+import { IntentStore } from './intents'
+import { MutationEventType, MutationStore, type MutationEvent } from './mutations'
+import { WriterFence } from './writer-fence'
+
+export enum ExecutionFailure {
+  IntentNotFound = 'INTENT_NOT_FOUND',
+  InvalidState = 'INVALID_STATE',
+  RecoveryTooEarly = 'RECOVERY_TOO_EARLY',
+}
+
+export class ExecutionError extends Data.TaggedError('ExecutionError')<{
+  readonly operation: MutationOperation
+  readonly failure: ExecutionFailure
+  readonly message: string
+  readonly eligibleAt?: string
+  readonly cause?: unknown
+}> {}
+
+const now = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+
+const readIntent = (operation: MutationOperation, intentId: string) =>
+  Effect.gen(function* () {
+    const store = yield* IntentStore
+    const stored = yield* store.read(intentId)
+    if (Option.isNone(stored)) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation,
+          failure: ExecutionFailure.IntentNotFound,
+          message: `intent ${intentId} does not exist`,
+        }),
+      )
+    }
+    return stored.value
+  })
+
+const nextInstant = (instant: string, current: string): string =>
+  new Date(Math.max(Date.parse(current), Date.parse(instant) + 1)).toISOString()
+
+const requestHash = (operation: MutationOperation, intent: Intent) =>
+  Effect.try({
+    try: () => canonicalHashV1(orderRequestBody(intent)),
+    catch: (cause) =>
+      new ExecutionError({
+        operation,
+        failure: ExecutionFailure.InvalidState,
+        message: 'intent cannot be represented as an Alpaca paper order',
+        cause,
+      }),
+  })
+
+const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefined => {
+  switch (status) {
+    case OrderStatus.Filled:
+      return TerminalOutcome.Filled
+    case OrderStatus.Canceled:
+      return TerminalOutcome.Canceled
+    case OrderStatus.Expired:
+      return TerminalOutcome.Expired
+    case OrderStatus.Rejected:
+      return TerminalOutcome.Rejected
+    default:
+      return undefined
+  }
+}
+
+const exactOrder = (intent: Intent, order: Order): boolean => {
+  const body = orderRequestBody(intent)
+  return (
+    order.accountId === intent.accountId &&
+    order.clientOrderId === intent.clientOrderId &&
+    order.symbol === intent.symbol &&
+    order.side === body.side &&
+    order.orderType === body.type &&
+    order.timeInForce === body.time_in_force &&
+    order.quantityMicros === intent.quantityMicros &&
+    order.extendedHours === false
+  )
+}
+
+const isCompleteEvidence = (value: unknown): value is MutationEvidence => Schema.is(MutationEvidenceSchema)(value)
+
+const mutationEvidence = (evidence: ReadEvidence): MutationEvidence => ({
+  requestId: evidence.requestId,
+  status: evidence.status,
+  contentHash: evidence.contentHash,
+  observedAt: evidence.observedAt,
+})
+
+const readErrorEvidence = (error: BrokerReadError): MutationEvidence | undefined => {
+  const candidate = {
+    requestId: error.requestId,
+    status: error.status,
+    contentHash: error.contentHash,
+    observedAt: error.observedAt,
+  }
+  return isCompleteEvidence(candidate) ? candidate : undefined
+}
+
+const isSubmitResolved = (event: MutationEvent): boolean =>
+  event.eventType === MutationEventType.SubmitAccepted ||
+  event.eventType === MutationEventType.SubmitRejected ||
+  event.eventType === MutationEventType.RecoveryFound
+
+const validateRecovery = (stored: Intent, event: MutationEvent) =>
+  Effect.gen(function* () {
+    const expectedHash =
+      event.operation === MutationOperation.Submit
+        ? yield* requestHash(event.operation, stored)
+        : event.brokerOrderId === undefined
+          ? undefined
+          : cancelRequestHash(event.brokerOrderId)
+    const validState =
+      event.operation === MutationOperation.Submit
+        ? stored.state === IntentState.IoStarted || stored.state === IntentState.Unknown
+        : stored.state === IntentState.Acknowledged
+    if (expectedHash === event.requestHash && validState) return
+    return yield* Effect.fail(
+      new ExecutionError({
+        operation: event.operation,
+        failure: ExecutionFailure.InvalidState,
+        message: 'durable mutation identity or intent state does not permit broker recovery',
+      }),
+    )
+  })
+
+export const submit = (intentId: string, consistencyDelayMs: number) =>
+  Effect.gen(function* () {
+    const intents = yield* IntentStore
+    const mutations = yield* MutationStore
+    const broker = yield* BrokerMutation
+    const fence = yield* WriterFence
+    const before = yield* readIntent(MutationOperation.Submit, intentId)
+    const hash = yield* requestHash(MutationOperation.Submit, before.intent)
+    const current = yield* now
+    const started = yield* mutations.beginSubmit(
+      intentId,
+      hash,
+      consistencyDelayMs,
+      nextInstant(before.updatedAt, current),
+    )
+    if (!started.started) return started.event
+
+    const after = yield* intents.read(intentId)
+    if (Option.isNone(after) || after.value.intent.state !== IntentState.IoStarted) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation: MutationOperation.Submit,
+          failure: ExecutionFailure.InvalidState,
+          message: 'started submit cannot read back its IO_STARTED intent',
+        }),
+      )
+    }
+    yield* fence.check
+
+    return yield* broker.submit(after.value.intent).pipe(
+      Effect.matchEffect({
+        onFailure: (error) => {
+          if (
+            error.failure === MutationFailure.Rejected &&
+            error.requestHash === hash &&
+            isCompleteEvidence(error.evidence)
+          ) {
+            return mutations.submitRejected(intentId, hash, error.evidence)
+          }
+          return isCompleteEvidence(error.evidence)
+            ? mutations.submitUnknown(intentId, hash, error.evidence.observedAt, error.evidence)
+            : now.pipe(Effect.flatMap((occurredAt) => mutations.submitUnknown(intentId, hash, occurredAt)))
+        },
+        onSuccess: (receipt) => {
+          if (receipt.requestHash !== hash || !exactOrder(after.value.intent, receipt.order)) {
+            return mutations.submitUnknown(intentId, hash, receipt.evidence.observedAt, receipt.evidence)
+          }
+          return mutations.submitAccepted(
+            intentId,
+            hash,
+            receipt.order.brokerOrderId,
+            receipt.evidence,
+            terminalOutcome(receipt.order.status),
+          )
+        },
+      }),
+    )
+  })
+
+const brokerOrderId = (event: MutationEvent | undefined): string | undefined => {
+  if (event?.eventType === MutationEventType.SubmitAccepted) return event.brokerOrderId
+  if (event?.eventType === MutationEventType.RecoveryFound) return event.brokerOrderId
+  return undefined
+}
+
+export const cancel = (intentId: string, consistencyDelayMs: number) =>
+  Effect.gen(function* () {
+    const mutations = yield* MutationStore
+    const broker = yield* BrokerMutation
+    const fence = yield* WriterFence
+    const intent = yield* readIntent(MutationOperation.Cancel, intentId)
+    const submitEvent = yield* mutations.latest(intentId, MutationOperation.Submit)
+    const orderId = brokerOrderId(submitEvent)
+    if (orderId === undefined) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation: MutationOperation.Cancel,
+          failure: ExecutionFailure.InvalidState,
+          message: 'cancellation requires a positively identified broker order',
+        }),
+      )
+    }
+    const hash = cancelRequestHash(orderId)
+    const current = yield* now
+    const started = yield* mutations.beginCancel(
+      intentId,
+      hash,
+      orderId,
+      consistencyDelayMs,
+      nextInstant(intent.updatedAt, current),
+    )
+    if (!started.started) return started.event
+    yield* fence.check
+
+    return yield* broker.cancel(orderId).pipe(
+      Effect.matchEffect({
+        onFailure: (error) =>
+          isCompleteEvidence(error.evidence)
+            ? mutations.cancelUnknown(intentId, hash, orderId, error.evidence.observedAt, error.evidence)
+            : now.pipe(Effect.flatMap((occurredAt) => mutations.cancelUnknown(intentId, hash, orderId, occurredAt))),
+        onSuccess: (receipt) => {
+          if (receipt.requestHash !== hash || receipt.brokerOrderId !== orderId) {
+            return mutations.cancelUnknown(intentId, hash, orderId, receipt.evidence.observedAt, receipt.evidence)
+          }
+          return mutations.cancelAccepted(intentId, hash, orderId, receipt.evidence)
+        },
+      }),
+    )
+  })
+
+const ensureRecoveryDelay = (operation: MutationOperation, event: MutationEvent, currentMillis: number) => {
+  const eligibleMillis = Date.parse(event.occurredAt) + event.consistencyDelayMs
+  if (currentMillis >= eligibleMillis) return Effect.void
+  const eligibleAt = new Date(eligibleMillis).toISOString()
+  return Effect.fail(
+    new ExecutionError({
+      operation,
+      failure: ExecutionFailure.RecoveryTooEarly,
+      message: `broker lookup is not allowed before ${eligibleAt}`,
+      eligibleAt,
+    }),
+  )
+}
+
+const markInterruptedStart = (event: MutationEvent, occurredAt: string) =>
+  Effect.flatMap(MutationStore, (store) => {
+    if (event.eventType === MutationEventType.SubmitStarted) {
+      return store.submitUnknown(event.intentId, event.requestHash, occurredAt)
+    }
+    if (event.eventType === MutationEventType.CancelStarted && event.brokerOrderId !== undefined) {
+      return store.cancelUnknown(event.intentId, event.requestHash, event.brokerOrderId, occurredAt)
+    }
+    return Effect.succeed(event)
+  })
+
+export const recover = (intentId: string, operation: MutationOperation) =>
+  Effect.gen(function* () {
+    const mutations = yield* MutationStore
+    const broker = yield* BrokerRead
+    const stored = yield* readIntent(operation, intentId)
+    const latest = yield* mutations.latest(intentId, operation)
+    if (latest === undefined) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation,
+          failure: ExecutionFailure.InvalidState,
+          message: 'mutation does not exist',
+        }),
+      )
+    }
+    if (operation === MutationOperation.Submit && isSubmitResolved(latest)) return latest
+    if (
+      operation === MutationOperation.Cancel &&
+      stored.intent.state === IntentState.Terminal &&
+      latest.eventType === MutationEventType.RecoveryFound
+    ) {
+      return latest
+    }
+    yield* validateRecovery(stored.intent, latest)
+
+    const currentMillis = yield* Clock.currentTimeMillis
+    yield* ensureRecoveryDelay(operation, latest, currentMillis)
+    const interrupted = yield* markInterruptedStart(latest, new Date(currentMillis).toISOString())
+
+    return yield* broker.orderByClientId(stored.intent.clientOrderId).pipe(
+      Effect.matchEffect({
+        onFailure: (error) => {
+          const evidence = readErrorEvidence(error)
+          if (error.kind === BrokerReadErrorKind.NotFound && evidence !== undefined) {
+            return mutations.recoveryNotFound(intentId, operation, interrupted.requestHash, evidence)
+          }
+          const occurredAt = evidence?.observedAt ?? new Date(currentMillis).toISOString()
+          return mutations.recoveryUnknown(intentId, operation, interrupted.requestHash, occurredAt, evidence)
+        },
+        onSuccess: (result) => {
+          const evidence = mutationEvidence(result.evidence)
+          if (!exactOrder(stored.intent, result.value)) {
+            return mutations.recoveryUnknown(
+              intentId,
+              operation,
+              interrupted.requestHash,
+              evidence.observedAt,
+              evidence,
+            )
+          }
+          return mutations.recoveryFound(
+            intentId,
+            operation,
+            interrupted.requestHash,
+            result.value.brokerOrderId,
+            evidence,
+            terminalOutcome(result.value.status),
+          )
+        },
+      }),
+    )
+  })
