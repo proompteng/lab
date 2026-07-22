@@ -3,6 +3,33 @@ set -eu
 
 umask 077
 
+toolchain_bin=/opt/lab-toolchain/bin
+
+check_tool_version() {
+  tool_name=$1
+  expected_version=$2
+  shift 2
+  actual_version=$("$@")
+  if [ "$actual_version" != "$expected_version" ]; then
+    printf '%s version mismatch: expected %s, got %s\n' "$tool_name" "$expected_version" "$actual_version" >&2
+    exit 1
+  fi
+}
+
+check_tool_version node v24.11.1 "$toolchain_bin/node" --version
+check_tool_version bun 1.3.14 "$toolchain_bin/bun" --version
+check_tool_version bunx 1.3.14 "$toolchain_bin/bunx" --version
+check_tool_version go 'go version go1.25.5 linux/amd64' "$toolchain_bin/go" version
+check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template '{{.Version}}'
+check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version
+check_tool_version kustomize v5.8.0 "$toolchain_bin/kustomize" version
+check_tool_version kubeconform v0.7.0 "$toolchain_bin/kubeconform" -v
+shellcheck_version=$("$toolchain_bin/shellcheck" --version | sed -n 's/^version: //p')
+check_tool_version shellcheck 0.11.0 printf '%s' "$shellcheck_version"
+yq_version=$("$toolchain_bin/yq" --version | sed 's/^.* version //')
+check_tool_version yq v4.49.2 printf '%s' "$yq_version"
+unset shellcheck_version yq_version
+
 mkdir -p \
   /opt/data/cron \
   /opt/data/home \

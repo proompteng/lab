@@ -12,6 +12,11 @@ never use the Discord token concurrently.
 - Upstream multi-architecture index: `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
 - Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
+- Lab toolchain:
+  `registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031`.
+  The dedicated multi-architecture Nix OCI image is pinned by index digest and restricted to Node `24.11.1`, Bun/Bunx
+  `1.3.14`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`, ShellCheck `0.11.0`, jq `1.8.1`, and yq
+  `4.49.2`.
 
 All runtime image references are immutable digests. Updating Hermes requires a new release review, amd64 mirror, rootless
 smoke test, manifest change, and normal CI/Codex review.
@@ -32,6 +37,9 @@ smoke test, manifest change, and normal CI/Codex review.
   only `get`, `list`, and `watch`, excludes core Secrets and interactive Pod subresources, and is bound cluster-wide only to
   the `hermes` ServiceAccount. Bootstrap writes a non-secret kubeconfig that follows the rotating projected token by file
   path rather than persisting token material.
+- Hermes receives the curated Lab toolchain through a second read-only OCI image volume. Only its `/bin` facade and
+  `/nix/store` closure are mounted; the image does not include Nix, a container engine, GitHub credentials, `kubectl`, or
+  any additional Kubernetes authority. Bootstrap fails closed unless every tool reports the repository-pinned version.
 - The API key comes from `onepassword-infra` through External Secrets. No secret is committed to Git.
 - The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. Only the bootstrap init
   container receives `GH_TOKEN`; it creates mode-`0600` GitHub CLI auth files in a per-Pod `emptyDir` shared read-only with
@@ -44,7 +52,7 @@ smoke test, manifest change, and normal CI/Codex review.
   `83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60`, caches the verified archive, and recreates the
   `tuslagch` Git identity, GitHub CLI authentication, and `gh auth git-credential` helper on every start. Bootstrap fails
   closed unless `gh api user` returns `tuslagch` and repository permission is `ADMIN`.
-- The immutable `/etc/profile.d/hermes-tools.sh` restores `/opt/tools` and the pinned Hermes paths after Debian's login
+- The immutable `/etc/profile.d/hermes-tools.sh` restores `/opt/tools`, `/opt/lab-toolchain/bin`, and the pinned Hermes paths after Debian's login
   profile resets `PATH`; Hermes explicitly sources it while capturing each terminal session, so bare `gh` and `kubectl`
   resolve consistently from API and Discord terminals.
 - API key rotation requires a bounded Secret refresh, gateway Pod restart, and old-key rejection/new-key acceptance proof.

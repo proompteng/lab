@@ -1,0 +1,200 @@
+name: hermes-toolchain-release
+
+on:
+  workflow_run:
+    workflows:
+      - hermes-toolchain-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote.
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote.
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...).
+        required: false
+        type: string
+
+concurrency:
+  group: hermes-toolchain-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: hermes-toolchain-release-contract
+          path: .artifacts/hermes-toolchain
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          IMAGE_DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          image='registry.ide-newton.ts.net/lab/hermes-toolchain'
+          contract='.artifacts/hermes-toolchain/release-contract.json'
+
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            source_sha="$(jq -r '.sourceSha' "${contract}")"
+            tag="$(jq -r '.tag' "${contract}")"
+            digest="$(jq -r '.digest' "${contract}")"
+            contract_image="$(jq -r '.image' "${contract}")"
+            test "${source_sha}" = "${WORKFLOW_RUN_HEAD_SHA}"
+            test "${contract_image}" = "${image}"
+          else
+            source_sha="${COMMIT_SHA_INPUT:-$(git rev-parse HEAD)}"
+            tag="${IMAGE_TAG_INPUT:-sha-${source_sha}}"
+            digest="${IMAGE_DIGEST_INPUT:-}"
+            if [[ -z "${digest}" ]]; then
+              digest="$(crane digest "${image}:${tag}")"
+            fi
+          fi
+
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid Hermes toolchain digest: ${digest}" >&2
+            exit 1
+          fi
+          if [[ "${source_sha}" != "$(git rev-parse HEAD)" ]]; then
+            changed_paths="$(git diff --name-only "${source_sha}..HEAD")"
+            toolchain_input_changes="$({
+              printf '%s\n' "${changed_paths}" | grep -E \
+                -e '^\.github/actions/setup-nix-toolchain/' \
+                -e '^\.github/workflows/hermes-toolchain-build-push\.yml$' \
+                -e '^\.github/workflows/nix-oci-build-common\.yml$' \
+                -e '^flake\.lock$' \
+                -e '^flake\.nix$' \
+                -e '^nix/ci-nix-oci-summary\.sh$' \
+                -e '^nix/ci-run-timed\.sh$' \
+                -e '^nix/images/hermes-toolchain\.nix$' \
+                -e '^nix/oci-inspect-archive\.sh$' \
+                -e '^nix/oci-push\.sh$' \
+                -e '^nix/oci-release-contract\.sh$' \
+                -e '^nix/packages\.nix$' || true
+            })"
+            if [[ -n "${toolchain_input_changes}" ]]; then
+              echo 'promote=false' >> "${GITHUB_OUTPUT}"
+              echo "Stale Hermes toolchain build ${source_sha}; current main is $(git rev-parse HEAD)." >&2
+              printf '%s\n' "${toolchain_input_changes}" >&2
+              exit 0
+            fi
+          fi
+
+          {
+            echo 'promote=true'
+            echo "image=${image}"
+            echo "tag=${tag}"
+            echo "digest=${digest}"
+            echo "source_sha=${source_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Verify promoted Hermes toolchain index
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64
+
+      - name: Update Hermes toolchain image
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          export IMAGE_REF="${IMAGE}@${DIGEST}"
+          perl -0pi -e 's#reference: registry\.ide-newton\.ts\.net/lab/hermes-toolchain\@sha256:[0-9a-f]{64}#reference: $ENV{IMAGE_REF}#g' \
+            argocd/applications/hermes/statefulset.yaml
+          test "$(grep -cF "reference: ${IMAGE_REF}" argocd/applications/hermes/statefulset.yaml)" -eq 1
+
+      - name: Create Hermes toolchain release pull request
+        if: steps.meta.outputs.promote == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/hermes-toolchain-release-${{ steps.meta.outputs.tag }}
+          title: 'chore(hermes): promote toolchain image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(hermes): promote toolchain image ${{ steps.meta.outputs.tag }}'
+          body: |
+            ## Summary
+
+            - Promote the Hermes Lab toolchain to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`.
+            - Preserve the existing Hermes runtime, credentials, network policy, and read-only Kubernetes authority.
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - `nix run .#assert-oci-platforms -- "${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}" linux/amd64 linux/arm64`
+            - `bun run scripts/hermes/validate-production.ts`
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            None
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed (or `N/A` with justification).
+            - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+            - [x] Documentation, release notes, and follow-ups are updated or tracked.
+          labels: |
+            automated-pr
+            nix-oci
+            agents
+          add-paths: |
+            argocd/applications/hermes/statefulset.yaml
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale Hermes toolchain promotion because image inputs changed after the build.'
