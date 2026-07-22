@@ -65,6 +65,14 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     BAYN_TIGERBEETLE_ADDRESSES: options.tigerBeetleAddresses ?? currentBindings.BAYN_TIGERBEETLE_ADDRESSES,
   }
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
+  const dossierGenerator =
+    pin === undefined
+      ? ''
+      : `configMapGenerator:\n  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier.json=qualification-dossiers/${pin}.json\n`
+  const dossierMounts =
+    pin === undefined
+      ? ''
+      : `          volumeMounts:\n            - name: qualification-dossier\n              mountPath: /var/run/bayn/qualification\n              readOnly: true\n      volumes:\n        - name: qualification-dossier\n          configMap:\n            name: bayn-qualification-dossier\n            defaultMode: 0444\n            items:\n              - key: qualification-dossier.json\n                path: qualification-dossier.json\n`
   const environment = [
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
     environmentBlock('BAYN_IMAGE_REPOSITORY', 'registry.ide-newton.ts.net/lab/bayn'),
@@ -77,11 +85,11 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
 
   writeFileSync(
     paths.kustomizationPath,
-    'images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n',
+    `${dossierGenerator}images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n`,
   )
   writeFileSync(
     paths.deploymentPath,
-    `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n${environment}`,
+    `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n${environment}${dossierMounts}`,
   )
   writeFileSync(
     paths.applicationSetPath,
@@ -122,6 +130,8 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
     )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).toContain('bayn-qualification-dossier')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain('/var/run/bayn/qualification')
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
   })
 
@@ -179,6 +189,8 @@ describe('Bayn manifest promotion', () => {
       candidateSnapshotId: currentSnapshotId,
     })
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('bayn-qualification-dossier')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_SIGNAL_SNAPSHOT_ID', currentSnapshotId).trim(),
     )

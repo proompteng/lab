@@ -72,6 +72,15 @@ const environmentValue = (deployment: string, name: string): string => {
 }
 
 const qualificationPin = /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/
+const qualificationDossierGenerator =
+  /  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier\.json=qualification-dossiers\/[0-9a-f]{64}\.json\n/
+const qualificationDossierMount =
+  /            - name: qualification-dossier\n              mountPath: \/var\/run\/bayn\/qualification\n              readOnly: true\n/
+const qualificationDossierVolume =
+  /        - name: qualification-dossier\n          configMap:\n            name: bayn-qualification-dossier\n            defaultMode: 0444\n            items:\n              - key: qualification-dossier\.json\n                path: qualification-dossier\.json\n/
+
+const matchCount = (source: string, pattern: RegExp): number =>
+  [...source.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].length
 
 const transitionQualificationPin = (
   deployment: string,
@@ -105,6 +114,18 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
   if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
   const hadQualificationPin = qualificationPins.length === 1
+  const dossierPartCounts = [
+    matchCount(kustomization, qualificationDossierGenerator),
+    matchCount(deployment, qualificationDossierMount),
+    matchCount(deployment, qualificationDossierVolume),
+  ]
+  if (dossierPartCounts.some((count) => count > 1) || new Set(dossierPartCounts).size !== 1) {
+    throw new Error('qualification dossier generator, mount, and volume must occur together at most once')
+  }
+  const hadQualificationDossier = dossierPartCounts[0] === 1
+  if (hadQualificationDossier !== hadQualificationPin) {
+    throw new Error('qualification pin and dossier must occur together')
+  }
   const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
   const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
   const deployedParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')
@@ -126,12 +147,15 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   }
   const imageBlock =
     /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/
-  const updatedKustomization = replaceExactlyOnce(
+  let updatedKustomization = replaceExactlyOnce(
     kustomization,
     imageBlock,
     `$1${JSON.stringify(options.tag)}\n    digest: ${options.digest}`,
     'Bayn image block',
   )
+  if (qualificationMode === 'replace' && hadQualificationDossier) {
+    updatedKustomization = updatedKustomization.replace(qualificationDossierGenerator, '')
+  }
 
   let updatedDeployment = replaceExactlyOnce(
     deployment,
@@ -158,6 +182,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     'BAYN_STRATEGY_PARAMETER_HASH value',
   )
   updatedDeployment = transitionQualificationPin(updatedDeployment, qualificationMode, hadQualificationPin)
+  if (qualificationMode === 'replace' && hadQualificationDossier) {
+    updatedDeployment = updatedDeployment.replace(qualificationDossierMount, '').replace(qualificationDossierVolume, '')
+  }
   for (const [name, value] of Object.entries(currentRuntimeConfiguration)) {
     updatedDeployment = replaceExactlyOnce(
       updatedDeployment,
