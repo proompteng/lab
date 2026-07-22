@@ -237,11 +237,22 @@ const readDatabase = Effect.fnUntraced(function* (runId: string) {
       )
       const trials = yield* decodeTrialRows(
         yield* sql`
-            SELECT run_id
-            FROM qualification_trials
-            WHERE observed_at < (
-              SELECT created_at FROM qualification_locks WHERE candidate_run_id = ${runId}
+            WITH target_lock AS (
+              SELECT created_at
+              FROM qualification_locks
+              WHERE candidate_run_id = ${runId}
             )
+            SELECT run_id FROM (
+              SELECT trial.run_id
+              FROM qualification_trials AS trial
+              CROSS JOIN target_lock
+              WHERE trial.observed_at < target_lock.created_at
+              UNION
+              SELECT result.run_id
+              FROM qualification_results AS result
+              CROSS JOIN target_lock
+              WHERE result.committed_at < target_lock.created_at
+            ) AS prior_trials
             ORDER BY run_id
           `,
       )
