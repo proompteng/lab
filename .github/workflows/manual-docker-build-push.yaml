@@ -66,6 +66,15 @@ jobs:
           repository_pattern='^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$'
           digest_pattern='^sha256:[0-9a-f]{64}$'
           tag_pattern='^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$'
+          for repository in nginx library/nginx proompteng/tigresse; do
+            [[ "$repository" =~ $repository_pattern ]]
+          done
+          for repository in /nginx nginx/ library//nginx 'Library/nginx'; do
+            if [[ "$repository" =~ $repository_pattern ]]; then
+              echo "Repository validation accepted invalid value: $repository" >&2
+              exit 1
+            fi
+          done
           [[ "$SOURCE_REPOSITORY" =~ $repository_pattern ]]
           [[ "$TARGET_REPOSITORY" =~ $repository_pattern ]]
           [[ "$SOURCE_DIGEST" =~ $digest_pattern ]]
@@ -76,6 +85,19 @@ jobs:
             echo "target=registry.ide-newton.ts.net/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
             echo "target_transport=registry.registry.svc.cluster.local/lab/${TARGET_REPOSITORY}:${TARGET_TAG}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify source digest and required platforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw \
+            "${{ steps.image.outputs.source }}" > source-index.json
+          test "sha256:$(sha256sum source-index.json | cut -d ' ' -f1)" = \
+            "${{ steps.image.outputs.source_digest }}"
+          jq -e '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' source-index.json
 
       - name: Copy complete OCI index
         shell: bash
