@@ -20,6 +20,19 @@ const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
 
+const accountResponse = {
+  id: accountId,
+  account_number: '010203ABCD',
+  status: 'ACTIVE',
+  currency: 'USD',
+  cash: '100000',
+  equity: '100000',
+  buying_power: '200000',
+  account_blocked: false,
+  trading_blocked: false,
+  trade_suspended_by_user: false,
+}
+
 const options: MutationOptions = {
   expectedAccountId: accountId,
   key: Redacted.make('paper-key'),
@@ -102,12 +115,21 @@ const response = (
     }),
   )
 
+const withVerifiedAccount = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  HttpClient.make((request, url) =>
+    url.pathname === '/v2/account' ? Effect.succeed(response(request, accountResponse)) : client.execute(request),
+  )
+
 const withMutation = <A, E>(
   client: HttpClient.HttpClient,
   use: (mutation: BrokerMutationShape) => Effect.Effect<A, E>,
   mutationOptions: MutationOptions = options,
-): Effect.Effect<A, BrokerMutationError | E> =>
-  makeMutation(mutationOptions).pipe(Effect.flatMap(use), Effect.provideService(HttpClient.HttpClient, client))
+): Effect.Effect<A, BrokerMutationError | E> => {
+  return makeMutation(mutationOptions).pipe(
+    Effect.flatMap(use),
+    Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
+  )
+}
 
 const requestBody = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[0]): unknown => {
   if (request.body._tag !== 'Uint8Array') throw new Error('expected a JSON request body')
@@ -115,6 +137,26 @@ const requestBody = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[
 }
 
 describe('Alpaca paper mutations', () => {
+  test('refuses to expose mutation capability when the credentials resolve a different account', async () => {
+    let mutationCalls = 0
+    const client = HttpClient.make(() => {
+      mutationCalls += 1
+      return Effect.die(new Error('mutation request must not run'))
+    })
+    const wrongAccount = '40b22fc4-23bc-446c-bf07-bea43b5d6c35'
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withMutation(client, () => Effect.void, { ...options, expectedAccountId: wrongAccount })),
+    )
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Configuration,
+      outcome: MutationOutcome.Known,
+    })
+    expect(mutationCalls).toBe(0)
+  })
+
   test('submits the exact IO_STARTED intent once and verifies the accepted order', async () => {
     const requests: Array<{ body: unknown; method: string; url: string }> = []
     const client = HttpClient.make((request, url) => {
@@ -217,7 +259,7 @@ describe('Alpaca paper mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
       Effect.provide(TestClock.layer()),
     )
 
@@ -250,7 +292,7 @@ describe('Alpaca paper mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provideService(HttpClient.HttpClient, withVerifiedAccount(client)),
       Effect.provide(TestClock.layer()),
     )
 

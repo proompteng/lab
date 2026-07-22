@@ -18,6 +18,7 @@ import {
   OrderType,
   TimeInForce,
   alpacaHttpLayer,
+  make as makeRead,
   normalizeOrder,
   paperTradingUrl,
   type Order,
@@ -281,6 +282,19 @@ export const makeMutation = (
       )
     }
     const client = yield* HttpClient.HttpClient
+    const read = yield* makeRead({
+      expectedAccountId: runtime.expectedAccountId,
+      key: options.key,
+      secret: options.secret,
+      proxyUrl: options.proxyUrl,
+      operationTimeoutMs: runtime.operationTimeoutMs,
+      retryAttempts: 0,
+    }).pipe(
+      Effect.mapError((cause) => configurationError('Alpaca mutation account verification could not start', cause)),
+    )
+    yield* read.account.pipe(
+      Effect.mapError((cause) => configurationError('Alpaca mutation account verification failed', cause)),
+    )
 
     const submit = (input: Intent) =>
       Effect.gen(function* () {
