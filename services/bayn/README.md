@@ -34,6 +34,8 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - `BAYN_QUALIFICATION_RUN_ID` optionally pins one terminal qualification across operational image updates. Startup
   verifies the stored strategy and Signal bindings, then recovers it without inspecting bars, opening a lock,
   evaluating, journaling, or persisting.
+- Production GitOps carries that pin outside an explicit one-shot qualification release. The release writer refuses a
+  second source revision on the same unpinned snapshot, preventing operational releases from creating new trials.
 - The compiled risk-balanced trend decision function records every normalized trend horizon, volatility estimate,
   portfolio-volatility scale, and target weight at a month-end close. Decisions may execute only at the next exchange
   session open.
