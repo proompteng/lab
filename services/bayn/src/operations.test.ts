@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Fiber, Layer } from 'effect'
 import { TestClock } from 'effect/testing'
-import { AuthenticationError, AuthorizationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
+import {
+  AuthenticationError,
+  AuthorizationError,
+  ConnectionError,
+  SqlError,
+  UnknownError,
+} from 'effect/unstable/sql/SqlError'
 
 import { DatabaseError } from './db/evidence-store'
 import { acquireSqlLayer, databaseOperation } from './operations'
@@ -67,6 +73,36 @@ describe('Bayn SQL dependency acquisition', () => {
       Effect.suspend(() => {
         attempts += 1
         return attempts === 1 ? Effect.fail(unavailable) : Effect.void
+      }),
+    )
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const fiber = yield* acquireSqlLayer(dependencies).pipe(Effect.forkScoped({ startImmediately: true }))
+        yield* Effect.yieldNow
+        expect(attempts).toBe(1)
+        yield* TestClock.adjust('1 second')
+        yield* Fiber.join(fiber)
+        expect(attempts).toBe(2)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
+  test('retries a PostgreSQL connection refusal reported as an unknown SQL error', async () => {
+    let attempts = 0
+    const connectionRefused = new DatabaseError({
+      failure: 'unavailable',
+      operation: 'connect',
+      message: 'PostgreSQL operation failed',
+      cause: new SqlError({
+        reason: new UnknownError({ cause: new Error('connect ECONNREFUSED'), operation: 'connect' }),
+      }),
+    })
+    const dependencies = Layer.effectDiscard(
+      Effect.suspend(() => {
+        attempts += 1
+        return attempts === 1 ? Effect.fail(connectionRefused) : Effect.void
       }),
     )
     const program = Effect.scoped(
