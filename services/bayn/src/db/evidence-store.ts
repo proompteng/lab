@@ -2116,7 +2116,7 @@ const withMigrationDeadline = <R>(
     }),
   )
 
-const EvidenceStoreDatabaseLayer = <RMigration, RStore>(
+export const makeEvidenceStoreLayer = <RMigration, RStore>(
   config: Pick<RuntimeConfig, 'operationTimeoutMs'>,
   migration: Effect.Effect<void, DatabaseError, RMigration>,
   store: Effect.Effect<EvidenceStoreService, DatabaseError, RStore>,
@@ -2130,31 +2130,4 @@ const EvidenceStoreDatabaseLayer = <RMigration, RStore>(
   )
 
 export const EvidenceStoreLive = (config: RuntimeConfig) =>
-  EvidenceStoreDatabaseLayer(config, migrations, makeEvidenceStore).pipe(Layer.provideMerge(PostgresClientLive(config)))
-
-export const makeEvidenceStoreRuntimeLayer = <RMigration, RStore>(
-  config: Pick<RuntimeConfig, 'operationTimeoutMs'>,
-  migration: Effect.Effect<void, DatabaseError, RMigration>,
-  store: Effect.Effect<EvidenceStoreService, DatabaseError, RStore>,
-) => recoverEvidenceStoreLayer(EvidenceStoreDatabaseLayer(config, migration, store))
-
-const recoverEvidenceStoreLayer = <R>(layer: Layer.Layer<EvidenceStore, DatabaseError, R>) =>
-  layer.pipe(
-    Layer.catch((error) =>
-      Layer.succeed(EvidenceStore, {
-        check: Effect.fail(error),
-        persist: () => Effect.fail(error),
-        read: () => Effect.fail(error),
-        readArtifactItems: () => Effect.fail(error),
-        recover: () => Effect.fail(error),
-        listPriorTrials: Effect.fail(error),
-        openQualification: () => Effect.fail(error),
-        readQualification: () => Effect.fail(error),
-      }),
-    ),
-  )
-
-export const EvidenceStoreRuntimeLive = (config: RuntimeConfig) =>
-  recoverEvidenceStoreLayer(
-    EvidenceStoreDatabaseLayer(config, migrations, makeEvidenceStore).pipe(Layer.provide(PostgresClientLive(config))),
-  )
+  makeEvidenceStoreLayer(config, migrations, makeEvidenceStore).pipe(Layer.provideMerge(PostgresClientLive(config)))

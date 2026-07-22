@@ -6,7 +6,7 @@ import { run } from './app'
 import { verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
-import { EvidenceStoreRuntimeLive } from './db/evidence-store'
+import { EvidenceStoreLive } from './db/evidence-store'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { hashParameters, loadDefaultProtocol } from './protocol'
@@ -47,7 +47,7 @@ const main = Effect.gen(function* () {
   const dependencies = Layer.mergeAll(
     marketData,
     JournalLive(config),
-    EvidenceStoreRuntimeLive(config).pipe(Layer.provide(NodeServices.layer)),
+    EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)),
   )
   return yield* run(config, strategy).pipe(Effect.provide(dependencies))
 })

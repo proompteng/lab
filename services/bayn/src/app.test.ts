@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { createServer } from 'node:http'
 
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Redacted, Ref } from 'effect'
@@ -12,8 +11,8 @@ import type { RuntimeConfig } from './config'
 import {
   DatabaseError,
   EvidenceStore,
-  EvidenceStoreRuntimeLive,
-  makeEvidenceStoreRuntimeLayer,
+  EvidenceStoreLive,
+  makeEvidenceStoreLayer,
   type EvidenceStoreService,
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
@@ -243,37 +242,6 @@ const fetchJson = async (port: number, path: string, method = 'GET') => {
     allow: response.headers.get('allow'),
     body: (await response.json()) as Record<string, unknown>,
   }
-}
-
-const unusedPort = () =>
-  new Promise<number>((resolve, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (address === null || typeof address === 'string') {
-        server.close()
-        reject(new Error('test server did not bind a TCP port'))
-        return
-      }
-      server.close((error) => (error === undefined ? resolve(address.port) : reject(error)))
-    })
-  })
-
-const waitForStatus = async (port: number, expectedStatus: string) => {
-  const deadline = Date.now() + 2_000
-  let lastError: unknown
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetchJson(port, '/v1/status')
-      const operational = response.body.operational as { readonly status?: string } | undefined
-      if (operational?.status === expectedStatus) return response
-    } catch (error) {
-      lastError = error
-    }
-    await Bun.sleep(20)
-  }
-  throw new Error(`Bayn did not reach ${expectedStatus}`, { cause: lastError })
 }
 
 const readyState = (): RuntimeState => {
@@ -1004,76 +972,40 @@ describe('Bayn startup lifecycle', () => {
     })
   })
 
-  test('keeps HTTP live and readiness closed when database layer setup fails', async () => {
-    const port = await unusedPort()
+  test('fails layer construction when database setup fails', async () => {
     const unavailableDatabase = {
       ...config,
-      port,
       postgres: {
         ...config.postgres,
         tls: true,
         caPath: `/tmp/bayn-missing-ca-${randomUUID()}.crt`,
       },
     }
-    const dependencies = Layer.mergeAll(
-      Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
-      Layer.succeed(Journal, successfulJournal),
-      EvidenceStoreRuntimeLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)),
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(Layer.build(EvidenceStoreLive(unavailableDatabase).pipe(Layer.provide(NodeServices.layer)))),
     )
-    const fiber = Effect.runFork(run(unavailableDatabase, fixtureStrategy).pipe(Effect.provide(dependencies)))
 
-    try {
-      const status = await waitForStatus(port, 'FAILED')
-      expect(status).toMatchObject({
-        status: 200,
-        body: {
-          operational: { status: 'FAILED' },
-          error: expect.stringContaining('database.health-check'),
-        },
-      })
-      expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
-      expect(await fetchJson(port, '/readyz')).toMatchObject({
-        status: 503,
-        body: { ready: false, status: 'FAILED' },
-      })
-    } finally {
-      await Effect.runPromise(Fiber.interrupt(fiber))
-    }
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('failed to read PostgreSQL CA certificate')
   })
 
-  test('keeps HTTP live and interrupts a migration that exceeds the operation deadline', async () => {
+  test('interrupts and fails layer construction when a migration exceeds the operation deadline', async () => {
     let interrupted = false
-    const port = await unusedPort()
     const timedOutDatabase = {
       ...config,
-      port,
       operationTimeoutMs: 10,
     }
     const stalledMigration = Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))))
-    const dependencies = Layer.mergeAll(
-      Layer.succeed(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
-      Layer.succeed(Journal, successfulJournal),
-      makeEvidenceStoreRuntimeLayer(timedOutDatabase, stalledMigration, Effect.succeed(successfulEvidenceStore)),
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Layer.build(
+          makeEvidenceStoreLayer(timedOutDatabase, stalledMigration, Effect.succeed(successfulEvidenceStore)),
+        ),
+      ),
     )
-    const fiber = Effect.runFork(run(timedOutDatabase, fixtureStrategy).pipe(Effect.provide(dependencies)))
 
-    try {
-      const status = await waitForStatus(port, 'FAILED')
-      expect(interrupted).toBe(true)
-      expect(status).toMatchObject({
-        status: 200,
-        body: {
-          operational: { status: 'FAILED' },
-          error: expect.stringContaining('PostgreSQL migration timed out after 10ms'),
-        },
-      })
-      expect(await fetchJson(port, '/livez')).toMatchObject({ status: 200, body: { live: true } })
-      expect(await fetchJson(port, '/readyz')).toMatchObject({
-        status: 503,
-        body: { ready: false, status: 'FAILED' },
-      })
-    } finally {
-      await Effect.runPromise(Fiber.interrupt(fiber))
-    }
+    expect(interrupted).toBe(true)
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('PostgreSQL migration timed out after 10ms')
   })
 })
