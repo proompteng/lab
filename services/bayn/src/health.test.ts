@@ -6,17 +6,21 @@ import { TestClock } from 'effect/testing'
 import { config, successfulJournal, readyState, recoveringStore } from './app-test-support'
 import { monitor, probe } from './app'
 import { EvidenceStore } from './db/evidence-store'
+import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { makeSnapshot } from './test-fixtures'
 
 describe('Bayn continuous health', () => {
+  const healthyWriter: WriterFenceService = { backendPid: 1, check: Effect.void }
+
   test('degrades on a probe defect, preserves evidence, and recovers only after a complete success', async () => {
     const initial = readyState()
     const initialEvidence = initial.evidence
     if (initialEvidence === null) throw new Error('ready fixture must contain evidence')
     const state = await Effect.runPromise(Ref.make(initial))
     let signalAvailable = false
+    let writerAvailable = true
     let accountingChecks = 0
     const marketData: MarketDataService = {
       check: Effect.suspend(() =>
@@ -32,11 +36,26 @@ describe('Bayn continuous health', () => {
       checkRun: () => Effect.sync(() => void (accountingChecks += 1)),
       journalAndReconcile: () => Effect.die(new Error('health probes must not write TigerBeetle')),
     }
-    const dependencies = (effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore>) =>
+    const writer: WriterFenceService = {
+      backendPid: 1,
+      check: Effect.suspend(() =>
+        writerAvailable
+          ? Effect.void
+          : Effect.fail(
+              new WriterFenceError({
+                failure: 'unavailable',
+                operation: 'check',
+                message: 'writer lease lost',
+              }),
+            ),
+      ),
+    }
+    const dependencies = (effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | WriterFence>) =>
       effect.pipe(
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, recoveringStore(initial)),
+        Effect.provideService(WriterFence, writer),
       )
 
     await Effect.runPromise(dependencies(probe(config, state)))
@@ -69,7 +88,22 @@ describe('Bayn continuous health', () => {
         },
       },
     })
-    expect(accountingChecks).toBe(2)
+
+    writerAvailable = false
+    await Effect.runPromise(dependencies(probe(config, state)))
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'DEGRADED',
+      health: {
+        sequence: 4,
+        dependencies: {
+          postgresql: { status: 'UNAVAILABLE', error: expect.stringContaining('writer lease lost') },
+          signal: { status: 'AVAILABLE' },
+          tigerBeetle: { status: 'AVAILABLE' },
+          evidence: { status: 'AVAILABLE' },
+        },
+      },
+    })
+    expect(accountingChecks).toBe(3)
   })
 
   test('runs immediately and then on the configured Effect schedule', async () => {
@@ -91,6 +125,7 @@ describe('Bayn continuous health', () => {
           Effect.provideService(MarketData, marketData),
           Effect.provideService(Journal, journal),
           Effect.provideService(EvidenceStore, recoveringStore(initial)),
+          Effect.provideService(WriterFence, healthyWriter),
           Effect.forkScoped({ startImmediately: true }),
         )
         yield* Effect.yieldNow
@@ -124,6 +159,7 @@ describe('Bayn continuous health', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
         Effect.provideService(EvidenceStore, recoveringStore(initial)),
+        Effect.provideService(WriterFence, healthyWriter),
       ),
     )
     await Effect.runPromise(Deferred.await(started))

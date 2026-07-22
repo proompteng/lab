@@ -5,9 +5,11 @@ import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { IntentStore, IntentStoreLive, plan, type IntentPlan } from '../execution/intents'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
-import { Authority } from '../paper'
+import { Authority, decodeRiskDecision, OrderSide, OrderType, RiskOutcome, TimeInForce, type Intent } from '../paper'
 import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy-service'
@@ -64,6 +66,52 @@ const makeEvidenceRuntime = (config = makeConfig()) =>
 
 const makeClientRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
+
+const makeExecutionRuntime = (config = makeConfig()) =>
+  ManagedRuntime.make(
+    IntentStoreLive.pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
+const intentPlan = (overrides: Partial<IntentPlan> = {}): IntentPlan => ({
+  schemaVersion: 'bayn.paper-intent-plan.v1',
+  strategyName: 'risk-balanced-trend',
+  cycleId: 'a'.repeat(64),
+  decisionHash: 'b'.repeat(64),
+  policyHash: 'c'.repeat(64),
+  accountId: 'paper-account-1',
+  symbol: 'NVDA',
+  side: OrderSide.Buy,
+  orderType: OrderType.Market,
+  timeInForce: TimeInForce.Day,
+  quantityMicros: '1000000',
+  notionalLimitMicros: '200000000',
+  createdAt: new Date(Date.now() - 1_000).toISOString(),
+  ...overrides,
+})
+
+const riskDecision = (
+  intent: Intent,
+  outcome: RiskOutcome,
+  times: { readonly decidedAt?: string; readonly expiresAt?: string } = {},
+) => {
+  const now = Date.now()
+  const decidedAt = times.decidedAt ?? new Date(now).toISOString()
+  const material = {
+    schemaVersion: 'bayn.paper-risk-decision.v1',
+    inputHash: 'd'.repeat(64),
+    intentId: intent.intentId,
+    policyHash: intent.policyHash,
+    outcome,
+    reasonCodes: outcome === RiskOutcome.Approved ? [] : ['KILL_ACTIVE'],
+    decidedAt,
+    expiresAt: times.expiresAt ?? new Date(now + 60_000).toISOString(),
+  } as const
+  return decodeRiskDecision({ ...material, decisionId: canonicalHashV1(material) })
+}
 
 const riskBalancedTrendSnapshot = makeSnapshot(800)
 
@@ -191,7 +239,241 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 1, name: 'initial_schema' },
       { migration_id: 2, name: 'paper_contracts' },
       { migration_id: 3, name: 'intent_risk_clock' },
+      { migration_id: 4, name: 'deterministic_intents' },
     ])
+  })
+
+  test('atomically commits one deterministic approved intent under one writer fence', async () => {
+    const execution = makeExecutionRuntime()
+    const secondOwner = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan()))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const commits = yield* Effect.promise(() =>
+          execution.runPromise(
+            Effect.gen(function* () {
+              const store = yield* IntentStore
+              return yield* Effect.all([store.commit(intent, decision), store.commit(intent, decision)], {
+                concurrency: 'unbounded',
+              })
+            }),
+          ),
+        )
+        const secondOwnerExit = yield* Effect.promise(() =>
+          secondOwner.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
+        )
+        const transitionTime = new Date(Date.now() + 1_000).toISOString()
+        const transitions = yield* Effect.promise(() =>
+          execution.runPromise(
+            Effect.gen(function* () {
+              const store = yield* IntentStore
+              return yield* Effect.all(
+                [
+                  store.markIoStarted(intent.intentId, transitionTime),
+                  store.markIoStarted(intent.intentId, transitionTime),
+                ],
+                { concurrency: 'unbounded' },
+              )
+            }),
+          ),
+        )
+        const stored = yield* Effect.promise(() =>
+          runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              const rows = yield* sql<{
+                client_order_id: string
+                decisions: number
+                intents: number
+                state: string
+                state_version: number
+              }>`
+                SELECT
+                  intent.client_order_id,
+                  intent.state,
+                  intent.state_version::integer,
+                  (SELECT count(*)::integer FROM intents) AS intents,
+                  (SELECT count(*)::integer FROM risk_decisions) AS decisions
+                FROM intents AS intent
+                WHERE intent.intent_id = ${intent.intentId}
+              `
+              return rows[0]
+            }),
+          ),
+        )
+        return { commits, secondOwnerExit, stored, transitions }
+      }).pipe(
+        Effect.ensuring(
+          Effect.all([Effect.promise(() => secondOwner.dispose()), Effect.promise(() => execution.dispose())], {
+            concurrency: 'unbounded',
+          }).pipe(Effect.asVoid),
+        ),
+      ),
+    )
+
+    expect(
+      observed.commits.map((receipt) => receipt.deduplicated).sort((left, right) => Number(left) - Number(right)),
+    ).toEqual([false, true])
+    expect(observed.commits[0].record.intent.intentId).toBe(intent.intentId)
+    expect(observed.commits[1].record.intent.clientOrderId).toBe(intent.clientOrderId)
+    expect(Exit.isFailure(observed.secondOwnerExit)).toBe(true)
+    expect(
+      observed.transitions.map((receipt) => receipt.deduplicated).sort((left, right) => Number(left) - Number(right)),
+    ).toEqual([false, true])
+    expect(observed.stored).toEqual({
+      client_order_id: intent.clientOrderId,
+      state: 'IO_STARTED',
+      state_version: 3,
+      intents: 1,
+      decisions: 1,
+    })
+  })
+
+  test('atomically blocks rejected risk and rejects divergent deterministic reuse', async () => {
+    const execution = makeExecutionRuntime()
+    const input = intentPlan({ cycleId: 'e'.repeat(64) })
+    const intent = await Effect.runPromise(plan(input))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Blocked))
+    const divergent = await Effect.runPromise(plan({ ...input, policyHash: 'f'.repeat(64) }))
+    const divergentDecision = await Effect.runPromise(riskDecision(divergent, RiskOutcome.Blocked))
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const forgedDecision = yield* Effect.promise(() =>
+          execution.runPromiseExit(
+            Effect.flatMap(IntentStore, (store) => store.commit(intent, { ...decision, decisionId: '0'.repeat(64) })),
+          ),
+        )
+        const receipt = yield* Effect.promise(() =>
+          execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
+        )
+        const conflict = yield* Effect.promise(() =>
+          execution.runPromiseExit(Effect.flatMap(IntentStore, (store) => store.commit(divergent, divergentDecision))),
+        )
+        const counts = yield* Effect.promise(() =>
+          runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              return yield* sql<{ decisions: number; intents: number }>`
+                SELECT
+                  (SELECT count(*)::integer FROM intents) AS intents,
+                  (SELECT count(*)::integer FROM risk_decisions) AS decisions
+              `
+            }),
+          ),
+        )
+        return { conflict, counts: counts[0], forgedDecision, receipt }
+      }).pipe(Effect.ensuring(Effect.promise(() => execution.dispose()))),
+    )
+
+    expect(observed.receipt.deduplicated).toBe(false)
+    expect(observed.receipt.record).toMatchObject({
+      decision: { decisionId: decision.decisionId, outcome: RiskOutcome.Blocked },
+      intent: { state: 'TERMINAL', terminalOutcome: 'BLOCKED' },
+      stateVersion: 2,
+    })
+    expect(Exit.isFailure(observed.conflict)).toBe(true)
+    expect(Exit.isFailure(observed.forgedDecision)).toBe(true)
+    if (Exit.isFailure(observed.forgedDecision)) {
+      expect(Cause.pretty(observed.forgedDecision.cause)).toContain(
+        'risk decision does not match its deterministic identity',
+      )
+    }
+    if (Exit.isFailure(observed.conflict)) {
+      expect(Cause.pretty(observed.conflict.cause)).toContain(
+        'deterministic intent identity was reused with different content',
+      )
+    }
+    expect(observed.counts).toEqual({ decisions: 1, intents: 1 })
+  })
+
+  test('rolls back both records when an approval is stale at commit', async () => {
+    const execution = makeExecutionRuntime()
+    const now = Date.now()
+    const intent = await Effect.runPromise(
+      plan(
+        intentPlan({
+          cycleId: 'f'.repeat(64),
+          createdAt: new Date(now - 180_000).toISOString(),
+        }),
+      ),
+    )
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, {
+        decidedAt: new Date(now - 120_000).toISOString(),
+        expiresAt: new Date(now - 60_000).toISOString(),
+      }),
+    )
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const commit = yield* Effect.promise(() =>
+          execution.runPromiseExit(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
+        )
+        const counts = yield* Effect.promise(() =>
+          runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              return yield* sql<{ decisions: number; intents: number }>`
+                SELECT
+                  (SELECT count(*)::integer FROM intents) AS intents,
+                  (SELECT count(*)::integer FROM risk_decisions) AS decisions
+              `
+            }),
+          ),
+        )
+        return { commit, counts: counts[0] }
+      }).pipe(Effect.ensuring(Effect.promise(() => execution.dispose()))),
+    )
+
+    expect(Exit.isFailure(observed.commit)).toBe(true)
+    expect(observed.counts).toEqual({ decisions: 0, intents: 0 })
+  })
+
+  test('loses mutation authority when the reserved writer session dies', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: 'e'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+
+    const observed = await Effect.runPromise(
+      Effect.gen(function* () {
+        const backendPid = yield* Effect.promise(() =>
+          execution.runPromise(Effect.map(WriterFence, (fence) => fence.backendPid)),
+        )
+        const terminated = yield* Effect.promise(() =>
+          runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              return yield* sql<{ terminated: boolean }>`
+                SELECT pg_terminate_backend(${backendPid}) AS terminated
+              `
+            }),
+          ),
+        )
+        const check = yield* Effect.promise(() =>
+          execution.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
+        )
+        const commit = yield* Effect.promise(() =>
+          execution.runPromiseExit(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
+        )
+        const count = yield* Effect.promise(() =>
+          runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              return yield* sql<{ count: number }>`SELECT count(*)::integer AS count FROM intents`
+            }),
+          ),
+        )
+        return { check, commit, count: count[0]?.count, terminated: terminated[0]?.terminated }
+      }).pipe(Effect.ensuring(Effect.promise(() => execution.dispose()))),
+    )
+
+    expect(observed.terminated).toBe(true)
+    expect(Exit.isFailure(observed.check)).toBe(true)
+    expect(Exit.isFailure(observed.commit)).toBe(true)
+    expect(observed.count).toBe(0)
   })
 
   test('requires one typed append-only payload and unique broker source ordering', async () => {
@@ -320,21 +602,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const decisionId = '2'.repeat(64)
         yield* sql`
           INSERT INTO intents (
-            intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+            intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+            account_id, client_order_id, symbol, side, order_type,
             time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
           ) VALUES (
-            ${intentId}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-1', 'NVDA', 'BUY',
+            ${intentId}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${intentId}, ${'5'.repeat(64)},
+            ${'6'.repeat(64)}, 'paper-account-1', 'client-order-1', 'NVDA', 'BUY',
             'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
             '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
           )
         `
         const invalidInitial = yield* Effect.exit(sql`
           INSERT INTO intents (
-            intent_id, schema_version, risk_decision_id, account_id, client_order_id, symbol, side,
-            order_type, time_in_force, quantity_micros, notional_limit_micros, state,
+            intent_id, schema_version, risk_decision_id, strategy_name, cycle_id, decision_hash,
+            policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
+            quantity_micros, notional_limit_micros, state,
             created_at, updated_at
           ) VALUES (
-            ${'3'.repeat(64)}, 'bayn.paper-intent.v1', ${'4'.repeat(64)}, 'paper-account-1',
+            ${'3'.repeat(64)}, 'bayn.paper-intent.v2', ${'4'.repeat(64)}, 'risk-balanced-trend',
+            ${'3'.repeat(64)}, ${'4'.repeat(64)}, ${'5'.repeat(64)}, 'paper-account-1',
             'client-order-2', 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'APPROVED',
             '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
           )
@@ -381,10 +667,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           Effect.gen(function* () {
             yield* sql`
               INSERT INTO intents (
-                intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                account_id, client_order_id, symbol, side, order_type,
                 time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
               ) VALUES (
-                ${staleIntentId}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-stale',
+                ${staleIntentId}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${staleIntentId},
+                ${'4'.repeat(64)}, ${'3'.repeat(64)}, 'paper-account-1', 'client-order-stale',
                 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                 statement_timestamp() - interval '1 minute', statement_timestamp() - interval '1 minute'
               )
@@ -494,10 +782,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  account_id, client_order_id, symbol, side, order_type,
                   time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'b'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-4',
+                  ${'b'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'b'.repeat(64)},
+                  ${'d'.repeat(64)}, ${'e'.repeat(64)}, 'paper-account-1', 'client-order-4',
                   'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
                 )
@@ -526,10 +816,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  account_id, client_order_id, symbol, side, order_type,
                   time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'f'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-5',
+                  ${'f'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'f'.repeat(64)},
+                  ${'1'.repeat(64)}, ${'2'.repeat(64)}, 'paper-account-1', 'client-order-5',
                   'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
                 )
@@ -557,10 +849,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           Effect.gen(function* () {
             yield* sql`
               INSERT INTO intents (
-                intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                account_id, client_order_id, symbol, side, order_type,
                 time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
               ) VALUES (
-                ${'a'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-6',
+                ${'a'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'a'.repeat(64)},
+                ${'8'.repeat(64)}, ${'7'.repeat(64)}, 'paper-account-1', 'client-order-6',
                 'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                 '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
               )
@@ -588,10 +882,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  account_id, client_order_id, symbol, side, order_type,
                   time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'7'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-3',
+                  ${'7'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'7'.repeat(64)},
+                  ${'9'.repeat(64)}, ${'a'.repeat(64)}, 'paper-account-1', 'client-order-3',
                   'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
                 )
@@ -1707,14 +2003,36 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(result.counts).toEqual({ runs: 0, protocols: 0, snapshots: 0, events: 0 })
   })
 
-  test('cancels an interrupted query and returns its pooled connection', async () => {
-    const rows = await runtime.runPromise(
+  test('rolls back an interrupted transaction and returns its pooled connection', async () => {
+    const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const sleeper = yield* Effect.forkChild(sql`SELECT pg_sleep(30)`)
-        yield* Effect.sleep('250 millis')
+        const inserted = yield* Deferred.make<void>()
+        const sleeper = yield* Effect.forkChild(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO intents (
+                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  account_id, client_order_id, symbol, side, order_type, time_in_force,
+                  quantity_micros, notional_limit_micros, state, created_at, updated_at
+                ) VALUES (
+                  ${'6'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'7'.repeat(64)},
+                  ${'8'.repeat(64)}, ${'9'.repeat(64)}, 'paper-account-1', 'interrupted-order',
+                  'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                  statement_timestamp(), statement_timestamp()
+                )
+              `
+              yield* Deferred.succeed(inserted, undefined)
+              yield* sql`SELECT pg_sleep(30)`
+            }),
+          ),
+        )
+        yield* Deferred.await(inserted)
         yield* Fiber.interrupt(sleeper)
-        return yield* sql<{ value: number }>`SELECT 1::integer AS value`.pipe(
+        return yield* sql<{ intents: number; value: number }>`
+          SELECT 1::integer AS value, count(*)::integer AS intents FROM intents
+        `.pipe(
           Effect.timeoutOrElse({
             duration: '2 seconds',
             orElse: () => Effect.fail(new Error('PostgreSQL pool did not recover')),
@@ -1723,7 +2041,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
 
-    expect(rows).toEqual([{ value: 1 }])
+    expect(observed).toEqual([{ intents: 0, value: 1 }])
   })
 
   test('closes the PostgreSQL pool when its managed scope is disposed', async () => {

@@ -347,9 +347,13 @@ export const BrokerEventSchema = BrokerEventBase.check(
 export type BrokerEvent = typeof BrokerEventSchema.Type
 
 const IntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-intent.v1'),
+  schemaVersion: Schema.Literal('bayn.paper-intent.v2'),
   intentId: Sha256,
   riskDecisionId: Schema.optionalKey(Sha256),
+  strategyName: NonEmptyString,
+  cycleId: Sha256,
+  decisionHash: Sha256,
+  policyHash: Sha256,
   accountId: NonEmptyString,
   clientOrderId: NonEmptyString,
   symbol: SymbolName,

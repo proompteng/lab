@@ -29,6 +29,7 @@ import {
   type EvidenceStoreService,
 } from './db/evidence-store'
 import { operationalError } from './errors'
+import { WriterFence, WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
 import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
@@ -37,6 +38,8 @@ import type { Strategy } from './strategy'
 import { fixtureProtocol, makeSnapshot } from './test-fixtures'
 
 describe('Bayn startup lifecycle', () => {
+  const writerFence: WriterFenceService = { backendPid: 1, check: Effect.void }
+
   test('recovers a pinned terminal qualification without inspecting data or writing state', async () => {
     let forbiddenCalls = 0
     const forbidden = (message: string) =>
@@ -403,6 +406,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(WriterFence, writerFence),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -429,6 +433,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(WriterFence, writerFence),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -443,6 +448,25 @@ describe('Bayn startup lifecycle', () => {
       expect(Cause.pretty(exit.cause)).toContain('connectivity-check timed out')
       expect(Cause.pretty(exit.cause)).not.toContain('remained live')
     }
+  })
+
+  test('fails before startup work when the writer fence is unavailable', async () => {
+    const unavailable = new WriterFenceError({
+      failure: 'busy',
+      operation: 'acquire',
+      message: 'another session owns the writer fence',
+    })
+    const exit = await Effect.runPromiseExit(
+      run(config, fixtureStrategy).pipe(
+        Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not inspect Signal')))),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(WriterFence, { backendPid: 2, check: Effect.fail(unavailable) }),
+      ),
+    )
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('paper writer fence is unavailable')
   })
 
   test('returns a retryable startup failure when durable evidence cannot be committed', async () => {
