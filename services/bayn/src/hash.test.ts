@@ -1,13 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { canonicalHashV1, canonicalJson, canonicalJsonV1, hashObject, stableU128, stableU64 } from './hash'
+import { canonicalHashV1, canonicalJsonV1, stableU128, stableU64 } from './hash'
 
 describe('canonical hashing', () => {
-  test('does not depend on object insertion order', () => {
-    expect(canonicalJson({ z: 1, a: { y: 2, x: 3 } })).toBe(canonicalJson({ a: { x: 3, y: 2 }, z: 1 }))
-    expect(hashObject({ b: 2, a: 1 })).toBe(hashObject({ a: 1, b: 2 }))
-  })
-
   test('uses deterministic UTF-16 key order and normalizes negative zero', () => {
     expect(canonicalJsonV1({ '\u20ac': 1, '\r': 2, a: -0, '\ud83d\ude00': 3 })).toBe('{"\\r":2,"a":0,"€":1,"😀":3}')
     expect(canonicalJsonV1({ nested: { '2': 2, '10': 1 } })).toBe('{"nested":{"10":1,"2":2}}')

@@ -31,7 +31,7 @@ const evidenceSummary = (database: AuditDatabaseSnapshot) => ({
       itemCount: itemCount(artifact.payload),
       contentHash: artifact.contentHash,
     }))
-    .sort((left, right) => left.name.localeCompare(right.name)),
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),
   events: {
     count: database.events.length,
     contentHash: canonicalHashV1(

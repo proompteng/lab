@@ -1,13 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Option, Redacted, Ref } from 'effect'
-import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
 import { initialize } from './app'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
-import { Journal, JournalLive, type JournalService } from './ledger'
+import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { initialState } from './runtime-state'
 import { makeStrategy } from './strategy-service'
@@ -90,12 +89,23 @@ const successfulEvidenceStore: EvidenceStoreService = {
     }),
 }
 
+const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): TigerBeetleClient => ({
+  createAccounts: async () => [],
+  createTransfers: async () => [],
+  lookupAccounts: async () => [],
+  lookupTransfers: async () => [],
+  queryAccounts: async () => [],
+  queryTransfers: async () => [],
+  destroy: () => undefined,
+  ...overrides,
+})
+
 describe('Bayn resource lifecycle', () => {
   test('closes the TigerBeetle client exactly once when its scope exits', async () => {
     let tigerBeetleCloseCount = 0
-    const tigerBeetleClient = {
+    const tigerBeetleClient = makeTigerBeetleClient({
       destroy: () => void (tigerBeetleCloseCount += 1),
-    } as unknown as Client
+    })
 
     await Effect.runPromise(
       Effect.scoped(
@@ -104,7 +114,7 @@ describe('Bayn resource lifecycle', () => {
         }).pipe(
           Effect.provide(
             JournalLive(config, {
-              createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
+              createClient: () => tigerBeetleClient,
               resolveReplicaAddresses: () => Effect.succeed(['3000']),
             }),
           ),
@@ -118,19 +128,19 @@ describe('Bayn resource lifecycle', () => {
   test('replaces a failed TigerBeetle client so the next probe recovers', async () => {
     const closeCounts = [0, 0]
     const clients = [
-      {
+      makeTigerBeetleClient({
         lookupAccounts: async () => {
           throw new Error('Client was closed.')
         },
         destroy: () => void (closeCounts[0] += 1),
-      },
-      {
+      }),
+      makeTigerBeetleClient({
         lookupAccounts: async () => [],
         destroy: () => void (closeCounts[1] += 1),
-      },
-    ] as unknown as Client[]
+      }),
+    ]
     let clientIndex = 0
-    const createClient = (): Client => {
+    const createClient = (): TigerBeetleClient => {
       const client = clients[clientIndex]
       if (client === undefined) throw new Error('unexpected TigerBeetle client acquisition')
       clientIndex += 1
@@ -147,7 +157,7 @@ describe('Bayn resource lifecycle', () => {
         }).pipe(
           Effect.provide(
             JournalLive(config, {
-              createClient: createClient as typeof createTigerBeetleClient,
+              createClient,
               resolveReplicaAddresses: () => Effect.succeed(['3000']),
             }),
           ),
@@ -160,10 +170,52 @@ describe('Bayn resource lifecycle', () => {
     expect(closeCounts).toEqual([1, 1])
   })
 
-  test('invalidates an interrupted TigerBeetle client when replacement acquisition fails', async () => {
+  test('runs independent TigerBeetle reconciliation reads concurrently', async () => {
+    const gate = Promise.withResolvers<void>()
+    let active = 0
+    let maximumConcurrency = 0
+    const query = async <A>(result: A): Promise<A> => {
+      active += 1
+      maximumConcurrency = Math.max(maximumConcurrency, active)
+      if (maximumConcurrency === 2) gate.resolve()
+      await gate.promise
+      active -= 1
+      return result
+    }
+    const client = makeTigerBeetleClient({
+      queryAccounts: () => query([]),
+      queryTransfers: () => query([]),
+      destroy: () => undefined,
+    })
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const journal = yield* Journal
+          yield* journal.checkRun({ runId: 'a'.repeat(64), accountCount: 0, transferCount: 0, exact: true }).pipe(
+            Effect.timeoutOrElse({
+              duration: 250,
+              orElse: () => Effect.fail(new Error('paired TigerBeetle queries were serialized')),
+            }),
+          )
+        }).pipe(
+          Effect.provide(
+            JournalLive(config, {
+              createClient: () => client,
+              resolveReplicaAddresses: () => Effect.succeed(['3000']),
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(maximumConcurrency).toBe(2)
+  })
+
+  test('invalidates an interrupted TigerBeetle client and defers replacement to the next request', async () => {
     const closeCounts = [0, 0]
     let rejectLookup: ((cause: Error) => void) | undefined
-    const interruptedClient = {
+    const interruptedClient = makeTigerBeetleClient({
       lookupAccounts: () =>
         new Promise<never>((_, reject) => {
           rejectLookup = reject
@@ -172,30 +224,34 @@ describe('Bayn resource lifecycle', () => {
         closeCounts[0] += 1
         rejectLookup?.(new Error('client closed'))
       },
-    } as unknown as Client
-    const recoveredClient = {
+    })
+    const recoveredClient = makeTigerBeetleClient({
       lookupAccounts: async () => [],
       destroy: () => void (closeCounts[1] += 1),
-    } as unknown as Client
+    })
     let clientAcquisitions = 0
-    const createClient = (): Client => {
+    const createClient = (): TigerBeetleClient => {
       clientAcquisitions += 1
       if (clientAcquisitions === 1) return interruptedClient
       if (clientAcquisitions === 2) throw new Error('replacement unavailable')
       if (clientAcquisitions === 3) return recoveredClient
       throw new Error('unexpected TigerBeetle client acquisition')
     }
+    let acquisitionsAfterInterrupt = 0
 
-    await Effect.runPromise(
+    const replacementError = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const journal = yield* Journal
           yield* journal.check.pipe(Effect.timeout(5), Effect.ignore)
+          acquisitionsAfterInterrupt = clientAcquisitions
+          const error = yield* Effect.flip(journal.check)
           yield* journal.check
+          return error
         }).pipe(
           Effect.provide(
             JournalLive(config, {
-              createClient: createClient as typeof createTigerBeetleClient,
+              createClient,
               resolveReplicaAddresses: () => Effect.succeed(['3000']),
             }),
           ),
@@ -203,8 +259,10 @@ describe('Bayn resource lifecycle', () => {
       ),
     )
 
+    expect(acquisitionsAfterInterrupt).toBe(1)
     expect(clientAcquisitions).toBe(3)
     expect(closeCounts).toEqual([1, 1])
+    expect(replacementError.message).toContain('replacement unavailable')
   })
 
   test('interrupts an in-flight market-data read when the startup deadline expires', async () => {
@@ -258,7 +316,7 @@ describe('Bayn resource lifecycle', () => {
   test('destroys TigerBeetle to cancel its indefinite retry when the startup deadline expires', async () => {
     let destroyed = false
     let rejectLookup: ((cause: Error) => void) | undefined
-    const tigerBeetleClient = {
+    const tigerBeetleClient = makeTigerBeetleClient({
       lookupAccounts: () =>
         new Promise<never>((_, reject) => {
           rejectLookup = reject
@@ -268,7 +326,7 @@ describe('Bayn resource lifecycle', () => {
         destroyed = true
         rejectLookup?.(new Error('client closed'))
       },
-    } as unknown as Client
+    })
     const marketData = marketDataService(Effect.succeed(makeSnapshot()))
     const state = await Effect.runPromise(Ref.make(initialState()))
 
@@ -279,7 +337,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provide(
             JournalLive(config, {
-              createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
+              createClient: () => tigerBeetleClient,
               resolveReplicaAddresses: () => Effect.succeed(['3000']),
             }),
           ),

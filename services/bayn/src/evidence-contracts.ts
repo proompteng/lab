@@ -211,9 +211,14 @@ const CashYieldEventSchema = Schema.Struct({
   amountMicros: Micros,
 })
 
-export const EvaluationEventsSchema = Schema.Array(
-  Schema.Union([DecisionEventSchema, FillEventSchema, FeeEventSchema, CashYieldEventSchema]),
-)
+export const EvaluationEventSchema = Schema.Union([
+  DecisionEventSchema,
+  FillEventSchema,
+  FeeEventSchema,
+  CashYieldEventSchema,
+])
+
+export const EvaluationEventsSchema = Schema.Array(EvaluationEventSchema)
 
 export const SimulatedOrdersArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.simulated-orders.v2'),

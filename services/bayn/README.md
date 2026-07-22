@@ -58,9 +58,9 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
   Any terminal-result failure rolls the evaluation graph back and leaves the lock visibly incomplete. An incomplete
   lock is never silently retried and blocks every new candidate; a locked candidate cannot bypass the terminal result
   through the ordinary persistence path.
-- Migration 8 is a deliberate one-way reset from the never-promoted TSMOM evidence contract. In one transaction it
-  deletes the old evidence graph and installs current-only SQL constraints. The runtime does not read, convert, restore,
-  or fall back to TSMOM records.
+- One current-only initial migration creates the unprefixed evidence and qualification schema. Startup rejects a
+  legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or falls back to
+  legacy records.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.

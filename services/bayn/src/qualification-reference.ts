@@ -16,7 +16,7 @@ import {
   type FeeInput,
   type FillTerms,
 } from './execution-model'
-import { canonicalHashV1, hashObject } from './hash'
+import { canonicalHashV1 } from './hash'
 import type {
   CashChange,
   DailyBar,
@@ -99,7 +99,7 @@ const align = (bars: readonly DailyBar[], manifest: InputManifest, universe: rea
     grouped.set(bar.sessionDate, day)
   }
   const sessions = [...grouped.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([date, day]): Session => {
       if (day.size !== universe.length || universe.some((symbol) => !day.has(symbol))) {
         throw new Error(`reference input session ${date} is incomplete`)
@@ -436,7 +436,7 @@ const order = (
     rejectionReason: outcome.rejectionReason,
     unfilledRemainder: outcome.unfilledRemainder,
   }
-  return { id: hashObject({ runId, kind: 'order', ...material }), ...material }
+  return { id: canonicalHashV1({ runId, kind: 'order', ...material }), ...material }
 }
 
 const fill = (
@@ -460,7 +460,7 @@ const fill = (
     slippageCostMicros: terms.slippageCostMicros.toString(),
     costBasisMicros: costBasisMicros.toString(),
   }
-  return { kind: 'fill', id: hashObject({ runId, kind: 'fill', ...material }), ...material }
+  return { kind: 'fill', id: canonicalHashV1({ runId, kind: 'fill', ...material }), ...material }
 }
 
 const cashChange = (
@@ -478,7 +478,7 @@ const cashChange = (
     amountMicros: amountMicros.toString(),
     cashAfterMicros: cashAfterMicros.toString(),
   }
-  return { id: hashObject({ runId, kind: 'cash-change', ...material }), ...material }
+  return { id: canonicalHashV1({ runId, kind: 'cash-change', ...material }), ...material }
 }
 
 const replay = (
@@ -534,7 +534,7 @@ const replay = (
           }
           const event = {
             kind: 'cash-yield' as const,
-            id: hashObject({ runId, kind: 'cash-yield', ...material }),
+            id: canonicalHashV1({ runId, kind: 'cash-yield', ...material }),
             ...material,
           }
           events.push(event)
@@ -552,7 +552,7 @@ const replay = (
       }
       const decision: DecisionEvent = {
         kind: 'decision',
-        id: hashObject({ runId, kind: 'decision', ...decisionMaterial }),
+        id: canonicalHashV1({ runId, kind: 'decision', ...decisionMaterial }),
         ...decisionMaterial,
       }
       if (retainTrace) {
@@ -723,7 +723,7 @@ const replay = (
           }
           const event: FeeEvent = {
             kind: 'fee',
-            id: hashObject({ runId, kind: 'fee', ...material }),
+            id: canonicalHashV1({ runId, kind: 'fee', ...material }),
             ...material,
           }
           events.push(event)

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { MARKED_EQUITY_TOLERANCE_MICROS, reconcileMarkedEquity } from './simulation-reconciliation'
-import { hashObject } from './hash'
+import { canonicalHashV1 } from './hash'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 import type { EvaluationEvent, SimulationTrace } from './types'
@@ -93,7 +93,7 @@ describe('independent marked-equity reconciliation', () => {
       index === firstFillIndex
         ? {
             ...changedNotionalPayload,
-            id: hashObject({ runId: evaluation.runId, kind: 'fill', ...fillIdentityPayload }),
+            id: canonicalHashV1({ runId: evaluation.runId, kind: 'fill', ...fillIdentityPayload }),
           }
         : event,
     )
@@ -112,7 +112,7 @@ describe('independent marked-equity reconciliation', () => {
       index === firstFeeIndex
         ? {
             ...changedFeePayload,
-            id: hashObject({ runId: evaluation.runId, kind: 'fee', ...feeIdentityPayload }),
+            id: canonicalHashV1({ runId: evaluation.runId, kind: 'fee', ...feeIdentityPayload }),
           }
         : event,
     )

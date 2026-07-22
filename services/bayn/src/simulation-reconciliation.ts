@@ -1,5 +1,5 @@
 import { accrueCashYield, calculateSessionFees, makeFillTerms, notionalMicros, type FeeInput } from './execution-model'
-import { hashObject } from './hash'
+import { canonicalHashV1 } from './hash'
 import type {
   CashChange,
   CashYieldEvent,
@@ -45,7 +45,7 @@ const uniqueById = <A extends { readonly id: string }>(values: readonly A[], nam
 const validateDecisionIdentity = (runId: string, decision: DecisionEvent): void => {
   const { id: _, kind: __, ...payload } = decision
   ensure(
-    decision.id === hashObject({ runId, kind: 'decision', ...payload }),
+    decision.id === canonicalHashV1({ runId, kind: 'decision', ...payload }),
     `decision ${decision.id} has an invalid identity`,
   )
 }
@@ -77,7 +77,7 @@ const validateFill = (runId: string, fill: FillEvent, order: SimulatedOrder, tra
   )
   unsigned(fill.costBasisMicros, 'fill cost basis')
   const { id: _, kind: __, ...payload } = fill
-  ensure(fill.id === hashObject({ runId, kind: 'fill', ...payload }), `fill ${fill.id} has an invalid identity`)
+  ensure(fill.id === canonicalHashV1({ runId, kind: 'fill', ...payload }), `fill ${fill.id} has an invalid identity`)
 }
 
 const validateOrder = (
@@ -111,7 +111,10 @@ const validateOrder = (
   }
   ensure((fill === undefined) === (filled === 0n), `order ${order.id} fill presence diverges from its status`)
   const { id: _, ...payload } = order
-  ensure(order.id === hashObject({ runId, kind: 'order', ...payload }), `order ${order.id} has an invalid identity`)
+  ensure(
+    order.id === canonicalHashV1({ runId, kind: 'order', ...payload }),
+    `order ${order.id} has an invalid identity`,
+  )
   if (fill !== undefined) validateFill(runId, fill, order, trace)
 }
 
@@ -143,7 +146,7 @@ const validateFee = (
   ensure(expected.catMicros === BigInt(fee.catMicros), `fee ${fee.id} CAT component diverges`)
   ensure(expected.totalMicros === BigInt(fee.totalMicros), `fee ${fee.id} total diverges`)
   const { id: _, kind: __, ...payload } = fee
-  ensure(fee.id === hashObject({ runId, kind: 'fee', ...payload }), `fee ${fee.id} has an invalid identity`)
+  ensure(fee.id === canonicalHashV1({ runId, kind: 'fee', ...payload }), `fee ${fee.id} has an invalid identity`)
 }
 
 const validateCashChange = (
@@ -163,7 +166,7 @@ const validateCashChange = (
   )
   const { id: _, ...payload } = change
   ensure(
-    change.id === hashObject({ runId, kind: 'cash-change', ...payload }),
+    change.id === canonicalHashV1({ runId, kind: 'cash-change', ...payload }),
     `cash change ${change.id} has an invalid identity`,
   )
 }
@@ -294,7 +297,7 @@ export const reconcileMarkedEquity = (input: {
         cumulativeCashYield += expected
         const { id: _, kind: __, ...payload } = event
         ensure(
-          event.id === hashObject({ runId: input.runId, kind: 'cash-yield', ...payload }),
+          event.id === canonicalHashV1({ runId: input.runId, kind: 'cash-yield', ...payload }),
           `cash-yield event ${event.id} has an invalid identity`,
         )
       }

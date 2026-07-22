@@ -144,6 +144,7 @@
   },
   "packageManager": "bun@1.3.14",
   "patchedDependencies": {
-    "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch"
+    "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
+    "@effect/sql-clickhouse@4.0.0-beta.100": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.100.patch"
   }
 }

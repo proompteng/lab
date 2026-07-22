@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Effect, Redacted } from 'effect'
-import {
-  createClient as createTigerBeetleClient,
-  CreateAccountStatus,
-  CreateTransferStatus,
-  type Account,
-  type Client,
-  type Transfer,
-} from 'tigerbeetle-node'
+import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import type { RuntimeConfig } from './config'
 import {
@@ -18,20 +11,26 @@ import {
   JournalLive,
   resolveReplicaAddresses,
   type JournalService,
+  type TigerBeetleClient,
 } from './ledger'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const materializeAccounts = (plan: ReturnType<typeof buildLedgerPlan>): Account[] => {
   const balances = new Map(plan.accounts.map((account) => [account.id, { debits: 0n, credits: 0n }]))
+  const balance = (accountId: bigint) => {
+    const value = balances.get(accountId)
+    if (value === undefined) throw new Error(`ledger fixture has no account ${accountId}`)
+    return value
+  }
   for (const transfer of plan.transfers) {
-    balances.get(transfer.debit_account_id)!.debits += transfer.amount
-    balances.get(transfer.credit_account_id)!.credits += transfer.amount
+    balance(transfer.debit_account_id).debits += transfer.amount
+    balance(transfer.credit_account_id).credits += transfer.amount
   }
   return plan.accounts.map((account) => ({
     ...account,
-    debits_posted: balances.get(account.id)!.debits,
-    credits_posted: balances.get(account.id)!.credits,
+    debits_posted: balance(account.id).debits,
+    credits_posted: balance(account.id).credits,
     timestamp: 1n,
   }))
 }
@@ -44,10 +43,21 @@ const journalConfig = {
   tigerBeetle: { clusterId: 222397790944575595450310052784555675227n, replicaAddresses: ['3000'], ledger: 7_001 },
 } satisfies Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>
 
+const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): TigerBeetleClient => ({
+  createAccounts: async () => [],
+  createTransfers: async () => [],
+  lookupAccounts: async () => [],
+  lookupTransfers: async () => [],
+  queryAccounts: async () => [],
+  queryTransfers: async () => [],
+  destroy: () => undefined,
+  ...overrides,
+})
+
 const makeLedgerClient = () => {
   const accounts = new Map<bigint, Account>()
   const transfers = new Map<bigint, Transfer>()
-  const client: Client = {
+  const client: TigerBeetleClient = {
     createAccounts: async (batch) =>
       batch.map((account) => {
         if (accounts.has(account.id)) return { timestamp: 1n, status: CreateAccountStatus.exists }
@@ -75,8 +85,6 @@ const makeLedgerClient = () => {
         const transfer = transfers.get(id)
         return transfer === undefined ? [] : [transfer]
       }),
-    getAccountTransfers: async () => [],
-    getAccountBalances: async () => [],
     queryAccounts: async (filter) =>
       [...accounts.values()]
         .filter(
@@ -98,14 +106,14 @@ const makeLedgerClient = () => {
   return { accounts, transfers, client }
 }
 
-const withJournal = <A, E>(client: Client, use: (journal: JournalService) => Effect.Effect<A, E>) =>
+const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
   Effect.scoped(
     Effect.gen(function* () {
       return yield* use(yield* Journal)
     }).pipe(
       Effect.provide(
         JournalLive(journalConfig, {
-          createClient: (() => client) as unknown as typeof createTigerBeetleClient,
+          createClient: () => client,
           resolveReplicaAddresses: () => Effect.succeed(['3000']),
         }),
       ),
@@ -191,7 +199,7 @@ describe('TigerBeetle simulation journal', () => {
     let accounts = materializeAccounts(plan)
     const transfers = materializeTransfers(plan)
     let writes = 0
-    const client = {
+    const client = makeTigerBeetleClient({
       queryAccounts: async () => accounts,
       queryTransfers: async () => transfers,
       createAccounts: async () => {
@@ -203,7 +211,7 @@ describe('TigerBeetle simulation journal', () => {
         return []
       },
       destroy: () => undefined,
-    } as unknown as Client
+    })
     const config: RuntimeConfig = {
       host: '127.0.0.1',
       port: 0,
@@ -243,7 +251,7 @@ describe('TigerBeetle simulation journal', () => {
         }).pipe(
           Effect.provide(
             JournalLive(config, {
-              createClient: (() => client) as unknown as typeof createTigerBeetleClient,
+              createClient: () => client,
               resolveReplicaAddresses: () => Effect.succeed(['3000']),
             }),
           ),

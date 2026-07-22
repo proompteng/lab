@@ -1,0 +1,23 @@
+diff --git a/dist/ClickhouseClient.js b/dist/ClickhouseClient.js
+--- a/dist/ClickhouseClient.js
++++ b/dist/ClickhouseClient.js
+@@ -97,7 +97,7 @@ export const make = options => Effect.gen(function* () {
+   const transformRows = options.transformResultNames ? Statement.defaultTransforms(options.transformResultNames).array : undefined;
+   const client = Clickhouse.createClient(options);
+   yield* Effect.acquireRelease(Effect.tryPromise({
+-    try: () => client.exec({
++    try: () => client.command({
+       query: "SELECT 1"
+     }),
+     catch: cause => new SqlError({
+diff --git a/src/ClickhouseClient.ts b/src/ClickhouseClient.ts
+--- a/src/ClickhouseClient.ts
++++ b/src/ClickhouseClient.ts
+@@ -180,6 +180,6 @@ export const make = (
+     yield* Effect.acquireRelease(
+       Effect.tryPromise({
+-        try: () => client.exec({ query: "SELECT 1" }),
++        try: () => client.command({ query: "SELECT 1" }),
+         catch: (cause) =>
+           new SqlError({ reason: classifyError(cause, "ClickhouseClient: Failed to connect", "connect", "connection") })
+       }),
