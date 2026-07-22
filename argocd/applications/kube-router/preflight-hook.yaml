@@ -42,7 +42,7 @@ spec:
             - |
               set -o pipefail
               expected_namespaces=$(
-                printf '%s\n' agents argocd bayn bilig kafka media pgadmin synthesis torghut | sort -u
+                printf '%s\n' agents argocd bayn bilig hermes kafka media pgadmin synthesis torghut | sort -u
               )
               actual_namespaces=$(
                 kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json |
@@ -57,7 +57,8 @@ spec:
               fi
 
               while IFS= read -r namespace; do
-                if [[ "$namespace" == bayn ]]; then
+                case "$namespace" in
+                bayn)
                   kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
                     jq -e '
                       .spec.podSelector.matchLabels == {
@@ -67,16 +68,23 @@ spec:
                       (.spec | has("ingress") | not) and
                       (.spec | has("egress") | not)
                     ' >/dev/null
-                  continue
-                fi
-
-                kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
+                  ;;
+                hermes)
+                  if kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all >/dev/null 2>&1; then
+                    echo 'Hermes must not have a rollout allow-all exception.' >&2
+                    exit 1
+                  fi
+                  ;;
+                *)
+                  kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json |
                     jq -e '
                       .spec.podSelector == {} and
                       (.spec.policyTypes | sort) == ["Egress", "Ingress"] and
                       .spec.ingress == [{}] and
                       .spec.egress == [{}]
                     ' >/dev/null
+                  ;;
+                esac
               done <<< "$expected_namespaces"
 
               kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json |

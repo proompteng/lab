@@ -97,6 +97,25 @@ test('rejects bypassing the live namespace preflight', async () => {
   )
 })
 
+test('rejects a preflight that permits a rollout exception in enforced Hermes', async () => {
+  const files = copy(await loadProductionFiles())
+  files.preflightHook = files.preflightHook.replace(
+    'Hermes must not have a rollout allow-all exception.',
+    'Hermes rollout exception accepted.',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.preflightHook}: missing production invariant "Hermes must not have a rollout allow-all exception."`,
+  )
+})
+
+test('rejects safety coverage that omits enforced Hermes', async () => {
+  const files = copy(await loadProductionFiles())
+  files.coverageProbe = files.coverageProbe.replace("    printf '%s\\n' hermes", '    true')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.coverageProbe}: missing production invariant "printf '%s\\\\n' hermes"`,
+  )
+})
+
 test('rejects automatic controller activation', async () => {
   const files = copy(await loadProductionFiles())
   files.platform = files.platform.replace(/(\n\s+- name: kube-router\n[\s\S]*?automation:) manual/, '$1 auto')

@@ -16,6 +16,7 @@ const trafficNeutralSafetyNamespaces = [
 ]
 const retiredSafetyNamespace = 'bayn'
 const safetyNamespaces = [...trafficNeutralSafetyNamespaces, retiredSafetyNamespace]
+const enforcedNamespaces = ['hermes']
 const retiredSafetySelector = {
   'network-policy.proompteng.ai/retired-rollout-policy': retiredSafetyNamespace,
 }
@@ -236,12 +237,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.preflightHook}: the bounded pre-DaemonSet coverage gate is incomplete`)
   }
   requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
-    "printf '%s\\n' agents argocd bayn bilig kafka media pgadmin synthesis torghut | sort -u",
+    `printf '%s\\n' ${[...safetyNamespaces, ...enforcedNamespaces].sort().join(' ')} | sort -u`,
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
-    'if [[ "$namespace" == bayn ]]',
+    'case "$namespace" in',
     'network-policy.proompteng.ai/retired-rollout-policy',
+    'Hermes must not have a rollout allow-all exception.',
     "kubectl -n bayn get pods -l 'network-policy.proompteng.ai/retired-rollout-policy=bayn' -o json",
     '.spec.podSelector == {}',
     '.spec.ingress == [{}]',
@@ -346,6 +348,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
 
   requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
     'set -euo pipefail',
+    "printf '%s\\n' hermes",
     'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$desired_namespaces" ]]',
   ])
