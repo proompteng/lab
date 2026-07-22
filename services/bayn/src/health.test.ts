@@ -29,6 +29,7 @@ describe('Bayn continuous health', () => {
       load: Effect.die(new Error('health probes must not load bars')),
     }
     const journal: JournalService = {
+      post: () => Effect.die(new Error('health probes must not write TigerBeetle')),
       check: Effect.die(new Error('a durable run must use checkRun')),
       checkRun: () => Effect.sync(() => void (accountingChecks += 1)),
       journalAndReconcile: () => Effect.die(new Error('health probes must not write TigerBeetle')),

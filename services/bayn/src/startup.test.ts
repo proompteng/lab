@@ -54,6 +54,7 @@ describe('Bayn startup lifecycle', () => {
           load: forbidden('pinned startup must not load Signal bars'),
         }),
         Effect.provideService(Journal, {
+          post: () => forbidden('pinned startup must not write TigerBeetle'),
           check: forbidden('pinned startup must not check TigerBeetle'),
           checkRun: () => forbidden('pinned startup must not check a TigerBeetle run'),
           journalAndReconcile: () => forbidden('pinned startup must not write TigerBeetle'),
@@ -148,6 +149,7 @@ describe('Bayn startup lifecycle', () => {
       },
     }
     const journal: JournalService = {
+      post: () => Effect.void,
       check: Effect.void,
       checkRun: () => Effect.void,
       journalAndReconcile: () => {
@@ -218,6 +220,7 @@ describe('Bayn startup lifecycle', () => {
       },
     }
     const journal: JournalService = {
+      post: () => Effect.void,
       check: Effect.void,
       checkRun: () => Effect.void,
       journalAndReconcile: () => {
@@ -282,6 +285,7 @@ describe('Bayn startup lifecycle', () => {
         ),
     }
     const journal: JournalService = {
+      post: () => Effect.void,
       check: Effect.void,
       checkRun: () => Effect.void,
       journalAndReconcile: () => {

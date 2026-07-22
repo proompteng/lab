@@ -6,7 +6,7 @@ import type { CashYieldEvent, EvaluationEvent, FeeEvent, FillEvent, InputManifes
 export const LEDGER_SCHEMA_VERSION = 2
 export const LEDGER_BATCH_MAX = 8_189
 
-const AccountCode = {
+export const AccountCode = {
   cash: 110,
   inventory: 120,
   equity: 310,
@@ -16,7 +16,7 @@ const AccountCode = {
   realizedLoss: 520,
 } as const
 
-const TransferCode = {
+export const TransferCode = {
   funding: 1,
   buy: 2,
   sellBasis: 3,
