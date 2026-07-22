@@ -56,6 +56,8 @@ spec:
               value: "43cece33d3db232ffb02ba78826727e50b5795319d09d27e1baa0c04709eb056"
             - name: BAYN_STRATEGY_PARAMETER_HASH
               value: "cf639d3692da65271b12423f9b7c6c9663e1fb13ae7290dc56fcfa3acf16eb69"
+            - name: BAYN_QUALIFICATION_RUN_ID
+              value: "87c0dac69efcfa7bdedb5bbcffe26f7ee9a14de8c05baea613f488eb869a305f"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
             - name: BAYN_HEALTH_INTERVAL_MS
@@ -150,6 +152,9 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
+            - name: qualification-dossier
+              mountPath: /var/run/bayn/qualification
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
@@ -161,3 +166,10 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        - name: qualification-dossier
+          configMap:
+            name: bayn-qualification-dossier
+            defaultMode: 0444
+            items:
+              - key: qualification-dossier.json
+                path: qualification-dossier.json
