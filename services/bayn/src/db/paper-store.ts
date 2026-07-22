@@ -363,10 +363,27 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         }),
       )
 
-    const priorPosition = (
-      input: FillEventInput,
-      sourceSequence: string,
-    ): Effect.Effect<PositionCost, PaperStoreError> =>
+    const economicallyPrecedes = (input: FillEventInput) => sql`
+      (
+        event.occurred_at < ${input.occurredAt}
+        OR (
+          event.occurred_at = ${input.occurredAt}
+          AND event.source_event_id COLLATE "C" < (${input.sourceEventId}::text COLLATE "C")
+        )
+      )
+    `
+
+    const economicallyFollows = (input: FillEventInput) => sql`
+      (
+        event.occurred_at > ${input.occurredAt}
+        OR (
+          event.occurred_at = ${input.occurredAt}
+          AND event.source_event_id COLLATE "C" > (${input.sourceEventId}::text COLLATE "C")
+        )
+      )
+    `
+
+    const priorPosition = (input: FillEventInput): Effect.Effect<PositionCost, PaperStoreError> =>
       run(
         'account',
         sql<Record<string, unknown>>`
@@ -377,7 +394,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
           WHERE transaction.account_id = ${input.accountId}
             AND transaction.symbol = ${input.fill.symbol}
-            AND event.source_sequence < ${sourceSequence}
+            AND ${economicallyPrecedes(input)}
         `.pipe(
           Effect.flatMap(decodePositionCost),
           Effect.map(([position]) => ({
@@ -387,10 +404,32 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         ),
       )
 
-    const requirePostedPredecessors = (
-      input: FillEventInput,
-      sourceSequence: string,
-    ): Effect.Effect<void, PaperStoreError> =>
+    const requirePostedPredecessors = (input: FillEventInput): Effect.Effect<void, PaperStoreError> =>
+      run(
+        'account',
+        sql<Record<string, unknown>>`
+          SELECT EXISTS (
+            SELECT 1
+            FROM broker_events AS event
+            LEFT JOIN accounting_transactions AS transaction ON transaction.broker_event_id = event.event_id
+            LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = transaction.broker_event_id
+            WHERE event.broker = ${input.broker}
+              AND event.account_id = ${input.accountId}
+              AND event.event_kind = 'FILL'
+              AND ${economicallyPrecedes(input)}
+              AND (transaction.transaction_id IS NULL OR receipt.receipt_id IS NULL)
+          ) AS unresolved
+        `.pipe(
+          Effect.flatMap(decodeUnresolvedPredecessor),
+          Effect.flatMap(([result]) =>
+            result.unresolved
+              ? fail('account', 'conflict', 'an earlier fill has not been posted to TigerBeetle')
+              : Effect.void,
+          ),
+        ),
+      )
+
+    const requireNoPreparedSuccessors = (input: FillEventInput): Effect.Effect<void, PaperStoreError> =>
       run(
         'account',
         sql<Record<string, unknown>>`
@@ -398,16 +437,15 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
             SELECT 1
             FROM accounting_transactions AS transaction
             JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
-            LEFT JOIN accounting_receipts AS receipt ON receipt.broker_event_id = transaction.broker_event_id
             WHERE transaction.account_id = ${input.accountId}
-              AND event.source_sequence < ${sourceSequence}
-              AND receipt.receipt_id IS NULL
+              AND transaction.symbol = ${input.fill.symbol}
+              AND ${economicallyFollows(input)}
           ) AS unresolved
         `.pipe(
           Effect.flatMap(decodeUnresolvedPredecessor),
           Effect.flatMap(([result]) =>
             result.unresolved
-              ? fail('account', 'conflict', 'an earlier fill has not been posted to TigerBeetle')
+              ? fail('account', 'conflict', 'a later fill was already accounted before this economic predecessor')
               : Effect.void,
           ),
         ),
@@ -464,8 +502,9 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         sql.withTransaction(
           Effect.gen(function* () {
             const event = yield* append(input)
-            yield* requirePostedPredecessors(input, event.sourceSequence)
-            const position = yield* priorPosition(input, event.sourceSequence)
+            yield* requirePostedPredecessors(input)
+            yield* requireNoPreparedSuccessors(input)
+            const position = yield* priorPosition(input)
             const expected = yield* Effect.try({
               try: () => prepareAccounting(event.eventId, input.fill, position, config.tigerBeetle.ledger),
               catch: (cause) => error('account', 'invariant', 'fill accounting plan is invalid', cause),

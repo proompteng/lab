@@ -148,7 +148,13 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
   },
 })
 
-const fillEvent = (id: string, side: OrderSide, quantityMicros: string, priceMicros: string): FillEventInput => {
+const fillEvent = (
+  id: string,
+  side: OrderSide,
+  quantityMicros: string,
+  priceMicros: string,
+  eventOccurredAt = occurredAt,
+): FillEventInput => {
   const fill = {
     schemaVersion: 'bayn.paper-fill.v1' as const,
     accountId,
@@ -160,7 +166,7 @@ const fillEvent = (id: string, side: OrderSide, quantityMicros: string, priceMic
     quantityMicros,
     priceMicros,
     feeMicros: '100',
-    occurredAt,
+    occurredAt: eventOccurredAt,
   }
   return {
     _tag: 'Fill',
@@ -168,7 +174,7 @@ const fillEvent = (id: string, side: OrderSide, quantityMicros: string, priceMic
     accountId,
     sourceEventId: id,
     contentHash: canonicalHashV1({ schemaVersion: 'bayn.paper-fill-source.v1', fill }),
-    occurredAt,
+    occurredAt: eventOccurredAt,
     observedAt,
     fill,
   }
@@ -568,6 +574,107 @@ describePostgres('paper accounting persistence', () => {
         equityMicros: '1000000000',
       })
       expect(result.counts).toEqual({ position_snapshots: 2, positions: 2, valuations: 2 })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('derives cost basis in broker economic order and rejects a late predecessor', async () => {
+    const control: JournalControl = { fail: false, planHashes: [] }
+    const runtime = makeStoreRuntime(control)
+    const first = fillEvent('fill-a', OrderSide.Buy, '3000000', '100000000', '2026-07-22T15:29:59.000Z')
+    const second = fillEvent('fill-b', OrderSide.Sell, '1000000', '120000000')
+    const latePredecessor = fillEvent('fill-0', OrderSide.Buy, '1000000', '90000000', '2026-07-22T15:29:58.000Z')
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const arrivedFirst = yield* store.ingest(second)
+          yield* store.account(first)
+          yield* store.account(second)
+          const rejected = yield* Effect.exit(store.account(latePredecessor))
+          const sql = yield* PgClient.PgClient
+          const transactions = yield* sql<{
+            cost_basis_micros: string
+            realized_pnl_micros: string
+            side: string
+            source_event_id: string
+            source_sequence: string
+          }>`
+            SELECT
+              event.source_event_id,
+              event.source_sequence::text,
+              transaction.side,
+              transaction.cost_basis_micros::text,
+              transaction.realized_pnl_micros::text
+            FROM accounting_transactions AS transaction
+            JOIN broker_events AS event ON event.event_id = transaction.broker_event_id
+            ORDER BY event.occurred_at, event.source_event_id COLLATE "C"
+          `
+          const [counts] = yield* sql<{ events: number; transactions: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM broker_events) AS events,
+              (SELECT count(*)::integer FROM accounting_transactions) AS transactions
+          `
+          return { arrivedFirst, rejected, transactions, counts }
+        }),
+      )
+
+      expect(result.arrivedFirst).toMatchObject({ sourceSequence: '0', deduplicated: false })
+      expect(result.transactions).toEqual([
+        {
+          source_event_id: 'fill-a',
+          source_sequence: '1',
+          side: 'BUY',
+          cost_basis_micros: '300000000',
+          realized_pnl_micros: '0',
+        },
+        {
+          source_event_id: 'fill-b',
+          source_sequence: '0',
+          side: 'SELL',
+          cost_basis_micros: '100000000',
+          realized_pnl_micros: '20000000',
+        },
+      ])
+      expect(Exit.isFailure(result.rejected)).toBe(true)
+      if (Exit.isFailure(result.rejected)) {
+        expect(Cause.pretty(result.rejected.cause)).toContain('later fill was already accounted')
+      }
+      expect(result.counts).toEqual({ events: 2, transactions: 2 })
+      expect(control.planHashes).toHaveLength(2)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('fails closed when an economic predecessor has no accounting transaction', async () => {
+    const control: JournalControl = { fail: false, planHashes: [] }
+    const runtime = makeStoreRuntime(control)
+    const first = fillEvent('fill-missing', OrderSide.Buy, '1000000', '100000000', '2026-07-22T15:29:59.000Z')
+    const second = fillEvent('fill-later', OrderSide.Sell, '1000000', '120000000')
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* store.ingest(first)
+          const rejected = yield* Effect.exit(store.account(second))
+          const sql = yield* PgClient.PgClient
+          const [counts] = yield* sql<{ events: number; transactions: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM broker_events) AS events,
+              (SELECT count(*)::integer FROM accounting_transactions) AS transactions
+          `
+          return { rejected, counts }
+        }),
+      )
+
+      expect(Exit.isFailure(result.rejected)).toBe(true)
+      if (Exit.isFailure(result.rejected)) {
+        expect(Cause.pretty(result.rejected.cause)).toContain('earlier fill has not been posted')
+      }
+      expect(result.counts).toEqual({ events: 1, transactions: 0 })
+      expect(control.planHashes).toHaveLength(0)
     } finally {
       await runtime.dispose()
     }

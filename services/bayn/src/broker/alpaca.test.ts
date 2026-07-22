@@ -249,6 +249,27 @@ describe('Alpaca paper reads', () => {
     expect(fill?.url.searchParams.get('direction')).toBe('desc')
   })
 
+  test('preflights ordinary non-empty orders whose optional Alpaca fields are null', async () => {
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/positions' || url.pathname === '/v2/account/activities/FILL') {
+        return Effect.succeed(jsonResponse(request, []))
+      }
+      return Effect.succeed(jsonResponse(request, url.pathname === '/v2/orders' ? [orderResponse] : orderResponse))
+    })
+
+    const proof = await Effect.runPromise(withClient(client, verifyReadAccess))
+
+    expect(proof).toMatchObject({
+      accountId,
+      openOrderCount: 1,
+      recentOrderCount: 1,
+      orderById: 'MATCHED',
+      orderByClientId: 'MATCHED',
+    })
+    expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
+  })
+
   test('bounds the complete startup preflight below the Kubernetes startup-probe budget', async () => {
     let interrupted = 0
     const client = HttpClient.make((request, url) => {

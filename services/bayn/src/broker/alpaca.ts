@@ -765,6 +765,20 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
     throw new Error('trailing-stop order must contain exactly one trailing offset')
   }
 
+  const filledAt = optionalTimestamp(raw.filled_at)
+  const expiredAt = optionalTimestamp(raw.expired_at)
+  const canceledAt = optionalTimestamp(raw.canceled_at)
+  const failedAt = optionalTimestamp(raw.failed_at)
+  const replacedAt = optionalTimestamp(raw.replaced_at)
+  const replacedBy = raw.replaced_by ?? undefined
+  const replaces = raw.replaces ?? undefined
+  const filledAveragePriceMicros = optionalMicros(raw.filled_avg_price, false, 'filled average price')
+  const limitPriceMicros = optionalMicros(raw.limit_price, false, 'limit price')
+  const stopPriceMicros = optionalMicros(raw.stop_price, false, 'stop price')
+  const trailPercentMicros = optionalMicros(raw.trail_percent, false, 'trail percent')
+  const trailPriceMicros = optionalMicros(raw.trail_price, false, 'trail price')
+  const highWaterMarkMicros = optionalMicros(raw.hwm, false, 'high water mark')
+
   return {
     accountId,
     brokerOrderId: raw.id,
@@ -772,31 +786,31 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
     submittedAt: raw.submitted_at,
-    filledAt: optionalTimestamp(raw.filled_at),
-    expiredAt: optionalTimestamp(raw.expired_at),
-    canceledAt: optionalTimestamp(raw.canceled_at),
-    failedAt: optionalTimestamp(raw.failed_at),
-    replacedAt: optionalTimestamp(raw.replaced_at),
-    replacedBy: raw.replaced_by ?? undefined,
-    replaces: raw.replaces ?? undefined,
+    ...(filledAt === undefined ? {} : { filledAt }),
+    ...(expiredAt === undefined ? {} : { expiredAt }),
+    ...(canceledAt === undefined ? {} : { canceledAt }),
+    ...(failedAt === undefined ? {} : { failedAt }),
+    ...(replacedAt === undefined ? {} : { replacedAt }),
+    ...(replacedBy === undefined ? {} : { replacedBy }),
+    ...(replaces === undefined ? {} : { replaces }),
     assetId: raw.asset_id,
     symbol: raw.symbol,
     assetClass: raw.asset_class,
-    quantityMicros,
-    notionalMicros,
+    ...(quantityMicros === undefined ? {} : { quantityMicros }),
+    ...(notionalMicros === undefined ? {} : { notionalMicros }),
     filledQuantityMicros,
-    filledAveragePriceMicros: optionalMicros(raw.filled_avg_price, false, 'filled average price'),
+    ...(filledAveragePriceMicros === undefined ? {} : { filledAveragePriceMicros }),
     orderClass: raw.order_class === '' ? OrderClass.Simple : raw.order_class,
     orderType: raw.order_type,
     side: raw.side,
     timeInForce: raw.time_in_force,
-    limitPriceMicros: optionalMicros(raw.limit_price, false, 'limit price'),
-    stopPriceMicros: optionalMicros(raw.stop_price, false, 'stop price'),
+    ...(limitPriceMicros === undefined ? {} : { limitPriceMicros }),
+    ...(stopPriceMicros === undefined ? {} : { stopPriceMicros }),
     status: raw.status,
     extendedHours: raw.extended_hours,
-    trailPercentMicros: optionalMicros(raw.trail_percent, false, 'trail percent'),
-    trailPriceMicros: optionalMicros(raw.trail_price, false, 'trail price'),
-    highWaterMarkMicros: optionalMicros(raw.hwm, false, 'high water mark'),
+    ...(trailPercentMicros === undefined ? {} : { trailPercentMicros }),
+    ...(trailPriceMicros === undefined ? {} : { trailPriceMicros }),
+    ...(highWaterMarkMicros === undefined ? {} : { highWaterMarkMicros }),
     observedAt,
   }
 }
@@ -817,6 +831,7 @@ const normalizeFillActivity = (raw: typeof FillActivityResponseSchema.Type, acco
   ) {
     throw new Error(`fill activity type ${raw.type} is inconsistent with leaves quantity`)
   }
+  const orderStatus = raw.order_status
   return {
     accountId,
     activityId: raw.id,
@@ -829,7 +844,7 @@ const normalizeFillActivity = (raw: typeof FillActivityResponseSchema.Type, acco
     transactionTime: raw.transaction_time,
     brokerOrderId: raw.order_id,
     type: raw.type,
-    orderStatus: raw.order_status,
+    ...(orderStatus === undefined ? {} : { orderStatus }),
   }
 }
 
@@ -1211,21 +1226,31 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
             orderById: verifyOrderLookup('order-by-id', order, read.orderById(order.brokerOrderId)),
             orderByClientId: verifyOrderLookup('order-by-client-id', order, read.orderByClientId(order.clientOrderId)),
           })
-    const proof: ReadPreflight = {
-      accountId: account.value.id,
-      accountHash: canonicalHashV1(account.value),
-      positionCount: responses.positions.value.length,
-      positionsHash: canonicalHashV1(responses.positions.value),
-      openOrderCount: responses.openOrders.value.length,
-      recentOrderCount: responses.recentOrders.value.length,
-      ordersHash: canonicalHashV1({
-        open: responses.openOrders.value,
-        recent: responses.recentOrders.value,
+    const proof = yield* Effect.try({
+      try: (): ReadPreflight => ({
+        accountId: account.value.id,
+        accountHash: canonicalHashV1(account.value),
+        positionCount: responses.positions.value.length,
+        positionsHash: canonicalHashV1(responses.positions.value),
+        openOrderCount: responses.openOrders.value.length,
+        recentOrderCount: responses.recentOrders.value.length,
+        ordersHash: canonicalHashV1({
+          open: responses.openOrders.value,
+          recent: responses.recentOrders.value,
+        }),
+        fillCount: responses.fills.value.items.length,
+        fillsHash: canonicalHashV1(responses.fills.value.items),
+        ...lookups,
       }),
-      fillCount: responses.fills.value.items.length,
-      fillsHash: canonicalHashV1(responses.fills.value.items),
-      ...lookups,
-    }
+      catch: (cause) =>
+        new BrokerReadError({
+          operation: 'preflight',
+          kind: BrokerReadErrorKind.InvalidResponse,
+          message: 'Alpaca observe-only preflight data is not canonical JSON',
+          retryable: false,
+          cause: safeCause(cause),
+        }),
+    })
     yield* Effect.logInfo('Alpaca observe-only read preflight passed').pipe(
       Effect.annotateLogs({
         accountId: proof.accountId,
