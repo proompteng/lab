@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Context, Data, Effect, Layer, Schema } from 'effect'
+import { Context, Data, Effect, Exit, Layer, Schema, Semaphore } from 'effect'
 
 const LOCK_NAMESPACE = 1_111_578_958 // ASCII "BAYN"
 const WRITER_LEASE = 1
@@ -9,7 +9,7 @@ const HeldRows = Schema.Tuple([Schema.Tuple([Schema.Boolean])])
 
 export class WriterFenceError extends Data.TaggedError('WriterFenceError')<{
   readonly failure: 'busy' | 'decode' | 'unavailable'
-  readonly operation: 'acquire' | 'check'
+  readonly operation: 'acquire' | 'check' | 'transaction'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -17,11 +17,12 @@ export class WriterFenceError extends Data.TaggedError('WriterFenceError')<{
 export interface WriterFenceService {
   readonly backendPid: number
   readonly check: Effect.Effect<void, WriterFenceError>
+  readonly transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | WriterFenceError, R>
 }
 
 export class WriterFence extends Context.Service<WriterFence, WriterFenceService>()('bayn/WriterFence') {}
 
-const unavailable = (operation: 'acquire' | 'check', cause: unknown) =>
+const unavailable = (operation: 'acquire' | 'check' | 'transaction', cause: unknown) =>
   new WriterFenceError({
     failure: 'unavailable',
     operation,
@@ -65,7 +66,8 @@ const acquire = Effect.gen(function* () {
       .pipe(Effect.ignore),
   )
 
-  const check = Effect.gen(function* () {
+  const transactionPermit = yield* Semaphore.make(1)
+  const checkHeld = Effect.gen(function* () {
     const heldRows = yield* connection
       .executeValues(
         `SELECT EXISTS (
@@ -95,11 +97,30 @@ const acquire = Effect.gen(function* () {
       )
     }
   })
+  const check = transactionPermit.withPermit(checkHeld)
+
+  const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | WriterFenceError, R> =>
+    transactionPermit.withPermit(
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          yield* connection
+            .executeUnprepared('BEGIN', [], undefined)
+            .pipe(Effect.mapError((cause) => unavailable('transaction', cause)))
+          const exit = yield* Effect.exit(
+            restore(checkHeld.pipe(Effect.andThen(effect))).pipe(
+              Effect.provideService(sql.transactionService, [connection, 0]),
+            ),
+          )
+          yield* connection
+            .executeUnprepared(Exit.isSuccess(exit) ? 'COMMIT' : 'ROLLBACK', [], undefined)
+            .pipe(Effect.mapError((cause) => unavailable('transaction', cause)))
+          return yield* exit
+        }),
+      ),
+    )
 
   yield* check
-  return { backendPid, check } satisfies WriterFenceService
+  return { backendPid, check, transaction } satisfies WriterFenceService
 })
 
 export const WriterFenceLive = Layer.effect(WriterFence, acquire)
-
-export const mutationFence = { namespace: LOCK_NAMESPACE, key: 2 } as const

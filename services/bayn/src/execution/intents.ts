@@ -27,7 +27,7 @@ import {
   UtcInstantSchema as UtcInstant,
   strictParseOptions,
 } from '../schemas'
-import { mutationFence, WriterFence, WriterFenceError } from './writer-fence'
+import { WriterFence, WriterFenceError } from './writer-fence'
 
 export const IntentPlanSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-intent-plan.v1'),
@@ -315,14 +315,7 @@ const makeStore = Effect.gen(function* () {
       return Option.fromNullishOr(records[0])
     })
 
-  const withFence = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        yield* sql`SELECT pg_advisory_xact_lock(${mutationFence.namespace}, ${mutationFence.key})`
-        yield* fence.check
-        return yield* effect
-      }),
-    )
+  const withFence = fence.transaction
 
   const commit = (inputIntent: Intent, inputDecision: RiskDecision) =>
     run(
@@ -432,13 +425,15 @@ const makeStore = Effect.gen(function* () {
               )
             }
             if (existing.decision !== undefined) {
-              const expectedState =
-                decision.outcome === RiskOutcome.Approved ? IntentState.Approved : IntentState.Terminal
+              const stateMatchesDecision =
+                decision.outcome === RiskOutcome.Approved
+                  ? existing.intent.state !== IntentState.Planned
+                  : existing.intent.state === IntentState.Terminal &&
+                    existing.intent.terminalOutcome === TerminalOutcome.Blocked
               if (
                 !decisionEquivalent(existing.decision, decision) ||
                 existing.intent.riskDecisionId !== decision.decisionId ||
-                existing.intent.state !== expectedState ||
-                (expectedState === IntentState.Terminal && existing.intent.terminalOutcome !== TerminalOutcome.Blocked)
+                !stateMatchesDecision
               ) {
                 return yield* Effect.fail(
                   storeError('conflict', 'commit', 'stored intent decision diverges from the requested decision'),

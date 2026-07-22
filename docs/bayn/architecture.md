@@ -5,9 +5,9 @@
 Bayn is a single-writer, paper-only quantitative qualification runtime. It evaluates one compiled
 `risk-balanced-trend` candidate against one immutable Signal snapshot, journals the deterministic simulation, verifies
 the accounting result, and exposes the resulting qualification evidence. It has no runtime broker credential,
-order-submission entry point, or capital-promotion authority. The source tree includes a dormant paper-only broker adapter
-and recovery coordinator; the composition root does not build them and the pod has no broker credential. Public status
-continues to report the GitOps authority ceiling independently of that dormant code.
+order-submission entry point, or capital-promotion authority. The source tree includes dormant paper-only read and
+mutation adapters plus a recovery coordinator; the composition root does not build them and the pod has no broker
+credential. Public status currently reports maximum authority `observe` independently of that dormant code.
 
 The runtime has three external I/O boundaries:
 
@@ -89,6 +89,9 @@ Effect is used at resource and failure boundaries, not as a container for ordina
   operation.
 - HTTP receives the runtime state and the narrow evidence-read callback it needs. It does not depend on the strategy or
   the complete evidence service.
+- The Alpaca read and mutation adapters, risk evaluator, intent and mutation stores, writer fence, and recovery
+  coordinator remain outside the runtime composition until the qualification and authority gates explicitly permit a
+  paper slice.
 
 Do not introduce a `Context.Service` or `Layer` for a pure value merely to make it injectable. Add an Effect service
 only when a capability needs acquisition, release, configuration, retry, concurrency, or typed I/O failure.

@@ -7,8 +7,11 @@ The application is manual and must be rolled out only from merged `main`.
 
 - Keep Flannel as the CNI and kube-proxy in nftables mode.
 - Keep kube-router routing, service proxy, load-balancer allocation, CNI installation, and IPv6 disabled.
-- Never activate the DaemonSet unless every namespace with an existing NetworkPolicy has the temporary allow-all policy.
-- Never remove the temporary safety policies during activation or rollback.
+- Never activate the DaemonSet unless every namespace with an existing NetworkPolicy is approved by the safety verifier
+  as either traffic-neutral, deliberately inert with no selected Pods, or enforcement-validated without an allow-all
+  exception.
+- Remove a temporary allow-all only in the reviewed change that records the namespace's validated graduated state in
+  the safety verifier. Preserve all non-graduated safety policies during activation and rollback.
 - Never delete the active DaemonSet without subsequently running the pinned cleanup DaemonSet on every node; kube-router
   rules persist after the controller exits.
 - Stop immediately on node, workload, DNS, service routing, or policy-probe regression.

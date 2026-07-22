@@ -227,6 +227,17 @@ describe('Alpaca paper reads', () => {
       },
     ])
 
+    response = [{ ...positionResponse, side: 'short', qty: '5', market_value: '600.0', unrealized_pl: '-100.0' }]
+    const short = await Effect.runPromise(withClient(client, (read) => read.positions))
+    expect(short.value).toEqual([
+      expect.objectContaining({
+        side: PositionSide.Short,
+        quantityMicros: '-5000000',
+        marketValueMicros: '-600000000',
+        unrealizedPnlMicros: '-100000000',
+      }),
+    ])
+
     response = [{ ...positionResponse, qty: '0.079145874' }]
     const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
     expect(failure).toMatchObject({
@@ -236,6 +247,15 @@ describe('Alpaca paper reads', () => {
       retryable: false,
     })
     expect(failure.message).toContain('violates the Bayn read contract')
+
+    response = [{ ...positionResponse, side: 'long', qty: '-170141183460469231731687303715884.105728' }]
+    const normalizedOverflow = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
+    expect(normalizedOverflow).toMatchObject({
+      _tag: 'BrokerReadError',
+      operation: 'positions',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
   })
 
   test('reads order collections and deterministic order lookups with GET only', async () => {

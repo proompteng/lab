@@ -10,7 +10,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { MutationEvidenceSchema, MutationOperation, type MutationEvidence } from '../broker/alpaca-mutations'
-import { mutationFence, WriterFence, WriterFenceError } from './writer-fence'
+import { WriterFence, WriterFenceError } from './writer-fence'
 
 export enum MutationEventType {
   SubmitStarted = 'SUBMIT_STARTED',
@@ -240,14 +240,7 @@ const makeStore = Effect.gen(function* () {
       ),
     )
 
-  const withFence = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    sql.withTransaction(
-      Effect.gen(function* () {
-        yield* sql`SELECT pg_advisory_xact_lock(${mutationFence.namespace}, ${mutationFence.key})`
-        yield* fence.check
-        return yield* effect
-      }),
-    )
+  const withFence = fence.transaction
 
   const latest = (intentId: string, operation: MutationOperation) =>
     Effect.gen(function* () {
