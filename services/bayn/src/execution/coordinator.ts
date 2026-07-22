@@ -95,6 +95,7 @@ const exactOrder = (intent: Intent, order: Order): boolean => {
     order.orderType === body.type &&
     order.timeInForce === body.time_in_force &&
     order.quantityMicros === intent.quantityMicros &&
+    (order.status !== OrderStatus.Filled || order.filledQuantityMicros === intent.quantityMicros) &&
     order.extendedHours === false
   )
 }
@@ -134,7 +135,8 @@ const validateRecovery = (stored: Intent, event: MutationEvent) =>
     const validState =
       event.operation === MutationOperation.Submit
         ? stored.state === IntentState.IoStarted || stored.state === IntentState.Unknown
-        : stored.state === IntentState.Acknowledged
+        : stored.state === IntentState.Acknowledged ||
+          (stored.state === IntentState.Unknown && event.brokerOrderId !== undefined)
     if (expectedHash === event.requestHash && validState) return
     return yield* Effect.fail(
       new ExecutionError({
@@ -185,12 +187,22 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
             return mutations.submitRejected(intentId, hash, error.evidence)
           }
           return isCompleteEvidence(error.evidence)
-            ? mutations.submitUnknown(intentId, hash, error.evidence.observedAt, error.evidence)
-            : now.pipe(Effect.flatMap((occurredAt) => mutations.submitUnknown(intentId, hash, occurredAt)))
+            ? mutations.submitUnknown(intentId, hash, error.evidence.observedAt, error.evidence, error.brokerOrderId)
+            : now.pipe(
+                Effect.flatMap((occurredAt) =>
+                  mutations.submitUnknown(intentId, hash, occurredAt, undefined, error.brokerOrderId),
+                ),
+              )
         },
         onSuccess: (receipt) => {
           if (receipt.requestHash !== hash || !exactOrder(after.value.intent, receipt.order)) {
-            return mutations.submitUnknown(intentId, hash, receipt.evidence.observedAt, receipt.evidence)
+            return mutations.submitUnknown(
+              intentId,
+              hash,
+              receipt.evidence.observedAt,
+              receipt.evidence,
+              receipt.order.brokerOrderId,
+            )
           }
           return mutations.submitAccepted(
             intentId,
@@ -204,12 +216,6 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
     )
   })
 
-const brokerOrderId = (event: MutationEvent | undefined): string | undefined => {
-  if (event?.eventType === MutationEventType.SubmitAccepted) return event.brokerOrderId
-  if (event?.eventType === MutationEventType.RecoveryFound) return event.brokerOrderId
-  return undefined
-}
-
 export const cancel = (intentId: string, consistencyDelayMs: number) =>
   Effect.gen(function* () {
     const mutations = yield* MutationStore
@@ -217,7 +223,7 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
     const fence = yield* WriterFence
     const intent = yield* readIntent(MutationOperation.Cancel, intentId)
     const submitEvent = yield* mutations.latest(intentId, MutationOperation.Submit)
-    const orderId = brokerOrderId(submitEvent)
+    const orderId = submitEvent?.brokerOrderId
     if (orderId === undefined) {
       return yield* Effect.fail(
         new ExecutionError({

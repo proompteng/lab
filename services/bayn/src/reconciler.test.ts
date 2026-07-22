@@ -144,7 +144,7 @@ interface StoreControl {
   restrictions: string[]
 }
 
-const makeStore = (control: StoreControl): PaperStoreShape => ({
+const makeStore = (control: StoreControl, hasAccountBaseline = true): PaperStoreShape => ({
   ingest: (input) =>
     Effect.sync(() => {
       control.writes += 1
@@ -165,6 +165,7 @@ const makeStore = (control: StoreControl): PaperStoreShape => ({
       control.writes += 1
       return valuation
     }),
+  hasAccountBaseline: () => Effect.succeed(hasAccountBaseline),
   bindings: () => Effect.succeed([{ intentId: hash('intent'), clientOrderId: order(0).clientOrderId }]),
   reconcile: (snapshot) =>
     Effect.sync(() => {
@@ -239,6 +240,57 @@ describe('paper reconciliation loop', () => {
     expect(control.reconciliations[0].orders[0].intentId).toBe(hash('intent'))
     expect(control.reconciliations[0].fills[0].intentId).toBe(hash('intent'))
     expect(control.restrictions).toEqual([])
+  })
+
+  test('rejects historical fills on an uninitialized account before ingesting broker state', async () => {
+    const existingOrder = order(0)
+    const existingFill = fill(0, existingOrder)
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [existingOrder], evidence: evidence('orders') }),
+      fillActivities: () => Effect.succeed({ value: { items: [existingFill] }, evidence: evidence('fills') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const failure = await Effect.runPromise(provide(read, makeStore(control, false)).pipe(Effect.flip))
+
+    expect(failure).toMatchObject({
+      _tag: 'ReconciliationError',
+      operation: 'snapshot',
+      message: 'paper account has fill history before Bayn established an opening cash baseline',
+    })
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('orders fills by normalized instants before accounting', async () => {
+    const earlierOrder = { ...order(0), submittedAt: '2026-07-22T12:00:00.000Z' }
+    const laterOrder = { ...order(1), submittedAt: '2026-07-22T12:00:01.000Z' }
+    const earlierFill = {
+      ...fill(0, earlierOrder),
+      activityId: 'fill-earlier',
+      transactionTime: '2026-07-22T12:00:00.1Z',
+    }
+    const laterFill = {
+      ...fill(1, laterOrder),
+      activityId: 'fill-later',
+      transactionTime: '2026-07-22T12:00:00.100001Z',
+    }
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [earlierOrder, laterOrder], evidence: evidence('orders') }),
+      fillActivities: () => Effect.succeed({ value: { items: [laterFill, earlierFill] }, evidence: evidence('fills') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    await Effect.runPromise(provide(read, makeStore(control)))
+
+    expect(control.reconciliations).toHaveLength(1)
+    expect(control.reconciliations[0].fills.map((candidate) => candidate.fillId)).toEqual([
+      earlierFill.activityId,
+      laterFill.activityId,
+    ])
   })
 
   test('fails a duplicate page before any durable write or false resolution', async () => {

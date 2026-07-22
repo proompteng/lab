@@ -169,6 +169,7 @@ export interface MutationStoreShape {
     requestHash: string,
     occurredAt: string,
     evidence?: Partial<MutationEvidence>,
+    brokerOrderId?: string,
   ) => Effect.Effect<MutationEvent, MutationStoreError | WriterFenceError>
   readonly beginCancel: (
     intentId: string,
@@ -218,6 +219,15 @@ export interface MutationStoreShape {
 }
 
 export class MutationStore extends Context.Service<MutationStore, MutationStoreShape>()('bayn/MutationStore') {}
+
+const isIdentifiedUnresolvedSubmit = (event: MutationEvent | undefined, brokerOrderId: string): boolean => {
+  if (event?.operation !== MutationOperation.Submit || event.brokerOrderId !== brokerOrderId) return false
+  return (
+    event.eventType === MutationEventType.SubmitUnknown ||
+    event.eventType === MutationEventType.RecoveryNotFound ||
+    event.eventType === MutationEventType.RecoveryUnknown
+  )
+}
 
 const storeError = (
   operation: MutationStoreError['operation'],
@@ -445,7 +455,15 @@ const makeStore = Effect.gen(function* () {
             }
             const requiredState =
               operation === MutationOperation.Submit ? IntentState.Approved : IntentState.Acknowledged
-            if (intent.state !== requiredState) {
+            const identifiedUnknownSubmit =
+              operation === MutationOperation.Cancel &&
+              intent.state === IntentState.Unknown &&
+              input.brokerOrderId !== undefined &&
+              isIdentifiedUnresolvedSubmit(
+                yield* readLatest(input.intentId, MutationOperation.Submit),
+                input.brokerOrderId,
+              )
+            if (intent.state !== requiredState && !identifiedUnknownSubmit) {
               return yield* Effect.fail(
                 storeError(
                   storeOperation,
@@ -509,6 +527,7 @@ const makeStore = Effect.gen(function* () {
       readonly fromState?: IntentState
       readonly terminalOutcome?: TerminalOutcome
       readonly recover?: boolean
+      readonly recoverUnknown?: boolean
     },
   ) =>
     run(
@@ -592,6 +611,19 @@ const makeStore = Effect.gen(function* () {
                 }
               }
             } else if (fields.nextState !== undefined) {
+              let fromState = fields.fromState ?? IntentState.IoStarted
+              if (fields.recoverUnknown === true) {
+                const recovered = yield* sql<{ intent_id: string }>`
+                  UPDATE intents
+                  SET
+                    state = ${IntentState.Recovered},
+                    state_version = state_version + 1,
+                    updated_at = GREATEST(${input.occurredAt}::timestamptz, updated_at + interval '1 microsecond')
+                  WHERE intent_id = ${input.intentId} AND state = ${IntentState.Unknown}
+                  RETURNING intent_id
+                `
+                if (recovered.length === 1) fromState = IntentState.Recovered
+              }
               const transitioned = yield* sql<{ intent_id: string }>`
                 UPDATE intents
                 SET
@@ -599,7 +631,7 @@ const makeStore = Effect.gen(function* () {
                   terminal_outcome = ${fields.terminalOutcome ?? null},
                   state_version = state_version + 1,
                   updated_at = GREATEST(${input.occurredAt}::timestamptz, updated_at + interval '1 microsecond')
-                WHERE intent_id = ${input.intentId} AND state = ${fields.fromState ?? IntentState.IoStarted}
+                WHERE intent_id = ${input.intentId} AND state = ${fromState}
                 RETURNING intent_id
               `
               if (transitioned.length !== 1) {
@@ -648,7 +680,7 @@ const makeStore = Effect.gen(function* () {
           terminalOutcome: TerminalOutcome.Rejected,
         },
       ),
-    submitUnknown: (intentId, requestHash, occurredAt, evidence) =>
+    submitUnknown: (intentId, requestHash, occurredAt, evidence, brokerOrderId) =>
       appendOutcome(
         'record-submit',
         intentId,
@@ -656,7 +688,11 @@ const makeStore = Effect.gen(function* () {
         requestHash,
         MutationEventType.SubmitUnknown,
         occurredAt,
-        { evidence: completeEvidence(evidence), nextState: IntentState.Unknown },
+        {
+          ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+          evidence: completeEvidence(evidence),
+          nextState: IntentState.Unknown,
+        },
       ),
     beginCancel: (intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) =>
       begin(MutationOperation.Cancel, intentId, requestHash, consistencyDelayMs, occurredAt, brokerOrderId),
@@ -696,7 +732,9 @@ const makeStore = Effect.gen(function* () {
           ...(operation === MutationOperation.Submit || terminal
             ? {
                 nextState: terminal ? IntentState.Terminal : IntentState.Acknowledged,
-                ...(operation === MutationOperation.Cancel ? { fromState: IntentState.Acknowledged } : {}),
+                ...(operation === MutationOperation.Cancel
+                  ? { fromState: IntentState.Acknowledged, recoverUnknown: true }
+                  : {}),
                 ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
               }
             : {}),

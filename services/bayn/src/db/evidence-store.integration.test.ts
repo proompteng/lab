@@ -7,7 +7,7 @@ import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, 
 import type { RuntimeConfig } from '../config'
 import { IntentStore, IntentStoreLive, plan, type IntentPlan } from '../execution/intents'
 import { MutationEventType, MutationStore, MutationStoreLive } from '../execution/mutations'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation, cancelRequestHash } from '../broker/alpaca-mutations'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { buildLedgerPlan } from '../ledger'
@@ -278,6 +278,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 5, name: 'mutation_recovery' },
       { migration_id: 6, name: 'current_risk_clock' },
       { migration_id: 7, name: 'accounting' },
+      { migration_id: 8, name: 'identified_submit_unknown' },
     ])
   })
 
@@ -715,6 +716,96 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.before).toEqual({ state: 'UNKNOWN', state_version: 4 })
     expect(observed.found.eventType).toBe(MutationEventType.RecoveryFound)
     expect(observed.after).toEqual({ state: 'ACKNOWLEDGED', state_version: 6 })
+  })
+
+  test('cancels an identified mismatched order while its submit remains UNKNOWN', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const submitHash = '6'.repeat(64)
+    const cancelHash = cancelRequestHash(orderId)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        const unknown = yield* store.submitUnknown(
+          intent.intentId,
+          submitHash,
+          new Date(base + 1).toISOString(),
+          {
+            requestId: 'mismatched-submit',
+            status: 200,
+            contentHash: '5'.repeat(64),
+            observedAt: new Date(base + 1).toISOString(),
+          },
+          orderId,
+        )
+        const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Submit, submitHash, {
+          requestId: 'submit-lookup-not-found',
+          status: 404,
+          contentHash: '4'.repeat(64),
+          observedAt: new Date(base + 2).toISOString(),
+        })
+        const cancelStarted = yield* store.beginCancel(
+          intent.intentId,
+          cancelHash,
+          orderId,
+          1_000,
+          new Date(base + 3).toISOString(),
+        )
+        yield* store.cancelAccepted(intent.intentId, cancelHash, orderId, {
+          requestId: 'cancel-request',
+          status: 204,
+          contentHash: '3'.repeat(64),
+          observedAt: new Date(base + 4).toISOString(),
+        })
+        const canceled = yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Cancel,
+          cancelHash,
+          orderId,
+          {
+            requestId: 'cancel-lookup',
+            status: 200,
+            contentHash: '2'.repeat(64),
+            observedAt: new Date(base + 5).toISOString(),
+          },
+          TerminalOutcome.Canceled,
+        )
+        return { cancelStarted, canceled, notFound, state: yield* sqlIntentState(intent.intentId), unknown }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.unknown).toMatchObject({
+      eventType: MutationEventType.SubmitUnknown,
+      brokerOrderId: orderId,
+    })
+    expect(observed.notFound).toMatchObject({
+      eventType: MutationEventType.RecoveryNotFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.cancelStarted.started).toBe(true)
+    expect(observed.canceled.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(observed.state.state).toBe('TERMINAL')
   })
 
   test('allows kill-mode cancellation of an identified order and resolves the cancel race', async () => {

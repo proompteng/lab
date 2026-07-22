@@ -241,7 +241,9 @@ describePostgres('paper accounting persistence', () => {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
+          const baselineBefore = yield* store.hasAccountBaseline(accountId)
           const first = yield* store.ingest(accountEvent())
+          const baselineAfter = yield* store.hasAccountBaseline(accountId)
           const replay = yield* store.ingest(accountEvent())
           const order = yield* store.ingest(orderEvent())
           const conflict = yield* Effect.exit(
@@ -254,11 +256,13 @@ describePostgres('paper accounting persistence', () => {
               (SELECT count(*)::integer FROM account_snapshots) AS accounts,
               (SELECT count(*)::integer FROM orders) AS orders
           `
-          return { first, replay, order, conflict, counts }
+          return { baselineAfter, baselineBefore, first, replay, order, conflict, counts }
         }),
       )
 
       expect(result.first).toMatchObject({ sourceSequence: '0', deduplicated: false })
+      expect(result.baselineBefore).toBe(false)
+      expect(result.baselineAfter).toBe(true)
       expect(result.replay).toEqual({ ...result.first, deduplicated: true })
       expect(result.order).toMatchObject({ sourceSequence: '1', deduplicated: false })
       expect(Exit.isFailure(result.conflict)).toBe(true)

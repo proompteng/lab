@@ -104,6 +104,8 @@ interface HarnessOptions {
   readonly lostFence?: boolean
   readonly notFoundOnce?: boolean
   readonly unknownSubmit?: boolean
+  readonly submitError?: BrokerMutationError
+  readonly submittedOrder?: Order
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -205,14 +207,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
       setState(IntentState.Terminal, response.observedAt, TerminalOutcome.Rejected)
       return Effect.succeed(rejected)
     },
-    submitUnknown: (_intentId, requestHash, occurredAt, response) => {
+    submitUnknown: (_intentId, requestHash, occurredAt, response, brokerOrderId) => {
       const unknown = event(
         MutationOperation.Submit,
         MutationEventType.SubmitUnknown,
         requestHash,
         latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
         occurredAt,
-        undefined,
+        brokerOrderId,
         completeEvidence(response),
       )
       setState(IntentState.Unknown, occurredAt)
@@ -312,6 +314,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         return Effect.die(new Error('submit happened before SUBMIT_STARTED was durable'))
       }
       if (options.crashAfterSubmit) return Effect.die(new Error('injected crash after send'))
+      if (options.submitError !== undefined) return Effect.fail(options.submitError)
       const hash = canonicalHashV1(orderRequestBody(submitted))
       if (options.unknownSubmit) {
         return Effect.fail(
@@ -325,7 +328,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         )
       }
       const response = evidence(200, '1970-01-01T00:00:00.100Z')
-      return Effect.succeed({ requestHash: hash, order: brokerOrder(), evidence: response })
+      return Effect.succeed({ requestHash: hash, order: options.submittedOrder ?? brokerOrder(), evidence: response })
     },
     cancel: (brokerOrderId) => {
       cancelCalls += 1
@@ -410,6 +413,54 @@ describe('paper execution coordinator', () => {
     expect(result.replay.eventId).toBe(result.accepted.eventId)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('keeps a partial broker fill UNKNOWN instead of recording a false terminal fill', async () => {
+    const harness = makeHarness({
+      submittedOrder: { ...brokerOrder(OrderStatus.Filled), filledQuantityMicros: '500000' },
+    })
+
+    const result = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))
+
+    expect(result).toMatchObject({
+      eventType: MutationEventType.SubmitUnknown,
+      brokerOrderId: orderId,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Unknown)
+  })
+
+  test('can cancel a mismatched accepted order while the intent remains UNKNOWN', async () => {
+    const response = evidence(200, '1970-01-01T00:00:00.100Z')
+    const harness = makeHarness({
+      submitError: new BrokerMutationError({
+        operation: MutationOperation.Submit,
+        failure: MutationFailure.Unknown,
+        outcome: MutationOutcome.Unknown,
+        message: 'accepted order differs from durable intent',
+        requestHash: canonicalHashV1(orderRequestBody(intent)),
+        evidence: response,
+        brokerOrderId: orderId,
+      }),
+    })
+
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          const unknown = yield* submit(intentId, 1_000)
+          const canceled = yield* cancel(intentId, 1_000)
+          return { unknown, canceled }
+        }),
+      ),
+    )
+
+    expect(result.unknown).toMatchObject({
+      eventType: MutationEventType.SubmitUnknown,
+      brokerOrderId: orderId,
+    })
+    expect(result.canceled.eventType).toBe(MutationEventType.CancelAccepted)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Unknown)
   })
 
   test('makes no broker call when the writer fence is lost after recording I/O start', async () => {
