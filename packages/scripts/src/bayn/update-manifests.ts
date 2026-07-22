@@ -36,12 +36,6 @@ const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string
   return source.replace(pattern, replacement)
 }
 
-const removeAtMostOnce = (source: string, pattern: RegExp, name: string): string => {
-  const matches = [...source.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))]
-  if (matches.length > 1) throw new Error(`expected at most one ${name}`)
-  return matches.length === 0 ? source : source.replace(pattern, '')
-}
-
 export const updateBaynManifests = (options: UpdateBaynManifestOptions): void => {
   if (!sourceShaPattern.test(options.sourceSha)) throw new Error(`invalid source SHA: ${options.sourceSha}`)
   if (!tagPattern.test(options.tag)) throw new Error(`invalid image tag: ${options.tag}`)
@@ -73,11 +67,6 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): void =>
     /(            - name: BAYN_IMAGE_DIGEST\n              value: )[^\n]+/,
     `$1${options.digest}`,
     'BAYN_IMAGE_DIGEST value',
-  )
-  updatedDeployment = removeAtMostOnce(
-    updatedDeployment,
-    /            - name: BAYN_QUALIFICATION_RUN_ID\n              value: [^\n]+\n/,
-    'BAYN_QUALIFICATION_RUN_ID block',
   )
   for (const [name, value] of Object.entries(currentRuntimeConfiguration)) {
     updatedDeployment = replaceExactlyOnce(

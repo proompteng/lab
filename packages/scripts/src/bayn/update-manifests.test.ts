@@ -13,7 +13,7 @@ afterEach(() => {
 })
 
 describe('Bayn manifest promotion', () => {
-  test('atomically promotes the current runtime and removes the legacy qualification pin', () => {
+  test('atomically promotes the current runtime without changing its qualification pin', () => {
     directory = mkdtempSync(join(tmpdir(), 'bayn-manifest-'))
     const kustomizationPath = join(directory, 'kustomization.yaml')
     const deploymentPath = join(directory, 'deployment.yaml')
@@ -47,7 +47,9 @@ describe('Bayn manifest promotion', () => {
       `- name: BAYN_IMAGE_REPOSITORY\n              value: registry.ide-newton.ts.net/lab/bayn`,
     )
     expect(readFileSync(deploymentPath, 'utf8')).toContain(`- name: BAYN_IMAGE_DIGEST\n              value: ${digest}`)
-    expect(readFileSync(deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(readFileSync(deploymentPath, 'utf8')).toContain(
+      '- name: BAYN_QUALIFICATION_RUN_ID\n              value: legacy-run',
+    )
     expect(readFileSync(deploymentPath, 'utf8')).toContain(
       '- name: BAYN_SIGNAL_SNAPSHOT_ID\n              value: "98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292"',
     )
@@ -75,7 +77,9 @@ describe('Bayn manifest promotion', () => {
       deploymentPath,
       applicationSetPath,
     })
-    expect(readFileSync(deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(readFileSync(deploymentPath, 'utf8')).toContain(
+      '- name: BAYN_QUALIFICATION_RUN_ID\n              value: legacy-run',
+    )
     expect(readFileSync(deploymentPath, 'utf8')).toContain(`value: ${nextSourceSha}`)
   })
 
