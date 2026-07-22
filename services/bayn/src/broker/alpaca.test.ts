@@ -23,6 +23,7 @@ import {
   layer,
   make,
   makeProxyDispatcher,
+  readPreflightTimeoutMs,
   verifyReadAccess,
   type BrokerReadShape,
   type ReadOptions,
@@ -239,13 +240,47 @@ describe('Alpaca paper reads', () => {
       requests
         .filter(({ url }) => url.pathname === '/v2/orders')
         .map(({ url }) => url.searchParams.get('status'))
-        .sort(),
+        .sort((left, right) => (left ?? '').localeCompare(right ?? '')),
     ).toEqual(['all', 'open'])
     expect(requests.some(({ url }) => url.pathname === `/v2/orders/00000000-0000-4000-8000-000000000000`)).toBe(true)
     expect(requests.some(({ url }) => url.pathname === '/v2/orders:by_client_order_id')).toBe(true)
     const fill = requests.find(({ url }) => url.pathname === '/v2/account/activities/FILL')
     expect(fill?.url.searchParams.get('page_size')).toBe('1')
     expect(fill?.url.searchParams.get('direction')).toBe('desc')
+  })
+
+  test('bounds the complete startup preflight below the Kubernetes startup-probe budget', async () => {
+    let interrupted = 0
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      return Effect.never.pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interrupted += 1
+          }),
+        ),
+      )
+    })
+
+    const program = withClient(
+      client,
+      (read) =>
+        Effect.gen(function* () {
+          const fiber = yield* Effect.flip(verifyReadAccess(read)).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(readPreflightTimeoutMs)
+          return yield* Fiber.join(fiber)
+        }),
+      { ...options, operationTimeoutMs: 120_000, retryAttempts: 0 },
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    const failure = await Effect.runPromise(program)
+    expect(failure).toMatchObject({
+      kind: BrokerReadErrorKind.Timeout,
+      operation: 'preflight',
+      retryable: true,
+    })
+    expect(interrupted).toBeGreaterThan(0)
   })
 
   test('normalizes equity positions exactly and rejects precision loss', async () => {

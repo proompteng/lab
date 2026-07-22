@@ -11,6 +11,7 @@ import {
 
 export const paperTradingUrl = 'https://paper-api.alpaca.markets'
 const defaultFillActivitiesPageSize = 100
+export const readPreflightTimeoutMs = 45_000
 const responseParseOptions = { onExcessProperty: 'ignore' } as const
 const inputParseOptions = { onExcessProperty: 'error' } as const
 const redactedHeaders = [
@@ -198,6 +199,7 @@ export enum BrokerReadErrorKind {
 export type BrokerReadOperation =
   | 'configuration'
   | 'proxy'
+  | 'preflight'
   | 'account'
   | 'positions'
   | 'orders'
@@ -1240,7 +1242,21 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
       }),
     )
     return proof
-  }).pipe(Effect.withLogSpan('broker.read.preflight'))
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: readPreflightTimeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new BrokerReadError({
+            operation: 'preflight',
+            kind: BrokerReadErrorKind.Timeout,
+            message: `Alpaca observe-only read preflight exceeded its ${readPreflightTimeoutMs}ms startup deadline`,
+            retryable: true,
+          }),
+        ),
+    }),
+    Effect.withLogSpan('broker.read.preflight'),
+  )
 
 export const layer = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError, HttpClient.HttpClient> =>
   Layer.effect(BrokerRead, make(options).pipe(Effect.tap(verifyReadAccess)))
