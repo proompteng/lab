@@ -2,7 +2,8 @@
 
 Bayn is a single-writer, paper-only quantitative qualification runtime. Its current protocol evaluates the frozen
 risk-balanced trend candidate on the authoritative infrastructure-equity universe and journals the resulting simulation
-to TigerBeetle. Bayn contains no broker client or capital-promotion path.
+to TigerBeetle. Its source contains a dormant, paper-only Alpaca mutation capability, but the deployed composition has
+no broker credentials, mutation layer, execution entry point, or capital-promotion path.
 
 ## Runtime contract
 
@@ -10,14 +11,17 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
 - Effect Config validates environment input. `BAYN_OPERATION_TIMEOUT_MS` bounds dependency operations, and
   `BAYN_HEALTH_INTERVAL_MS` controls the continuous health interval; both default to 30 seconds.
 - `BAYN_MAXIMUM_AUTHORITY` is a closed `OBSERVE`/`PAPER` process ceiling and defaults to `OBSERVE`. It never creates a
-  broker capability; the deployed runtime remains `OBSERVE` and contains no submit, cancel, or replace path.
+  broker capability; the deployed runtime remains `OBSERVE` and does not compose the submit/cancel capability.
 - Public egress is denied from the Bayn Pod. A separate CONNECT proxy permits only
-  `paper-api.alpaca.markets:443`; the service has no broker credential or client until a later reviewed slice.
+  `paper-api.alpaca.markets:443`. The pod has no broker credential, so the dormant client cannot authenticate or run.
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
   runs versioned Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
   query cancellation.
+- PostgreSQL stores paper mutation transitions in one append-only `mutation_events` table. Request identity, broker
+  response identity, and the lookup delay are committed before use; unresolved outcomes block later exposure. The
+  deployed observe-only runtime does not create mutation rows.
 - The composition root builds one pure strategy value and passes it explicitly to the lifecycle. Effect services and
   layers are reserved for I/O resources. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its authoritative
   universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
@@ -64,9 +68,9 @@ to TigerBeetle. Bayn contains no broker client or capital-promotion path.
   Any terminal-result failure rolls the evaluation graph back and leaves the lock visibly incomplete. An incomplete
   lock is never silently retried and blocks every new candidate; a locked candidate cannot bypass the terminal result
   through the ordinary persistence path.
-- One current-only initial migration creates the unprefixed evidence and qualification schema. Startup rejects a
-  legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or falls back to
-  legacy records.
+- The current-only migration chain owns the unprefixed evidence, qualification, intent, and mutation schema. Startup
+  rejects a legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or
+  falls back to legacy records.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.
