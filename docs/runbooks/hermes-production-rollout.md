@@ -242,7 +242,7 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/data/workspace/tuslagch/.rollout-canary
    ```
 
-4. Prove network containment from the gateway and domain filtering through Squid:
+4. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
 
    ```bash
    set -euo pipefail
@@ -256,11 +256,20 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes exec hermes-0 -c hermes -- \
      git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main
    kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -c \
-     '! /opt/hermes/.venv/bin/python -c '\''import urllib.request; urllib.request.urlopen("https://example.com", timeout=5)'\'''
+     '/opt/hermes/.venv/bin/python -c '\''import urllib.request; response=urllib.request.urlopen("https://example.com", timeout=10); assert response.status == 200; response.read(1)'\'''
+   private_result=$(
+     kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c \
+       'import urllib.request; opener=urllib.request.build_opener(urllib.request.ProxyHandler({"https":"http://hermes-egress-proxy.hermes.svc.cluster.local:3128"})); opener.open("https://169.254.169.254", timeout=5)' \
+       2>&1 || true
+   )
+   case "$private_result" in
+     *"403 Forbidden"*) ;;
+     *) echo 'private destination did not receive Squid denial' >&2; exit 1 ;;
+   esac
    ```
 
-   The direct public request must fail. Discord and the credential-free GitHub checkout path must work through Squid, and
-   the non-allowlisted domain must fail.
+   The direct public request must fail. Discord, GitHub, and an arbitrary public HTTPS destination must work through Squid,
+   while the metadata destination must receive Squid's explicit denial.
 
 5. Prove the cluster reader and local lab checkout from inside the gateway:
 
@@ -769,8 +778,9 @@ Do not declare cutover complete from pod readiness alone.
 
 ## Rollback
 
-Hard rollback triggers are any unauthorized Discord response, non-allowlisted egress, failed authenticated inference for 15
-minutes, loss/corruption of migrated state, backup verification failure, or repeated gateway restarts.
+Hard rollback triggers are any unauthorized Discord response, direct public egress bypassing Squid, proxy access to a
+private/tailnet/link-local/metadata destination, failed authenticated inference for 15 minutes, loss/corruption of migrated
+state, backup verification failure, or repeated gateway restarts.
 
 ### Before Discord cutover
 

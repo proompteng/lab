@@ -24,10 +24,10 @@ smoke test, manifest change, and normal CI/Codex review.
   token mounting.
 - The namespace enforces the Kubernetes `restricted` Pod Security profile.
 - Default-deny NetworkPolicies permit the gateway to reach only cluster DNS, the Kubernetes API service and its pinned
-  control-plane endpoints, Flamingo, and the allowlisted Squid proxy once a compatible policy engine is present. Flannel
+  control-plane endpoints, Flamingo, and the dedicated Squid proxy once a compatible policy engine is present. Flannel
   alone does not enforce these objects; the runbook's disposable live probe must pass before the first sync.
-- Squid permits HTTPS `CONNECT` only to Discord-owned domains and GitHub, and blocks other destinations plus private,
-  tailnet, metadata, and multicast ranges.
+- Squid permits HTTPS `CONNECT` to public destinations. Squid ACLs and NetworkPolicy both block private, tailnet, loopback,
+  link-local/metadata, multicast, and reserved destination ranges; the gateway has no direct public egress path.
 - Hermes receives a digest-pinned Kubernetes 1.35 `kubectl` binary through an OCI image volume. Its custom ClusterRole has
   only `get`, `list`, and `watch`, excludes core Secrets and interactive Pod subresources, and is bound cluster-wide only to
   the `hermes` ServiceAccount. Bootstrap writes a non-secret kubeconfig that follows the rotating projected token by file
