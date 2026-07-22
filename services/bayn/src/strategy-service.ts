@@ -1,5 +1,3 @@
-import { Context, Layer } from 'effect'
-
 import type { RuntimeProvenance } from './contracts'
 import {
   defaultQualificationStatisticsPolicyDocument,
@@ -16,7 +14,7 @@ import {
 import { evaluateRiskBalancedTrend, prepareRiskBalancedTrendQualification } from './risk-balanced-trend'
 import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } from './types'
 
-export interface StrategyService {
+export interface Strategy {
   readonly name: string
   readonly universe: readonly string[]
   readonly parameters: Protocol
@@ -30,8 +28,6 @@ export interface StrategyService {
   readonly analyze: (evaluation: EvaluationResult, priorTrialRunIds: readonly string[]) => QualificationAnalysis
 }
 
-export class Strategy extends Context.Service<Strategy, StrategyService>()('bayn/Strategy') {}
-
 const requireMatchingUniverse = (manifest: InputManifest, protocol: Protocol): InputManifest => {
   const snapshot = manifest.finalizedSnapshot
   if (
@@ -44,7 +40,7 @@ const requireMatchingUniverse = (manifest: InputManifest, protocol: Protocol): I
   return manifest
 }
 
-export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance): StrategyService => {
+export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance): Strategy => {
   const benchmarkPolicy = makeQualificationPolicyDocument('bayn.risk-balanced-trend-benchmark-policy.v1', {
     schemaVersion: 'bayn.risk-balanced-trend-benchmark-policy.v1',
     comparison: 'stronger-of-buy-and-hold-or-direct-volatility-timing',
@@ -116,6 +112,3 @@ export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance):
       ),
   }
 }
-
-export const StrategyLayer = (protocol: Protocol, provenance: RuntimeProvenance) =>
-  Layer.succeed(Strategy, makeStrategy(protocol, provenance))

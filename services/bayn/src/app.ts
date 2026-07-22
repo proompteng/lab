@@ -1,233 +1,28 @@
-import { createServer } from 'node:http'
-
-import { NodeHttpServer } from '@effect/platform-node'
 import { Cause, Clock, Duration, Effect, Exit, Layer, Option, Ref, Schedule } from 'effect'
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
 
-import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config'
 import { makeRuntimeProvenance, type FinalizedSnapshotProvenance, type RuntimeProvenance } from './contracts'
 import {
   EvidenceStore,
-  type EvidenceStoreService,
-  type PersistenceReceipt,
   type QualificationRecord,
   type RecoveredEvaluationEvidence,
   type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { formatError, operationalError, type Component, type OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
+import { makeHttpLayer } from './http'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
-import { makeQualificationResult, type QualificationResult } from './qualification'
+import { makeQualificationResult } from './qualification'
 import { summarizeEvaluation } from './risk-balanced-trend'
-import { Strategy } from './strategy-service'
-import type { EvaluationSummary, ReconciliationResult } from './types'
-
-export interface RuntimeEvidence {
-  readonly startupMode: 'evaluated' | 'pinned' | 'recovered'
-  readonly provenance: RuntimeProvenance
-  readonly evaluation: EvaluationSummary
-  readonly reconciliation: ReconciliationResult
-  readonly persistence: PersistenceReceipt
-  readonly qualification: QualificationResult
-}
-
-export interface DependencyHealth {
-  readonly status: 'UNKNOWN' | 'AVAILABLE' | 'UNAVAILABLE'
-  readonly checkedAt: string | null
-  readonly error: string | null
-}
-
-export interface RuntimeHealth {
-  readonly sequence: number
-  readonly checkedAt: string | null
-  readonly dependencies: {
-    readonly postgresql: DependencyHealth
-    readonly signal: DependencyHealth
-    readonly tigerBeetle: DependencyHealth
-    readonly evidence: DependencyHealth
-  }
-}
-
-export interface RuntimeState {
-  readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
-  readonly evidence: RuntimeEvidence | null
-  readonly health: RuntimeHealth
-  readonly error: string | null
-}
-
-const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
-
-export const initialState = (): RuntimeState => ({
-  status: 'STARTING',
-  evidence: null,
-  health: {
-    sequence: 0,
-    checkedAt: null,
-    dependencies: {
-      postgresql: unknownDependency(),
-      signal: unknownDependency(),
-      tigerBeetle: unknownDependency(),
-      evidence: unknownDependency(),
-    },
-  },
-  error: null,
-})
-
-const allAvailable = (health: RuntimeHealth): boolean =>
-  Object.values(health.dependencies).every((dependency) => dependency.status === 'AVAILABLE')
-
-const isReady = (state: RuntimeState): boolean =>
-  state.status === 'READY' && state.evidence !== null && allAvailable(state.health)
-
-const json = (value: unknown): string =>
-  JSON.stringify(value, (_, nested) => (typeof nested === 'bigint' ? nested.toString() : nested))
-
-const verifiedState = (evidence: RuntimeEvidence | null, dependency: DependencyHealth) => {
-  if (evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
-  return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
-}
-
-const publicState = (
-  state: RuntimeState,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-) => {
-  let economic = 'UNKNOWN'
-  let accounting = 'UNKNOWN'
-  if (state.evidence !== null) {
-    economic = state.evidence.qualification.verdict
-    if (state.health.dependencies.tigerBeetle.status === 'AVAILABLE') accounting = 'EXACT'
-    if (state.health.dependencies.tigerBeetle.status === 'UNAVAILABLE') accounting = 'UNAVAILABLE'
-  }
-
-  return {
-    service: 'bayn',
-    operational: {
-      status: state.status,
-      ready: isReady(state),
-      probeSequence: state.health.sequence,
-      checkedAt: state.health.checkedAt,
-    },
-    dependencies: state.health.dependencies,
-    data: {
-      status: verifiedState(state.evidence, state.health.dependencies.signal),
-      input: state.evidence?.evaluation.input ?? null,
-    },
-    evidence: {
-      status: verifiedState(state.evidence, state.health.dependencies.evidence),
-      runId: state.evidence?.evaluation.runId ?? null,
-      startupMode: state.evidence?.startupMode ?? null,
-      persistence: state.evidence?.persistence ?? null,
-    },
-    economic: {
-      status: economic,
-      verdict: state.evidence?.qualification.evaluationVerdict ?? null,
-    },
-    qualification: {
-      status: state.evidence?.qualification.verdict ?? 'UNKNOWN',
-      executable: state.evidence?.qualification.verdict === 'QUALIFIED',
-      lockId: state.evidence?.qualification.lockId ?? null,
-      resultHash: state.evidence?.qualification.resultHash ?? null,
-      analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,
-      candidateOrdinal: state.evidence?.qualification.analysis.candidateOrdinal ?? null,
-      reasonCodes: state.evidence?.qualification.reasonCodes ?? [],
-      executionProvenance: state.evidence?.provenance ?? null,
-    },
-    accounting: {
-      status: accounting,
-      reconciliation: state.evidence?.reconciliation ?? null,
-    },
-    authority: {
-      maximum: 'observe',
-      brokerOrders: false,
-      capitalPromotion: false,
-    },
-    build: {
-      sourceRevision: provenance.sourceRevision,
-      image: provenance.image,
-      verification: provenanceVerification,
-    },
-    error: state.error,
-  }
-}
-
-const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<string, string>>) =>
-  HttpServerResponse.text(json(body), { status, contentType: 'application/json', headers })
-
-export const makeHttpLayer = (
-  config: Pick<RuntimeConfig, 'host' | 'operationTimeoutMs' | 'port'>,
-  state: Ref.Ref<RuntimeState>,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-  evidenceStore: EvidenceStoreService,
-): ReturnType<typeof NodeHttpServer.layer> => {
-  const ready = Ref.get(state).pipe(
-    Effect.map((current) => {
-      const ready = isReady(current)
-      const failedDependencies = Object.entries(current.health.dependencies)
-        .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
-        .map(([name]) => name)
-      return jsonResponse(
-        {
-          ready,
-          status: current.status,
-          checkedAt: current.health.checkedAt,
-          probeSequence: current.health.sequence,
-          failedDependencies,
-        },
-        ready ? 200 : 503,
-      )
-    }),
-  )
-  const status = Ref.get(state).pipe(
-    Effect.map((current) => jsonResponse(publicState(current, provenance, provenanceVerification))),
-  )
-  const historicalEvaluation = HttpRouter.params.pipe(
-    Effect.flatMap(({ runId }) => {
-      if (runId === undefined || !/^[0-9a-f]{64}$/.test(runId)) {
-        return Effect.succeed(jsonResponse({ error: 'invalid_run_id' }, 400))
-      }
-      return evidenceStore.read(runId).pipe(
-        Effect.timeoutOrElse({
-          duration: config.operationTimeoutMs,
-          orElse: () => Effect.fail(new Error(`evidence read timed out after ${config.operationTimeoutMs}ms`)),
-        }),
-        Effect.map((stored) =>
-          Option.match(stored, {
-            onNone: () => jsonResponse({ error: 'evaluation_not_found' }, 404),
-            onSome: (evidence) => jsonResponse(evidence),
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.logError('Bayn historical evidence read failed').pipe(
-            Effect.annotateLogs({ service: 'bayn', runId, error: error.message }),
-            Effect.as(jsonResponse({ error: 'evidence_unavailable' }, 503)),
-          ),
-        ),
-      )
-    }),
-  )
-  const fallback = (
-    request: HttpServerRequest.HttpServerRequest,
-  ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
-    Effect.succeed(
-      request.method === 'GET'
-        ? jsonResponse({ error: 'not_found' }, 404)
-        : jsonResponse({ error: 'method_not_allowed' }, 405, { allow: 'GET' }),
-    )
-  const routes: Layer.Layer<never, never, HttpRouter.HttpRouter> = HttpRouter.addAll([
-    HttpRouter.route<never, never>('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
-    HttpRouter.route<never, never>('GET', '/readyz', ready),
-    HttpRouter.route<never, never>('GET', '/v1/status', status),
-    HttpRouter.route('GET', '/v1/evaluations/:runId', historicalEvaluation),
-    HttpRouter.route<never, never>('*', '*', fallback),
-  ] as const)
-
-  return HttpRouter.serve(routes, { disableLogger: true }).pipe(
-    Layer.provideMerge(NodeHttpServer.layer(() => createServer(), { host: config.host, port: config.port })),
-  )
-}
+import {
+  initialState,
+  type DependencyHealth,
+  type RuntimeEvidence,
+  type RuntimeHealth,
+  type RuntimeState,
+} from './runtime-state'
+import type { Strategy } from './strategy-service'
 
 const withinDeadline = <A, R>(
   effect: Effect.Effect<A, OperationalError, R>,
@@ -291,9 +86,9 @@ const recoverPinnedQualification = (
   config: RuntimeConfig,
   runId: string,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, OperationalError, Strategy | EvidenceStore> =>
+  strategy: Strategy,
+): Effect.Effect<void, OperationalError, EvidenceStore> =>
   Effect.gen(function* () {
-    const strategy = yield* Strategy
     const evidenceStore = yield* EvidenceStore
     yield* Effect.logInfo('Bayn pinned qualification recovery started').pipe(
       Effect.annotateLogs({
@@ -418,11 +213,11 @@ const recoverPinnedQualification = (
 const evaluateAndJournal = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, OperationalError, MarketData | Journal | Strategy | EvidenceStore> =>
+  strategy: Strategy,
+): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
-    const strategy = yield* Strategy
     const evidenceStore = yield* EvidenceStore
     yield* Effect.logInfo('Bayn startup evaluation started').pipe(
       Effect.annotateLogs({
@@ -626,10 +421,11 @@ const evaluateAndJournal = (
 export const initialize = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, never, MarketData | Journal | Strategy | EvidenceStore> =>
+  strategy: Strategy,
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
   (config.qualificationRunId === undefined
-    ? evaluateAndJournal(config, state)
-    : recoverPinnedQualification(config, config.qualificationRunId, state)
+    ? evaluateAndJournal(config, state, strategy)
+    : recoverPinnedQualification(config, config.qualificationRunId, state, strategy)
   ).pipe(Effect.catch((error) => failStartup(state, error)))
 
 interface ProbeResult<A> {
@@ -807,16 +603,16 @@ export const monitor = (
 
 export const run = (
   config: RuntimeConfig,
-): Effect.Effect<never, OperationalError, MarketData | Journal | Strategy | EvidenceStore> =>
+  strategy: Strategy,
+): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const strategy = yield* Strategy
       const evidenceStore = yield* EvidenceStore
       const state = yield* Ref.make(initialState())
       yield* Layer.build(
-        makeHttpLayer(config, state, strategy.provenance, config.build.verification, evidenceStore),
+        makeHttpLayer(config, state, strategy.provenance, config.build.verification, evidenceStore.read),
       ).pipe(Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)))
-      yield* initialize(config, state)
+      yield* initialize(config, state, strategy)
       yield* monitor(config, state).pipe(Effect.forkScoped({ startImmediately: true }))
       return yield* Effect.never
     }),

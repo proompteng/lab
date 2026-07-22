@@ -3,16 +3,18 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Option, Redacted, Ref } from 'effect'
 import { createClient as createTigerBeetleClient, type Client } from 'tigerbeetle-node'
 
-import { initialState, initialize } from './app'
+import { initialize } from './app'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { StrategyLayer } from './strategy-service'
+import { initialState } from './runtime-state'
+import { makeStrategy } from './strategy-service'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
+const fixtureStrategy = makeStrategy(fixtureProtocol, provenance)
 
 const config: RuntimeConfig = {
   host: '127.0.0.1',
@@ -214,11 +216,10 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initialize(config, state).pipe(
+        initialize(config, state, fixtureStrategy).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
-          Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
         ),
       ),
     )
@@ -240,11 +241,10 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initialize(config, state).pipe(
+        initialize(config, state, fixtureStrategy).pipe(
           Effect.provideService(Journal, successfulJournal),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
           Effect.provideService(MarketData, marketData),
-          Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
         ),
       ),
     )
@@ -274,10 +274,9 @@ describe('Bayn resource lifecycle', () => {
 
     await Effect.runPromise(
       Effect.scoped(
-        initialize(config, state).pipe(
+        initialize(config, state, fixtureStrategy).pipe(
           Effect.provideService(MarketData, marketData),
           Effect.provideService(EvidenceStore, successfulEvidenceStore),
-          Effect.provide(StrategyLayer(fixtureProtocol, provenance)),
           Effect.provide(
             JournalLive(config, {
               createClient: (() => tigerBeetleClient) as unknown as typeof createTigerBeetleClient,
