@@ -125,9 +125,9 @@ jobs:
           body: |
             ## Summary
 
-            Promote the immutable Bayn image and atomically cut the runtime to the current Signal snapshot and the
-            dedicated Bayn TigerBeetle ledger. The generated manifest removes the legacy qualification pin rather
-            than converting or restoring legacy evidence.
+            Promote the immutable Bayn image while preserving the current terminal qualification pin, Signal
+            snapshot, and dedicated Bayn TigerBeetle ledger. The rollout recovers the pinned current-contract
+            evidence and does not create another qualification or accounting journal.
 
             - Source commit: `${{ steps.release.outputs.source_sha }}`
             - Image tag: `${{ steps.release.outputs.tag }}`
@@ -135,7 +135,7 @@ jobs:
 
             ## Related Issues
 
-            PROOMPT-399
+            PROOMPT-400
 
             ## Testing
 
@@ -147,9 +147,9 @@ jobs:
 
             ## Breaking Changes
 
-            The image applies the one-way current-protocol database migration. Merge only after a fresh CNPG backup
-            is verified and the dedicated `ledger` TigerBeetle cluster is healthy; rollback restores the pre-cut CNPG
-            backup and prior Git revision rather than attempting an in-place schema fallback.
+            This is a one-way current-contract runtime release. Databases with the legacy migration tracker are
+            rejected; there is no schema fallback or automatic rename. The existing terminal qualification remains
+            pinned so a behavior-preserving image release performs read-only recovery.
 
             ## Checklist
 
