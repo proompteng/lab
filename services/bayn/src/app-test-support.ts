@@ -84,6 +84,7 @@ export const config: RuntimeConfig = {
 
 export const successfulJournal: JournalService = {
   post: () => Effect.void,
+  verifyAccount: () => Effect.succeed(true),
   check: Effect.void,
   checkRun: () => Effect.void,
   journalAndReconcile: (evaluation) =>

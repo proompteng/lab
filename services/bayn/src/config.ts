@@ -26,6 +26,14 @@ export interface RuntimeConfig {
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
+  readonly alpaca?: {
+    readonly accountId: string
+    readonly key: Redacted.Redacted<string>
+    readonly secret: Redacted.Redacted<string>
+    readonly proxyUrl: string
+    readonly retryAttempts: number
+    readonly reconciliationIntervalMs: number
+  }
   readonly clickhouse: {
     readonly url: string
     readonly username: string
@@ -48,6 +56,7 @@ export interface RuntimeConfig {
 }
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
+const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
     Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
@@ -84,6 +93,12 @@ const runtimeConfig = Config.all({
   ),
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
+  alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
+  alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
+  alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
+  alpacaProxyUrl: nonEmptyString('BAYN_ALPACA_PROXY_URL').pipe(Config.withDefault('http://bayn-egress-proxy:3128')),
+  alpacaRetryAttempts: Config.schema(RetryAttempts, 'BAYN_ALPACA_RETRY_ATTEMPTS').pipe(Config.withDefault(2)),
+  reconciliationIntervalMs: positiveInteger('BAYN_RECONCILIATION_INTERVAL_MS', 30_000),
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
   clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
   clickhousePassword: secretString('BAYN_CLICKHOUSE_PASSWORD'),
@@ -121,6 +136,14 @@ const runtimeConfig = Config.all({
     provenanceMode: config.provenanceMode,
     healthIntervalMs: config.healthIntervalMs,
     operationTimeoutMs: config.operationTimeoutMs,
+    configuredAlpaca: {
+      accountId: config.alpacaAccountId,
+      key: config.alpacaKey,
+      secret: config.alpacaSecret,
+      proxyUrl: config.alpacaProxyUrl,
+      retryAttempts: config.alpacaRetryAttempts,
+      reconciliationIntervalMs: config.reconciliationIntervalMs,
+    },
     clickhouse: {
       url: config.clickhouseUrl,
       username: config.clickhouseUsername,
@@ -169,6 +192,30 @@ export const loadConfig = (
         catch: (cause) => operationalError('config', 'load', 'invalid Signal evaluation bounds', cause),
       }),
     ),
+    Effect.flatMap((config) => {
+      const credentials = Option.all({
+        accountId: config.configuredAlpaca.accountId,
+        key: config.configuredAlpaca.key,
+        secret: config.configuredAlpaca.secret,
+      })
+      const anyCredential =
+        Option.isSome(config.configuredAlpaca.accountId) ||
+        Option.isSome(config.configuredAlpaca.key) ||
+        Option.isSome(config.configuredAlpaca.secret)
+      if (anyCredential && Option.isNone(credentials)) {
+        return Effect.fail(
+          operationalError('config', 'alpaca', 'Alpaca account ID, key ID, and secret key must be configured together'),
+        )
+      }
+      const alpaca = Option.map(credentials, (value) => ({
+        ...value,
+        proxyUrl: config.configuredAlpaca.proxyUrl,
+        retryAttempts: config.configuredAlpaca.retryAttempts,
+        reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
+      }))
+      const { configuredAlpaca: _configuredAlpaca, ...runtime } = config
+      return Effect.succeed({ ...runtime, ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}) })
+    }),
     Effect.flatMap((config) =>
       Effect.try({
         try: (): RuntimeConfig => {

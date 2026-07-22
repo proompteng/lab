@@ -26,6 +26,7 @@ import {
   type RiskDecision,
   type RiskInput,
 } from './paper'
+import { reconciledStateHash } from './reconciliation'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -244,12 +245,19 @@ export const StateSchema = StateBase.check(
     if (new Set(clientOrderIds).size !== clientOrderIds.length) {
       issues.push({ path: ['orders'], issue: 'must have unique clientOrderId values' })
     }
+    const latestOrderObservation = state.orders.reduce(
+      (latest, order) => (order.observedAt > latest ? order.observedAt : latest),
+      '',
+    )
+    if (state.orders.length > 0 && latestOrderObservation !== state.ordersObservedAt) {
+      issues.push({ path: ['ordersObservedAt'], issue: 'must equal the latest paginated order observation' })
+    }
     for (const [index, order] of state.orders.entries()) {
       if (order.accountId !== accountId) {
         issues.push({ path: ['orders', index, 'accountId'], issue: 'must match the account snapshot' })
       }
-      if (order.observedAt !== state.ordersObservedAt) {
-        issues.push({ path: ['orders', index, 'observedAt'], issue: 'must match ordersObservedAt' })
+      if (order.observedAt > state.ordersObservedAt) {
+        issues.push({ path: ['orders', index, 'observedAt'], issue: 'must not follow ordersObservedAt' })
       }
     }
     if (BigInt(state.peakEquityMicros) < BigInt(state.account.equityMicros)) {
@@ -347,26 +355,19 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
       : positiveDifference(referencePrice, expectedPrice)
   const adverseSlippageBps = divideUp(adversePriceDifference * BASIS_POINTS, referencePrice)
   const unresolvedOrderCount = state.orders.filter((order) => isUnresolved(order.status)).length
-  const brokerStateHash = canonicalHashV1({
-    schemaVersion: 'bayn.paper-risk-broker-state.v1',
+  const reconciledHash = reconciledStateHash({
     account: state.account,
     positions: state.positions,
     positionsObservedAt: state.positionsObservedAt,
     orders: state.orders,
     ordersObservedAt: state.ordersObservedAt,
-  })
-  const reconciledStateHash = canonicalHashV1({
-    schemaVersion: 'bayn.paper-risk-reconciled-state.v1',
-    brokerStateHash,
     accountingHash: state.accountingHash,
-    dailyTradedNotionalMicros: state.dailyTradedNotionalMicros,
-    dayStartEquityMicros: state.dayStartEquityMicros,
-    peakEquityMicros: state.peakEquityMicros,
   })
   const oldestBrokerState = Math.min(
     instant(state.account.observedAt),
     instant(state.positionsObservedAt),
     instant(state.ordersObservedAt),
+    ...state.orders.map((order) => instant(order.observedAt)),
     instant(state.reconciliation.reconciledAt),
     instant(state.authorityObservedAt),
   )
@@ -452,10 +453,10 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
       Gate.Reconciliation,
       Reason.ReconciliationNotExact,
       state.reconciliation.status === ReconciliationStatus.Exact &&
-        state.reconciliation.expectedHash === reconciledStateHash &&
-        state.reconciliation.observedHash === reconciledStateHash,
+        state.reconciliation.expectedHash === reconciledHash &&
+        state.reconciliation.observedHash === reconciledHash,
       `${state.reconciliation.status}:${state.reconciliation.expectedHash}:${state.reconciliation.observedHash}`,
-      `${ReconciliationStatus.Exact}:${reconciledStateHash}:${reconciledStateHash}`,
+      `${ReconciliationStatus.Exact}:${reconciledHash}:${reconciledHash}`,
     ),
     makeGate(
       Gate.BrokerStateFreshness,

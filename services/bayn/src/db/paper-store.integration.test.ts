@@ -9,7 +9,17 @@ import { operationalError } from '../errors'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlan } from '../ledger-plan'
 import { Journal, type JournalService } from '../ledger'
-import { AccountStatus, Authority, Broker, OrderSide, OrderStatus, OrderType, TimeInForce } from '../paper'
+import {
+  AccountStatus,
+  Authority,
+  Broker,
+  DiscrepancyKind,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  ReconciliationStatus,
+  TimeInForce,
+} from '../paper'
 import type {
   BrokerEventInput,
   FillEventInput,
@@ -75,6 +85,7 @@ const journal = (control: JournalControl): JournalService => ({
         ? Effect.fail(operationalError('journal', 'post', 'injected TigerBeetle failure'))
         : Effect.void
     }),
+  verifyAccount: () => Effect.succeed(true),
   journalAndReconcile: () => Effect.die(new Error('unexpected simulation journal call')),
   check: Effect.void,
   checkRun: () => Effect.void,
@@ -93,7 +104,7 @@ const makeClientRuntime = () => ManagedRuntime.make(PostgresClientLive(config).p
 
 const makeEvidenceRuntime = () => ManagedRuntime.make(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
 
-const accountEvent = (): BrokerEventInput => ({
+const accountEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => ({
   _tag: 'Account',
   broker: Broker.Alpaca,
   accountId,
@@ -113,7 +124,7 @@ const accountEvent = (): BrokerEventInput => ({
   },
 })
 
-const orderEvent = (): BrokerEventInput => ({
+const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => ({
   _tag: 'Order',
   broker: Broker.Alpaca,
   accountId,
@@ -258,12 +269,112 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('treats cancel history as newer than submit history when broker timestamps tie', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    const intentId = 'a'.repeat(64)
+    const brokerOrderId = orderEvent().order.brokerOrderId
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const exactAccount = {
+            ...accountEvent(),
+            account: { ...accountEvent().account, equityMicros: accountEvent().account.cashMicros },
+          } satisfies BrokerEventInput
+          const accountReceipt = yield* store.ingest(exactAccount)
+          const positionsReceipt = yield* store.ingestPositions(
+            positionSnapshotInput(hash('mutation-ordering-empty-positions'), []),
+          )
+          const valuation = yield* store.value({
+            accountEventId: accountReceipt.eventId,
+            positionSnapshotId: positionsReceipt.snapshotId,
+          })
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            INSERT INTO intents (
+              intent_id, schema_version, account_id, client_order_id, symbol, side,
+              order_type, time_in_force, quantity_micros, notional_limit_micros,
+              state, state_version, created_at, updated_at,
+              strategy_name, cycle_id, decision_hash, policy_hash
+            ) VALUES (
+              ${intentId}, 'bayn.paper-intent.v2', ${accountId}, ${orderEvent().order.clientOrderId},
+              ${orderEvent().order.symbol}, 'BUY', 'MARKET', 'DAY', 3000000, 300000000,
+              'PLANNED', 1, ${occurredAt}, ${occurredAt},
+              'tsmom-v1', ${'9'.repeat(64)}, ${'b'.repeat(64)}, ${'c'.repeat(64)}
+            )
+          `
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+              request_hash, consistency_delay_ms, broker_order_id, request_id,
+              response_status, response_content_hash, occurred_at
+            ) VALUES
+              (
+                ${'1'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'3'.repeat(64)}, ${intentId}, 1,
+                'SUBMIT', 'SUBMIT_STARTED', ${'4'.repeat(64)}, 1000, NULL, NULL, NULL, NULL, ${occurredAt}
+              ),
+              (
+                ${'f'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'3'.repeat(64)}, ${intentId}, 2,
+                'SUBMIT', 'SUBMIT_ACCEPTED', ${'4'.repeat(64)}, 1000, ${brokerOrderId}, 'submit-request',
+                200, ${'5'.repeat(64)}, ${occurredAt}
+              ),
+              (
+                ${'2'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${intentId}, 1,
+                'CANCEL', 'CANCEL_STARTED', ${'7'.repeat(64)}, 1000, ${brokerOrderId}, NULL, NULL, NULL, ${occurredAt}
+              ),
+              (
+                ${'0'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${intentId}, 2,
+                'CANCEL', 'CANCEL_ACCEPTED', ${'7'.repeat(64)}, 1000, ${brokerOrderId}, 'cancel-request',
+                204, ${'8'.repeat(64)}, ${occurredAt}
+              )
+          `
+          return yield* store.reconcile({
+            account: exactAccount.account,
+            positions: [],
+            positionsObservedAt: observedAt,
+            orders: [{ ...orderEvent().order, intentId }],
+            ordersObservedAt: observedAt,
+            fills: [],
+            valuation,
+            reconciledAt: '2026-07-22T15:30:03.000Z',
+          })
+        }),
+      )
+
+      expect(result.reconciliation.discrepancies).toHaveLength(1)
+      expect(result.reconciliation.discrepancies[0]).toMatchObject({
+        kind: DiscrepancyKind.Mutation,
+        identity: intentId,
+        observed: `UNKNOWN:${occurredAt}`,
+      })
+      expect(result.metrics.oldestUnknownMutationAgeMs).toBe(3_000)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('recovers the PostgreSQL-to-TigerBeetle crash window without duplicate accounting', async () => {
     const control: JournalControl = { fail: true, planHashes: [] }
     const runtime = makeStoreRuntime(control)
     const buy = fillEvent('fill-buy', OrderSide.Buy, '3000000', '100000000')
     const sell = fillEvent('fill-sell', OrderSide.Sell, '1000000', '120000000')
     try {
+      await runtime.runPromise(
+        Effect.flatMap(PaperStore, (store) =>
+          store.ingest({
+            ...accountEvent(),
+            sourceEventId: 'opening-account',
+            contentHash: hash('opening-account'),
+            occurredAt: '2026-07-22T15:29:59.000Z',
+            observedAt: '2026-07-22T15:29:59.000Z',
+            account: {
+              ...accountEvent().account,
+              equityMicros: accountEvent().account.cashMicros,
+              observedAt: '2026-07-22T15:29:59.000Z',
+            },
+          }),
+        ),
+      )
       const failed = await runtime.runPromiseExit(Effect.flatMap(PaperStore, (store) => store.account(buy)))
       expect(Exit.isFailure(failed)).toBe(true)
 
@@ -332,9 +443,46 @@ describePostgres('paper accounting persistence', () => {
         ]),
       )
       expect(stored.transactions.every((transaction) => /^[a-f0-9]{64}$/.test(transaction.ledger_plan_hash))).toBe(true)
-      expect(stored.counts).toEqual({ events: 2, transactions: 2, receipts: 2 })
+      expect(stored.counts).toEqual({ events: 3, transactions: 2, receipts: 2 })
       expect(Exit.isFailure(stored.immutable)).toBe(true)
       expect(Exit.isFailure(stored.truncate)).toBe(true)
+
+      const exact = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const currentAccount = {
+            ...accountEvent(),
+            sourceEventId: 'current-account',
+            contentHash: hash('current-account'),
+            account: {
+              ...accountEvent().account,
+              cashMicros: '819999800',
+              equityMicros: '1019999800',
+            },
+          } satisfies BrokerEventInput
+          const accountReceipt = yield* store.ingest(currentAccount)
+          const position = positionEvent(hash('accounted-position'), 'asset-accounted', 'NVDA', '2000000', '200000000')
+          const positionsReceipt = yield* store.ingestPositions(
+            positionSnapshotInput(hash('accounted-position'), [position]),
+          )
+          const valuation = yield* store.value({
+            accountEventId: accountReceipt.eventId,
+            positionSnapshotId: positionsReceipt.snapshotId,
+          })
+          return yield* store.reconcile({
+            account: currentAccount.account,
+            positions: [position.position],
+            positionsObservedAt: observedAt,
+            orders: [],
+            ordersObservedAt: observedAt,
+            fills: [buy.fill, sell.fill],
+            valuation,
+            reconciledAt: '2026-07-22T15:31:00.000Z',
+          })
+        }),
+      )
+      expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(exact.reconciliation.discrepancies).toEqual([])
     } finally {
       await runtime.dispose()
     }
@@ -416,6 +564,123 @@ describePostgres('paper accounting persistence', () => {
         equityMicros: '1000000000',
       })
       expect(result.counts).toEqual({ position_snapshots: 2, positions: 2, valuations: 2 })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('keeps discrepancy history in immutable reconciliation rows and never restores authority', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    const exactAccount = {
+      ...accountEvent(),
+      account: { ...accountEvent().account, equityMicros: accountEvent().account.cashMicros },
+    } satisfies BrokerEventInput
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const accountReceipt = yield* store.ingest(exactAccount)
+          const positionsReceipt = yield* store.ingestPositions(
+            positionSnapshotInput(hash('reconciliation-empty-positions'), []),
+          )
+          const valuation = yield* store.value({
+            accountEventId: accountReceipt.eventId,
+            positionSnapshotId: positionsReceipt.snapshotId,
+          })
+          const baseline = {
+            account: exactAccount.account,
+            positions: [],
+            positionsObservedAt: observedAt,
+            orders: [],
+            ordersObservedAt: observedAt,
+            fills: [],
+            valuation,
+            reconciledAt: '2026-07-22T15:30:02.000Z',
+          } as const
+          const exact = yield* store.reconcile(baseline)
+
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${hash('paper-generation')}, 'PAPER', 'PAPER', 'CLEAR', 1,
+              '2026-07-22T15:30:02.500Z'
+            )
+          `
+
+          const mismatchInput = {
+            ...baseline,
+            orders: [orderEvent().order],
+            reconciledAt: '2026-07-22T15:30:03.000Z',
+          } as const
+          const mismatch = yield* store.reconcile(mismatchInput)
+          const replay = yield* store.reconcile(mismatchInput)
+          const ongoing = yield* store.reconcile({
+            ...mismatchInput,
+            reconciledAt: '2026-07-22T15:30:04.000Z',
+          })
+          const resolved = yield* store.reconcile({
+            ...baseline,
+            reconciledAt: '2026-07-22T15:30:05.000Z',
+          })
+
+          const rows = yield* sql<{ discrepancy_count: number; status: string }>`
+            SELECT status, jsonb_array_length(discrepancies)::integer AS discrepancy_count
+            FROM reconciliations
+            ORDER BY reconciled_at
+          `
+          const [authority] = yield* sql<{
+            effective: string
+            kill_state: string
+            reason: string | null
+            version: number
+          }>`
+            SELECT effective, kill_state, reason, version::integer
+            FROM authority_state
+          `
+          const mutateReconciliation = yield* Effect.exit(sql`
+            UPDATE reconciliations
+            SET content_hash = ${hash('mutated-reconciliation')}
+            WHERE reconciliation_id = ${mismatch.reconciliation.reconciliationId}
+          `)
+          return {
+            exact,
+            mismatch,
+            replay,
+            ongoing,
+            resolved,
+            rows,
+            authority,
+            mutateReconciliation,
+          }
+        }),
+      )
+
+      expect(result.exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(result.mismatch.reconciliation.status).toBe(ReconciliationStatus.Discrepancy)
+      expect(result.replay).toEqual(result.mismatch)
+      expect(result.mismatch.reconciliation.discrepancies).toHaveLength(1)
+      expect(result.ongoing.reconciliation.discrepancies[0]).toMatchObject({
+        discrepancyId: result.mismatch.reconciliation.discrepancies[0]?.discrepancyId,
+        firstObservedAt: '2026-07-22T15:30:03.000Z',
+        lastObservedAt: '2026-07-22T15:30:04.000Z',
+      })
+      expect(result.resolved.reconciliation.status).toBe(ReconciliationStatus.Exact)
+      expect(result.resolved.reconciliation.discrepancies).toEqual([])
+      expect(result.rows).toEqual([
+        { status: ReconciliationStatus.Exact, discrepancy_count: 0 },
+        { status: ReconciliationStatus.Discrepancy, discrepancy_count: 1 },
+        { status: ReconciliationStatus.Discrepancy, discrepancy_count: 1 },
+        { status: ReconciliationStatus.Exact, discrepancy_count: 0 },
+      ])
+      expect(result.authority).toEqual({
+        effective: 'OBSERVE',
+        kill_state: 'ACTIVE',
+        reason: `reconciliation discrepancy ${result.mismatch.reconciliation.reconciliationId}`,
+        version: 2,
+      })
+      expect(Exit.isFailure(result.mutateReconciliation)).toBe(true)
     } finally {
       await runtime.dispose()
     }

@@ -55,6 +55,7 @@ describe('Bayn startup lifecycle', () => {
         }),
         Effect.provideService(Journal, {
           post: () => forbidden('pinned startup must not write TigerBeetle'),
+          verifyAccount: () => forbidden('pinned startup must not reconcile paper accounting'),
           check: forbidden('pinned startup must not check TigerBeetle'),
           checkRun: () => forbidden('pinned startup must not check a TigerBeetle run'),
           journalAndReconcile: () => forbidden('pinned startup must not write TigerBeetle'),
@@ -150,6 +151,7 @@ describe('Bayn startup lifecycle', () => {
     }
     const journal: JournalService = {
       post: () => Effect.void,
+      verifyAccount: () => Effect.succeed(true),
       check: Effect.void,
       checkRun: () => Effect.void,
       journalAndReconcile: () => {
@@ -221,6 +223,7 @@ describe('Bayn startup lifecycle', () => {
     }
     const journal: JournalService = {
       post: () => Effect.void,
+      verifyAccount: () => Effect.succeed(true),
       check: Effect.void,
       checkRun: () => Effect.void,
       journalAndReconcile: () => {
@@ -286,6 +289,7 @@ describe('Bayn startup lifecycle', () => {
     }
     const journal: JournalService = {
       post: () => Effect.void,
+      verifyAccount: () => Effect.succeed(true),
       check: Effect.void,
       checkRun: () => Effect.void,
       journalAndReconcile: () => {

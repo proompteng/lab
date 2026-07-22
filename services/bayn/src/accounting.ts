@@ -118,6 +118,8 @@ interface Amounts {
   readonly cashDelta: bigint
 }
 
+type LedgerFill = Pick<Fill, 'accountId' | 'symbol' | 'side' | 'feeMicros'>
+
 const calculateAmounts = (fill: Fill, prior: PositionCost): Amounts => {
   const quantity = BigInt(fill.quantityMicros)
   const price = BigInt(fill.priceMicros)
@@ -155,7 +157,7 @@ const calculateAmounts = (fill: Fill, prior: PositionCost): Amounts => {
 const makeLedgerPlan = (
   transactionId: string,
   brokerEventId: string,
-  fill: Fill,
+  fill: LedgerFill,
   amounts: Amounts,
   ledger: number,
 ): LedgerPlan => {
@@ -244,6 +246,37 @@ const makeLedgerPlan = (
     accounts: [...accounts.values()].sort((left, right) => (left.id < right.id ? -1 : 1)),
     transfers: transfers.sort((left, right) => (left.id < right.id ? -1 : 1)),
   }
+}
+
+export const rebuildAccountingLedger = (transaction: AccountingTransaction, ledger: number): LedgerPlan => {
+  const decoded = decodeTransaction(transaction)
+  const { contentHash, ...material } = decoded
+  if (canonicalHashV1(material) !== contentHash) {
+    throw new Error('accounting transaction content hash does not match its immutable fields')
+  }
+  const plan = makeLedgerPlan(
+    decoded.transactionId,
+    decoded.brokerEventId,
+    {
+      accountId: decoded.accountId,
+      symbol: decoded.symbol,
+      side: decoded.side,
+      feeMicros: decoded.feeMicros,
+    },
+    {
+      notional: BigInt(decoded.notionalMicros),
+      costBasis: BigInt(decoded.costBasisMicros),
+      realizedPnl: BigInt(decoded.realizedPnlMicros),
+      quantityDelta: BigInt(decoded.quantityDeltaMicros),
+      costBasisDelta: BigInt(decoded.costBasisDeltaMicros),
+      cashDelta: BigInt(decoded.cashDeltaMicros),
+    },
+    ledger,
+  )
+  if (hashLedgerPlan(plan) !== decoded.ledgerPlanHash) {
+    throw new Error('accounting transaction ledger plan hash does not match its immutable fields')
+  }
+  return plan
 }
 
 export const prepareAccounting = (

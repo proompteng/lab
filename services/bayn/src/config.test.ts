@@ -52,6 +52,7 @@ describe('Effect configuration', () => {
     expect(config.maximumAuthority).toBe(Authority.Observe)
     expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
+    expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
       publicationAsOf: '2026-07-17',
@@ -83,6 +84,38 @@ describe('Effect configuration', () => {
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), pinned))
 
     expect(config.qualificationRunId).toBe('e'.repeat(64))
+  })
+
+  test('enables reconciliation only with one complete redacted Alpaca credential binding', async () => {
+    const configured = new Map(runtimeEnvironment)
+    configured.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+    configured.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    configured.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))
+
+    expect(config.alpaca).toMatchObject({
+      accountId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
+      proxyUrl: 'http://bayn-egress-proxy:3128',
+      retryAttempts: 2,
+      reconciliationIntervalMs: 30_000,
+    })
+    if (config.alpaca === undefined) throw new Error('expected an Alpaca configuration')
+    expect(Redacted.isRedacted(config.alpaca.key)).toBe(true)
+    expect(Redacted.isRedacted(config.alpaca.secret)).toBe(true)
+  })
+
+  test('rejects a partial Alpaca credential binding instead of silently staying dormant', async () => {
+    const partial = new Map(runtimeEnvironment)
+    partial.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), partial)))
+
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'alpaca',
+    })
   })
 
   test('supports an explicit, visibly unverified development provenance path', async () => {

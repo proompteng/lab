@@ -25,12 +25,29 @@ import {
   AccountingReceiptSchema,
   Broker,
   BrokerEventSchema,
-  OrderSide,
   ValuationSchema,
   type AccountingReceipt,
   type Valuation,
 } from '../paper'
-import { Sha256Schema as Sha256, StrictNonEmptyStringSchema as NonEmptyString, strictParseOptions } from '../schemas'
+import {
+  Sha256Schema as Sha256,
+  StrictNonEmptyStringSchema as NonEmptyString,
+  UtcInstantSchema as UtcInstant,
+  strictParseOptions,
+} from '../schemas'
+import {
+  AccountingReceiptRowSchema,
+  AccountingTransactionRowSchema,
+  accountingReceiptFromRow,
+  accountingTransactionFromRow,
+} from './accounting-rows'
+import {
+  makeReconciliation,
+  restrictAuthority,
+  type BrokerSnapshot,
+  type IntentBinding,
+  type ReconciliationReport,
+} from './reconciliation'
 
 export const VALUATION_SNAPSHOT_MAX_SKEW_MS = 30_000
 
@@ -47,7 +64,15 @@ export interface PositionSnapshotReceipt {
 }
 
 export class PaperStoreError extends Data.TaggedError('PaperStoreError')<{
-  readonly operation: 'ingest' | 'positions' | 'account' | 'receipt' | 'valuation'
+  readonly operation:
+    | 'ingest'
+    | 'positions'
+    | 'account'
+    | 'receipt'
+    | 'valuation'
+    | 'bindings'
+    | 'reconciliation'
+    | 'authority'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'ledger' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -58,6 +83,9 @@ export interface PaperStoreShape {
   readonly ingestPositions: (input: PositionSnapshotInput) => Effect.Effect<PositionSnapshotReceipt, PaperStoreError>
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, PaperStoreError>
   readonly value: (input: ValuationInput) => Effect.Effect<Valuation, PaperStoreError>
+  readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], PaperStoreError>
+  readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationReport, PaperStoreError>
+  readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, PaperStoreError>
 }
 
 export class PaperStore extends Context.Service<PaperStore, PaperStoreShape>()('bayn/PaperStore') {}
@@ -72,41 +100,6 @@ const EventRow = Schema.Struct({
 const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 const PositionCostRow = Schema.Tuple([Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String })])
 const UnresolvedPredecessorRow = Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })])
-const TransactionRow = Schema.Struct({
-  schema_version: Schema.Literal('bayn.paper-accounting-transaction.v1'),
-  transaction_id: Sha256,
-  broker_event_id: Sha256,
-  intent_id: Schema.NullOr(Sha256),
-  account_id: NonEmptyString,
-  symbol: Schema.String,
-  side: Schema.Enum(OrderSide),
-  quantity_micros: Schema.String,
-  price_micros: Schema.String,
-  notional_micros: Schema.String,
-  fee_micros: Schema.String,
-  cost_basis_micros: Schema.String,
-  realized_pnl_micros: Schema.String,
-  quantity_delta_micros: Schema.String,
-  cost_basis_delta_micros: Schema.String,
-  cash_delta_micros: Schema.String,
-  ledger_plan_hash: Sha256,
-  content_hash: Sha256,
-  occurred_at: Schema.DateValid,
-})
-const ReceiptRow = Schema.Struct({
-  schema_version: Schema.Literal('bayn.paper-accounting-receipt.v1'),
-  receipt_id: Sha256,
-  intent_id: Schema.NullOr(Sha256),
-  broker_event_id: Sha256,
-  tigerbeetle_cluster_id: Schema.String,
-  tigerbeetle_ledger: Schema.Int,
-  account_ids: Schema.Array(Schema.String),
-  transfer_ids: Schema.Array(Schema.String),
-  debit_micros: Schema.String,
-  credit_micros: Schema.String,
-  content_hash: Sha256,
-  recorded_at: Schema.DateValid,
-})
 const AccountRow = Schema.Tuple([
   Schema.Struct({
     event_id: Sha256,
@@ -145,6 +138,7 @@ const ValuationRow = Schema.Struct({
   equity_micros: Schema.String,
   as_of: Schema.DateValid,
 })
+const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
 const decodeFillInput = Schema.decodeUnknownEffect(FillEventInputSchema, strictParseOptions)
@@ -154,8 +148,11 @@ const decodeEventRows = Schema.decodeUnknownEffect(Schema.Array(EventRow), stric
 const decodeLastSequence = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 const decodePositionCost = Schema.decodeUnknownEffect(PositionCostRow, strictParseOptions)
 const decodeUnresolvedPredecessor = Schema.decodeUnknownEffect(UnresolvedPredecessorRow, strictParseOptions)
-const decodeTransactionRows = Schema.decodeUnknownEffect(Schema.Array(TransactionRow), strictParseOptions)
-const decodeReceiptRows = Schema.decodeUnknownEffect(Schema.Array(ReceiptRow), strictParseOptions)
+const decodeTransactionRows = Schema.decodeUnknownEffect(
+  Schema.Array(AccountingTransactionRowSchema),
+  strictParseOptions,
+)
+const decodeReceiptRows = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodeAccountRows = Schema.decodeUnknownEffect(AccountRow, strictParseOptions)
 const decodePositionRows = Schema.decodeUnknownEffect(Schema.Array(PositionRow), strictParseOptions)
 const decodePositionSnapshotRows = Schema.decodeUnknownEffect(Schema.Array(PositionSnapshotRow), strictParseOptions)
@@ -166,6 +163,7 @@ const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, strictPa
 const decodeReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
 const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, strictParseOptions)
 const decodeTransaction = Schema.decodeUnknownEffect(AccountingTransactionSchema, strictParseOptions)
+const decodeAuthorityRestriction = Schema.decodeUnknownEffect(AuthorityRestrictionInput, strictParseOptions)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -222,43 +220,6 @@ const eventIdOf = (input: BrokerEventInput): string =>
     contentHash: input.contentHash,
   })
 
-const transactionFromRow = (row: typeof TransactionRow.Type): AccountingTransaction => ({
-  schemaVersion: row.schema_version,
-  transactionId: row.transaction_id,
-  brokerEventId: row.broker_event_id,
-  ...(row.intent_id === null ? {} : { intentId: row.intent_id }),
-  accountId: row.account_id,
-  symbol: row.symbol,
-  side: row.side,
-  quantityMicros: row.quantity_micros,
-  priceMicros: row.price_micros,
-  notionalMicros: row.notional_micros,
-  feeMicros: row.fee_micros,
-  costBasisMicros: row.cost_basis_micros,
-  realizedPnlMicros: row.realized_pnl_micros,
-  quantityDeltaMicros: row.quantity_delta_micros,
-  costBasisDeltaMicros: row.cost_basis_delta_micros,
-  cashDeltaMicros: row.cash_delta_micros,
-  ledgerPlanHash: row.ledger_plan_hash,
-  contentHash: row.content_hash,
-  occurredAt: row.occurred_at.toISOString(),
-})
-
-const receiptFromRow = (row: typeof ReceiptRow.Type): AccountingReceipt => ({
-  schemaVersion: row.schema_version,
-  receiptId: row.receipt_id,
-  ...(row.intent_id === null ? {} : { intentId: row.intent_id }),
-  brokerEventId: row.broker_event_id,
-  tigerBeetleClusterId: row.tigerbeetle_cluster_id,
-  tigerBeetleLedger: row.tigerbeetle_ledger,
-  accountIds: row.account_ids,
-  transferIds: row.transfer_ids,
-  debitMicros: row.debit_micros,
-  creditMicros: row.credit_micros,
-  contentHash: row.content_hash,
-  recordedAt: row.recorded_at.toISOString(),
-})
-
 const valuationFromRow = (row: typeof ValuationRow.Type): Valuation => ({
   schemaVersion: row.schema_version,
   valuationId: row.valuation_id,
@@ -289,6 +250,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const journal = yield* Journal
+    const reconciliation = makeReconciliation(sql, journal, config)
 
     const insertPayload = (eventId: string, input: BrokerEventInput, positionSnapshotId?: string) => {
       switch (input._tag) {
@@ -464,7 +426,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           `.pipe(Effect.flatMap(decodeTransactionRows))
           if (rows.length === 0) return undefined
           if (rows.length !== 1) return yield* fail('account', 'invariant', 'fill has multiple accounting transactions')
-          return yield* decodeTransaction(transactionFromRow(rows[0]))
+          return yield* decodeTransaction(accountingTransactionFromRow(rows[0]))
         }),
       )
 
@@ -538,7 +500,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           `.pipe(Effect.flatMap(decodeReceiptRows))
           if (rows.length === 0) return undefined
           if (rows.length !== 1) return yield* fail('receipt', 'invariant', 'fill has multiple accounting receipts')
-          return yield* decodeReceipt(receiptFromRow(rows[0]))
+          return yield* decodeReceipt(accountingReceiptFromRow(rows[0]))
         }),
       )
 
@@ -865,7 +827,25 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
         ),
       )
 
-    return { ingest, ingestPositions, account, value } satisfies PaperStoreShape
+    const bindings = (accountId: string) => run('bindings', reconciliation.bindings(accountId))
+    const reconcile = (snapshot: BrokerSnapshot) => run('reconciliation', reconciliation.reconcile(snapshot))
+    const lowerAuthority = (reason: string, updatedAt: string) =>
+      run(
+        'authority',
+        decodeAuthorityRestriction({ reason, updatedAt }).pipe(
+          Effect.flatMap((input) => restrictAuthority(sql, input.reason, input.updatedAt)),
+        ),
+      )
+
+    return {
+      ingest,
+      ingestPositions,
+      account,
+      value,
+      bindings,
+      reconcile,
+      restrictAuthority: lowerAuthority,
+    } satisfies PaperStoreShape
   })
 
 export const PaperStoreLive = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>

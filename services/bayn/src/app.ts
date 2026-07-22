@@ -14,6 +14,7 @@ import type { Strategy } from './strategy'
 export const run = (
   config: RuntimeConfig,
   strategy: Strategy,
+  reconciliation: Effect.Effect<void> = Effect.void,
 ): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -24,6 +25,7 @@ export const run = (
       ).pipe(Effect.mapError((cause) => operationalError('http', 'listen', 'HTTP server failed to listen', cause)))
       yield* initialize(config, state, strategy)
       yield* monitor(config, state).pipe(Effect.forkScoped({ startImmediately: true }))
+      yield* reconciliation.pipe(Effect.forkScoped({ startImmediately: true }))
       return yield* Effect.never
     }),
   )
