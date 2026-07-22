@@ -1,8 +1,19 @@
 import { describe, expect, test } from 'bun:test'
 
+import { readFileSync } from 'node:fs'
+
 import { Effect, Exit } from 'effect'
 
 import { defaultProtocolDocument, hashParameters, loadDefaultProtocol, loadProtocol } from './protocol'
+
+const imageParameterHash = (): string => {
+  const imageSource = readFileSync(new URL('../../../nix/images/bayn.nix', import.meta.url), 'utf8')
+  const matches = [...imageSource.matchAll(/^\s*strategyParameterHash = "([a-f0-9]{64})";$/gm)]
+  if (matches.length !== 1 || matches[0]?.[1] === undefined) {
+    throw new Error('nix/images/bayn.nix must define exactly one strategyParameterHash')
+  }
+  return matches[0][1]
+}
 
 describe('strategy protocol', () => {
   test('decodes the committed protocol', async () => {
@@ -20,7 +31,7 @@ describe('strategy protocol', () => {
       maximumSymbolWeight: 0.35,
       maximumPortfolioVolatility: 0.1,
     })
-    expect(hashParameters(protocol)).toMatch(/^[a-f0-9]{64}$/)
+    expect(hashParameters(protocol)).toBe(imageParameterHash())
   })
 
   test('rejects legacy, malformed, and non-canonical documents', async () => {

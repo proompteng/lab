@@ -64,6 +64,7 @@ const config: RuntimeConfig = {
     imageRepository: provenance.image.repository,
     imageDigest: provenance.image.digest,
     strategyBehaviorHash: provenance.strategy.behaviorHash,
+    strategyParameterHash: provenance.strategy.parameterHash,
     verification: 'embedded',
   },
   healthIntervalMs: 100,

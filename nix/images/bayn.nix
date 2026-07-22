@@ -12,6 +12,8 @@ let
   # Immutable identity for bayn.risk-balanced-trend.behavior.v1. The deterministic evaluator and decision fingerprints
   # are locked in risk-balanced-trend.test.ts, so behavior-preserving refactors retain the same identity.
   strategyBehaviorHash = "43cece33d3db232ffb02ba78826727e50b5795319d09d27e1baa0c04709eb056";
+  # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v2 document.
+  strategyParameterHash = "cf639d3692da65271b12423f9b7c6c9663e1fb13ae7290dc56fcfa3acf16eb69";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
 in
 import ./bun-workspace-service.nix {
@@ -38,9 +40,12 @@ import ./bun-workspace-service.nix {
       + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
       + " "
       + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
+      + " "
+      + buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash
     )
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
+    "grep -F -- ${lib.escapeShellArg strategyParameterHash} services/bayn/dist/index.js"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
@@ -64,5 +69,6 @@ import ./bun-workspace-service.nix {
   labels = {
     "org.opencontainers.image.revision" = repoRevision;
     "proompteng.ai/bayn.strategy-behavior-hash" = strategyBehaviorHash;
+    "proompteng.ai/bayn.strategy-parameter-hash" = strategyParameterHash;
   };
 }
