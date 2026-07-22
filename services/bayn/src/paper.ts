@@ -32,6 +32,12 @@ const SignedMicros = boundedInteger(/^(?:0|-?[1-9][0-9]*)$/, I128_MIN, I128_MAX,
 const NonPositiveMicros = boundedInteger(/^(?:0|-[1-9][0-9]*)$/, I128_MIN, 0n, 'canonical non-positive i128 micros')
 const UnsignedMicros = boundedInteger(/^(?:0|[1-9][0-9]*)$/, 0n, U128_MAX, 'canonical unsigned u128 micros')
 const PositiveMicros = DecimalId
+
+export {
+  PositiveMicros as PositiveMicrosSchema,
+  SignedMicros as SignedMicrosSchema,
+  UnsignedMicros as UnsignedMicrosSchema,
+}
 const Ledger = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: U32_MAX }))
 const Version = Schema.Int.check(Schema.isGreaterThan(0))
 const ReasonCodes = Schema.Array(NonEmptyString).check(Schema.isUnique())
