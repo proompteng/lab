@@ -1,6 +1,6 @@
 import { NodeHttpClient, Undici } from '@effect/platform-node'
 import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Schema, Scope } from 'effect'
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { Headers, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
 import {
@@ -10,6 +10,7 @@ import {
 } from '../schemas'
 
 const tradingUrl = 'https://paper-api.alpaca.markets'
+const defaultFillActivitiesPageSize = 100
 const responseParseOptions = { onExcessProperty: 'ignore' } as const
 const inputParseOptions = { onExcessProperty: 'error' } as const
 const redactedHeaders = [
@@ -501,11 +502,46 @@ const decodeOrderId = Schema.decodeUnknownEffect(Uuid)
 const decodeClientOrderId = Schema.decodeUnknownEffect(ClientOrderId)
 const decodeRuntimeOptions = Schema.decodeUnknownEffect(RuntimeOptionsSchema, inputParseOptions)
 
-const safeCause = (cause: unknown): Readonly<Record<string, string>> => {
-  if (typeof cause === 'object' && cause !== null && '_tag' in cause && typeof cause._tag === 'string') {
-    return { tag: cause._tag }
+const redactDiagnostic = (value: string, sensitiveValues: readonly string[]): string =>
+  sensitiveValues.reduce(
+    (redacted, sensitive) => (sensitive.length === 0 ? redacted : redacted.replaceAll(sensitive, '<redacted>')),
+    value,
+  )
+
+const safeCause = (cause: unknown, sensitiveValues: readonly string[] = []): Readonly<Record<string, string>> => {
+  if (Schema.isSchemaError(cause)) {
+    return { tag: cause._tag, message: redactDiagnostic(cause.message, sensitiveValues) }
   }
-  return { tag: cause instanceof Error ? cause.name : typeof cause }
+  if (HttpClientError.isHttpClientError(cause)) {
+    const detail =
+      'cause' in cause.reason && cause.reason.cause instanceof Error ? cause.reason.cause.message : undefined
+    return {
+      tag: cause._tag,
+      reason: cause.reason._tag,
+      message: redactDiagnostic(cause.message, sensitiveValues),
+      ...(detail === undefined ? {} : { detail: redactDiagnostic(detail, sensitiveValues) }),
+    }
+  }
+  if (cause instanceof Error) {
+    const message = typeof cause.message === 'string' ? redactDiagnostic(cause.message, sensitiveValues) : undefined
+    const code =
+      'code' in cause && (typeof cause.code === 'string' || typeof cause.code === 'number')
+        ? String(cause.code)
+        : undefined
+    return {
+      tag: cause.name,
+      ...(message === undefined ? {} : { message }),
+      ...(code === undefined ? {} : { code }),
+    }
+  }
+  if (typeof cause === 'object' && cause !== null && '_tag' in cause && typeof cause._tag === 'string') {
+    const message =
+      'message' in cause && typeof cause.message === 'string'
+        ? redactDiagnostic(cause.message, sensitiveValues)
+        : undefined
+    return { tag: cause._tag, ...(message === undefined ? {} : { message }) }
+  }
+  return { tag: typeof cause }
 }
 
 const configurationError = (operation: 'configuration' | 'proxy', message: string, cause?: unknown): BrokerReadError =>
@@ -543,13 +579,17 @@ const invalidRequest = (operation: BrokerReadOperation, message: string, cause: 
     cause: safeCause(cause),
   })
 
-const transportError = (operation: BrokerReadOperation, cause: unknown): BrokerReadError =>
+const transportError = (
+  operation: BrokerReadOperation,
+  cause: unknown,
+  sensitiveValues: readonly string[],
+): BrokerReadError =>
   new BrokerReadError({
     operation,
     kind: BrokerReadErrorKind.Transport,
     message: `Alpaca ${operation} request failed before a response was available`,
     retryable: true,
-    cause: safeCause(cause),
+    cause: safeCause(cause, sensitiveValues),
   })
 
 const statusError = (
@@ -583,13 +623,18 @@ const statusError = (
   })
 }
 
-const timeoutError = (operation: BrokerReadOperation, timeoutMs: number, cause: unknown): BrokerReadError =>
+const timeoutError = (
+  operation: BrokerReadOperation,
+  timeoutMs: number,
+  cause: unknown,
+  sensitiveValues: readonly string[],
+): BrokerReadError =>
   new BrokerReadError({
     operation,
     kind: BrokerReadErrorKind.Timeout,
     message: `Alpaca ${operation} exceeded its ${timeoutMs}ms deadline`,
     retryable: true,
-    cause: safeCause(cause),
+    cause: safeCause(cause, sensitiveValues),
   })
 
 const decimalToMicros = (value: string, signed: boolean, name: string): string => {
@@ -863,6 +908,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         configurationError('configuration', 'Alpaca credentials must be non-empty without surrounding whitespace'),
       )
     }
+    const sensitiveValues = [key, secret]
 
     const baseClient = yield* HttpClient.HttpClient
     const client = baseClient.pipe(HttpClient.retryTransient({ times: runtime.retryAttempts }))
@@ -882,7 +928,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         })
         const response = yield* client
           .execute(request)
-          .pipe(Effect.mapError((cause) => transportError(operation, cause)))
+          .pipe(Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)))
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const headers = yield* decodeResponseHeaders(response).pipe(
           Effect.mapError((cause) =>
@@ -954,8 +1000,8 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
           cause instanceof BrokerReadError
             ? cause
             : Cause.isTimeoutError(cause)
-              ? timeoutError(operation, runtime.operationTimeoutMs, cause)
-              : transportError(operation, cause),
+              ? timeoutError(operation, runtime.operationTimeoutMs, cause, sensitiveValues)
+              : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
@@ -1041,14 +1087,15 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
       decodeInput('fill-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fill activities query').pipe(
         Effect.flatMap((decoded) => {
           const url = new URL('/v2/account/activities/FILL', tradingUrl)
+          const pageSize = decoded.pageSize ?? defaultFillActivitiesPageSize
           if (decoded.date !== undefined) url.searchParams.set('date', decoded.date)
           if (decoded.after !== undefined) url.searchParams.set('after', decoded.after)
           if (decoded.until !== undefined) url.searchParams.set('until', decoded.until)
           if (decoded.direction !== undefined) url.searchParams.set('direction', decoded.direction)
-          if (decoded.pageSize !== undefined) url.searchParams.set('page_size', String(decoded.pageSize))
+          url.searchParams.set('page_size', String(pageSize))
           if (decoded.pageToken !== undefined) url.searchParams.set('page_token', decoded.pageToken)
           return readJson('fill-activities', url, decodeFillActivities).pipe(
-            Effect.map((result) => ({ result, pageSize: decoded.pageSize })),
+            Effect.map((result) => ({ result, pageSize })),
           )
         }),
         Effect.flatMap(({ pageSize, result }) =>
@@ -1057,9 +1104,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
             return {
               items,
               nextPageToken:
-                pageSize !== undefined && items.length === pageSize && items.length > 0
-                  ? items[items.length - 1]?.activityId
-                  : undefined,
+                items.length === pageSize && items.length > 0 ? items[items.length - 1]?.activityId : undefined,
             }
           }),
         ),

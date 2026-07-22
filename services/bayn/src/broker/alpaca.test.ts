@@ -329,6 +329,24 @@ describe('Alpaca paper reads', () => {
     })
   })
 
+  test('requests the default fill page size explicitly and returns a cursor for a full page', async () => {
+    let requestedUrl: URL | undefined
+    const page = Array.from({ length: 100 }, (_, index) => ({
+      ...fillResponse,
+      id: `fill-${String(index).padStart(3, '0')}::${orderId}`,
+    }))
+    const client = HttpClient.make((request, url) => {
+      requestedUrl = url
+      return Effect.succeed(jsonResponse(request, page))
+    })
+
+    const result = await Effect.runPromise(withClient(client, (read) => read.fillActivities()))
+
+    expect(requestedUrl?.searchParams.get('page_size')).toBe('100')
+    expect(result.value.items).toHaveLength(100)
+    expect(result.value.nextPageToken).toBe(page[99].id)
+  })
+
   test('fails closed on unknown vocabularies, malformed numbers, and invalid query combinations', async () => {
     let calls = 0
     let body: unknown = { ...accountResponse, status: 'SURPRISE_STATUS' }
@@ -343,6 +361,10 @@ describe('Alpaca paper reads', () => {
     body = { ...accountResponse, cash: '1e9' }
     const malformedNumber = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
     expect(malformedNumber).toMatchObject({ kind: BrokerReadErrorKind.InvalidResponse })
+    expect(malformedNumber.cause).toMatchObject({
+      tag: 'SchemaError',
+      message: expect.stringContaining('["cash"]'),
+    })
 
     const callsBeforeInvalidQuery = calls
     const invalidQuery = await Effect.runPromise(
@@ -444,7 +466,10 @@ describe('Alpaca paper reads', () => {
     const client = HttpClient.make((request) =>
       Effect.fail(
         new HttpClientError.HttpClientError({
-          reason: new HttpClientError.TransportError({ request, description: 'connection refused' }),
+          reason: new HttpClientError.TransportError({
+            request,
+            description: 'connection refused for paper-key and paper-secret',
+          }),
         }),
       ),
     )
@@ -456,8 +481,36 @@ describe('Alpaca paper reads', () => {
       kind: BrokerReadErrorKind.Transport,
       operation: 'account',
       retryable: true,
-      cause: { tag: 'HttpClientError' },
+      cause: {
+        tag: 'HttpClientError',
+        reason: 'TransportError',
+        message: expect.stringContaining('connection refused'),
+      },
     })
+    expect(JSON.stringify(failure.cause)).not.toContain('paper-key')
+    expect(JSON.stringify(failure.cause)).not.toContain('paper-secret')
+  })
+
+  test('retains the failing configuration path without invoking Alpaca', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, accountResponse))
+    })
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => read.account, { ...options, operationTimeoutMs: 0 })),
+    )
+
+    expect(failure).toMatchObject({
+      kind: BrokerReadErrorKind.Configuration,
+      operation: 'configuration',
+      cause: {
+        tag: 'SchemaError',
+        message: expect.stringContaining('["operationTimeoutMs"]'),
+      },
+    })
+    expect(calls).toBe(0)
   })
 
   test('refuses to publish the live capability for the wrong paper account', async () => {
