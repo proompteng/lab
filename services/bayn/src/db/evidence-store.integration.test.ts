@@ -274,6 +274,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 3, name: 'intent_risk_clock' },
       { migration_id: 4, name: 'deterministic_intents' },
       { migration_id: 5, name: 'mutation_recovery' },
+      { migration_id: 6, name: 'current_risk_clock' },
     ])
   })
 
@@ -313,6 +314,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }),
           ),
         )
+        const retryAfterTransition = yield* Effect.promise(() =>
+          execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
+        )
         const stored = yield* Effect.promise(() =>
           runtime.runPromise(
             Effect.gen(function* () {
@@ -337,7 +341,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }),
           ),
         )
-        return { commits, secondOwnerExit, stored, transitions }
+        return { commits, retryAfterTransition, secondOwnerExit, stored, transitions }
       }).pipe(
         Effect.ensuring(
           Effect.all([Effect.promise(() => secondOwner.dispose()), Effect.promise(() => execution.dispose())], {
@@ -356,6 +360,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(
       observed.transitions.map((receipt) => receipt.deduplicated).sort((left, right) => Number(left) - Number(right)),
     ).toEqual([false, true])
+    expect(observed.retryAfterTransition).toMatchObject({
+      deduplicated: true,
+      record: { intent: { state: 'IO_STARTED' }, stateVersion: 3 },
+    })
     expect(observed.stored).toEqual({
       client_order_id: intent.clientOrderId,
       state: 'IO_STARTED',
@@ -466,48 +474,126 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.counts).toEqual({ decisions: 0, intents: 0 })
   })
 
-  test('loses mutation authority when the reserved writer session dies', async () => {
+  test('runs mutations on the lease session and rolls back when that session dies', async () => {
     const execution = makeExecutionRuntime()
+    const nextOwner = makeExecutionRuntime()
+    const blocker = makeClientRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: 'e'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
 
     const observed = await Effect.runPromise(
       Effect.gen(function* () {
-        const backendPid = yield* Effect.promise(() =>
-          execution.runPromise(Effect.map(WriterFence, (fence) => fence.backendPid)),
-        )
-        const terminated = yield* Effect.promise(() =>
-          runtime.runPromise(
-            Effect.gen(function* () {
-              const sql = yield* PgClient.PgClient
-              return yield* sql<{ terminated: boolean }>`
-                SELECT pg_terminate_backend(${backendPid}) AS terminated
-              `
-            }),
+        const lockHeld = yield* Deferred.make<void>()
+        const releaseLock = yield* Deferred.make<void>()
+        const lockHolder = yield* Effect.forkChild(
+          Effect.promise(() =>
+            blocker.runPromise(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                yield* sql.withTransaction(
+                  Effect.gen(function* () {
+                    yield* sql`LOCK TABLE intents IN ACCESS EXCLUSIVE MODE`
+                    yield* Deferred.succeed(lockHeld, undefined)
+                    yield* Deferred.await(releaseLock)
+                  }),
+                )
+              }),
+            ),
           ),
+          { startImmediately: true },
         )
-        const check = yield* Effect.promise(() =>
-          execution.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
-        )
-        const commit = yield* Effect.promise(() =>
-          execution.runPromiseExit(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
-        )
-        const count = yield* Effect.promise(() =>
-          runtime.runPromise(
-            Effect.gen(function* () {
-              const sql = yield* PgClient.PgClient
-              return yield* sql<{ count: number }>`SELECT count(*)::integer AS count FROM intents`
-            }),
-          ),
-        )
-        return { check, commit, count: count[0]?.count, terminated: terminated[0]?.terminated }
-      }).pipe(Effect.ensuring(Effect.promise(() => execution.dispose()))),
+        yield* Deferred.await(lockHeld)
+        return yield* Effect.gen(function* () {
+          const backendPid = yield* Effect.promise(() =>
+            execution.runPromise(Effect.map(WriterFence, (fence) => fence.backendPid)),
+          )
+          const firstCommit = yield* Effect.forkChild(
+            Effect.promise(() =>
+              execution.runPromiseExit(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
+            ),
+            { startImmediately: true },
+          )
+          const mutationPid = yield* Effect.gen(function* () {
+            type WaitingMutation = { pid: number; query: string }
+            let activities: readonly WaitingMutation[] = []
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              activities = yield* Effect.promise(() =>
+                runtime.runPromise(
+                  Effect.gen(function* () {
+                    const sql = yield* PgClient.PgClient
+                    return yield* sql<WaitingMutation>`
+                      SELECT pid::integer, query
+                      FROM pg_stat_activity
+                      WHERE pid <> pg_backend_pid()
+                        AND datname = current_database()
+                        AND wait_event_type = 'Lock'
+                        AND query ILIKE '%INSERT INTO intents%'
+                    `
+                  }),
+                ),
+              )
+              if (activities[0] !== undefined) return activities[0].pid
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            return yield* Effect.fail(`mutation did not wait on the table lock: ${JSON.stringify(activities)}`)
+          })
+          const terminated = yield* Effect.promise(() =>
+            runtime.runPromise(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                return yield* sql<{ terminated: boolean }>`
+                  SELECT pg_terminate_backend(${backendPid}) AS terminated
+                `
+              }),
+            ),
+          )
+          const nextOwnerCheck = yield* Effect.promise(() =>
+            nextOwner.runPromiseExit(Effect.flatMap(WriterFence, (fence) => fence.check)),
+          )
+          yield* Deferred.succeed(releaseLock, undefined)
+          yield* Fiber.join(lockHolder)
+          const firstCommitExit = yield* Fiber.join(firstCommit)
+          const nextCommit = yield* Effect.promise(() =>
+            nextOwner.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))),
+          )
+          const count = yield* Effect.promise(() =>
+            runtime.runPromise(
+              Effect.gen(function* () {
+                const sql = yield* PgClient.PgClient
+                return yield* sql<{ count: number }>`SELECT count(*)::integer AS count FROM intents`
+              }),
+            ),
+          )
+          return {
+            backendPid,
+            count: count[0]?.count,
+            firstCommitExit,
+            mutationPid,
+            nextCommit,
+            nextOwnerCheck,
+            terminated: terminated[0]?.terminated,
+          }
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseLock, undefined).pipe(Effect.ignore)))
+      }).pipe(
+        Effect.ensuring(
+          Effect.all(
+            [
+              Effect.promise(() => blocker.dispose()),
+              Effect.promise(() => execution.dispose()),
+              Effect.promise(() => nextOwner.dispose()),
+            ],
+            { concurrency: 'unbounded' },
+          ).pipe(Effect.asVoid),
+        ),
+      ),
     )
 
+    expect(observed.mutationPid).toBe(observed.backendPid)
     expect(observed.terminated).toBe(true)
-    expect(Exit.isFailure(observed.check)).toBe(true)
-    expect(Exit.isFailure(observed.commit)).toBe(true)
-    expect(observed.count).toBe(0)
+    expect(Exit.isSuccess(observed.nextOwnerCheck)).toBe(true)
+    expect(Exit.isFailure(observed.firstCommitExit)).toBe(true)
+    expect(observed.nextCommit).toMatchObject({ deduplicated: false, record: { intent: { state: 'APPROVED' } } })
+    expect(observed.count).toBe(1)
   })
 
   test('linearizes one submit and records its exact acknowledged outcome', async () => {
@@ -987,7 +1073,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               ) VALUES (
                 ${staleDecisionId}, 'bayn.paper-risk-decision.v1', ${'4'.repeat(64)}, ${staleIntentId},
                 ${'3'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
-                statement_timestamp(), statement_timestamp() + interval '5 seconds'
+                statement_timestamp(), statement_timestamp() + interval '1 second'
               )
             `
             yield* sql`
@@ -998,12 +1084,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             `
           }),
         )
+        const [staleDecision] = yield* sql<{ expires_at: string }>`
+          SELECT expires_at::text FROM risk_decisions WHERE decision_id = ${staleDecisionId}
+        `
+        if (staleDecision === undefined) throw new Error('stale risk decision is missing')
         const lockHeld = yield* Deferred.make<void>()
         const releaseLock = yield* Deferred.make<void>()
         const lockHolder = yield* Effect.forkChild(
           sql.withTransaction(
             Effect.gen(function* () {
-              yield* sql`SELECT intent_id FROM intents WHERE intent_id = ${staleIntentId} FOR UPDATE`
+              yield* sql`LOCK TABLE risk_decisions IN ACCESS EXCLUSIVE MODE`
               yield* Deferred.succeed(lockHeld, undefined)
               yield* Deferred.await(releaseLock)
             }),
@@ -1043,13 +1133,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                         activity.query,
                         activity.state,
                         activity.wait_event_type,
-                        activity.query_start < decision.expires_at AS started_before_expiry
+                        activity.query_start < ${staleDecision.expires_at}::timestamptz AS started_before_expiry
                       FROM pg_stat_activity AS activity
-                      CROSS JOIN risk_decisions AS decision
                       WHERE activity.pid <> pg_backend_pid()
                         AND activity.usename = current_user
                         AND activity.datname = current_database()
-                        AND decision.decision_id = ${staleDecisionId}
                     `
                   }),
                 ),
@@ -1069,9 +1157,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               Effect.gen(function* () {
                 const observerSql = yield* PgClient.PgClient
                 yield* observerSql`
-                  SELECT pg_sleep_until(expires_at + interval '10 milliseconds')
-                  FROM risk_decisions
-                  WHERE decision_id = ${staleDecisionId}
+                  SELECT pg_sleep_until(${staleDecision.expires_at}::timestamptz + interval '10 milliseconds')
                 `
               }),
             ),

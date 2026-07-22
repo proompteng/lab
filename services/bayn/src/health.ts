@@ -4,7 +4,6 @@ import type { RuntimeConfig } from './config'
 import type { FinalizedSnapshotProvenance } from './contracts'
 import { EvidenceStore, type QualificationRecord, type RecoveredEvaluationEvidence } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
-import { WriterFence } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import { Journal } from './ledger'
 import { MarketData } from './market-data'
@@ -83,22 +82,18 @@ const dependencyHealth = (result: ProbeResult, checkedAt: string): DependencyHea
 export const probe = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | WriterFence> =>
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
     const evidenceStore = yield* EvidenceStore
-    const writerFence = yield* WriterFence
     const current = yield* Ref.get(state)
     const evidence = current.evidence
     const [postgresql, signal, tigerBeetle, durableEvidence] = yield* Effect.all(
       [
         observe(
           withinDeadline(
-            databaseOperation(
-              Effect.all([evidenceStore.check, writerFence.check], { concurrency: 'unbounded' }).pipe(Effect.asVoid),
-              'continuous-health',
-            ),
+            databaseOperation(evidenceStore.check, 'continuous-health'),
             config.operationTimeoutMs,
             'database',
             'continuous-health',
@@ -184,5 +179,5 @@ export const probe = (
 export const monitor = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | WriterFence> =>
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
   probe(config, state).pipe(Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))), Effect.asVoid)

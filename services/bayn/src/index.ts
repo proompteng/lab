@@ -7,8 +7,6 @@ import { verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreLive } from './db/evidence-store'
-import { IntentStoreLive } from './execution/intents'
-import { WriterFenceLive } from './execution/writer-fence'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
 import { acquireSqlLayer } from './operations'
@@ -49,8 +47,7 @@ const main = Effect.gen(function* () {
     Layer.provide(NodeHttpClient.layerNodeHttp),
   )
   const database = EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer))
-  const persistence = IntentStoreLive.pipe(Layer.provideMerge(WriterFenceLive), Layer.provideMerge(database))
-  const dependencies = Layer.mergeAll(marketData, JournalLive(config), persistence)
+  const dependencies = Layer.mergeAll(marketData, JournalLive(config), database)
   return yield* run(config, strategy).pipe(Effect.provide(dependencies))
 }).pipe(Effect.scoped)
 

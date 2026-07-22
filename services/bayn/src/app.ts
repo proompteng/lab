@@ -3,7 +3,6 @@ import { Effect, Layer, Ref } from 'effect'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
-import { WriterFence } from './execution/writer-fence'
 import { monitor } from './health'
 import { makeHttpLayer } from './http'
 import { Journal } from './ledger'
@@ -15,15 +14,9 @@ import type { Strategy } from './strategy'
 export const run = (
   config: RuntimeConfig,
   strategy: Strategy,
-): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | WriterFence> =>
+): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const writerFence = yield* WriterFence
-      yield* writerFence.check.pipe(
-        Effect.mapError((cause) =>
-          operationalError('database', 'check-writer-fence', 'paper writer fence is unavailable', cause),
-        ),
-      )
       const evidenceStore = yield* EvidenceStore
       const state = yield* Ref.make(initialState())
       yield* Layer.build(

@@ -381,6 +381,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
               }),
             )
           : Effect.void,
+        transaction: (effect) => effect,
       }),
       Effect.provide(TestClock.layer()),
     )

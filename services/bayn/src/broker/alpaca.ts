@@ -669,6 +669,15 @@ const optionalTimestamp = (value: string | null): string | undefined => value ??
 const optionalMicros = (value: string | null, signed: boolean, name: string): string | undefined =>
   value === null ? undefined : decimalToMicros(value, signed, name)
 
+const positionMicros = (value: string, side: PositionSide, name: string): string => {
+  const decoded = BigInt(decimalToMicros(value, true, name))
+  if (decoded === 0n) throw new Error(`${name} must be non-zero`)
+  const magnitude = decoded < 0n ? -decoded : decoded
+  const normalized = side === PositionSide.Short ? -magnitude : magnitude
+  if (normalized < I128_MIN || normalized > I128_MAX) throw new Error(`${name} exceeds the decimal micros range`)
+  return normalized.toString()
+}
+
 const normalizeAccount = (
   raw: typeof AccountResponseSchema.Type,
   expectedAccountId: string,
@@ -696,16 +705,8 @@ const normalizePosition = (
   observedAt: string,
 ): Position => {
   if (raw.asset_class !== AssetClass.UsEquity) throw new Error(`unsupported position asset class ${raw.asset_class}`)
-  const quantityMicros = decimalToMicros(raw.qty, true, 'position quantity')
-  const marketValueMicros = decimalToMicros(raw.market_value, true, 'market value')
-  if (
-    (raw.side === PositionSide.Long && BigInt(quantityMicros) <= 0n) ||
-    (raw.side === PositionSide.Short && BigInt(quantityMicros) >= 0n) ||
-    (raw.side === PositionSide.Long && BigInt(marketValueMicros) <= 0n) ||
-    (raw.side === PositionSide.Short && BigInt(marketValueMicros) >= 0n)
-  ) {
-    throw new Error(`position side ${raw.side} is inconsistent with quantity or market value`)
-  }
+  const quantityMicros = positionMicros(raw.qty, raw.side, 'position quantity')
+  const marketValueMicros = positionMicros(raw.market_value, raw.side, 'market value')
   return {
     accountId,
     assetId: raw.asset_id,

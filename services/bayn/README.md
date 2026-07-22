@@ -17,8 +17,7 @@ no broker credentials, mutation layer, execution entry point, or capital-promoti
 - Signal ClickHouse is read-only at runtime. Data publication and provider credentials are owned by the separate Signal
   adjusted-daily publisher; Bayn contains no DDL or backfill command.
 - Bayn owns a two-instance CloudNativePG cluster. The runtime uses the generated application URI over verified TLS,
-  runs versioned Effect SQL migrations at startup, and keeps a two-connection pool for its single-writer operation plus
-  query cancellation.
+  runs versioned Effect SQL migrations at startup, and keeps a bounded two-connection pool.
 - PostgreSQL stores paper mutation transitions in one append-only `mutation_events` table. Request identity, broker
   response identity, and the lookup delay are committed before use; unresolved outcomes block later exposure. The
   deployed observe-only runtime does not create mutation rows.
@@ -71,6 +70,10 @@ no broker credentials, mutation layer, execution entry point, or capital-promoti
 - The current-only migration chain owns the unprefixed evidence, qualification, intent, and mutation schema. Startup
   rejects a legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or
   falls back to legacy records.
+- Alpaca read and mutation adapters, deterministic risk, intent and mutation persistence, the writer fence, and the
+  recovery coordinator remain dormant source foundations. The composition root does not acquire broker credentials,
+  construct either adapter, reserve the writer fence, or expose the stores or coordinator while qualification is
+  rejected and maximum authority is `OBSERVE`.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.
