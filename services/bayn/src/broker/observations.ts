@@ -174,7 +174,7 @@ export const accountObservation = (result: ReadResult<AlpacaAccount>): BrokerEve
     _tag: 'Account',
     broker: Broker.Alpaca,
     accountId: account.accountId,
-    sourceEventId: `account:${result.evidence.contentHash}`,
+    sourceEventId: `account:${result.evidence.contentHash}:${result.evidence.observedAt}`,
     contentHash: canonicalHashV1({
       schemaVersion: 'bayn.paper-account-source.v1',
       responseContentHash: result.evidence.contentHash,
@@ -212,7 +212,7 @@ export const positionObservations = (result: ReadResult<readonly AlpacaPosition[
         _tag: 'Position',
         broker: Broker.Alpaca,
         accountId: position.accountId,
-        sourceEventId: `position:${result.evidence.contentHash}:${value.assetId}`,
+        sourceEventId: `position:${result.evidence.contentHash}:${result.evidence.observedAt}:${value.assetId}`,
         contentHash: canonicalHashV1({
           schemaVersion: 'bayn.paper-position-source.v1',
           responseContentHash: result.evidence.contentHash,

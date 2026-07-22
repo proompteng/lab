@@ -79,15 +79,22 @@ const activity: FillActivity = {
 }
 
 describe('paper broker observations', () => {
-  test('normalizes account status and stable response identity', () => {
+  test('normalizes account status and preserves observation freshness', () => {
     const first = accountObservation({ value: account, evidence })
     const replay = accountObservation({ value: account, evidence: { ...evidence, requestId: 'request-2' } })
 
     expect(first._tag).toBe('Account')
     if (first._tag !== 'Account') throw new Error('expected account observation')
     expect(first.account.status).toBe(AccountStatus.Active)
-    expect(first.sourceEventId).toBe(`account:${evidence.contentHash}`)
+    expect(first.sourceEventId).toBe(`account:${evidence.contentHash}:${observedAt}`)
     expect(replay).toEqual(first)
+    const laterObservedAt = '2026-07-22T15:31:01.000Z'
+    const later = accountObservation({
+      value: { ...account, observedAt: laterObservedAt },
+      evidence: { ...evidence, observedAt: laterObservedAt },
+    })
+    expect(later.sourceEventId).not.toBe(first.sourceEventId)
+    expect(later.contentHash).toBe(first.contentHash)
     const restricted = accountObservation({ value: { ...account, tradingBlocked: true }, evidence })
     expect(restricted._tag === 'Account' && restricted.account.status).toBe(AccountStatus.Restricted)
   })
@@ -128,6 +135,13 @@ describe('paper broker observations', () => {
     expect(events).toHaveLength(2)
     expect(events.map((event) => (event._tag === 'Position' ? event.position.symbol : ''))).toEqual(['AMD', 'NVDA'])
     expect(new Set(events.map((event) => event.sourceEventId)).size).toBe(2)
+    const laterObservedAt = '2026-07-22T15:31:01.000Z'
+    const later = positionObservations({
+      value: positions.map((position) => ({ ...position, observedAt: laterObservedAt })),
+      evidence: { ...evidence, observedAt: laterObservedAt },
+    })
+    expect(later.map((event) => event.sourceEventId)).not.toEqual(events.map((event) => event.sourceEventId))
+    expect(later.map((event) => event.contentHash)).toEqual(events.map((event) => event.contentHash))
     expect(() =>
       positionObservations({ value: [positions[0], { ...positions[1], symbol: 'NVDA' }], evidence }),
     ).toThrow('duplicate Alpaca position symbol')
