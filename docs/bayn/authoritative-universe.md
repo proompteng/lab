@@ -1,6 +1,6 @@
 # Bayn authoritative universe
 
-Status: **selected; deployment proof pending**
+Status: **selected, published, and compiled; Bayn runtime proof paused by the separate database workstream**
 
 Last verified: 2026-07-21
 
@@ -25,9 +25,8 @@ substitution; an addition, removal, calendar change, or adjustment change requir
 qualification record.
 
 The ETF universe from `PROOMPT-392` is abandoned. It was inherited without a selection procedure and is absent from
-the websocket subscription. Its image must not be promoted, deployed, or qualified. The runtime composition root
-remains on the previously deployed TSMOM implementation until a strategy for `equity-infrastructure-v1` is separately
-implemented and precommitted. This containment does not approve TSMOM or its ETF universe.
+the websocket subscription. Bayn's compiled `bayn.risk-balanced-trend.protocol.v2` now binds this exact universe,
+universe ID, and symbol hash. Strategy construction and market-data inspection both reject any different universe.
 
 ## Pre-return eligibility evidence
 
@@ -61,27 +60,27 @@ Every selected symbol has both the executable and reference role: it must exist 
 historical publication, with no reference-only substitute. The following operational exposure labels were committed
 without consulting candidate returns and exist only to make concentration visible:
 
-| Symbol | Non-return exposure role          | Decision reason                                      |
-| ------ | --------------------------------- | ---------------------------------------------------- |
-| AMD    | compute processors                | complete history, supported feeds, capacity pass     |
-| AVGO   | networking and custom silicon     | complete history, supported feeds, capacity pass     |
-| COHR   | optical components                | complete history, supported feeds, capacity pass     |
-| CRDO   | high-speed connectivity silicon   | complete history, supported feeds, capacity pass     |
-| LITE   | optical components                | complete history, supported feeds, capacity pass     |
-| MRVL   | networking and storage silicon    | complete history, supported feeds, capacity pass     |
-| MU     | memory                            | complete history, supported feeds, capacity pass     |
-| NVDA   | accelerated compute               | complete history, supported feeds, capacity pass     |
-| WDC    | data storage                      | complete history, supported feeds, capacity pass     |
-| SNDK   | flash storage                     | excluded: only 358 adjusted daily sessions           |
+| Symbol | Non-return exposure role        | Decision reason                                  |
+| ------ | ------------------------------- | ------------------------------------------------ |
+| AMD    | compute processors              | complete history, supported feeds, capacity pass |
+| AVGO   | networking and custom silicon   | complete history, supported feeds, capacity pass |
+| COHR   | optical components              | complete history, supported feeds, capacity pass |
+| CRDO   | high-speed connectivity silicon | complete history, supported feeds, capacity pass |
+| LITE   | optical components              | complete history, supported feeds, capacity pass |
+| MRVL   | networking and storage silicon  | complete history, supported feeds, capacity pass |
+| MU     | memory                          | complete history, supported feeds, capacity pass |
+| NVDA   | accelerated compute             | complete history, supported feeds, capacity pass |
+| WDC    | data storage                    | complete history, supported feeds, capacity pass |
+| SNDK   | flash storage                   | excluded: only 358 adjusted daily sessions       |
 
-## Pre-rollout production baseline
+## Historical pre-rollout baseline (superseded)
 
 Read-only verification at 2026-07-21T09:20:51Z found one healthy websocket pod and one Alpaca connection. Alpaca had
 acknowledged the legacy ten-symbol set, including `SNDK`, on trades, quotes, bars, and updated bars. The scheduled V1
 Signal publisher was active. Both ClickHouse replicas agreed on two finalized V1 manifests; the latest snapshot
 `0e3188062fb6781f9dfdc048b4bfe9846d8f4ce74c5e429e296e3ebcd75e93a5` contains 2,398 sessions and 19,184 bars for
-the eight legacy ETFs `DBC,EEM,EFA,GLD,IEF,SPY,TLT,VNQ` through 2026-07-20. Neither producer nor database therefore
-matches the selected universe yet.
+the eight legacy ETFs `DBC,EEM,EFA,GLD,IEF,SPY,TLT,VNQ` through 2026-07-20. At that timestamp neither the producer nor
+the publication matched the selected universe. This paragraph is retained only as the before-rollout observation.
 
 ## Data contract
 
@@ -96,9 +95,9 @@ matches the selected universe yet.
   history that a live websocket cannot provide; daily publications run after the Basic plan's 15-minute delay and use
   the same validation and immutable `snapshot_manifests_v2` finalization path. Every manifest binds the universe ID and
   symbol hash.
-- The later Bayn strategy integration must accept only a finalized V2 manifest whose universe ID, symbol hash, feed,
-  adjustment, calendar, bounds, and canonical symbols match the compiled strategy. A superset, subset, duplicate,
-  mixed feed, or missing session must fail closed. This rollout does not change Bayn's current pinned V1 evidence.
+- Bayn accepts only a finalized V2 publication whose universe ID, symbol hash, feed, adjustment, calendar, bounds, and
+  canonical symbols match the compiled strategy. A superset, subset, duplicate, mixed feed, or missing session fails
+  closed.
 - Historical and live events retain their transport and feed identity. Delayed SIP REST history is not relabeled as
   real-time IEX websocket data.
 - Live envelopes preserve provider source, feed, provider event time, ingestion time, and updated-bar corrections.
@@ -128,25 +127,25 @@ supported limit-order semantics; this milestone submits no orders. The external 
 [24/5 feed specification](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api), and
 [extended-hours order rules](https://docs.alpaca.markets/us/docs/orders-at-alpaca).
 
-## Rollout and proof
+## Current integration and remaining proof
 
-1. Merge the versioned ConfigMap, additive schema, websocket wiring, and dormant CronJob and backfill templates.
-   Neither writer is rendered, so this phase cannot write Signal data or leave Argo waiting on a suspended CronJob.
-2. Promote immutable websocket and publisher images. Promotion pins source revisions and digests but leaves both Signal
-   writers inert.
-3. Through a reviewed GitOps change, add and start only the one-shot backfill Job while the CronJob remains absent.
-   Require it to finalize exactly one SIP/all snapshot for all nine symbols from 2022-01-27 through
-   2026-07-20: 1,122 sessions and 10,098 bars.
-4. Reproduce the manifest, session, and bar hashes from both ClickHouse replicas and prove one manifest row whose
-   universe ID and symbol hash match the ConfigMap.
-5. Confirm websocket readiness reports the same universe ID, hash, and exact symbols, and that Alpaca acknowledged all
-   nine symbols on trades, quotes, bars, and updated bars.
-6. Remove the completed one-shot Job and enable the daily CronJob in one GitOps change. Never render both writers as
-   active. Retain two successful scheduled publications before declaring the publication lane stable.
+- The versioned ConfigMap supplies the exact universe to the websocket, archive pipeline, and Signal publisher.
+- GitOps renders the scheduled Signal publisher with delayed SIP history and the V2 finalization contract.
+- Bayn's compiled strategy, market-data reader, qualification lock, and tests all bind the same universe ID and symbol
+  hash.
+- Bayn GitOps selects finalized snapshot
+  `98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292` through 2026-07-20.
+- The Bayn Deployment is intentionally at zero replicas while the separate database workstream performs its
+  reset/restore. This document does not authorize changing that state.
 
-Rollback is fail-closed: suspend the active writer, preserve every finalized or partially staged row, and revert only
-after no Job is active. Bayn remains pinned to its existing rejected TSMOM evidence; this data rollout neither deploys
-a new strategy nor grants broker or capital authority.
+After that workstream restores one writer, live acceptance must prove the promoted image digest, the exact snapshot and
+universe binding, one ready endpoint, an observable terminal qualification, all continuous dependencies available, and
+fixed observe-only authority. Until then, Git and prior publication evidence prove integration but not current Bayn
+runtime behavior.
+
+Rollback remains fail-closed: stop the active Signal writer through GitOps, preserve finalized and partially staged
+publications, and revert only after no publication Job is active. A rollback does not grant broker or capital
+authority.
 
 ## Read-only ClickHouse proof
 
