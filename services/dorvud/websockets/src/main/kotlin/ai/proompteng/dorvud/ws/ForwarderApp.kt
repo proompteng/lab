@@ -99,6 +99,19 @@ internal fun alpacaMarketDataStreamUrl(
     AlpacaMarketType.OPTIONS -> "${config.alpacaStreamUrl.trimEnd('/')}/v1beta1/${feed.feed}"
   }
 
+internal fun marketDataIdleRequiresReconnect(
+  sessionReady: Boolean,
+  now: Instant,
+  marketType: AlpacaMarketType,
+  marketHolidays: Set<LocalDate>,
+  equityFeed: EquityFeed?,
+): Boolean =
+  !sessionReady ||
+    marketDataFreshnessGateActive(
+      marketSessionState(now, marketType, marketHolidays),
+      equityFeed,
+    )
+
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
     AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
@@ -534,22 +547,40 @@ class ForwarderApp(
         header("Content-Type", "application/msgpack")
       }
     }) {
+      var authOk = false
+      var subscribedOk = false
+
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
-        val frame =
-          withTimeoutOrNull(config.marketDataReadIdleTimeoutMs) {
-            incoming.receive()
-          } ?: error(
-            "alpaca market-data websocket idle for ${config.marketDataReadIdleTimeoutMs}ms; reconnecting",
-          )
-        val elements = decodeMarketDataFrame(frame) ?: return emptyList()
-        val messages: List<JsonElement> =
-          if (elements is JsonArray) elements.toList() else listOf(elements)
-        return messages.mapNotNull { el ->
-          try {
-            json.decodeFromJsonElement(AlpacaMessageSerializer, el)
-          } catch (e: SerializationException) {
-            logger.warn(e) { "failed to decode alpaca message; dropping" }
-            null
+        while (true) {
+          val frame =
+            withTimeoutOrNull(config.marketDataReadIdleTimeoutMs) {
+              incoming.receive()
+            }
+          if (frame == null) {
+            val reconnect =
+              marketDataIdleRequiresReconnect(
+                sessionReady = authOk && subscribedOk,
+                now = Instant.ofEpochMilli(nowMs()),
+                marketType = config.alpacaMarketType,
+                marketHolidays = config.optionsMarketHolidays,
+                equityFeed = feed.config.equityFeed,
+              )
+            if (reconnect) {
+              error("alpaca market-data websocket idle for ${config.marketDataReadIdleTimeoutMs}ms; reconnecting")
+            }
+            continue
+          }
+
+          val elements = decodeMarketDataFrame(frame) ?: return emptyList()
+          val messages: List<JsonElement> =
+            if (elements is JsonArray) elements.toList() else listOf(elements)
+          return messages.mapNotNull { el ->
+            try {
+              json.decodeFromJsonElement(AlpacaMessageSerializer, el)
+            } catch (e: SerializationException) {
+              logger.warn(e) { "failed to decode alpaca message; dropping" }
+              null
+            }
           }
         }
       }
@@ -566,8 +597,6 @@ class ForwarderApp(
 
       val subscribedSymbols = mutableSetOf<String>()
       val subscribedLock = Mutex()
-      var authOk = false
-      var subscribedOk = false
       var readyNotified = false
       val subscribedSince = AtomicReference<Instant?>(null)
       val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
