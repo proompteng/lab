@@ -1,9 +1,41 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { updateBaynManifests } from './update-manifests'
+import { updateBaynManifests, type UpdateBaynManifestOptions } from './update-manifests'
+
+const currentSnapshotId = '98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292'
+const strategyBehaviorHash = '1'.repeat(64)
+const strategyParameterHash = '2'.repeat(64)
+const qualificationRunId = '9'.repeat(64)
+const currentBindings = {
+  BAYN_SIGNAL_SNAPSHOT_ID: currentSnapshotId,
+  BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-20',
+  BAYN_SIGNAL_CALENDAR_VERSION: 'alpaca-us-equity-calendar-v1',
+  BAYN_SIGNAL_DATA_START: '2022-01-27',
+  BAYN_SIGNAL_DATA_END: '2026-07-20',
+  BAYN_SIGNAL_LOOKBACK_START: '2022-01-27',
+  BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
+  BAYN_SIGNAL_EVALUATION_END: '2026-07-20',
+  BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
+  BAYN_TIGERBEETLE_ADDRESSES: 'ledger.bayn.svc.cluster.local:3000',
+  BAYN_TIGERBEETLE_LEDGER: '7001',
+} as const
+
+interface FixtureOptions {
+  readonly snapshotId?: string
+  readonly publicationAsOf?: string
+  readonly behaviorHash?: string
+  readonly parameterHash?: string
+  readonly qualificationRunId?: string | undefined
+}
+
+interface FixturePaths {
+  readonly kustomizationPath: string
+  readonly deploymentPath: string
+  readonly applicationSetPath: string
+}
 
 let directory: string | undefined
 
@@ -12,173 +44,119 @@ afterEach(() => {
   directory = undefined
 })
 
-describe('Bayn manifest promotion', () => {
-  test('derives qualification-pin handling from the complete runtime binding', () => {
-    directory = mkdtempSync(join(tmpdir(), 'bayn-manifest-'))
-    const kustomizationPath = join(directory, 'kustomization.yaml')
-    const deploymentPath = join(directory, 'deployment.yaml')
-    const applicationSetPath = join(directory, 'product.yaml')
-    const strategyBehaviorHash = '1'.repeat(64)
-    const strategyParameterHash = '2'.repeat(64)
-    writeFileSync(
-      kustomizationPath,
-      `images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n`,
-    )
-    writeFileSync(
-      deploymentPath,
-      `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n            - name: BAYN_CODE_REVISION\n              value: bootstrap\n            - name: BAYN_IMAGE_REPOSITORY\n              value: registry.ide-newton.ts.net/lab/bayn\n            - name: BAYN_IMAGE_DIGEST\n              value: sha256:old\n            - name: BAYN_QUALIFICATION_RUN_ID\n              value: legacy-run\n            - name: BAYN_SIGNAL_SNAPSHOT_ID\n              value: legacy-snapshot\n            - name: BAYN_SIGNAL_PUBLICATION_ASOF\n              value: 2026-07-19\n            - name: BAYN_SIGNAL_CALENDAR_VERSION\n              value: legacy-calendar\n            - name: BAYN_SIGNAL_DATA_START\n              value: 2017-01-03\n            - name: BAYN_SIGNAL_DATA_END\n              value: 2026-07-19\n            - name: BAYN_SIGNAL_LOOKBACK_START\n              value: 2017-01-03\n            - name: BAYN_SIGNAL_EVALUATION_START\n              value: 2018-01-03\n            - name: BAYN_SIGNAL_EVALUATION_END\n              value: 2026-07-19\n            - name: BAYN_TIGERBEETLE_CLUSTER_ID\n              value: "2001"\n            - name: BAYN_TIGERBEETLE_ADDRESSES\n              value: old-ledger.example:3000\n            - name: BAYN_TIGERBEETLE_LEDGER\n              value: "7001"\n`,
-    )
-    writeFileSync(
-      deploymentPath,
-      readFileSync(deploymentPath, 'utf8').replace(
-        '            - name: BAYN_QUALIFICATION_RUN_ID\n',
-        `            - name: BAYN_STRATEGY_BEHAVIOR_HASH\n              value: old\n            - name: BAYN_STRATEGY_PARAMETER_HASH\n              value: old\n            - name: BAYN_QUALIFICATION_RUN_ID\n`,
-      ),
-    )
-    writeFileSync(
-      applicationSetPath,
-      `elements:\n              - name: bayn\n                path: argocd/applications/bayn\n                enabled: "false"\n              - name: next\n                enabled: "true"\n`,
-    )
-    const addQualificationPin = () =>
-      writeFileSync(
-        deploymentPath,
-        readFileSync(deploymentPath, 'utf8').replace(
-          '            - name: BAYN_SIGNAL_SNAPSHOT_ID\n',
-          `            - name: BAYN_QUALIFICATION_RUN_ID\n              value: ${'9'.repeat(64)}\n            - name: BAYN_SIGNAL_SNAPSHOT_ID\n`,
-        ),
-      )
-    const sourceSha = 'a'.repeat(40)
-    const digest = `sha256:${'b'.repeat(64)}`
-    const initial = updateBaynManifests({
-      sourceSha,
-      tag: `sha-${sourceSha}`,
-      digest,
-      strategyBehaviorHash,
-      strategyParameterHash,
-      rolloutTimestamp: '2026-07-19T10:00:00Z',
-      kustomizationPath,
-      deploymentPath,
-      applicationSetPath,
-    })
-    expect(initial).toMatchObject({
-      qualificationMode: 'replace',
-      hadQualificationPin: true,
-      runtimeBindingsMatch: false,
-    })
-    expect(readFileSync(kustomizationPath, 'utf8')).toContain(`newTag: "sha-${sourceSha}"\n    digest: ${digest}`)
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(`value: ${sourceSha}`)
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_IMAGE_REPOSITORY\n              value: registry.ide-newton.ts.net/lab/bayn`,
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(`- name: BAYN_IMAGE_DIGEST\n              value: ${digest}`)
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_STRATEGY_BEHAVIOR_HASH\n              value: "${strategyBehaviorHash}"`,
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_STRATEGY_PARAMETER_HASH\n              value: "${strategyParameterHash}"`,
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      '- name: BAYN_SIGNAL_SNAPSHOT_ID\n              value: "98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292"',
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      '- name: BAYN_SIGNAL_EVALUATION_START\n              value: "2023-01-30"',
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      '- name: BAYN_TIGERBEETLE_CLUSTER_ID\n              value: "122731676035874920802382025803517750735"',
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      '- name: BAYN_TIGERBEETLE_ADDRESSES\n              value: "ledger.bayn.svc.cluster.local:3000"',
-    )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain('restartedAt: "2026-07-19T10:00:00Z"')
-    expect(readFileSync(applicationSetPath, 'utf8')).toContain(
-      '- name: bayn\n                path: argocd/applications/bayn\n                enabled: "true"',
-    )
+const environmentBlock = (name: string, value: string): string =>
+  `            - name: ${name}\n              value: ${JSON.stringify(value)}\n`
 
-    addQualificationPin()
-    const nextSourceSha = 'c'.repeat(40)
-    const preserved = updateBaynManifests({
-      sourceSha: nextSourceSha,
-      tag: `sha-${nextSourceSha}`,
-      digest: `sha256:${'d'.repeat(64)}`,
-      strategyBehaviorHash,
-      strategyParameterHash,
-      rolloutTimestamp: '2026-07-20T10:00:00Z',
-      kustomizationPath,
-      deploymentPath,
-      applicationSetPath,
-    })
-    expect(preserved).toMatchObject({
+const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
+  directory = mkdtempSync(join(tmpdir(), 'bayn-manifest-'))
+  const paths = {
+    kustomizationPath: join(directory, 'kustomization.yaml'),
+    deploymentPath: join(directory, 'deployment.yaml'),
+    applicationSetPath: join(directory, 'product.yaml'),
+  }
+  const bindings = {
+    ...currentBindings,
+    BAYN_SIGNAL_SNAPSHOT_ID: options.snapshotId ?? currentBindings.BAYN_SIGNAL_SNAPSHOT_ID,
+    BAYN_SIGNAL_PUBLICATION_ASOF: options.publicationAsOf ?? currentBindings.BAYN_SIGNAL_PUBLICATION_ASOF,
+  }
+  const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
+  const environment = [
+    environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
+    environmentBlock('BAYN_IMAGE_REPOSITORY', 'registry.ide-newton.ts.net/lab/bayn'),
+    environmentBlock('BAYN_IMAGE_DIGEST', `sha256:${'0'.repeat(64)}`),
+    environmentBlock('BAYN_STRATEGY_BEHAVIOR_HASH', options.behaviorHash ?? strategyBehaviorHash),
+    environmentBlock('BAYN_STRATEGY_PARAMETER_HASH', options.parameterHash ?? strategyParameterHash),
+    pin === undefined ? '' : environmentBlock('BAYN_QUALIFICATION_RUN_ID', pin),
+    ...Object.entries(bindings).map(([name, value]) => environmentBlock(name, value)),
+  ].join('')
+
+  writeFileSync(
+    paths.kustomizationPath,
+    'images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n',
+  )
+  writeFileSync(
+    paths.deploymentPath,
+    `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n${environment}`,
+  )
+  writeFileSync(
+    paths.applicationSetPath,
+    'elements:\n              - name: bayn\n                path: argocd/applications/bayn\n                enabled: "false"\n              - name: next\n                enabled: "true"\n',
+  )
+  return paths
+}
+
+const promote = (
+  paths: FixturePaths,
+  overrides: Partial<Pick<UpdateBaynManifestOptions, 'strategyBehaviorHash' | 'strategyParameterHash'>> = {},
+) => {
+  const sourceSha = 'a'.repeat(40)
+  return updateBaynManifests({
+    sourceSha,
+    tag: `sha-${sourceSha}`,
+    digest: `sha256:${'b'.repeat(64)}`,
+    strategyBehaviorHash: overrides.strategyBehaviorHash ?? strategyBehaviorHash,
+    strategyParameterHash: overrides.strategyParameterHash ?? strategyParameterHash,
+    rolloutTimestamp: '2026-07-22T10:00:00Z',
+    ...paths,
+  })
+}
+
+describe('Bayn manifest promotion', () => {
+  test('preserves a qualification pin only for identical strategy and runtime bindings', () => {
+    const paths = makeFixture()
+    const result = promote(paths)
+
+    expect(result).toMatchObject({
       qualificationMode: 'preserve',
       hadQualificationPin: true,
       runtimeBindingsMatch: true,
+      snapshotChanged: false,
+      deployedSnapshotId: currentSnapshotId,
+      candidateSnapshotId: currentSnapshotId,
     })
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(
-      `- name: BAYN_QUALIFICATION_RUN_ID\n              value: ${'9'.repeat(64)}`,
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
     )
-    expect(readFileSync(deploymentPath, 'utf8')).toContain(`value: ${nextSourceSha}`)
+    expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
+  })
 
-    writeFileSync(
-      deploymentPath,
-      readFileSync(deploymentPath, 'utf8').replace(
-        'BAYN_SIGNAL_PUBLICATION_ASOF\n              value: "2026-07-20"',
-        'BAYN_SIGNAL_PUBLICATION_ASOF\n              value: "2026-07-19"',
-      ),
+  test('rejects an incompatible strategy against an already-qualified snapshot without writing files', () => {
+    const paths = makeFixture()
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() => promote(paths, { strategyParameterHash: '3'.repeat(64) })).toThrow(
+      'qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID',
     )
-    const signalChangeSourceSha = 'e'.repeat(40)
-    const signalChange = updateBaynManifests({
-      sourceSha: signalChangeSourceSha,
-      tag: `sha-${signalChangeSourceSha}`,
-      digest: `sha256:${'f'.repeat(64)}`,
-      strategyBehaviorHash,
-      strategyParameterHash,
-      rolloutTimestamp: '2026-07-21T10:00:00Z',
-      kustomizationPath,
-      deploymentPath,
-      applicationSetPath,
-    })
-    expect(signalChange).toMatchObject({
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  test('rejects changed runtime bindings against an already-qualified snapshot', () => {
+    const paths = makeFixture({ publicationAsOf: '2026-07-19' })
+
+    expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+  })
+
+  test('replaces a pin for a fresh snapshot and rejects another unpinned release on that snapshot', () => {
+    const paths = makeFixture({ snapshotId: '4'.repeat(64), publicationAsOf: '2026-07-19' })
+    const changedParameterHash = '3'.repeat(64)
+    const first = promote(paths, { strategyParameterHash: changedParameterHash })
+
+    expect(first).toMatchObject({
       qualificationMode: 'replace',
       hadQualificationPin: true,
       runtimeBindingsMatch: false,
+      snapshotChanged: true,
+      deployedSnapshotId: '4'.repeat(64),
+      candidateSnapshotId: currentSnapshotId,
     })
-    expect(readFileSync(deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      environmentBlock('BAYN_SIGNAL_SNAPSHOT_ID', currentSnapshotId).trim(),
+    )
 
-    const unpinnedSourceSha = '6'.repeat(40)
-    const unpinned = updateBaynManifests({
-      sourceSha: unpinnedSourceSha,
-      tag: `sha-${unpinnedSourceSha}`,
-      digest: `sha256:${'7'.repeat(64)}`,
-      strategyBehaviorHash,
-      strategyParameterHash,
-      rolloutTimestamp: '2026-07-22T10:00:00Z',
-      kustomizationPath,
-      deploymentPath,
-      applicationSetPath,
-    })
-    expect(unpinned).toMatchObject({
-      qualificationMode: 'replace',
-      hadQualificationPin: false,
-      runtimeBindingsMatch: true,
-    })
-
-    addQualificationPin()
-    const changedParameters = updateBaynManifests({
-      sourceSha: '8'.repeat(40),
-      tag: `sha-${'8'.repeat(40)}`,
-      digest: `sha256:${'8'.repeat(64)}`,
-      strategyBehaviorHash,
-      strategyParameterHash: '8'.repeat(64),
-      rolloutTimestamp: '2026-07-23T10:00:00Z',
-      kustomizationPath,
-      deploymentPath,
-      applicationSetPath,
-    })
-    expect(changedParameters).toMatchObject({
-      qualificationMode: 'replace',
-      hadQualificationPin: true,
-      runtimeBindingsMatch: true,
-    })
+    expect(() => promote(paths, { strategyParameterHash: changedParameterHash })).toThrow(
+      'qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID',
+    )
   })
 
   test('rejects malformed release metadata', () => {
@@ -187,8 +165,8 @@ describe('Bayn manifest promotion', () => {
         sourceSha: 'main',
         tag: 'latest',
         digest: 'sha256:bad',
-        strategyBehaviorHash: '1'.repeat(64),
-        strategyParameterHash: '2'.repeat(64),
+        strategyBehaviorHash,
+        strategyParameterHash,
         rolloutTimestamp: 'now',
         applicationSetPath: 'unused',
       }),

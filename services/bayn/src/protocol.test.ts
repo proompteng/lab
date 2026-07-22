@@ -1,19 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { readFileSync } from 'node:fs'
-
 import { Effect, Exit } from 'effect'
 
+import { verifyParameterHash, type EmbeddedBuildMetadata } from './build'
 import { defaultProtocolDocument, hashParameters, loadDefaultProtocol, loadProtocol } from './protocol'
-
-const imageParameterHash = (): string => {
-  const imageSource = readFileSync(new URL('../../../nix/images/bayn.nix', import.meta.url), 'utf8')
-  const matches = [...imageSource.matchAll(/^\s*strategyParameterHash = "([a-f0-9]{64})";$/gm)]
-  if (matches.length !== 1 || matches[0]?.[1] === undefined) {
-    throw new Error('nix/images/bayn.nix must define exactly one strategyParameterHash')
-  }
-  return matches[0][1]
-}
 
 describe('strategy protocol', () => {
   test('decodes the committed protocol', async () => {
@@ -31,7 +21,25 @@ describe('strategy protocol', () => {
       maximumSymbolWeight: 0.35,
       maximumPortfolioVolatility: 0.1,
     })
-    expect(hashParameters(protocol)).toBe(imageParameterHash())
+    expect(hashParameters(protocol)).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('rejects build metadata for different compiled parameters', async () => {
+    const protocol = await Effect.runPromise(loadDefaultProtocol)
+    const parameterHash = hashParameters(protocol)
+    const metadata: EmbeddedBuildMetadata = {
+      sourceRevision: 'a'.repeat(40),
+      imageRepository: 'registry.example.test/lab/bayn',
+      strategyBehaviorHash: 'b'.repeat(64),
+      strategyParameterHash: parameterHash,
+    }
+
+    await Effect.runPromise(verifyParameterHash(metadata, parameterHash))
+    const exit = await Effect.runPromiseExit(
+      verifyParameterHash({ ...metadata, strategyParameterHash: '0'.repeat(64) }, parameterHash),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(exit.cause.toString()).toContain('compiled strategy parameters')
   })
 
   test('rejects legacy, malformed, and non-canonical documents', async () => {

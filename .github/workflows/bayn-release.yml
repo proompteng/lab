@@ -103,20 +103,23 @@ jobs:
           IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
         run: |
           set -euo pipefail
-          nix_hash() {
-            local name="$1"
-            local -a hashes
-            mapfile -t hashes < <(
-              git show "${SOURCE_SHA}:nix/images/bayn.nix" |
-                sed -nE "s/^[[:space:]]*${name} = \"([0-9a-f]{64})\";$/\\1/p"
-            )
-            test "${#hashes[@]}" -eq 1
-            printf '%s' "${hashes[0]}"
+          image_label() {
+            local config="$1"
+            local name="$2"
+            jq -er --arg name "$name" '.config.Labels[$name] | select(type == "string" and length > 0)' <<< "$config"
           }
 
-          strategy_behavior_hash="$(nix_hash strategyBehaviorHash)"
-          strategy_parameter_hash="$(nix_hash strategyParameterHash)"
-          nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/bayn@${IMAGE_DIGEST}" linux/amd64 linux/arm64
+          candidate_reference="registry.ide-newton.ts.net/lab/bayn@${IMAGE_DIGEST}"
+          nix run .#assert-oci-platforms -- "$candidate_reference" linux/amd64 linux/arm64
+          config_amd64="$(crane config --platform linux/amd64 "$candidate_reference")"
+          config_arm64="$(crane config --platform linux/arm64 "$candidate_reference")"
+          source_revision="$(image_label "$config_amd64" org.opencontainers.image.revision)"
+          strategy_behavior_hash="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-behavior-hash)"
+          strategy_parameter_hash="$(image_label "$config_amd64" proompteng.ai/bayn.strategy-parameter-hash)"
+          test "$source_revision" = "$SOURCE_SHA"
+          test "$(image_label "$config_arm64" org.opencontainers.image.revision)" = "$source_revision"
+          test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-behavior-hash)" = "$strategy_behavior_hash"
+          test "$(image_label "$config_arm64" proompteng.ai/bayn.strategy-parameter-hash)" = "$strategy_parameter_hash"
           promotion="$(
             bun packages/scripts/src/bayn/update-manifests.ts \
               --source-sha "$SOURCE_SHA" \
@@ -131,6 +134,9 @@ jobs:
             echo "qualification_mode=$(jq -r '.qualificationMode' <<< "$promotion")"
             echo "had_qualification_pin=$(jq -r '.hadQualificationPin' <<< "$promotion")"
             echo "runtime_bindings_match=$(jq -r '.runtimeBindingsMatch' <<< "$promotion")"
+            echo "snapshot_changed=$(jq -r '.snapshotChanged' <<< "$promotion")"
+            echo "deployed_snapshot_id=$(jq -r '.deployedSnapshotId' <<< "$promotion")"
+            echo "candidate_snapshot_id=$(jq -r '.candidateSnapshotId' <<< "$promotion")"
             echo "deployed_source=$(jq -r '.deployedSourceSha' <<< "$promotion")"
             echo "deployed_behavior_hash=$(jq -r '.deployedBehaviorHash' <<< "$promotion")"
             echo "deployed_parameter_hash=$(jq -r '.deployedParameterHash' <<< "$promotion")"
@@ -163,6 +169,9 @@ jobs:
             - Qualification mode: `${{ steps.promotion.outputs.qualification_mode }}`
             - Existing pin: `${{ steps.promotion.outputs.had_qualification_pin }}`
             - Runtime bindings match: `${{ steps.promotion.outputs.runtime_bindings_match }}`
+            - Snapshot changed: `${{ steps.promotion.outputs.snapshot_changed }}`
+            - Deployed snapshot: `${{ steps.promotion.outputs.deployed_snapshot_id }}`
+            - Candidate snapshot: `${{ steps.promotion.outputs.candidate_snapshot_id }}`
             - Deployed behavior hash: `${{ steps.promotion.outputs.deployed_behavior_hash }}`
             - Candidate behavior hash: `${{ steps.promotion.outputs.candidate_behavior_hash }}`
             - Deployed parameter hash: `${{ steps.promotion.outputs.deployed_parameter_hash }}`
@@ -185,7 +194,8 @@ jobs:
             This is a one-way current-contract runtime release. Databases with the old migration tracker are rejected;
             there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
             behavior, protocol parameters, Signal inputs, and TigerBeetle bindings all match. `replace` removes the
-            pin, and later unpinned promotions remain valid without reintroducing compatibility state.
+            pin only for a fresh Signal snapshot. After that qualification, another image requires its terminal run
+            to be pinned or another fresh snapshot.
 
             ## Checklist
 
