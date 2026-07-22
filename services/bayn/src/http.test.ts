@@ -50,7 +50,8 @@ describe('Bayn HTTP probes', () => {
             status: 200,
             body: { ready: true, status: 'READY' },
           })
-          expect(yield* Effect.promise(() => fetchJson(port, '/v1/status'))).toMatchObject({
+          const statusResponse = yield* Effect.promise(() => fetchJson(port, '/v1/status'))
+          expect(statusResponse).toMatchObject({
             status: 200,
             body: {
               service: 'bayn',
@@ -69,6 +70,9 @@ describe('Bayn HTTP probes', () => {
               accounting: { status: 'EXACT' },
             },
           })
+          expect(statusResponse.body.economic).not.toHaveProperty('status')
+          expect(statusResponse.body.qualification).not.toHaveProperty('status')
+          expect(statusResponse.body.qualification).not.toHaveProperty('executable')
           expect(yield* Effect.promise(() => fetchJson(port, `/v1/evaluations/${historicalRunId}`))).toMatchObject({
             status: 200,
             body: { run: { runId: historicalRunId } },
