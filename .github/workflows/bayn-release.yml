@@ -133,7 +133,7 @@ jobs:
           {
             echo "qualification_mode=$(jq -r '.qualificationMode' <<< "$promotion")"
             echo "had_qualification_pin=$(jq -r '.hadQualificationPin' <<< "$promotion")"
-            echo "runtime_bindings_match=$(jq -r '.runtimeBindingsMatch' <<< "$promotion")"
+            echo "qualification_bindings_match=$(jq -r '.qualificationBindingsMatch' <<< "$promotion")"
             echo "snapshot_changed=$(jq -r '.snapshotChanged' <<< "$promotion")"
             echo "deployed_snapshot_id=$(jq -r '.deployedSnapshotId' <<< "$promotion")"
             echo "candidate_snapshot_id=$(jq -r '.candidateSnapshotId' <<< "$promotion")"
@@ -168,7 +168,7 @@ jobs:
             - Image digest: `${{ steps.release.outputs.digest }}`
             - Qualification mode: `${{ steps.promotion.outputs.qualification_mode }}`
             - Existing pin: `${{ steps.promotion.outputs.had_qualification_pin }}`
-            - Runtime bindings match: `${{ steps.promotion.outputs.runtime_bindings_match }}`
+            - Qualification identity bindings match: `${{ steps.promotion.outputs.qualification_bindings_match }}`
             - Snapshot changed: `${{ steps.promotion.outputs.snapshot_changed }}`
             - Deployed snapshot: `${{ steps.promotion.outputs.deployed_snapshot_id }}`
             - Candidate snapshot: `${{ steps.promotion.outputs.candidate_snapshot_id }}`
@@ -193,10 +193,11 @@ jobs:
 
             This is a one-way current-contract runtime release. Databases with the old migration tracker are rejected;
             there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
-            behavior, protocol parameters, Signal inputs, and TigerBeetle bindings all match. `replace` removes an
-            existing incompatible pin only for a fresh Signal snapshot. Once that one-shot release is unpinned, a
-            different source revision is rejected until the terminal run is pinned or the snapshot advances.
-            Promotion never creates a qualification pin.
+            behavior, protocol parameters, Signal inputs, TigerBeetle cluster ID, and TigerBeetle ledger all match.
+            Replica addresses are transport and are rewritten without relabeling qualification evidence. `replace`
+            removes an existing incompatible pin only for a fresh Signal snapshot. Once that one-shot release is
+            unpinned, a different source revision is rejected until the terminal run is pinned or the snapshot
+            advances. Promotion never creates a qualification pin.
 
             ## Checklist
 
