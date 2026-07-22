@@ -141,6 +141,7 @@ const baseState = (): State => {
     dayStartEquityMicros: '1000000000',
     peakEquityMicros: '1050000000',
     accountingHash,
+    marketDataSymbol: 'NVDA',
     marketDataHash: hash('5'),
     referencePriceMicros: '100000000',
     expectedExecutionPriceMicros: '100000000',
@@ -233,6 +234,7 @@ describe('bounded paper risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Limit] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '01' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '9223372036854775808' })).toThrow()
+    expect(() => decodePolicy({ ...rawPolicy, maxUnresolvedOrders: 1 })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, decisionTtlMs: 86_400_001 })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, extra: true })).toThrow()
 
@@ -303,7 +305,7 @@ describe('bounded paper risk', () => {
     for (const [reason, intent, state, policy] of cases) expectBlocked(reason, intent, state, policy)
   })
 
-  test('blocks adverse slippage and unresolved-order overflow at their next unit', () => {
+  test('blocks adverse slippage and any unresolved order', () => {
     const slippageState = makeState({
       account: { ...baseState().account, buyingPowerMicros: '101000000' },
       expectedExecutionPriceMicros: '101000000',
@@ -326,10 +328,7 @@ describe('bounded paper risk', () => {
     )
 
     const oneOrder = makeState({ orders: [openOrder('broker-1')] })
-    expect(evaluate(makeIntent(), oneOrder, makePolicy({ maxUnresolvedOrders: 1 })).decision.outcome).toBe(
-      RiskOutcome.Approved,
-    )
-    expectBlocked(Reason.UnresolvedOrdersExceeded, makeIntent(), oneOrder, makePolicy({ maxUnresolvedOrders: 0 }))
+    expectBlocked(Reason.UnresolvedOrdersExceeded, makeIntent(), oneOrder, makePolicy())
   })
 
   test('does not require buying power for a position-reducing sell', () => {
@@ -355,6 +354,7 @@ describe('bounded paper risk', () => {
       makeState({ account: { ...baseState().account, equityMicros: '0' } }),
     )
     expectBlocked(Reason.SymbolNotAllowed, makeIntent(), makeState(), makePolicy({ allowedSymbols: ['AMD'] }))
+    expectBlocked(Reason.MarketDataSymbolMismatch, makeIntent(), makeState({ marketDataSymbol: 'AMD' }), makePolicy())
     expectBlocked(Reason.OrderTypeNotAllowed, makeIntent({ orderType: OrderType.Limit }), makeState(), makePolicy())
     expectBlocked(
       Reason.TimeInForceNotAllowed,

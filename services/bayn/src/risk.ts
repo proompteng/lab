@@ -36,7 +36,7 @@ import {
 
 const MAX_POLICY_MICROS = 9_223_372_036_854_775_807n
 const MAX_AGE_MS = 86_400_000
-const MAX_OPEN_ORDERS = 1_000
+const MAX_UNKNOWN_MUTATIONS = 1_000
 const BASIS_POINTS = 10_000n
 const QUANTITY_SCALE = 1_000_000n
 
@@ -46,7 +46,7 @@ const LimitMicros = UnsignedMicrosSchema.check(
   }),
 )
 const AgeMilliseconds = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_AGE_MS }))
-const OrderCount = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: MAX_OPEN_ORDERS }))
+const MutationCount = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: MAX_UNKNOWN_MUTATIONS }))
 const BasisPointLimit = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number(BASIS_POINTS) }))
 
 const isSorted = (values: ReadonlyArray<string>): boolean => {
@@ -72,6 +72,7 @@ export enum Gate {
   AccountStatus = 'account_status',
   Equity = 'equity',
   Symbol = 'symbol',
+  MarketDataSymbol = 'market_data_symbol',
   OrderType = 'order_type',
   TimeInForce = 'time_in_force',
   Authority = 'authority',
@@ -102,6 +103,7 @@ export enum Reason {
   AccountNotActive = 'ACCOUNT_NOT_ACTIVE',
   EquityNotPositive = 'EQUITY_NOT_POSITIVE',
   SymbolNotAllowed = 'SYMBOL_NOT_ALLOWED',
+  MarketDataSymbolMismatch = 'MARKET_DATA_SYMBOL_MISMATCH',
   OrderTypeNotAllowed = 'ORDER_TYPE_NOT_ALLOWED',
   TimeInForceNotAllowed = 'TIME_IN_FORCE_NOT_ALLOWED',
   AuthorityNotPaper = 'AUTHORITY_NOT_PAPER',
@@ -146,7 +148,7 @@ export const PolicySchema = Schema.Struct({
   maxBrokerStateAgeMs: AgeMilliseconds,
   maxMarketDataAgeMs: AgeMilliseconds,
   maxAdverseSlippageBps: BasisPointLimit,
-  maxUnresolvedOrders: OrderCount,
+  maxUnresolvedOrders: Schema.Literal(0),
   decisionTtlMs: AgeMilliseconds,
 })
 export type Policy = typeof PolicySchema.Type
@@ -162,11 +164,12 @@ const StateBase = Schema.Struct({
   reconciliation: ReconciliationSchema,
   authority: AuthorityStateSchema,
   authorityObservedAt: UtcInstant,
-  unknownMutationCount: OrderCount,
+  unknownMutationCount: MutationCount,
   dailyTradedNotionalMicros: UnsignedMicrosSchema,
   dayStartEquityMicros: SignedMicrosSchema,
   peakEquityMicros: SignedMicrosSchema,
   accountingHash: Sha256,
+  marketDataSymbol: SymbolName,
   marketDataHash: Sha256,
   referencePriceMicros: PositiveMicrosSchema,
   expectedExecutionPriceMicros: PositiveMicrosSchema,
@@ -409,6 +412,13 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
       policy.allowedSymbols.join(','),
     ),
     makeGate(
+      Gate.MarketDataSymbol,
+      Reason.MarketDataSymbolMismatch,
+      state.marketDataSymbol === intent.symbol,
+      state.marketDataSymbol,
+      intent.symbol,
+    ),
+    makeGate(
       Gate.OrderType,
       Reason.OrderTypeNotAllowed,
       intent.orderType === OrderType.Market,
@@ -576,6 +586,7 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     unknownMutationCount: state.unknownMutationCount,
   })
   const marketDataHash = canonicalHashV1({
+    symbol: state.marketDataSymbol,
     sourceHash: state.marketDataHash,
     observedAt: state.marketDataObservedAt,
     referencePriceMicros: state.referencePriceMicros,
