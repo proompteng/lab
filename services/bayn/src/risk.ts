@@ -293,6 +293,8 @@ const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const positiveDifference = (left: bigint, right: bigint): bigint => (left > right ? left - right : 0n)
 const divideUp = (numerator: bigint, denominator: bigint): bigint =>
   numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator
+const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>
+  numerator < 0n ? -divideUp(-numerator, denominator) : divideUp(numerator, denominator)
 const instant = (value: string): number => Date.parse(value)
 const utc = (value: number): string => new Date(value).toISOString()
 
@@ -310,29 +312,35 @@ const isUnresolved = (status: OrderStatus): boolean =>
 export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluation => {
   const evaluatedAt = instant(state.evaluatedAt)
   const policyHash = canonicalHashV1(policy)
-  const orderNotional = divideUp(
-    BigInt(intent.quantityMicros) * BigInt(state.expectedExecutionPriceMicros),
+  const referencePrice = BigInt(state.referencePriceMicros)
+  const expectedPrice = BigInt(state.expectedExecutionPriceMicros)
+  const orderNotional = divideUp(BigInt(intent.quantityMicros) * expectedPrice, QUANTITY_SCALE)
+  const direction = intent.side === OrderSide.Buy ? 1n : -1n
+  const currentSymbolQuantity = state.positions
+    .filter((position) => position.symbol === intent.symbol)
+    .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
+  const currentSymbolExposureNumerator = currentSymbolQuantity * referencePrice
+  const postTradeSymbolExposureNumerator =
+    (currentSymbolQuantity + direction * BigInt(intent.quantityMicros)) * referencePrice
+  const postTradeSymbolExposure = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
+  const postTradeSymbolExposureMagnitude = divideUp(absolute(postTradeSymbolExposureNumerator), QUANTITY_SCALE)
+  const otherGrossExposure = state.positions
+    .filter((position) => position.symbol !== intent.symbol)
+    .reduce((total, position) => total + absolute(BigInt(position.marketValueMicros)), 0n)
+  const otherNetExposure = state.positions
+    .filter((position) => position.symbol !== intent.symbol)
+    .reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
+  const postTradeGrossExposure = otherGrossExposure + postTradeSymbolExposureMagnitude
+  const postTradeNetExposureNumerator = otherNetExposure * QUANTITY_SCALE + postTradeSymbolExposureNumerator
+  const postTradeNetExposure = divideAwayFromZero(postTradeNetExposureNumerator, QUANTITY_SCALE)
+  const postTradeNetExposureMagnitude = divideUp(absolute(postTradeNetExposureNumerator), QUANTITY_SCALE)
+  const exposureIncrease = divideUp(
+    positiveDifference(absolute(postTradeSymbolExposureNumerator), absolute(currentSymbolExposureNumerator)),
     QUANTITY_SCALE,
   )
-  const direction = intent.side === OrderSide.Buy ? 1n : -1n
-  const currentSymbolExposure = state.positions
-    .filter((position) => position.symbol === intent.symbol)
-    .reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
-  const currentGrossExposure = state.positions.reduce(
-    (total, position) => total + absolute(BigInt(position.marketValueMicros)),
-    0n,
-  )
-  const currentNetExposure = state.positions.reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
-  const postTradeSymbolExposure = currentSymbolExposure + direction * orderNotional
-  const exposureIncrease = positiveDifference(absolute(postTradeSymbolExposure), absolute(currentSymbolExposure))
-  const postTradeGrossExposure =
-    currentGrossExposure - absolute(currentSymbolExposure) + absolute(postTradeSymbolExposure)
-  const postTradeNetExposure = currentNetExposure + direction * orderNotional
   const dailyTradedNotional = BigInt(state.dailyTradedNotionalMicros) + orderNotional
   const dailyLoss = positiveDifference(BigInt(state.dayStartEquityMicros), BigInt(state.account.equityMicros))
   const drawdown = positiveDifference(BigInt(state.peakEquityMicros), BigInt(state.account.equityMicros))
-  const referencePrice = BigInt(state.referencePriceMicros)
-  const expectedPrice = BigInt(state.expectedExecutionPriceMicros)
   const adversePriceDifference =
     intent.side === OrderSide.Buy
       ? positiveDifference(expectedPrice, referencePrice)
@@ -515,8 +523,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.SymbolExposure,
       Reason.SymbolExposureExceeded,
-      absolute(postTradeSymbolExposure) <= BigInt(policy.maxSymbolExposureMicros),
-      absolute(postTradeSymbolExposure),
+      postTradeSymbolExposureMagnitude <= BigInt(policy.maxSymbolExposureMicros),
+      postTradeSymbolExposureMagnitude,
       `<=${policy.maxSymbolExposureMicros}`,
     ),
     makeGate(
@@ -529,8 +537,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.NetExposure,
       Reason.NetExposureExceeded,
-      absolute(postTradeNetExposure) <= BigInt(policy.maxNetExposureMicros),
-      absolute(postTradeNetExposure),
+      postTradeNetExposureMagnitude <= BigInt(policy.maxNetExposureMicros),
+      postTradeNetExposureMagnitude,
       `<=${policy.maxNetExposureMicros}`,
     ),
     makeGate(
