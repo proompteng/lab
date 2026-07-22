@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Cause, Effect, Exit, Option, Redacted, Ref } from 'effect'
+import { AuthorizationError, SqlError } from 'effect/unstable/sql/SqlError'
 
 import { initialize } from './app'
 import type { RuntimeConfig } from './config'
 import { EvidenceStore, type EvidenceStoreService } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
-import { MarketData, type MarketDataService } from './market-data'
+import { MarketData, marketDataOperationError, type MarketDataService } from './market-data'
 import { initialState } from './runtime-state'
 import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
@@ -309,6 +310,31 @@ describe('Bayn resource lifecycle', () => {
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'FAILED',
       error: expect.stringContaining('market-data.verify'),
+    })
+  })
+
+  test('keeps ClickHouse authorization failures observable as terminal startup failures', async () => {
+    const authorization = new SqlError({
+      reason: new AuthorizationError({ cause: new Error('SELECT denied'), operation: 'query' }),
+    })
+    const marketData = marketDataService(
+      Effect.fail(marketDataOperationError('load', 'failed to load finalized Signal snapshot', authorization)),
+    )
+    const state = await Effect.runPromise(Ref.make(initialState()))
+
+    await Effect.runPromise(
+      Effect.scoped(
+        initialize(config, state, fixtureStrategy).pipe(
+          Effect.provideService(Journal, successfulJournal),
+          Effect.provideService(EvidenceStore, successfulEvidenceStore),
+          Effect.provideService(MarketData, marketData),
+        ),
+      ),
+    )
+
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'FAILED',
+      error: expect.stringContaining('market-data.load'),
     })
   })
 

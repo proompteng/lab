@@ -1,5 +1,6 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Clock, Context, Effect, Layer, Schema } from 'effect'
+import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import type { RuntimeConfig } from './config'
 import { type EvaluationBounds, type FinalizedSnapshotProvenance, FinalizedSnapshotProvenanceSchema } from './contracts'
@@ -147,6 +148,16 @@ export interface MarketDataService {
 }
 
 export class MarketData extends Context.Service<MarketData, MarketDataService>()('bayn/MarketData') {}
+
+export const marketDataOperationError = (
+  operation: 'check' | 'inspect' | 'load',
+  message: string,
+  cause: unknown,
+): OperationalError => {
+  if (cause instanceof OperationalError) return cause
+  const makeError = isSqlError(cause) && !cause.isRetryable ? operationalError : retryableOperationalError
+  return makeError('market-data', operation, message, cause)
+}
 
 const asCount = (value: string | number, name: string): number => {
   const parsed = typeof value === 'number' ? value : Number(value)
@@ -586,9 +597,7 @@ const makeMarketData = (
         )
       }).pipe(
         Effect.mapError((cause) =>
-          cause instanceof OperationalError
-            ? cause
-            : retryableOperationalError('market-data', 'check', 'failed to check finalized Signal snapshot', cause),
+          marketDataOperationError('check', 'failed to check finalized Signal snapshot', cause),
         ),
       ),
       inspect: Effect.gen(function* () {
@@ -598,9 +607,7 @@ const makeMarketData = (
         return yield* verify('inspect', () => verifyFinalizedCalendar(rows, request(observedAt)))
       }).pipe(
         Effect.mapError((cause) =>
-          cause instanceof OperationalError
-            ? cause
-            : retryableOperationalError('market-data', 'inspect', 'failed to inspect finalized Signal calendar', cause),
+          marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),
         ),
       ),
       load: Effect.gen(function* () {
@@ -612,11 +619,7 @@ const makeMarketData = (
           verifyFinalizedSnapshot(decodeSnapshotRows(bars, sessions, manifests), request(observedAt)),
         )
       }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof OperationalError
-            ? cause
-            : retryableOperationalError('market-data', 'load', 'failed to load finalized Signal snapshot', cause),
-        ),
+        Effect.mapError((cause) => marketDataOperationError('load', 'failed to load finalized Signal snapshot', cause)),
       ),
     }
   })
