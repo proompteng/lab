@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
-import { PgClient, PgMigrator } from '@effect/sql-pg'
+import { PgClient } from '@effect/sql-pg'
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
@@ -19,7 +19,6 @@ import {
   PostgresClientLive,
   type PersistEvaluationInput,
 } from './evidence-store'
-import { migrationLoader } from './migrations'
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -144,19 +143,23 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('migrates the complete evidence schema', async () => {
-    const tables = await runtime.runPromise(
+    const schema = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        return yield* sql<{ table_name: string }>`
+        const tables = yield* sql<{ table_name: string }>`
           SELECT table_name
           FROM information_schema.tables
           WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
           ORDER BY table_name
         `
+        const migrations = yield* sql<{ migration_id: number; name: string }>`
+          SELECT migration_id, name FROM schema_migrations ORDER BY migration_id
+        `
+        return { tables, migrations }
       }),
     )
 
-    expect(tables.map((row) => row.table_name)).toEqual([
+    expect(schema.tables.map((row) => row.table_name)).toEqual([
       'evaluation_artifacts',
       'evaluation_events',
       'evaluation_runs',
@@ -169,324 +172,20 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'snapshot_references',
       'status_history',
     ])
+    expect(schema.migrations).toEqual([{ migration_id: 1, name: 'initial_schema' }])
   })
 
-  test('rejects the legacy migration tracker instead of renaming it', async () => {
-    await runtime.dispose()
-    const client = makeClientRuntime()
-    await client.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* sql`CREATE TABLE bayn_schema_migrations (migration_id integer PRIMARY KEY)`
-      }),
-    )
-
-    const legacyRuntime = makeEvidenceRuntime()
-    const exit = await legacyRuntime.runPromiseExit(Effect.flatMap(EvidenceStore, (store) => store.check))
-    await legacyRuntime.dispose()
-
-    const trackers = await client.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const rows = yield* sql<{ current_exists: boolean; legacy_exists: boolean }>`
-          SELECT
-            to_regclass('public.schema_migrations') IS NOT NULL AS current_exists,
-            to_regclass('public.bayn_schema_migrations') IS NOT NULL AS legacy_exists
-        `
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        return rows[0]
-      }),
-    )
-    await client.dispose()
-    runtime = makeEvidenceRuntime()
-    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
-
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('legacy migration tracker is unsupported')
-    expect(trackers).toEqual({ current_exists: false, legacy_exists: true })
-  })
-
-  test('hard-migrates the deployed schema by deleting previous evidence and preserving migration history', async () => {
-    const runId = '9'.repeat(64)
-    const snapshotId = '6'.repeat(64)
-    const lockId = '5'.repeat(64)
-    const resultHash = '4'.repeat(64)
-    const analysisHash = '3'.repeat(64)
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`DROP SCHEMA public CASCADE`
-        yield* sql`CREATE SCHEMA public`
-        yield* sql`DROP SCHEMA IF EXISTS restore_probe CASCADE`
-        yield* sql`CREATE SCHEMA restore_probe`
-        yield* sql`CREATE TABLE restore_probe.evidence (proof_id text PRIMARY KEY, proof_value text NOT NULL)`
-        yield* sql`INSERT INTO restore_probe.evidence VALUES ('legacy-restore-proof', 'must-be-deleted')`
-        const deployedMigrations = migrationLoader.pipe(
-          Effect.map((migrations) => migrations.filter(([id]) => id <= 5)),
-        )
-        yield* PgMigrator.run({ loader: deployedMigrations, table: 'schema_migrations' }).pipe(
-          Effect.provide(NodeServices.layer),
-        )
-        yield* sql`
-          INSERT INTO bayn_protocol_locks (
-            protocol_hash,
-            schema_version,
-            strategy_name,
-            behavior_hash,
-            parameter_hash,
-            parameters
-          ) VALUES (
-            ${runId},
-            'bayn.tsmom.protocol.v2',
-            'tsmom',
-            ${'8'.repeat(64)},
-            ${'7'.repeat(64)},
-            '{}'::jsonb
-          )
-        `
-        yield* sql`
-          INSERT INTO bayn_protocol_locks (
-            protocol_hash,
-            schema_version,
-            strategy_name,
-            behavior_hash,
-            parameter_hash,
-            parameters
-          ) VALUES (
-            ${'e'.repeat(64)},
-            'bayn.tsmom.protocol.v1',
-            'tsmom',
-            ${'f'.repeat(64)},
-            ${'0'.repeat(64)},
-            '{}'::jsonb
-          )
-        `
-        yield* sql`
-          INSERT INTO bayn_snapshot_references (
-            snapshot_id,
-            schema_version,
-            database_name,
-            table_name,
-            dataset_version,
-            source,
-            source_feed,
-            adjustment,
-            content_hash,
-            row_count,
-            first_session,
-            last_session,
-            manifest
-          ) VALUES (
-            ${snapshotId},
-            'bayn.finalized-snapshot.v2',
-            'signal',
-            'adjusted_daily_bars_v2',
-            'signal.adjusted-daily-snapshot.v1',
-            'alpaca',
-            'sip',
-            'all',
-            ${'2'.repeat(64)},
-            1,
-            '2026-07-17',
-            '2026-07-17',
-            '{}'::jsonb
-          )
-        `
-        yield* sql`
-          INSERT INTO bayn_evaluation_runs (
-            run_id,
-            protocol_hash,
-            snapshot_id,
-            evaluation_schema_version,
-            source_revision,
-            image_repository,
-            image_digest,
-            strategy_name,
-            initial_capital_micros,
-            expected_artifact_count,
-            expected_event_count,
-            expected_gate_count,
-            status,
-            completed_at
-          ) VALUES (
-            ${runId},
-            ${runId},
-            ${snapshotId},
-            'bayn.evaluation.v4',
-            ${'1'.repeat(40)},
-            'registry.example/bayn',
-            ${`sha256:${'0'.repeat(64)}`},
-            'tsmom',
-            1000000,
-            1,
-            1,
-            1,
-            'COMPLETE',
-            transaction_timestamp()
-          )
-        `
-        yield* sql`
-          INSERT INTO bayn_evaluation_artifacts (
-            run_id, artifact_name, schema_version, content_hash, payload
-          ) VALUES (${runId}, 'legacy', 'bayn.legacy.v1', ${'a'.repeat(64)}, '{}'::jsonb)
-        `
-        yield* sql`
-          INSERT INTO bayn_evaluation_events (
-            run_id, ordinal, event_id, event_kind, content_hash, payload
-          ) VALUES (${runId}, 0, ${'b'.repeat(64)}, 'decision', ${'c'.repeat(64)}, '{}'::jsonb)
-        `
-        yield* sql`
-          INSERT INTO bayn_gate_outcomes (
-            run_id, ordinal, gate_name, passed, actual, required, content_hash
-          ) VALUES (${runId}, 0, 'legacy-gate', false, '0'::jsonb, '1'::jsonb, ${'d'.repeat(64)})
-        `
-        yield* sql`
-          INSERT INTO bayn_status_history (run_id, status, detail)
-          VALUES (${runId}, 'COMPLETE', '{}'::jsonb)
-        `
-        yield* sql`
-          INSERT INTO bayn_qualification_trials (
-            run_id, schema_version, disposition, reason_codes, observed_at
-          ) VALUES (
-            ${runId},
-            'bayn.qualification-trial.v1',
-            'BURNED',
-            ARRAY['PRE_LOCK_RESULT_OBSERVED'],
-            transaction_timestamp()
-          )
-        `
-        const lock = {
-          schemaVersion: 'bayn.qualification-lock.v2',
-          lockId,
-          candidateRunId: runId,
-          protocolHash: runId,
-          sourceRevision: '1'.repeat(40),
-          image: { repository: 'registry.example/bayn', digest: `sha256:${'0'.repeat(64)}` },
-          data: { snapshotId },
-        }
-        yield* sql`
-          INSERT INTO bayn_qualification_locks (
-            lock_id,
-            schema_version,
-            candidate_run_id,
-            protocol_hash,
-            snapshot_id,
-            source_revision,
-            image_repository,
-            image_digest,
-            payload
-          ) VALUES (
-            ${lockId},
-            'bayn.qualification-lock.v2',
-            ${runId},
-            ${runId},
-            ${snapshotId},
-            ${'1'.repeat(40)},
-            'registry.example/bayn',
-            ${`sha256:${'0'.repeat(64)}`},
-            ${sql.json(lock)}
-          )
-        `
-        const result = {
-          schemaVersion: 'bayn.qualification-result.v2',
-          lockId,
-          runId,
-          verdict: 'REJECTED',
-          analysis: { analysisHash },
-          resultHash,
-        }
-        yield* sql`
-          INSERT INTO bayn_qualification_results (
-            lock_id, schema_version, run_id, verdict, analysis_hash, result_hash, payload
-          ) VALUES (
-            ${lockId},
-            'bayn.qualification-result.v2',
-            ${runId},
-            'REJECTED',
-            ${analysisHash},
-            ${resultHash},
-            ${sql.json(result)}
-          )
-        `
-      }),
-    )
-
-    await runtime.dispose()
-    runtime = makeEvidenceRuntime()
-    await runtime.runPromise(Effect.flatMap(EvidenceStore, (store) => store.check))
-
-    const migrated = await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const legacyTables = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count
-          FROM pg_catalog.pg_tables
-          WHERE schemaname = 'public' AND tablename LIKE 'bayn\_%' ESCAPE '\'
-        `
-        const legacyRelations = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count
-          FROM pg_catalog.pg_class AS relation
-          INNER JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-          WHERE namespace.nspname = 'public' AND left(relation.relname, 5) = 'bayn_'
-        `
-        const currentSequence = yield* sql<{ exists: boolean }>`
-          SELECT to_regclass('public.status_history_sequence_seq') IS NOT NULL AS exists
-        `
-        const restoreProbe = yield* sql<{ exists: boolean }>`
-          SELECT to_regnamespace('restore_probe') IS NOT NULL AS exists
-        `
-        const migrations = yield* sql<{ count: number }>`
-          SELECT count(*)::integer AS count FROM schema_migrations
-        `
-        const evidence = yield* sql<{ count: number }>`
-          SELECT (
-            (SELECT count(*) FROM protocol_locks) +
-            (SELECT count(*) FROM snapshot_references) +
-            (SELECT count(*) FROM evaluation_runs) +
-            (SELECT count(*) FROM evaluation_artifacts) +
-            (SELECT count(*) FROM evaluation_events) +
-            (SELECT count(*) FROM gate_outcomes) +
-            (SELECT count(*) FROM status_history) +
-            (SELECT count(*) FROM qualification_trials) +
-            (SELECT count(*) FROM qualification_locks) +
-            (SELECT count(*) FROM qualification_results)
-          )::integer AS count
-        `
-        return {
-          legacyTableCount: legacyTables[0]?.count,
-          legacyRelationCount: legacyRelations[0]?.count,
-          currentSequenceExists: currentSequence[0]?.exists,
-          restoreProbeExists: restoreProbe[0]?.exists,
-          migrationCount: migrations[0]?.count,
-          evidenceCount: evidence[0]?.count,
-        }
-      }),
-    )
-
-    expect(migrated).toEqual({
-      legacyTableCount: 0,
-      legacyRelationCount: 0,
-      currentSequenceExists: true,
-      restoreProbeExists: false,
-      migrationCount: 8,
-      evidenceCount: 0,
-    })
-  })
-
-  test('rejects legacy protocol rows after the hard cut', async () => {
+  test('accepts only the current protocol contract', async () => {
     const exits = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const legacy = yield* Effect.exit(sql`
+        const unsupported = yield* Effect.exit(sql`
           INSERT INTO protocol_locks (
             protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
           ) VALUES (
             ${'0'.repeat(64)},
-            'bayn.tsmom.protocol.v2',
-            'tsmom',
+            'unsupported.protocol',
+            'unsupported',
             ${'1'.repeat(64)},
             ${'2'.repeat(64)},
             '{}'::jsonb
@@ -504,11 +203,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        return { current, legacy }
+        return { current, unsupported }
       }),
     )
 
-    expect(Exit.isFailure(exits.legacy)).toBe(true)
+    expect(Exit.isFailure(exits.unsupported)).toBe(true)
     expect(Exit.isSuccess(exits.current)).toBe(true)
   })
 

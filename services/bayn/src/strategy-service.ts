@@ -19,7 +19,7 @@ import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } fro
 export interface StrategyService {
   readonly name: string
   readonly universe: readonly string[]
-  readonly parameters: unknown
+  readonly parameters: Protocol
   readonly provenance: RuntimeProvenance
   readonly evaluate: (bars: readonly DailyBar[], manifest: InputManifest) => EvaluationResult
   readonly prepareLock: (
