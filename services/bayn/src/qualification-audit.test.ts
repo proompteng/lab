@@ -9,14 +9,13 @@ import { makeStrategy } from './strategy'
 import { summarizeEvaluation } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
-const fixture = (): QualificationAuditInput => {
+const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditInput => {
   const snapshot = makeSnapshot(900)
   const protocol = fixtureProtocol
   const provenance = makeTestProvenance()
   const strategy = makeStrategy(protocol, provenance)
   const evaluation = strategy.evaluate(snapshot.bars, snapshot.manifest)
   const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
-  const priorTrialRunIds: readonly string[] = []
   const lock = strategy.prepareLock(snapshot.manifest, sessionDates, priorTrialRunIds)
   const analysis = strategy.analyze(evaluation, priorTrialRunIds)
   const result = makeQualificationResult(lock, evaluation.verdict, analysis)
@@ -318,6 +317,15 @@ describe('qualification audit', () => {
     ])
     expect(first.policies.policySetHash).toBe(canonicalHashV1(first.policies.documents))
     expect(second.auditHash).toBe(first.auditHash)
+  })
+
+  test('passes for a later candidate when prior terminal result lineage is complete', () => {
+    const priorRunId = '0'.repeat(64)
+    const report = auditQualification(fixture([priorRunId]))
+
+    expect(report.status).toBe('PASS')
+    expect(report.checks.find((check) => check.name === 'locked-prior-trial-lineage')?.passed).toBe(true)
+    expect(report.checks.find((check) => check.name === 'analysis-lineage')?.passed).toBe(true)
   })
 
   test('fails closed on stored evidence drift', () => {
