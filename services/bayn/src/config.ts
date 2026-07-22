@@ -3,6 +3,14 @@ import { Config, Effect, Option, Redacted, Schema, SchemaTransformation } from '
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata, type EmbeddedBuildMetadata } from './build'
 import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema, type EvaluationBounds } from './contracts'
 import { operationalError, type OperationalError } from './errors'
+import {
+  GitSourceRevisionSchema as SourceRevision,
+  ImageDigestSchema as ImageDigest,
+  ImageRepositorySchema as ImageRepository,
+  PositiveIntegerSchema as PositiveInteger,
+  TrimmedNonEmptyStringSchema as NonEmptyString,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 
 export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
   readonly imageDigest: string
@@ -37,11 +45,6 @@ export interface RuntimeConfig {
   }
 }
 
-const NonEmptyString = Schema.Trim.check(Schema.isMinLength(1))
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-const SourceRevision = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
-const ImageRepository = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
-const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
@@ -141,7 +144,6 @@ const runtimeConfig = Config.all({
   })),
 )
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
 const decodeEmbeddedBuildMetadata = Schema.decodeUnknownSync(EmbeddedBuildMetadataSchema, StrictParseOptions)
 
 export const loadConfig = (

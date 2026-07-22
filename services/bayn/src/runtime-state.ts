@@ -1,14 +1,21 @@
 import type { RuntimeProvenance } from './contracts'
-import type { PersistenceReceipt } from './db/evidence-store'
 import type { QualificationResult } from './qualification'
 import type { EvaluationSummary, ReconciliationResult } from './types'
+
+export interface RuntimePersistenceReceipt {
+  readonly runId: string
+  readonly deduplicated: boolean
+  readonly artifactCount: number
+  readonly eventCount: number
+  readonly gateCount: number
+}
 
 export interface RuntimeEvidence {
   readonly startupMode: 'evaluated' | 'pinned' | 'recovered'
   readonly provenance: RuntimeProvenance
   readonly evaluation: EvaluationSummary
   readonly reconciliation: ReconciliationResult
-  readonly persistence: PersistenceReceipt
+  readonly persistence: RuntimePersistenceReceipt
   readonly qualification: QualificationResult
 }
 

@@ -2,15 +2,16 @@ import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Layer, Logger, Redacted } from 'effect'
 
-import { acquireSqlLayer, run } from './app'
+import { run } from './app'
 import { verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreLive } from './db/evidence-store'
 import { JournalLive } from './ledger'
 import { MarketDataLive } from './market-data'
+import { acquireSqlLayer } from './operations'
 import { hashParameters, loadDefaultProtocol } from './protocol'
-import { makeStrategy } from './strategy-service'
+import { makeStrategy } from './strategy'
 
 const main = Effect.gen(function* () {
   const config = yield* loadConfig()

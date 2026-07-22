@@ -6,12 +6,9 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
-import type { StoredEvaluationEvidence } from './db/evidence-store'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
-type ReadEvidence = (
-  runId: string,
-) => Effect.Effect<Option.Option<StoredEvaluationEvidence>, { readonly message: string }>
+type ReadEvidence = (runId: string) => Effect.Effect<Option.Option<unknown>, { readonly message: string }>
 
 const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
   if (state.evidence === null || dependency.status === 'UNKNOWN') return 'UNKNOWN'
@@ -23,10 +20,8 @@ const publicState = (
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ) => {
-  let economic = 'UNKNOWN'
   let accounting = 'UNKNOWN'
   if (state.evidence !== null) {
-    economic = state.evidence.qualification.verdict
     if (state.health.dependencies.tigerBeetle.status === 'AVAILABLE') accounting = 'EXACT'
     if (state.health.dependencies.tigerBeetle.status === 'UNAVAILABLE') accounting = 'UNAVAILABLE'
   }
@@ -51,12 +46,10 @@ const publicState = (
       persistence: state.evidence?.persistence ?? null,
     },
     economic: {
-      status: economic,
       verdict: state.evidence?.qualification.evaluationVerdict ?? null,
     },
     qualification: {
-      status: state.evidence?.qualification.verdict ?? 'UNKNOWN',
-      executable: state.evidence?.qualification.verdict === 'QUALIFIED',
+      verdict: state.evidence?.qualification.verdict ?? null,
       lockId: state.evidence?.qualification.lockId ?? null,
       resultHash: state.evidence?.qualification.resultHash ?? null,
       analysisHash: state.evidence?.qualification.analysis.analysisHash ?? null,

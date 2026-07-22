@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { canonicalHashV1 } from './hash'
-import { evaluateReference } from './qualification-reference'
+import { evaluateReference } from './audit/reference'
 import { evaluateRiskBalancedTrend } from './risk-balanced-trend'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 

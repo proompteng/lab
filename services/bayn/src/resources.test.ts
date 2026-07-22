@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Option, Redacted, Ref } from 'effect'
+import { Cause, Effect, Exit, Option, Redacted, Ref } from 'effect'
 
 import { initialize } from './app'
 import type { RuntimeConfig } from './config'
@@ -9,7 +9,7 @@ import { operationalError } from './errors'
 import { Journal, JournalLive, type JournalService, type TigerBeetleClient } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { initialState } from './runtime-state'
-import { makeStrategy } from './strategy-service'
+import { makeStrategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 const provenance = makeTestProvenance()
@@ -272,7 +272,7 @@ describe('Bayn resource lifecycle', () => {
     )
     const state = await Effect.runPromise(Ref.make(initialState()))
 
-    await Effect.runPromise(
+    const exit = await Effect.runPromiseExit(
       Effect.scoped(
         initialize(config, state, fixtureStrategy).pipe(
           Effect.provideService(Journal, successfulJournal),
@@ -283,10 +283,9 @@ describe('Bayn resource lifecycle', () => {
     )
 
     expect(interrupted).toBe(true)
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAILED',
-      error: expect.stringContaining('market-data.load: load timed out'),
-    })
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('load timed out')
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', error: null })
   })
 
   test('fails closed when ClickHouse returns a malformed row', async () => {
@@ -330,7 +329,7 @@ describe('Bayn resource lifecycle', () => {
     const marketData = marketDataService(Effect.succeed(makeSnapshot()))
     const state = await Effect.runPromise(Ref.make(initialState()))
 
-    await Effect.runPromise(
+    const exit = await Effect.runPromiseExit(
       Effect.scoped(
         initialize(config, state, fixtureStrategy).pipe(
           Effect.provideService(MarketData, marketData),
@@ -346,9 +345,8 @@ describe('Bayn resource lifecycle', () => {
     )
 
     expect(destroyed).toBe(true)
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'FAILED',
-      error: expect.stringContaining('journal.connectivity-check: connectivity-check timed out'),
-    })
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('connectivity-check timed out')
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', error: null })
   })
 })

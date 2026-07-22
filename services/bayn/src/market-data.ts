@@ -3,8 +3,18 @@ import { Clock, Context, Effect, Layer, Schema } from 'effect'
 
 import type { RuntimeConfig } from './config'
 import { type EvaluationBounds, type FinalizedSnapshotProvenance, FinalizedSnapshotProvenanceSchema } from './contracts'
-import { OperationalError, operationalError } from './errors'
+import { OperationalError, operationalError, retryableOperationalError } from './errors'
 import { canonicalHashV1, sha256 } from './hash'
+import {
+  DigitsSchema,
+  GitSourceRevisionSchema as SourceRevisionSchema,
+  ImageDigestSchema,
+  ImageRepositorySchema,
+  IsoDateSchema,
+  Sha256Schema as HashSchema,
+  SignalRowSymbolSchema as SymbolSchema,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 import {
   DataFeed,
   DataSource,
@@ -24,22 +34,8 @@ const tables = {
   manifests: 'snapshot_manifests_v2',
 } as const
 const calendarTimeZone = 'America/New_York' as const
-const StrictParseOptions = { onExcessProperty: 'error' } as const
-
-const isIsoDate = (value: string): value is IsoDate => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const parsed = new Date(`${value}T00:00:00.000Z`)
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
-}
-const IsoDateSchema = Schema.String.pipe(Schema.refine(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }))
-const SnapshotIdSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
-const HashSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
-const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
-const ImageRepositorySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
-const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
-const SymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,14}$/))
+const SnapshotIdSchema = HashSchema
 const FixedDecimalSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)\.\d{8}$/))
-const DigitsSchema = Schema.String.check(Schema.isPattern(/^\d+$/))
 const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:0\d|1\d|2[0-3]):[0-5]\d$/))
 const CountSchema = Schema.Union([Schema.Number, DigitsSchema])
 const FinalizedAtSchema = Schema.String.check(
@@ -592,7 +588,7 @@ const makeMarketData = (
         Effect.mapError((cause) =>
           cause instanceof OperationalError
             ? cause
-            : operationalError('market-data', 'check', 'failed to check finalized Signal snapshot', cause),
+            : retryableOperationalError('market-data', 'check', 'failed to check finalized Signal snapshot', cause),
         ),
       ),
       inspect: Effect.gen(function* () {
@@ -604,7 +600,7 @@ const makeMarketData = (
         Effect.mapError((cause) =>
           cause instanceof OperationalError
             ? cause
-            : operationalError('market-data', 'inspect', 'failed to inspect finalized Signal calendar', cause),
+            : retryableOperationalError('market-data', 'inspect', 'failed to inspect finalized Signal calendar', cause),
         ),
       ),
       load: Effect.gen(function* () {
@@ -619,7 +615,7 @@ const makeMarketData = (
         Effect.mapError((cause) =>
           cause instanceof OperationalError
             ? cause
-            : operationalError('market-data', 'load', 'failed to load finalized Signal snapshot', cause),
+            : retryableOperationalError('market-data', 'load', 'failed to load finalized Signal snapshot', cause),
         ),
       ),
     }

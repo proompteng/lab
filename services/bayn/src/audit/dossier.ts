@@ -1,16 +1,16 @@
 import { Schema } from 'effect'
 
-import { canonicalHashV1 } from './hash'
-import { QualificationLockSchema, QualificationResultSchema } from './qualification'
+import { canonicalHashV1 } from '../hash'
+import { QualificationLockSchema, QualificationResultSchema } from '../qualification'
+import { strictParseOptions as StrictParseOptions } from '../schemas'
+import type { InputManifest } from '../types'
 import {
   auditQualification,
   type AuditDatabaseSnapshot,
   type QualificationAuditInput,
   type QualificationAuditReport,
-} from './qualification-audit'
-import type { InputManifest } from './types'
+} from './audit'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
 const decodeLock = Schema.decodeUnknownSync(QualificationLockSchema, StrictParseOptions)
 const decodeResult = Schema.decodeUnknownSync(QualificationResultSchema, StrictParseOptions)
 

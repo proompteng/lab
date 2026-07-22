@@ -7,17 +7,15 @@ import {
   defaultQualificationStatisticsPolicy,
   type QualificationAnalysis,
 } from './qualification-statistics'
+import {
+  ImageDigestSchema as ImageDigest,
+  SourceRevisionSchema as SourceRevision,
+  StrictNonEmptyStringSchema as NonEmptyString,
+  SymbolSchema as SymbolName,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 import type { EconomicVerdict } from './types'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
-const NonEmptyString = Schema.String.check(
-  Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value, {
-    expected: 'a non-empty string without surrounding whitespace',
-  }),
-)
-const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
-const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
-const SymbolName = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 const MinimumSessions = Schema.Int.check(Schema.isGreaterThanOrEqualTo(504))
 const MinimumRebalances = Schema.Int.check(Schema.isGreaterThanOrEqualTo(24))
 const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(Schema.is(Schema.Json), { expected: 'a JSON value' }))

@@ -3,19 +3,21 @@ import { Schema } from 'effect'
 import { EvaluationBoundsSchema, FinalizedSnapshotProvenanceSchema, IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1 } from './hash'
 import { ExecutionModelSchema } from './protocol'
+import {
+  DigitsSchema as Micros,
+  ImageDigestSchema as ImageDigest,
+  NonNegativeFiniteSchema as NonNegativeFinite,
+  NonNegativeIntegerSchema as NonNegativeInteger,
+  PositiveIntegerSchema as PositiveInteger,
+  SignedMicrosSchema as SignedMicros,
+  SourceRevisionSchema as SourceRevision,
+  SymbolSchema as Symbol,
+  UnitIntervalSchema as UnitIntervalFinite,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
-const Micros = Schema.String.check(Schema.isPattern(/^\d+$/))
-const SignedMicros = Schema.String.check(Schema.isPattern(/^-?\d+$/))
-const SourceRevision = Schema.String.check(Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/))
-const ImageDigest = Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/))
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
-const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
-const UnitIntervalFinite = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(1))
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
-const Symbol = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 
 const InputManifestFields = {
   hash: Sha256Schema,
@@ -109,7 +111,7 @@ export const MarkedEquityReconciliationSchema = Schema.Struct({
   runId: Sha256Schema,
   toleranceMicros: Schema.Literal(MARKED_EQUITY_TOLERANCE_MICROS.toString()),
   maximumDailyDifferenceMicros: Micros,
-  reconstructedCashMicros: Schema.String.check(Schema.isPattern(/^-?\d+$/)),
+  reconstructedCashMicros: SignedMicros,
   reconstructedPositionValueMicros: Micros,
   evaluatorTotalFeesMicros: Micros,
   reconstructedTotalFeesMicros: Micros,
@@ -420,3 +422,29 @@ export const makeEquitySeriesArtifact = (items: (typeof EquitySeriesArtifactSche
   schemaVersion: 'bayn.equity-series.v1' as const,
   items,
 })
+
+export type InputManifest = typeof InputManifestArtifactSchema.Type
+export type SymbolCoverage = InputManifest['symbols'][number]
+export type PerformanceMetrics = typeof PerformanceMetricsSchema.Type
+export type EconomicVerdict = typeof VerdictSchema.Type
+export type GateResult = EconomicVerdict['gates'][number]
+export type MarkedEquityReconciliation = typeof MarkedEquityReconciliationSchema.Type
+export type EvaluationSummary = typeof EvaluationSummarySchema.Type
+export type ReconciliationResult = typeof ReconciliationResultSchema.Type
+export type EvaluationEvent = typeof EvaluationEventSchema.Type
+export type DecisionEvent = Extract<EvaluationEvent, { readonly kind: 'decision' }>
+export type FillEvent = Extract<EvaluationEvent, { readonly kind: 'fill' }>
+export type FeeEvent = Extract<EvaluationEvent, { readonly kind: 'fee' }>
+export type CashYieldEvent = Extract<EvaluationEvent, { readonly kind: 'cash-yield' }>
+export type SimulatedOrder = (typeof SimulatedOrdersArtifactSchema.Type)['items'][number]
+export type OrderStatus = SimulatedOrder['status']
+export type OrderRejectionReason = Exclude<SimulatedOrder['rejectionReason'], null>
+export type CashChange = (typeof CashChangesArtifactSchema.Type)['items'][number]
+export type DailyPositionMark = (typeof DailyPositionMarksArtifactSchema.Type)['items'][number]
+export type PositionMark = DailyPositionMark['positions'][number]
+export type SignalDecision = (typeof RiskBalancedTrendSignalDecisionsArtifactSchema.Type)['items'][number]
+export type DecisionPlan = Omit<SignalDecision, 'decisionId' | 'executionDate'>
+export type SymbolSignal = SignalDecision['signals'][number]
+export type HorizonSignal = SymbolSignal['horizons'][number]
+export type DailyPerformancePoint = (typeof DailyPerformanceSeriesArtifactSchema.Type)['items'][number]
+export type EquityPoint = (typeof EquitySeriesArtifactSchema.Type)['items'][number]

@@ -6,6 +6,7 @@ export class OperationalError extends Data.TaggedError('OperationalError')<{
   readonly component: Component
   readonly operation: string
   readonly message: string
+  readonly retryable: boolean
   readonly cause?: unknown
 }> {}
 
@@ -21,6 +22,21 @@ export const operationalError = (
     component,
     operation,
     message: cause === undefined ? message : `${message}: ${causeMessage(cause)}`,
+    retryable: false,
+    cause,
+  })
+
+export const retryableOperationalError = (
+  component: Component,
+  operation: string,
+  message: string,
+  cause?: unknown,
+): OperationalError =>
+  new OperationalError({
+    component,
+    operation,
+    message: cause === undefined ? message : `${message}: ${causeMessage(cause)}`,
+    retryable: true,
     cause,
   })
 

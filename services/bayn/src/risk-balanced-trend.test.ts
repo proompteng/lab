@@ -6,7 +6,7 @@ import {
   makeRiskBalancedTrendDecision,
   prepareRiskBalancedTrendQualification,
 } from './risk-balanced-trend'
-import { makeStrategy } from './strategy-service'
+import { makeStrategy } from './strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from './test-fixtures'
 import type { IsoDate, Protocol } from './types'
 

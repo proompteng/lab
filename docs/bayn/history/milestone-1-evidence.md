@@ -1,7 +1,7 @@
-# Bayn milestone 1 evidence
+# Bayn milestone 1 evidence (historical)
 
-Evidence captured on 2026-07-19 before GitOps activation. This is a development/economic-gate run, not the excluded
-locked out-of-sample verdict.
+Evidence captured on 2026-07-19 before GitOps activation. This retired V1/IEX development run is retained only as
+history; it is not the current protocol, data contract, or locked out-of-sample verdict.
 
 ## Data
 

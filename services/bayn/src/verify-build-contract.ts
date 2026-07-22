@@ -4,11 +4,13 @@ import { Effect, Schema } from 'effect'
 import { embeddedBuildMetadata, EmbeddedBuildMetadataSchema, verifyParameterHash } from './build'
 import { operationalError } from './errors'
 import { hashParameters, loadDefaultProtocol } from './protocol'
+import { strictParseOptions } from './schemas'
 
 const program = Effect.gen(function* () {
-  const metadata = yield* Schema.decodeUnknownEffect(EmbeddedBuildMetadataSchema, {
-    onExcessProperty: 'error',
-  })(embeddedBuildMetadata).pipe(
+  const metadata = yield* Schema.decodeUnknownEffect(
+    EmbeddedBuildMetadataSchema,
+    strictParseOptions,
+  )(embeddedBuildMetadata).pipe(
     Effect.mapError((cause) =>
       operationalError('config', 'provenance', 'production image is missing complete build metadata', cause),
     ),

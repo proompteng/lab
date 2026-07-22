@@ -2,20 +2,18 @@ import { Schema } from 'effect'
 
 import { IsoDateSchema, Sha256Schema } from './contracts'
 import { canonicalHashV1 } from './hash'
+import {
+  NonNegativeIntegerSchema as NonNegativeInteger,
+  PositiveFiniteSchema as PositiveFinite,
+  PositiveIntegerSchema as PositiveInteger,
+  StrictNonEmptyStringSchema as NonEmptyString,
+  UnitIntervalSchema as UnitInterval,
+  strictParseOptions as StrictParseOptions,
+} from './schemas'
 import type { EvaluationResult, IsoDate } from './types'
 
-const StrictParseOptions = { onExcessProperty: 'error' } as const
-const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
-const NonNegativeInteger = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
-const PositiveFinite = Schema.Finite.check(Schema.isGreaterThan(0))
-const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
 const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThan(1))
 const SimpleReturn = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(-1))
-const NonEmptyString = Schema.String.check(
-  Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value, {
-    expected: 'a non-empty string without surrounding whitespace',
-  }),
-)
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 
 export const QualificationStatisticsPolicySchema = Schema.Struct({
