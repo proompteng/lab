@@ -48,6 +48,63 @@ test('rejects a mutable kubectl image volume', async () => {
   )
 })
 
+test('rejects a mutable Hermes toolchain image volume', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    /registry\.ide-newton\.ts\.net\/lab\/hermes-toolchain@sha256:[a-f0-9]+/,
+    'registry.ide-newton.ts.net/lab/hermes-toolchain:latest',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: Lab tools must use exactly one immutable Hermes toolchain OCI volume`,
+  )
+})
+
+test('rejects omitting the Hermes toolchain bin mount from one container', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '              mountPath: /opt/lab-toolchain/bin\n              subPath: bin',
+    '              mountPath: /opt/lab-toolchain-disabled/bin\n              subPath: bin',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+  )
+})
+
+test('rejects omitting the Hermes toolchain closure mount from one container', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '              mountPath: /nix/store\n              subPath: nix/store',
+    '              mountPath: /nix/store-disabled\n              subPath: nix/store',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`,
+  )
+})
+
+test('rejects bootstrap without exact Hermes toolchain version checks', async () => {
+  const files = await loadProductionFiles()
+  files.bootstrap = files.bootstrap.replace(
+    'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
+    '"$toolchain_bin/node" --version',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.bootstrap}: missing production invariant "check_tool_version node v24.11.1 \\"$toolchain_bin/node\\" --version"`,
+  )
+})
+
+test('rejects expanding the curated Hermes toolchain package set', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainImage = files.toolchainImage.replace('    pkgs.jq\n', '    pkgs.jq\n    pkgs.docker-client\n')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.toolchainImage}: contains forbidden production term "    pkgs.docker-client\\n"`,
+  )
+})
+
 test('rejects a gateway working directory above the lab checkout', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace('  cwd: /opt/data/workspace/tuslagch/lab', '  cwd: /opt/data/workspace/tuslagch')
@@ -219,7 +276,7 @@ test('rejects persisting GitHub CLI auth on the Hermes data volume', async () =>
 test('rejects a terminal login profile that omits the production tools path', async () => {
   const files = await loadProductionFiles()
   const expectedExport =
-    "export PATH='/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'"
+    "export PATH='/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'"
   files.terminalProfile = files.terminalProfile.replace(expectedExport, "export PATH='/usr/local/bin:/usr/bin:/bin'")
 
   expect(validateProductionContent(files)).toContain(

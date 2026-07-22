@@ -29,19 +29,41 @@ main_revision=$(git rev-parse origin/main)
 test "$(git rev-parse HEAD)" = "$main_revision"
 upstream_digest=$(crane digest docker.io/nousresearch/hermes-agent:v2026.7.7.2)
 mirror_digest=$(crane digest registry.ide-newton.ts.net/lab/hermes-agent:v2026.7.7.2-amd64)
+toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031
+toolchain_digest=$(crane digest "$toolchain_ref")
 test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973
 test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a
+test "$toolchain_digest" = sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031
+toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
+  '[.manifests[].platform | "\(.os)/\(.architecture)"] | sort | join(",")')
+test "$toolchain_platforms" = linux/amd64,linux/arm64
+for platform in linux/amd64 linux/arm64; do
+  crane config --platform "$platform" "$toolchain_ref" | jq -e '
+    .config.Labels["proompteng.ai/toolchain.node"] == "24.11.1" and
+    .config.Labels["proompteng.ai/toolchain.bun"] == "1.3.14" and
+    .config.Labels["proompteng.ai/toolchain.go"] == "1.25.5" and
+    .config.Labels["proompteng.ai/toolchain.helm"] == "3.19.1" and
+    .config.Labels["proompteng.ai/toolchain.kustomize"] == "5.8.0" and
+    .config.Labels["proompteng.ai/toolchain.kubeconform"] == "0.7.0" and
+    .config.Labels["proompteng.ai/toolchain.shellcheck"] == "0.11.0" and
+    .config.Labels["proompteng.ai/toolchain.jq"] == "1.8.1" and
+    .config.Labels["proompteng.ai/toolchain.yq"] == "4.49.2"
+  '
+done
 argocd app get hermes --refresh >/dev/null
 hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')
 test "$hermes_revision" = "$main_revision"
 printf 'main=%s upstream=%s mirror=%s argo=%s\n' \
   "$main_revision" "$upstream_digest" "$mirror_digest" "$hermes_revision"
-unset main_revision upstream_digest mirror_digest hermes_revision
+printf 'toolchain=%s platforms=%s\n' "$toolchain_digest" "$toolchain_platforms"
+unset main_revision upstream_digest mirror_digest toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision
 ```
 
 The expected upstream index digest is `sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973`.
 The expected mirrored amd64 manifest digest is
 `sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a`.
+The expected Hermes toolchain multi-architecture index digest is
+`sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031`.
 
 ## Phase 0: preflight and secret
 
@@ -209,7 +231,50 @@ The expected mirrored amd64 manifest digest is
    then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
    gateway Pod's readiness.
 
-2. Port-forward the cluster-local API and keep the key out of command output:
+2. Prove every curated development tool through the same login-shell boundary used by Hermes terminals, then run real
+   validation from the durable lab checkout without changing its existing branch or dirty state:
+
+   ```bash
+   kubectl -n hermes exec hermes-0 -c hermes -- /usr/bin/bash -lc '
+     set -euo pipefail
+     test "$(command -v gh)" = /opt/tools/gh
+     test "$(command -v kubectl)" = /opt/tools/kubectl
+     test "$(command -v node)" = /opt/lab-toolchain/bin/node
+     test "$(command -v bun)" = /opt/lab-toolchain/bin/bun
+     test "$(command -v bunx)" = /opt/lab-toolchain/bin/bunx
+     test "$(command -v go)" = /opt/lab-toolchain/bin/go
+     test "$(command -v helm)" = /opt/lab-toolchain/bin/helm
+     test "$(command -v jq)" = /opt/lab-toolchain/bin/jq
+     test "$(command -v kustomize)" = /opt/lab-toolchain/bin/kustomize
+     test "$(command -v kubeconform)" = /opt/lab-toolchain/bin/kubeconform
+     test "$(command -v shellcheck)" = /opt/lab-toolchain/bin/shellcheck
+     test "$(command -v yq)" = /opt/lab-toolchain/bin/yq
+     test "$(node --version)" = v24.11.1
+     test "$(bun --version)" = 1.3.14
+     test "$(bunx --version)" = 1.3.14
+     test "$(go version)" = "go version go1.25.5 linux/amd64"
+     test "$(helm version --template "{{.Version}}")" = v3.19.1
+     test "$(jq --version)" = jq-1.8.1
+     test "$(kustomize version)" = v5.8.0
+     test "$(kubeconform -v)" = v0.7.0
+     test "$(shellcheck --version | awk '\''$1 == "version:" { print $2 }'\'')" = 0.11.0
+     test "$(yq --version | sed '\''s/^.* version //'\'')" = v4.49.2
+     cd /opt/data/workspace/tuslagch/lab
+     workspace_status_before=$(git status --short)
+     bun run scripts/hermes/validate-production.ts
+     shellcheck argocd/applications/hermes/*.sh
+     kustomize build --enable-helm argocd/applications/hermes >/tmp/hermes-toolchain-render.yaml
+     kubeconform -strict -summary -ignore-missing-schemas /tmp/hermes-toolchain-render.yaml
+     go test ./services/prt -run "^$"
+     test "$(git status --short)" = "$workspace_status_before"
+     printf "hermes_lab_toolchain_ready=true checkout=%s\n" "$(git rev-parse HEAD)"
+   '
+   ```
+
+   The toolchain image supplies binaries only. GitHub authentication remains in `/opt/github-auth`, `kubectl` remains the
+   separately pinned read-only client, and this acceptance step must leave the existing checkout byte-for-byte untouched.
+
+3. Port-forward the cluster-local API and keep the key out of command output:
 
    ```bash
    kubectl -n hermes port-forward service/hermes 18642:8642
@@ -232,7 +297,7 @@ The expected mirrored amd64 manifest digest is
    unset hermes_api_key
    ```
 
-3. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
+4. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
 
    ```bash
    set -euo pipefail
@@ -242,7 +307,7 @@ The expected mirrored amd64 manifest digest is
    kubectl -n hermes exec hermes-0 -c hermes -- test -s /opt/data/workspace/tuslagch/.rollout-canary
    ```
 
-4. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
+5. Prove direct-egress containment, public HTTPS through Squid, and private-destination denial:
 
    ```bash
    set -euo pipefail
@@ -271,7 +336,7 @@ The expected mirrored amd64 manifest digest is
    The direct public request must fail. Discord, GitHub, and an arbitrary public HTTPS destination must work through Squid,
    while the metadata destination must receive Squid's explicit denial.
 
-5. Prove the cluster reader and local lab checkout from inside the gateway:
+6. Prove the cluster reader and local lab checkout from inside the gateway:
 
    ```bash
    set -euo pipefail
@@ -301,7 +366,7 @@ The expected mirrored amd64 manifest digest is
    Secrets, service-account token subresources, `exec`, `attach`, `proxy`, and `port-forward`. The server-side dry-run is an
    authorization proof: it must be rejected before admission and must not create a ConfigMap.
 
-6. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
+7. Prove the authenticated GitHub identity and non-mutating branch-push capability from inside the gateway:
 
    ```bash
    set -euo pipefail
@@ -895,6 +960,8 @@ The rollout record is complete only when it includes:
 
 - merged PRs and exact `main` revisions for API canary and Discord cutover;
 - image digests and upstream release commit;
+- Hermes toolchain index digest, both platform manifests, OCI version labels, exact login-shell versions, and real lab
+  validation with an unchanged checkout status;
 - Argo `Synced/Healthy` readback at those revisions;
 - ExternalSecret Ready conditions and secret field lengths/counts without values;
 - pod UID, read-only rootfs, scoped service-account token, NetworkPolicy, PVC, and verified backup evidence;

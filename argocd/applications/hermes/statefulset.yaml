@@ -123,6 +123,14 @@ spec:
             - name: kubectl-image
               mountPath: /opt/kubectl-image
               readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/bin
+              subPath: bin
+              readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /nix/store
+              subPath: nix/store
+              readOnly: true
             - name: tools
               mountPath: /opt/tools
             - name: github-auth
@@ -164,7 +172,7 @@ spec:
             - name: GIT_TERMINAL_PROMPT
               value: "0"
             - name: PATH
-              value: /opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+              value: /opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
             - name: API_SERVER_ENABLED
               value: "true"
             - name: API_SERVER_HOST
@@ -290,6 +298,14 @@ spec:
             - name: tools
               mountPath: /opt/tools
               readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/bin
+              subPath: bin
+              readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /nix/store
+              subPath: nix/store
+              readOnly: true
             - name: github-auth
               mountPath: /opt/github-auth
               readOnly: true
@@ -312,6 +328,10 @@ spec:
         - name: kubectl-image
           image:
             reference: registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e
+            pullPolicy: IfNotPresent
+        - name: lab-toolchain-image
+          image:
+            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031
             pullPolicy: IfNotPresent
         - name: tools
           emptyDir:

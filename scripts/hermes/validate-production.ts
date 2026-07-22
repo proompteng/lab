@@ -5,10 +5,12 @@ const hermesImage =
   'registry.ide-newton.ts.net/lab/hermes-agent@sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a'
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
+const hermesToolchainImage =
+  'registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031'
 const githubCliVersion = '2.96.0'
 const githubCliArchiveSha256 = '83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60'
 const terminalPath =
-  '/opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  '/opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
 export const productionPaths = {
   kustomization: 'argocd/applications/hermes/kustomization.yaml',
@@ -50,6 +52,9 @@ export const productionPaths = {
   runbook: 'docs/runbooks/hermes-production-rollout.md',
   impactMap: '.github/ci/impact-map.yml',
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
+  toolchainImage: 'nix/images/hermes-toolchain.nix',
+  toolchainBuildWorkflow: '.github/workflows/hermes-toolchain-build-push.yml',
+  toolchainReleaseWorkflow: '.github/workflows/hermes-toolchain-release.yml',
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -136,7 +141,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mountPath: /opt/github-auth',
     'mountPath: /etc/profile.d/hermes-tools.sh\n              subPath: terminal-profile.sh\n              readOnly: true',
     'sizeLimit: 1Mi',
-    'value: /opt/tools:/opt/hermes/bin:',
+    'value: /opt/tools:/opt/lab-toolchain/bin:/opt/hermes/bin:',
     'name: KUBECONFIG',
     'value: /opt/data/home/.kube/config',
     'name: GH_CONFIG_DIR',
@@ -169,6 +174,34 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
   if (count(files.statefulSet, `reference: ${kubectlImage}`) !== 1) {
     failures.push(`${productionPaths.statefulSet}: kubectl must use exactly one immutable Kubernetes 1.35 OCI volume`)
+  }
+  if (count(files.statefulSet, `reference: ${hermesToolchainImage}`) !== 1) {
+    failures.push(
+      `${productionPaths.statefulSet}: Lab tools must use exactly one immutable Hermes toolchain OCI volume`,
+    )
+  }
+  const toolchainBinMount = [
+    '            - name: lab-toolchain-image',
+    '              mountPath: /opt/lab-toolchain/bin',
+    '              subPath: bin',
+    '              readOnly: true',
+  ].join('\n')
+  const toolchainStoreMount = [
+    '            - name: lab-toolchain-image',
+    '              mountPath: /nix/store',
+    '              subPath: nix/store',
+    '              readOnly: true',
+  ].join('\n')
+  if (count(files.statefulSet, toolchainBinMount) !== 2) {
+    failures.push(
+      `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+    )
+  }
+  if (count(files.statefulSet, toolchainStoreMount) !== 2) {
+    failures.push(`${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`)
+  }
+  if (count(files.statefulSet, '        - name: lab-toolchain-image\n          image:\n') !== 1) {
+    failures.push(`${productionPaths.statefulSet}: the toolchain must use exactly one OCI image volume`)
   }
   for (const key of ['DISCORD_BOT_TOKEN', 'DISCORD_ALLOWED_USERS']) {
     const reference = [
@@ -515,6 +548,17 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
 
   requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'toolchain_bin=/opt/lab-toolchain/bin',
+    'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
+    'check_tool_version bun 1.3.14 "$toolchain_bin/bun" --version',
+    'check_tool_version bunx 1.3.14 "$toolchain_bin/bunx" --version',
+    'check_tool_version go \'go version go1.25.5 linux/amd64\' "$toolchain_bin/go" version',
+    'check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template \'{{.Version}}\'',
+    'check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version',
+    'check_tool_version kustomize v5.8.0 "$toolchain_bin/kustomize" version',
+    'check_tool_version kubeconform v0.7.0 "$toolchain_bin/kubeconform" -v',
+    'check_tool_version shellcheck 0.11.0',
+    'check_tool_version yq v4.49.2',
     'install -m 0555 /opt/kubectl-image/bin/kubectl /opt/tools/kubectl',
     '/opt/tools/kubectl version --client=true',
     'install -d -m 0700 "$kubeconfig_dir"',
@@ -604,6 +648,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
     '/opt/data/workspace/tuslagch/lab',
     'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
+    'Node `24.11.1`, Bun/Bunx `1.3.14`, Go `1.25.5`',
+    '/opt/lab-toolchain/bin',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
     'digest-pinned Kubernetes 1.35 `kubectl` binary',
@@ -616,6 +662,58 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'bounded retries for transient pod-network startup races',
     '/etc/profile.d/hermes-tools.sh',
     githubCliArchiveSha256,
+    'dedicated multi-architecture Nix OCI image is pinned by index digest',
+    hermesToolchainImage,
+    'Bootstrap fails closed unless every tool reports the repository-pinned version.',
+  ])
+
+  const expectedToolchainPackages = `tools = [
+    nodejs
+    bun
+    go
+    helm
+    kustomize
+    kubeconform
+    shellcheck
+    pkgs.jq
+    yq
+  ];`
+  requireTerms(failures, productionPaths.toolchainImage, files.toolchainImage, [
+    expectedToolchainPackages,
+    'name = "registry.ide-newton.ts.net/lab/hermes-toolchain";',
+    'created = "1970-01-01T00:00:01Z";',
+    'User = "10000:10000";',
+    '"proompteng.ai/toolchain.node" = lib.getVersion nodejs;',
+    '"proompteng.ai/toolchain.bun" = lib.getVersion bun;',
+    '"proompteng.ai/toolchain.go" = lib.getVersion go;',
+  ])
+  forbidTerms(failures, productionPaths.toolchainImage, files.toolchainImage, [
+    'pkgs.nix',
+    '    pkgs.docker-client\n',
+    '    pkgs.docker\n',
+    'pkgs.skopeo',
+    'pkgs.regclient',
+    'pkgs.gh',
+    'kubectl',
+    'argocd',
+    'opentofu',
+    'terraform',
+  ])
+  requireTerms(failures, productionPaths.toolchainBuildWorkflow, files.toolchainBuildWorkflow, [
+    'name: hermes-toolchain-build-push',
+    'image_name: hermes-toolchain',
+    'package_attr: hermes-toolchain-image',
+    'hermes-toolchain-release-contract',
+  ])
+  requireTerms(failures, productionPaths.toolchainReleaseWorkflow, files.toolchainReleaseWorkflow, [
+    'name: hermes-toolchain-release',
+    '      - hermes-toolchain-build-push',
+    'name: hermes-toolchain-release-contract',
+    'nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64',
+    'argocd/applications/hermes/statefulset.yaml',
+    'automated-pr',
+    'nix-oci',
+    'agents',
   ])
 
   const operationDeadlines = {
@@ -887,6 +985,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(kubectl auth can-i create deployments.apps --all-namespaces || true)" = no',
     'test "$(pwd -P)" = /opt/data/workspace/tuslagch/lab',
     'test "$(git rev-parse --show-toplevel)" = /opt/data/workspace/tuslagch/lab',
+    'test "$(command -v node)" = /opt/lab-toolchain/bin/node',
+    'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
+    'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
+    'test "$(node --version)" = v24.11.1',
+    'test "$(bun --version)" = 1.3.14',
+    'test "$(go version)" = "go version go1.25.5 linux/amd64"',
+    'bun run scripts/hermes/validate-production.ts',
+    'shellcheck argocd/applications/hermes/*.sh',
+    'kustomize build --enable-helm argocd/applications/hermes >/tmp/hermes-toolchain-render.yaml',
+    'kubeconform -strict -summary -ignore-missing-schemas /tmp/hermes-toolchain-render.yaml',
+    'go test ./services/prt -run "^$"',
+    'test "$(git status --short)" = "$workspace_status_before"',
+    'hermes_lab_toolchain_ready=true checkout=%s',
     '! kubectl -n hermes get secret hermes-api-auth',
     '! kubectl -n hermes create configmap hermes-readonly-proof',
     'git -C /opt/data/workspace/tuslagch/lab remote get-url origin',
@@ -921,6 +1032,11 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(git rev-parse HEAD)" = "$main_revision"',
     'test "$upstream_digest" = sha256:9c841866021c54c4596849f6135717e8a4d52ba510b7f52c50aef1de1a283973',
     'test "$mirror_digest" = sha256:3db34ce19adfa080736a2a3feb0316dbcccc588faa9afe7fd8ae1c03b4f1a53a',
+    'toolchain_ref=registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031',
+    'test "$toolchain_digest" = sha256:3ced4cade50538d778f1438754fea57b2f7bce1fb2e6ab0e92787a707c66d031',
+    'test "$toolchain_platforms" = linux/amd64,linux/arm64',
+    '.config.Labels["proompteng.ai/toolchain.node"] == "24.11.1"',
+    '.config.Labels["proompteng.ai/toolchain.yq"] == "4.49.2"',
     'argocd app get hermes --refresh >/dev/null',
     "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
     'test "$hermes_revision" = "$main_revision"',
