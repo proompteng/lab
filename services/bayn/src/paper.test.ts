@@ -181,6 +181,21 @@ describe('paper contracts', () => {
 
   test('enforces order and rate-limit invariants', async () => {
     await expectFailure(decodeOrder({ ...order, filledQuantityMicros: '1000001' }))
+    await expectFailure(decodeOrder({ ...order, filledQuantityMicros: '0' }))
+    await expectFailure(decodeOrder({ ...order, filledQuantityMicros: order.quantityMicros }))
+    await expectFailure(decodeOrder({ ...order, status: OrderStatus.Filled, filledQuantityMicros: '0' }))
+    expect(
+      await Effect.runPromise(
+        decodeOrder({ ...order, status: OrderStatus.Filled, filledQuantityMicros: order.quantityMicros }),
+      ),
+    ).toMatchObject({ status: OrderStatus.Filled })
+    await expectFailure(decodeOrder({ ...order, status: OrderStatus.New }))
+    expect(
+      await Effect.runPromise(decodeOrder({ ...order, status: OrderStatus.New, filledQuantityMicros: '0' })),
+    ).toMatchObject({ status: OrderStatus.New })
+    await expectFailure(
+      decodeOrder({ ...order, status: OrderStatus.Canceled, filledQuantityMicros: order.quantityMicros }),
+    )
     await expectFailure(decodeOrder({ ...order, limitPriceMicros: '125000000' }))
     await expectFailure(decodeOrder({ ...order, orderType: OrderType.Limit }))
     expect(
@@ -239,9 +254,38 @@ describe('paper contracts', () => {
       'RECOVERED:TERMINAL',
     ])
 
+    const allowedTerminal = new Set([
+      'PLANNED:BLOCKED',
+      'APPROVED:BLOCKED',
+      'APPROVED:CANCELED',
+      'IO_STARTED:FILLED',
+      'IO_STARTED:CANCELED',
+      'IO_STARTED:EXPIRED',
+      'IO_STARTED:REJECTED',
+      'ACKNOWLEDGED:FILLED',
+      'ACKNOWLEDGED:CANCELED',
+      'ACKNOWLEDGED:EXPIRED',
+      'ACKNOWLEDGED:REJECTED',
+      'RECOVERED:FILLED',
+      'RECOVERED:CANCELED',
+      'RECOVERED:EXPIRED',
+      'RECOVERED:REJECTED',
+    ])
+
     for (const from of Object.values(IntentState)) {
       for (const to of Object.values(IntentState)) {
+        if (to === IntentState.Terminal) {
+          for (const outcome of Object.values(TerminalOutcome)) {
+            expect(isIntentTransitionAllowed(from, to, outcome), `${from}:${outcome}`).toBe(
+              allowedTerminal.has(`${from}:${outcome}`),
+            )
+          }
+          continue
+        }
         expect(isIntentTransitionAllowed(from, to), `${from}:${to}`).toBe(allowed.has(`${from}:${to}`))
+        expect(isIntentTransitionAllowed(from, to, TerminalOutcome.Blocked), `${from}:${to}:unexpected outcome`).toBe(
+          false,
+        )
       }
     }
   })
@@ -318,6 +362,7 @@ describe('paper contracts', () => {
     }
     expect(await Effect.runPromise(decodeValuation(valuation))).toEqual(valuation)
     await expectFailure(decodeValuation({ ...valuation, equityMicros: '3000001' }))
+    await expectFailure(decodeValuation({ ...valuation, shortMarketValueMicros: '500000', equityMicros: '4000000' }))
   })
 
   test('requires reconciliation evidence and downward-only effective authority', async () => {

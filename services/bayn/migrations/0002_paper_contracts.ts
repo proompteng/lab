@@ -146,7 +146,7 @@ export default Effect.gen(function* () {
       account_id text NOT NULL,
       event_kind text GENERATED ALWAYS AS ('ORDER') STORED,
       schema_version text NOT NULL CHECK (schema_version = 'bayn.paper-order.v1'),
-      broker_order_id text NOT NULL UNIQUE CHECK (
+      broker_order_id text NOT NULL CHECK (
         length(broker_order_id) > 0 AND broker_order_id = btrim(broker_order_id)
       ),
       client_order_id text NOT NULL CHECK (
@@ -172,10 +172,15 @@ export default Effect.gen(function* () {
       status text NOT NULL CHECK (
         status IN ('NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'EXPIRED', 'REJECTED', 'PENDING')
       ),
-      UNIQUE (account_id, client_order_id),
       CHECK (
         (order_type = 'LIMIT' AND limit_price_micros IS NOT NULL)
         OR (order_type = 'MARKET' AND limit_price_micros IS NULL)
+      ),
+      CHECK (
+        (status = 'FILLED' AND filled_quantity_micros = quantity_micros)
+        OR (status = 'PARTIALLY_FILLED' AND filled_quantity_micros > 0 AND filled_quantity_micros < quantity_micros)
+        OR (status IN ('NEW', 'PENDING') AND filled_quantity_micros = 0)
+        OR (status IN ('CANCELED', 'EXPIRED', 'REJECTED') AND filled_quantity_micros < quantity_micros)
       ),
       FOREIGN KEY (event_id, account_id, event_kind)
         REFERENCES broker_events(event_id, account_id, event_kind) ON DELETE RESTRICT,
@@ -183,6 +188,9 @@ export default Effect.gen(function* () {
         REFERENCES intents(intent_id, account_id) ON DELETE RESTRICT
     )
   `
+
+  yield* sql`CREATE INDEX orders_account_broker_order_idx ON orders(account_id, broker_order_id)`
+  yield* sql`CREATE INDEX orders_account_client_order_idx ON orders(account_id, client_order_id)`
 
   yield* sql`
     CREATE TABLE fills (
@@ -323,6 +331,7 @@ export default Effect.gen(function* () {
         array_ndims(account_ids) = 1
         AND array_lower(account_ids, 1) = 1
         AND cardinality(account_ids) >= 2
+        AND array_position(account_ids, NULL) IS NULL
         AND numeric_array_is_strictly_ascending(account_ids)
         AND account_ids[1] > 0
         AND account_ids[cardinality(account_ids)] <= 340282366920938463463374607431768211455
@@ -331,6 +340,7 @@ export default Effect.gen(function* () {
         array_ndims(transfer_ids) = 1
         AND array_lower(transfer_ids, 1) = 1
         AND cardinality(transfer_ids) >= 1
+        AND array_position(transfer_ids, NULL) IS NULL
         AND numeric_array_is_strictly_ascending(transfer_ids)
         AND transfer_ids[1] > 0
         AND transfer_ids[cardinality(transfer_ids)] <= 340282366920938463463374607431768211455
@@ -427,6 +437,10 @@ export default Effect.gen(function* () {
     RETURNS trigger
     LANGUAGE plpgsql
     AS $function$
+    DECLARE
+      decision_outcome text;
+      decision_decided_at timestamptz;
+      decision_expires_at timestamptz;
     BEGIN
       IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'intents cannot be deleted' USING ERRCODE = '55000';
@@ -454,6 +468,10 @@ export default Effect.gen(function* () {
         RAISE EXCEPTION 'intent state version and time must advance' USING ERRCODE = '23514';
       END IF;
 
+      IF OLD.state <> 'PLANNED' AND NEW.risk_decision_id IS DISTINCT FROM OLD.risk_decision_id THEN
+        RAISE EXCEPTION 'intent risk decision cannot change after planning' USING ERRCODE = '55000';
+      END IF;
+
       IF NOT (CASE OLD.state
         WHEN 'PLANNED' THEN NEW.state IN ('APPROVED', 'TERMINAL')
         WHEN 'APPROVED' THEN NEW.state IN ('IO_STARTED', 'TERMINAL')
@@ -465,6 +483,40 @@ export default Effect.gen(function* () {
         ELSE false
       END) THEN
         RAISE EXCEPTION 'invalid intent transition from % to %', OLD.state, NEW.state USING ERRCODE = '23514';
+      END IF;
+
+      IF NEW.state = 'TERMINAL' AND NOT (CASE OLD.state
+        WHEN 'PLANNED' THEN NEW.terminal_outcome = 'BLOCKED'
+        WHEN 'APPROVED' THEN NEW.terminal_outcome IN ('BLOCKED', 'CANCELED')
+        WHEN 'IO_STARTED' THEN NEW.terminal_outcome IN ('FILLED', 'CANCELED', 'EXPIRED', 'REJECTED')
+        WHEN 'ACKNOWLEDGED' THEN NEW.terminal_outcome IN ('FILLED', 'CANCELED', 'EXPIRED', 'REJECTED')
+        WHEN 'RECOVERED' THEN NEW.terminal_outcome IN ('FILLED', 'CANCELED', 'EXPIRED', 'REJECTED')
+        ELSE false
+      END) THEN
+        RAISE EXCEPTION 'invalid terminal outcome % from %', NEW.terminal_outcome, OLD.state USING ERRCODE = '23514';
+      END IF;
+
+      IF OLD.state = 'PLANNED' OR NEW.state = 'IO_STARTED' THEN
+        SELECT outcome, decided_at, expires_at
+        INTO decision_outcome, decision_decided_at, decision_expires_at
+        FROM risk_decisions
+        WHERE decision_id = NEW.risk_decision_id AND intent_id = NEW.intent_id;
+
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'intent transition requires its bound risk decision' USING ERRCODE = '23503';
+        END IF;
+
+        IF decision_decided_at > NEW.updated_at OR decision_expires_at <= NEW.updated_at THEN
+          RAISE EXCEPTION 'intent transition requires a current risk decision' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.state = 'TERMINAL' AND decision_outcome <> 'BLOCKED' THEN
+          RAISE EXCEPTION 'blocked terminal intent requires a blocked risk decision' USING ERRCODE = '23514';
+        END IF;
+
+        IF NEW.state <> 'TERMINAL' AND decision_outcome <> 'APPROVED' THEN
+          RAISE EXCEPTION 'broker I/O requires an approved risk decision' USING ERRCODE = '23514';
+        END IF;
       END IF;
 
       RETURN NEW;

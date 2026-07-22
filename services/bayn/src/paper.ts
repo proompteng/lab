@@ -29,6 +29,7 @@ const boundedInteger = (pattern: RegExp, minimum: bigint, maximum: bigint, expec
 const DecimalId = boundedInteger(/^[1-9][0-9]*$/, 1n, U128_MAX, 'a canonical positive u128 decimal string')
 const Sequence = boundedInteger(/^(?:0|[1-9][0-9]*)$/, 0n, U64_MAX, 'a canonical unsigned u64 decimal string')
 const SignedMicros = boundedInteger(/^(?:0|-?[1-9][0-9]*)$/, I128_MIN, I128_MAX, 'canonical signed i128 micros')
+const NonPositiveMicros = boundedInteger(/^(?:0|-[1-9][0-9]*)$/, I128_MIN, 0n, 'canonical non-positive i128 micros')
 const UnsignedMicros = boundedInteger(/^(?:0|[1-9][0-9]*)$/, 0n, U128_MAX, 'canonical unsigned u128 micros')
 const PositiveMicros = DecimalId
 const Ledger = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: U32_MAX }))
@@ -185,6 +186,31 @@ export const OrderSchema = OrderBase.check(
     const issues: Schema.FilterIssue[] = []
     if (BigInt(order.filledQuantityMicros) > BigInt(order.quantityMicros)) {
       issues.push({ path: ['filledQuantityMicros'], issue: 'must not exceed quantityMicros' })
+    }
+    const filledQuantity = BigInt(order.filledQuantityMicros)
+    const quantity = BigInt(order.quantityMicros)
+    if (order.status === OrderStatus.Filled && filledQuantity !== quantity) {
+      issues.push({ path: ['filledQuantityMicros'], issue: 'must equal quantityMicros for a filled order' })
+    }
+    if (order.status === OrderStatus.PartiallyFilled && (filledQuantity === 0n || filledQuantity >= quantity)) {
+      issues.push({
+        path: ['filledQuantityMicros'],
+        issue: 'must be between zero and quantityMicros for a partial fill',
+      })
+    }
+    if ((order.status === OrderStatus.New || order.status === OrderStatus.Pending) && filledQuantity !== 0n) {
+      issues.push({ path: ['filledQuantityMicros'], issue: 'must be zero before any fill' })
+    }
+    if (
+      (order.status === OrderStatus.Canceled ||
+        order.status === OrderStatus.Expired ||
+        order.status === OrderStatus.Rejected) &&
+      filledQuantity >= quantity
+    ) {
+      issues.push({
+        path: ['filledQuantityMicros'],
+        issue: 'must be less than quantityMicros for an unfilled terminal order',
+      })
     }
     if (order.orderType === OrderType.Limit && order.limitPriceMicros === undefined) {
       issues.push({ path: ['limitPriceMicros'], issue: 'is required for a limit order' })
@@ -363,8 +389,38 @@ const allowedTransitions: Readonly<Record<IntentState, readonly IntentState[]>> 
   [IntentState.Terminal]: [],
 }
 
-export const isIntentTransitionAllowed = (from: IntentState, to: IntentState): boolean =>
-  allowedTransitions[from].includes(to)
+const allowedTerminalOutcomes: Readonly<Partial<Record<IntentState, readonly TerminalOutcome[]>>> = {
+  [IntentState.Planned]: [TerminalOutcome.Blocked],
+  [IntentState.Approved]: [TerminalOutcome.Blocked, TerminalOutcome.Canceled],
+  [IntentState.IoStarted]: [
+    TerminalOutcome.Filled,
+    TerminalOutcome.Canceled,
+    TerminalOutcome.Expired,
+    TerminalOutcome.Rejected,
+  ],
+  [IntentState.Acknowledged]: [
+    TerminalOutcome.Filled,
+    TerminalOutcome.Canceled,
+    TerminalOutcome.Expired,
+    TerminalOutcome.Rejected,
+  ],
+  [IntentState.Recovered]: [
+    TerminalOutcome.Filled,
+    TerminalOutcome.Canceled,
+    TerminalOutcome.Expired,
+    TerminalOutcome.Rejected,
+  ],
+}
+
+export const isIntentTransitionAllowed = (
+  from: IntentState,
+  to: IntentState,
+  terminalOutcome?: TerminalOutcome,
+): boolean => {
+  if (!allowedTransitions[from].includes(to)) return false
+  if (to !== IntentState.Terminal) return terminalOutcome === undefined
+  return terminalOutcome !== undefined && (allowedTerminalOutcomes[from]?.includes(terminalOutcome) ?? false)
+}
 
 const RiskInputBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-risk-input.v1'),
@@ -445,7 +501,7 @@ const ValuationBase = Schema.Struct({
   sourceHash: Sha256,
   cashMicros: SignedMicros,
   longMarketValueMicros: UnsignedMicros,
-  shortMarketValueMicros: SignedMicros,
+  shortMarketValueMicros: NonPositiveMicros,
   equityMicros: SignedMicros,
   asOf: UtcInstant,
 })

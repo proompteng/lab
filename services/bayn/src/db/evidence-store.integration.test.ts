@@ -219,6 +219,36 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               `
             }),
           )
+        const insertOrder = (
+          eventId: string,
+          sourceEventId: string,
+          sourceSequence: string,
+          status: 'NEW' | 'FILLED',
+          filledQuantity: string,
+        ) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO broker_events (
+                  event_id, schema_version, content_hash, event_kind, broker, account_id,
+                  source_event_id, source_sequence, occurred_at, observed_at
+                ) VALUES (
+                  ${eventId}, 'bayn.paper-broker-event.v1', ${'d'.repeat(64)}, 'ORDER', 'ALPACA',
+                  'paper-account-1', ${sourceEventId}, ${sourceSequence},
+                  '2026-07-22T06:00:00.000Z', '2026-07-22T06:01:00.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO orders (
+                  event_id, account_id, schema_version, broker_order_id, client_order_id, symbol,
+                  side, order_type, time_in_force, quantity_micros, filled_quantity_micros, status
+                ) VALUES (
+                  ${eventId}, 'paper-account-1', 'bayn.paper-order.v1', 'broker-order-1',
+                  'client-order-1', 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, ${filledQuantity}, ${status}
+                )
+              `
+            }),
+          )
 
         yield* insertAccount('1'.repeat(64), 'source-1', '1')
         const duplicateSource = yield* Effect.exit(insertAccount('2'.repeat(64), 'source-1', '2'))
@@ -240,18 +270,31 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             `,
           ),
         )
+        yield* insertOrder('6'.repeat(64), 'source-6', '2', 'NEW', '0')
+        yield* insertOrder('7'.repeat(64), 'source-7', '3', 'FILLED', '1000000')
+        const inconsistentFill = yield* Effect.exit(insertOrder('8'.repeat(64), 'source-8', '4', 'FILLED', '0'))
         const update = yield* Effect.exit(sql`
           UPDATE account_snapshots SET cash_micros = 2 WHERE event_id = ${'1'.repeat(64)}
         `)
         const deletion = yield* Effect.exit(sql`
           DELETE FROM broker_events WHERE event_id = ${'1'.repeat(64)}
         `)
-        const counts = yield* sql<{ events: number; accounts: number }>`
+        const counts = yield* sql<{ events: number; accounts: number; orders: number }>`
           SELECT
             (SELECT count(*)::integer FROM broker_events) AS events,
-            (SELECT count(*)::integer FROM account_snapshots) AS accounts
+            (SELECT count(*)::integer FROM account_snapshots) AS accounts,
+            (SELECT count(*)::integer FROM orders) AS orders
         `
-        return { duplicateSequence, duplicateSource, overflow, missingPayload, update, deletion, counts: counts[0] }
+        return {
+          duplicateSequence,
+          duplicateSource,
+          overflow,
+          missingPayload,
+          inconsistentFill,
+          update,
+          deletion,
+          counts: counts[0],
+        }
       }),
     )
 
@@ -259,9 +302,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.duplicateSequence)).toBe(true)
     expect(Exit.isFailure(result.overflow)).toBe(true)
     expect(Exit.isFailure(result.missingPayload)).toBe(true)
+    expect(Exit.isFailure(result.inconsistentFill)).toBe(true)
     expect(Exit.isFailure(result.update)).toBe(true)
     expect(Exit.isFailure(result.deletion)).toBe(true)
-    expect(result.counts).toEqual({ events: 1, accounts: 1 })
+    expect(result.counts).toEqual({ events: 3, accounts: 1, orders: 2 })
   })
 
   test('enforces intent transitions, risk binding, and immutable decisions', async () => {
@@ -322,6 +366,105 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               updated_at = '2026-07-22T06:00:40.000Z'
           WHERE intent_id = ${intentId}
         `)
+        const expiredIo = yield* Effect.exit(sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-07-22T06:01:30.000Z'
+          WHERE intent_id = ${intentId}
+        `)
+        const blockedApproval = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO intents (
+                  intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                  time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+                ) VALUES (
+                  ${'b'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-4',
+                  'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                  '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO risk_decisions (
+                  decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                  reason_codes, decided_at, expires_at
+                ) VALUES (
+                  ${'c'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'d'.repeat(64)}, ${'b'.repeat(64)},
+                  ${'e'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
+                  '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                )
+              `
+              yield* sql`
+                UPDATE intents
+                SET state = 'APPROVED', risk_decision_id = ${'c'.repeat(64)}, state_version = 2,
+                    updated_at = '2026-07-22T06:00:30.000Z'
+                WHERE intent_id = ${'b'.repeat(64)}
+              `
+            }),
+          ),
+        )
+        const invalidTerminal = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                INSERT INTO intents (
+                  intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                  time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+                ) VALUES (
+                  ${'f'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-5',
+                  'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                  '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+                )
+              `
+              yield* sql`
+                INSERT INTO risk_decisions (
+                  decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                  reason_codes, decided_at, expires_at
+                ) VALUES (
+                  ${'0'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'1'.repeat(64)}, ${'f'.repeat(64)},
+                  ${'2'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
+                  '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+                )
+              `
+              yield* sql`
+                UPDATE intents
+                SET state = 'TERMINAL', terminal_outcome = 'FILLED', risk_decision_id = ${'0'.repeat(64)},
+                    state_version = 2, updated_at = '2026-07-22T06:00:30.000Z'
+                WHERE intent_id = ${'f'.repeat(64)}
+              `
+            }),
+          ),
+        )
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO intents (
+                intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
+                time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+              ) VALUES (
+                ${'a'.repeat(64)}, 'bayn.paper-intent.v1', 'paper-account-1', 'client-order-6',
+                'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+              )
+            `
+            yield* sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                reason_codes, decided_at, expires_at
+              ) VALUES (
+                ${'9'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'8'.repeat(64)}, ${'a'.repeat(64)},
+                ${'7'.repeat(64)}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
+                '2026-07-22T06:00:30.000Z', '2026-07-22T06:01:30.000Z'
+              )
+            `
+            yield* sql`
+              UPDATE intents
+              SET state = 'TERMINAL', terminal_outcome = 'BLOCKED', risk_decision_id = ${'9'.repeat(64)},
+                  state_version = 2, updated_at = '2026-07-22T06:00:30.000Z'
+              WHERE intent_id = ${'a'.repeat(64)}
+            `
+          }),
+        )
         const orphan = yield* Effect.exit(
           sql.withTransaction(
             Effect.gen(function* () {
@@ -359,17 +502,36 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           JOIN risk_decisions AS decision ON decision.intent_id = intent.intent_id
           WHERE intent.intent_id = ${intentId}
         `
-        return { invalidInitial, skipState, changeIdentity, orphan, mutateDecision, deleteIntent, state: state[0] }
+        const blockedState = yield* sql<{ state: string; terminal_outcome: string }>`
+          SELECT state, terminal_outcome FROM intents WHERE intent_id = ${'a'.repeat(64)}
+        `
+        return {
+          invalidInitial,
+          skipState,
+          changeIdentity,
+          expiredIo,
+          blockedApproval,
+          invalidTerminal,
+          orphan,
+          mutateDecision,
+          deleteIntent,
+          state: state[0],
+          blockedState: blockedState[0],
+        }
       }),
     )
 
     expect(Exit.isFailure(result.invalidInitial)).toBe(true)
     expect(Exit.isFailure(result.skipState)).toBe(true)
     expect(Exit.isFailure(result.changeIdentity)).toBe(true)
+    expect(Exit.isFailure(result.expiredIo)).toBe(true)
+    expect(Exit.isFailure(result.blockedApproval)).toBe(true)
+    expect(Exit.isFailure(result.invalidTerminal)).toBe(true)
     expect(Exit.isFailure(result.orphan)).toBe(true)
     expect(Exit.isFailure(result.mutateDecision)).toBe(true)
     expect(Exit.isFailure(result.deleteIntent)).toBe(true)
     expect(result.state).toEqual({ state: 'APPROVED', state_version: 2, decision_id: '2'.repeat(64) })
+    expect(result.blockedState).toEqual({ state: 'TERMINAL', terminal_outcome: 'BLOCKED' })
   })
 
   test('enforces exact accounting evidence and downward-only authority', async () => {
@@ -457,6 +619,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '2026-07-22T06:01:00.000Z'
           )
         `)
+        const nullIdentifier = yield* Effect.exit(sql`
+          INSERT INTO accounting_receipts (
+            receipt_id, schema_version, broker_event_id, tigerbeetle_cluster_id, tigerbeetle_ledger,
+            account_ids, transfer_ids, debit_micros, credit_micros, content_hash, recorded_at
+          ) VALUES (
+            ${'e'.repeat(64)}, 'bayn.paper-accounting-receipt.v1', ${eventId}, 2001, 7001,
+            ARRAY[1, NULL, 2]::numeric[], ARRAY[3]::numeric[], 1250000, 1250000, ${'f'.repeat(64)},
+            '2026-07-22T06:01:00.000Z'
+          )
+        `)
         const badValuation = yield* Effect.exit(sql`
           INSERT INTO valuations (
             valuation_id, schema_version, account_id, source_hash, cash_micros,
@@ -513,6 +685,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         return {
           unbalanced,
           unordered,
+          nullIdentifier,
           badValuation,
           badReconciliation,
           escalation,
@@ -525,6 +698,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
 
     expect(Exit.isFailure(result.unbalanced)).toBe(true)
     expect(Exit.isFailure(result.unordered)).toBe(true)
+    expect(Exit.isFailure(result.nullIdentifier)).toBe(true)
     expect(Exit.isFailure(result.badValuation)).toBe(true)
     expect(Exit.isFailure(result.badReconciliation)).toBe(true)
     expect(Exit.isFailure(result.escalation)).toBe(true)
