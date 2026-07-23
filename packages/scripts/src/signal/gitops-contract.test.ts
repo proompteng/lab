@@ -219,7 +219,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 5,
+      restartNonce: 6,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
