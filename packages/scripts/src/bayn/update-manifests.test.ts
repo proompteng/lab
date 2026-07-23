@@ -345,6 +345,26 @@ describe('Bayn manifest promotion', () => {
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
+  test('rejects using an accepted run to change unpinned transport addresses', () => {
+    const paths = makeFixture({
+      qualificationRunId: null,
+      tigerBeetleAddresses: 'ledger.bayn.svc.cluster.local:3000',
+    })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() =>
+      promote(
+        paths,
+        {
+          acceptedQualificationRunId: '8'.repeat(64),
+          digest: `sha256:${'0'.repeat(64)}`,
+        },
+        '0'.repeat(40),
+      ),
+    ).toThrow('qualification installation must pin the exact deployed source, image, strategy, and runtime')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
   test('requires an explicit complete runtime before installing an accepted run', () => {
     const paths = makeFixture({ qualificationRunId: null })
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
@@ -436,6 +456,9 @@ describe('Bayn manifest promotion', () => {
     expect(() =>
       parseUpdateBaynManifestArguments([...base, '--accepted-qualification-run-id', qualificationRunId]),
     ).toThrow('--accepted-qualification-run-id requires the complete candidate runtime')
+    expect(() => parseUpdateBaynManifestArguments([...base, ...candidate.slice(0, -1), '   '])).toThrow(
+      '--accepted-qualification-run-id is required',
+    )
   })
 
   test('rejects malformed explicit qualification material before writing', () => {

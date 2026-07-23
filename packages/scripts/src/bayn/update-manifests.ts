@@ -87,6 +87,7 @@ const qualificationIdentityNames = [
   'BAYN_TIGERBEETLE_CLUSTER_ID',
   'BAYN_TIGERBEETLE_LEDGER',
 ] as const
+const candidateRuntimeNames = [...qualificationIdentityNames, 'BAYN_TIGERBEETLE_ADDRESSES'] as const
 
 const runtimeFromDeployment = (deployment: string): BaynCandidateRuntime => ({
   BAYN_SIGNAL_SNAPSHOT_ID: environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID'),
@@ -209,7 +210,8 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (deployedQualificationRunId !== null && !hashPattern.test(deployedQualificationRunId)) {
     throw new Error('invalid deployed BAYN_QUALIFICATION_RUN_ID')
   }
-  const candidateRuntime = options.candidateRuntime ?? runtimeFromDeployment(deployment)
+  const deployedRuntime = runtimeFromDeployment(deployment)
+  const candidateRuntime = options.candidateRuntime ?? deployedRuntime
   validateCandidateRuntime(candidateRuntime)
   const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
   const deployedImageDigest = environmentValue(deployment, 'BAYN_IMAGE_DIGEST')
@@ -219,7 +221,10 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const candidateSnapshotId = candidateRuntime.BAYN_SIGNAL_SNAPSHOT_ID
   const snapshotChanged = deployedSnapshotId !== candidateSnapshotId
   const qualificationBindingsMatch = qualificationIdentityNames.every(
-    (name) => environmentValue(deployment, name) === candidateRuntime[name],
+    (name) => deployedRuntime[name] === candidateRuntime[name],
+  )
+  const candidateRuntimeMatchesDeployment = candidateRuntimeNames.every(
+    (name) => deployedRuntime[name] === candidateRuntime[name],
   )
   const strategyIdentityMatches =
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
@@ -240,7 +245,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       deployedSourceSha !== options.sourceSha ||
       deployedImageDigest !== options.digest ||
       !strategyIdentityMatches ||
-      !qualificationBindingsMatch
+      !candidateRuntimeMatchesDeployment
     ) {
       throw new Error('qualification installation must pin the exact deployed source, image, strategy, and runtime')
     }
@@ -424,8 +429,10 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
       BAYN_TIGERBEETLE_LEDGER: required('--tigerbeetle-ledger'),
     }
   }
-  const acceptedQualificationRunId = values.get('--accepted-qualification-run-id')?.trim()
-  if (acceptedQualificationRunId && candidateRuntime === undefined) {
+  const acceptedQualificationRunId = values.has('--accepted-qualification-run-id')
+    ? required('--accepted-qualification-run-id')
+    : undefined
+  if (acceptedQualificationRunId !== undefined && candidateRuntime === undefined) {
     throw new Error('--accepted-qualification-run-id requires the complete candidate runtime')
   }
   return {
@@ -436,7 +443,7 @@ export const parseUpdateBaynManifestArguments = (argumentsToParse: readonly stri
     strategyParameterHash: required('--strategy-parameter-hash'),
     rolloutTimestamp: required('--rollout-timestamp'),
     ...(candidateRuntime === undefined ? {} : { candidateRuntime }),
-    ...(acceptedQualificationRunId ? { acceptedQualificationRunId } : {}),
+    ...(acceptedQualificationRunId === undefined ? {} : { acceptedQualificationRunId }),
   }
 }
 
