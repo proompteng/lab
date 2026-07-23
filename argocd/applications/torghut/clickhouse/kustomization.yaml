@@ -15,6 +15,7 @@ resources:
   - signal-schema-job.yaml
   - intraday-bars-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
+  - signal-cross-asset-backfill-20160104-20260722.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
