@@ -30,8 +30,8 @@ helmCharts:
 images:
   - name: ghcr.io/block/buzz
     newName: ghcr.io/block/buzz
-    newTag: 0.1.0
-    digest: sha256:e7f25874ef10581485d4c548f3f1cf76f986aeffbfafee00bcb8edc2855dedea
+    newTag: sha-acfbb1b
+    digest: sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428
 
 patches:
   - target:
