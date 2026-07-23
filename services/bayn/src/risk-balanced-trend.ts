@@ -1,5 +1,5 @@
 import type { RuntimeProvenance } from './contracts'
-import { MICROS } from './execution-model'
+import { MICROS, referencePriceMicros } from './execution-model'
 import { canonicalHashV1 } from './hash'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
 import {
@@ -13,6 +13,7 @@ import {
   selectEvaluationWindow,
   simulate,
   TRADING_DAYS,
+  type AlignedSession,
   type SimulationTarget,
 } from './simulation'
 import {
@@ -263,6 +264,65 @@ export const makeRiskBalancedTrendDecision = (
   }
 }
 
+const decisionFromAlignedSessions = (
+  sessions: readonly AlignedSession[],
+  signalIndex: number,
+  protocol: Protocol,
+): DecisionPlan => {
+  const signalSession = sessions[signalIndex]
+  if (signalSession === undefined) throw new Error('risk-balanced trend signal session is missing')
+  const historySessions = requiredHistory(protocol)
+  const history = sessions.slice(signalIndex - historySessions, signalIndex + 1)
+  return makeRiskBalancedTrendDecision(
+    signalSession.date,
+    history.map((session) => session.date),
+    Object.fromEntries(
+      protocol.universe.map((symbol) => [symbol, history.map((session) => session.bars[symbol].close)]),
+    ),
+    protocol,
+  )
+}
+
+export interface CurrentRiskBalancedTrendDecision {
+  readonly decision: DecisionPlan
+  readonly priceMicros: Readonly<Record<string, string>>
+}
+
+export const compileCurrentRiskBalancedTrendDecision = (
+  bars: readonly DailyBar[],
+  inputManifest: InputManifest,
+  protocol: Protocol,
+): CurrentRiskBalancedTrendDecision => {
+  const sessions = alignBars(bars, protocol.universe, inputManifest)
+  const signalIndex = sessions.length - 1
+  const terminalSession = sessions[signalIndex]
+  if (
+    terminalSession === undefined ||
+    terminalSession.date !== inputManifest.finalizedSnapshot.lastSession ||
+    terminalSession.date !== inputManifest.lastSession
+  ) {
+    throw new Error('current strategy decision must end on the bound Signal terminal session')
+  }
+  const decision = decisionFromAlignedSessions(sessions, signalIndex, protocol)
+  const priceMicros = Object.fromEntries(
+    protocol.universe.map((symbol) => [
+      symbol,
+      referencePriceMicros(terminalSession.bars[symbol].close, protocol.executionModel).toString(),
+    ]),
+  )
+  const priceSymbols = Object.keys(priceMicros)
+  if (
+    decision.signalDate !== terminalSession.date ||
+    priceSymbols.length !== protocol.universe.length ||
+    protocol.universe.some(
+      (symbol) => !Object.hasOwn(priceMicros, symbol) || !/^[1-9][0-9]*$/.test(priceMicros[symbol]),
+    )
+  ) {
+    throw new Error('current strategy decision and terminal closes do not cover one compiled universe session')
+  }
+  return { decision, priceMicros }
+}
+
 export interface QualificationPrecommit {
   readonly candidateRunId: string
   readonly protocolHash: string
@@ -314,15 +374,7 @@ export const evaluateRiskBalancedTrend = (
   const { signalIndices, startIndex } = window
   const evaluationSessions = sessions.slice(0, window.evaluationEndExclusive)
   const strategyTargets: SimulationTarget[] = signalIndices.map((signalIndex) => {
-    const history = sessions.slice(signalIndex - historySessions, signalIndex + 1)
-    const decision = makeRiskBalancedTrendDecision(
-      sessions[signalIndex].date,
-      history.map((session) => session.date),
-      Object.fromEntries(
-        protocol.universe.map((symbol) => [symbol, history.map((session) => session.bars[symbol].close)]),
-      ),
-      protocol,
-    )
+    const decision = decisionFromAlignedSessions(sessions, signalIndex, protocol)
     return { signalIndex, executionIndex: signalIndex + 1, weights: decision.targetWeights, decision }
   })
   const equalWeight = roundWeight(1 / protocol.universe.length)

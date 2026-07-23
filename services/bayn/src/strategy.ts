@@ -1,4 +1,7 @@
+import { Schema } from 'effect'
+
 import type { RuntimeProvenance } from './contracts'
+import { InputManifestArtifactSchema } from './evidence-contracts'
 import {
   defaultQualificationStatisticsPolicyDocument,
   makeQualificationLock,
@@ -11,14 +14,23 @@ import {
   prepareQualificationSeries,
   type QualificationAnalysis,
 } from './qualification-statistics'
-import { evaluateRiskBalancedTrend, prepareRiskBalancedTrendQualification } from './risk-balanced-trend'
+import {
+  compileCurrentRiskBalancedTrendDecision,
+  evaluateRiskBalancedTrend,
+  prepareRiskBalancedTrendQualification,
+  type CurrentRiskBalancedTrendDecision,
+} from './risk-balanced-trend'
+import { strictParseOptions } from './schemas'
 import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } from './types'
+
+export type CurrentStrategyDecision = CurrentRiskBalancedTrendDecision
 
 export interface Strategy {
   readonly name: string
   readonly parameters: Protocol
   readonly provenance: RuntimeProvenance
   readonly evaluate: (bars: readonly DailyBar[], manifest: InputManifest) => EvaluationResult
+  readonly currentDecision: (bars: readonly DailyBar[], manifest: InputManifest) => CurrentStrategyDecision
   readonly prepareLock: (
     manifest: InputManifest,
     sessionDates: readonly IsoDate[],
@@ -26,6 +38,8 @@ export interface Strategy {
   ) => QualificationLock
   readonly analyze: (evaluation: EvaluationResult, priorTrialRunIds: readonly string[]) => QualificationAnalysis
 }
+
+const decodeManifest = Schema.decodeUnknownSync(InputManifestArtifactSchema, strictParseOptions)
 
 const requireMatchingUniverse = (manifest: InputManifest, protocol: Protocol): InputManifest => {
   const snapshot = manifest.finalizedSnapshot
@@ -36,7 +50,16 @@ const requireMatchingUniverse = (manifest: InputManifest, protocol: Protocol): I
   ) {
     throw new TypeError('Signal snapshot universe does not match the compiled strategy universe')
   }
-  return manifest
+  const decoded = decodeManifest(manifest)
+  if (
+    decoded.firstSession !== snapshot.firstSession ||
+    decoded.lastSession !== snapshot.lastSession ||
+    decoded.rowCount !== snapshot.rowCount ||
+    decoded.sessionCount !== snapshot.sessionCount
+  ) {
+    throw new TypeError('Signal manifest does not match its finalized snapshot bounds')
+  }
+  return decoded
 }
 
 const universeRationale =
@@ -65,6 +88,8 @@ export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance):
     provenance,
     evaluate: (bars, manifest) =>
       evaluateRiskBalancedTrend(bars, requireMatchingUniverse(manifest, protocol), protocol, provenance),
+    currentDecision: (bars, manifest) =>
+      compileCurrentRiskBalancedTrendDecision(bars, requireMatchingUniverse(manifest, protocol), protocol),
     prepareLock: (manifest, sessionDates, priorTrialRunIds) => {
       const inputManifest = requireMatchingUniverse(manifest, protocol)
       const precommit = prepareRiskBalancedTrendQualification(sessionDates, inputManifest, protocol, provenance)

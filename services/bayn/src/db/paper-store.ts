@@ -46,7 +46,7 @@ import {
   restrictAuthority,
   type BrokerSnapshot,
   type IntentBinding,
-  type ReconciliationReport,
+  type ReconciliationWriteResult,
 } from './reconciliation'
 
 export const VALUATION_SNAPSHOT_MAX_SKEW_MS = 30_000
@@ -86,7 +86,7 @@ export interface PaperStoreShape {
   readonly value: (input: ValuationInput) => Effect.Effect<Valuation, PaperStoreError>
   readonly hasAccountBaseline: (accountId: string) => Effect.Effect<boolean, PaperStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], PaperStoreError>
-  readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationReport, PaperStoreError>
+  readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationWriteResult, PaperStoreError>
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, PaperStoreError>
 }
 

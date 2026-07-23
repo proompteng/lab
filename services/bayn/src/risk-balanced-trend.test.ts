@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import { referencePriceMicros } from './execution-model'
 import { canonicalHashV1 } from './hash'
 import {
   evaluateRiskBalancedTrend,
@@ -196,6 +197,88 @@ describe('risk-balanced trend candidate', () => {
 
     expect(baseline.signalDecisions[0].signalDate < finalSession).toBe(true)
     expect(changed.signalDecisions[0]).toEqual(baseline.signalDecisions[0])
+  })
+
+  test('compiles one current decision with exact quantized terminal-session prices', () => {
+    const snapshot = makeSnapshot()
+    const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
+    const bars = snapshot.bars.map((bar) =>
+      bar.sessionDate === snapshot.manifest.lastSession && bar.symbol === fixtureProtocol.universe[0]
+        ? { ...bar, close: 100.123456 }
+        : bar,
+    )
+    const current = strategy.currentDecision(bars, snapshot.manifest)
+    const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
+    const historyLength = Math.max(fixtureProtocol.volatilityWindow, ...fixtureProtocol.horizons) + 1
+    const historyDates = sessionDates.slice(-historyLength)
+    const closesBySymbolAndDate = new Map(
+      bars.map((bar) => [`${bar.symbol}\u001f${bar.sessionDate}`, bar.close] as const),
+    )
+    const expectedPrices = Object.fromEntries(
+      fixtureProtocol.universe.map((symbol) => {
+        const close = closesBySymbolAndDate.get(`${symbol}\u001f${snapshot.manifest.finalizedSnapshot.lastSession}`)
+        if (close === undefined) throw new Error(`fixture is missing terminal close for ${symbol}`)
+        return [symbol, referencePriceMicros(close, fixtureProtocol.executionModel).toString()]
+      }),
+    )
+    const expectedDecision = makeRiskBalancedTrendDecision(
+      snapshot.manifest.finalizedSnapshot.lastSession,
+      historyDates,
+      Object.fromEntries(
+        fixtureProtocol.universe.map((symbol) => [
+          symbol,
+          historyDates.map((date) => {
+            const close = closesBySymbolAndDate.get(`${symbol}\u001f${date}`)
+            if (close === undefined) throw new Error(`fixture is missing ${symbol} ${date}`)
+            return close
+          }),
+        ]),
+      ),
+      fixtureProtocol,
+    )
+
+    expect(current).toEqual({ decision: expectedDecision, priceMicros: expectedPrices })
+    expect(current.decision.signalDate).toBe(snapshot.manifest.finalizedSnapshot.lastSession)
+    expect(current.priceMicros[fixtureProtocol.universe[0]]).toBe('100123500')
+    expect(Object.keys(current.priceMicros)).toEqual([...fixtureProtocol.universe])
+    expect(Object.values(current.priceMicros).every((price) => /^[1-9][0-9]*$/.test(price))).toBe(true)
+  })
+
+  test('rejects an invalid or snapshot-divergent manifest before compiling a current decision', () => {
+    const snapshot = makeSnapshot()
+    const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
+    expect(() =>
+      strategy.currentDecision(snapshot.bars, {
+        ...snapshot.manifest,
+        hash: '0'.repeat(64),
+      }),
+    ).toThrow()
+
+    const priorSession = snapshot.bars
+      .map((bar) => bar.sessionDate)
+      .filter((date) => date < snapshot.manifest.lastSession)
+      .sort()
+      .at(-1)
+    if (priorSession === undefined) throw new Error('fixture requires a prior session')
+    const { hash: _, ...material } = snapshot.manifest
+    const divergentMaterial = {
+      ...material,
+      bounds: {
+        ...material.bounds,
+        dataEnd: priorSession,
+        evaluationEnd: priorSession,
+      },
+      lastSession: priorSession,
+      symbols: material.symbols.map((coverage) => ({ ...coverage, lastSession: priorSession })),
+    }
+    const divergent = {
+      ...divergentMaterial,
+      hash: canonicalHashV1(divergentMaterial),
+    }
+
+    expect(() => strategy.currentDecision(snapshot.bars, divergent)).toThrow(
+      'Signal manifest does not match its finalized snapshot bounds',
+    )
   })
 
   test('rejects a Signal manifest for a different universe before qualification', () => {

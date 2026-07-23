@@ -23,6 +23,7 @@ import { PaperStore, type PaperStoreError, type PaperStoreShape } from './db/pap
 import type { BrokerSnapshot, ReconciliationReport } from './db/reconciliation'
 import { WriterFence, type WriterFenceError, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
+import type { ReconciledBrokerState, ReconciliationRiskContext } from './reconciliation'
 
 const maximumRows = 10_000
 const ordersPageSize = 500
@@ -41,6 +42,12 @@ interface OrderRead {
 interface BrokerHistory {
   readonly orders: OrderRead
   readonly fills: readonly Observed<FillActivity>[]
+}
+
+export interface ReconciliationPassResult {
+  readonly report: ReconciliationReport
+  readonly brokerState: ReconciledBrokerState
+  readonly riskContext: ReconciliationRiskContext
 }
 
 export class ReconciliationError extends Data.TaggedError('ReconciliationError')<{
@@ -180,7 +187,10 @@ const run = (
   read: BrokerReadShape,
   store: PaperStoreShape,
   fence: WriterFenceService,
-): Effect.Effect<ReconciliationReport, BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError> =>
+): Effect.Effect<
+  ReconciliationPassResult,
+  BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError
+> =>
   Effect.gen(function* () {
     const beforeUntil = new Date(yield* Clock.currentTimeMillis).toISOString()
     const before = yield* readHistory(read, beforeUntil)
@@ -268,16 +278,37 @@ const run = (
           positionSnapshotId: positionsReceipt.snapshotId,
         })
         const reconciledAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        const report = yield* store.reconcile({
+        const positions = normalized.positions.positions
+          .map((event) => event.position)
+          .sort((left, right) => compareText(left.symbol, right.symbol))
+        const reconciledOrders = normalized.orderEvents
+          .map((event) => event.order)
+          .sort((left, right) => compareText(left.brokerOrderId, right.brokerOrderId))
+        const unknownOrderCount = reconciledOrders.filter((order) => order.intentId === undefined).length
+        const persisted = yield* store.reconcile({
           account: normalized.account.account,
-          positions: normalized.positions.positions.map((event) => event.position),
+          positions,
           positionsObservedAt: normalized.positions.observedAt,
-          orders: normalized.orderEvents.map((event) => event.order),
+          orders: reconciledOrders,
           ordersObservedAt: orders.observedAt,
           fills: normalized.fillEvents.map((event) => event.fill),
           valuation,
           reconciledAt,
         } satisfies BrokerSnapshot)
+        const report: ReconciliationReport = {
+          reconciliation: persisted.reconciliation,
+          metrics: persisted.metrics,
+        }
+        const brokerState: ReconciledBrokerState = {
+          account: normalized.account.account,
+          positions,
+          positionsObservedAt: normalized.positions.observedAt,
+          orders: reconciledOrders,
+          ordersObservedAt: orders.observedAt,
+          accountingHash: persisted.accountingHash,
+          reconciliation: persisted.reconciliation,
+          unknownOrderCount,
+        }
 
         yield* Effect.logInfo('Paper account reconciliation completed').pipe(
           Effect.annotateLogs({
@@ -292,13 +323,13 @@ const run = (
             accountingExact: report.metrics.accountingExact,
           }),
         )
-        return report
+        return { report, brokerState, riskContext: persisted.riskContext }
       }),
     )
   }).pipe(Effect.withLogSpan('reconciliation'))
 
 export const runOnce: Effect.Effect<
-  ReconciliationReport,
+  ReconciliationPassResult,
   BrokerReadError | PaperStoreError | ReconciliationError | WriterFenceError,
   BrokerRead | PaperStore | WriterFence
 > = Effect.gen(function* () {
