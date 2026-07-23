@@ -7,6 +7,8 @@ import {
   type MarketCalendarSession,
 } from './broker/alpaca'
 import {
+  CycleState,
+  isTerminalCycleState,
   makeCycleDraft,
   makeCycleIdentity,
   makeCycleWindow,
@@ -17,12 +19,15 @@ import {
 } from './cycle'
 import {
   bindFinalizedCyclePublication,
+  runCyclePublicationReadiness,
   type CyclePublicationReadiness,
   type CycleReadinessError,
 } from './cycle-readiness'
+import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from './cycle-recovery'
 import { CycleStore, type CycleAcquireReceipt } from './db/cycle-store'
 import type { OperationalError } from './errors'
 import { MarketData, type MarketDataInspection, type SignalSessionRow } from './market-data'
+import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 
 const calendarRangeDays = 31
 // This leaves at least 10 calendar days after the newest candidate inside Alpaca's 31-day observation bound.
@@ -36,6 +41,7 @@ export interface CycleRunContext {
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: CycleExecutionPolicy
+  readonly buildDecision: (cycle: AutonomousCycle) => Effect.Effect<ObserveShadowDecisionDocument, unknown>
 }
 
 export interface CycleCandidate {
@@ -60,10 +66,29 @@ export type CycleRunResult =
       readonly cycle: CycleBindingResult['cycle']
     }
   | {
+      readonly outcome: 'ALREADY_TERMINAL'
+      readonly signalSessionDate: string
+      readonly observedAt: string
+      readonly cycle: AutonomousCycle
+    }
+  | {
       readonly outcome: 'RESUMED'
       readonly signalSessionDate: string
       readonly observedAt: string
       readonly readiness: CycleBindingResult
+    }
+  | {
+      readonly outcome: 'RECOVERED'
+      readonly action:
+        | 'ACTIVATED'
+        | 'BLOCKED'
+        | 'BOUND_DECISION'
+        | 'BOUND_SNAPSHOT'
+        | 'COMPLETED'
+        | 'NO_TRADE'
+        | 'WAITING'
+      readonly observedAt: string
+      readonly cycle: AutonomousCycle
     }
   | {
       readonly outcome: 'NOT_DUE'
@@ -88,12 +113,15 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
   readonly operation:
     | 'acquire-cycle'
     | 'bind-publication'
+    | 'build-decision'
     | 'build-cycle'
     | 'configure'
     | 'inspect-publication'
     | 'load-context'
     | 'market-calendar'
+    | 'read-oldest-unfinished'
     | 'read-authority-slot'
+    | 'recover-cycle'
     | 'select-session'
   readonly failure:
     | 'calendar-read'
@@ -107,8 +135,21 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
   readonly cause?: unknown
 }> {}
 
+export type CyclePassObservation =
+  | {
+      readonly outcome: 'SUCCEEDED'
+      readonly observedAt: string
+      readonly result: CycleRunResult
+    }
+  | {
+      readonly outcome: 'FAILED'
+      readonly observedAt: string
+      readonly error: CycleRunnerError
+    }
+
 export interface AutonomousCycleLoopOptions<E = never, R = never> {
-  readonly context: Effect.Effect<CycleRunContext | undefined, E, R>
+  readonly context: Effect.Effect<CycleRunContext, E, R>
+  readonly observePass: (observation: CyclePassObservation) => Effect.Effect<void>
   readonly pollIntervalMs: number
 }
 
@@ -226,7 +267,7 @@ export const makeDueCycleDraft = (
   return makeCycleDraft(identity, window)
 }
 
-export const runAutonomousCyclePass = (
+export const discoverAutonomousCyclePass = (
   context: CycleRunContext,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
   Effect.gen(function* () {
@@ -251,6 +292,8 @@ export const runAutonomousCyclePass = (
       catch: (cause) =>
         runnerError('inspect-publication', 'contract', 'bounded cycle publication discovery is invalid', cause),
     })
+    const unclaimed: MarketDataInspection[] = []
+    let latestTerminal: AutonomousCycle | undefined
     for (const publication of publications) {
       const signalSessionDate = publication.signalSession.session_date
       const existing = yield* store
@@ -264,7 +307,14 @@ export const runAutonomousCyclePass = (
             runnerError('read-authority-slot', 'store', 'durable autonomous cycle authority-slot read failed', cause),
           ),
         )
-      if (Option.isNone(existing)) continue
+      if (Option.isNone(existing)) {
+        unclaimed.push(publication)
+        continue
+      }
+      if (isTerminalCycleState(existing.value.state)) {
+        if (latestTerminal === undefined) latestTerminal = existing.value
+        continue
+      }
       if (existing.value.bindings.snapshotId === undefined) {
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const readiness = yield* bindDiscoveredPublication(existing.value, publication, observedAt)
@@ -282,8 +332,25 @@ export const runAutonomousCyclePass = (
         cycle: existing.value,
       }
     }
+    if (unclaimed.length === 0) {
+      if (latestTerminal === undefined) {
+        return yield* Effect.fail(
+          runnerError(
+            'read-authority-slot',
+            'contract',
+            'cycle discovery found no resumable or terminal authority slot',
+          ),
+        )
+      }
+      return {
+        outcome: 'ALREADY_TERMINAL',
+        signalSessionDate: latestTerminal.identity.signalSessionDate,
+        observedAt: discovery.observedAt,
+        cycle: latestTerminal,
+      }
+    }
     const query = yield* Effect.try({
-      try: () => marketCalendarQueryForPublications(publications),
+      try: () => marketCalendarQueryForPublications(unclaimed),
       catch: (cause) => runnerError('market-calendar', 'contract', 'cycle calendar query construction failed', cause),
     })
     const calendar = yield* broker
@@ -293,9 +360,9 @@ export const runAutonomousCyclePass = (
           runnerError('market-calendar', 'calendar-read', 'authoritative broker calendar read failed', cause),
         ),
       )
-    const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const calendarObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
     let latestNotDue: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }> | undefined
-    for (const publication of publications) {
+    for (const publication of unclaimed) {
       const candidate: CycleCandidate = {
         qualificationRunId: context.qualificationRunId,
         strategyProtocolHash: context.strategyProtocolHash,
@@ -317,7 +384,6 @@ export const runAutonomousCyclePass = (
       const common = {
         signalSessionDate,
         executionSessionDate: executionSession.date,
-        observedAt,
         calendarResponseHash: calendar.value.normalizedResponseHash,
         calendarReadContentHash: calendar.evidence.contentHash,
       } as const
@@ -327,20 +393,23 @@ export const runAutonomousCyclePass = (
       })
       if (draft === undefined) {
         if (latestNotDue === undefined) {
-          latestNotDue = { outcome: 'NOT_DUE', ...common }
+          latestNotDue = { outcome: 'NOT_DUE', observedAt: calendarObservedAt, ...common }
         }
         continue
       }
+      const acquiredAt = new Date(yield* Clock.currentTimeMillis).toISOString()
       const receipt = yield* store
-        .acquire(draft, observedAt)
+        .acquire(draft, acquiredAt)
         .pipe(
           Effect.mapError((cause) =>
             runnerError('acquire-cycle', 'store', 'durable autonomous cycle acquisition failed', cause),
           ),
         )
-      const readiness = yield* bindDiscoveredPublication(receipt.cycle, publication, observedAt)
+      const bindingObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+      const readiness = yield* bindDiscoveredPublication(receipt.cycle, publication, bindingObservedAt)
       return {
         outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
+        observedAt: bindingObservedAt,
         ...common,
         receipt,
         readiness,
@@ -350,6 +419,210 @@ export const runAutonomousCyclePass = (
     return yield* Effect.fail(
       runnerError('inspect-publication', 'contract', 'bounded cycle publication discovery produced no candidates'),
     )
+  })
+
+const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
+  Effect.try({
+    try: () => selectCycleRecovery(state),
+    catch: (cause) => runnerError('recover-cycle', 'contract', 'autonomous cycle recovery state is invalid', cause),
+  })
+
+const readinessFailure = (cause: CycleReadinessError): CycleRunnerError['failure'] => {
+  switch (cause.failure) {
+    case 'store':
+      return 'store'
+    case 'market-data':
+      return 'market-data'
+    case 'contract':
+      return 'contract'
+  }
+}
+
+const recoverCycle = (
+  selection: CycleRecoverySelection,
+  context: CycleRunContext,
+  observedAt: string,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> => {
+  switch (selection.action) {
+    case 'DISCOVER':
+      return discoverAutonomousCyclePass(context)
+    case 'BLOCK':
+      return Effect.gen(function* () {
+        const store = yield* CycleStore
+        const blocked = yield* store
+          .block(selection.cycleId, selection.reason, selection.observedAt)
+          .pipe(
+            Effect.mapError((cause) =>
+              runnerError('recover-cycle', 'store', 'unfinished autonomous cycle blocking failed', cause),
+            ),
+          )
+        return {
+          outcome: 'RECOVERED',
+          action: 'BLOCKED',
+          observedAt: selection.observedAt,
+          cycle: blocked.cycle,
+        }
+      })
+    case 'READ_PUBLICATION':
+      return runCyclePublicationReadiness(selection.cycle).pipe(
+        Effect.mapError((cause: CycleReadinessError) =>
+          runnerError('recover-cycle', readinessFailure(cause), 'unfinished cycle publication recovery failed', cause),
+        ),
+        Effect.flatMap((readiness) =>
+          chooseRecovery({
+            qualificationRunId: context.qualificationRunId,
+            accountId: context.accountId,
+            strategyProtocolHash: context.strategyProtocolHash,
+            observedAt,
+            cycle: selection.cycle,
+            readiness,
+          }),
+        ),
+        Effect.flatMap((next) => recoverCycle(next, context, observedAt)),
+      )
+    case 'RETURN_READINESS':
+      return Effect.succeed({
+        outcome: 'RECOVERED',
+        action: selection.recoveryAction,
+        observedAt: selection.result.observedAt,
+        cycle: selection.result.cycle,
+      })
+    case 'ACTIVATE':
+      return Effect.gen(function* () {
+        const store = yield* CycleStore
+        const activation = yield* store
+          .activate(selection.cycleId, selection.observedAt)
+          .pipe(
+            Effect.mapError((cause) =>
+              runnerError('recover-cycle', 'store', 'snapshot-bound cycle activation failed', cause),
+            ),
+          )
+        return {
+          outcome: 'RECOVERED',
+          action: activation.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'ACTIVATED',
+          observedAt: selection.observedAt,
+          cycle: activation.cycle,
+        }
+      })
+    case 'WAIT':
+      return Effect.succeed({
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        observedAt: selection.observedAt,
+        cycle: selection.cycle,
+      })
+    case 'BUILD_DECISION':
+      return context.buildDecision(selection.cycle).pipe(
+        Effect.mapError((cause) =>
+          runnerError('build-decision', 'contract', 'OBSERVE shadow decision construction failed', cause),
+        ),
+        Effect.flatMap((document) =>
+          Effect.gen(function* () {
+            const store = yield* CycleStore
+            const bindObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+            const binding = yield* store
+              .bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt)
+              .pipe(
+                Effect.mapError((cause) =>
+                  runnerError('recover-cycle', 'store', 'durable shadow decision binding failed', cause),
+                ),
+              )
+            return {
+              outcome: 'RECOVERED',
+              action: binding.cycle.state === CycleState.Blocked ? 'BLOCKED' : 'BOUND_DECISION',
+              observedAt: binding.cycle.updatedAt,
+              cycle: binding.cycle,
+            }
+          }),
+        ),
+      )
+    case 'READ_DECISION':
+      return Effect.gen(function* () {
+        const store = yield* CycleStore
+        const document = yield* store
+          .readDecisionDocument(selection.cycle.identity.cycleId)
+          .pipe(
+            Effect.mapError((cause) =>
+              runnerError('recover-cycle', 'store', 'durable shadow decision read failed', cause),
+            ),
+          )
+        const next = yield* chooseRecovery({
+          qualificationRunId: context.qualificationRunId,
+          accountId: context.accountId,
+          strategyProtocolHash: context.strategyProtocolHash,
+          observedAt,
+          cycle: selection.cycle,
+          decisionDocument: Option.match(document, {
+            onNone: () => null,
+            onSome: (value) => value,
+          }),
+        })
+        return yield* recoverCycle(next, context, observedAt)
+      })
+    case 'FINISH':
+      return Effect.gen(function* () {
+        const store = yield* CycleStore
+        const finished = yield* store
+          .finish(selection.cycleId, selection.state, selection.observedAt)
+          .pipe(
+            Effect.mapError((cause) =>
+              runnerError('recover-cycle', 'store', 'shadow cycle terminal transition failed', cause),
+            ),
+          )
+        let action: Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['action']
+        switch (finished.cycle.state) {
+          case CycleState.Completed:
+            action = 'COMPLETED'
+            break
+          case CycleState.NoTrade:
+            action = 'NO_TRADE'
+            break
+          case CycleState.Blocked:
+            action = 'BLOCKED'
+            break
+          default:
+            return yield* Effect.fail(
+              runnerError('recover-cycle', 'contract', 'cycle finish did not produce a terminal state'),
+            )
+        }
+        return {
+          outcome: 'RECOVERED',
+          action,
+          observedAt: selection.observedAt,
+          cycle: finished.cycle,
+        }
+      })
+  }
+}
+
+export const runAutonomousCyclePass = (
+  context: CycleRunContext,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData> =>
+  Effect.gen(function* () {
+    const store = yield* CycleStore
+    const unfinished = yield* store
+      .readOldestUnfinished({
+        qualificationRunId: context.qualificationRunId,
+        accountId: context.accountId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          runnerError('read-oldest-unfinished', 'store', 'oldest unfinished autonomous cycle read failed', cause),
+        ),
+      )
+    const cycle = Option.match(unfinished, {
+      onNone: () => undefined,
+      onSome: (value) => value,
+    })
+    const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const selection = yield* chooseRecovery({
+      qualificationRunId: context.qualificationRunId,
+      accountId: context.accountId,
+      strategyProtocolHash: context.strategyProtocolHash,
+      observedAt,
+      cycle,
+    })
+    return yield* recoverCycle(selection, context, observedAt)
   })
 
 const logCompletedPass = (result: CycleRunResult): Effect.Effect<void> => {
@@ -368,6 +641,16 @@ const logCompletedPass = (result: CycleRunResult): Effect.Effect<void> => {
           cycleState: result.cycle.state,
         }),
       )
+    case 'ALREADY_TERMINAL':
+      return Effect.logInfo('Bayn autonomous cycle pass completed').pipe(
+        Effect.annotateLogs({
+          outcome: result.outcome,
+          signalSessionDate: result.signalSessionDate,
+          observedAt: result.observedAt,
+          cycleId: result.cycle.identity.cycleId,
+          cycleState: result.cycle.state,
+        }),
+      )
     case 'RESUMED':
       return Effect.logInfo('Bayn autonomous cycle pass completed').pipe(
         Effect.annotateLogs({
@@ -377,6 +660,16 @@ const logCompletedPass = (result: CycleRunResult): Effect.Effect<void> => {
           cycleId: result.readiness.cycle.identity.cycleId,
           cycleState: result.readiness.cycle.state,
           publicationReadiness: result.readiness.outcome,
+        }),
+      )
+    case 'RECOVERED':
+      return Effect.logInfo('Bayn autonomous cycle pass completed').pipe(
+        Effect.annotateLogs({
+          outcome: result.outcome,
+          recoveryAction: result.action,
+          observedAt: result.observedAt,
+          cycleId: result.cycle.identity.cycleId,
+          cycleState: result.cycle.state,
         }),
       )
     case 'NOT_DUE':
@@ -419,19 +712,17 @@ const logFailedPass = (error: CycleRunnerError): Effect.Effect<void> =>
   )
 
 const runLoopPass = <E, R>(
-  context: Effect.Effect<CycleRunContext | undefined, E, R>,
-): Effect.Effect<void, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
+  context: Effect.Effect<CycleRunContext, E, R>,
+): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | MarketData | R> =>
   context.pipe(
     Effect.mapError((cause) =>
       runnerError('load-context', 'context', 'autonomous cycle context loading failed', cause),
     ),
-    Effect.flatMap((value) =>
-      value === undefined
-        ? Effect.void
-        : runAutonomousCyclePass(value).pipe(Effect.tap(logCompletedPass), Effect.asVoid),
-    ),
+    Effect.flatMap(runAutonomousCyclePass),
     Effect.withLogSpan('autonomous-cycle'),
   )
+
+const observationTime = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
 
 export const startAutonomousCycleLoop = <E, R>(
   options: AutonomousCycleLoopOptions<E, R>,
@@ -446,8 +737,18 @@ export const startAutonomousCycleLoop = <E, R>(
     )
   }
   return runLoopPass(options.context).pipe(
-    Effect.tapError(logFailedPass),
-    Effect.catch(() => Effect.void),
+    Effect.flatMap((result) =>
+      observationTime.pipe(
+        Effect.flatMap((observedAt) => options.observePass({ outcome: 'SUCCEEDED', observedAt, result })),
+        Effect.andThen(logCompletedPass(result)),
+      ),
+    ),
+    Effect.catch((error) =>
+      observationTime.pipe(
+        Effect.flatMap((observedAt) => options.observePass({ outcome: 'FAILED', observedAt, error })),
+        Effect.andThen(logFailedPass(error)),
+      ),
+    ),
     Effect.repeat(Schedule.spaced(Duration.millis(options.pollIntervalMs))),
     Effect.asVoid,
     Effect.forkScoped({ startImmediately: true }),

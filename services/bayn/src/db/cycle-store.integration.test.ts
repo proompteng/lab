@@ -34,7 +34,7 @@ import { ReconciliationStatus } from '../paper'
 import { makeObserveShadowDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
-import { CycleStore, CycleStoreLive } from './cycle-store'
+import { CycleStore, CycleStoreLive, type CycleStoreShape } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
 import { migrationLoader } from './migrations'
 
@@ -71,8 +71,16 @@ const signalSession = (
 
 const makeDraft = (
   accountId = 'paper-account-1',
-  options: { readonly executionCloseAt?: string; readonly submissionWindowMs?: number } = {},
+  options: {
+    readonly executionCloseAt?: string
+    readonly executionOpenAt?: string
+    readonly executionSessionDate?: IsoDate
+    readonly signalSessionDate?: IsoDate
+    readonly submissionWindowMs?: number
+  } = {},
 ): CycleDraft => {
+  const signalSessionDate = options.signalSessionDate ?? '2026-03-06'
+  const executionSessionDate = options.executionSessionDate ?? '2026-03-09'
   const executionPolicy = makeCycleExecutionPolicy({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'c'.repeat(64),
@@ -82,8 +90,8 @@ const makeDraft = (
   const executionCalendar = makeExecutionCalendarObservation({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     source: 'alpaca-v2-calendar',
-    date: '2026-03-09',
-    openAt: '2026-03-09T13:30:00.000Z',
+    date: executionSessionDate,
+    openAt: options.executionOpenAt ?? '2026-03-09T13:30:00.000Z',
     closeAt: options.executionCloseAt ?? '2026-03-09T20:00:00.000Z',
   })
   const identity = makeCycleIdentity({
@@ -92,7 +100,7 @@ const makeDraft = (
     qualificationRunId: 'a'.repeat(64),
     strategyProtocolHash: 'b'.repeat(64),
     accountId,
-    signalSessionDate: '2026-03-06',
+    signalSessionDate,
     signalCalendarVersion,
     executionSessionDate: executionCalendar.executionSessionDate,
     executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
@@ -100,7 +108,7 @@ const makeDraft = (
     executionCalendarHash: executionCalendar.executionCalendarHash,
     executionPolicy,
   })
-  return makeCycleDraft(identity, makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
+  return makeCycleDraft(identity, makeCycleWindow(signalSession(signalSessionDate), executionCalendar, executionPolicy))
 }
 
 const insertSnapshotReference = (
@@ -231,6 +239,7 @@ const makeShadowDecision = (
   draft: CycleDraft,
   boundSnapshotId: string,
   options: {
+    readonly blockedReason?: Exclude<TargetPlanReason, TargetPlanReason.TargetsSatisfied>
     readonly createdAt?: string
     readonly snapshotContentHash?: string
     readonly strategyDecisionHash?: string
@@ -240,8 +249,8 @@ const makeShadowDecision = (
   const targetPlanMaterial = {
     schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
     inputHash: '1'.repeat(64),
-    status: TargetPlanStatus.NoTrade,
-    reason: TargetPlanReason.TargetsSatisfied,
+    status: options.blockedReason === undefined ? TargetPlanStatus.NoTrade : TargetPlanStatus.Blocked,
+    reason: options.blockedReason ?? TargetPlanReason.TargetsSatisfied,
     targets: [],
     intentTargets: [],
     requiredReferenceBuyNotionalMicros: '0',
@@ -317,6 +326,7 @@ const runnerContext = (accountId: string): CycleRunContext => ({
     submissionWindowMs: 30 * 60 * 1_000,
     submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
   }),
+  buildDecision: () => Effect.die(new Error('runner integration fixture built an unexpected decision')),
 })
 
 const runnerPublication = (): Extract<FinalizedPublicationInspection, { readonly outcome: 'FINALIZED' }> => ({
@@ -335,6 +345,7 @@ const runnerPublication = (): Extract<FinalizedPublicationInspection, { readonly
 
 const runnerMarketData = (): MarketDataService => {
   const unused = Effect.die(new Error('autonomous cycle runner must inspect only bounded publication candidates'))
+  const inspectExactPublication = () => Effect.succeed(runnerPublication())
   return {
     check: unused,
     inspect: unused,
@@ -343,8 +354,8 @@ const runnerMarketData = (): MarketDataService => {
       observedAt: runnerPublication().observedAt,
       publications: [runnerPublication().inspection],
     }),
-    inspectPublication: () => unused,
-    inspectSnapshotPublication: () => unused,
+    inspectPublication: inspectExactPublication,
+    inspectSnapshotPublication: inspectExactPublication,
     load: unused,
   }
 }
@@ -462,6 +473,58 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(observed.count).toBe(1)
   })
 
+  test('reads the oldest unfinished cycle inside one qualification and account scope', async () => {
+    const accountId = 'paper-account-recovery'
+    const older = makeDraft(accountId, {
+      signalSessionDate: '2026-01-30',
+      executionSessionDate: '2026-02-02',
+      executionOpenAt: '2026-02-02T14:30:00.000Z',
+      executionCloseAt: '2026-02-02T21:00:00.000Z',
+    })
+    const newer = makeDraft(accountId, {
+      signalSessionDate: '2026-02-27',
+      executionSessionDate: '2026-03-02',
+      executionOpenAt: '2026-03-02T14:30:00.000Z',
+      executionCloseAt: '2026-03-02T21:00:00.000Z',
+    })
+    const unrelated = makeDraft('paper-account-recovery-other')
+
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(older, '2026-01-30T21:01:00.000Z')
+        yield* store.acquire(newer, '2026-02-27T21:01:00.000Z')
+        yield* store.acquire(unrelated, acquireAt)
+
+        const scope = { qualificationRunId: older.identity.qualificationRunId, accountId }
+        const first = yield* store.readOldestUnfinished(scope)
+        yield* store.block(
+          older.identity.cycleId,
+          CycleTerminalReason.MissedPublication,
+          older.window.publicationDeadlineAt,
+        )
+        const second = yield* store.readOldestUnfinished(scope)
+        yield* store.block(
+          newer.identity.cycleId,
+          CycleTerminalReason.MissedPublication,
+          newer.window.publicationDeadlineAt,
+        )
+        const none = yield* store.readOldestUnfinished(scope)
+        return { first, none, second }
+      }),
+    )
+
+    expect(Option.isSome(observed.first)).toBe(true)
+    if (Option.isSome(observed.first)) {
+      expect(observed.first.value.identity.cycleId).toBe(older.identity.cycleId)
+    }
+    expect(Option.isSome(observed.second)).toBe(true)
+    if (Option.isSome(observed.second)) {
+      expect(observed.second.value.identity.cycleId).toBe(newer.identity.cycleId)
+    }
+    expect(Option.isNone(observed.none)).toBe(true)
+  })
+
   test('concurrent runner passes and restart converge on one OBSERVE cycle', async () => {
     const context = runnerContext('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     const queries: Array<{ readonly start: string; readonly end: string }> = []
@@ -472,7 +535,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const concurrent = yield* Effect.all(
           [
             runAutonomousCyclePass(context).pipe(Effect.provideService(BrokerRead, read)),
-            runAutonomousCyclePass(structuredClone(context)).pipe(Effect.provideService(BrokerRead, read)),
+            runAutonomousCyclePass({ ...context }).pipe(Effect.provideService(BrokerRead, read)),
           ],
           { concurrency: 'unbounded' },
         )
@@ -496,9 +559,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       true,
     )
     expect(result.restarted).toMatchObject({
-      outcome: 'ALREADY_ACQUIRED',
+      outcome: 'RECOVERED',
+      action: 'ACTIVATED',
       cycle: {
-        state: CycleState.Pending,
+        state: CycleState.Active,
         bindings: { snapshotId: snapshotA },
         identity: {
           accountId: context.accountId,
@@ -553,12 +617,9 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       cycle: { state: CycleState.Pending, bindings: {} },
     })
     expect(result.resumed).toMatchObject({
-      outcome: 'RESUMED',
-      readiness: {
-        outcome: 'BOUND',
-        snapshotId: snapshotA,
-        cycle: { bindings: { snapshotId: snapshotA } },
-      },
+      outcome: 'RECOVERED',
+      action: 'BOUND_SNAPSHOT',
+      cycle: { bindings: { snapshotId: snapshotA } },
     })
     expect(result.counts).toEqual({ cycles: 1, references: 1 })
   })
@@ -622,6 +683,58 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           result.readiness.cycle.window.submissionCutoffAt < result.readiness.cycle.window.executionOpenAt,
       ),
     ).toBe(true)
+  })
+
+  test('samples a fresh Clock time after acquisition before binding a finalized publication', async () => {
+    const accountId = '10000000-0000-4000-8000-000000000005'
+    const beforeDeadline = '2026-02-02T13:57:59.999Z'
+    const deadline = '2026-02-02T13:58:00.000Z'
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const delayedStore: CycleStoreShape = {
+          ...store,
+          acquire: (draft, observedAt) => store.acquire(draft, observedAt).pipe(Effect.tap(() => TestClock.adjust(1))),
+        }
+        yield* TestClock.setTime(Date.parse(beforeDeadline))
+        const cycle = yield* runAutonomousCyclePass(runnerContext(accountId)).pipe(
+          Effect.provideService(BrokerRead, runnerBrokerRead([])),
+          Effect.provideService(CycleStore, delayedStore),
+        )
+        const sql = yield* PgClient.PgClient
+        const [counts] = yield* sql<{ cycles: number; references: number }>`
+          SELECT
+            (SELECT count(*)::integer FROM autonomous_cycles) AS cycles,
+            (SELECT count(*)::integer FROM snapshot_references) AS references
+        `
+        return { counts, cycle }
+      }).pipe(Effect.provideService(MarketData, runnerMarketData()), Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.cycle).toMatchObject({
+      outcome: 'ACQUIRED',
+      observedAt: deadline,
+      receipt: {
+        cycle: {
+          state: CycleState.Pending,
+          bindings: {},
+          createdAt: beforeDeadline,
+          updatedAt: beforeDeadline,
+        },
+      },
+      readiness: {
+        outcome: 'BLOCKED',
+        observedAt: deadline,
+        cycle: {
+          state: CycleState.Blocked,
+          bindings: {},
+          terminalReason: CycleTerminalReason.MissedPublication,
+          terminalAt: deadline,
+          updatedAt: deadline,
+        },
+      },
+    })
+    expect(result.counts).toEqual({ cycles: 1, references: 0 })
   })
 
   test('reserves one capital-authority slot across changed calendar and policy inputs', async () => {
@@ -806,6 +919,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     const document = makeShadowDecision(draft, snapshotA)
     const divergent = makeShadowDecision(draft, snapshotA, { strategyDecisionHash: '7'.repeat(64) })
     const wrongSnapshot = makeShadowDecision(draft, snapshotA, { snapshotContentHash: '7'.repeat(64) })
+    const backdated = makeShadowDecision(draft, snapshotA, { createdAt: snapshotAt })
+    const futureDated = makeShadowDecision(draft, snapshotA, { createdAt: terminalAt })
     const missingDocumentDraft = makeDraft('paper-account-shadow-missing-document')
     const orphanDocumentDraft = makeDraft('paper-account-shadow-orphan-document')
     const orphanDocument = makeShadowDecision(orphanDocumentDraft, snapshotB)
@@ -820,6 +935,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const missingEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, document, decisionAt))
         yield* insertShadowReconciliation(draft)
         const wrongEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, wrongSnapshot, decisionAt))
+        const backdatedBinding = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, backdated, decisionAt))
+        const futureBinding = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, futureDated, decisionAt))
         const bound = yield* store.bindDecision(draft.identity.cycleId, document, decisionAt)
         const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), decisionAt)
         const storedDocument = yield* store.readDecisionDocument(draft.identity.cycleId)
@@ -901,12 +1018,14 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         `
         return {
           authoritySlot,
+          backdatedBinding,
           bound,
           conflict,
           counts,
           directDelete,
           directTruncate,
           directUpdate,
+          futureBinding,
           missingDocument,
           missingEvidence,
           orphanDocumentInsert,
@@ -934,6 +1053,8 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(Exit.isFailure(result.conflict)).toBe(true)
     expect(Exit.isFailure(result.missingEvidence)).toBe(true)
     expect(Exit.isFailure(result.wrongEvidence)).toBe(true)
+    expect(Exit.isFailure(result.backdatedBinding)).toBe(true)
+    expect(Exit.isFailure(result.futureBinding)).toBe(true)
     expect(Exit.isFailure(result.missingDocument)).toBe(true)
     expect(Exit.isFailure(result.orphanDocumentInsert)).toBe(true)
     expect(Exit.isFailure(result.directUpdate)).toBe(true)
@@ -954,9 +1075,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     })
   })
 
-  test('keeps completion unreachable and preserves blocked terminal history across runtimes', async () => {
+  test('finishes the exact no-trade decision once after cutoff and preserves terminal history across runtimes', async () => {
     const draft = makeDraft()
     const shadowDecision = makeShadowDecision(draft, snapshotA)
+    const afterCutoff = new Date(Date.parse(draft.window.submissionCutoffAt) + 1).toISOString()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -976,35 +1098,38 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
             terminal_at = ${terminalAt}
           WHERE cycle_id = ${draft.identity.cycleId}
         `)
-        const directNoTrade = yield* Effect.exit(sql`
-          UPDATE autonomous_cycles
-          SET
-            state = ${CycleState.NoTrade},
-            state_version = state_version + 1,
-            updated_at = ${terminalAt},
-            terminal_at = ${terminalAt}
-          WHERE cycle_id = ${draft.identity.cycleId}
-        `)
-
-        const blocked = yield* store.block(draft.identity.cycleId, CycleTerminalReason.DataStale, terminalAt)
-        const retried = yield* store.block(draft.identity.cycleId, CycleTerminalReason.DataStale, terminalAt)
+        const mismatchedFinish = yield* Effect.exit(
+          store.finish(draft.identity.cycleId, CycleState.Completed, terminalAt),
+        )
+        const finishes = yield* Effect.all(
+          [
+            store.finish(draft.identity.cycleId, CycleState.NoTrade, afterCutoff),
+            store.finish(draft.identity.cycleId, CycleState.NoTrade, afterCutoff),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        const finished = finishes.find((receipt) => receipt.changed)
+        const retried = finishes.find((receipt) => !receipt.changed)
+        if (finished === undefined || retried === undefined) {
+          return yield* Effect.die(new Error('concurrent finish fixture requires one mutation and one replay'))
+        }
         const rejectedRewrite = yield* Effect.exit(
-          store.block(draft.identity.cycleId, CycleTerminalReason.Reconciliation, terminalAt),
+          store.block(draft.identity.cycleId, CycleTerminalReason.Reconciliation, afterCutoff),
         )
         const directUpdate = yield* Effect.exit(sql`
           UPDATE autonomous_cycles
-          SET updated_at = ${'2026-03-06T21:06:00.000Z'}, state_version = state_version + 1
+          SET updated_at = ${new Date(Date.parse(afterCutoff) + 1).toISOString()}, state_version = state_version + 1
           WHERE cycle_id = ${draft.identity.cycleId}
         `)
         const directDelete = yield* Effect.exit(sql`
           DELETE FROM autonomous_cycles WHERE cycle_id = ${draft.identity.cycleId}
         `)
         return {
-          blocked,
           directCompleted,
           directDelete,
-          directNoTrade,
           directUpdate,
+          finished,
+          mismatchedFinish,
           rejectedRewrite,
           retried,
         }
@@ -1012,17 +1137,18 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     )
 
     expect(Exit.isFailure(result.directCompleted)).toBe(true)
-    expect(Exit.isFailure(result.directNoTrade)).toBe(true)
-    expect(result.blocked.cycle).toMatchObject({
-      state: CycleState.Blocked,
+    expect(Exit.isFailure(result.mismatchedFinish)).toBe(true)
+    expect(result.finished.cycle).toMatchObject({
+      state: CycleState.NoTrade,
       bindings: {
         snapshotId: snapshotA,
         decisionHash: shadowDecision.contentHash,
       },
-      terminalReason: CycleTerminalReason.DataStale,
-      terminalAt,
+      terminalAt: afterCutoff,
     })
+    expect(result.finished.cycle.terminalReason).toBeUndefined()
     expect(result.retried.changed).toBe(false)
+    expect(result.retried.cycle).toEqual(result.finished.cycle)
     expect(Exit.isFailure(result.rejectedRewrite)).toBe(true)
     expect(Exit.isFailure(result.directUpdate)).toBe(true)
     expect(Exit.isFailure(result.directDelete)).toBe(true)
@@ -1039,9 +1165,84 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     )
     await secondRuntime.dispose()
     expect(Option.isSome(durable.cycle)).toBe(true)
-    if (Option.isSome(durable.cycle)) expect(durable.cycle.value).toEqual(result.blocked.cycle)
+    if (Option.isSome(durable.cycle)) expect(durable.cycle.value).toEqual(result.finished.cycle)
     expect(Option.isSome(durable.document)).toBe(true)
     if (Option.isSome(durable.document)) expect(durable.document.value).toEqual(shadowDecision)
+  })
+
+  test('requires decision-bound blocking to match the exact target-plan reason', async () => {
+    const storeDraft = makeDraft('paper-account-blocked-store')
+    const directDraft = makeDraft('paper-account-blocked-direct')
+    const storeDocument = makeShadowDecision(storeDraft, snapshotA, {
+      blockedReason: TargetPlanReason.InputStale,
+    })
+    const directDocument = makeShadowDecision(directDraft, snapshotB, {
+      blockedReason: TargetPlanReason.InputStale,
+    })
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(storeDraft, acquireAt)
+        yield* store.bindSnapshot(storeDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        yield* store.activate(storeDraft.identity.cycleId, activeAt)
+        yield* insertShadowReconciliation(storeDraft)
+        yield* store.bindDecision(storeDraft.identity.cycleId, storeDocument, decisionAt)
+        const storeMismatch = yield* Effect.exit(
+          store.block(storeDraft.identity.cycleId, CycleTerminalReason.Reconciliation, terminalAt),
+        )
+        const storeMatch = yield* store.block(storeDraft.identity.cycleId, CycleTerminalReason.DataStale, terminalAt)
+
+        yield* store.acquire(directDraft, acquireAt)
+        yield* store.bindSnapshot(directDraft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+        yield* store.activate(directDraft.identity.cycleId, activeAt)
+        yield* insertShadowReconciliation(directDraft)
+        yield* store.bindDecision(directDraft.identity.cycleId, directDocument, decisionAt)
+        const sql = yield* PgClient.PgClient
+        const directMismatch = yield* Effect.exit(sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.Reconciliation},
+            state_version = state_version + 1,
+            updated_at = ${terminalAt},
+            terminal_at = ${terminalAt}
+          WHERE cycle_id = ${directDraft.identity.cycleId}
+        `)
+        yield* sql`
+          UPDATE autonomous_cycles
+          SET
+            state = ${CycleState.Blocked},
+            terminal_reason = ${CycleTerminalReason.DataStale},
+            state_version = state_version + 1,
+            updated_at = ${terminalAt},
+            terminal_at = ${terminalAt}
+          WHERE cycle_id = ${directDraft.identity.cycleId}
+        `
+        return {
+          directCycle: yield* store.read(directDraft.identity.cycleId),
+          directMismatch,
+          storeMatch,
+          storeMismatch,
+        }
+      }),
+    )
+
+    expect(Exit.isFailure(result.storeMismatch)).toBe(true)
+    expect(result.storeMatch.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.DataStale,
+      bindings: { decisionHash: storeDocument.contentHash },
+    })
+    expect(Exit.isFailure(result.directMismatch)).toBe(true)
+    expect(Option.isSome(result.directCycle)).toBe(true)
+    if (Option.isSome(result.directCycle)) {
+      expect(result.directCycle.value).toMatchObject({
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.DataStale,
+        bindings: { decisionHash: directDocument.contentHash },
+      })
+    }
   })
 
   test('enforces initial lifecycle state and distinct publication and submission deadlines', async () => {

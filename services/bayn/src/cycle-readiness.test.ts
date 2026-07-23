@@ -174,6 +174,7 @@ const cycleStore = (control: StoreControl): CycleStoreShape => {
     read: () => Effect.succeed(Option.some(control.current)),
     readAuthoritySlot: unused,
     readDecisionDocument: unused,
+    readOldestUnfinished: unused,
     bindSnapshot: (_cycleId, inputManifest, observedAt) =>
       Effect.sync(() => {
         control.binds += 1
@@ -194,6 +195,7 @@ const cycleStore = (control: StoreControl): CycleStoreShape => {
       }),
     activate: unused,
     bindDecision: unused,
+    finish: unused,
     block: (_cycleId, reason, observedAt) =>
       Effect.sync(() => {
         control.blocks += 1
