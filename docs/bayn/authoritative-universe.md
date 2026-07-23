@@ -72,8 +72,9 @@ active ConfigMap. Before the explicit M2.2 release, production Bayn was pinned t
 - maximum authority `OBSERVE`.
 
 The M2.1 economic gates passed, but its terminal qualification is `REJECTED` for insufficient power and walk-forward
-history. The M2.2 one-shot release removes the runtime pin and mounted dossier together without rewriting that
-snapshot, PostgreSQL graph, source-controlled dossier, or TigerBeetle journal.
+history. The M2.2 one-shot release removes the runtime run-ID pin without rewriting that snapshot, PostgreSQL graph,
+ephemeral operator audit output, or TigerBeetle journal. Runtime recovery loads the durable EvidenceStore graph by run
+ID; no dossier file is mounted.
 
 ## Pre-change live baseline
 
@@ -108,6 +109,15 @@ independently report:
 
 One accepted finalized snapshot with this both-replica integrity proof is sufficient for qualification. No candidate
 returns, weights, metrics, or benchmark comparisons were calculated for publication acceptance.
+
+## Released pre-correction evidence
+
+The released run `7a521052ff039376267eb16f222023edf5d72f308af380c71f2d50da6e6a1b32` terminated `REJECTED` and is pinned
+by run ID so Bayn recovers its immutable PostgreSQL EvidenceStore graph without reevaluating. It remains
+non-authorizing under `OBSERVE`: the execution model was not live-causal, and the retrospective query log cannot prove
+that pre-lock Bayn/operator reads of the bars table returned only bounded publication count/hash evidence. The two
+independent audits therefore fail both candidate-bar chronology and principal checks rather than exempting those reads.
+PROOMPT-406 owns the causal contract and corrected precommit; this record clears no M2.2 or paper-mutation gate.
 
 Publication rollback remains fail-closed: stop new publication through GitOps and preserve finalized or partially
 staged rows for diagnosis. Never delete M2.1 evidence or Signal publication tables.

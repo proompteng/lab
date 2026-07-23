@@ -32,7 +32,6 @@ interface FixtureOptions {
   readonly behaviorHash?: string
   readonly parameterHash?: string
   readonly qualificationRunId?: string | undefined
-  readonly qualificationDossierRunId?: string
 }
 
 interface FixturePaths {
@@ -66,14 +65,6 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     BAYN_TIGERBEETLE_ADDRESSES: options.tigerBeetleAddresses ?? currentBindings.BAYN_TIGERBEETLE_ADDRESSES,
   }
   const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
-  const dossierGenerator =
-    pin === undefined
-      ? ''
-      : `configMapGenerator:\n  - name: bayn-qualification-dossier\n    files:\n      - qualification-dossier.json=qualification-dossiers/${options.qualificationDossierRunId ?? pin}.json\n`
-  const dossierMounts =
-    pin === undefined
-      ? ''
-      : `          volumeMounts:\n            - name: qualification-dossier\n              mountPath: /var/run/bayn/qualification\n              readOnly: true\n      volumes:\n        - name: qualification-dossier\n          configMap:\n            name: bayn-qualification-dossier\n            defaultMode: 0444\n            items:\n              - key: qualification-dossier.json\n                path: qualification-dossier.json\n`
   const environment = [
     environmentBlock('BAYN_CODE_REVISION', '0'.repeat(40)),
     environmentBlock('BAYN_IMAGE_REPOSITORY', 'registry.ide-newton.ts.net/lab/bayn'),
@@ -86,11 +77,11 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
 
   writeFileSync(
     paths.kustomizationPath,
-    `${dossierGenerator}images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n`,
+    'images:\n  - name: registry.ide-newton.ts.net/lab/bayn\n    newName: registry.ide-newton.ts.net/lab/bayn\n    newTag: bootstrap\n',
   )
   writeFileSync(
     paths.deploymentPath,
-    `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n${environment}${dossierMounts}`,
+    `metadata:\n  template:\n    metadata:\n      annotations:\n        kubectl.kubernetes.io/restartedAt: "old"\n    spec:\n      containers:\n        - env:\n${environment}`,
   )
   writeFileSync(
     paths.applicationSetPath,
@@ -133,9 +124,45 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
     )
-    expect(readFileSync(paths.kustomizationPath, 'utf8')).toContain('bayn-qualification-dossier')
-    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain('/var/run/bayn/qualification')
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('qualification-dossier')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
+  })
+
+  test('preserves and replaces qualification using only the run-ID pin', () => {
+    const paths = makeFixture()
+
+    expect(promote(paths).qualificationMode).toBe('preserve')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
+      environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
+    )
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('qualification-dossier')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
+
+    const freshSnapshotId = '4'.repeat(64)
+    writeFileSync(
+      paths.deploymentPath,
+      readFileSync(paths.deploymentPath, 'utf8').replace(currentSnapshotId, freshSnapshotId),
+    )
+
+    expect(promote(paths, { strategyParameterHash: '3'.repeat(64) })).toMatchObject({
+      qualificationMode: 'replace',
+      hadQualificationPin: true,
+      snapshotChanged: true,
+      deployedSnapshotId: freshSnapshotId,
+      candidateSnapshotId: currentSnapshotId,
+    })
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
+    expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('qualification-dossier')
+    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
+  })
+
+  test('rejects a malformed qualification run ID before preservation', () => {
+    const paths = makeFixture({ qualificationRunId: 'not-a-run-id' })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() => promote(paths)).toThrow('invalid deployed BAYN_QUALIFICATION_RUN_ID')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('holds an incompatible strategy against an already-qualified snapshot without writing files', () => {
@@ -150,14 +177,6 @@ describe('Bayn manifest promotion', () => {
       qualificationBindingsMatch: true,
       snapshotChanged: false,
     })
-    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
-  })
-
-  test('rejects a dossier that does not belong to the pinned run without writing files', () => {
-    const paths = makeFixture({ qualificationDossierRunId: '8'.repeat(64) })
-    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
-
-    expect(() => promote(paths)).toThrow('qualification dossier run ID must match the pinned run ID')
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
@@ -209,8 +228,6 @@ describe('Bayn manifest promotion', () => {
       candidateSnapshotId: currentSnapshotId,
     })
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
-    expect(readFileSync(paths.kustomizationPath, 'utf8')).not.toContain('bayn-qualification-dossier')
-    expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_SIGNAL_SNAPSHOT_ID', currentSnapshotId).trim(),
     )

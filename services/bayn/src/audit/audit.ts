@@ -108,6 +108,17 @@ export interface SignalPrincipals {
   readonly publishers: readonly string[]
 }
 
+export const classifySignalTableAccess = (
+  observedTables: readonly string[],
+  signalTables: InputManifest['tables'],
+): SignalAccessRecord['kind'] => {
+  const tables = new Set(observedTables)
+  if (tables.has(`signal.${signalTables.bars}`)) return 'bars'
+  if (tables.has(`signal.${signalTables.sessions}`)) return 'sessions'
+  if (tables.has(`signal.${signalTables.manifests}`)) return 'manifest'
+  throw new Error('query log record does not access a Signal evidence table')
+}
+
 export interface RepositoryAudit {
   readonly sourceCommitExists: boolean
   readonly sourceCommitAncestorOfMain: boolean

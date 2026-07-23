@@ -116,8 +116,9 @@ For a terminal locked candidate, `audit:qualification` performs an operator-side
 evidence graph in one PostgreSQL `REPEATABLE READ, READ ONLY` transaction, reloads the finalized Signal snapshot,
 replays the candidate and all benchmarks without importing the production strategy, checks ClickHouse query-start
 chronology on every physical ClickHouse replica with a separately supplied audit principal, and checks authoritative
-`origin/main` history. It emits one `bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run
-it twice and require identical `auditHash` values.
+`origin/main` history. Query-log classification uses ClickHouse's recorded table metadata rather than spoofable SQL
+text. It emits one `bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run it twice and
+require identical `auditHash` values.
 
 ```sh
 BAYN_AUDIT_RUN_ID=<run-id> \
@@ -135,11 +136,15 @@ BAYN_AUDIT_REPOSITORY_PATH=<lab-checkout> \
 
 The audit command is not part of the deployed runtime and never calls TigerBeetle or a broker. Its privileged
 ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal
-read-only identity.
+read-only identity. Any recorded bars-table access takes fail-closed precedence over sessions or manifests; SQL aliases
+cannot relabel a read. The log cannot retroactively prove that an operator query returned only bounded count/hash
+evidence, so any Signal-table read by a principal other than the candidate or declared publisher makes the audit fail.
 
 Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
 binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
-verdict, and observe-only authority. It is an operator evidence artifact, not runtime configuration.
+verdict, and observe-only authority. It is ephemeral operator/CI evidence, not runtime configuration. Runtime recovery
+uses only `BAYN_QUALIFICATION_RUN_ID` to load the immutable EvidenceStore graph; Bayn never mounts or reads a dossier
+file.
 
 The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
 

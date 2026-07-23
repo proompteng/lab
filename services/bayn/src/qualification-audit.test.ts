@@ -3,7 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
-import { auditQualification, type AuditDatabaseSnapshot, type QualificationAuditInput } from './audit/audit'
+import {
+  auditQualification,
+  classifySignalTableAccess,
+  type AuditDatabaseSnapshot,
+  type QualificationAuditInput,
+} from './audit/audit'
 import { makeQualificationDossier } from './audit/dossier'
 import { makeStrategy } from './strategy'
 import { summarizeEvaluation } from './risk-balanced-trend'
@@ -358,6 +363,18 @@ describe('qualification audit', () => {
 
     expect(report.status).toBe('FAIL')
     expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(false)
+  })
+
+  test('classifies Signal access from table metadata with bars taking fail-closed precedence', () => {
+    const tables = fixture().manifest.tables
+
+    expect(classifySignalTableAccess([`signal.${tables.bars}`], tables)).toBe('bars')
+    expect(classifySignalTableAccess([`signal.${tables.manifests}`, `signal.${tables.bars}`], tables)).toBe('bars')
+    expect(classifySignalTableAccess([`signal.${tables.sessions}`], tables)).toBe('sessions')
+    expect(classifySignalTableAccess([`signal.${tables.manifests}`], tables)).toBe('manifest')
+    expect(() => classifySignalTableAccess(['system.query_log'], tables)).toThrow(
+      'query log record does not access a Signal evidence table',
+    )
   })
 
   test.each([
