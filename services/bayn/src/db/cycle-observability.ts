@@ -87,6 +87,7 @@ const ProjectionRowSchema = Schema.Struct({
   reconciliation_status: Schema.NullOr(Schema.Enum(ReconciliationStatus)),
   reconciliation_discrepancy_count: Schema.NullOr(NonNegativeIntegerSchema),
   reconciled_at: NullableDate,
+  reconciliation_covers_latest_mutation: Schema.NullOr(Schema.Boolean),
   mutation_event_count: NonNegativeIntegerSchema,
   unresolved_mutation_count: NonNegativeIntegerSchema,
   oldest_unresolved_mutation_at: NullableDate,
@@ -179,7 +180,8 @@ const reconciliationFromRow = (row: ProjectionRow): ReconciliationObservation | 
     row.reconciliation_account_id === null ||
     row.reconciliation_status === null ||
     row.reconciliation_discrepancy_count === null ||
-    row.reconciled_at === null
+    row.reconciled_at === null ||
+    row.reconciliation_covers_latest_mutation === null
   ) {
     throw readError('invariant', 'reconciliation projection is incomplete')
   }
@@ -189,6 +191,7 @@ const reconciliationFromRow = (row: ProjectionRow): ReconciliationObservation | 
     status: row.reconciliation_status,
     discrepancyCount: row.reconciliation_discrepancy_count,
     reconciledAt: row.reconciled_at.toISOString(),
+    coversLatestMutation: row.reconciliation_covers_latest_mutation,
   }
 }
 
@@ -366,6 +369,11 @@ const makeCycleObservability = Effect.gen(function* () {
             reconciliation.status AS reconciliation_status,
             jsonb_array_length(reconciliation.discrepancies) AS reconciliation_discrepancy_count,
             reconciliation.reconciled_at,
+            CASE
+              WHEN reconciliation.reconciliation_id IS NULL THEN NULL
+              WHEN NOT EXISTS (SELECT 1 FROM account_mutation_events) THEN true
+              ELSE reconciliation.reconciled_at >= (SELECT max(occurred_at) FROM account_mutation_events)
+            END AS reconciliation_covers_latest_mutation,
             (SELECT count(*)::integer FROM account_mutation_events) AS mutation_event_count,
             (SELECT count(*)::integer FROM unresolved_mutations) AS unresolved_mutation_count,
             (SELECT min(occurred_at) FROM unresolved_mutations) AS oldest_unresolved_mutation_at,

@@ -39,6 +39,7 @@ export interface ReconciliationObservation {
   readonly status: ReconciliationStatus
   readonly discrepancyCount: number
   readonly reconciledAt: string
+  readonly coversLatestMutation: boolean
 }
 
 export interface MutationObservation {
@@ -217,11 +218,7 @@ export const deriveCycleOperationsStatus = (
   const killActive = projection.authority?.kill === KillState.Active
   const reconciliationMissing = maximumAuthority === Authority.Paper && projection.reconciliation === null
   const reconciliationDiscrepancy = projection.reconciliation?.status === ReconciliationStatus.Discrepancy
-  const reconciliationCoversLatestMutation =
-    projection.reconciliation === null
-      ? null
-      : projection.mutations.latestOccurredAt === null ||
-        Date.parse(projection.reconciliation.reconciledAt) >= Date.parse(projection.mutations.latestOccurredAt)
+  const reconciliationCoversLatestMutation = projection.reconciliation?.coversLatestMutation ?? null
   const reconciliationPredatesMutation =
     maximumAuthority === Authority.Paper && reconciliationCoversLatestMutation === false
   const reconciliationStale =

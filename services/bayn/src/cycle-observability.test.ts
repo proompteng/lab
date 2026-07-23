@@ -224,6 +224,7 @@ describe('autonomous cycle operations classification', () => {
           status: ReconciliationStatus.Exact,
           discrepancyCount: 0,
           reconciledAt: now,
+          coversLatestMutation: true,
         },
       }),
       Date.parse(now),
@@ -277,7 +278,7 @@ describe('autonomous cycle operations classification', () => {
     })
   })
 
-  test('requires PAPER reconciliation at or after the latest selected-account mutation', () => {
+  test('requires PAPER reconciliation to cover the latest selected-account mutation', () => {
     const authority = {
       maximum: Authority.Paper,
       effective: Authority.Paper,
@@ -286,7 +287,7 @@ describe('autonomous cycle operations classification', () => {
       updatedAt: now,
     } as const
     const latestOccurredAt = '2026-07-20T11:59:00.000Z'
-    const input = (reconciledAt: string) =>
+    const input = (coversLatestMutation: boolean) =>
       projection({
         authority,
         reconciliation: {
@@ -294,7 +295,8 @@ describe('autonomous cycle operations classification', () => {
           reconciliationId: '8'.repeat(64),
           status: ReconciliationStatus.Exact,
           discrepancyCount: 0,
-          reconciledAt,
+          reconciledAt: latestOccurredAt,
+          coversLatestMutation,
         },
         mutations: {
           eventCount: 2,
@@ -303,13 +305,8 @@ describe('autonomous cycle operations classification', () => {
           latestOccurredAt,
         },
       })
-    const covered = deriveCycleOperationsStatus(input(latestOccurredAt), Date.parse(now), Authority.Paper, thresholds)
-    const predates = deriveCycleOperationsStatus(
-      input('2026-07-20T11:58:59.999Z'),
-      Date.parse(now),
-      Authority.Paper,
-      thresholds,
-    )
+    const covered = deriveCycleOperationsStatus(input(true), Date.parse(now), Authority.Paper, thresholds)
+    const predates = deriveCycleOperationsStatus(input(false), Date.parse(now), Authority.Paper, thresholds)
 
     expect(covered).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
@@ -342,6 +339,7 @@ describe('autonomous cycle operations classification', () => {
           status: ReconciliationStatus.Discrepancy,
           discrepancyCount: 1,
           reconciledAt: now,
+          coversLatestMutation: true,
         },
       }),
       Date.parse(now),
@@ -357,6 +355,7 @@ describe('autonomous cycle operations classification', () => {
           status: ReconciliationStatus.Exact,
           discrepancyCount: 0,
           reconciledAt: '2026-07-20T11:58:00.000Z',
+          coversLatestMutation: true,
         },
       }),
       Date.parse(now),

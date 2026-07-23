@@ -83,7 +83,11 @@ const makeDraft = (dedicatedAccountId = accountId) => {
   return makeCycleDraft(identity, makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
 }
 
-const seedSafetyState = (maximum = Authority.Observe, effective = Authority.Observe) =>
+const seedSafetyState = (
+  maximum = Authority.Observe,
+  effective = Authority.Observe,
+  reconciledAt = '2026-03-06T21:00:00.000Z',
+) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     yield* sql`
@@ -113,7 +117,7 @@ const seedSafetyState = (maximum = Authority.Observe, effective = Authority.Obse
       ${'1'.repeat(64)},
       'EXACT',
       ${sql.json([])},
-      ${'2026-03-06T21:00:00.000Z'}
+      ${reconciledAt}
     )
   `
   })
@@ -170,9 +174,10 @@ const seedUnresolvedMutation = (mutationAccountId = accountId) =>
   `
   })
 
-const seedAcceptedMutation = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`
+const seedAcceptedMutation = (occurredAt = '2026-03-06T21:03:00.000Z') =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`
     INSERT INTO mutation_events (
       event_id, schema_version, mutation_id, intent_id, sequence, operation,
       event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -191,10 +196,10 @@ const seedAcceptedMutation = Effect.gen(function* () {
       'broker-request-observability',
       200,
       ${'7'.repeat(64)},
-      ${'2026-03-06T21:03:00.000Z'}
+      ${occurredAt}
     )
   `
-})
+  })
 
 describePostgres('PostgreSQL cycle observability projection', () => {
   let runtime: ReturnType<typeof makeRuntime>
@@ -340,13 +345,13 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     })
   })
 
-  test('keeps PAPER blocked when a resolved mutation is newer than the last exact reconciliation', async () => {
+  test('keeps PAPER blocked when a sub-millisecond resolved mutation follows exact reconciliation', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const observability = yield* CycleObservability
-        yield* seedSafetyState(Authority.Paper, Authority.Paper)
+        yield* seedSafetyState(Authority.Paper, Authority.Paper, '2026-03-06T21:02:00.000000Z')
         yield* seedUnresolvedMutation()
-        yield* seedAcceptedMutation
+        yield* seedAcceptedMutation('2026-03-06T21:02:00.000500Z')
         const projected = yield* observability.read(qualificationRunId, accountId)
         const status = deriveCycleOperationsStatus(projected, Date.parse('2026-03-06T21:03:30.000Z'), Authority.Paper, {
           cycleStallThresholdMs: 300_000,
@@ -361,13 +366,14 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       reconciliation: {
         accountId,
         status: 'EXACT',
-        reconciledAt: '2026-03-06T21:00:00.000Z',
+        reconciledAt: '2026-03-06T21:02:00.000Z',
+        coversLatestMutation: false,
       },
       mutations: {
         eventCount: 2,
         unresolvedCount: 0,
         oldestUnresolvedAt: null,
-        latestOccurredAt: '2026-03-06T21:03:00.000Z',
+        latestOccurredAt: '2026-03-06T21:02:00.000Z',
       },
     })
     expect(result.status).toMatchObject({
