@@ -1,5 +1,6 @@
 import { DateTime, Schema } from 'effect'
 
+import type { MarketCalendarObservation, MarketCalendarSession } from './broker/alpaca'
 import { canonicalHashV1 } from './hash'
 import type { SignalSessionRow } from './market-data'
 import {
@@ -13,6 +14,35 @@ import {
 
 const cycleTimeZone = 'America/New_York' as const
 const SubmissionWindowMsSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(86_400_000))
+const maximumSubmissionDurationMs = 86_400_000
+
+const localMarketTimeToUtcOption = (sessionDate: string, marketTime: string): string | undefined => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(`${sessionDate}T${marketTime}`)
+  if (match === null) return undefined
+  const zoned = DateTime.makeZoned(
+    {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      hour: Number(match[4]),
+      minute: Number(match[5]),
+    },
+    {
+      timeZone: cycleTimeZone,
+      adjustForTimeZone: true,
+      disambiguation: 'reject',
+    },
+  )
+  return zoned._tag === 'None' ? undefined : DateTime.toDateUtc(zoned.value).toISOString()
+}
+
+const localMarketTimeToUtc = (sessionDate: string, marketTime: string): string => {
+  const instant = localMarketTimeToUtcOption(sessionDate, marketTime)
+  if (instant === undefined) {
+    throw new TypeError(`${sessionDate} ${marketTime} is not a valid ${cycleTimeZone} market time`)
+  }
+  return instant
+}
 
 export enum CycleState {
   Pending = 'PENDING',
@@ -23,7 +53,8 @@ export enum CycleState {
 }
 
 export enum CycleTerminalReason {
-  MissedWindow = 'BLOCKED_MISSED_WINDOW',
+  MissedPublication = 'BLOCKED_MISSED_PUBLICATION_DEADLINE',
+  MissedSubmission = 'BLOCKED_MISSED_SUBMISSION_DEADLINE',
   DataUnavailable = 'BLOCKED_DATA_UNAVAILABLE',
   DataStale = 'BLOCKED_DATA_STALE',
   DataInvalid = 'BLOCKED_DATA_INVALID',
@@ -36,6 +67,79 @@ export enum CycleTerminalReason {
   Reconciliation = 'BLOCKED_RECONCILIATION',
   Risk = 'BLOCKED_RISK',
 }
+
+const ExecutionCalendarObservationMaterialBase = Schema.Struct({
+  executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
+  executionSessionDate: IsoDateSchema,
+  executionOpenAt: UtcInstantSchema,
+  executionCloseAt: UtcInstantSchema,
+})
+
+const executionCalendarMaterialIssues = (
+  observation: typeof ExecutionCalendarObservationMaterialBase.Type,
+): Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (observation.executionOpenAt >= observation.executionCloseAt) {
+    issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
+  }
+  if (
+    !observation.executionOpenAt.startsWith(observation.executionSessionDate) ||
+    !observation.executionCloseAt.startsWith(observation.executionSessionDate)
+  ) {
+    issues.push({ path: ['executionSessionDate'], issue: 'must match the UTC execution session instants' })
+  }
+  return issues
+}
+
+export const ExecutionCalendarObservationMaterialSchema = ExecutionCalendarObservationMaterialBase.check(
+  Schema.makeFilter(executionCalendarMaterialIssues),
+)
+export type ExecutionCalendarObservationMaterial = typeof ExecutionCalendarObservationMaterialSchema.Type
+
+const executionCalendarMaterialOf = (
+  observation: ExecutionCalendarObservationMaterial,
+): ExecutionCalendarObservationMaterial => ({
+  executionCalendarSchemaVersion: observation.executionCalendarSchemaVersion,
+  executionCalendarSource: observation.executionCalendarSource,
+  executionSessionDate: observation.executionSessionDate,
+  executionOpenAt: observation.executionOpenAt,
+  executionCloseAt: observation.executionCloseAt,
+})
+
+const ExecutionCalendarObservationBase = Schema.Struct({
+  ...ExecutionCalendarObservationMaterialBase.fields,
+  executionCalendarHash: Sha256Schema,
+})
+
+const executionCalendarObservationIssues = (
+  observation: typeof ExecutionCalendarObservationBase.Type,
+): Schema.FilterIssue[] => {
+  const issues = executionCalendarMaterialIssues(observation)
+  if (observation.executionCalendarHash !== canonicalHashV1(executionCalendarMaterialOf(observation))) {
+    issues.push({
+      path: ['executionCalendarHash'],
+      issue: 'must match the selected broker-calendar session',
+    })
+  }
+  return issues
+}
+
+export const ExecutionCalendarObservationSchema = ExecutionCalendarObservationBase.check(
+  Schema.makeFilter(executionCalendarObservationIssues),
+)
+export type ExecutionCalendarObservation = typeof ExecutionCalendarObservationSchema.Type
+export type SelectedExecutionCalendarSession = Pick<MarketCalendarObservation, 'schemaVersion' | 'source'> &
+  MarketCalendarSession
+
+const decodeExecutionCalendarMaterialSync = Schema.decodeUnknownSync(
+  ExecutionCalendarObservationMaterialSchema,
+  strictParseOptions,
+)
+const decodeExecutionCalendarObservationSync = Schema.decodeUnknownSync(
+  ExecutionCalendarObservationSchema,
+  strictParseOptions,
+)
 
 const CycleExecutionPolicyMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
@@ -67,7 +171,11 @@ const CycleIdentityMaterialSchema = Schema.Struct({
   strategyProtocolHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
   signalSessionDate: IsoDateSchema,
-  calendarVersion: StrictNonEmptyStringSchema,
+  signalCalendarVersion: StrictNonEmptyStringSchema,
+  executionSessionDate: IsoDateSchema,
+  executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
+  executionCalendarHash: Sha256Schema,
   executionPolicy: CycleExecutionPolicySchema,
 })
 export type CycleIdentityMaterial = typeof CycleIdentityMaterialSchema.Type
@@ -79,30 +187,33 @@ const CycleIdentityBase = Schema.Struct({
 
 export const CycleIdentitySchema = CycleIdentityBase.check(
   Schema.makeFilter((identity) => {
+    const issues: Schema.FilterIssue[] = []
     const { cycleId, ...material } = identity
-    return cycleId === canonicalHashV1(material)
-      ? []
-      : [{ path: ['cycleId'], issue: 'must match the canonical cycle identity material' }]
+    if (identity.signalSessionDate >= identity.executionSessionDate) {
+      issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
+    }
+    if (cycleId !== canonicalHashV1(material)) {
+      issues.push({ path: ['cycleId'], issue: 'must match the canonical cycle identity material' })
+    }
+    return issues
   }),
 )
 export type CycleIdentity = typeof CycleIdentitySchema.Type
 
 const CycleWindowBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v1'),
-  calendarVersion: StrictNonEmptyStringSchema,
+  signalCalendarVersion: StrictNonEmptyStringSchema,
   signalSessionDate: IsoDateSchema,
-  executionSessionDate: IsoDateSchema,
+  ...ExecutionCalendarObservationBase.fields,
   signalCloseAt: UtcInstantSchema,
   publicationDeadlineAt: UtcInstantSchema,
   submissionOpenAt: UtcInstantSchema,
-  executionOpenAt: UtcInstantSchema,
-  executionCloseAt: UtcInstantSchema,
   submissionCutoffAt: UtcInstantSchema,
 })
 
 export const CycleWindowSchema = CycleWindowBase.check(
   Schema.makeFilter((window) => {
-    const issues: Schema.FilterIssue[] = []
+    const issues = executionCalendarObservationIssues(window)
     if (window.signalSessionDate >= window.executionSessionDate) {
       issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
     }
@@ -137,8 +248,20 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
   if (draft.identity.signalSessionDate !== draft.window.signalSessionDate) {
     issues.push({ path: ['window', 'signalSessionDate'], issue: 'must match the cycle identity' })
   }
-  if (draft.identity.calendarVersion !== draft.window.calendarVersion) {
-    issues.push({ path: ['window', 'calendarVersion'], issue: 'must match the cycle identity' })
+  if (draft.identity.signalCalendarVersion !== draft.window.signalCalendarVersion) {
+    issues.push({ path: ['window', 'signalCalendarVersion'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionSessionDate !== draft.window.executionSessionDate) {
+    issues.push({ path: ['window', 'executionSessionDate'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionCalendarSchemaVersion !== draft.window.executionCalendarSchemaVersion) {
+    issues.push({ path: ['window', 'executionCalendarSchemaVersion'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionCalendarSource !== draft.window.executionCalendarSource) {
+    issues.push({ path: ['window', 'executionCalendarSource'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.executionCalendarHash !== draft.window.executionCalendarHash) {
+    issues.push({ path: ['window', 'executionCalendarHash'], issue: 'must match the cycle identity' })
   }
   const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.submissionOpenAt)
   if (submissionWindowMs !== draft.identity.executionPolicy.submissionWindowMs) {
@@ -241,57 +364,30 @@ export const AutonomousCycleSchema = AutonomousCycleBase.check(
 )
 export type AutonomousCycle = typeof AutonomousCycleSchema.Type
 
-const localMarketTimeToUtc = (sessionDate: string, marketTime: string): string => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(`${sessionDate}T${marketTime}`)
-  if (match === null) throw new TypeError(`invalid exchange session timestamp: ${sessionDate} ${marketTime}`)
-  const zoned = DateTime.makeZoned(
-    {
-      year: Number(match[1]),
-      month: Number(match[2]),
-      day: Number(match[3]),
-      hour: Number(match[4]),
-      minute: Number(match[5]),
-    },
-    {
-      timeZone: cycleTimeZone,
-      adjustForTimeZone: true,
-      disambiguation: 'reject',
-    },
-  )
-  if (zoned._tag === 'None') {
-    throw new TypeError(`${sessionDate} ${marketTime} is not a valid ${cycleTimeZone} market time`)
-  }
-  return DateTime.toDateUtc(zoned.value).toISOString()
-}
-
-type CycleSessionRow = Pick<
-  SignalSessionRow,
-  'calendar_version' | 'session_date' | 'open_time' | 'close_time' | 'timezone'
->
-
-const validateCalendar = (sessions: readonly CycleSessionRow[]): void => {
-  if (sessions.length < 2) throw new TypeError('cycle scheduling requires at least two exchange sessions')
-  for (let index = 0; index < sessions.length; index += 1) {
-    const session = sessions[index]
-    if (session.open_time >= session.close_time) {
-      throw new TypeError(`exchange session ${session.session_date} close must follow its open`)
-    }
-    if (index > 0) {
-      const previous = sessions[index - 1]
-      if (previous.session_date >= session.session_date) {
-        throw new TypeError('exchange sessions must be unique and strictly ordered')
-      }
-      if (previous.calendar_version !== session.calendar_version) {
-        throw new TypeError('exchange sessions must use one calendar version')
-      }
-    }
-  }
-}
+type SignalCycleSessionRow = Pick<SignalSessionRow, 'calendar_version' | 'session_date' | 'close_time' | 'timezone'>
 
 export const makeCycleExecutionPolicy = (material: CycleExecutionPolicyMaterial): CycleExecutionPolicy => ({
   ...material,
   executionPolicyHash: canonicalHashV1(material),
 })
+
+export const makeExecutionCalendarObservation = (
+  session: SelectedExecutionCalendarSession,
+): ExecutionCalendarObservation => {
+  let material: ExecutionCalendarObservationMaterial
+  try {
+    material = decodeExecutionCalendarMaterialSync({
+      executionCalendarSchemaVersion: session.schemaVersion,
+      executionCalendarSource: session.source,
+      executionSessionDate: session.date,
+      executionOpenAt: session.openAt,
+      executionCloseAt: session.closeAt,
+    })
+  } catch {
+    throw new TypeError('broker calendar session must contain ordered UTC instants for its session date')
+  }
+  return { ...material, executionCalendarHash: canonicalHashV1(material) }
+}
 
 export const makeCycleIdentity = (material: CycleIdentityMaterial): CycleIdentity => ({
   ...material,
@@ -299,31 +395,35 @@ export const makeCycleIdentity = (material: CycleIdentityMaterial): CycleIdentit
 })
 
 export const makeCycleWindow = (
-  sessions: readonly Pick<
-    SignalSessionRow,
-    'calendar_version' | 'session_date' | 'open_time' | 'close_time' | 'timezone'
-  >[],
-  signalSessionDate: string,
+  signalSession: SignalCycleSessionRow,
+  executionCalendar: ExecutionCalendarObservation,
   executionPolicy: Pick<CycleExecutionPolicy, 'submissionWindowMs' | 'submissionCutoffBeforeOpenMs'>,
 ): CycleWindow => {
-  validateCalendar(sessions)
   const { submissionCutoffBeforeOpenMs, submissionWindowMs } = executionPolicy
-  if (!Number.isSafeInteger(submissionWindowMs) || submissionWindowMs <= 0) {
-    throw new TypeError('submission window must be a positive integer number of milliseconds')
+  if (
+    !Number.isSafeInteger(submissionWindowMs) ||
+    submissionWindowMs <= 0 ||
+    submissionWindowMs > maximumSubmissionDurationMs
+  ) {
+    throw new TypeError('submission window must be between one millisecond and one day')
   }
-  if (!Number.isSafeInteger(submissionCutoffBeforeOpenMs) || submissionCutoffBeforeOpenMs <= 0) {
-    throw new TypeError('broker cutoff lead must be a positive integer number of milliseconds')
+  if (
+    !Number.isSafeInteger(submissionCutoffBeforeOpenMs) ||
+    submissionCutoffBeforeOpenMs <= 0 ||
+    submissionCutoffBeforeOpenMs > maximumSubmissionDurationMs
+  ) {
+    throw new TypeError('broker cutoff lead must be between one millisecond and one day')
   }
-  const signalIndex = sessions.findIndex((session) => session.session_date === signalSessionDate)
-  if (signalIndex < 0) throw new TypeError(`Signal session ${signalSessionDate} is absent from the exchange calendar`)
-  const signalSession = sessions[signalIndex]
-  const executionSession = sessions[signalIndex + 1]
-  if (executionSession === undefined) {
-    throw new TypeError(`Signal session ${signalSessionDate} has no following exchange session`)
+  if (signalSession.session_date >= executionCalendar.executionSessionDate) {
+    throw new TypeError('execution session must follow the Signal session')
+  }
+  try {
+    decodeExecutionCalendarObservationSync(executionCalendar)
+  } catch {
+    throw new TypeError('selected broker calendar session is invalid')
   }
   const signalCloseAt = localMarketTimeToUtc(signalSession.session_date, signalSession.close_time)
-  const executionOpenAt = localMarketTimeToUtc(executionSession.session_date, executionSession.open_time)
-  const executionCloseAt = localMarketTimeToUtc(executionSession.session_date, executionSession.close_time)
+  const executionOpenAt = executionCalendar.executionOpenAt
   const submissionCutoffAt = new Date(Date.parse(executionOpenAt) - submissionCutoffBeforeOpenMs).toISOString()
   const submissionOpenAt = new Date(Date.parse(submissionCutoffAt) - submissionWindowMs).toISOString()
   if (submissionOpenAt <= signalCloseAt) {
@@ -331,14 +431,12 @@ export const makeCycleWindow = (
   }
   return {
     schemaVersion: 'bayn.autonomous-cycle-window.v1',
-    calendarVersion: signalSession.calendar_version,
+    signalCalendarVersion: signalSession.calendar_version,
     signalSessionDate: signalSession.session_date,
-    executionSessionDate: executionSession.session_date,
+    ...executionCalendar,
     signalCloseAt,
     publicationDeadlineAt: submissionOpenAt,
     submissionOpenAt,
-    executionOpenAt,
-    executionCloseAt,
     submissionCutoffAt,
   }
 }
@@ -347,8 +445,16 @@ export const makeCycleDraft = (identity: CycleIdentity, window: CycleWindow): Cy
   if (identity.signalSessionDate !== window.signalSessionDate) {
     throw new TypeError('cycle identity and window must bind the same Signal session')
   }
-  if (identity.calendarVersion !== window.calendarVersion) {
-    throw new TypeError('cycle identity and window must bind the same exchange calendar')
+  if (identity.signalCalendarVersion !== window.signalCalendarVersion) {
+    throw new TypeError('cycle identity and window must bind the same Signal calendar')
+  }
+  if (
+    identity.executionSessionDate !== window.executionSessionDate ||
+    identity.executionCalendarSchemaVersion !== window.executionCalendarSchemaVersion ||
+    identity.executionCalendarSource !== window.executionCalendarSource ||
+    identity.executionCalendarHash !== window.executionCalendarHash
+  ) {
+    throw new TypeError('cycle identity and window must bind the same execution calendar observation')
   }
   const submissionWindowMs = Date.parse(window.submissionCutoffAt) - Date.parse(window.submissionOpenAt)
   if (submissionWindowMs !== identity.executionPolicy.submissionWindowMs) {
@@ -366,9 +472,7 @@ export const isTerminalCycleState = (state: CycleState): boolean =>
 
 export const isCycleStateTransitionAllowed = (from: CycleState, to: CycleState): boolean => {
   if (from === CycleState.Pending) return to === CycleState.Active || to === CycleState.Blocked
-  if (from === CycleState.Active) {
-    return to === CycleState.Completed || to === CycleState.NoTrade || to === CycleState.Blocked
-  }
+  if (from === CycleState.Active) return to === CycleState.Blocked
   return false
 }
 
@@ -381,6 +485,10 @@ export const cycleDraftOf = (cycle: AutonomousCycle): CycleDraft => ({
 export const cycleDraftMatches = (left: CycleDraft, right: CycleDraft): boolean =>
   canonicalHashV1(left) === canonicalHashV1(right)
 
+export const decodeExecutionCalendarObservation = Schema.decodeUnknownEffect(
+  ExecutionCalendarObservationSchema,
+  strictParseOptions,
+)
 export const decodeCycleExecutionPolicy = Schema.decodeUnknownEffect(CycleExecutionPolicySchema, strictParseOptions)
 export const decodeCycleIdentity = Schema.decodeUnknownEffect(CycleIdentitySchema, strictParseOptions)
 export const decodeCycleWindow = Schema.decodeUnknownEffect(CycleWindowSchema, strictParseOptions)

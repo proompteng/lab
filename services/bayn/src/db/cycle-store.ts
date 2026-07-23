@@ -33,7 +33,7 @@ export interface CycleMutationReceipt {
 }
 
 export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
-  readonly operation: 'acquire' | 'activate' | 'bind-decision' | 'bind-snapshot' | 'block' | 'finish' | 'read'
+  readonly operation: 'acquire' | 'activate' | 'bind-decision' | 'bind-snapshot' | 'block' | 'read'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'not-found' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -58,11 +58,6 @@ export interface CycleStoreShape {
     reason: CycleTerminalReason,
     observedAt: string,
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
-  readonly finish: (
-    cycleId: string,
-    state: CycleState.Completed | CycleState.NoTrade,
-    observedAt: string,
-  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
 }
 
 export class CycleStore extends Context.Service<CycleStore, CycleStoreShape>()('bayn/CycleStore') {}
@@ -76,13 +71,16 @@ const StoredCycleRowSchema = Schema.Struct({
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,
   signal_session_date: IsoDateSchema,
-  calendar_version: StrictNonEmptyStringSchema,
+  signal_calendar_version: StrictNonEmptyStringSchema,
   execution_policy_schema_version: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
   execution_policy_hash: Sha256Schema,
   strategy_execution_model_hash: Sha256Schema,
   submission_window_ms: PositiveIntegerSchema,
   submission_cutoff_before_open_ms: PositiveIntegerSchema,
   window_schema_version: Schema.Literal('bayn.autonomous-cycle-window.v1'),
+  execution_calendar_schema_version: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
+  execution_calendar_source: Schema.Literal('alpaca-v2-calendar'),
+  execution_calendar_hash: Sha256Schema,
   execution_session_date: IsoDateSchema,
   signal_close_at: Schema.DateValid,
   publication_deadline_at: Schema.DateValid,
@@ -117,23 +115,15 @@ const BlockInputSchema = Schema.Struct({
   reason: Schema.Enum(CycleTerminalReason),
   observedAt: UtcInstantSchema,
 })
-const FinishInputSchema = Schema.Struct({
-  cycleId: Sha256Schema,
-  state: Schema.Literals([CycleState.Completed, CycleState.NoTrade]),
-  observedAt: UtcInstantSchema,
-})
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
-const IntentCountSchema = Schema.Tuple([Schema.Struct({ count: Schema.Int })])
 
 const decodeStoredCycleRows = Schema.decodeUnknownEffect(Schema.Array(StoredCycleRowSchema), strictParseOptions)
 const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
 const decodeSnapshotInput = Schema.decodeUnknownEffect(SnapshotInputSchema, strictParseOptions)
 const decodeDecisionInput = Schema.decodeUnknownEffect(DecisionInputSchema, strictParseOptions)
 const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
-const decodeFinishInput = Schema.decodeUnknownEffect(FinishInputSchema, strictParseOptions)
 const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
 const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
-const decodeIntentCount = Schema.decodeUnknownEffect(IntentCountSchema, strictParseOptions)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -185,7 +175,11 @@ const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.
       strategyProtocolHash: row.strategy_protocol_hash,
       accountId: row.account_id,
       signalSessionDate: row.signal_session_date,
-      calendarVersion: row.calendar_version,
+      signalCalendarVersion: row.signal_calendar_version,
+      executionSessionDate: row.execution_session_date,
+      executionCalendarSchemaVersion: row.execution_calendar_schema_version,
+      executionCalendarSource: row.execution_calendar_source,
+      executionCalendarHash: row.execution_calendar_hash,
       executionPolicy: {
         schemaVersion: row.execution_policy_schema_version,
         strategyExecutionModelHash: row.strategy_execution_model_hash,
@@ -197,8 +191,11 @@ const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.
     },
     window: {
       schemaVersion: row.window_schema_version,
-      calendarVersion: row.calendar_version,
+      signalCalendarVersion: row.signal_calendar_version,
       signalSessionDate: row.signal_session_date,
+      executionCalendarSchemaVersion: row.execution_calendar_schema_version,
+      executionCalendarSource: row.execution_calendar_source,
+      executionCalendarHash: row.execution_calendar_hash,
       executionSessionDate: row.execution_session_date,
       signalCloseAt: row.signal_close_at.toISOString(),
       publicationDeadlineAt: row.publication_deadline_at.toISOString(),
@@ -232,10 +229,12 @@ const selectCycle = (
         SELECT
           cycle_id, schema_version, identity_schema_version, strategy_name,
           qualification_run_id, strategy_protocol_hash, account_id,
-          signal_session_date::text AS signal_session_date, calendar_version,
+          signal_session_date::text AS signal_session_date, signal_calendar_version,
           execution_policy_schema_version, execution_policy_hash,
           strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-          window_schema_version, execution_session_date::text AS execution_session_date,
+          window_schema_version, execution_calendar_schema_version,
+          execution_calendar_source, execution_calendar_hash,
+          execution_session_date::text AS execution_session_date,
           signal_close_at, publication_deadline_at, submission_open_at,
           execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
           decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
@@ -247,10 +246,12 @@ const selectCycle = (
         SELECT
           cycle_id, schema_version, identity_schema_version, strategy_name,
           qualification_run_id, strategy_protocol_hash, account_id,
-          signal_session_date::text AS signal_session_date, calendar_version,
+          signal_session_date::text AS signal_session_date, signal_calendar_version,
           execution_policy_schema_version, execution_policy_hash,
           strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-          window_schema_version, execution_session_date::text AS execution_session_date,
+          window_schema_version, execution_calendar_schema_version,
+          execution_calendar_source, execution_calendar_hash,
+          execution_session_date::text AS execution_session_date,
           signal_close_at, publication_deadline_at, submission_open_at,
           execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
           decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
@@ -277,7 +278,7 @@ const initialCycle = (draft: CycleDraft, observedAt: string): Effect.Effect<Auto
     ...draft,
     state: missed ? CycleState.Blocked : CycleState.Pending,
     bindings: {},
-    ...(missed ? { terminalReason: CycleTerminalReason.MissedWindow, terminalAt: observedAt } : {}),
+    ...(missed ? { terminalReason: CycleTerminalReason.MissedPublication, terminalAt: observedAt } : {}),
     stateVersion: 1,
     createdAt: observedAt,
     updatedAt: observedAt,
@@ -314,10 +315,20 @@ const makeCycleStore = Effect.gen(function* () {
     if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Blocked)) {
       return fail(operation, 'conflict', `terminal cycle ${cycle.identity.cycleId} cannot be blocked again`)
     }
-    const missedWindowAt =
-      cycle.state === CycleState.Pending ? cycle.window.publicationDeadlineAt : cycle.window.submissionCutoffAt
-    if (reason === CycleTerminalReason.MissedWindow && observedAt < missedWindowAt) {
-      return fail(operation, 'invariant', 'missed-window transition cannot precede the applicable cycle deadline')
+    if (
+      reason === CycleTerminalReason.MissedPublication &&
+      (cycle.state !== CycleState.Pending ||
+        cycle.bindings.snapshotId !== undefined ||
+        observedAt < cycle.window.publicationDeadlineAt)
+    ) {
+      return fail(
+        operation,
+        'invariant',
+        'missed-publication transition requires an unbound pending cycle at or after its publication deadline',
+      )
+    }
+    if (reason === CycleTerminalReason.MissedSubmission && observedAt < cycle.window.submissionCutoffAt) {
+      return fail(operation, 'invariant', 'missed-submission transition cannot precede the broker submission cutoff')
     }
     if (observedAt < cycle.updatedAt) {
       return fail(operation, 'conflict', 'cycle update time cannot move backward')
@@ -354,10 +365,11 @@ const makeCycleStore = Effect.gen(function* () {
               INSERT INTO autonomous_cycles (
                 cycle_id, schema_version, identity_schema_version, strategy_name,
                 qualification_run_id, strategy_protocol_hash, account_id,
-                signal_session_date, calendar_version,
+                signal_session_date, signal_calendar_version,
                 execution_policy_schema_version, execution_policy_hash,
                 strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
-                window_schema_version, execution_session_date,
+                window_schema_version, execution_calendar_schema_version,
+                execution_calendar_source, execution_calendar_hash, execution_session_date,
                 signal_close_at, publication_deadline_at, submission_open_at,
                 execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
                 decision_hash, terminal_reason, state_version,
@@ -367,13 +379,15 @@ const makeCycleStore = Effect.gen(function* () {
                 ${candidate.identity.schemaVersion}, ${candidate.identity.strategyName},
                 ${candidate.identity.qualificationRunId}, ${candidate.identity.strategyProtocolHash},
                 ${candidate.identity.accountId}, ${candidate.identity.signalSessionDate},
-                ${candidate.identity.calendarVersion},
+                ${candidate.identity.signalCalendarVersion},
                 ${candidate.identity.executionPolicy.schemaVersion},
                 ${candidate.identity.executionPolicy.executionPolicyHash},
                 ${candidate.identity.executionPolicy.strategyExecutionModelHash},
                 ${candidate.identity.executionPolicy.submissionWindowMs},
                 ${candidate.identity.executionPolicy.submissionCutoffBeforeOpenMs},
-                ${candidate.window.schemaVersion}, ${candidate.window.executionSessionDate},
+                ${candidate.window.schemaVersion}, ${candidate.window.executionCalendarSchemaVersion},
+                ${candidate.window.executionCalendarSource}, ${candidate.window.executionCalendarHash},
+                ${candidate.window.executionSessionDate},
                 ${candidate.window.signalCloseAt}, ${candidate.window.publicationDeadlineAt},
                 ${candidate.window.submissionOpenAt}, ${candidate.window.executionOpenAt},
                 ${candidate.window.executionCloseAt},
@@ -384,12 +398,24 @@ const makeCycleStore = Effect.gen(function* () {
               ON CONFLICT DO NOTHING
               RETURNING cycle_id
             `.pipe(Effect.flatMap(decodeMutationRows))
-            let stored = yield* readLocked('acquire', candidate.identity.cycleId)
+            const slot = yield* sql<Record<string, unknown>>`
+              SELECT cycle_id
+              FROM autonomous_cycles
+              WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
+                AND account_id = ${candidate.identity.accountId}
+                AND signal_session_date = ${candidate.identity.signalSessionDate}
+              FOR UPDATE
+            `.pipe(Effect.flatMap(decodeMutationRows))
+            const storedCycleId = slot[0]?.cycle_id
+            if (slot.length !== 1 || storedCycleId === undefined) {
+              return yield* fail('acquire', 'invariant', 'autonomous cycle authority slot was not found exactly once')
+            }
+            let stored = yield* readLocked('acquire', storedCycleId)
             if (!cycleDraftMatches(cycleDraftOf(stored), decodedDraft)) {
               return yield* fail('acquire', 'conflict', 'stored cycle differs from deterministic acquisition input')
             }
             if (stored.state === CycleState.Pending && decodedTime >= stored.window.publicationDeadlineAt) {
-              stored = (yield* blockCycle('acquire', stored, CycleTerminalReason.MissedWindow, decodedTime)).cycle
+              stored = (yield* blockCycle('acquire', stored, CycleTerminalReason.MissedPublication, decodedTime)).cycle
             }
             return { cycle: stored, created: inserted.length === 1 }
           }),
@@ -424,6 +450,13 @@ const makeCycleStore = Effect.gen(function* () {
           sql.withTransaction(
             Effect.gen(function* () {
               const cycle = yield* readLocked('bind-snapshot', input.cycleId)
+              if (input.observedAt < cycle.window.signalCloseAt) {
+                return yield* fail(
+                  'bind-snapshot',
+                  'invariant',
+                  'snapshot binding cannot precede the Signal session close',
+                )
+              }
               if (cycle.bindings.snapshotId !== undefined) {
                 if (cycle.bindings.snapshotId !== input.snapshotId) {
                   return yield* fail('bind-snapshot', 'conflict', 'cycle snapshot binding cannot be replaced')
@@ -434,7 +467,12 @@ const makeCycleStore = Effect.gen(function* () {
                 return yield* fail('bind-snapshot', 'conflict', 'snapshot may bind only while a cycle is pending')
               }
               if (input.observedAt >= cycle.window.publicationDeadlineAt) {
-                return yield* blockCycle('bind-snapshot', cycle, CycleTerminalReason.MissedWindow, input.observedAt)
+                return yield* blockCycle(
+                  'bind-snapshot',
+                  cycle,
+                  CycleTerminalReason.MissedPublication,
+                  input.observedAt,
+                )
               }
               if (input.observedAt < cycle.updatedAt) {
                 return yield* fail('bind-snapshot', 'conflict', 'cycle update time cannot move backward')
@@ -476,7 +514,7 @@ const makeCycleStore = Effect.gen(function* () {
                 return yield* fail('activate', 'invariant', 'cycle activation requires a bound snapshot')
               }
               if (input.observedAt >= cycle.window.submissionCutoffAt) {
-                return yield* blockCycle('activate', cycle, CycleTerminalReason.MissedWindow, input.observedAt)
+                return yield* blockCycle('activate', cycle, CycleTerminalReason.MissedSubmission, input.observedAt)
               }
               if (input.observedAt < cycle.updatedAt) {
                 return yield* fail('activate', 'conflict', 'cycle update time cannot move backward')
@@ -524,7 +562,7 @@ const makeCycleStore = Effect.gen(function* () {
                 return yield* fail('bind-decision', 'conflict', 'decision may bind only while a cycle is active')
               }
               if (input.observedAt >= cycle.window.submissionCutoffAt) {
-                return yield* blockCycle('bind-decision', cycle, CycleTerminalReason.MissedWindow, input.observedAt)
+                return yield* blockCycle('bind-decision', cycle, CycleTerminalReason.MissedSubmission, input.observedAt)
               }
               if (input.observedAt < cycle.updatedAt) {
                 return yield* fail('bind-decision', 'conflict', 'cycle update time cannot move backward')
@@ -568,70 +606,7 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
-  const finish = (
-    cycleId: string,
-    state: CycleState.Completed | CycleState.NoTrade,
-    observedAt: string,
-  ): Effect.Effect<CycleMutationReceipt, CycleStoreError> =>
-    run(
-      'finish',
-      decodeFinishInput({ cycleId, state, observedAt }).pipe(
-        Effect.flatMap((input) =>
-          sql.withTransaction(
-            Effect.gen(function* () {
-              const cycle = yield* readLocked('finish', input.cycleId)
-              if (cycle.state === input.state) return { cycle, changed: false }
-              if (!isCycleStateTransitionAllowed(cycle.state, input.state)) {
-                return yield* fail('finish', 'conflict', 'only an active cycle may finish')
-              }
-              const decisionHash = cycle.bindings.decisionHash
-              if (decisionHash === undefined) {
-                return yield* fail('finish', 'invariant', 'cycle completion requires a bound decision')
-              }
-              const [intentCount] = yield* sql<Record<string, unknown>>`
-                SELECT count(*)::integer AS count
-                FROM intents
-                WHERE cycle_id = ${input.cycleId}
-                  AND decision_hash = ${decisionHash}
-              `.pipe(Effect.flatMap(decodeIntentCount))
-              if (
-                (input.state === CycleState.Completed && intentCount.count === 0) ||
-                (input.state === CycleState.NoTrade && intentCount.count !== 0)
-              ) {
-                return yield* fail(
-                  'finish',
-                  'invariant',
-                  input.state === CycleState.Completed
-                    ? 'completed cycle requires canonical intents'
-                    : 'no-trade cycle cannot have canonical intents',
-                )
-              }
-              if (input.observedAt < cycle.updatedAt) {
-                return yield* fail('finish', 'conflict', 'cycle update time cannot move backward')
-              }
-              const updatedRows = yield* sql<Record<string, unknown>>`
-                UPDATE autonomous_cycles
-                SET
-                  state = ${input.state},
-                  state_version = ${cycle.stateVersion + 1},
-                  updated_at = ${input.observedAt},
-                  terminal_at = ${input.observedAt}
-                WHERE cycle_id = ${input.cycleId}
-                  AND state = ${CycleState.Active}
-                  AND state_version = ${cycle.stateVersion}
-                  AND decision_hash = ${decisionHash}
-                RETURNING cycle_id
-              `
-              yield* requireApplied('finish', updatedRows)
-              const updated = yield* readLocked('finish', input.cycleId)
-              return { cycle: updated, changed: true }
-            }),
-          ),
-        ),
-      ),
-    )
-
-  return { acquire, read, bindSnapshot, activate, bindDecision, block, finish } satisfies CycleStoreShape
+  return { acquire, read, bindSnapshot, activate, bindDecision, block } satisfies CycleStoreShape
 })
 
 export const CycleStoreLive = Layer.effect(CycleStore, makeCycleStore)
