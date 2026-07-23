@@ -33,6 +33,7 @@ export default Effect.gen(function* () {
       execution_session_date date NOT NULL,
       signal_close_at timestamptz NOT NULL,
       publication_deadline_at timestamptz NOT NULL,
+      submission_open_at timestamptz NOT NULL,
       execution_open_at timestamptz NOT NULL,
       execution_close_at timestamptz NOT NULL,
       submission_cutoff_at timestamptz NOT NULL,
@@ -66,13 +67,14 @@ export default Effect.gen(function* () {
         execution_policy_hash
       ),
       CHECK (signal_session_date < execution_session_date),
-      CHECK (signal_close_at < execution_open_at),
-      CHECK (publication_deadline_at = execution_open_at),
-      CHECK (execution_open_at < submission_cutoff_at),
-      CHECK (submission_cutoff_at <= execution_close_at),
+      CHECK (signal_close_at < submission_open_at),
+      CHECK (publication_deadline_at = submission_open_at),
+      CHECK (submission_open_at < submission_cutoff_at),
+      CHECK (submission_cutoff_at = execution_open_at),
+      CHECK (execution_open_at < execution_close_at),
       CHECK (
         submission_cutoff_at =
-          execution_open_at + submission_window_ms * interval '1 millisecond'
+          submission_open_at + submission_window_ms * interval '1 millisecond'
       ),
       CHECK (updated_at >= created_at),
       CHECK (decision_hash IS NULL OR snapshot_id IS NOT NULL),

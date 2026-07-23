@@ -80,10 +80,11 @@ describe('autonomous cycle identity and calendar', () => {
       signalSessionDate: '2026-03-06',
       executionSessionDate: '2026-03-09',
       signalCloseAt: '2026-03-06T21:00:00.000Z',
-      publicationDeadlineAt: '2026-03-09T13:30:00.000Z',
+      publicationDeadlineAt: '2026-03-09T13:00:00.000Z',
+      submissionOpenAt: '2026-03-09T13:00:00.000Z',
       executionOpenAt: '2026-03-09T13:30:00.000Z',
       executionCloseAt: '2026-03-09T20:00:00.000Z',
-      submissionCutoffAt: '2026-03-09T14:00:00.000Z',
+      submissionCutoffAt: '2026-03-09T13:30:00.000Z',
     })
   })
 
@@ -92,13 +93,21 @@ describe('autonomous cycle identity and calendar', () => {
     expect(holidayWindow.executionSessionDate).toBe('2026-07-06')
     expect(holidayWindow.executionOpenAt).toBe('2026-07-06T13:30:00.000Z')
 
+    const earlyCloseWindow = makeCycleWindow(
+      [session('2026-11-25'), session('2026-11-27', '09:30', '13:00')],
+      '2026-11-25',
+      4 * 60 * 60 * 1_000,
+    )
+    expect(earlyCloseWindow).toMatchObject({
+      submissionOpenAt: '2026-11-27T10:30:00.000Z',
+      submissionCutoffAt: '2026-11-27T14:30:00.000Z',
+      executionOpenAt: '2026-11-27T14:30:00.000Z',
+      executionCloseAt: '2026-11-27T18:00:00.000Z',
+    })
+
     expect(() =>
-      makeCycleWindow(
-        [session('2026-11-25'), session('2026-11-27', '09:30', '13:00')],
-        '2026-11-25',
-        4 * 60 * 60 * 1_000,
-      ),
-    ).toThrow('submission window extends beyond the execution session close')
+      makeCycleWindow([session('2026-03-09'), session('2026-03-10')], '2026-03-09', 18 * 60 * 60 * 1_000),
+    ).toThrow('submission window must begin after the Signal session close')
   })
 
   test('rejects forged identities, policy/window drift, and illegal terminal rewrites', async () => {

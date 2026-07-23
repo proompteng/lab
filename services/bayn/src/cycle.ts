@@ -93,6 +93,7 @@ const CycleWindowBase = Schema.Struct({
   executionSessionDate: IsoDateSchema,
   signalCloseAt: UtcInstantSchema,
   publicationDeadlineAt: UtcInstantSchema,
+  submissionOpenAt: UtcInstantSchema,
   executionOpenAt: UtcInstantSchema,
   executionCloseAt: UtcInstantSchema,
   submissionCutoffAt: UtcInstantSchema,
@@ -104,17 +105,20 @@ export const CycleWindowSchema = CycleWindowBase.check(
     if (window.signalSessionDate >= window.executionSessionDate) {
       issues.push({ path: ['executionSessionDate'], issue: 'must follow the Signal session' })
     }
-    if (window.signalCloseAt >= window.executionOpenAt) {
-      issues.push({ path: ['executionOpenAt'], issue: 'must follow the Signal session close' })
+    if (window.signalCloseAt >= window.submissionOpenAt) {
+      issues.push({ path: ['submissionOpenAt'], issue: 'must follow the Signal session close' })
     }
-    if (window.publicationDeadlineAt !== window.executionOpenAt) {
-      issues.push({ path: ['publicationDeadlineAt'], issue: 'must equal the execution session open' })
+    if (window.publicationDeadlineAt !== window.submissionOpenAt) {
+      issues.push({ path: ['publicationDeadlineAt'], issue: 'must equal the pre-open submission window' })
     }
-    if (window.executionOpenAt >= window.submissionCutoffAt) {
-      issues.push({ path: ['submissionCutoffAt'], issue: 'must follow the execution session open' })
+    if (window.submissionOpenAt >= window.submissionCutoffAt) {
+      issues.push({ path: ['submissionCutoffAt'], issue: 'must follow the submission window open' })
     }
-    if (window.submissionCutoffAt > window.executionCloseAt) {
-      issues.push({ path: ['submissionCutoffAt'], issue: 'must not follow the execution session close' })
+    if (window.submissionCutoffAt !== window.executionOpenAt) {
+      issues.push({ path: ['submissionCutoffAt'], issue: 'must equal the execution session open' })
+    }
+    if (window.executionOpenAt >= window.executionCloseAt) {
+      issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
     }
     return issues
   }),
@@ -135,7 +139,7 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
   if (draft.identity.calendarVersion !== draft.window.calendarVersion) {
     issues.push({ path: ['window', 'calendarVersion'], issue: 'must match the cycle identity' })
   }
-  const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.executionOpenAt)
+  const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.submissionOpenAt)
   if (submissionWindowMs !== draft.identity.executionPolicy.submissionWindowMs) {
     issues.push({
       path: ['window', 'submissionCutoffAt'],
@@ -307,9 +311,9 @@ export const makeCycleWindow = (
   const signalCloseAt = localMarketTimeToUtc(signalSession.session_date, signalSession.close_time)
   const executionOpenAt = localMarketTimeToUtc(executionSession.session_date, executionSession.open_time)
   const executionCloseAt = localMarketTimeToUtc(executionSession.session_date, executionSession.close_time)
-  const submissionCutoffAt = new Date(Date.parse(executionOpenAt) + submissionWindowMs).toISOString()
-  if (submissionCutoffAt > executionCloseAt) {
-    throw new TypeError('submission window extends beyond the execution session close')
+  const submissionOpenAt = new Date(Date.parse(executionOpenAt) - submissionWindowMs).toISOString()
+  if (submissionOpenAt <= signalCloseAt) {
+    throw new TypeError('submission window must begin after the Signal session close')
   }
   return {
     schemaVersion: 'bayn.autonomous-cycle-window.v1',
@@ -317,10 +321,11 @@ export const makeCycleWindow = (
     signalSessionDate: signalSession.session_date,
     executionSessionDate: executionSession.session_date,
     signalCloseAt,
-    publicationDeadlineAt: executionOpenAt,
+    publicationDeadlineAt: submissionOpenAt,
+    submissionOpenAt,
     executionOpenAt,
     executionCloseAt,
-    submissionCutoffAt,
+    submissionCutoffAt: executionOpenAt,
   }
 }
 
@@ -331,7 +336,7 @@ export const makeCycleDraft = (identity: CycleIdentity, window: CycleWindow): Cy
   if (identity.calendarVersion !== window.calendarVersion) {
     throw new TypeError('cycle identity and window must bind the same exchange calendar')
   }
-  const submissionWindowMs = Date.parse(window.submissionCutoffAt) - Date.parse(window.executionOpenAt)
+  const submissionWindowMs = Date.parse(window.submissionCutoffAt) - Date.parse(window.submissionOpenAt)
   if (submissionWindowMs !== identity.executionPolicy.submissionWindowMs) {
     throw new TypeError('cycle window must match the bound execution policy')
   }

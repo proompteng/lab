@@ -85,6 +85,7 @@ const StoredCycleRowSchema = Schema.Struct({
   execution_session_date: IsoDateSchema,
   signal_close_at: Schema.DateValid,
   publication_deadline_at: Schema.DateValid,
+  submission_open_at: Schema.DateValid,
   execution_open_at: Schema.DateValid,
   execution_close_at: Schema.DateValid,
   submission_cutoff_at: Schema.DateValid,
@@ -199,6 +200,7 @@ const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.
       executionSessionDate: row.execution_session_date,
       signalCloseAt: row.signal_close_at.toISOString(),
       publicationDeadlineAt: row.publication_deadline_at.toISOString(),
+      submissionOpenAt: row.submission_open_at.toISOString(),
       executionOpenAt: row.execution_open_at.toISOString(),
       executionCloseAt: row.execution_close_at.toISOString(),
       submissionCutoffAt: row.submission_cutoff_at.toISOString(),
@@ -232,8 +234,8 @@ const selectCycle = (
           execution_policy_schema_version, execution_policy_hash,
           strategy_execution_model_hash, submission_window_ms,
           window_schema_version, execution_session_date::text AS execution_session_date,
-          signal_close_at, publication_deadline_at, execution_open_at,
-          execution_close_at, submission_cutoff_at, state, snapshot_id,
+          signal_close_at, publication_deadline_at, submission_open_at,
+          execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
           decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
         FROM autonomous_cycles
         WHERE cycle_id = ${cycleId}
@@ -247,8 +249,8 @@ const selectCycle = (
           execution_policy_schema_version, execution_policy_hash,
           strategy_execution_model_hash, submission_window_ms,
           window_schema_version, execution_session_date::text AS execution_session_date,
-          signal_close_at, publication_deadline_at, execution_open_at,
-          execution_close_at, submission_cutoff_at, state, snapshot_id,
+          signal_close_at, publication_deadline_at, submission_open_at,
+          execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
           decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
         FROM autonomous_cycles
         WHERE cycle_id = ${cycleId}
@@ -354,8 +356,8 @@ const makeCycleStore = Effect.gen(function* () {
                 execution_policy_schema_version, execution_policy_hash,
                 strategy_execution_model_hash, submission_window_ms,
                 window_schema_version, execution_session_date,
-                signal_close_at, publication_deadline_at, execution_open_at,
-                execution_close_at, submission_cutoff_at, state, snapshot_id,
+                signal_close_at, publication_deadline_at, submission_open_at,
+                execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
                 decision_hash, terminal_reason, state_version,
                 created_at, updated_at, terminal_at
               ) VALUES (
@@ -370,7 +372,8 @@ const makeCycleStore = Effect.gen(function* () {
                 ${candidate.identity.executionPolicy.submissionWindowMs},
                 ${candidate.window.schemaVersion}, ${candidate.window.executionSessionDate},
                 ${candidate.window.signalCloseAt}, ${candidate.window.publicationDeadlineAt},
-                ${candidate.window.executionOpenAt}, ${candidate.window.executionCloseAt},
+                ${candidate.window.submissionOpenAt}, ${candidate.window.executionOpenAt},
+                ${candidate.window.executionCloseAt},
                 ${candidate.window.submissionCutoffAt}, ${candidate.state}, NULL, NULL,
                 ${candidate.terminalReason ?? null}, ${candidate.stateVersion},
                 ${candidate.createdAt}, ${candidate.updatedAt}, ${candidate.terminalAt ?? null}

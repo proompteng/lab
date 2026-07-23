@@ -208,6 +208,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
   test('blocks missed windows and derives completion only from canonical intents', async () => {
     const missedDraft = makeDraft('paper-account-missed')
     const blockedDraft = makeDraft('paper-account-blocked')
+    const cutoffDraft = makeDraft('paper-account-cutoff')
     const completionDraft = makeDraft('paper-account-completed')
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -228,6 +229,15 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           blockedDraft.identity.cycleId,
           CycleTerminalReason.DataStale,
           blockedDraft.window.publicationDeadlineAt,
+        )
+
+        yield* store.acquire(cutoffDraft, acquireAt)
+        yield* store.bindSnapshot(cutoffDraft.identity.cycleId, snapshotA, snapshotAt)
+        yield* store.activate(cutoffDraft.identity.cycleId, activeAt)
+        const atMarketOpen = yield* store.bindDecision(
+          cutoffDraft.identity.cycleId,
+          decisionHash,
+          cutoffDraft.window.executionOpenAt,
         )
 
         yield* store.acquire(completionDraft, acquireAt)
@@ -254,7 +264,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           )
         `
         const completed = yield* store.finish(completionDraft.identity.cycleId, CycleState.Completed, terminalAt)
-        return { blocked, completed, earlyActiveMiss, missed, withoutIntent }
+        return { atMarketOpen, blocked, completed, earlyActiveMiss, missed, withoutIntent }
       }),
     )
 
@@ -269,6 +279,12 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       terminalReason: CycleTerminalReason.DataStale,
       terminalAt: blockedDraft.window.publicationDeadlineAt,
     })
+    expect(result.atMarketOpen.cycle).toMatchObject({
+      state: CycleState.Blocked,
+      terminalReason: CycleTerminalReason.MissedWindow,
+      terminalAt: cutoffDraft.window.executionOpenAt,
+    })
+    expect(result.atMarketOpen.cycle.bindings.decisionHash).toBeUndefined()
     expect(Exit.isFailure(result.withoutIntent)).toBe(true)
     if (Exit.isFailure(result.withoutIntent)) {
       expect(Cause.pretty(result.withoutIntent.cause)).toContain('completed cycle requires canonical intents')
