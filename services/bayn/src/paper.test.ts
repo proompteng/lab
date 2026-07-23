@@ -25,12 +25,14 @@ import {
   decodeIntent,
   decodeOrder,
   decodePosition,
+  decodePaperAuthorityGeneration,
   decodeRateLimit,
   decodeReconciliation,
   decodeRiskDecision,
   decodeRiskInput,
   decodeValuation,
   isIntentTransitionAllowed,
+  makePaperAuthorityGeneration,
 } from './paper'
 
 const instant = '2026-07-22T06:00:00.000Z'
@@ -410,5 +412,62 @@ describe('paper contracts', () => {
         decodeAuthorityState({ ...observe, maximum: Authority.Paper, kill: KillState.Active, reason: 'operator kill' }),
       ),
     ).toMatchObject({ effective: Authority.Observe, kill: KillState.Active })
+  })
+
+  test('binds a PAPER authority generation to exact qualification, runtime, account, policy, and proof evidence', async () => {
+    const material = {
+      schemaVersion: 'bayn.paper-authority-generation.v1' as const,
+      maximum: Authority.Paper as const,
+      previousGenerationHash: hash('0'),
+      qualificationRunId: hash('1'),
+      qualificationLockId: hash('2'),
+      qualificationResultHash: hash('3'),
+      protocolHash: hash('4'),
+      qualificationExecutionPolicyHash: hash('5'),
+      qualificationSourceRevision: '6'.repeat(40),
+      qualificationImageRepository: 'registry.example.test/lab/bayn-qualification',
+      qualificationImageDigest: `sha256:${hash('7')}` as const,
+      activationSourceRevision: '8'.repeat(40),
+      activationImageRepository: 'registry.example.test/lab/bayn-activation',
+      activationImageDigest: `sha256:${hash('9')}` as const,
+      strategyName: 'risk-balanced-trend' as const,
+      strategyBehaviorHash: hash('a'),
+      strategyParameterHash: hash('b'),
+      strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3' as const,
+      accountId: 'paper-account-1',
+      riskPolicyHash: hash('c'),
+      proofPlanHash: hash('d'),
+      reconciliationId: hash('e'),
+      reconciliationContentHash: hash('f'),
+    }
+    const generation = makePaperAuthorityGeneration(material)
+
+    expect(await Effect.runPromise(decodePaperAuthorityGeneration(generation))).toEqual(generation)
+    expect(generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(makePaperAuthorityGeneration(structuredClone(material))).toEqual(generation)
+    expect(
+      makePaperAuthorityGeneration({
+        ...material,
+        proofPlanHash: hash('0'),
+      }).generationHash,
+    ).not.toBe(generation.generationHash)
+    expect(
+      makePaperAuthorityGeneration({
+        ...material,
+        activationSourceRevision: '2'.repeat(40),
+      }).generationHash,
+    ).not.toBe(generation.generationHash)
+    await expectFailure(
+      decodePaperAuthorityGeneration({
+        ...generation,
+        generationHash: hash('1'),
+      }),
+    )
+    expect(() =>
+      makePaperAuthorityGeneration({
+        ...material,
+        strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' as never,
+      }),
+    ).toThrow()
   })
 })

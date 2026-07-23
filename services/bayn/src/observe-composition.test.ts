@@ -397,6 +397,7 @@ describe('OBSERVE runtime composition', () => {
           authorityInitializations += 1
           throw new Error('PAPER startup must not initialize synthetic OBSERVE authority')
         }),
+      activatePaperGeneration: () => unused,
       restrictAuthority: () => unused,
     }
     const cycleStore: CycleStoreShape = {
