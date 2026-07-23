@@ -1,10 +1,10 @@
 # Bayn
 
 Bayn is a single-writer, paper-only quantitative qualification runtime. Its next protocol precommits the frozen
-risk-balanced trend candidate on a five-sleeve cross-asset ETF universe. The deployed runtime remains pinned to the
-terminal infrastructure-equity result and does not journal a new simulation to TigerBeetle. Alpaca credentials may
-enable a bounded GET-only account preflight while authority remains `OBSERVE`.
-The paper mutation capability, execution entry point, and capital-promotion path remain dormant.
+risk-balanced trend candidate on a five-sleeve cross-asset ETF universe. The explicit one-shot release omits
+`BAYN_QUALIFICATION_RUN_ID` so startup can open the exact candidate lock and conduct the single permitted evaluation.
+GitOps remains `OBSERVE` and carries no Alpaca credentials, so qualification has no broker dependency and makes zero
+broker calls. The paper mutation capability, execution entry point, and capital-promotion path remain dormant.
 
 ## Runtime contract
 
