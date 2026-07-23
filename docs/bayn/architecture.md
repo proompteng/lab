@@ -196,7 +196,10 @@ must remain available, accounting must be exact, and HTTP status must retain obs
 Outside an explicit one-shot qualification release, GitOps pins `BAYN_QUALIFICATION_RUN_ID` to one terminal run. The
 release writer preserves that pin while compiled strategy identity, Signal identity and bounds, TigerBeetle cluster
 ID, and TigerBeetle ledger remain identical. TigerBeetle replica addresses are transport routing, not qualification
-identity, so the writer may restore replica-index order without relabeling terminal evidence. A cluster-ID or ledger
-change still requires a fresh Signal snapshot. After a fresh snapshot removes the pin for its one allowed source
-revision, promotion rejects a different source revision on that same unpinned snapshot; operational releases therefore
-cannot create extra qualification trials.
+identity, so an explicit reviewed candidate may change them without relabeling terminal evidence. A cluster-ID or
+ledger change still requires a fresh Signal snapshot. The writer has no source-coded current snapshot: ordinary image
+promotion reads the deployed runtime, while a qualification transition must supply the complete candidate runtime.
+After a fresh snapshot removes the pin for its one allowed source revision, promotion rejects a different source
+revision. A controlled invocation may install the exact independently accepted terminal run only for that already
+deployed source and complete runtime. A later pinned operational release may change source while preserving identical
+compiled strategy and qualification identity. Automatic image promotion never creates a qualification pin.
