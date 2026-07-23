@@ -30,20 +30,28 @@ const bar = (symbol: string, sessionDate: IsoDate, open: number, close = 100) =>
   publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV2,
 })
 
-const sessions = (secondOpen = 100): readonly AlignedSession[] => [
-  {
-    date: '2026-01-02',
-    bars: Object.fromEntries(symbols.map((symbol) => [symbol, bar(symbol, '2026-01-02', 100)])),
-  },
-  {
-    date: '2026-01-05',
-    bars: Object.fromEntries(symbols.map((symbol) => [symbol, bar(symbol, '2026-01-05', secondOpen)])),
-  },
-  {
-    date: '2026-01-06',
-    bars: Object.fromEntries(symbols.map((symbol) => [symbol, bar(symbol, '2026-01-06', 100)])),
-  },
-]
+type Ohlc = Pick<ReturnType<typeof bar>, 'open' | 'high' | 'low' | 'close'>
+
+const sessions = (unseenExecutionOhlc: Partial<Ohlc> = {}): readonly AlignedSession[] => {
+  const executionBar = (symbol: string) => ({
+    ...bar(symbol, '2026-01-05', unseenExecutionOhlc.open ?? 100, unseenExecutionOhlc.close ?? 100),
+    ...unseenExecutionOhlc,
+  })
+  return [
+    {
+      date: '2026-01-02',
+      bars: Object.fromEntries(symbols.map((symbol) => [symbol, bar(symbol, '2026-01-02', 100)])),
+    },
+    {
+      date: '2026-01-05',
+      bars: Object.fromEntries(symbols.map((symbol) => [symbol, executionBar(symbol)])),
+    },
+    {
+      date: '2026-01-06',
+      bars: Object.fromEntries(symbols.map((symbol) => [symbol, bar(symbol, '2026-01-06', 100)])),
+    },
+  ]
+}
 
 const plan = (signalDate: IsoDate, targetWeights: Readonly<Record<string, number>>): DecisionPlan => ({
   schemaVersion: 'bayn.risk-balanced-trend-decision-plan.v1',
@@ -111,9 +119,9 @@ const requests = (result: ReturnType<typeof run>, sessionDate: IsoDate) =>
     }))
 
 describe('live-causal simulation', () => {
-  test('keeps planned order requests invariant when the unseen execution open changes', () => {
+  test('keeps planned order requests invariant when every unseen execution OHLC value changes', () => {
     const baseline = run(sessions())
-    const gapped = run(sessions(150))
+    const gapped = run(sessions({ open: 150, high: 170, low: 80, close: 120 }))
 
     expect(requests(gapped, '2026-01-05')).toEqual(requests(baseline, '2026-01-05'))
     expect(gapped.metrics.endingEquityMicros).not.toBe(baseline.metrics.endingEquityMicros)
