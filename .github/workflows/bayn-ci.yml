@@ -67,3 +67,4 @@ jobs:
         run: |
           bun test services/bayn/src/db/evidence-store.integration.test.ts
           bun test services/bayn/src/db/paper-store.integration.test.ts
+          bun test services/bayn/src/db/cycle-store.integration.test.ts
