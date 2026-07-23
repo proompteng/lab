@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit, Option } from 'effect'
+import { Cause, Effect, Exit, Option } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -194,7 +194,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const mutationStore: MutationStoreShape = {
     beginSubmit: (_intentId, requestHash, consistencyDelayMs, occurredAt) => {
       const existing = latest.get(MutationOperation.Submit)
-      if (existing !== undefined) return Effect.succeed({ event: existing, started: false })
+      if (existing !== undefined) {
+        if (existing.requestHash !== requestHash || existing.consistencyDelayMs !== consistencyDelayMs) {
+          return Effect.die(new Error('mutation identity was reused with different request content'))
+        }
+        return Effect.succeed({ event: existing, started: false })
+      }
       const started = event(
         MutationOperation.Submit,
         MutationEventType.SubmitStarted,
@@ -246,7 +251,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
     beginCancel: (_intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) => {
       const existing = latest.get(MutationOperation.Cancel)
-      if (existing !== undefined) return Effect.succeed({ event: existing, started: false })
+      if (existing !== undefined) {
+        if (
+          existing.requestHash !== requestHash ||
+          existing.consistencyDelayMs !== consistencyDelayMs ||
+          existing.brokerOrderId !== brokerOrderId
+        ) {
+          return Effect.die(new Error('mutation identity was reused with different request content'))
+        }
+        return Effect.succeed({ event: existing, started: false })
+      }
       return Effect.succeed({
         event: event(
           MutationOperation.Cancel,
@@ -498,6 +512,7 @@ describe('paper execution coordinator', () => {
       harness.provide(
         Effect.gen(function* () {
           const accepted = yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(600_000)
           const replay = yield* submit(intentId, 1_000)
           return { accepted, replay }
         }),
@@ -508,6 +523,24 @@ describe('paper execution coordinator', () => {
     expect(result.replay.eventId).toBe(result.accepted.eventId)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('rejects a submit replay whose committed consistency delay changes', async () => {
+    const harness = makeHarness()
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          return yield* Effect.exit(submit(intentId, 1_001))
+        }),
+      ),
+    )
+
+    expect(Exit.isFailure(result)).toBe(true)
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain('mutation identity was reused with different request content')
+    }
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
   test('keeps a partial broker fill UNKNOWN instead of recording a false terminal fill', async () => {
@@ -650,6 +683,25 @@ describe('paper execution coordinator', () => {
     expect(result.found.eventType).toBe(MutationEventType.RecoveryFound)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 1 })
     expect(harness.state()).toBe(IntentState.Terminal)
+  })
+
+  test('rejects a cancel replay whose committed consistency delay changes', async () => {
+    const harness = makeHarness()
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* cancel(intentId, 1_000)
+          return yield* Effect.exit(cancel(intentId, 1_001))
+        }),
+      ),
+    )
+
+    expect(Exit.isFailure(result)).toBe(true)
+    if (Exit.isFailure(result)) {
+      expect(Cause.pretty(result.cause)).toContain('mutation identity was reused with different request content')
+    }
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 0 })
   })
 
   test('makes zero DELETE calls when the risk decision expires exactly at cancellation', async () => {

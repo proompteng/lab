@@ -43,7 +43,30 @@ const changeExecutionWindow = (
   overrides: Partial<Pick<State['executionSession'], 'submissionOpenAt' | 'submissionCutoffAt'>>,
 ): State['executionSession'] => {
   const { bindingHash: _, ...material } = binding
-  return rehashExecutionSession({ ...material, ...overrides })
+  if (overrides.submissionCutoffAt === undefined) {
+    return rehashExecutionSession({ ...material, ...overrides })
+  }
+  const executionOpenAt = new Date(
+    Date.parse(overrides.submissionCutoffAt) + material.submissionCutoffLeadMinutes * 60_000,
+  ).toISOString()
+  const executionDate = executionOpenAt.slice(0, 10) as State['executionSession']['executionSession']['date']
+  const signalDate = new Date(Date.parse(`${executionDate}T00:00:00.000Z`) - 24 * 60 * 60_000)
+    .toISOString()
+    .slice(0, 10) as State['executionSession']['signal']['sessionDate']
+  return rehashExecutionSession({
+    ...material,
+    ...overrides,
+    signal: { ...material.signal, sessionDate: signalDate },
+    calendar: {
+      ...material.calendar,
+      requestedRange: { start: executionDate, end: executionDate },
+    },
+    executionSession: {
+      date: executionDate,
+      openAt: executionOpenAt,
+      closeAt: new Date(Date.parse(executionOpenAt) + 2 * 60 * 60_000).toISOString(),
+    },
+  })
 }
 
 const makePolicy = (overrides: Partial<Policy> = {}): Policy =>

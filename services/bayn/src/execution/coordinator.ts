@@ -231,10 +231,13 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
     const broker = yield* BrokerMutation
     const fence = yield* WriterFence
     const existing = yield* mutations.latest(intentId, MutationOperation.Submit)
-    if (existing !== undefined) return existing
     const before = yield* readIntent(MutationOperation.Submit, intentId)
-    yield* requireActiveRiskDecision(MutationOperation.Submit, before)
     const hash = yield* requestHash(MutationOperation.Submit, before.intent)
+    if (existing !== undefined) {
+      const replay = yield* mutations.beginSubmit(intentId, hash, consistencyDelayMs, existing.occurredAt)
+      return replay.event
+    }
+    yield* requireActiveRiskDecision(MutationOperation.Submit, before)
     const current = yield* now
     const started = yield* mutations.beginSubmit(
       intentId,
@@ -303,9 +306,6 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
     const broker = yield* BrokerMutation
     const fence = yield* WriterFence
     const existing = yield* mutations.latest(intentId, MutationOperation.Cancel)
-    if (existing !== undefined) return existing
-    const intent = yield* readIntent(MutationOperation.Cancel, intentId)
-    yield* requireActiveRiskDecision(MutationOperation.Cancel, intent)
     const submitEvent = yield* mutations.latest(intentId, MutationOperation.Submit)
     const orderId = submitEvent?.brokerOrderId
     if (orderId === undefined) {
@@ -318,6 +318,12 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
       )
     }
     const hash = cancelRequestHash(orderId)
+    if (existing !== undefined) {
+      const replay = yield* mutations.beginCancel(intentId, hash, orderId, consistencyDelayMs, existing.occurredAt)
+      return replay.event
+    }
+    const intent = yield* readIntent(MutationOperation.Cancel, intentId)
+    yield* requireActiveRiskDecision(MutationOperation.Cancel, intent)
     const current = yield* now
     const started = yield* mutations.beginCancel(
       intentId,

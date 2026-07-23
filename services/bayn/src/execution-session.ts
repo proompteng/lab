@@ -65,6 +65,15 @@ export const ExecutionSessionBindingSchema = ExecutionSessionBindingBase.check(
         issue: 'must produce submissionOpenAt < submissionCutoffAt < executionSession.openAt',
       })
     }
+    const expectedSubmissionCutoffAt = new Date(
+      Date.parse(binding.executionSession.openAt) - binding.submissionCutoffLeadMinutes * 60_000,
+    ).toISOString()
+    if (binding.submissionCutoffAt !== expectedSubmissionCutoffAt) {
+      issues.push({
+        path: ['submissionCutoffAt'],
+        issue: 'must equal execution open minus the declared fixed cutoff lead',
+      })
+    }
     const { bindingHash, ...material } = binding
     if (bindingHash !== canonicalHashV1(material)) {
       issues.push({ path: ['bindingHash'], issue: 'must match the causal execution-session material' })

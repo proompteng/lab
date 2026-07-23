@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
+import { Schema } from 'effect'
+
 import type { MarketCalendarObservation } from './broker/alpaca'
 import { defaultExecutionModel } from './execution-model'
-import { bindExecutionSession } from './execution-session'
+import { bindExecutionSession, ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1 } from './hash'
+import { strictParseOptions } from './schemas'
 
 const hash = (character: string): string => character.repeat(64)
 
@@ -35,6 +38,8 @@ const bind = (observation: MarketCalendarObservation) =>
     calendar: observation,
     executionModel: defaultExecutionModel,
   })
+
+const decodeBinding = Schema.decodeUnknownSync(ExecutionSessionBindingSchema, strictParseOptions)
 
 describe('causal execution-session binding', () => {
   test('binds a holiday gap, fixed pre-open cutoff, and early close without assuming session hours', () => {
@@ -114,5 +119,24 @@ describe('causal execution-session binding', () => {
         executionModel: defaultExecutionModel,
       }),
     ).toThrow('submissionOpenAt < submissionCutoffAt < executionSession.openAt')
+  })
+
+  test('rejects a rehashed binding whose cutoff does not match the declared lead', () => {
+    const observation = calendar([
+      { date: '2026-07-06', openAt: '2026-07-06T13:30:00.000Z', closeAt: '2026-07-06T20:00:00.000Z' },
+    ])
+    const valid = bind(observation)
+    const { bindingHash: _, ...validMaterial } = valid
+    const tamperedMaterial = {
+      ...validMaterial,
+      submissionCutoffAt: '2026-07-06T13:29:59.999Z',
+    }
+
+    expect(() =>
+      decodeBinding({
+        ...tamperedMaterial,
+        bindingHash: canonicalHashV1(tamperedMaterial),
+      }),
+    ).toThrow('must equal execution open minus the declared fixed cutoff lead')
   })
 })
