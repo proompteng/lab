@@ -246,6 +246,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'accounting_receipts',
       'accounting_transactions',
       'authority_state',
+      'autonomous_cycles',
       'broker_errors',
       'broker_events',
       'evaluation_artifacts',
@@ -280,6 +281,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 7, name: 'accounting' },
       { migration_id: 8, name: 'identified_submit_unknown' },
       { migration_id: 9, name: 'fill_source_timestamp' },
+      { migration_id: 10, name: 'autonomous_cycles' },
     ])
   })
 
