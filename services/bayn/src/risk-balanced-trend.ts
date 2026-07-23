@@ -294,6 +294,7 @@ export interface CurrentRiskBalancedTrendDecision {
 const CurrentDecisionCycleBindingSchema = Schema.Struct({
   signalSessionDate: IsoDateSchema,
   executionSessionDate: IsoDateSchema,
+  calendarSessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(2)),
 })
 export type CurrentDecisionCycleBinding = typeof CurrentDecisionCycleBindingSchema.Type
 const decodeCurrentDecisionCycleBinding = Schema.decodeUnknownSync(
@@ -301,13 +302,35 @@ const decodeCurrentDecisionCycleBinding = Schema.decodeUnknownSync(
   strictParseOptions,
 )
 
+export const makeCurrentDecisionCycleBinding = (input: CurrentDecisionCycleBinding): CurrentDecisionCycleBinding => {
+  const binding = decodeCurrentDecisionCycleBinding(input)
+  for (let index = 1; index < binding.calendarSessionDates.length; index += 1) {
+    if (binding.calendarSessionDates[index - 1] >= binding.calendarSessionDates[index]) {
+      throw new TypeError('current strategy calendar sessions must be unique and strictly ordered')
+    }
+  }
+  if (!binding.calendarSessionDates.includes(binding.signalSessionDate)) {
+    throw new TypeError('current strategy calendar sessions must contain the Signal session')
+  }
+  if (binding.executionSessionDate <= binding.signalSessionDate) {
+    throw new TypeError('current strategy execution session must follow its Signal session')
+  }
+  const firstPostSignalSession = binding.calendarSessionDates.find(
+    (sessionDate) => sessionDate > binding.signalSessionDate,
+  )
+  if (firstPostSignalSession !== binding.executionSessionDate) {
+    throw new TypeError('current strategy execution session must be the first post-signal calendar session')
+  }
+  return binding
+}
+
 export const compileCurrentRiskBalancedTrendDecision = (
   bars: readonly DailyBar[],
   inputManifest: InputManifest,
   protocol: Protocol,
   cycleBinding: CurrentDecisionCycleBinding,
 ): CurrentRiskBalancedTrendDecision => {
-  const binding = decodeCurrentDecisionCycleBinding(cycleBinding)
+  const binding = makeCurrentDecisionCycleBinding(cycleBinding)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const signalIndex = sessions.length - 1
   const terminalSession = sessions[signalIndex]
@@ -318,9 +341,6 @@ export const compileCurrentRiskBalancedTrendDecision = (
     terminalSession.date !== binding.signalSessionDate
   ) {
     throw new Error('current strategy decision must end on the due cycle Signal terminal session')
-  }
-  if (binding.executionSessionDate <= binding.signalSessionDate) {
-    throw new Error('current strategy execution session must follow its Signal session')
   }
   if (
     protocol.rebalance === 'month-end' &&

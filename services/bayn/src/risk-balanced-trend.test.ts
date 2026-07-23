@@ -4,6 +4,7 @@ import { referencePriceMicros } from './execution-model'
 import { canonicalHashV1 } from './hash'
 import {
   evaluateRiskBalancedTrend,
+  makeCurrentDecisionCycleBinding,
   makeRiskBalancedTrendDecision,
   prepareRiskBalancedTrendQualification,
 } from './risk-balanced-trend'
@@ -200,17 +201,22 @@ describe('risk-balanced trend candidate', () => {
   })
 
   test('compiles one current decision with exact quantized terminal-session prices', () => {
-    const snapshot = makeSnapshot()
+    const snapshot = makeSnapshot(1_129)
     const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
     const bars = snapshot.bars.map((bar) =>
       bar.sessionDate === snapshot.manifest.lastSession && bar.symbol === fixtureProtocol.universe[0]
         ? { ...bar, close: 100.123456 }
         : bar,
     )
-    const current = strategy.currentDecision(bars, snapshot.manifest, {
-      signalSessionDate: snapshot.manifest.lastSession,
-      executionSessionDate: '2020-05-01',
-    })
+    const current = strategy.currentDecision(
+      bars,
+      snapshot.manifest,
+      makeCurrentDecisionCycleBinding({
+        signalSessionDate: snapshot.manifest.lastSession,
+        executionSessionDate: '2020-05-01',
+        calendarSessionDates: ['2020-04-30', '2020-05-01', '2020-05-04'],
+      }),
+    )
     const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
     const historyLength = Math.max(fixtureProtocol.volatilityWindow, ...fixtureProtocol.horizons) + 1
     const historyDates = sessionDates.slice(-historyLength)
@@ -255,29 +261,54 @@ describe('risk-balanced trend candidate', () => {
       strategy.currentDecision(snapshot.bars, snapshot.manifest, {
         signalSessionDate: snapshot.manifest.lastSession,
         executionSessionDate: '2020-04-22',
+        calendarSessionDates: ['2020-04-21', '2020-04-22', '2020-05-01'],
       }),
     ).toThrow('current strategy decision requires a month-end due cycle')
     expect(() =>
       strategy.currentDecision(snapshot.bars, snapshot.manifest, {
-        signalSessionDate: '2020-04-20',
+        signalSessionDate: snapshot.manifest.lastSession,
         executionSessionDate: '2020-05-01',
+        calendarSessionDates: ['2020-04-21', '2020-04-22', '2020-05-01'],
+      }),
+    ).toThrow('current strategy execution session must be the first post-signal calendar session')
+    expect(() =>
+      strategy.currentDecision(snapshot.bars, snapshot.manifest, {
+        signalSessionDate: '2020-04-20',
+        executionSessionDate: '2020-04-21',
+        calendarSessionDates: ['2020-04-20', '2020-04-21', '2020-04-22'],
       }),
     ).toThrow('current strategy decision must end on the due cycle Signal terminal session')
     expect(() =>
-      strategy.currentDecision(snapshot.bars, snapshot.manifest, {
+      makeCurrentDecisionCycleBinding({
         signalSessionDate: snapshot.manifest.lastSession,
         executionSessionDate: '2020-04-20',
+        calendarSessionDates: ['2020-04-20', '2020-04-21'],
       }),
     ).toThrow('current strategy execution session must follow its Signal session')
+    expect(() =>
+      makeCurrentDecisionCycleBinding({
+        signalSessionDate: snapshot.manifest.lastSession,
+        executionSessionDate: '2020-05-01',
+        calendarSessionDates: ['2020-05-01', '2020-05-04'],
+      }),
+    ).toThrow('current strategy calendar sessions must contain the Signal session')
+    expect(() =>
+      makeCurrentDecisionCycleBinding({
+        signalSessionDate: snapshot.manifest.lastSession,
+        executionSessionDate: '2020-05-01',
+        calendarSessionDates: ['2020-04-21', '2020-05-01', '2020-04-22'],
+      }),
+    ).toThrow('current strategy calendar sessions must be unique and strictly ordered')
   })
 
   test('rejects an invalid or snapshot-divergent manifest before compiling a current decision', () => {
-    const snapshot = makeSnapshot()
+    const snapshot = makeSnapshot(1_129)
     const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
-    const cycleBinding = {
+    const cycleBinding = makeCurrentDecisionCycleBinding({
       signalSessionDate: snapshot.manifest.lastSession,
       executionSessionDate: '2020-05-01',
-    } as const
+      calendarSessionDates: ['2020-04-30', '2020-05-01', '2020-05-04'],
+    })
     expect(() =>
       strategy.currentDecision(
         snapshot.bars,
