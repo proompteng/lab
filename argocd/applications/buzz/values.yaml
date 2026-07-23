@@ -1,0 +1,92 @@
+quickstart: false
+
+image:
+  repository: ghcr.io/block/buzz
+  tag: 0.1.0
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+autoscaling:
+  enabled: false
+
+relayUrl: wss://buzz.ide-newton.ts.net
+mediaBaseUrl: https://buzz.ide-newton.ts.net/media
+
+# Dedicated owner's x-only Nostr public key. The corresponding nsec never enters
+# Kubernetes.
+ownerPubkey: "a2b371b652d7350ca7e6974a15bf7b7a6da5955d8096bf59ee5d1152ec590ca3"
+
+secrets:
+  existingSecret: buzz-secrets
+
+relay:
+  requireAuthToken: true
+  requireRelayMembership: true
+  requireMediaGetAuth: false
+  allowNipOaAuth: true
+  pubkeyAllowlist: false
+  huddleAudioAvailable: false
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: DoNotSchedule
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: buzz
+          app.kubernetes.io/instance: buzz
+          app.kubernetes.io/component: relay
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+pairingRelay:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+ingress:
+  enabled: true
+  className: tailscale
+  annotations:
+    tailscale.com/tags: tag:k8s
+  hosts:
+    - host: buzz.ide-newton.ts.net
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - buzz.ide-newton.ts.net
+
+persistence:
+  git:
+    enabled: false
+    size: 10Gi
+
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+s3:
+  endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+  bucket: buzz-objects
+
+minio:
+  enabled: false
+
+migrate:
+  autoMigrate: true
+  preUpgradeJob:
+    enabled: false
+
+serviceMonitor:
+  enabled: false

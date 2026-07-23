@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: buzz
+
+resources:
+  - objectbucketclaims.yaml
+  - secret-store.yaml
+  - redis-auth-externalsecret.yaml
+  - postgres-objectstore.yaml
+  - postgres-cluster.yaml
+  - postgres-scheduled-backup.yaml
+  - redis.yaml
+  - buzz-externalsecret.yaml
+  - networkpolicy.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
+
+# Chart 0.1.6 was verified as
+# sha256:88b96378cabd6b64c9bb8da9824a608daac3b0965d2aa17019e70248c07d517c.
+helmCharts:
+  - name: buzz
+    repo: oci://ghcr.io/block/buzz/charts
+    version: 0.1.6
+    releaseName: buzz
+    namespace: buzz
+    valuesFile: values.yaml
+
+images:
+  - name: ghcr.io/block/buzz
+    newName: ghcr.io/block/buzz
+    newTag: 0.1.0
+    digest: sha256:e7f25874ef10581485d4c548f3f1cf76f986aeffbfafee00bcb8edc2855dedea
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: buzz
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-wave: "0"

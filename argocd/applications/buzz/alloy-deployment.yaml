@@ -1,25 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: observability-cluster-metrics-alloy
-  namespace: observability
+  name: buzz-alloy
   labels:
-    app.kubernetes.io/name: observability-cluster-metrics-alloy
-    app.kubernetes.io/component: cluster-metrics
+    app.kubernetes.io/name: buzz-alloy
+    app.kubernetes.io/part-of: buzz
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: observability-cluster-metrics-alloy
+      app.kubernetes.io/name: buzz-alloy
   template:
     metadata:
-      annotations:
-        observability.proompteng.ai/config-sha256: b9a60712c9fc52f99acbaba0c1166317facc974c329dbade4cb1f9b892fc5db4
       labels:
-        app.kubernetes.io/name: observability-cluster-metrics-alloy
-        app.kubernetes.io/component: cluster-metrics
+        app.kubernetes.io/name: buzz-alloy
+        app.kubernetes.io/part-of: buzz
     spec:
-      serviceAccountName: observability-cluster-metrics-alloy
+      serviceAccountName: buzz-alloy
       securityContext:
         runAsNonRoot: true
         runAsUser: 473
@@ -30,21 +27,34 @@ spec:
           type: RuntimeDefault
       containers:
         - name: alloy
-          image: grafana/alloy:v1.11.2
+          image: grafana/alloy:v1.11.2@sha256:6ab34b8201f0e8b0c4346be4934c9965723af3f7f21dd9a65fd73f270f69b451
+          imagePullPolicy: IfNotPresent
           args:
             - run
-            - /etc/alloy/config.river
+            - /etc/alloy/config.alloy
           workingDir: /var/lib/alloy
           ports:
             - name: http
               containerPort: 12345
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 128Mi
             limits:
-              cpu: 1
-              memory: 1Gi
+              cpu: 500m
+              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -59,6 +69,9 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: observability-cluster-metrics-alloy
+            name: buzz-alloy
+            items:
+              - key: config.alloy
+                path: config.alloy
         - name: data
           emptyDir: {}

@@ -1,0 +1,54 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: buzz-db
+  labels:
+    app.kubernetes.io/name: buzz-db
+    app.kubernetes.io/part-of: buzz
+  annotations:
+    argocd.argoproj.io/sync-wave: "-7"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  description: Buzz relay state
+  inheritedMetadata:
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.7-system-trixie@sha256:08775f8bdeb112878b8f2ef63578c47959ee332fc9e076d5d6735a710c4500e2
+  imagePullPolicy: IfNotPresent
+  enablePDB: true
+  enableSuperuserAccess: false
+  minSyncReplicas: 1
+  maxSyncReplicas: 1
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  affinity:
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  storage:
+    storageClass: rook-ceph-block
+    size: 20Gi
+    resizeInUseVolumes: true
+  bootstrap:
+    initdb:
+      database: buzz
+      owner: buzz
+      encoding: UTF8
+      dataChecksums: true
+  postgresql:
+    parameters:
+      password_encryption: scram-sha-256
+      ssl_min_protocol_version: TLSv1.3
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: buzz-db
+        serverName: buzz-db-live

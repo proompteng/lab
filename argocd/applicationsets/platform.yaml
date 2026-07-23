@@ -408,6 +408,21 @@ spec:
                     argocd.argoproj.io/sync-options: Prune=false
                 automation: auto
                 enabled: "true"
+              - name: buzz
+                path: argocd/applications/buzz
+                namespace: buzz
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: manual
+                enabled: "true"
               - name: observability
                 path: argocd/applications/observability
                 namespace: observability
