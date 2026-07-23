@@ -13,7 +13,7 @@ import {
   readyState,
 } from './app-test-support'
 import type { BrokerReadShape } from './broker/alpaca'
-import { unusedMarketCalendar } from './broker/alpaca-test-support'
+import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import { makeHttpLayer, renderPrometheusMetrics } from './http'
@@ -350,6 +350,7 @@ describe('Bayn HTTP probes', () => {
     const unused = Effect.die(new Error('status must not invoke broker reads'))
     const read: BrokerReadShape = {
       account: unused,
+      assetBySymbol: unusedAssetBySymbol,
       positions: unused,
       orders: () => unused,
       orderById: () => unused,

@@ -14,6 +14,8 @@ const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
 const marketCalendarPreflightRangeDays = 14
 const millisecondsPerDay = 86_400_000
+const assetObservationSchemaVersion = 'bayn.alpaca-asset-observation.v1' as const
+const assetObservationSource = 'alpaca-v2-asset' as const
 const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v1' as const
 const marketCalendarSource = 'alpaca-v2-calendar' as const
 const marketCalendarTimeZone = 'America/New_York' as const
@@ -115,6 +117,13 @@ export enum AssetExchange {
   Empty = '',
 }
 
+export enum AssetStatus {
+  Active = 'active',
+  Inactive = 'inactive',
+}
+
+export type AssetObservationExchange = Exclude<AssetExchange, AssetExchange.Empty>
+
 export enum PositionSide {
   Long = 'long',
   Short = 'short',
@@ -212,6 +221,7 @@ export type BrokerReadOperation =
   | 'order-by-id'
   | 'order-by-client-id'
   | 'fill-activities'
+  | 'asset-by-symbol'
   | 'market-calendar'
 
 export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
@@ -348,6 +358,23 @@ export interface MarketCalendarQuery {
   readonly end: string
 }
 
+export interface AssetObservation {
+  readonly schemaVersion: typeof assetObservationSchemaVersion
+  readonly source: typeof assetObservationSource
+  readonly requestedSymbol: string
+  readonly requestHash: string
+  readonly assetId: string
+  readonly symbol: string
+  readonly assetClass: AssetClass
+  readonly exchange: AssetObservationExchange
+  readonly status: AssetStatus
+  readonly tradable: boolean
+  readonly fractionable: boolean
+  readonly attributes: readonly string[]
+  readonly observedAt: string
+  readonly normalizedResponseHash: string
+}
+
 export interface MarketCalendarSession {
   readonly date: string
   readonly openAt: string
@@ -387,6 +414,7 @@ export interface FillActivitiesQuery {
 
 export interface BrokerReadShape {
   readonly account: Effect.Effect<ReadResult<Account>, BrokerReadError>
+  readonly assetBySymbol: (symbol: string) => Effect.Effect<ReadResult<AssetObservation>, BrokerReadError>
   readonly positions: Effect.Effect<ReadResult<readonly Position[]>, BrokerReadError>
   readonly orders: (query?: OrdersQuery) => Effect.Effect<ReadResult<readonly Order[]>, BrokerReadError>
   readonly orderById: (orderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
@@ -439,6 +467,31 @@ const PositionResponseSchema = Schema.Struct({
   market_value: Decimal,
   unrealized_pl: Decimal,
   current_price: Decimal,
+})
+
+const AssetResponseSchema = Schema.Struct({
+  id: Uuid,
+  class: Schema.Enum(AssetClass),
+  exchange: Schema.Union([
+    Schema.Literal(AssetExchange.Amex),
+    Schema.Literal(AssetExchange.Arca),
+    Schema.Literal(AssetExchange.Ascx),
+    Schema.Literal(AssetExchange.Bats),
+    Schema.Literal(AssetExchange.Nyse),
+    Schema.Literal(AssetExchange.Nasdaq),
+    Schema.Literal(AssetExchange.NyseArca),
+    Schema.Literal(AssetExchange.Ftxu),
+    Schema.Literal(AssetExchange.Coinbase),
+    Schema.Literal(AssetExchange.Gnss),
+    Schema.Literal(AssetExchange.Erisx),
+    Schema.Literal(AssetExchange.Otc),
+    Schema.Literal(AssetExchange.Crypto),
+  ]),
+  symbol: SymbolName,
+  status: Schema.Enum(AssetStatus),
+  tradable: Schema.Boolean,
+  fractionable: Schema.Boolean,
+  attributes: Schema.optionalKey(Schema.NullOr(Schema.Array(NonEmptyString))),
 })
 
 export const OrderResponseSchema = Schema.Struct({
@@ -568,6 +621,7 @@ const RuntimeOptionsSchema = Schema.Struct({
 type Decoder<A> = (input: unknown) => Effect.Effect<A, unknown>
 
 const decodeAccount = Schema.decodeUnknownEffect(AccountResponseSchema, responseParseOptions)
+const decodeAsset = Schema.decodeUnknownEffect(AssetResponseSchema, responseParseOptions)
 const decodePositions = Schema.decodeUnknownEffect(Schema.Array(PositionResponseSchema), responseParseOptions)
 const decodeOrders = Schema.decodeUnknownEffect(Schema.Array(OrderResponseSchema), responseParseOptions)
 const decodeOrder = Schema.decodeUnknownEffect(OrderResponseSchema, responseParseOptions)
@@ -578,6 +632,7 @@ const decodeErrorResponse = Schema.decodeUnknownEffect(ErrorResponseSchema, resp
 const decodeOrdersQuery = Schema.decodeUnknownEffect(OrdersQuerySchema, inputParseOptions)
 const decodeFillActivitiesQuery = Schema.decodeUnknownEffect(FillActivitiesQuerySchema, inputParseOptions)
 const decodeMarketCalendarQuery = Schema.decodeUnknownEffect(MarketCalendarQuerySchema, inputParseOptions)
+const decodeAssetSymbol = Schema.decodeUnknownEffect(SymbolName)
 const decodeOrderId = Schema.decodeUnknownEffect(Uuid)
 const decodeClientOrderId = Schema.decodeUnknownEffect(ClientOrderId)
 const decodeRuntimeOptions = Schema.decodeUnknownEffect(RuntimeOptionsSchema, inputParseOptions)
@@ -647,6 +702,7 @@ const invalidResponse = (
     status: evidence?.status,
     requestId: evidence?.requestId,
     contentHash: evidence?.contentHash,
+    observedAt: evidence?.observedAt,
     cause: cause === undefined ? undefined : safeCause(cause),
   })
 
@@ -799,6 +855,44 @@ const normalizePosition = (
     marketValueMicros,
     unrealizedPnlMicros: decimalToMicros(raw.unrealized_pl, true, 'unrealized PnL'),
     observedAt,
+  }
+}
+
+const assetRequestMaterial = (requestedSymbol: string) => ({
+  schemaVersion: assetObservationSchemaVersion,
+  source: assetObservationSource,
+  method: 'GET' as const,
+  path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
+  requestedSymbol,
+})
+
+const normalizeAsset = (
+  raw: typeof AssetResponseSchema.Type,
+  requestedSymbol: string,
+  observedAt: string,
+): AssetObservation => {
+  if (raw.symbol !== requestedSymbol) {
+    throw new Error(`asset lookup returned symbol ${raw.symbol}, expected ${requestedSymbol}`)
+  }
+  const requestHash = canonicalHashV1(assetRequestMaterial(requestedSymbol))
+  const normalized = {
+    schemaVersion: assetObservationSchemaVersion,
+    source: assetObservationSource,
+    requestedSymbol,
+    requestHash,
+    assetId: raw.id,
+    symbol: raw.symbol,
+    assetClass: raw.class,
+    exchange: raw.exchange,
+    status: raw.status,
+    tradable: raw.tradable,
+    fractionable: raw.fractionable,
+    attributes: [...new Set(raw.attributes ?? [])].sort(),
+  }
+  return {
+    ...normalized,
+    observedAt,
+    normalizedResponseHash: canonicalHashV1(normalized),
   }
 }
 
@@ -1085,7 +1179,6 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         const response = yield* client
           .execute(request)
           .pipe(Effect.mapError((cause) => transportError(operation, cause, sensitiveValues)))
-        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const headers = yield* decodeResponseHeaders(response).pipe(
           Effect.mapError((cause) =>
             invalidResponse(
@@ -1116,13 +1209,14 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
               cause,
             ),
         })
+        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const evidence = yield* Effect.try({
           try: () => responseEvidence(headers, response.status, contentHash, observedAt),
           catch: (cause) =>
             invalidResponse(
               operation,
               `Alpaca ${operation} rate-limit metadata is invalid`,
-              { status: response.status, requestId: headers['x-request-id'], contentHash },
+              { status: response.status, requestId: headers['x-request-id'], contentHash, observedAt },
               cause,
             ),
         })
@@ -1200,6 +1294,20 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         ),
       ),
     )
+
+    const assetBySymbol = (symbol: string) =>
+      decodeInput('asset-by-symbol', decodeAssetSymbol, symbol, 'invalid Alpaca asset symbol').pipe(
+        Effect.flatMap((decoded) => {
+          const request = assetRequestMaterial(decoded)
+          return readJson('asset-by-symbol', new URL(request.path, paperTradingUrl), decodeAsset).pipe(
+            Effect.flatMap((result) =>
+              normalize('asset-by-symbol', result.evidence, () =>
+                normalizeAsset(result.value, decoded, result.evidence.observedAt),
+              ),
+            ),
+          )
+        }),
+      )
 
     const marketCalendar = (query: MarketCalendarQuery) =>
       decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
@@ -1289,7 +1397,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         ),
       )
 
-    return { account, positions, orders, orderById, orderByClientId, fillActivities, marketCalendar }
+    return { account, assetBySymbol, positions, orders, orderById, orderByClientId, fillActivities, marketCalendar }
   })
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'

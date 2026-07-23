@@ -18,6 +18,7 @@ The runtime has three external I/O boundaries:
 Alpaca is reachable only through the existing paper-host CONNECT proxy. Credentials provide runtime-decoded GET-only
 broker access. Under `OBSERVE`, the canonical non-dispatchable autonomous shadow loop composes `PaperStore` and
 `WriterFence` and performs one same-pass reconciliation when it builds a decision; broker mutation remains absent.
+Exact asset reads retain status, tradability, fractionability, and normalized attributes as policy-neutral evidence.
 
 The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
 that interface and every persisted evidence contract.

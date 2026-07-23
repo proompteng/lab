@@ -21,7 +21,7 @@ import {
   type Order as BrokerOrder,
   type ReadEvidence,
 } from './broker/alpaca'
-import { unusedMarketCalendar } from './broker/alpaca-test-support'
+import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './paper'
 import { PaperStore, type PaperStoreShape } from './db/paper-store'
@@ -207,6 +207,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): PaperStore
 
 const emptyRead = (): BrokerReadShape => ({
   account: Effect.succeed({ value: account, evidence: evidence('account') }),
+  assetBySymbol: unusedAssetBySymbol,
   positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
   orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
   fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fills') }),

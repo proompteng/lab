@@ -4,6 +4,7 @@ import { Effect } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { BrokerReadShape, MarketCalendarObservation, ReadResult } from './broker/alpaca'
+import { unusedAssetBySymbol } from './broker/alpaca-test-support'
 import {
   CycleState,
   decodeAutonomousCycle,
@@ -415,6 +416,7 @@ describe('OBSERVE runtime composition', () => {
     }
     const brokerRead: BrokerReadShape = {
       account: unused,
+      assetBySymbol: unusedAssetBySymbol,
       positions: unused,
       orders: () => unused,
       orderById: () => unused,

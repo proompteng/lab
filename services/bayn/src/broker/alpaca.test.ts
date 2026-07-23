@@ -10,6 +10,7 @@ import {
   AccountStatus,
   AssetClass,
   AssetExchange,
+  AssetStatus,
   BrokerRead,
   BrokerReadError,
   BrokerReadErrorKind,
@@ -69,6 +70,18 @@ const positionResponse = {
   unrealized_pl: '100.0',
   current_price: '120.0',
   cost_basis: '500.0',
+}
+
+const assetResponse = {
+  id: assetId,
+  class: 'us_equity',
+  exchange: 'NASDAQ',
+  symbol: 'AAPL',
+  status: 'active',
+  tradable: true,
+  fractionable: true,
+  attributes: ['has_options'],
+  name: 'Apple Inc.',
 }
 
 const orderResponse = {
@@ -186,6 +199,7 @@ describe('Alpaca paper reads', () => {
     expect(inspected).not.toContain('paper-secret')
     expect(surface).toEqual([
       'account',
+      'assetBySymbol',
       'fillActivities',
       'marketCalendar',
       'orderByClientId',
@@ -213,6 +227,211 @@ describe('Alpaca paper reads', () => {
         retryAfter: undefined,
       },
     })
+  })
+
+  test('reads exact asset evidence with GET-only auth and samples time after the complete body', async () => {
+    const requestedSymbol = 'BRK.B'
+    const response = {
+      ...assetResponse,
+      symbol: requestedSymbol,
+      status: 'inactive',
+      tradable: false,
+      fractionable: false,
+      attributes: ['ipo'],
+    }
+    const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
+    let releaseBody: (() => void) | undefined
+    const client = HttpClient.make((request, url) => {
+      requests.push({
+        method: request.method,
+        url,
+        key: request.headers['apca-api-key-id'] ?? '',
+        secret: request.headers['apca-api-secret-key'] ?? '',
+      })
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          releaseBody = () => {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(response)))
+            controller.close()
+          }
+        },
+      })
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, {
+            status: 200,
+            headers: responseHeaders,
+          }),
+        ),
+      )
+    })
+
+    const program = withClient(
+      client,
+      (read) =>
+        Effect.gen(function* () {
+          const fiber = yield* read.assetBySymbol(requestedSymbol).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(2_000)
+          releaseBody?.()
+          return yield* Fiber.join(fiber)
+        }),
+      { ...options, operationTimeoutMs: 5_000 },
+    ).pipe(Effect.provide(TestClock.layer()))
+    const result = await Effect.runPromise(program)
+
+    expect(requests).toEqual([
+      {
+        method: 'GET',
+        url: new URL(`https://paper-api.alpaca.markets/v2/assets/${encodeURIComponent(requestedSymbol)}`),
+        key: 'paper-key',
+        secret: 'paper-secret',
+      },
+    ])
+    const requestHash = canonicalHashV1({
+      schemaVersion: 'bayn.alpaca-asset-observation.v1',
+      source: 'alpaca-v2-asset',
+      method: 'GET',
+      path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
+      requestedSymbol,
+    })
+    const normalized = {
+      schemaVersion: 'bayn.alpaca-asset-observation.v1',
+      source: 'alpaca-v2-asset',
+      requestedSymbol,
+      requestHash,
+      assetId,
+      symbol: requestedSymbol,
+      assetClass: AssetClass.UsEquity,
+      exchange: AssetExchange.Nasdaq,
+      status: AssetStatus.Inactive,
+      tradable: false,
+      fractionable: false,
+      attributes: ['ipo'],
+    } as const
+    expect(result.value).toEqual({
+      ...normalized,
+      observedAt: '1970-01-01T00:00:02.000Z',
+      normalizedResponseHash: canonicalHashV1(normalized),
+    })
+    expect(result.evidence).toMatchObject({
+      requestId: 'req-123',
+      status: 200,
+      contentHash: canonicalHashV1(response),
+      observedAt: '1970-01-01T00:00:02.000Z',
+    })
+    expect(requests.some(({ method }) => method === 'POST' || method === 'DELETE')).toBe(false)
+  })
+
+  test('canonicalizes asset attributes into deterministic sorted-unique response evidence', async () => {
+    let response: unknown = { ...assetResponse, attributes: ['ipo', 'has_options', 'ipo'] }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+
+    const first = await Effect.runPromise(
+      withClient(client, (read) => read.assetBySymbol('AAPL')).pipe(Effect.provide(TestClock.layer())),
+    )
+    response = { ...assetResponse, attributes: ['has_options', 'ipo'] }
+    const second = await Effect.runPromise(
+      withClient(client, (read) => read.assetBySymbol('AAPL')).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(first.value.attributes).toEqual(['has_options', 'ipo'])
+    expect(first.value.requestHash).toBe(second.value.requestHash)
+    expect(first.value.normalizedResponseHash).toBe(second.value.normalizedResponseHash)
+    expect(first.evidence.contentHash).not.toBe(second.evidence.contentHash)
+  })
+
+  test('normalizes absent or null asset attributes to immutable empty evidence', async () => {
+    const { attributes: _attributes, ...withoutAttributes } = assetResponse
+    let response: unknown = withoutAttributes
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+
+    const absent = await Effect.runPromise(withClient(client, (read) => read.assetBySymbol('AAPL')))
+    response = { ...assetResponse, attributes: null }
+    const nullAttributes = await Effect.runPromise(withClient(client, (read) => read.assetBySymbol('AAPL')))
+
+    expect(absent.value.attributes).toEqual([])
+    expect(nullAttributes.value.attributes).toEqual([])
+    expect(absent.value.normalizedResponseHash).toBe(nullAttributes.value.normalizedResponseHash)
+  })
+
+  test('fails typed with post-response evidence for malformed or mismatched assets', async () => {
+    let calls = 0
+    let response: unknown = { ...assetResponse, fractionable: 'false' }
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, response))
+    })
+    const readFailure = (symbol: string) =>
+      Effect.flip(withClient(client, (read) => read.assetBySymbol(symbol))).pipe(Effect.provide(TestClock.layer()))
+
+    const malformed = await Effect.runPromise(readFailure('AAPL'))
+    expect(malformed).toMatchObject({
+      operation: 'asset-by-symbol',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+      status: 200,
+      requestId: 'req-123',
+      contentHash: canonicalHashV1(response),
+      observedAt: '1970-01-01T00:00:00.000Z',
+    })
+
+    response = { ...assetResponse, symbol: 'MSFT' }
+    const mismatch = await Effect.runPromise(readFailure('AAPL'))
+    expect(mismatch).toMatchObject({
+      operation: 'asset-by-symbol',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+      status: 200,
+      requestId: 'req-123',
+      contentHash: canonicalHashV1(response),
+      observedAt: '1970-01-01T00:00:00.000Z',
+      cause: {
+        message: 'asset lookup returned symbol MSFT, expected AAPL',
+      },
+    })
+
+    const callsBeforeInvalidSymbol = calls
+    const invalidSymbol = await Effect.runPromise(readFailure('../AAPL'))
+    expect(invalidSymbol).toMatchObject({
+      operation: 'asset-by-symbol',
+      kind: BrokerReadErrorKind.InvalidRequest,
+      retryable: false,
+    })
+    expect(calls).toBe(callsBeforeInvalidSymbol)
+
+    response = { ...assetResponse, exchange: '' }
+    const emptyExchange = await Effect.runPromise(readFailure('AAPL'))
+    expect(emptyExchange).toMatchObject({
+      operation: 'asset-by-symbol',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+      contentHash: canonicalHashV1(response),
+      observedAt: '1970-01-01T00:00:00.000Z',
+    })
+  })
+
+  test('uses the bounded transient GET retry policy for exact asset reads', async () => {
+    const methods: string[] = []
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      methods.push(request.method)
+      calls += 1
+      return Effect.succeed(
+        calls === 1
+          ? jsonResponse(request, { code: 50010000, message: 'temporary failure' }, 500)
+          : jsonResponse(request, assetResponse),
+      )
+    })
+
+    const result = await Effect.runPromise(
+      withClient(client, (read) => read.assetBySymbol('AAPL'), { ...options, retryAttempts: 1 }),
+    )
+
+    expect(result.value.symbol).toBe('AAPL')
+    expect(calls).toBe(2)
+    expect(methods).toEqual(['GET', 'GET'])
   })
 
   test('reads one bounded market calendar range and returns deterministic UTC observation evidence', async () => {
@@ -323,7 +542,7 @@ describe('Alpaca paper reads', () => {
     })
   })
 
-  test('preflights the complete GET-only surface without persisting or inventing an order', async () => {
+  test('preflights the startup GET-only surface without persisting or inventing an order', async () => {
     const requests: Array<{ method: string; url: URL }> = []
     const client = HttpClient.make((request, url) => {
       requests.push({ method: request.method, url })

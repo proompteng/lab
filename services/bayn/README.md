@@ -90,6 +90,8 @@ paper mutation capability, execution entry point, and capital-promotion path rem
   composes `PaperStore` and `WriterFence` and performs one same-pass reconciliation when it builds a decision.
   `BrokerMutation`, `IntentStore`, `MutationStore`, and the coordinator remain absent; `PAPER` startup fails closed until
   the PROOMPT-375 Phase B authority generation and dispatch transition exists.
+- Exact Alpaca asset reads preserve the returned status, tradability, fractionability, and normalized attributes as
+  content-hashed evidence; the read adapter does not decide execution eligibility.
 - The bounded Alpaca calendar observation is content-hashed with its request range, source/version, and normalized UTC
   sessions. A causal execution-session binding retains and revalidates that complete observation, selects its first
   post-signal session, and binds the session's exact open, close, pre-open cutoff, finalized Signal identity, and
