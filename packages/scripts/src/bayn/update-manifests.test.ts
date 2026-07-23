@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { updateBaynManifests, type UpdateBaynManifestOptions } from './update-manifests'
 
-const currentSnapshotId = '0945e3331d67437a072d5eb33f65e469b9883a5e762e29e80f7acb389864c79f'
+const currentSnapshotId = '840c75885270b349d4a992e003918ce7e6fe39730f981a20b2e88ae2db45a2e2'
 const strategyBehaviorHash = '1'.repeat(64)
 const strategyParameterHash = '2'.repeat(64)
 const qualificationRunId = '9'.repeat(64)
@@ -13,10 +13,10 @@ const currentBindings = {
   BAYN_SIGNAL_SNAPSHOT_ID: currentSnapshotId,
   BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-22',
   BAYN_SIGNAL_CALENDAR_VERSION: 'alpaca-us-equity-calendar-v1',
-  BAYN_SIGNAL_DATA_START: '2022-01-27',
+  BAYN_SIGNAL_DATA_START: '2016-01-04',
   BAYN_SIGNAL_DATA_END: '2026-07-22',
-  BAYN_SIGNAL_LOOKBACK_START: '2022-01-27',
-  BAYN_SIGNAL_EVALUATION_START: '2023-01-30',
+  BAYN_SIGNAL_LOOKBACK_START: '2016-01-04',
+  BAYN_SIGNAL_EVALUATION_START: '2017-01-03',
   BAYN_SIGNAL_EVALUATION_END: '2026-07-22',
   BAYN_TIGERBEETLE_CLUSTER_ID: '122731676035874920802382025803517750735',
   BAYN_TIGERBEETLE_ADDRESSES:
