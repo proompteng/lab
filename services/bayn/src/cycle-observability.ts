@@ -26,6 +26,7 @@ export interface CycleOperationsSnapshot {
 }
 
 export interface DurableAuthorityObservation {
+  readonly generationHash: string
   readonly maximum: Authority
   readonly effective: Authority
   readonly kill: KillState
