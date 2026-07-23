@@ -83,21 +83,26 @@ const makeDraft = (dedicatedAccountId = accountId) => {
   return makeCycleDraft(identity, makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
 }
 
-const seedSafetyState = (
-  maximum = Authority.Observe,
-  effective = Authority.Observe,
-  reconciledAt = '2026-03-06T21:00:00.000Z',
-) =>
+const seedSafetyState = (reconciledAt = '2026-03-06T21:00:00.000Z') =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    yield* sql`
+      INSERT INTO authority_generations (
+        generation_hash, schema_version, previous_generation_hash, maximum,
+        authority_version, activated_at
+      ) VALUES (
+        ${'f'.repeat(64)}, 'bayn.authority-generation-history.v1', NULL,
+        'OBSERVE', 1, '2026-03-06T21:00:00.000Z'
+      )
+    `
     yield* sql`
     INSERT INTO authority_state (
       schema_version, generation_hash, maximum, effective, kill_state, reason, version, updated_at
     ) VALUES (
       'bayn.paper-authority.v1',
       ${'f'.repeat(64)},
-      ${maximum},
-      ${effective},
+      ${Authority.Observe},
+      ${Authority.Observe},
       ${KillState.Clear},
       NULL,
       1,
@@ -116,7 +121,7 @@ const seedSafetyState = (
       ${reconciliationHash},
       ${'1'.repeat(64)},
       'EXACT',
-      ${sql.json([])},
+      ${sql.json(JSON.stringify([]))},
       ${reconciledAt}
     )
   `
@@ -128,13 +133,18 @@ const seedUnresolvedMutation = (mutationAccountId = accountId) =>
     const intentId = '2'.repeat(64)
     yield* sql`
     INSERT INTO intents (
-      intent_id, schema_version, risk_decision_id, account_id, client_order_id,
+      intent_id, schema_version, risk_decision_id, strategy_name, cycle_id,
+      decision_hash, policy_hash, account_id, client_order_id,
       symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
       state, terminal_outcome, state_version, created_at, updated_at
     ) VALUES (
       ${intentId},
-      'bayn.paper-intent.v1',
+      'bayn.paper-intent.v2',
       NULL,
+      'risk-balanced-trend',
+      ${'8'.repeat(64)},
+      ${'9'.repeat(64)},
+      ${'a'.repeat(64)},
       ${mutationAccountId},
       'bayn-observability-test-order',
       'SPY',
@@ -349,16 +359,32 @@ describePostgres('PostgreSQL cycle observability projection', () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const observability = yield* CycleObservability
-        yield* seedSafetyState(Authority.Paper, Authority.Paper, '2026-03-06T21:02:00.000000Z')
+        yield* seedSafetyState('2026-03-06T21:02:00.000000Z')
         yield* seedUnresolvedMutation()
         yield* seedAcceptedMutation('2026-03-06T21:02:00.000500Z')
         const projected = yield* observability.read(qualificationRunId, accountId)
-        const status = deriveCycleOperationsStatus(projected, Date.parse('2026-03-06T21:03:30.000Z'), Authority.Paper, {
-          cycleStallThresholdMs: 300_000,
-          reconciliationStaleThresholdMs: 300_000,
-          unknownMutationThresholdMs: 300_000,
-        })
-        return { projected, status }
+        if (projected.authority === null) {
+          return yield* Effect.die(new Error('authority projection is unavailable'))
+        }
+        const paperProjection = {
+          ...projected,
+          authority: {
+            ...projected.authority,
+            maximum: Authority.Paper,
+            effective: Authority.Paper,
+          },
+        }
+        const status = deriveCycleOperationsStatus(
+          paperProjection,
+          Date.parse('2026-03-06T21:03:30.000Z'),
+          Authority.Paper,
+          {
+            cycleStallThresholdMs: 300_000,
+            reconciliationStaleThresholdMs: 300_000,
+            unknownMutationThresholdMs: 300_000,
+          },
+        )
+        return { projected: paperProjection, status }
       }),
     )
 

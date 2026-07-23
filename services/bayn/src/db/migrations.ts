@@ -13,6 +13,7 @@ import autonomousCycles from '../../migrations/0010_autonomous_cycles'
 import causalProtocol from '../../migrations/0011_causal_protocol'
 import observeShadowDecisions from '../../migrations/0012_observe_shadow_decisions'
 import autonomousCycleTerminalTransitions from '../../migrations/0013_autonomous_cycle_terminal_transitions'
+import authorityGenerationHistory from '../../migrations/0014_authority_generation_history'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -28,4 +29,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '11_causal_protocol': causalProtocol,
   '12_observe_shadow_decisions': observeShadowDecisions,
   '13_autonomous_cycle_terminal_transitions': autonomousCycleTerminalTransitions,
+  '14_authority_generation_history': authorityGenerationHistory,
 })

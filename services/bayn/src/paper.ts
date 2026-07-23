@@ -1,7 +1,10 @@
 import { Schema } from 'effect'
 
+import { canonicalHashV1 } from './hash'
 import {
+  ImageDigestSchema as ImageDigest,
   Sha256Schema as Sha256,
+  SourceRevisionSchema as SourceRevision,
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
   UtcInstantSchema as UtcInstant,
@@ -575,6 +578,63 @@ export const ReconciliationSchema = ReconciliationBase.check(
 )
 export type Reconciliation = typeof ReconciliationSchema.Type
 
+export const PaperAuthorityGenerationMaterialSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-authority-generation.v1'),
+  maximum: Schema.Literal(Authority.Paper),
+  previousGenerationHash: Sha256,
+  qualificationRunId: Sha256,
+  qualificationLockId: Sha256,
+  qualificationResultHash: Sha256,
+  protocolHash: Sha256,
+  qualificationExecutionPolicyHash: Sha256,
+  qualificationSourceRevision: SourceRevision,
+  qualificationImageRepository: NonEmptyString,
+  qualificationImageDigest: ImageDigest,
+  activationSourceRevision: SourceRevision,
+  activationImageRepository: NonEmptyString,
+  activationImageDigest: ImageDigest,
+  strategyName: Schema.Literal('risk-balanced-trend'),
+  strategyBehaviorHash: Sha256,
+  strategyParameterHash: Sha256,
+  strategyParameterSchemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v3'),
+  accountId: NonEmptyString,
+  riskPolicyHash: Sha256,
+  proofPlanHash: Sha256,
+  reconciliationId: Sha256,
+  reconciliationContentHash: Sha256,
+})
+export type PaperAuthorityGenerationMaterial = typeof PaperAuthorityGenerationMaterialSchema.Type
+
+const PaperAuthorityGenerationBase = Schema.Struct({
+  ...PaperAuthorityGenerationMaterialSchema.fields,
+  generationHash: Sha256,
+})
+
+export const PaperAuthorityGenerationSchema = PaperAuthorityGenerationBase.check(
+  Schema.makeFilter(
+    (generation: typeof PaperAuthorityGenerationBase.Type) => {
+      const { generationHash, ...material } = generation
+      return generationHash === canonicalHashV1(material)
+    },
+    { expected: 'a generation hash matching the complete PAPER authority material' },
+  ),
+)
+export type PaperAuthorityGeneration = typeof PaperAuthorityGenerationSchema.Type
+
+const decodePaperAuthorityGenerationMaterialSync = Schema.decodeUnknownSync(
+  PaperAuthorityGenerationMaterialSchema,
+  StrictParseOptions,
+)
+const decodePaperAuthorityGenerationSync = Schema.decodeUnknownSync(PaperAuthorityGenerationSchema, StrictParseOptions)
+
+export const makePaperAuthorityGeneration = (input: PaperAuthorityGenerationMaterial): PaperAuthorityGeneration => {
+  const material = decodePaperAuthorityGenerationMaterialSync(input)
+  return decodePaperAuthorityGenerationSync({
+    ...material,
+    generationHash: canonicalHashV1(material),
+  })
+}
+
 const AuthorityStateBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority.v1'),
   generationHash: Sha256,
@@ -619,4 +679,8 @@ export const decodeRiskDecision = Schema.decodeUnknownEffect(RiskDecisionSchema,
 export const decodeAccountingReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
 export const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, StrictParseOptions)
 export const decodeReconciliation = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
+export const decodePaperAuthorityGeneration = Schema.decodeUnknownEffect(
+  PaperAuthorityGenerationSchema,
+  StrictParseOptions,
+)
 export const decodeAuthorityState = Schema.decodeUnknownEffect(AuthorityStateSchema, StrictParseOptions)

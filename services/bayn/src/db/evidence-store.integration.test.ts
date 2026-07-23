@@ -5,23 +5,31 @@ import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { makeStrategyProtocolHash } from '../contracts'
 import { IntentStore, IntentStoreLive, plan, type IntentPlan } from '../execution/intents'
 import { MutationEventType, MutationStore, MutationStoreLive } from '../execution/mutations'
 import { MutationOperation, cancelRequestHash } from '../broker/alpaca-mutations'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
-import { buildLedgerPlan } from '../ledger'
+import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
 import {
   Authority,
   decodeRiskDecision,
+  makePaperAuthorityGeneration,
   OrderSide,
   OrderType,
   RiskOutcome,
   TerminalOutcome,
   TimeInForce,
   type Intent,
+  type PaperAuthorityGeneration,
 } from '../paper'
-import { makeQualificationResult } from '../qualification'
+import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  type QualificationSeries,
+} from '../qualification-statistics'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
@@ -33,6 +41,7 @@ import {
   PostgresClientLive,
   type PersistEvaluationInput,
 } from './evidence-store'
+import { PaperStore, PaperStoreLive } from './paper-store'
 
 const postgresUrl = process.env.BAYN_TEST_POSTGRES_URL
 const testUrl = postgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
@@ -95,6 +104,34 @@ const makeMutationRuntime = (config = makeConfig()) =>
   ManagedRuntime.make(
     MutationStoreLive.pipe(
       Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
+const unusedJournal: JournalService = {
+  post: () => Effect.die(new Error('unexpected accounting journal write')),
+  verifyAccount: () => Effect.die(new Error('unexpected accounting journal verification')),
+  journalAndReconcile: () => Effect.die(new Error('unexpected simulation journal write')),
+  check: Effect.die(new Error('unexpected accounting journal health check')),
+  checkRun: () => Effect.die(new Error('unexpected simulation journal verification')),
+}
+
+const makePaperStoreRuntime = (config = makeConfig()) =>
+  ManagedRuntime.make(
+    PaperStoreLive(config).pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(Layer.succeed(Journal, unusedJournal)),
+      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provide(NodeServices.layer),
+    ),
+  )
+
+const makeAuthorityMutationRuntime = (config = makeConfig()) =>
+  ManagedRuntime.make(
+    Layer.mergeAll(PaperStoreLive(config), IntentStoreLive, MutationStoreLive).pipe(
+      Layer.provideMerge(WriterFenceLive),
+      Layer.provideMerge(Layer.succeed(Journal, unusedJournal)),
       Layer.provideMerge(PostgresClientLive(config)),
       Layer.provide(NodeServices.layer),
     ),
@@ -198,6 +235,295 @@ const makeLockedInput = (input: PersistEvaluationInput, priorTrialRunIds: readon
   }
 }
 
+const fixtureHash = (value: string): string => canonicalHashV1({ value })
+
+const passingQualificationSeries = (runId: string): QualificationSeries => {
+  const sessionDate = (index: number): `${number}-${number}-${number}` => {
+    const date = new Date('2000-01-01T00:00:00.000Z')
+    date.setUTCDate(date.getUTCDate() + index)
+    return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
+  }
+  const blockCount = 90
+  return {
+    schemaVersion: 'bayn.qualification-series.v1',
+    runId,
+    observations: Array.from({ length: blockCount * 21 + 10 }, (_, index) => {
+      const noise = (((index * 17) % 23) - 11) / 100_000
+      return {
+        sessionDate: sessionDate(index),
+        strategyReturn: 0.0005 + noise,
+        cashReturn: 0,
+        buyAndHoldReturn: 0.00015 + noise * 1.1,
+        directVolatilityReturn: 0.0001 + noise * 0.8,
+      }
+    }),
+    rebalanceExecutionDates: Array.from({ length: blockCount + 1 }, (_, index) => sessionDate(index * 21)),
+  }
+}
+
+const mutationQualificationProvenance = makeTestProvenance()
+const mutationQualificationRunId = fixtureHash('mutation-authority-qualification-run')
+const mutationQualificationSnapshotId = fixtureHash('mutation-authority-qualification-snapshot')
+const mutationQualificationLock = makeQualificationLock({
+  schemaVersion: 'bayn.qualification-lock.v3',
+  candidateRunId: mutationQualificationRunId,
+  protocolHash: makeStrategyProtocolHash(mutationQualificationProvenance.strategy),
+  sourceRevision: mutationQualificationProvenance.sourceRevision,
+  image: mutationQualificationProvenance.image,
+  universeId: fixtureProtocol.universeId,
+  universeSymbolHash: fixtureProtocol.universeSymbolHash,
+  universe: fixtureProtocol.universe,
+  universeRationale: 'Deterministic qualified evidence for mutation persistence tests.',
+  data: {
+    snapshotId: mutationQualificationSnapshotId,
+    publicationId: fixtureHash('mutation-authority-qualification-publication'),
+    inputManifestHash: fixtureHash('mutation-authority-qualification-manifest'),
+    contentHash: fixtureHash('mutation-authority-qualification-content'),
+    sessionsContentHash: fixtureHash('mutation-authority-qualification-sessions'),
+    provider: 'alpaca',
+    sourceFeed: 'sip',
+    adjustment: 'all',
+    calendarVersion: 'alpaca-us-equity-calendar-v1',
+    firstSession: '2016-01-04',
+    lastSession: '2026-07-21',
+    selectedSessionCount: 1_900,
+    selectedRebalanceCount: 91,
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: '2016-01-04',
+      dataEnd: '2026-07-21',
+      lookbackStart: '2016-01-04',
+      evaluationStart: '2017-01-03',
+      evaluationEnd: '2026-07-21',
+    },
+  },
+  policies: {
+    benchmark: makeQualificationPolicyDocument('bayn.mutation-benchmark-policy.v1', {
+      schemaVersion: 'bayn.mutation-benchmark-policy.v1',
+      enabled: true,
+    }),
+    thresholds: makeQualificationPolicyDocument('bayn.mutation-threshold-policy.v1', {
+      schemaVersion: 'bayn.mutation-threshold-policy.v1',
+      enabled: true,
+    }),
+    uncertainty: makeQualificationPolicyDocument('bayn.mutation-uncertainty-policy.v1', {
+      schemaVersion: 'bayn.mutation-uncertainty-policy.v1',
+      enabled: true,
+    }),
+    execution: makeQualificationPolicyDocument(
+      fixtureProtocol.executionModel.schemaVersion,
+      fixtureProtocol.executionModel,
+    ),
+  },
+  priorTrialRunIds: [],
+})
+const mutationQualificationResult = makeQualificationResult(
+  mutationQualificationLock,
+  {
+    status: 'PASS',
+    gates: [{ name: 'mutation_authority_fixture', passed: true, actual: 1, required: 1 }],
+  },
+  analyzeQualification(
+    passingQualificationSeries(mutationQualificationRunId),
+    defaultQualificationStatisticsPolicy,
+    [],
+  ),
+)
+
+const makeMutationPaperAuthorityGeneration = (
+  previousGenerationHash: string,
+  reconciliationId: string,
+  reconciliationContentHash: string,
+) => {
+  if (mutationQualificationResult.verdict !== 'QUALIFIED') {
+    throw new Error('audited mutation fixture requires QUALIFIED evidence')
+  }
+  const strategy = mutationQualificationProvenance.strategy
+  const strategyParameterSchemaVersion = strategy.parameterSchemaVersion
+  if (strategyParameterSchemaVersion !== 'bayn.risk-balanced-trend.protocol.v3') {
+    throw new Error('audited mutation fixture requires the current strategy parameter contract')
+  }
+
+  const config = makeConfig()
+  return makePaperAuthorityGeneration({
+    schemaVersion: 'bayn.paper-authority-generation.v1',
+    maximum: Authority.Paper,
+    previousGenerationHash,
+    qualificationRunId: mutationQualificationResult.runId,
+    qualificationLockId: mutationQualificationLock.lockId,
+    qualificationResultHash: mutationQualificationResult.resultHash,
+    protocolHash: mutationQualificationLock.protocolHash,
+    qualificationExecutionPolicyHash: mutationQualificationLock.policies.execution.contentHash,
+    qualificationSourceRevision: mutationQualificationLock.sourceRevision,
+    qualificationImageRepository: mutationQualificationLock.image.repository,
+    qualificationImageDigest: mutationQualificationLock.image.digest,
+    activationSourceRevision: config.build.sourceRevision,
+    activationImageRepository: config.build.imageRepository,
+    activationImageDigest: config.build.imageDigest,
+    strategyName: strategy.name,
+    strategyBehaviorHash: strategy.behaviorHash,
+    strategyParameterHash: strategy.parameterHash,
+    strategyParameterSchemaVersion,
+    accountId: 'paper-account-1',
+    riskPolicyHash: fixtureHash('mutation-risk-policy'),
+    proofPlanHash: fixtureHash('mutation-proof-plan'),
+    reconciliationId,
+    reconciliationContentHash,
+  })
+}
+
+const makePaperActivationConfig = (activation: PaperAuthorityGeneration): RuntimeConfig => {
+  const config = makeConfig()
+  return {
+    ...config,
+    maximumAuthority: Authority.Paper,
+    qualificationRunId: activation.qualificationRunId,
+    build: {
+      ...config.build,
+      strategyBehaviorHash: activation.strategyBehaviorHash,
+      strategyParameterHash: activation.strategyParameterHash,
+    },
+    alpaca: {
+      accountId: activation.accountId,
+      authorityGenerationHash: activation.generationHash,
+      key: Redacted.make('unused'),
+      secret: Redacted.make('unused'),
+      proxyUrl: 'http://bayn-egress-proxy.invalid',
+      retryAttempts: 0,
+      reconciliationIntervalMs: 30_000,
+    },
+  }
+}
+
+const activateAuditedPaperAuthority = async () => {
+  const observeGenerationHash = fixtureHash('mutation-observe-authority-generation')
+  const reconciliationId = fixtureHash('mutation-authority-reconciliation')
+  const reconciliationContentHash = fixtureHash('mutation-authority-reconciliation-content')
+  const activation = makeMutationPaperAuthorityGeneration(
+    observeGenerationHash,
+    reconciliationId,
+    reconciliationContentHash,
+  )
+  const config = makePaperActivationConfig(activation)
+  const strategy = mutationQualificationProvenance.strategy
+  const paperRuntime = makePaperStoreRuntime(config)
+  try {
+    await paperRuntime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* PaperStore
+        const sql = yield* PgClient.PgClient
+        const accountStateHash = fixtureHash('mutation-authority-account-state')
+        yield* sql`
+          INSERT INTO protocol_locks (
+            protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+          ) VALUES (
+            ${mutationQualificationLock.protocolHash}, ${fixtureProtocol.schemaVersion},
+            ${strategy.name}, ${strategy.behaviorHash}, ${strategy.parameterHash},
+            ${sql.json(fixtureProtocol)}
+          )
+        `
+        yield* sql`
+          INSERT INTO snapshot_references (
+            snapshot_id, schema_version, database_name, table_name, dataset_version, source,
+            source_feed, adjustment, content_hash, row_count, first_session, last_session, manifest
+          ) VALUES (
+            ${mutationQualificationLock.data.snapshotId}, 'bayn.finalized-snapshot.v3',
+            'signal', 'adjusted_daily_bars_v2', 'signal.adjusted-daily-snapshot.v2',
+            'alpaca', 'sip', 'all', ${mutationQualificationLock.data.contentHash},
+            ${mutationQualificationLock.data.selectedSessionCount * mutationQualificationLock.universe.length},
+            ${mutationQualificationLock.data.firstSession}, ${mutationQualificationLock.data.lastSession},
+            ${sql.json(mutationQualificationLock.data)}
+          )
+        `
+        yield* sql`
+          INSERT INTO evaluation_runs (
+            run_id, protocol_hash, snapshot_id, evaluation_schema_version, source_revision,
+            image_repository, image_digest, strategy_name, initial_capital_micros,
+            expected_artifact_count, expected_event_count, expected_gate_count,
+            status, completed_at
+          ) VALUES (
+            ${mutationQualificationResult.runId}, ${mutationQualificationLock.protocolHash},
+            ${mutationQualificationLock.data.snapshotId}, 'bayn.evaluation.v6',
+            ${mutationQualificationLock.sourceRevision}, ${mutationQualificationLock.image.repository},
+            ${mutationQualificationLock.image.digest}, ${strategy.name}, 1000000000000,
+            1, 0, 1, 'COMPLETE', clock_timestamp()
+          )
+        `
+        yield* sql`
+          INSERT INTO evaluation_artifacts (
+            run_id, artifact_name, schema_version, content_hash, payload
+          ) VALUES (
+            ${mutationQualificationResult.runId}, 'qualification-artifact-manifest',
+            'bayn.qualification-artifact-manifest.v1',
+            ${fixtureHash('mutation-authority-qualification-artifact')},
+            ${sql.json({ runId: mutationQualificationResult.runId })}
+          )
+        `
+        yield* sql`
+          INSERT INTO gate_outcomes (
+            run_id, ordinal, gate_name, passed, actual, required, content_hash
+          ) VALUES (
+            ${mutationQualificationResult.runId}, 0, 'mutation_authority_fixture', true,
+            ${sql.json('1')}, ${sql.json('1')},
+            ${fixtureHash('mutation-authority-qualification-gate')}
+          )
+        `
+        yield* sql`
+          INSERT INTO status_history (run_id, status, detail)
+          VALUES
+            (
+              ${mutationQualificationResult.runId}, 'WRITING',
+              ${sql.json({ artifactCount: 1, eventCount: 0, gateCount: 1 })}
+            ),
+            (
+              ${mutationQualificationResult.runId}, 'COMPLETE',
+              ${sql.json({ reconciliationExact: true, verdict: 'PASS' })}
+            )
+        `
+        yield* sql`
+          INSERT INTO qualification_locks (
+            lock_id, schema_version, candidate_run_id, protocol_hash, snapshot_id,
+            source_revision, image_repository, image_digest, payload
+          ) VALUES (
+            ${mutationQualificationLock.lockId}, ${mutationQualificationLock.schemaVersion},
+            ${mutationQualificationLock.candidateRunId}, ${mutationQualificationLock.protocolHash},
+            ${mutationQualificationLock.data.snapshotId}, ${mutationQualificationLock.sourceRevision},
+            ${mutationQualificationLock.image.repository}, ${mutationQualificationLock.image.digest},
+            ${sql.json(mutationQualificationLock)}
+          )
+        `
+        yield* sql`
+          INSERT INTO qualification_results (
+            lock_id, schema_version, run_id, verdict, analysis_hash, result_hash, payload
+          ) VALUES (
+            ${mutationQualificationResult.lockId}, ${mutationQualificationResult.schemaVersion},
+            ${mutationQualificationResult.runId}, ${mutationQualificationResult.verdict},
+            ${mutationQualificationResult.analysis.analysisHash}, ${mutationQualificationResult.resultHash},
+            ${sql.json(mutationQualificationResult)}
+          )
+        `
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${reconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
+            ${accountStateHash}, ${accountStateHash}, ${reconciliationContentHash},
+            'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
+          )
+        `
+        yield* store.ensureAuthorityGeneration({
+          generationHash: observeGenerationHash,
+          maximum: Authority.Observe,
+        })
+        yield* store.activatePaperGeneration(activation)
+      }),
+    )
+  } finally {
+    await paperRuntime.dispose()
+  }
+}
+
 describePostgres('PostgreSQL evaluation evidence', () => {
   let runtime: ReturnType<typeof makeEvidenceRuntime>
 
@@ -256,6 +582,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'account_snapshots',
       'accounting_receipts',
       'accounting_transactions',
+      'authority_generations',
       'authority_state',
       'autonomous_cycle_shadow_decisions',
       'autonomous_cycles',
@@ -297,6 +624,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 11, name: 'causal_protocol' },
       { migration_id: 12, name: 'observe_shadow_decisions' },
       { migration_id: 13, name: 'autonomous_cycle_terminal_transitions' },
+      { migration_id: 14, name: 'authority_generation_history' },
     ])
   })
 
@@ -625,18 +953,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(
       Effect.gen(function* () {
         yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const startedAt = new Date(Date.now() + 100).toISOString()
@@ -683,6 +1003,160 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.state).toEqual({ state: 'ACKNOWLEDGED', state_version: 4, events: 2 })
   })
 
+  test('serializes PAPER activation behind a writer-fenced mutation outcome and rechecks the baseline', async () => {
+    await activateAuditedPaperAuthority()
+
+    const observeGenerationHash = fixtureHash('writer-fenced-return-observe-generation')
+    const reconciliationId = fixtureHash('writer-fenced-reconciliation')
+    const reconciliationContentHash = fixtureHash('writer-fenced-reconciliation-content')
+    const paperActivation = makeMutationPaperAuthorityGeneration(
+      observeGenerationHash,
+      reconciliationId,
+      reconciliationContentHash,
+    )
+    const authority = makeAuthorityMutationRuntime(makePaperActivationConfig(paperActivation))
+    const blocker = makeClientRuntime()
+    const base = Date.now()
+    const intent = await Effect.runPromise(
+      plan(
+        intentPlan({
+          cycleId: '9'.repeat(64),
+          createdAt: new Date(base - 5_000).toISOString(),
+        }),
+      ),
+    )
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, {
+        decidedAt: new Date(base - 4_000).toISOString(),
+        expiresAt: new Date(base + 60_000).toISOString(),
+      }),
+    )
+    try {
+      const observed = await authority.runPromise(
+        Effect.gen(function* () {
+          const intentStore = yield* IntentStore
+          const mutationStore = yield* MutationStore
+          const paperStore = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const requestHash = fixtureHash('writer-fenced-late-submit-outcome')
+          yield* intentStore.commit(intent, decision)
+          yield* mutationStore.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base - 3_000).toISOString())
+
+          yield* paperStore.ensureAuthorityGeneration({
+            generationHash: observeGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const accountStateHash = fixtureHash('writer-fenced-account-state')
+          const [reconciliation] = yield* sql<{ reconciled_at: Date }>`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            ) VALUES (
+              ${reconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
+              ${accountStateHash}, ${accountStateHash}, ${reconciliationContentHash},
+              'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
+            )
+            RETURNING reconciled_at
+          `
+          if (reconciliation === undefined) {
+            return yield* Effect.fail('exact reconciliation was not persisted')
+          }
+          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const [before] = yield* readAuthorityEvidence
+          const lockHeld = yield* Deferred.make<void>()
+          const releaseLock = yield* Deferred.make<void>()
+          const lockHolder = yield* Effect.forkChild(
+            Effect.promise(() =>
+              blocker.runPromise(
+                Effect.gen(function* () {
+                  const blockerSql = yield* PgClient.PgClient
+                  yield* blockerSql.withTransaction(
+                    Effect.gen(function* () {
+                      yield* blockerSql`LOCK TABLE mutation_events IN ACCESS EXCLUSIVE MODE`
+                      yield* Deferred.succeed(lockHeld, undefined)
+                      yield* Deferred.await(releaseLock)
+                    }),
+                  )
+                }),
+              ),
+            ),
+            { startImmediately: true },
+          )
+          yield* Deferred.await(lockHeld)
+
+          return yield* Effect.gen(function* () {
+            const acceptedAt = new Date(reconciliation.reconciled_at.getTime() + 1).toISOString()
+            const outcome = yield* Effect.forkChild(
+              Effect.exit(
+                mutationStore.submitAccepted(intent.intentId, requestHash, orderId, {
+                  requestId: 'writer-fenced-submit-outcome',
+                  status: 200,
+                  contentHash: fixtureHash('writer-fenced-submit-response'),
+                  observedAt: acceptedAt,
+                }),
+              ),
+              { startImmediately: true },
+            )
+            let mutationWaiting = false
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              const activities = yield* sql<{ query: string; wait_event_type: string | null }>`
+                SELECT query, wait_event_type
+                FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND datname = current_database()
+                  AND wait_event_type = 'Lock'
+                  AND query ILIKE '%FROM mutation_events%'
+              `
+              if (activities[0] !== undefined) {
+                mutationWaiting = true
+                break
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            if (!mutationWaiting) {
+              return yield* Effect.fail('mutation outcome did not wait while holding the writer fence')
+            }
+
+            const activationFiber = yield* Effect.forkChild(
+              Effect.exit(paperStore.activatePaperGeneration(paperActivation)),
+              { startImmediately: true },
+            )
+            yield* Effect.sleep(Duration.millis(20))
+            const activationWaited = activationFiber.pollUnsafe() === undefined
+            yield* Deferred.succeed(releaseLock, undefined)
+            yield* Fiber.join(lockHolder)
+            const outcomeExit = yield* Fiber.join(outcome)
+            const activationExit = yield* Fiber.join(activationFiber)
+            const activationFailure = Exit.isFailure(activationExit)
+              ? Option.getOrUndefined(Cause.findErrorOption(activationExit.cause))
+              : undefined
+            const [after] = yield* readAuthorityEvidence
+            return { activationFailure, activationWaited, after, before, outcomeExit }
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseLock, undefined).pipe(Effect.ignore)))
+        }),
+      )
+
+      expect(observed.activationWaited).toBe(true)
+      expect(Exit.isSuccess(observed.outcomeExit)).toBe(true)
+      expect(observed.activationFailure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'PAPER activation requires zero unresolved mutations covered by reconciliation',
+      })
+      expect(observed.after).toEqual(observed.before)
+    } finally {
+      await authority.dispose()
+      await blocker.dispose()
+    }
+  }, 20_000)
+
   test('does not append a mutation start after its approved risk decision expires', async () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '0'.repeat(64) })))
@@ -693,18 +1167,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(
       Effect.gen(function* () {
         yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
     await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 50))
 
     const mutation = makeMutationRuntime()
@@ -741,18 +1207,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(
       Effect.gen(function* () {
         yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const requestHash = '6'.repeat(64)
@@ -794,18 +1252,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(
       Effect.gen(function* () {
         yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = '6'.repeat(64)
@@ -891,18 +1341,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const store = yield* IntentStore
         yield* store.commit(intent, decision)
         yield* store.commit(blockedIntent, blockedDecision)
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = '3'.repeat(64)
@@ -921,7 +1363,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         yield* sql`
           UPDATE authority_state
-          SET effective = 'OBSERVE', kill_state = 'ACTIVE', reason = 'operator kill', version = 2,
+          SET effective = 'OBSERVE', kill_state = 'ACTIVE', reason = 'operator kill', version = 3,
               updated_at = ${new Date(base + 2).toISOString()}
           WHERE singleton
         `
@@ -979,18 +1421,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     await execution.runPromise(
       Effect.gen(function* () {
         yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = 'a'.repeat(64)
@@ -1049,18 +1483,10 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const store = yield* IntentStore
         yield* store.commit(first, firstDecision)
         yield* store.commit(second, secondDecision)
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          INSERT INTO authority_state (
-            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-          ) VALUES (
-            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
-            ${new Date(Date.now() + 1).toISOString()}
-          )
-        `
       }),
     )
     await execution.dispose()
+    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const firstSubmitHash = 'a'.repeat(64)
@@ -1708,6 +2134,15 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           )
         `
         yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${'a'.repeat(64)}, 'bayn.authority-generation-history.v1', NULL,
+            'OBSERVE', 1, '2026-07-22T06:00:00.000Z'
+          )
+        `
+        yield* sql`
           INSERT INTO authority_state (
             schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
           ) VALUES (
@@ -1764,27 +2199,23 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '2026-07-22T06:01:00.000Z'
           )
         `)
-        yield* sql`
+        const paperWithoutHistory = yield* Effect.exit(sql`
           UPDATE authority_state
           SET generation_hash = ${'b'.repeat(64)}, maximum = 'PAPER', effective = 'PAPER',
               version = 2, updated_at = '2026-07-22T06:01:00.000Z'
-        `
-        yield* sql`
-          UPDATE authority_state
-          SET effective = 'OBSERVE', version = 3, updated_at = '2026-07-22T06:02:00.000Z'
-        `
+        `)
         const escalation = yield* Effect.exit(sql`
           UPDATE authority_state
-          SET effective = 'PAPER', version = 4, updated_at = '2026-07-22T06:03:00.000Z'
+          SET effective = 'PAPER', version = 2, updated_at = '2026-07-22T06:02:00.000Z'
         `)
         yield* sql`
           UPDATE authority_state
-          SET kill_state = 'ACTIVE', reason = 'operator kill', version = 4,
+          SET kill_state = 'ACTIVE', reason = 'operator kill', version = 2,
               updated_at = '2026-07-22T06:03:00.000Z'
         `
         const clearKill = yield* Effect.exit(sql`
           UPDATE authority_state
-          SET kill_state = 'CLEAR', reason = NULL, version = 5,
+          SET kill_state = 'CLEAR', reason = NULL, version = 3,
               updated_at = '2026-07-22T06:04:00.000Z'
         `)
         const mutateReceipt = yield* Effect.exit(sql`
@@ -1804,6 +2235,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           nullIdentifier,
           badValuation,
           badReconciliation,
+          paperWithoutHistory,
           escalation,
           clearKill,
           mutateReceipt,
@@ -1817,10 +2249,11 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(Exit.isFailure(result.nullIdentifier)).toBe(true)
     expect(Exit.isFailure(result.badValuation)).toBe(true)
     expect(Exit.isFailure(result.badReconciliation)).toBe(true)
+    expect(Exit.isFailure(result.paperWithoutHistory)).toBe(true)
     expect(Exit.isFailure(result.escalation)).toBe(true)
     expect(Exit.isFailure(result.clearKill)).toBe(true)
     expect(Exit.isFailure(result.mutateReceipt)).toBe(true)
-    expect(result.authority).toEqual({ maximum: 'PAPER', effective: 'OBSERVE', kill_state: 'ACTIVE', version: 4 })
+    expect(result.authority).toEqual({ maximum: 'OBSERVE', effective: 'OBSERVE', kill_state: 'ACTIVE', version: 2 })
   })
 
   test('rejects the legacy migration tracker instead of creating a parallel schema', async () => {

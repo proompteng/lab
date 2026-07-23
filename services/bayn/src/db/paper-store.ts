@@ -19,6 +19,8 @@ import {
   type ValuationInput,
 } from '../broker/observations'
 import type { RuntimeConfig } from '../config'
+import { makeStrategyProtocolHash } from '../contracts'
+import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { Journal } from '../ledger'
 import {
@@ -27,12 +29,16 @@ import {
   Broker,
   BrokerEventSchema,
   KillState,
+  ReconciliationStatus,
   ValuationSchema,
   decodeAuthorityState,
+  decodePaperAuthorityGeneration,
   type AccountingReceipt,
   type AuthorityState,
+  type PaperAuthorityGeneration,
   type Valuation,
 } from '../paper'
+import { QualificationLockSchema, QualificationResultSchema } from '../qualification'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -99,6 +105,13 @@ export interface PaperStoreShape {
   readonly ensureAuthorityGeneration: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, PaperStoreError>
+  /**
+   * Sole supported cross-generation PAPER writer. Application code and operators must not issue direct DML against
+   * authority_state or authority_generations.
+   */
+  readonly activatePaperGeneration: (
+    input: PaperAuthorityGeneration,
+  ) => Effect.Effect<AuthorityState, PaperStoreError, WriterFence>
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, PaperStoreError>
 }
 
@@ -173,6 +186,75 @@ const AuthorityStateObservationRow = Schema.Struct({
 })
 const AuthorityStateRows = Schema.Array(AuthorityStateRow).check(Schema.isMaxLength(1))
 const AuthorityStateObservationRows = Schema.Array(AuthorityStateObservationRow).check(Schema.isMaxLength(1))
+const AuthorityGenerationRow = Schema.Struct({
+  generation_hash: Sha256,
+  activation_schema_version: Schema.NullOr(Schema.Literal('bayn.paper-authority-generation.v1')),
+  previous_generation_hash: Schema.NullOr(Sha256),
+  maximum: Schema.Enum(Authority),
+  authority_version: Schema.String,
+  qualification_run_id: Schema.NullOr(Sha256),
+  qualification_lock_id: Schema.NullOr(Sha256),
+  qualification_result_hash: Schema.NullOr(Sha256),
+  protocol_hash: Schema.NullOr(Sha256),
+  qualification_execution_policy_hash: Schema.NullOr(Sha256),
+  qualification_source_revision: Schema.NullOr(Schema.String),
+  qualification_image_repository: Schema.NullOr(NonEmptyString),
+  qualification_image_digest: Schema.NullOr(Schema.String),
+  activation_source_revision: Schema.NullOr(Schema.String),
+  activation_image_repository: Schema.NullOr(NonEmptyString),
+  activation_image_digest: Schema.NullOr(Schema.String),
+  strategy_name: Schema.NullOr(Schema.Literal('risk-balanced-trend')),
+  strategy_behavior_hash: Schema.NullOr(Sha256),
+  strategy_parameter_hash: Schema.NullOr(Sha256),
+  strategy_parameter_schema_version: Schema.NullOr(Schema.Literal('bayn.risk-balanced-trend.protocol.v3')),
+  account_id: Schema.NullOr(NonEmptyString),
+  risk_policy_hash: Schema.NullOr(Sha256),
+  proof_plan_hash: Schema.NullOr(Sha256),
+  reconciliation_id: Schema.NullOr(Sha256),
+  reconciliation_content_hash: Schema.NullOr(Sha256),
+  activated_at: Schema.DateValid,
+})
+const AuthorityGenerationRows = Schema.Array(AuthorityGenerationRow).check(Schema.isMaxLength(1))
+const ActivationEvidenceRow = Schema.Struct({
+  lock_payload: QualificationLockSchema,
+  result_payload: QualificationResultSchema,
+  run_status: Schema.Literals(['WRITING', 'COMPLETE']),
+  expected_artifact_count: Schema.Int,
+  expected_event_count: Schema.Int,
+  expected_gate_count: Schema.Int,
+  artifact_count: Schema.Int,
+  event_count: Schema.Int,
+  gate_count: Schema.Int,
+  status_count: Schema.Int,
+  writing_status_count: Schema.Int,
+  complete_status_count: Schema.Int,
+  writing_detail: Schema.Unknown,
+  complete_detail: Schema.Unknown,
+  protocol_schema_version: Schema.Literals([
+    'bayn.risk-balanced-trend.protocol.v2',
+    'bayn.risk-balanced-trend.protocol.v3',
+  ]),
+  strategy_name: Schema.Literal('risk-balanced-trend'),
+  behavior_hash: Sha256,
+  parameter_hash: Sha256,
+  parameters: Schema.Unknown,
+})
+const ActivationEvidenceRows = Schema.Array(ActivationEvidenceRow).check(Schema.isMaxLength(1))
+const ActivationReconciliationRow = Schema.Struct({
+  reconciliation_id: Sha256,
+  account_id: NonEmptyString,
+  content_hash: Sha256,
+  status: Schema.Enum(ReconciliationStatus),
+  reconciled_at: Schema.DateValid,
+})
+const ActivationReconciliationRows = Schema.Array(ActivationReconciliationRow).check(Schema.isMaxLength(1))
+const MutationBaselineRow = Schema.Tuple([
+  Schema.Struct({
+    unresolved_count: Schema.Int,
+    latest_mutation_at: Schema.NullOr(Schema.DateValid),
+  }),
+])
+const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: Schema.DateValid })])
 const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
@@ -205,6 +287,11 @@ const decodeAuthorityStateObservationRows = Schema.decodeUnknownEffect(
   AuthorityStateObservationRows,
   strictParseOptions,
 )
+const decodeAuthorityGenerationRows = Schema.decodeUnknownEffect(AuthorityGenerationRows, strictParseOptions)
+const decodeActivationEvidenceRows = Schema.decodeUnknownEffect(ActivationEvidenceRows, strictParseOptions)
+const decodeActivationReconciliationRows = Schema.decodeUnknownEffect(ActivationReconciliationRows, strictParseOptions)
+const decodeMutationBaseline = Schema.decodeUnknownEffect(MutationBaselineRow, strictParseOptions)
+const decodeDatabaseInstant = Schema.decodeUnknownEffect(DatabaseInstantRow, strictParseOptions)
 const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, strictParseOptions)
 const decodeReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
 const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, strictParseOptions)
@@ -263,6 +350,70 @@ const authorityStateFromRow = (
   })
 }
 
+const positiveSafeVersion = (value: string, message: string): Effect.Effect<number, PaperStoreError> => {
+  const version = Number(value)
+  return Number.isSafeInteger(version) && version > 0
+    ? Effect.succeed(version)
+    : fail('authority', 'invariant', message)
+}
+
+const paperGenerationFromRow = (
+  row: typeof AuthorityGenerationRow.Type,
+): Effect.Effect<PaperAuthorityGeneration, PaperStoreError | Schema.SchemaError> => {
+  if (
+    row.activation_schema_version === null ||
+    row.previous_generation_hash === null ||
+    row.qualification_run_id === null ||
+    row.qualification_lock_id === null ||
+    row.qualification_result_hash === null ||
+    row.protocol_hash === null ||
+    row.qualification_execution_policy_hash === null ||
+    row.qualification_source_revision === null ||
+    row.qualification_image_repository === null ||
+    row.qualification_image_digest === null ||
+    row.activation_source_revision === null ||
+    row.activation_image_repository === null ||
+    row.activation_image_digest === null ||
+    row.strategy_name === null ||
+    row.strategy_behavior_hash === null ||
+    row.strategy_parameter_hash === null ||
+    row.strategy_parameter_schema_version === null ||
+    row.account_id === null ||
+    row.risk_policy_hash === null ||
+    row.proof_plan_hash === null ||
+    row.reconciliation_id === null ||
+    row.reconciliation_content_hash === null
+  ) {
+    return fail('authority', 'invariant', 'PAPER authority generation history is incomplete')
+  }
+  return decodePaperAuthorityGeneration({
+    schemaVersion: row.activation_schema_version,
+    generationHash: row.generation_hash,
+    maximum: row.maximum,
+    previousGenerationHash: row.previous_generation_hash,
+    qualificationRunId: row.qualification_run_id,
+    qualificationLockId: row.qualification_lock_id,
+    qualificationResultHash: row.qualification_result_hash,
+    protocolHash: row.protocol_hash,
+    qualificationExecutionPolicyHash: row.qualification_execution_policy_hash,
+    qualificationSourceRevision: row.qualification_source_revision,
+    qualificationImageRepository: row.qualification_image_repository,
+    qualificationImageDigest: row.qualification_image_digest,
+    activationSourceRevision: row.activation_source_revision,
+    activationImageRepository: row.activation_image_repository,
+    activationImageDigest: row.activation_image_digest,
+    strategyName: row.strategy_name,
+    strategyBehaviorHash: row.strategy_behavior_hash,
+    strategyParameterHash: row.strategy_parameter_hash,
+    strategyParameterSchemaVersion: row.strategy_parameter_schema_version,
+    accountId: row.account_id,
+    riskPolicyHash: row.risk_policy_hash,
+    proofPlanHash: row.proof_plan_hash,
+    reconciliationId: row.reconciliation_id,
+    reconciliationContentHash: row.reconciliation_content_hash,
+  })
+}
+
 const kindOf = (input: BrokerEventInput): typeof EventKind.Type => {
   switch (input._tag) {
     case 'Account':
@@ -311,7 +462,14 @@ const stableReceipt = (receipt: AccountingReceipt) => ({
   contentHash: receipt.contentHash,
 })
 
-const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
+type PaperStoreRuntimeConfig = Pick<
+  RuntimeConfig,
+  'build' | 'maximumAuthority' | 'qualificationRunId' | 'reconciliationStaleThresholdMs' | 'tigerBeetle'
+> & {
+  readonly alpaca?: Pick<NonNullable<RuntimeConfig['alpaca']>, 'accountId' | 'authorityGenerationHash'>
+}
+
+const makeStore = (config: PaperStoreRuntimeConfig) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const journal = yield* Journal
@@ -948,6 +1106,70 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       )
     const bindings = (accountId: string) => run('bindings', reconciliation.bindings(accountId))
     const reconcile = (snapshot: BrokerSnapshot) => run('reconciliation', reconciliation.reconcile(snapshot))
+
+    const lockAuthorityGenerations = Effect.gen(function* () {
+      yield* sql`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended('bayn.paper-authority-generation.v1', 0)
+        )
+      `
+      yield* sql`LOCK TABLE authority_generations IN SHARE ROW EXCLUSIVE MODE`
+    })
+
+    const readGeneration = (generationHash: string) =>
+      sql<Record<string, unknown>>`
+        SELECT
+          generation_hash, activation_schema_version, previous_generation_hash, maximum,
+          authority_version::text AS authority_version, qualification_run_id,
+          qualification_lock_id, qualification_result_hash, protocol_hash,
+          qualification_execution_policy_hash, qualification_source_revision,
+          qualification_image_repository, qualification_image_digest,
+          activation_source_revision, activation_image_repository, activation_image_digest,
+          strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+          strategy_parameter_schema_version, account_id, risk_policy_hash, proof_plan_hash,
+          reconciliation_id, reconciliation_content_hash, activated_at
+        FROM authority_generations
+        WHERE generation_hash = ${generationHash}
+      `.pipe(Effect.flatMap(decodeAuthorityGenerationRows))
+
+    const verifyCurrentGenerationHistory = (
+      current: AuthorityState,
+      history: typeof AuthorityGenerationRow.Type | undefined,
+    ) =>
+      Effect.gen(function* () {
+        if (history === undefined) {
+          return yield* fail('authority', 'invariant', 'current authority generation lacks immutable history')
+        }
+        const historyVersion = yield* positiveSafeVersion(
+          history.authority_version,
+          'authority generation history version is not a safe positive integer',
+        )
+        if (
+          history.generation_hash !== current.generationHash ||
+          history.maximum !== current.maximum ||
+          historyVersion > current.version ||
+          history.activated_at.toISOString() > current.updatedAt
+        ) {
+          return yield* fail('authority', 'invariant', 'current authority generation history differs from state')
+        }
+      })
+
+    const nextAuthorityInstant = sql<Record<string, unknown>>`
+      SELECT greatest(
+        clock_timestamp(),
+        updated_at + interval '1 millisecond'
+      ) AS activated_at
+      FROM authority_state
+      WHERE singleton
+    `.pipe(
+      Effect.flatMap(decodeDatabaseInstant),
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? fail('authority', 'invariant', 'authority update time is unavailable')
+          : Effect.succeed(rows[0].activated_at),
+      ),
+    )
+
     const ensureAuthorityGeneration = (candidate: EnsureAuthorityGenerationInput) =>
       run(
         'authority',
@@ -957,11 +1179,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
               ? fail('authority', 'invariant', 'Phase A authority maximum must be OBSERVE')
               : sql.withTransaction(
                   Effect.gen(function* () {
-                    yield* sql`
-                      SELECT pg_advisory_xact_lock(
-                        hashtextextended('bayn.paper-authority-generation.v1', 0)
-                      )
-                    `
+                    yield* lockAuthorityGenerations
                     const rows = yield* sql<Record<string, unknown>>`
                       SELECT
                         schema_version, generation_hash, maximum, effective, kill_state, reason,
@@ -972,13 +1190,31 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                     `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
                     const currentRow = rows[0]
                     if (currentRow === undefined) {
+                      if ((yield* readGeneration(input.generationHash))[0] !== undefined) {
+                        return yield* fail('authority', 'conflict', 'authority generation hash was already used')
+                      }
+                      const [databaseTime] = yield* sql<Record<string, unknown>>`
+                        SELECT clock_timestamp() AS activated_at
+                      `.pipe(Effect.flatMap(decodeDatabaseInstant))
+                      if (databaseTime === undefined) {
+                        return yield* fail('authority', 'invariant', 'authority initialization time is unavailable')
+                      }
+                      yield* sql`
+                        INSERT INTO authority_generations (
+                          generation_hash, schema_version, previous_generation_hash, maximum,
+                          authority_version, activated_at
+                        ) VALUES (
+                          ${input.generationHash}, 'bayn.authority-generation-history.v1', NULL,
+                          'OBSERVE', 1, ${databaseTime.activated_at}
+                        )
+                      `
                       const inserted = yield* sql<Record<string, unknown>>`
                         INSERT INTO authority_state (
                           schema_version, generation_hash, maximum, effective, kill_state,
                           reason, version, updated_at
                         ) VALUES (
                           'bayn.paper-authority.v1', ${input.generationHash}, ${input.maximum},
-                          'OBSERVE', 'CLEAR', NULL, 1, clock_timestamp()
+                          'OBSERVE', 'CLEAR', NULL, 1, ${databaseTime.activated_at}
                         )
                         RETURNING
                           schema_version, generation_hash, maximum, effective, kill_state, reason,
@@ -1007,9 +1243,24 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                           'authority generation maximum conflicts with durable state',
                         )
                       }
+                      yield* verifyCurrentGenerationHistory(current, (yield* readGeneration(current.generationHash))[0])
                       return current
                     }
 
+                    yield* verifyCurrentGenerationHistory(current, (yield* readGeneration(current.generationHash))[0])
+                    if ((yield* readGeneration(input.generationHash))[0] !== undefined) {
+                      return yield* fail('authority', 'conflict', 'authority generation hash was already used')
+                    }
+                    const activatedAt = yield* nextAuthorityInstant
+                    yield* sql`
+                      INSERT INTO authority_generations (
+                        generation_hash, schema_version, previous_generation_hash, maximum,
+                        authority_version, activated_at
+                      ) VALUES (
+                        ${input.generationHash}, 'bayn.authority-generation-history.v1',
+                        ${current.generationHash}, 'OBSERVE', ${current.version + 1}, ${activatedAt}
+                      )
+                    `
                     const rotated = yield* sql<Record<string, unknown>>`
                       UPDATE authority_state
                       SET
@@ -1017,10 +1268,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                         maximum = ${input.maximum},
                         effective = 'OBSERVE',
                         version = version + 1,
-                        updated_at = greatest(
-                          clock_timestamp(),
-                          updated_at + interval '1 millisecond'
-                        )
+                        updated_at = ${activatedAt}
                       WHERE singleton
                       RETURNING
                         schema_version, generation_hash, maximum, effective, kill_state, reason,
@@ -1036,6 +1284,390 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
           ),
         ),
       )
+
+    const activatePaperGeneration = (candidate: PaperAuthorityGeneration) =>
+      run(
+        'authority',
+        decodePaperAuthorityGeneration(candidate).pipe(
+          Effect.flatMap((input) => {
+            if (
+              config.maximumAuthority !== Authority.Paper ||
+              config.alpaca === undefined ||
+              input.generationHash !== config.alpaca.authorityGenerationHash ||
+              input.accountId !== config.alpaca.accountId ||
+              input.qualificationRunId !== config.qualificationRunId
+            ) {
+              return fail(
+                'authority',
+                'invariant',
+                'PAPER activation differs from the configured authority, account, generation, or qualification binding',
+              )
+            }
+            if (
+              input.activationSourceRevision !== config.build.sourceRevision ||
+              input.activationImageRepository !== config.build.imageRepository ||
+              input.activationImageDigest !== config.build.imageDigest
+            ) {
+              return fail(
+                'authority',
+                'invariant',
+                'PAPER activation provenance differs from the current embedded build',
+              )
+            }
+            if (
+              input.strategyBehaviorHash !== config.build.strategyBehaviorHash ||
+              input.strategyParameterHash !== config.build.strategyParameterHash
+            ) {
+              return fail(
+                'authority',
+                'invariant',
+                'PAPER activation strategy identity differs from the current embedded build',
+              )
+            }
+            return Effect.succeed(input)
+          }),
+          Effect.flatMap((input) =>
+            Effect.flatMap(WriterFence, (fence) =>
+              fence.transaction(
+                Effect.gen(function* () {
+                  yield* sql`
+                  SELECT pg_advisory_xact_lock(
+                    hashtextextended(${`ALPACA:${input.accountId}`}, 0)
+                  )
+                `
+                  yield* lockAuthorityGenerations
+                  const currentRows = yield* sql<Record<string, unknown>>`
+                  SELECT
+                    schema_version, generation_hash, maximum, effective, kill_state, reason,
+                    version::text AS version, updated_at, clock_timestamp() AS observed_at
+                  FROM authority_state
+                  WHERE singleton
+                  FOR UPDATE
+                `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
+                  const currentRow = currentRows[0]
+                  if (currentRow === undefined) {
+                    return yield* fail(
+                      'authority',
+                      'invariant',
+                      'PAPER activation requires an initialized OBSERVE authority',
+                    )
+                  }
+                  const current = yield* authorityStateFromRow(currentRow)
+                  if (currentRow.updated_at.getTime() > currentRow.observed_at.getTime()) {
+                    return yield* fail(
+                      'authority',
+                      'invariant',
+                      'durable authority update follows its database observation time',
+                    )
+                  }
+
+                  const currentHistory = (yield* readGeneration(current.generationHash))[0]
+                  yield* verifyCurrentGenerationHistory(current, currentHistory)
+                  if (current.generationHash === input.generationHash) {
+                    if (current.maximum !== Authority.Paper) {
+                      return yield* fail(
+                        'authority',
+                        'conflict',
+                        'PAPER generation conflicts with durable maximum authority',
+                      )
+                    }
+                    if (currentHistory === undefined) {
+                      return yield* fail('authority', 'invariant', 'PAPER authority history is missing')
+                    }
+                    const stored = yield* paperGenerationFromRow(currentHistory)
+                    if (canonicalHashV1(stored) !== canonicalHashV1(input)) {
+                      return yield* fail(
+                        'authority',
+                        'conflict',
+                        'PAPER generation history differs from deterministic replay',
+                      )
+                    }
+                    return current
+                  }
+
+                  if (current.maximum !== Authority.Observe || current.effective !== Authority.Observe) {
+                    return yield* fail('authority', 'invariant', 'PAPER activation requires current OBSERVE authority')
+                  }
+                  if (input.previousGenerationHash !== current.generationHash) {
+                    return yield* fail(
+                      'authority',
+                      'conflict',
+                      'PAPER generation does not extend the current authority generation',
+                    )
+                  }
+                  if ((yield* readGeneration(input.generationHash))[0] !== undefined) {
+                    return yield* fail('authority', 'conflict', 'authority generation hash was already used')
+                  }
+
+                  yield* sql`
+                  LOCK TABLE
+                    evaluation_artifacts,
+                    evaluation_events,
+                    gate_outcomes,
+                    status_history
+                  IN SHARE MODE
+                `
+                  const evidenceRows = yield* sql<Record<string, unknown>>`
+                  SELECT
+                    lock.payload AS lock_payload,
+                    result.payload AS result_payload,
+                    run.status AS run_status,
+                    run.expected_artifact_count,
+                    run.expected_event_count,
+                    run.expected_gate_count,
+                    (
+                      SELECT count(*)::integer
+                      FROM evaluation_artifacts
+                      WHERE run_id = run.run_id
+                    ) AS artifact_count,
+                    (
+                      SELECT count(*)::integer
+                      FROM evaluation_events
+                      WHERE run_id = run.run_id
+                    ) AS event_count,
+                    (
+                      SELECT count(*)::integer
+                      FROM gate_outcomes
+                      WHERE run_id = run.run_id
+                    ) AS gate_count,
+                    (
+                      SELECT count(*)::integer
+                      FROM status_history
+                      WHERE run_id = run.run_id
+                    ) AS status_count,
+                    (
+                      SELECT count(*)::integer
+                      FROM status_history
+                      WHERE run_id = run.run_id AND status = 'WRITING'
+                    ) AS writing_status_count,
+                    (
+                      SELECT count(*)::integer
+                      FROM status_history
+                      WHERE run_id = run.run_id AND status = 'COMPLETE'
+                    ) AS complete_status_count,
+                    (
+                      SELECT detail
+                      FROM status_history
+                      WHERE run_id = run.run_id AND status = 'WRITING'
+                    ) AS writing_detail,
+                    (
+                      SELECT detail
+                      FROM status_history
+                      WHERE run_id = run.run_id AND status = 'COMPLETE'
+                    ) AS complete_detail,
+                    protocol.schema_version AS protocol_schema_version,
+                    protocol.strategy_name,
+                    protocol.behavior_hash,
+                    protocol.parameter_hash,
+                    protocol.parameters
+                  FROM qualification_results AS result
+                  JOIN qualification_locks AS lock
+                    ON lock.lock_id = result.lock_id
+                    AND lock.candidate_run_id = result.run_id
+                  JOIN evaluation_runs AS run
+                    ON run.run_id = result.run_id
+                    AND run.protocol_hash = lock.protocol_hash
+                    AND run.snapshot_id = lock.snapshot_id
+                    AND run.source_revision = lock.source_revision
+                    AND run.image_repository = lock.image_repository
+                    AND run.image_digest = lock.image_digest
+                  JOIN protocol_locks AS protocol
+                    ON protocol.protocol_hash = run.protocol_hash
+                    AND protocol.strategy_name = run.strategy_name
+                  WHERE result.run_id = ${input.qualificationRunId}
+                  FOR SHARE OF result, lock, run, protocol
+                `.pipe(Effect.flatMap(decodeActivationEvidenceRows))
+                  const evidence = evidenceRows[0]
+                  if (evidence === undefined) {
+                    return yield* fail('authority', 'invariant', 'exact terminal qualification evidence is unavailable')
+                  }
+                  const lock = evidence.lock_payload
+                  const result = evidence.result_payload
+                  const strategyProtocolHash = makeStrategyProtocolHash({
+                    name: evidence.strategy_name,
+                    behaviorHash: evidence.behavior_hash,
+                    parameterHash: evidence.parameter_hash,
+                    parameterSchemaVersion: evidence.protocol_schema_version,
+                  })
+                  if (
+                    result.verdict !== 'QUALIFIED' ||
+                    evidence.run_status !== 'COMPLETE' ||
+                    evidence.expected_artifact_count !== evidence.artifact_count ||
+                    evidence.expected_event_count !== evidence.event_count ||
+                    evidence.expected_gate_count !== evidence.gate_count ||
+                    evidence.status_count !== 2 ||
+                    evidence.writing_status_count !== 1 ||
+                    evidence.complete_status_count !== 1 ||
+                    canonicalHashV1(evidence.writing_detail) !==
+                      canonicalHashV1({
+                        artifactCount: evidence.expected_artifact_count,
+                        eventCount: evidence.expected_event_count,
+                        gateCount: evidence.expected_gate_count,
+                      }) ||
+                    canonicalHashV1(evidence.complete_detail) !==
+                      canonicalHashV1({
+                        reconciliationExact: true,
+                        verdict: result.evaluationVerdict.status,
+                      }) ||
+                    result.runId !== input.qualificationRunId ||
+                    result.lockId !== input.qualificationLockId ||
+                    result.resultHash !== input.qualificationResultHash ||
+                    lock.lockId !== input.qualificationLockId ||
+                    lock.candidateRunId !== input.qualificationRunId ||
+                    lock.protocolHash !== input.protocolHash ||
+                    lock.policies.execution.contentHash !== input.qualificationExecutionPolicyHash ||
+                    lock.sourceRevision !== input.qualificationSourceRevision ||
+                    lock.image.repository !== input.qualificationImageRepository ||
+                    lock.image.digest !== input.qualificationImageDigest ||
+                    evidence.protocol_schema_version !== input.strategyParameterSchemaVersion ||
+                    evidence.strategy_name !== input.strategyName ||
+                    evidence.behavior_hash !== input.strategyBehaviorHash ||
+                    evidence.parameter_hash !== input.strategyParameterHash ||
+                    canonicalHashV1(evidence.parameters) !== input.strategyParameterHash ||
+                    strategyProtocolHash !== input.protocolHash
+                  ) {
+                    return yield* fail(
+                      'authority',
+                      'invariant',
+                      'PAPER generation differs from terminal qualification evidence',
+                    )
+                  }
+
+                  const reconciliationRows = yield* sql<Record<string, unknown>>`
+                  SELECT
+                    reconciliation_id, account_id, content_hash, status, reconciled_at
+                  FROM reconciliations
+                  WHERE account_id = ${input.accountId}
+                  ORDER BY reconciled_at DESC, reconciliation_id DESC
+                  LIMIT 1
+                  FOR SHARE
+                `.pipe(Effect.flatMap(decodeActivationReconciliationRows))
+                  const exactReconciliation = reconciliationRows[0]
+                  if (
+                    exactReconciliation === undefined ||
+                    exactReconciliation.reconciliation_id !== input.reconciliationId ||
+                    exactReconciliation.account_id !== input.accountId ||
+                    exactReconciliation.content_hash !== input.reconciliationContentHash ||
+                    exactReconciliation.status !== ReconciliationStatus.Exact
+                  ) {
+                    return yield* fail(
+                      'authority',
+                      'invariant',
+                      'PAPER activation requires the latest fresh exact account reconciliation',
+                    )
+                  }
+
+                  const [mutationBaseline] = yield* sql<Record<string, unknown>>`
+                  WITH latest AS (
+                    SELECT DISTINCT ON (event.mutation_id)
+                      event.operation,
+                      event.event_type,
+                      event.occurred_at,
+                      intent.state
+                    FROM mutation_events AS event
+                    JOIN intents AS intent ON intent.intent_id = event.intent_id
+                    WHERE intent.account_id = ${input.accountId}
+                    ORDER BY event.mutation_id, event.sequence DESC
+                  )
+                  SELECT
+                    count(*) FILTER (
+                      WHERE latest.event_type IN (
+                        'SUBMIT_STARTED',
+                        'SUBMIT_UNKNOWN',
+                        'RECOVERY_NOT_FOUND',
+                        'RECOVERY_UNKNOWN',
+                        'CANCEL_STARTED',
+                        'CANCEL_ACCEPTED',
+                        'CANCEL_UNKNOWN'
+                      )
+                      OR (
+                        latest.operation = 'CANCEL'
+                        AND latest.event_type = 'RECOVERY_FOUND'
+                        AND latest.state <> 'TERMINAL'
+                      )
+                    )::integer AS unresolved_count,
+                    max(latest.occurred_at) AS latest_mutation_at
+                  FROM latest
+                `.pipe(Effect.flatMap(decodeMutationBaseline))
+                  if (
+                    mutationBaseline.unresolved_count !== 0 ||
+                    (mutationBaseline.latest_mutation_at !== null &&
+                      mutationBaseline.latest_mutation_at.getTime() > exactReconciliation.reconciled_at.getTime())
+                  ) {
+                    return yield* fail(
+                      'authority',
+                      'invariant',
+                      'PAPER activation requires zero unresolved mutations covered by reconciliation',
+                    )
+                  }
+
+                  const activatedAt = yield* nextAuthorityInstant
+                  if (
+                    exactReconciliation.reconciled_at.getTime() > activatedAt.getTime() ||
+                    activatedAt.getTime() - exactReconciliation.reconciled_at.getTime() >=
+                      config.reconciliationStaleThresholdMs
+                  ) {
+                    return yield* fail(
+                      'authority',
+                      'invariant',
+                      'PAPER activation requires the latest fresh exact account reconciliation',
+                    )
+                  }
+                  const nextVersion = current.version + 1
+                  yield* sql`
+                  INSERT INTO authority_generations (
+                    generation_hash, schema_version, activation_schema_version,
+                    previous_generation_hash, maximum, authority_version,
+                    qualification_run_id, qualification_lock_id, qualification_result_hash,
+                    protocol_hash, qualification_execution_policy_hash,
+                    qualification_source_revision, qualification_image_repository,
+                    qualification_image_digest, activation_source_revision,
+                    activation_image_repository, activation_image_digest,
+                    strategy_name, strategy_behavior_hash,
+                    strategy_parameter_hash, strategy_parameter_schema_version, account_id,
+                    risk_policy_hash, proof_plan_hash, reconciliation_id,
+                    reconciliation_content_hash, activated_at
+                  ) VALUES (
+                    ${input.generationHash}, 'bayn.authority-generation-history.v1',
+                    ${input.schemaVersion}, ${input.previousGenerationHash}, 'PAPER', ${nextVersion},
+                    ${input.qualificationRunId}, ${input.qualificationLockId},
+                    ${input.qualificationResultHash}, ${input.protocolHash},
+                    ${input.qualificationExecutionPolicyHash}, ${input.qualificationSourceRevision},
+                    ${input.qualificationImageRepository}, ${input.qualificationImageDigest},
+                    ${input.activationSourceRevision}, ${input.activationImageRepository},
+                    ${input.activationImageDigest}, ${input.strategyName},
+                    ${input.strategyBehaviorHash}, ${input.strategyParameterHash},
+                    ${input.strategyParameterSchemaVersion}, ${input.accountId},
+                    ${input.riskPolicyHash}, ${input.proofPlanHash}, ${input.reconciliationId},
+                    ${input.reconciliationContentHash}, ${activatedAt}
+                  )
+                `
+                  const effective = current.kill === KillState.Active ? Authority.Observe : Authority.Paper
+                  const activatedRows = yield* sql<Record<string, unknown>>`
+                  UPDATE authority_state
+                  SET
+                    generation_hash = ${input.generationHash},
+                    maximum = 'PAPER',
+                    effective = ${effective},
+                    version = version + 1,
+                    updated_at = ${activatedAt}
+                  WHERE singleton
+                  RETURNING
+                    schema_version, generation_hash, maximum, effective, kill_state, reason,
+                    version::text AS version, updated_at
+                `.pipe(Effect.flatMap(decodeAuthorityStateRows))
+                  const activatedRow = activatedRows[0]
+                  if (activatedRow === undefined) {
+                    return yield* fail('authority', 'invariant', 'PAPER authority was not activated')
+                  }
+                  return yield* authorityStateFromRow(activatedRow)
+                }),
+              ),
+            ),
+          ),
+        ),
+      )
+
     const lowerAuthority = (reason: string, updatedAt: string) =>
       run(
         'authority',
@@ -1053,9 +1685,9 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       bindings,
       reconcile,
       ensureAuthorityGeneration,
+      activatePaperGeneration,
       restrictAuthority: lowerAuthority,
     } satisfies PaperStoreShape
   })
 
-export const PaperStoreLive = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
-  Layer.effect(PaperStore, makeStore(config))
+export const PaperStoreLive = (config: PaperStoreRuntimeConfig) => Layer.effect(PaperStore, makeStore(config))

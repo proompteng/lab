@@ -2,10 +2,12 @@ import { beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted } from 'effect'
 
 import type { RuntimeConfig } from '../config'
+import { makeStrategyProtocolHash } from '../contracts'
 import { operationalError } from '../errors'
+import { WriterFenceLive } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlan } from '../ledger-plan'
 import { Journal, type JournalService } from '../ledger'
@@ -20,7 +22,22 @@ import {
   OrderType,
   ReconciliationStatus,
   TimeInForce,
+  makePaperAuthorityGeneration,
+  type PaperAuthorityGeneration,
 } from '../paper'
+import {
+  makeQualificationLock,
+  makeQualificationPolicyDocument,
+  makeQualificationResult,
+  type QualificationLock,
+  type QualificationResult,
+} from '../qualification'
+import {
+  analyzeQualification,
+  defaultQualificationStatisticsPolicy,
+  type QualificationSeries,
+} from '../qualification-statistics'
+import { fixtureProtocol } from '../test-fixtures'
 import {
   sourceTimestamp,
   type BrokerEventInput,
@@ -39,6 +56,130 @@ const accountId = 'paper-account-1'
 const observedAt = '2026-07-22T15:30:01.000Z'
 const occurredAt = '2026-07-22T15:30:00.000Z'
 const hash = (value: string): string => canonicalHashV1({ value })
+const qualifiedSourceRevision = '1'.repeat(40)
+const qualifiedImageRepository = 'registry.example.test/lab/bayn'
+const qualifiedImageDigest = `sha256:${'2'.repeat(64)}` as const
+const qualifiedStrategyBehaviorHash = hash('qualified-strategy-behavior')
+const qualifiedStrategyParameterHash = canonicalHashV1(fixtureProtocol)
+const qualifiedProtocolHash = makeStrategyProtocolHash({
+  name: 'risk-balanced-trend',
+  behaviorHash: qualifiedStrategyBehaviorHash,
+  parameterHash: qualifiedStrategyParameterHash,
+  parameterSchemaVersion: fixtureProtocol.schemaVersion,
+})
+
+const qualificationPolicy = (name: string) =>
+  makeQualificationPolicyDocument(`bayn.${name}.v1`, {
+    schemaVersion: `bayn.${name}.v1`,
+    enabled: true,
+  })
+
+const qualificationSeries = (runId: string): QualificationSeries => {
+  const sessionDate = (index: number): `${number}-${number}-${number}` => {
+    const date = new Date('2000-01-01T00:00:00.000Z')
+    date.setUTCDate(date.getUTCDate() + index)
+    return date.toISOString().slice(0, 10) as `${number}-${number}-${number}`
+  }
+  const blockCount = 90
+  return {
+    schemaVersion: 'bayn.qualification-series.v1',
+    runId,
+    observations: Array.from({ length: blockCount * 21 + 10 }, (_, index) => {
+      const noise = (((index * 17) % 23) - 11) / 100_000
+      return {
+        sessionDate: sessionDate(index),
+        strategyReturn: 0.0005 + noise,
+        cashReturn: 0,
+        buyAndHoldReturn: 0.00015 + noise * 1.1,
+        directVolatilityReturn: 0.0001 + noise * 0.8,
+      }
+    }),
+    rebalanceExecutionDates: Array.from({ length: blockCount + 1 }, (_, index) => sessionDate(index * 21)),
+  }
+}
+
+interface QualificationFixture {
+  readonly lock: QualificationLock
+  readonly result: QualificationResult
+}
+
+const makeQualificationFixture = (name: string, qualified: boolean): QualificationFixture => {
+  const runId = hash(`${name}-run`)
+  const snapshotId = hash(`${name}-snapshot`)
+  const lock = makeQualificationLock({
+    schemaVersion: 'bayn.qualification-lock.v3',
+    candidateRunId: runId,
+    protocolHash: qualifiedProtocolHash,
+    sourceRevision: qualifiedSourceRevision,
+    image: {
+      repository: qualifiedImageRepository,
+      digest: qualifiedImageDigest,
+    },
+    universeId: fixtureProtocol.universeId,
+    universeSymbolHash: fixtureProtocol.universeSymbolHash,
+    universe: fixtureProtocol.universe,
+    universeRationale: 'Precommitted cross-asset universe for the authority activation persistence test.',
+    data: {
+      snapshotId,
+      publicationId: hash(`${name}-publication`),
+      inputManifestHash: hash(`${name}-manifest`),
+      contentHash: hash(`${name}-content`),
+      sessionsContentHash: hash(`${name}-sessions`),
+      provider: 'alpaca',
+      sourceFeed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'alpaca-us-equity-calendar-v1',
+      firstSession: '2016-01-04',
+      lastSession: '2026-07-21',
+      selectedSessionCount: 1_900,
+      selectedRebalanceCount: 91,
+      bounds: {
+        schemaVersion: 'bayn.evaluation-bounds.v1',
+        dataStart: '2016-01-04',
+        dataEnd: '2026-07-21',
+        lookbackStart: '2016-01-04',
+        evaluationStart: '2017-01-03',
+        evaluationEnd: '2026-07-21',
+      },
+    },
+    policies: {
+      benchmark: qualificationPolicy(`${name}-benchmark-policy`),
+      thresholds: qualificationPolicy(`${name}-threshold-policy`),
+      uncertainty: qualificationPolicy(`${name}-uncertainty-policy`),
+      execution: makeQualificationPolicyDocument(
+        fixtureProtocol.executionModel.schemaVersion,
+        fixtureProtocol.executionModel,
+      ),
+    },
+    priorTrialRunIds: [],
+  })
+  const analysis = analyzeQualification(qualificationSeries(runId), defaultQualificationStatisticsPolicy, [])
+  const evaluationVerdict = qualified
+    ? {
+        status: 'PASS' as const,
+        gates: [{ name: 'paper_activation_fixture', passed: true, actual: 1, required: 1 }],
+      }
+    : {
+        status: 'FAIL_CLOSED' as const,
+        gates: [{ name: 'paper_activation_fixture', passed: false, actual: 0, required: 1 }],
+      }
+  return { lock, result: makeQualificationResult(lock, evaluationVerdict, analysis) }
+}
+
+const qualifiedEvidence = makeQualificationFixture('qualified-authority', true)
+const rejectedEvidence = makeQualificationFixture('rejected-authority', false)
+
+interface ReconciliationFixture {
+  readonly reconciliationId: string
+  readonly contentHash: string
+  readonly databaseAgeMs: number
+}
+
+const exactReconciliation = (name: string, databaseAgeMs = 0): ReconciliationFixture => ({
+  reconciliationId: hash(`${name}-reconciliation`),
+  contentHash: hash(`${name}-reconciliation-content`),
+  databaseAgeMs,
+})
 
 const config: RuntimeConfig = {
   host: '127.0.0.1',
@@ -96,11 +237,12 @@ const journal = (control: JournalControl): JournalService => ({
   checkRun: () => Effect.void,
 })
 
-const makeStoreRuntime = (control: JournalControl) =>
+const makeStoreRuntime = (control: JournalControl, runtimeConfig: RuntimeConfig = config) =>
   ManagedRuntime.make(
-    PaperStoreLive(config).pipe(
+    PaperStoreLive(runtimeConfig).pipe(
+      Layer.provideMerge(WriterFenceLive),
       Layer.provideMerge(Layer.succeed(Journal, journal(control))),
-      Layer.provideMerge(PostgresClientLive(config)),
+      Layer.provideMerge(PostgresClientLive(runtimeConfig)),
       Layer.provide(NodeServices.layer),
     ),
   )
@@ -108,6 +250,172 @@ const makeStoreRuntime = (control: JournalControl) =>
 const makeClientRuntime = () => ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provide(NodeServices.layer)))
 
 const makeEvidenceRuntime = () => ManagedRuntime.make(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
+
+const seedQualificationEvidence = (fixture: QualificationFixture) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const { lock, result } = fixture
+    yield* sql`
+      INSERT INTO protocol_locks (
+        protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+      ) VALUES (
+        ${lock.protocolHash}, ${fixtureProtocol.schemaVersion}, 'risk-balanced-trend',
+        ${qualifiedStrategyBehaviorHash}, ${qualifiedStrategyParameterHash}, ${sql.json(fixtureProtocol)}
+      )
+      ON CONFLICT (protocol_hash) DO NOTHING
+    `
+    yield* sql`
+      INSERT INTO snapshot_references (
+        snapshot_id, schema_version, database_name, table_name, dataset_version, source,
+        source_feed, adjustment, content_hash, row_count, first_session, last_session, manifest
+      ) VALUES (
+        ${lock.data.snapshotId}, 'bayn.finalized-snapshot.v3', 'signal', 'adjusted_daily_bars_v2',
+        'signal.adjusted-daily-snapshot.v2', 'alpaca', 'sip', 'all', ${lock.data.contentHash},
+        ${lock.data.selectedSessionCount * lock.universe.length}, ${lock.data.firstSession},
+        ${lock.data.lastSession}, ${sql.json(lock.data)}
+      )
+    `
+    yield* sql`
+      INSERT INTO evaluation_runs (
+        run_id, protocol_hash, snapshot_id, evaluation_schema_version, source_revision,
+        image_repository, image_digest, strategy_name, initial_capital_micros,
+        expected_artifact_count, expected_event_count, expected_gate_count,
+        status, completed_at
+      ) VALUES (
+        ${result.runId}, ${lock.protocolHash}, ${lock.data.snapshotId}, 'bayn.evaluation.v6',
+        ${lock.sourceRevision}, ${lock.image.repository}, ${lock.image.digest}, 'risk-balanced-trend',
+        1000000000000, 1, 0, 1, 'COMPLETE', clock_timestamp()
+      )
+    `
+    yield* sql`
+      INSERT INTO evaluation_artifacts (
+        run_id, artifact_name, schema_version, content_hash, payload
+      ) VALUES (
+        ${result.runId}, 'qualification-artifact-manifest', 'bayn.qualification-artifact-manifest.v1',
+        ${hash(`${result.runId}-artifact`)}, ${sql.json({ runId: result.runId })}
+      )
+    `
+    yield* sql`
+      INSERT INTO gate_outcomes (
+        run_id, ordinal, gate_name, passed, actual, required, content_hash
+      ) VALUES (
+        ${result.runId}, 0, 'paper_activation_fixture',
+        ${result.evaluationVerdict.gates[0].passed},
+        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].actual))},
+        ${sql.json(JSON.stringify(result.evaluationVerdict.gates[0].required))},
+        ${hash(`${result.runId}-gate`)}
+      )
+    `
+    yield* sql`
+      INSERT INTO status_history (run_id, status, detail)
+      VALUES
+        (
+          ${result.runId}, 'WRITING',
+          ${sql.json({ artifactCount: 1, eventCount: 0, gateCount: 1 })}
+        ),
+        (
+          ${result.runId}, 'COMPLETE',
+          ${sql.json({ reconciliationExact: true, verdict: result.evaluationVerdict.status })}
+        )
+    `
+    yield* sql`
+      INSERT INTO qualification_locks (
+        lock_id, schema_version, candidate_run_id, protocol_hash, snapshot_id,
+        source_revision, image_repository, image_digest, payload
+      ) VALUES (
+        ${lock.lockId}, ${lock.schemaVersion}, ${lock.candidateRunId}, ${lock.protocolHash},
+        ${lock.data.snapshotId}, ${lock.sourceRevision}, ${lock.image.repository},
+        ${lock.image.digest}, ${sql.json(lock)}
+      )
+    `
+    yield* sql`
+      INSERT INTO qualification_results (
+        lock_id, schema_version, run_id, verdict, analysis_hash, result_hash, payload
+      ) VALUES (
+        ${result.lockId}, ${result.schemaVersion}, ${result.runId}, ${result.verdict},
+        ${result.analysis.analysisHash}, ${result.resultHash}, ${sql.json(result)}
+      )
+    `
+  })
+
+const seedExactReconciliation = (fixture: ReconciliationFixture, reconciliationAccountId = accountId) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const stateHash = hash(`${fixture.reconciliationId}-state`)
+    yield* sql`
+      INSERT INTO reconciliations (
+        reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+        content_hash, status, discrepancies, reconciled_at
+      ) VALUES (
+        ${fixture.reconciliationId}, 'bayn.paper-reconciliation.v1', ${reconciliationAccountId},
+        ${stateHash}, ${stateHash}, ${fixture.contentHash}, 'EXACT', ${sql.json(JSON.stringify([]))},
+        clock_timestamp() - (${fixture.databaseAgeMs} * interval '1 millisecond')
+      )
+    `
+  })
+
+const makeActivation = (
+  previousGenerationHash: string,
+  qualification: QualificationFixture,
+  reconciliation: Pick<ReconciliationFixture, 'contentHash' | 'reconciliationId'>,
+  overrides: Partial<Parameters<typeof makePaperAuthorityGeneration>[0]> = {},
+) =>
+  makePaperAuthorityGeneration({
+    schemaVersion: 'bayn.paper-authority-generation.v1',
+    maximum: Authority.Paper,
+    previousGenerationHash,
+    qualificationRunId: qualification.result.runId,
+    qualificationLockId: qualification.lock.lockId,
+    qualificationResultHash: qualification.result.resultHash,
+    protocolHash: qualification.lock.protocolHash,
+    qualificationExecutionPolicyHash: qualification.lock.policies.execution.contentHash,
+    qualificationSourceRevision: qualification.lock.sourceRevision,
+    qualificationImageRepository: qualification.lock.image.repository,
+    qualificationImageDigest: qualification.lock.image.digest,
+    activationSourceRevision: config.build.sourceRevision,
+    activationImageRepository: config.build.imageRepository,
+    activationImageDigest: config.build.imageDigest,
+    strategyName: 'risk-balanced-trend',
+    strategyBehaviorHash: qualifiedStrategyBehaviorHash,
+    strategyParameterHash: qualifiedStrategyParameterHash,
+    strategyParameterSchemaVersion: fixtureProtocol.schemaVersion,
+    accountId,
+    riskPolicyHash: hash('paper-risk-policy'),
+    proofPlanHash: hash('bounded-paper-proof-plan'),
+    reconciliationId: reconciliation.reconciliationId,
+    reconciliationContentHash: reconciliation.contentHash,
+    ...overrides,
+  })
+
+const paperRuntimeConfig = (
+  activation: PaperAuthorityGeneration,
+  overrides: Partial<RuntimeConfig> = {},
+): RuntimeConfig => ({
+  ...config,
+  maximumAuthority: Authority.Paper,
+  qualificationRunId: activation.qualificationRunId,
+  build: {
+    ...config.build,
+    strategyBehaviorHash: activation.strategyBehaviorHash,
+    strategyParameterHash: activation.strategyParameterHash,
+  },
+  alpaca: {
+    accountId: activation.accountId,
+    authorityGenerationHash: activation.generationHash,
+    key: Redacted.make('unused'),
+    secret: Redacted.make('unused'),
+    proxyUrl: 'http://bayn-egress-proxy.invalid',
+    retryAttempts: 0,
+    reconciliationIntervalMs: 30_000,
+  },
+  ...overrides,
+})
+
+const makeActivationRuntime = (
+  control: JournalControl,
+  activation: PaperAuthorityGeneration,
+  overrides: Partial<RuntimeConfig> = {},
+) => makeStoreRuntime(control, paperRuntimeConfig(activation, overrides))
 
 const accountEvent = (eventAccountId = accountId): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => ({
   _tag: 'Account',
@@ -472,7 +780,10 @@ describePostgres('paper accounting persistence', () => {
   }, 15_000)
 
   test('rejects maximum conflicts, invalid input, and every PAPER request without writing', async () => {
-    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    const observeGenerationHash = hash('conflicting-observe-generation')
+    const reconciliation = exactReconciliation('maximum-conflict')
+    const activation = makeActivation(observeGenerationHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
     try {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
@@ -490,49 +801,836 @@ describePostgres('paper accounting persistence', () => {
             }),
           )
           const sql = yield* PgClient.PgClient
-          const [empty] = yield* sql<{ rows: number }>`
-            SELECT count(*)::integer AS rows FROM authority_state
-          `
-          yield* sql`
+          const directPaper = yield* Effect.exit(sql`
             INSERT INTO authority_state (
-              schema_version, generation_hash, maximum, effective, kill_state, reason, version, updated_at
+              schema_version, generation_hash, maximum, effective, kill_state,
+              reason, version, updated_at
             ) VALUES (
-              'bayn.paper-authority.v1', ${hash('conflicting-authority-generation')},
+              'bayn.paper-authority.v1', ${hash('direct-initial-paper')},
               'PAPER', 'PAPER', 'CLEAR', NULL, 1, clock_timestamp()
             )
+          `)
+          const directObserveWithoutHistory = yield* Effect.exit(sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state,
+              reason, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${hash('direct-initial-observe-without-history')},
+              'OBSERVE', 'OBSERVE', 'CLEAR', NULL, 1, clock_timestamp()
+            )
+          `)
+          const [empty] = yield* sql<{ authority_rows: number; history_rows: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM authority_state) AS authority_rows,
+              (SELECT count(*)::integer FROM authority_generations) AS history_rows
           `
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: observeGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* store.activatePaperGeneration(activation)
           const [beforeConflict] = yield* sql<{ tuple_id: string; version: number }>`
             SELECT xmin::text AS tuple_id, version::integer FROM authority_state
           `
           const conflict = yield* Effect.flip(
             store.ensureAuthorityGeneration({
-              generationHash: hash('conflicting-authority-generation'),
+              generationHash: activation.generationHash,
               maximum: Authority.Observe,
             }),
           )
           const [afterConflict] = yield* sql<{ tuple_id: string; version: number }>`
             SELECT xmin::text AS tuple_id, version::integer FROM authority_state
           `
-          const rotated = yield* store.ensureAuthorityGeneration({
-            generationHash: hash('observe-authority-generation'),
-            maximum: Authority.Observe,
-          })
-          return { invalid, paper, empty, conflict, beforeConflict, afterConflict, rotated }
+          return {
+            invalid,
+            paper,
+            directObserveWithoutHistory,
+            directPaper,
+            empty,
+            conflict,
+            beforeConflict,
+            afterConflict,
+          }
         }),
       )
 
       expect(result.invalid).toMatchObject({ operation: 'authority', failure: 'decode' })
       expect(result.paper).toMatchObject({ operation: 'authority', failure: 'invariant' })
-      expect(result.empty).toEqual({ rows: 0 })
+      expect(Exit.isFailure(result.directPaper)).toBe(true)
+      expect(Exit.isFailure(result.directObserveWithoutHistory)).toBe(true)
+      expect(result.empty).toEqual({ authority_rows: 0, history_rows: 0 })
       expect(result.conflict).toMatchObject({ operation: 'authority', failure: 'conflict' })
       expect(result.afterConflict).toEqual(result.beforeConflict)
-      expect(result.rotated).toMatchObject({
-        generationHash: hash('observe-authority-generation'),
-        maximum: Authority.Observe,
-        effective: Authority.Observe,
-        kill: KillState.Clear,
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('requires the exact configured PAPER activation binding before any authority write', async () => {
+    const initialGenerationHash = hash('configured-paper-binding-observe-generation')
+    const reconciliation = exactReconciliation('configured-paper-binding')
+    const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const setupRuntime = makeStoreRuntime({ fail: false, planHashes: [] })
+    const validConfig = paperRuntimeConfig(activation)
+    const validAlpaca = validConfig.alpaca
+    if (validAlpaca === undefined) {
+      throw new Error('valid PAPER activation config requires an Alpaca binding')
+    }
+    const { alpaca: _alpaca, ...missingAlpacaConfig } = validConfig
+    const invalidConfigs: readonly RuntimeConfig[] = [
+      { ...validConfig, maximumAuthority: Authority.Observe },
+      missingAlpacaConfig,
+      {
+        ...validConfig,
+        alpaca: {
+          ...validAlpaca,
+          authorityGenerationHash: hash('wrong-configured-paper-generation'),
+        },
+      },
+      {
+        ...validConfig,
+        alpaca: {
+          ...validAlpaca,
+          accountId: 'wrong-configured-paper-account',
+        },
+      },
+      { ...validConfig, qualificationRunId: hash('wrong-configured-qualification-run') },
+    ]
+    const readAuthorityEvidence = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      const [evidence] = yield* sql<{ authority: unknown; history: unknown }>`
+        SELECT
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+            )
+            FROM authority_state AS authority
+          ) AS authority,
+          (
+            SELECT jsonb_agg(
+              jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+              ORDER BY history.authority_version
+            )
+            FROM authority_generations AS history
+          ) AS history
+      `
+      return evidence
+    })
+    const before = await (async () => {
+      try {
+        return await setupRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            yield* seedQualificationEvidence(qualifiedEvidence)
+            yield* seedExactReconciliation(reconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            return yield* readAuthorityEvidence
+          }),
+        )
+      } finally {
+        await setupRuntime.dispose()
+      }
+    })()
+    const failures = []
+    for (const invalidConfig of invalidConfigs) {
+      const runtime = makeStoreRuntime({ fail: false, planHashes: [] }, invalidConfig)
+      try {
+        failures.push(
+          await runtime.runPromise(
+            Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(activation))),
+          ),
+        )
+      } finally {
+        await runtime.dispose()
+      }
+    }
+    const wrongBuildActivation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation, {
+      activationSourceRevision: 'f'.repeat(40),
+    })
+    const wrongBuildRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, wrongBuildActivation)
+    const wrongBuildFailure = await (async () => {
+      try {
+        return await wrongBuildRuntime.runPromise(
+          Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(wrongBuildActivation))),
+        )
+      } finally {
+        await wrongBuildRuntime.dispose()
+      }
+    })()
+    const correctBuild = paperRuntimeConfig(activation).build
+    const wrongStrategyRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, activation, {
+      build: {
+        ...correctBuild,
+        strategyBehaviorHash: hash('wrong-current-strategy-behavior'),
+      },
+    })
+    const wrongStrategyFailure = await (async () => {
+      try {
+        return await wrongStrategyRuntime.runPromise(
+          Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(activation))),
+        )
+      } finally {
+        await wrongStrategyRuntime.dispose()
+      }
+    })()
+    const client = makeClientRuntime()
+    const afterRejected = await (async () => {
+      try {
+        return await client.runPromise(readAuthorityEvidence)
+      } finally {
+        await client.dispose()
+      }
+    })()
+    const correctRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const activated = await correctRuntime.runPromise(
+        Effect.flatMap(PaperStore, (store) => store.activatePaperGeneration(activation)),
+      )
+      expect(activated).toMatchObject({
+        generationHash: activation.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
         version: 2,
       })
+    } finally {
+      await correctRuntime.dispose()
+    }
+
+    expect(failures).toHaveLength(5)
+    for (const failure of failures) {
+      expect(failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message:
+          'PAPER activation differs from the configured authority, account, generation, or qualification binding',
+      })
+    }
+    expect(wrongBuildFailure).toMatchObject({
+      operation: 'authority',
+      failure: 'invariant',
+      message: 'PAPER activation provenance differs from the current embedded build',
+    })
+    expect(wrongStrategyFailure).toMatchObject({
+      operation: 'authority',
+      failure: 'invariant',
+      message: 'PAPER activation strategy identity differs from the current embedded build',
+    })
+    expect(afterRejected).toEqual(before)
+  }, 15_000)
+
+  test('activates one exact QUALIFIED PAPER generation and replays it without writing', async () => {
+    const initialGenerationHash = hash('paper-activation-observe-generation')
+    const reconciliation = exactReconciliation('paper-activation')
+    const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          const observe = yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const activated = yield* store.activatePaperGeneration(activation)
+          const [beforeReplay] = yield* sql<{
+            authority_tuple: string
+            history_count: number
+            paper_tuple: string
+          }>`
+            SELECT
+              authority.xmin::text AS authority_tuple,
+              paper.xmin::text AS paper_tuple,
+              (SELECT count(*)::integer FROM authority_generations) AS history_count
+            FROM authority_state AS authority
+            JOIN authority_generations AS paper
+              ON paper.generation_hash = authority.generation_hash
+          `
+          const replay = yield* store.activatePaperGeneration(activation)
+          const [afterReplay] = yield* sql<{
+            authority_tuple: string
+            history_count: number
+            paper_tuple: string
+          }>`
+            SELECT
+              authority.xmin::text AS authority_tuple,
+              paper.xmin::text AS paper_tuple,
+              (SELECT count(*)::integer FROM authority_generations) AS history_count
+            FROM authority_state AS authority
+            JOIN authority_generations AS paper
+              ON paper.generation_hash = authority.generation_hash
+          `
+          const history = yield* sql<{
+            account_id: string | null
+            activation_image_digest: string | null
+            activation_image_repository: string | null
+            activation_source_revision: string | null
+            authority_version: number
+            generation_hash: string
+            maximum: string
+            previous_generation_hash: string | null
+            proof_plan_hash: string | null
+            qualification_image_digest: string | null
+            qualification_image_repository: string | null
+            qualification_result_hash: string | null
+            qualification_source_revision: string | null
+            risk_policy_hash: string | null
+          }>`
+            SELECT
+              generation_hash, previous_generation_hash, maximum,
+              authority_version::integer, qualification_result_hash, account_id,
+              risk_policy_hash, proof_plan_hash, qualification_source_revision,
+              qualification_image_repository, qualification_image_digest,
+              activation_source_revision, activation_image_repository, activation_image_digest
+            FROM authority_generations
+            ORDER BY authority_version
+          `
+          const mutateHistory = yield* Effect.exit(sql`
+            UPDATE authority_generations
+            SET proof_plan_hash = ${hash('mutated-proof-plan')}
+            WHERE generation_hash = ${activation.generationHash}
+          `)
+          const deleteHistory = yield* Effect.exit(sql`
+            DELETE FROM authority_generations
+            WHERE generation_hash = ${activation.generationHash}
+          `)
+          const truncateHistory = yield* Effect.exit(sql`TRUNCATE authority_generations CASCADE`)
+          return {
+            activated,
+            activation,
+            afterReplay,
+            beforeReplay,
+            deleteHistory,
+            history,
+            mutateHistory,
+            observe,
+            replay,
+            truncateHistory,
+          }
+        }),
+      )
+
+      expect(result.activated).toEqual({
+        ...result.observe,
+        generationHash: result.activation.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        version: 2,
+        updatedAt: expect.any(String),
+      })
+      expect(result.replay).toEqual(result.activated)
+      expect(result.afterReplay).toEqual(result.beforeReplay)
+      expect(Exit.isFailure(result.mutateHistory)).toBe(true)
+      expect(Exit.isFailure(result.deleteHistory)).toBe(true)
+      expect(Exit.isFailure(result.truncateHistory)).toBe(true)
+      expect(result.history).toEqual([
+        {
+          generation_hash: result.observe.generationHash,
+          previous_generation_hash: null,
+          maximum: Authority.Observe,
+          authority_version: 1,
+          qualification_result_hash: null,
+          account_id: null,
+          risk_policy_hash: null,
+          proof_plan_hash: null,
+          qualification_source_revision: null,
+          qualification_image_repository: null,
+          qualification_image_digest: null,
+          activation_source_revision: null,
+          activation_image_repository: null,
+          activation_image_digest: null,
+        },
+        {
+          generation_hash: result.activation.generationHash,
+          previous_generation_hash: result.observe.generationHash,
+          maximum: Authority.Paper,
+          authority_version: 2,
+          qualification_result_hash: qualifiedEvidence.result.resultHash,
+          account_id: accountId,
+          risk_policy_hash: result.activation.riskPolicyHash,
+          proof_plan_hash: result.activation.proofPlanHash,
+          qualification_source_revision: qualifiedEvidence.lock.sourceRevision,
+          qualification_image_repository: qualifiedEvidence.lock.image.repository,
+          qualification_image_digest: qualifiedEvidence.lock.image.digest,
+          activation_source_revision: config.build.sourceRevision,
+          activation_image_repository: config.build.imageRepository,
+          activation_image_digest: config.build.imageDigest,
+        },
+      ])
+      expect(result.activation.qualificationSourceRevision).not.toBe(result.activation.activationSourceRevision)
+      expect(result.activation.qualificationImageRepository).not.toBe(result.activation.activationImageRepository)
+      expect(result.activation.qualificationImageDigest).not.toBe(result.activation.activationImageDigest)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects the exact reconciliation staleness boundary and future database time without writing', async () => {
+    const initialGenerationHash = hash('reconciliation-time-observe-generation')
+    const staleReconciliation = exactReconciliation('stale-reconciliation-time', config.reconciliationStaleThresholdMs)
+    const staleActivation = makeActivation(initialGenerationHash, qualifiedEvidence, staleReconciliation)
+    const staleRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, staleActivation)
+    const readAuthorityEvidence = Effect.gen(function* () {
+      const sql = yield* PgClient.PgClient
+      const [evidence] = yield* sql<{ authority: unknown; history: unknown }>`
+        SELECT
+          (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+          (
+            SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+            FROM authority_generations AS history
+          ) AS history
+      `
+      return evidence
+    })
+    const staleResult = await (async () => {
+      try {
+        return await staleRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            yield* seedQualificationEvidence(qualifiedEvidence)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const before = yield* readAuthorityEvidence
+            yield* seedExactReconciliation(staleReconciliation)
+            const failure = yield* Effect.flip(store.activatePaperGeneration(staleActivation))
+            const after = yield* readAuthorityEvidence
+            return { after, before, failure }
+          }),
+        )
+      } finally {
+        await staleRuntime.dispose()
+      }
+    })()
+    const futureReconciliation = exactReconciliation('future-reconciliation-time', -60_000)
+    const futureActivation = makeActivation(initialGenerationHash, qualifiedEvidence, futureReconciliation)
+    const futureRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, futureActivation)
+    try {
+      const futureResult = await futureRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* seedExactReconciliation(futureReconciliation)
+          const failure = yield* Effect.flip(store.activatePaperGeneration(futureActivation))
+          const after = yield* readAuthorityEvidence
+          return { after, failure }
+        }),
+      )
+
+      expect(staleResult.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'PAPER activation requires the latest fresh exact account reconciliation',
+      })
+      expect(futureResult.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'PAPER activation requires the latest fresh exact account reconciliation',
+      })
+      expect(staleResult.after).toEqual(staleResult.before)
+      expect(futureResult.after).toEqual(staleResult.before)
+    } finally {
+      await futureRuntime.dispose()
+    }
+  }, 15_000)
+
+  test('resamples database time after prerequisite lock waits before accepting reconciliation freshness', async () => {
+    const initialGenerationHash = hash('delayed-reconciliation-observe-generation')
+    const reconciliation = exactReconciliation('delayed-reconciliation')
+    const paperActivation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, paperActivation, {
+      reconciliationStaleThresholdMs: 250,
+    })
+    const blocker = makeClientRuntime()
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const [before] = yield* readAuthorityEvidence
+          const lockHeld = yield* Deferred.make<void>()
+          const releaseLock = yield* Deferred.make<void>()
+          const lockHolder = yield* Effect.forkChild(
+            Effect.promise(() =>
+              blocker.runPromise(
+                Effect.gen(function* () {
+                  const blockerSql = yield* PgClient.PgClient
+                  yield* blockerSql.withTransaction(
+                    Effect.gen(function* () {
+                      yield* blockerSql`LOCK TABLE status_history IN ACCESS EXCLUSIVE MODE`
+                      yield* Deferred.succeed(lockHeld, undefined)
+                      yield* Deferred.await(releaseLock)
+                    }),
+                  )
+                }),
+              ),
+            ),
+            { startImmediately: true },
+          )
+          yield* Deferred.await(lockHeld)
+          return yield* Effect.gen(function* () {
+            const activationFiber = yield* Effect.forkChild(
+              Effect.exit(store.activatePaperGeneration(paperActivation)),
+              { startImmediately: true },
+            )
+            let waiting = false
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+              const activities = yield* sql<{ query: string; wait_event_type: string | null }>`
+                SELECT query, wait_event_type
+                FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND datname = current_database()
+                  AND wait_event_type = 'Lock'
+                  AND query ILIKE '%LOCK TABLE%status_history%'
+              `
+              if (activities[0] !== undefined) {
+                waiting = true
+                break
+              }
+              yield* Effect.sleep(Duration.millis(10))
+            }
+            if (!waiting) {
+              return yield* Effect.fail('PAPER activation did not wait on the qualification evidence lock')
+            }
+            yield* sql`SELECT pg_sleep(0.3)`
+            yield* Deferred.succeed(releaseLock, undefined)
+            yield* Fiber.join(lockHolder)
+            const activationExit = yield* Fiber.join(activationFiber)
+            const [after] = yield* readAuthorityEvidence
+            return { activationExit, after, before }
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseLock, undefined).pipe(Effect.ignore)))
+        }),
+      )
+
+      expect(Exit.isFailure(result.activationExit)).toBe(true)
+      if (Exit.isFailure(result.activationExit)) {
+        expect(Cause.pretty(result.activationExit.cause)).toContain(
+          'PAPER activation requires the latest fresh exact account reconciliation',
+        )
+      }
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await blocker.dispose()
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('serializes concurrent PAPER activation into one history row and state transition', async () => {
+    const initialGenerationHash = hash('concurrent-paper-observe-generation')
+    const reconciliation = exactReconciliation('concurrent-paper-activation')
+    const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const states = yield* Effect.all(
+            Array.from({ length: 12 }, () => store.activatePaperGeneration(activation)),
+            { concurrency: 'unbounded' },
+          )
+          const sql = yield* PgClient.PgClient
+          const [stored] = yield* sql<{ history_count: number; paper_count: number; version: number }>`
+            SELECT
+              authority.version::integer AS version,
+              (SELECT count(*)::integer FROM authority_generations) AS history_count,
+              (
+                SELECT count(*)::integer
+                FROM authority_generations
+                WHERE maximum = 'PAPER'
+              ) AS paper_count
+            FROM authority_state AS authority
+          `
+          return { states, stored }
+        }),
+      )
+
+      expect(result.states).toHaveLength(12)
+      expect(new Set(result.states.map((state) => JSON.stringify(state))).size).toBe(1)
+      expect(result.states[0]).toMatchObject({
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        version: 2,
+      })
+      expect(result.stored).toEqual({ history_count: 2, paper_count: 1, version: 2 })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('preserves an active kill exactly while rotating maximum authority to PAPER', async () => {
+    const initialGenerationHash = hash('killed-paper-observe-generation')
+    const reconciliation = exactReconciliation('killed-paper-activation')
+    const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* sql`
+            UPDATE authority_state
+            SET
+              kill_state = 'ACTIVE',
+              reason = 'operator kill',
+              version = version + 1,
+              updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
+            WHERE singleton
+          `
+          const [before] = yield* sql<{ kill_state: string; reason: string; updated_at: Date; version: number }>`
+            SELECT kill_state, reason, updated_at, version::integer
+            FROM authority_state
+          `
+          const activated = yield* store.activatePaperGeneration(activation)
+          return { activated, before }
+        }),
+      )
+
+      expect(result.activated).toMatchObject({
+        maximum: Authority.Paper,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: result.before.reason,
+        version: result.before.version + 1,
+      })
+      expect(Date.parse(result.activated.updatedAt)).toBeGreaterThan(result.before.updated_at.getTime())
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects reused generations and every qualification or reconciliation mismatch without writing', async () => {
+    const initialGenerationHash = hash('mismatch-paper-observe-generation')
+    const reconciliation = exactReconciliation('mismatch-paper-activation')
+    const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          const [before] = yield* sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const mismatches = [
+            { qualificationSourceRevision: 'f'.repeat(40) },
+            { qualificationImageDigest: `sha256:${'e'.repeat(64)}` as const },
+            { activationSourceRevision: 'f'.repeat(40) },
+            { strategyBehaviorHash: hash('wrong-strategy-behavior') },
+            { strategyParameterHash: hash('wrong-strategy-parameters') },
+            { qualificationResultHash: hash('wrong-qualification-result') },
+            { qualificationExecutionPolicyHash: hash('wrong-execution-policy') },
+            { accountId: 'another-paper-account' },
+            { reconciliationContentHash: hash('wrong-reconciliation-content') },
+          ] as const
+          const failures = yield* Effect.forEach(mismatches, (overrides) =>
+            Effect.flip(
+              store.activatePaperGeneration(
+                makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation, overrides),
+              ),
+            ),
+          )
+          yield* sql`
+            INSERT INTO reconciliations (
+              reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at
+            ) VALUES (
+              ${hash('later-discrepancy')}, 'bayn.paper-reconciliation.v1', ${accountId},
+              ${hash('expected-state')}, ${hash('observed-state')}, ${hash('later-discrepancy-content')},
+              'DISCREPANCY', ${sql.json(JSON.stringify([{ discrepancyId: hash('discrepancy') }]))},
+              clock_timestamp()
+            )
+          `
+          const stale = yield* Effect.flip(store.activatePaperGeneration(activation))
+          const [after] = yield* sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          return { after, before, failures, stale }
+        }),
+      )
+
+      expect(result.failures).toHaveLength(9)
+      expect(result.failures.every((failure) => failure.operation === 'authority')).toBe(true)
+      expect(result.stale).toMatchObject({ operation: 'authority', failure: 'invariant' })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects REJECTED evidence and unresolved mutation state without changing authority history', async () => {
+    const initialGenerationHash = hash('rejected-paper-observe-generation')
+    const reconciliation = exactReconciliation('rejected-paper-activation')
+    const rejectedActivation = makeActivation(initialGenerationHash, rejectedEvidence, reconciliation)
+    const qualifiedActivation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const rejectedRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, rejectedActivation)
+    const rejected = await (async () => {
+      try {
+        return await rejectedRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            yield* seedQualificationEvidence(rejectedEvidence)
+            yield* seedExactReconciliation(reconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            return yield* Effect.flip(store.activatePaperGeneration(rejectedActivation))
+          }),
+        )
+      } finally {
+        await rejectedRuntime.dispose()
+      }
+    })()
+    const qualifiedRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, qualifiedActivation)
+    try {
+      const result = await qualifiedRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            INSERT INTO intents (
+              intent_id, schema_version, account_id, client_order_id, symbol, side,
+              order_type, time_in_force, quantity_micros, notional_limit_micros,
+              state, state_version, created_at, updated_at,
+              strategy_name, cycle_id, decision_hash, policy_hash
+            ) VALUES (
+              ${hash('unresolved-intent')}, 'bayn.paper-intent.v2', ${accountId},
+              'unresolved-client-order', 'SPY', 'BUY', 'MARKET', 'DAY', 1000000, 100000000,
+              'PLANNED', 1, '2026-07-22T15:30:03.000Z', '2026-07-22T15:30:03.000Z',
+              'risk-balanced-trend', ${hash('unresolved-cycle')},
+              ${hash('unresolved-decision')}, ${hash('unresolved-policy')}
+            )
+          `
+          yield* sql`
+            INSERT INTO mutation_events (
+              event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+              request_hash, consistency_delay_ms, occurred_at
+            ) VALUES (
+              ${hash('unresolved-event')}, 'bayn.paper-mutation-event.v1',
+              ${hash('unresolved-mutation')}, ${hash('unresolved-intent')}, 1,
+              'SUBMIT', 'SUBMIT_STARTED', ${hash('unresolved-request')}, 1000,
+              '2026-07-22T15:30:04.000Z'
+            )
+          `
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          const unresolved = yield* Effect.flip(store.activatePaperGeneration(qualifiedActivation))
+          const [stored] = yield* sql<{ generation_hash: string; history_count: number; version: number }>`
+            SELECT
+              generation_hash,
+              version::integer,
+              (SELECT count(*)::integer FROM authority_generations) AS history_count
+            FROM authority_state
+          `
+          return { stored, unresolved }
+        }),
+      )
+
+      expect(rejected).toMatchObject({ operation: 'authority', failure: 'invariant' })
+      expect(result.unresolved).toMatchObject({ operation: 'authority', failure: 'invariant' })
+      expect(result.stored).toEqual({
+        generation_hash: hash('rejected-paper-observe-generation'),
+        version: 1,
+        history_count: 1,
+      })
+    } finally {
+      await qualifiedRuntime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects A to B to A generation reuse after an OBSERVE return', async () => {
+    const firstObserveHash = hash('authority-generation-a')
+    const reconciliation = exactReconciliation('generation-reuse')
+    const activation = makeActivation(firstObserveHash, qualifiedEvidence, reconciliation)
+    const runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const returnObserveHash = hash('authority-generation-c')
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: firstObserveHash,
+            maximum: Authority.Observe,
+          })
+          yield* store.activatePaperGeneration(activation)
+          const returned = yield* store.ensureAuthorityGeneration({
+            generationHash: returnObserveHash,
+            maximum: Authority.Observe,
+          })
+          const reused = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: firstObserveHash,
+              maximum: Authority.Observe,
+            }),
+          )
+          const sql = yield* PgClient.PgClient
+          const history = yield* sql<{ generation_hash: string }>`
+            SELECT generation_hash
+            FROM authority_generations
+            ORDER BY authority_version
+          `
+          return { history, returned, reused }
+        }),
+      )
+
+      expect(result.returned).toMatchObject({
+        generationHash: hash('authority-generation-c'),
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        version: 3,
+      })
+      expect(result.reused).toMatchObject({ operation: 'authority', failure: 'conflict' })
+      expect(new Set(result.history.map((row) => row.generation_hash)).size).toBe(3)
     } finally {
       await runtime.dispose()
     }
@@ -888,14 +1986,10 @@ describePostgres('paper accounting persistence', () => {
                 '2026-07-22T15:30:30.000Z'
               )
           `
-          yield* sql`
-            INSERT INTO authority_state (
-              schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
-            ) VALUES (
-              'bayn.paper-authority.v1', ${hash('observe-generation')}, 'OBSERVE', 'OBSERVE', 'CLEAR', 1,
-              '2026-07-22T15:30:02.000Z'
-            )
-          `
+          yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-generation'),
+            maximum: Authority.Observe,
+          })
           const [observationBefore] = yield* sql<{ observed_at: Date }>`
             SELECT clock_timestamp() AS observed_at
           `
@@ -931,7 +2025,7 @@ describePostgres('paper accounting persistence', () => {
           effective: Authority.Observe,
           kill: KillState.Clear,
           version: 1,
-          updatedAt: '2026-07-22T15:30:02.000Z',
+          updatedAt: expect.any(String),
         },
         unknownMutationCount: 0,
         dailyTradedNotionalMicros: '420000000',
@@ -1154,59 +2248,96 @@ describePostgres('paper accounting persistence', () => {
   }, 15_000)
 
   test('keeps discrepancy history in immutable reconciliation rows and never restores authority', async () => {
-    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    const setupRuntime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      { ...config, reconciliationStaleThresholdMs: Number.MAX_SAFE_INTEGER },
+    )
     const exactAccount = {
       ...accountEvent(),
       account: { ...accountEvent().account, equityMicros: accountEvent().account.cashMicros },
     } satisfies BrokerEventInput
+    let runtime: ReturnType<typeof makeStoreRuntime> | undefined
     try {
+      const setup = await (async () => {
+        try {
+          return await setupRuntime.runPromise(
+            Effect.gen(function* () {
+              const store = yield* PaperStore
+              const accountReceipt = yield* store.ingest(exactAccount)
+              const positionsReceipt = yield* store.ingestPositions(
+                positionSnapshotInput(hash('reconciliation-empty-positions'), []),
+              )
+              const valuation = yield* store.value({
+                accountEventId: accountReceipt.eventId,
+                positionSnapshotId: positionsReceipt.snapshotId,
+              })
+              const baseline = {
+                account: exactAccount.account,
+                positions: [],
+                positionsObservedAt: observedAt,
+                orders: [],
+                ordersObservedAt: observedAt,
+                fills: [],
+                valuation,
+                reconciledAt: '2026-07-22T15:30:02.000Z',
+              } as const
+              const exact = yield* store.reconcile(baseline)
+              const observeGenerationHash = hash('reconciliation-observe-generation')
+              yield* seedQualificationEvidence(qualifiedEvidence)
+              yield* store.ensureAuthorityGeneration({
+                generationHash: observeGenerationHash,
+                maximum: Authority.Observe,
+              })
+              return { baseline, exact, observeGenerationHash, valuation }
+            }),
+          )
+        } finally {
+          await setupRuntime.dispose()
+        }
+      })()
+      const activation = makeActivation(setup.observeGenerationHash, qualifiedEvidence, {
+        reconciliationId: setup.exact.reconciliation.reconciliationId,
+        contentHash: setup.exact.reconciliation.contentHash,
+      })
+      runtime = makeActivationRuntime({ fail: false, planHashes: [] }, activation, {
+        reconciliationStaleThresholdMs: Number.MAX_SAFE_INTEGER,
+      })
       const result = await runtime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
-          const accountReceipt = yield* store.ingest(exactAccount)
-          const positionsReceipt = yield* store.ingestPositions(
-            positionSnapshotInput(hash('reconciliation-empty-positions'), []),
-          )
-          const valuation = yield* store.value({
-            accountEventId: accountReceipt.eventId,
-            positionSnapshotId: positionsReceipt.snapshotId,
-          })
-          const baseline = {
-            account: exactAccount.account,
-            positions: [],
-            positionsObservedAt: observedAt,
-            orders: [],
-            ordersObservedAt: observedAt,
-            fills: [],
-            valuation,
-            reconciledAt: '2026-07-22T15:30:02.000Z',
-          } as const
-          const exact = yield* store.reconcile(baseline)
-
           const sql = yield* PgClient.PgClient
+          const activated = yield* store.activatePaperGeneration(activation)
           yield* sql`
-            INSERT INTO authority_state (
-              schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+            INSERT INTO valuations (
+              valuation_id, schema_version, account_id, source_hash, cash_micros,
+              long_market_value_micros, short_market_value_micros, equity_micros, as_of
             ) VALUES (
-              'bayn.paper-authority.v1', ${hash('paper-generation')}, 'PAPER', 'PAPER', 'CLEAR', 1,
-              '2026-07-22T15:30:02.500Z'
+              ${hash('paper-activation-day-valuation')}, ${setup.valuation.schemaVersion},
+              ${setup.valuation.accountId}, ${hash('paper-activation-day-source')},
+              ${setup.valuation.cashMicros}, ${setup.valuation.longMarketValueMicros},
+              ${setup.valuation.shortMarketValueMicros}, ${setup.valuation.equityMicros},
+              ${activated.updatedAt}
             )
           `
+          const activationTime = Date.parse(activated.updatedAt)
+          const mismatchObservedAt = new Date(activationTime + 1).toISOString()
+          const ongoingObservedAt = new Date(activationTime + 2).toISOString()
+          const resolvedObservedAt = new Date(activationTime + 3).toISOString()
 
           const mismatchInput = {
-            ...baseline,
+            ...setup.baseline,
             orders: [orderEvent().order],
-            reconciledAt: '2026-07-22T15:30:03.000Z',
+            reconciledAt: mismatchObservedAt,
           } as const
           const mismatch = yield* store.reconcile(mismatchInput)
           const replay = yield* store.reconcile(mismatchInput)
           const ongoing = yield* store.reconcile({
             ...mismatchInput,
-            reconciledAt: '2026-07-22T15:30:04.000Z',
+            reconciledAt: ongoingObservedAt,
           })
           const resolved = yield* store.reconcile({
-            ...baseline,
-            reconciledAt: '2026-07-22T15:30:05.000Z',
+            ...setup.baseline,
+            reconciledAt: resolvedObservedAt,
           })
 
           const rows = yield* sql<{ discrepancy_count: number; status: string }>`
@@ -1229,7 +2360,7 @@ describePostgres('paper accounting persistence', () => {
             WHERE reconciliation_id = ${mismatch.reconciliation.reconciliationId}
           `)
           return {
-            exact,
+            exact: setup.exact,
             mismatch,
             replay,
             ongoing,
@@ -1237,6 +2368,8 @@ describePostgres('paper accounting persistence', () => {
             rows,
             authority,
             mutateReconciliation,
+            mismatchObservedAt,
+            ongoingObservedAt,
           }
         }),
       )
@@ -1261,8 +2394,8 @@ describePostgres('paper accounting persistence', () => {
       expect(result.mismatch.reconciliation.discrepancies).toHaveLength(1)
       expect(result.ongoing.reconciliation.discrepancies[0]).toMatchObject({
         discrepancyId: result.mismatch.reconciliation.discrepancies[0]?.discrepancyId,
-        firstObservedAt: '2026-07-22T15:30:03.000Z',
-        lastObservedAt: '2026-07-22T15:30:04.000Z',
+        firstObservedAt: result.mismatchObservedAt,
+        lastObservedAt: result.ongoingObservedAt,
       })
       expect(result.resolved.reconciliation.status).toBe(ReconciliationStatus.Exact)
       expect(result.resolved.reconciliation.discrepancies).toEqual([])
@@ -1276,11 +2409,11 @@ describePostgres('paper accounting persistence', () => {
         effective: 'OBSERVE',
         kill_state: 'ACTIVE',
         reason: `reconciliation discrepancy ${result.mismatch.reconciliation.reconciliationId}`,
-        version: 2,
+        version: 3,
       })
       expect(Exit.isFailure(result.mutateReconciliation)).toBe(true)
     } finally {
-      await runtime.dispose()
+      await runtime?.dispose()
     }
   }, 15_000)
 })
