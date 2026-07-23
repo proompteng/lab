@@ -19,7 +19,7 @@ import {
 } from '../broker/alpaca'
 import { canonicalHashV1 } from '../hash'
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
-import { IntentStore, type IntentStoreError } from './intents'
+import { IntentStore, type IntentStoreError, type StoredIntent } from './intents'
 import { MutationEventType, MutationStore, type MutationEvent } from './mutations'
 import { WriterFence } from './writer-fence'
 
@@ -132,36 +132,52 @@ const isSubmitResolved = (event: MutationEvent): boolean =>
   event.eventType === MutationEventType.SubmitRejected ||
   event.eventType === MutationEventType.RecoveryFound
 
+const requireActiveRiskDecision = (
+  operation: MutationOperation,
+  stored: StoredIntent,
+  operationLabel = operation === MutationOperation.Submit ? 'submission' : 'cancellation',
+  allowIoStarted = false,
+) =>
+  Effect.gen(function* () {
+    const decision = stored.decision
+    const validIntentState =
+      operation === MutationOperation.Submit
+        ? stored.intent.state === IntentState.Approved ||
+          (allowIoStarted && stored.intent.state === IntentState.IoStarted)
+        : stored.intent.state === IntentState.Acknowledged || stored.intent.state === IntentState.Unknown
+    if (
+      !validIntentState ||
+      decision?.outcome !== RiskOutcome.Approved ||
+      stored.intent.riskDecisionId !== decision.decisionId
+    ) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation,
+          failure: ExecutionFailure.InvalidState,
+          message: `${operationLabel} requires one committed approved intent and matching risk decision`,
+        }),
+      )
+    }
+    const currentTime = yield* Clock.currentTimeMillis
+    if (currentTime >= Date.parse(decision.expiresAt)) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation,
+          failure: ExecutionFailure.InvalidState,
+          message: `${operationLabel} risk decision expired at ${decision.expiresAt}`,
+        }),
+      )
+    }
+    return stored
+  })
+
 export const dryRunSubmit = (
   intentId: string,
 ): Effect.Effect<DryRunSubmit, ExecutionError | IntentStoreError, IntentStore> =>
   readIntent(MutationOperation.Submit, intentId).pipe(
     Effect.flatMap((stored) =>
       Effect.gen(function* () {
-        const decision = stored.decision
-        if (
-          stored.intent.state !== IntentState.Approved ||
-          decision?.outcome !== RiskOutcome.Approved ||
-          stored.intent.riskDecisionId !== decision.decisionId
-        ) {
-          return yield* Effect.fail(
-            new ExecutionError({
-              operation: MutationOperation.Submit,
-              failure: ExecutionFailure.InvalidState,
-              message: 'dry-run submission requires one committed approved intent and matching risk decision',
-            }),
-          )
-        }
-        const currentTime = yield* Clock.currentTimeMillis
-        if (currentTime >= Date.parse(decision.expiresAt)) {
-          return yield* Effect.fail(
-            new ExecutionError({
-              operation: MutationOperation.Submit,
-              failure: ExecutionFailure.InvalidState,
-              message: `dry-run submission risk decision expired at ${decision.expiresAt}`,
-            }),
-          )
-        }
+        yield* requireActiveRiskDecision(MutationOperation.Submit, stored, 'dry-run submission')
         return yield* Effect.try({
           try: (): DryRunSubmit => {
             const request = orderRequestBody(stored.intent)
@@ -210,12 +226,18 @@ const validateRecovery = (stored: Intent, event: MutationEvent) =>
 
 export const submit = (intentId: string, consistencyDelayMs: number) =>
   Effect.gen(function* () {
-    const intents = yield* IntentStore
     const mutations = yield* MutationStore
     const broker = yield* BrokerMutation
     const fence = yield* WriterFence
+    const existing = yield* mutations.latest(intentId, MutationOperation.Submit)
     const before = yield* readIntent(MutationOperation.Submit, intentId)
     const hash = yield* requestHash(MutationOperation.Submit, before.intent)
+    if (existing !== undefined) {
+      const replay = yield* mutations.beginSubmit(intentId, hash, consistencyDelayMs, existing.occurredAt)
+      return replay.event
+    }
+    yield* fence.check
+    yield* requireActiveRiskDecision(MutationOperation.Submit, before)
     const current = yield* now
     const started = yield* mutations.beginSubmit(
       intentId,
@@ -225,19 +247,9 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
     )
     if (!started.started) return started.event
 
-    const after = yield* intents.read(intentId)
-    if (Option.isNone(after) || after.value.intent.state !== IntentState.IoStarted) {
-      return yield* Effect.fail(
-        new ExecutionError({
-          operation: MutationOperation.Submit,
-          failure: ExecutionFailure.InvalidState,
-          message: 'started submit cannot read back its IO_STARTED intent',
-        }),
-      )
-    }
-    yield* fence.check
+    const submittedIntent: Intent = { ...before.intent, state: IntentState.IoStarted }
 
-    return yield* broker.submit(after.value.intent).pipe(
+    return yield* broker.submit(submittedIntent).pipe(
       Effect.matchEffect({
         onFailure: (error) => {
           if (
@@ -256,7 +268,7 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
               )
         },
         onSuccess: (receipt) => {
-          if (receipt.requestHash !== hash || !exactOrder(after.value.intent, receipt.order)) {
+          if (receipt.requestHash !== hash || !exactOrder(submittedIntent, receipt.order)) {
             return mutations.submitUnknown(
               intentId,
               hash,
@@ -282,7 +294,7 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
     const mutations = yield* MutationStore
     const broker = yield* BrokerMutation
     const fence = yield* WriterFence
-    const intent = yield* readIntent(MutationOperation.Cancel, intentId)
+    const existing = yield* mutations.latest(intentId, MutationOperation.Cancel)
     const submitEvent = yield* mutations.latest(intentId, MutationOperation.Submit)
     const orderId = submitEvent?.brokerOrderId
     if (orderId === undefined) {
@@ -295,6 +307,13 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
       )
     }
     const hash = cancelRequestHash(orderId)
+    if (existing !== undefined) {
+      const replay = yield* mutations.beginCancel(intentId, hash, orderId, consistencyDelayMs, existing.occurredAt)
+      return replay.event
+    }
+    const intent = yield* readIntent(MutationOperation.Cancel, intentId)
+    yield* fence.check
+    yield* requireActiveRiskDecision(MutationOperation.Cancel, intent)
     const current = yield* now
     const started = yield* mutations.beginCancel(
       intentId,
@@ -304,7 +323,6 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
       nextInstant(intent.updatedAt, current),
     )
     if (!started.started) return started.event
-    yield* fence.check
 
     return yield* broker.cancel(orderId).pipe(
       Effect.matchEffect({

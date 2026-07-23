@@ -25,7 +25,7 @@ import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
-import type { Protocol } from '../types'
+import type { CausalProtocol, Protocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -282,6 +282,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 8, name: 'identified_submit_unknown' },
       { migration_id: 9, name: 'fill_source_timestamp' },
       { migration_id: 10, name: 'autonomous_cycles' },
+      { migration_id: 11, name: 'causal_protocol' },
     ])
   })
 
@@ -666,6 +667,57 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.accepted.consistencyDelayMs).toBe(1_000)
     expect(observed.replay.eventId).toBe(observed.accepted.eventId)
     expect(observed.state).toEqual({ state: 'ACKNOWLEDGED', state_version: 4, events: 2 })
+  })
+
+  test('does not append a mutation start after its approved risk decision expires', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '0'.repeat(64) })))
+    const expiresAtMillis = Date.now() + 1_000
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
+    )
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+    await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 50))
+
+    const mutation = makeMutationRuntime()
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        const start = yield* Effect.exit(
+          store.beginSubmit(intent.intentId, '8'.repeat(64), 1_000, new Date().toISOString()),
+        )
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ events: number; state: string }>`
+          SELECT
+            state,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { start, state: rows[0] }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.start)).toBe(true)
+    if (Exit.isFailure(observed.start)) {
+      expect(Cause.pretty(observed.start.cause)).toContain('current approved risk decision')
+    }
+    expect(observed.state).toEqual({ state: 'APPROVED', events: 0 })
   })
 
   test('keeps an ambiguous submit UNKNOWN until lookup recovers the exact broker order', async () => {
@@ -1745,7 +1797,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('legacy migration history is unsupported')
   })
 
-  test('accepts only the current protocol contract', async () => {
+  test('accepts the current and immutable historical protocol contracts', async () => {
     const exits = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1761,7 +1813,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        const current = yield* Effect.exit(sql`
+        const historical = yield* Effect.exit(sql`
           INSERT INTO protocol_locks (
             protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
           ) VALUES (
@@ -1773,11 +1825,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        return { current, unsupported }
+        const current = yield* Effect.exit(sql`
+          INSERT INTO protocol_locks (
+            protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+          ) VALUES (
+            ${'6'.repeat(64)},
+            'bayn.risk-balanced-trend.protocol.v3',
+            'risk-balanced-trend',
+            ${'7'.repeat(64)},
+            ${'8'.repeat(64)},
+            '{}'::jsonb
+          )
+        `)
+        return { current, historical, unsupported }
       }),
     )
 
     expect(Exit.isFailure(exits.unsupported)).toBe(true)
+    expect(Exit.isSuccess(exits.historical)).toBe(true)
     expect(Exit.isSuccess(exits.current)).toBe(true)
   })
 
@@ -2007,7 +2072,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('persists and recovers fee, partial-fill, and nonzero cash-yield evidence', async () => {
-    const protocol: Protocol = {
+    const protocol: CausalProtocol = {
       ...fixtureProtocol,
       executionModel: {
         ...fixtureProtocol.executionModel,
@@ -2245,7 +2310,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Option.isSome(result.stored)) {
       expect(result.stored.value.protocol).toMatchObject({
         strategyName: 'risk-balanced-trend',
-        schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
         parameters: fixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({

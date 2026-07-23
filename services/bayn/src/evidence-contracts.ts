@@ -236,7 +236,9 @@ export const SimulatedOrdersArtifactSchema = Schema.Struct({
       requestedQuantityMicros: Micros,
       filledQuantityMicros: Micros,
       status: Schema.Literals(['filled', 'partially-filled', 'rejected']),
-      rejectionReason: Schema.NullOr(Schema.Literals(['below-minimum-buy-notional', 'zero-after-rounding'])),
+      rejectionReason: Schema.NullOr(
+        Schema.Literals(['below-minimum-buy-notional', 'zero-after-rounding', 'insufficient-buying-power']),
+      ),
       unfilledRemainder: Schema.Literals(['none', 'canceled']),
     }),
   ).check(Schema.isMinLength(1)),

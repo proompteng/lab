@@ -254,6 +254,30 @@ const makeOrder = (
   return { id: canonicalHashV1({ runId, kind: 'order', ...payload }), ...payload }
 }
 
+const limitOrderFillToBuyingPower = (
+  runId: string,
+  order: SimulatedOrder,
+  filledQuantityMicros: bigint,
+): SimulatedOrder => {
+  const originalFilled = BigInt(order.filledQuantityMicros)
+  if (originalFilled === 0n || filledQuantityMicros === originalFilled) return order
+  if (filledQuantityMicros < 0n || filledQuantityMicros > originalFilled) {
+    throw new Error('buying-power fill adjustment must reduce the modeled fill')
+  }
+  const payload = {
+    decisionId: order.decisionId,
+    sessionDate: order.sessionDate,
+    symbol: order.symbol,
+    side: order.side,
+    requestedQuantityMicros: order.requestedQuantityMicros,
+    filledQuantityMicros: filledQuantityMicros.toString(),
+    status: filledQuantityMicros === 0n ? ('rejected' as const) : ('partially-filled' as const),
+    rejectionReason: filledQuantityMicros === 0n ? ('insufficient-buying-power' as const) : null,
+    unfilledRemainder: 'canceled' as const,
+  }
+  return { id: canonicalHashV1({ runId, kind: 'order', ...payload }), ...payload }
+}
+
 const makeFill = (
   runId: string,
   decision: DecisionEvent,
@@ -328,6 +352,9 @@ export const simulate = (
   runId: string,
   recordEvents: boolean,
 ): SimulationResult => {
+  if (protocol.executionModel.schemaVersion !== 'bayn.execution-model.v2') {
+    throw new Error('simulation requires the causal bayn.execution-model.v2 contract')
+  }
   const targetsByExecution = new Map(targets.map((target) => [target.executionIndex, target]))
   const positions = new Map<string, Position>()
   const initialCapitalMicros = BigInt(protocol.initialCapitalMicros)
@@ -356,6 +383,7 @@ export const simulate = (
     const spreadBeforeSession = totalSpreadCostMicros
     const slippageBeforeSession = totalSlippageCostMicros
     const cashYieldBeforeSession = totalCashYieldMicros
+    const planningCashSnapshotMicros = cashMicros
 
     if (previousSessionDate !== undefined) {
       const elapsedDays = elapsedCalendarDays(previousSessionDate, session.date)
@@ -401,47 +429,159 @@ export const simulate = (
         signalDecisions.push({ ...target.decision, decisionId: decision.id, executionDate: decision.executionDate })
       }
 
-      const openPrices = Object.fromEntries(
+      const planningPrices = Object.fromEntries(
+        Object.entries(sessions[target.signalIndex].bars).map(([symbol, bar]) => [
+          symbol,
+          referencePriceMicros(bar.close, protocol.executionModel),
+        ]),
+      ) as Readonly<Record<string, bigint>>
+      const executionOpenPrices = Object.fromEntries(
         Object.entries(session.bars).map(([symbol, bar]) => [
           symbol,
           referencePriceMicros(bar.open, protocol.executionModel),
         ]),
       ) as Readonly<Record<string, bigint>>
-      const preTradeEquityMicros =
-        cashMicros +
-        Object.entries(openPrices).reduce(
+      const planningCashMicros = planningCashSnapshotMicros
+      const planningEquityMicros =
+        planningCashSnapshotMicros +
+        Object.entries(planningPrices).reduce(
           (value, [symbol, price]) => value + notionalMicros(positions.get(symbol)?.quantityMicros ?? 0n, price),
           0n,
         )
       const desiredQuantities = Object.fromEntries(
         Object.entries(target.weights).map(([symbol, weight]) => [
           symbol,
-          desiredQuantityMicros(preTradeEquityMicros, weight, openPrices[symbol], protocol.executionModel),
+          desiredQuantityMicros(planningEquityMicros, weight, planningPrices[symbol], protocol.executionModel),
         ]),
       ) as Readonly<Record<string, bigint>>
       const sessionFills: FillEvent[] = []
 
-      for (const symbol of Object.keys(target.weights).sort()) {
-        const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
-        const desired = desiredQuantities[symbol]
-        if (desired >= position.quantityMicros) continue
-        const order = makeOrder(
+      const plannedSells = Object.keys(target.weights)
+        .sort()
+        .map((symbol) => {
+          const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
+          return {
+            symbol,
+            quantityMicros:
+              desiredQuantities[symbol] < position.quantityMicros
+                ? position.quantityMicros - desiredQuantities[symbol]
+                : 0n,
+          }
+        })
+        .filter((sell) => sell.quantityMicros > 0n)
+      const proposedBuys = Object.keys(target.weights)
+        .sort()
+        .map((symbol) => {
+          const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
+          return {
+            symbol,
+            quantityMicros:
+              desiredQuantities[symbol] > position.quantityMicros
+                ? desiredQuantities[symbol] - position.quantityMicros
+                : 0n,
+          }
+        })
+        .filter((buy) => buy.quantityMicros > 0n)
+      const plannedBuysAffordable = (scalePpm: bigint): boolean => {
+        const buyInputs = proposedBuys.flatMap((buy): FeeInput[] => {
+          const quantity = scaleQuantityMicros(buy.quantityMicros, scalePpm, protocol.executionModel)
+          if (
+            quantity === 0n ||
+            notionalMicros(quantity, planningPrices[buy.symbol]) <
+              BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
+          ) {
+            return []
+          }
+          const terms = makeFillTerms(
+            'buy',
+            quantity,
+            planningPrices[buy.symbol],
+            protocol.executionModel,
+            costMultiplierMicros,
+          )
+          return [{ side: 'buy', quantityMicros: quantity, notionalMicros: terms.notionalMicros }]
+        })
+        const fees = calculateSessionFees(buyInputs, protocol.executionModel, costMultiplierMicros)
+        return buyInputs.reduce((sum, fill) => sum + fill.notionalMicros, 0n) + fees.totalMicros <= planningCashMicros
+      }
+      let plannedBuyScale = 0n
+      let maximumPlannedBuyScale = ppm
+      while (plannedBuyScale < maximumPlannedBuyScale) {
+        const candidate = (plannedBuyScale + maximumPlannedBuyScale + 1n) / 2n
+        if (plannedBuysAffordable(candidate)) plannedBuyScale = candidate
+        else maximumPlannedBuyScale = candidate - 1n
+      }
+      const sellOrders = plannedSells.map((sell) =>
+        makeOrder(
           runId,
           decision,
           session.date,
-          symbol,
+          sell.symbol,
           'sell',
-          position.quantityMicros - desired,
-          openPrices[symbol],
+          sell.quantityMicros,
+          executionOpenPrices[sell.symbol],
           protocol,
-        )
+        ),
+      )
+      const plannedBuyOrders = proposedBuys.flatMap((buy): SimulatedOrder[] => {
+        const requestedQuantity = scaleQuantityMicros(buy.quantityMicros, plannedBuyScale, protocol.executionModel)
+        return requestedQuantity === 0n ||
+          notionalMicros(requestedQuantity, planningPrices[buy.symbol]) <
+            BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
+          ? []
+          : [
+              makeOrder(
+                runId,
+                decision,
+                session.date,
+                buy.symbol,
+                'buy',
+                requestedQuantity,
+                executionOpenPrices[buy.symbol],
+                protocol,
+              ),
+            ]
+      })
+      const executionBuysAffordable = (scalePpm: bigint): boolean => {
+        const buyInputs = plannedBuyOrders.flatMap((order): FeeInput[] => {
+          const quantity = scaleQuantityMicros(BigInt(order.filledQuantityMicros), scalePpm, protocol.executionModel)
+          if (quantity === 0n) return []
+          const terms = makeFillTerms(
+            'buy',
+            quantity,
+            executionOpenPrices[order.symbol],
+            protocol.executionModel,
+            costMultiplierMicros,
+          )
+          return [{ side: 'buy', quantityMicros: quantity, notionalMicros: terms.notionalMicros }]
+        })
+        const fees = calculateSessionFees(buyInputs, protocol.executionModel, costMultiplierMicros)
+        return buyInputs.reduce((sum, fill) => sum + fill.notionalMicros, 0n) + fees.totalMicros <= planningCashMicros
+      }
+      let executionBuyScale = 0n
+      let maximumExecutionBuyScale = ppm
+      while (executionBuyScale < maximumExecutionBuyScale) {
+        const candidate = (executionBuyScale + maximumExecutionBuyScale + 1n) / 2n
+        if (executionBuysAffordable(candidate)) executionBuyScale = candidate
+        else maximumExecutionBuyScale = candidate - 1n
+      }
+      const buyOrders = plannedBuyOrders.map((order) =>
+        limitOrderFillToBuyingPower(
+          runId,
+          order,
+          scaleQuantityMicros(BigInt(order.filledQuantityMicros), executionBuyScale, protocol.executionModel),
+        ),
+      )
+
+      for (const order of sellOrders) {
         if (recordEvents) orders.push(order)
+        const position = positions.get(order.symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
         const filledQuantity = BigInt(order.filledQuantityMicros)
         if (filledQuantity > 0n) {
           const terms = makeFillTerms(
             'sell',
             filledQuantity,
-            openPrices[symbol],
+            executionOpenPrices[order.symbol],
             protocol.executionModel,
             costMultiplierMicros,
           )
@@ -453,7 +593,7 @@ export const simulate = (
           totalSlippageCostMicros += terms.slippageCostMicros
           position.quantityMicros -= filledQuantity
           position.costBasisMicros -= costBasis
-          positions.set(symbol, position)
+          positions.set(order.symbol, position)
           sessionFills.push(fill)
           if (recordEvents) {
             events.push(fill)
@@ -462,78 +602,14 @@ export const simulate = (
         }
       }
 
-      const proposedBuys = Object.keys(target.weights)
-        .sort()
-        .map((symbol) => {
-          const position = positions.get(symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
-          const quantityMicros =
-            desiredQuantities[symbol] > position.quantityMicros
-              ? desiredQuantities[symbol] - position.quantityMicros
-              : 0n
-          return { symbol, position, quantityMicros, referencePriceMicros: openPrices[symbol] }
-        })
-        .filter((buy) => buy.quantityMicros > 0n)
-
-      const sellFeeInputs: FeeInput[] = sessionFills.map((fill) => ({
-        side: fill.side,
-        quantityMicros: BigInt(fill.quantityMicros),
-        notionalMicros: BigInt(fill.notionalMicros),
-      }))
-      const affordable = (scalePpm: bigint): boolean => {
-        const buyInputs = proposedBuys.flatMap((buy): FeeInput[] => {
-          const quantity = scaleQuantityMicros(buy.quantityMicros, scalePpm, protocol.executionModel)
-          if (
-            quantity === 0n ||
-            notionalMicros(quantity, buy.referencePriceMicros) <
-              BigInt(protocol.executionModel.precision.minimumBuyNotionalMicros)
-          ) {
-            return []
-          }
-          const terms = makeFillTerms(
-            'buy',
-            quantity,
-            buy.referencePriceMicros,
-            protocol.executionModel,
-            costMultiplierMicros,
-          )
-          return [{ side: 'buy', quantityMicros: quantity, notionalMicros: terms.notionalMicros }]
-        })
-        const fees = calculateSessionFees(
-          [...sellFeeInputs, ...buyInputs],
-          protocol.executionModel,
-          costMultiplierMicros,
-        )
-        const buyNotional = buyInputs.reduce((sum, fill) => sum + fill.notionalMicros, 0n)
-        return buyNotional + fees.totalMicros <= cashMicros
-      }
-      let low = 0n
-      let high = ppm
-      while (low < high) {
-        const middle = (low + high + 1n) / 2n
-        if (affordable(middle)) low = middle
-        else high = middle - 1n
-      }
-
-      for (const buy of proposedBuys) {
-        const requestedQuantity = scaleQuantityMicros(buy.quantityMicros, low, protocol.executionModel)
-        if (requestedQuantity === 0n) continue
-        const order = makeOrder(
-          runId,
-          decision,
-          session.date,
-          buy.symbol,
-          'buy',
-          requestedQuantity,
-          buy.referencePriceMicros,
-          protocol,
-        )
+      for (const order of buyOrders) {
         if (recordEvents) orders.push(order)
         const filledQuantity = BigInt(order.filledQuantityMicros)
         if (filledQuantity > 0n) {
           const terms = makeFillTerms(
             'buy',
             filledQuantity,
-            buy.referencePriceMicros,
+            executionOpenPrices[order.symbol],
             protocol.executionModel,
             costMultiplierMicros,
           )
@@ -542,9 +618,10 @@ export const simulate = (
           turnoverMicros += terms.notionalMicros
           totalSpreadCostMicros += terms.spreadCostMicros
           totalSlippageCostMicros += terms.slippageCostMicros
-          buy.position.quantityMicros += filledQuantity
-          buy.position.costBasisMicros += terms.notionalMicros
-          positions.set(buy.symbol, buy.position)
+          const position = positions.get(order.symbol) ?? { quantityMicros: 0n, costBasisMicros: 0n }
+          position.quantityMicros += filledQuantity
+          position.costBasisMicros += terms.notionalMicros
+          positions.set(order.symbol, position)
           sessionFills.push(fill)
           if (recordEvents) {
             events.push(fill)

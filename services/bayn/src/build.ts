@@ -51,3 +51,11 @@ export const verifyParameterHash = (
   metadata.strategyParameterHash === actualParameterHash
     ? Effect.void
     : Effect.fail(operationalError('config', 'provenance', 'compiled strategy parameters do not match build metadata'))
+
+export const verifyBehaviorHash = (
+  metadata: EmbeddedBuildMetadata,
+  actualBehaviorHash: string,
+): Effect.Effect<void, OperationalError> =>
+  metadata.strategyBehaviorHash === actualBehaviorHash
+    ? Effect.void
+    : Effect.fail(operationalError('config', 'provenance', 'compiled strategy behavior does not match build metadata'))

@@ -352,6 +352,21 @@ describe('qualification audit', () => {
     expect(report.checks.find((check) => check.name === 'reference-strategy')?.passed).toBe(false)
   })
 
+  test('requires the source-pinned auditor for immutable protocol v2 evidence', () => {
+    const input = fixture()
+    const database = {
+      ...input.database,
+      protocol: {
+        ...input.database.protocol,
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+      },
+    }
+
+    expect(() => auditQualification({ ...input, database })).toThrow(
+      'current auditor requires causal protocol v3; audit immutable v2 evidence with its source-pinned image',
+    )
+  })
+
   test('fails closed when candidate bars were read before the lock', () => {
     const input = fixture()
     const signalAccess = input.signalAccess.map((record) =>

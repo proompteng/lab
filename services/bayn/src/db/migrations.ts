@@ -10,6 +10,7 @@ import accounting from '../../migrations/0007_accounting'
 import identifiedSubmitUnknown from '../../migrations/0008_identified_submit_unknown'
 import fillSourceTimestamp from '../../migrations/0009_fill_source_timestamp'
 import autonomousCycles from '../../migrations/0010_autonomous_cycles'
+import causalProtocol from '../../migrations/0011_causal_protocol'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -22,4 +23,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '8_identified_submit_unknown': identifiedSubmitUnknown,
   '9_fill_source_timestamp': fillSourceTimestamp,
   '10_autonomous_cycles': autonomousCycles,
+  '11_causal_protocol': causalProtocol,
 })

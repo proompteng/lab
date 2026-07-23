@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit } from 'effect'
 
-import { verifyParameterHash, type EmbeddedBuildMetadata } from './build'
+import { riskBalancedTrendBehaviorHash } from './behavior'
+import { verifyBehaviorHash, verifyParameterHash, type EmbeddedBuildMetadata } from './build'
 import { defaultProtocolDocument, hashParameters, loadDefaultProtocol, loadProtocol } from './protocol'
 
 describe('strategy protocol', () => {
@@ -10,7 +11,7 @@ describe('strategy protocol', () => {
     const protocol = await Effect.runPromise(loadDefaultProtocol)
 
     expect(protocol).toMatchObject({
-      schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+      schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
       universeId: 'cross-asset-taa-v1',
       universeSymbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
       universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
@@ -20,6 +21,16 @@ describe('strategy protocol', () => {
       volatilityWindow: 63,
       maximumSymbolWeight: 0.35,
       maximumPortfolioVolatility: 0.1,
+      executionModel: {
+        schemaVersion: 'bayn.execution-model.v2',
+        order: {
+          planningPriceReference: 'signal-session-close',
+          planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
+          fillPriceReference: 'next-session-open',
+          buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
+          submissionCutoffLeadMinutes: 15,
+        },
+      },
     })
     expect(hashParameters(protocol)).toMatch(/^[a-f0-9]{64}$/)
   })
@@ -30,16 +41,22 @@ describe('strategy protocol', () => {
     const metadata: EmbeddedBuildMetadata = {
       sourceRevision: 'a'.repeat(40),
       imageRepository: 'registry.example.test/lab/bayn',
-      strategyBehaviorHash: 'b'.repeat(64),
+      strategyBehaviorHash: riskBalancedTrendBehaviorHash,
       strategyParameterHash: parameterHash,
     }
 
     await Effect.runPromise(verifyParameterHash(metadata, parameterHash))
+    await Effect.runPromise(verifyBehaviorHash(metadata, riskBalancedTrendBehaviorHash))
     const exit = await Effect.runPromiseExit(
       verifyParameterHash({ ...metadata, strategyParameterHash: '0'.repeat(64) }, parameterHash),
     )
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(exit.cause.toString()).toContain('compiled strategy parameters')
+    const behaviorExit = await Effect.runPromiseExit(
+      verifyBehaviorHash({ ...metadata, strategyBehaviorHash: '0'.repeat(64) }, riskBalancedTrendBehaviorHash),
+    )
+    expect(Exit.isFailure(behaviorExit)).toBe(true)
+    if (Exit.isFailure(behaviorExit)) expect(behaviorExit.cause.toString()).toContain('compiled strategy behavior')
   })
 
   test('rejects legacy, malformed, and non-canonical documents', async () => {
@@ -65,11 +82,40 @@ describe('strategy protocol', () => {
     }
   })
 
+  test('decodes the frozen v2 protocol only for immutable historical evidence', async () => {
+    const historical = {
+      ...defaultProtocolDocument,
+      schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+      executionModel: {
+        ...defaultProtocolDocument.executionModel,
+        schemaVersion: 'bayn.execution-model.v1',
+        order: {
+          type: 'market',
+          timeInForce: 'day',
+          extendedHours: false,
+          submitAfter: 'signal-session-close',
+          submitBefore: 'next-session-open',
+          priceReference: 'next-session-open',
+        },
+      },
+    } as const
+
+    const protocol = await Effect.runPromise(loadProtocol(historical))
+
+    expect(protocol.schemaVersion).toBe('bayn.risk-balanced-trend.protocol.v2')
+    expect(protocol.executionModel.schemaVersion).toBe('bayn.execution-model.v1')
+  })
+
   test('requires every execution fact', async () => {
     const requiredPaths = [
       ['order', 'type'],
       ['order', 'timeInForce'],
       ['order', 'extendedHours'],
+      ['order', 'planningPriceReference'],
+      ['order', 'planningBrokerStateReference'],
+      ['order', 'fillPriceReference'],
+      ['order', 'buyingPowerPolicy'],
+      ['order', 'submissionCutoffLeadMinutes'],
       ['precision', 'quantityIncrementMicros'],
       ['precision', 'priceIncrementMicros'],
       ['precision', 'minimumBuyNotionalMicros'],

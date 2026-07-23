@@ -1,7 +1,7 @@
 import { Effect, Option, Ref } from 'effect'
 
 import type { RuntimeConfig } from './config'
-import { makeRuntimeProvenance, type RuntimeProvenance } from './contracts'
+import { makeRuntimeProvenance, makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
 import { EvidenceStore, type StoredEvaluationEvidence } from './db/evidence-store'
 import { formatError, operationalError, type OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
@@ -37,11 +37,12 @@ const failStartup = (state: Ref.Ref<RuntimeState>, error: OperationalError): Eff
 const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenance => {
   if (
     stored.protocol.strategyName !== 'risk-balanced-trend' ||
-    stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2'
+    (stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2' &&
+      stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3')
   ) {
     throw new Error('stored evaluation uses an unsupported strategy contract')
   }
-  return makeRuntimeProvenance({
+  const provenance = makeRuntimeProvenance({
     sourceRevision: stored.run.sourceRevision,
     image: { repository: stored.run.imageRepository, digest: stored.run.imageDigest },
     strategy: {
@@ -51,13 +52,20 @@ const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenan
       parameterSchemaVersion: stored.protocol.schemaVersion,
     },
   })
+  if (
+    canonicalHashV1(stored.protocol.parameters) !== provenance.strategy.parameterHash ||
+    stored.protocol.protocolHash !== makeStrategyProtocolHash(provenance.strategy) ||
+    stored.run.protocolHash !== stored.protocol.protocolHash
+  ) {
+    throw new Error('stored evaluation protocol does not match its own provenance')
+  }
+  return provenance
 }
 
 const recoverPinnedQualification = (
   config: RuntimeConfig,
   runId: string,
   state: Ref.Ref<RuntimeState>,
-  strategy: Strategy,
 ): Effect.Effect<void, OperationalError, EvidenceStore> =>
   Effect.gen(function* () {
     const evidenceStore = yield* EvidenceStore
@@ -106,12 +114,8 @@ const recoverPinnedQualification = (
           throw new Error('stored evaluation and terminal qualification run IDs differ')
         }
         if (
-          canonicalHashV1(executionProvenance.strategy) !== canonicalHashV1(strategy.provenance.strategy) ||
-          canonicalHashV1(stored.protocol.parameters) !== canonicalHashV1(strategy.parameters)
-        ) {
-          throw new Error('compiled strategy differs from the pinned qualification protocol')
-        }
-        if (
+          qualification.lock.candidateRunId !== runId ||
+          qualification.lock.protocolHash !== stored.run.protocolHash ||
           qualification.lock.sourceRevision !== executionProvenance.sourceRevision ||
           canonicalHashV1(qualification.lock.image) !== canonicalHashV1(executionProvenance.image)
         ) {
@@ -396,5 +400,5 @@ export const initialize = (
 ): Effect.Effect<void, OperationalError, MarketData | Journal | EvidenceStore> =>
   (config.qualificationRunId === undefined
     ? evaluateAndJournal(config, state, strategy)
-    : recoverPinnedQualification(config, config.qualificationRunId, state, strategy)
+    : recoverPinnedQualification(config, config.qualificationRunId, state)
   ).pipe(Effect.catch((error) => (error.retryable ? Effect.fail(error) : failStartup(state, error))))

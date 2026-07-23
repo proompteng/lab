@@ -171,7 +171,10 @@ const RuntimeProvenanceBase = Schema.Struct({
     name: Schema.Literal('risk-balanced-trend'),
     behaviorHash: Sha256Schema,
     parameterHash: Sha256Schema,
-    parameterSchemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
+    parameterSchemaVersion: Schema.Literals([
+      'bayn.risk-balanced-trend.protocol.v2',
+      'bayn.risk-balanced-trend.protocol.v3',
+    ]),
   }),
   contractVersions: Schema.Struct({
     runtimeProvenance: Schema.Literal('bayn.runtime-provenance.v2'),

@@ -1,7 +1,8 @@
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect, Schema } from 'effect'
 
-import { embeddedBuildMetadata, EmbeddedBuildMetadataSchema, verifyParameterHash } from './build'
+import { riskBalancedTrendBehaviorHash } from './behavior'
+import { embeddedBuildMetadata, EmbeddedBuildMetadataSchema, verifyBehaviorHash, verifyParameterHash } from './build'
 import { operationalError } from './errors'
 import { hashParameters, loadDefaultProtocol } from './protocol'
 import { strictParseOptions } from './schemas'
@@ -16,7 +17,10 @@ const program = Effect.gen(function* () {
     ),
   )
   const protocol = yield* loadDefaultProtocol
-  yield* verifyParameterHash(metadata, hashParameters(protocol))
+  yield* Effect.all([
+    verifyBehaviorHash(metadata, riskBalancedTrendBehaviorHash),
+    verifyParameterHash(metadata, hashParameters(protocol)),
+  ])
 })
 
 NodeRuntime.runMain(program)

@@ -7,16 +7,21 @@ const BPS = 10_000n
 const WEIGHT_SCALE = 1_000_000_000_000n
 
 export const defaultExecutionModel: ExecutionModel = {
-  schemaVersion: 'bayn.execution-model.v1',
+  schemaVersion: 'bayn.execution-model.v2',
   venue: 'alpaca-paper',
   assetClass: 'us-equity',
   order: {
     type: 'market',
     timeInForce: 'day',
     extendedHours: false,
-    submitAfter: 'signal-session-close',
-    submitBefore: 'next-session-open',
-    priceReference: 'next-session-open',
+    planAfter: 'signal-session-finalized',
+    submitAfter: 'plan-committed',
+    submitBefore: 'fixed-pre-open-cutoff',
+    planningPriceReference: 'signal-session-close',
+    planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
+    fillPriceReference: 'next-session-open',
+    buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
+    submissionCutoffLeadMinutes: 15,
   },
   precision: {
     quantityIncrementMicros: '1',

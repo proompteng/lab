@@ -16,25 +16,32 @@ import {
   fixtureQualification,
   pinnedExecutionProvenance,
   pinnedEvaluation,
+  pinnedLock,
   pinnedQualification,
   pinnedRuntimeConfig,
+  pinnedStoredEvidence,
+  pinnedStrategy,
   pinnedStore,
 } from './app-test-support'
 import { initialize, run } from './app'
+import { makeStrategyProtocolHash } from './contracts'
 import {
   DatabaseError,
   EvidenceStore,
   EvidenceStoreLive,
   makeEvidenceStoreLayer,
   type EvidenceStoreService,
+  type StoredEvaluationEvidence,
 } from './db/evidence-store'
 import { operationalError } from './errors'
 import { Journal, type JournalService } from './ledger'
 import { MarketData } from './market-data'
+import { defaultProtocolDocument, loadProtocol } from './protocol'
+import { makeQualificationLock, makeQualificationResult } from './qualification'
 import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-trend'
 import { initialState } from './runtime-state'
 import type { Strategy } from './strategy'
-import { fixtureProtocol, makeSnapshot } from './test-fixtures'
+import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
 
 describe('Bayn startup lifecycle', () => {
   test('recovers a pinned terminal qualification without inspecting data or writing state', async () => {
@@ -82,19 +89,125 @@ describe('Bayn startup lifecycle', () => {
     })
   })
 
-  test('fails pinned recovery closed on strategy, snapshot, terminal-result, and durable-evidence drift', async () => {
-    const cases = [
-      {
-        name: 'strategy',
-        config: pinnedRuntimeConfig,
-        strategy: {
-          ...fixtureStrategy,
-          provenance: {
-            ...fixtureStrategy.provenance,
-            strategy: { ...fixtureStrategy.provenance.strategy, behaviorHash: '0'.repeat(64) },
+  test('recovers immutable protocol v2 evidence independently of the compiled v3 strategy', async () => {
+    const historicalProtocol = Effect.runSync(
+      loadProtocol({
+        ...defaultProtocolDocument,
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+        executionModel: {
+          ...defaultProtocolDocument.executionModel,
+          schemaVersion: 'bayn.execution-model.v1',
+          order: {
+            type: 'market',
+            timeInForce: 'day',
+            extendedHours: false,
+            submitAfter: 'signal-session-close',
+            submitBefore: 'next-session-open',
+            priceReference: 'next-session-open',
           },
         },
-        store: pinnedStore(),
+      }),
+    )
+    const historicalProvenance = makeTestProvenance(historicalProtocol, {
+      sourceRevision: pinnedExecutionProvenance.sourceRevision,
+      imageDigest: pinnedExecutionProvenance.image.digest,
+      behaviorHash: 'c'.repeat(64),
+    })
+    const historicalProtocolHash = makeStrategyProtocolHash(historicalProvenance.strategy)
+    const historicalStoredEvidence: StoredEvaluationEvidence = {
+      ...pinnedStoredEvidence,
+      protocol: {
+        protocolHash: historicalProtocolHash,
+        schemaVersion: historicalProtocol.schemaVersion,
+        strategyName: historicalProvenance.strategy.name,
+        behaviorHash: historicalProvenance.strategy.behaviorHash,
+        parameterHash: historicalProvenance.strategy.parameterHash,
+        parameters: historicalProtocol,
+      },
+      run: {
+        ...pinnedStoredEvidence.run,
+        protocolHash: historicalProtocolHash,
+        sourceRevision: historicalProvenance.sourceRevision,
+        imageRepository: historicalProvenance.image.repository,
+        imageDigest: historicalProvenance.image.digest,
+      },
+    }
+    const { lockId: _, ...pinnedLockMaterial } = pinnedLock
+    const historicalLock = makeQualificationLock({
+      ...pinnedLockMaterial,
+      protocolHash: historicalProtocolHash,
+      sourceRevision: historicalProvenance.sourceRevision,
+      image: historicalProvenance.image,
+    })
+    const historicalQualification = makeQualificationResult(
+      historicalLock,
+      pinnedEvaluation.verdict,
+      pinnedStrategy.analyze(pinnedEvaluation, []),
+    )
+    const store: EvidenceStoreService = {
+      ...pinnedStore(),
+      read: () => Effect.succeed(Option.some(historicalStoredEvidence)),
+      readQualification: () =>
+        Effect.succeed(Option.some({ state: 'TERMINAL', lock: historicalLock, result: historicalQualification })),
+      recover: (runId, recoveredProvenance) =>
+        Effect.sync(() => {
+          expect(runId).toBe(pinnedEvaluation.runId)
+          expect(recoveredProvenance).toEqual(historicalProvenance)
+          return Option.some({
+            evaluation: summarizeEvaluation(pinnedEvaluation),
+            reconciliation: {
+              runId,
+              accountCount: 13,
+              transferCount: pinnedEvaluation.events.length,
+              exact: true,
+            },
+            persistence: {
+              runId,
+              deduplicated: true,
+              artifactCount: 17,
+              eventCount: pinnedEvaluation.events.length,
+              gateCount: pinnedEvaluation.verdict.gates.length,
+            },
+          })
+        }),
+    }
+    const state = await Effect.runPromise(Ref.make(initialState()))
+
+    await Effect.runPromise(
+      initialize(pinnedRuntimeConfig, state, fixtureStrategy).pipe(
+        Effect.provideService(MarketData, marketDataService(Effect.die(new Error('must not load bars')))),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, store),
+      ),
+    )
+
+    expect(fixtureStrategy.provenance.strategy.parameterSchemaVersion).toBe('bayn.risk-balanced-trend.protocol.v3')
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'STARTING',
+      evidence: {
+        startupMode: 'pinned',
+        provenance: historicalProvenance,
+        qualification: { verdict: 'REJECTED' },
+      },
+    })
+  })
+
+  test('fails pinned recovery closed on stored-protocol, snapshot, terminal-result, and durable-evidence drift', async () => {
+    const cases = [
+      {
+        name: 'stored protocol',
+        config: pinnedRuntimeConfig,
+        strategy: fixtureStrategy,
+        store: {
+          ...pinnedStore(),
+          read: () =>
+            Effect.succeed(
+              Option.some({
+                ...pinnedStoredEvidence,
+                protocol: { ...pinnedStoredEvidence.protocol, parameterHash: '0'.repeat(64) },
+              }),
+            ),
+        },
       },
       {
         name: 'snapshot',

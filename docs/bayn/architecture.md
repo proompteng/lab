@@ -24,7 +24,7 @@ that interface and every persisted evidence contract.
 ## Runtime flow
 
 1. The composition root loads Effect Config, decodes the compiled protocol, verifies its parameter hash against the
-   build, and constructs one pure `Strategy` value.
+   build, verifies the compiled behavior identity, and constructs one pure `Strategy` value.
 2. Startup inspects the configured finalized Signal V2 publication before loading bars. The manifest must match the
    compiled universe, symbol hash, feed, adjustment, calendar, and evaluation bounds.
 3. Bayn derives the candidate identity and opens the immutable qualification lock through the existing evidence
@@ -54,11 +54,13 @@ Paper mutation uses one deliberately small transaction/I/O boundary:
 1. A committed approved intent and current paper authority acquire the single-writer fence.
 2. PostgreSQL records `SUBMIT_STARTED`, the exact request hash, deterministic client-order ID, and immutable broker
    consistency delay before the first POST.
-3. Exactly one Alpaca request is made. Decoded 4xx rejections are terminal; a timeout, interruption, malformed response,
+3. The coordinator rechecks the committed risk-decision expiry with the Effect clock immediately before POST or
+   DELETE. The interval is half-open, so the exact cutoff instant makes zero broker mutations.
+4. Exactly one Alpaca request is made. Decoded 4xx rejections are terminal; a timeout, interruption, malformed response,
    server response, or post-send crash remains `UNKNOWN`.
-4. Recovery waits the committed delay and performs `GET /v2/orders:by_client_order_id`. It never wraps POST or DELETE
+5. Recovery waits the committed delay and performs `GET /v2/orders:by_client_order_id`. It never wraps POST or DELETE
    in a generic retry.
-5. Cancel targets only a recorded broker order ID. A kill may permit that cancellation, but it cannot authorize a new
+6. Cancel targets only a recorded broker order ID. A kill may permit that cancellation, but it cannot authorize a new
    exposure-increasing intent.
 
 `mutation_events` is append-only and enforces the transition sequence, request identity, response identity, broker
@@ -121,7 +123,7 @@ fixed exclusively by `authority`.
 
 ## Strategy and economic contract
 
-The compiled `bayn.risk-balanced-trend.protocol.v2` candidate uses the exact `cross-asset-taa-v1` universe:
+The compiled `bayn.risk-balanced-trend.protocol.v3` precommit uses the exact `cross-asset-taa-v1` universe:
 
 `DBC, EFA, IEF, SPY, VNQ`.
 
@@ -139,8 +141,22 @@ database recovery under `OBSERVE`; the pin clears no qualification or mutation g
 At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
 averages them into a composite score, and assigns weight only to positive scores. Weights are redistributed under a 35%
 per-symbol cap, quantized deterministically, and scaled down when estimated portfolio volatility exceeds 10%. Residual
-exposure remains cash. Decisions execute only at the next exchange-session open under the compiled paper execution
-model.
+exposure remains cash. The strategy parameters and thresholds are unchanged from the rejected v2 run.
+
+The v3 execution model is live-causal. Once the signal session is finalized, planning uses that session's close-price
+vector and a content-hashed reconciled broker state observed before planning. The bounded Alpaca calendar response
+binds its request range, source/version, complete normalized session set, response hash, and the selected future
+session's exact UTC open and close. Decoding revalidates the response hash and requires that selected session to be the
+first post-signal session in the bound observation.
+Ordinary non-extended `DAY` market orders may be submitted only after the plan is committed and before a fixed
+15-minute pre-open cutoff. Risk approval is valid in `[submissionOpenAt, submissionCutoffAt)`. Planned buys reserve
+aggregate pre-submit buying power and cannot spend planned sell proceeds. The selected session open is a fill outcome:
+changing it may alter fills, gaps, slippage, shortfall, and performance, but cannot alter planned quantities.
+
+The source-controlled precommit identities are behavior
+`dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd` and parameters
+`e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3`. They do not relabel
+the terminal v2 rejection and do not constitute a new qualification.
 
 The evaluator compares the candidate with buy-and-hold, direct-volatility timing, and doubled-cost results over aligned
 dates. Qualification also applies the committed statistical and walk-forward policy. Every decision, benchmark,

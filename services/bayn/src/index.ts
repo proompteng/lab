@@ -3,9 +3,10 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Context, Effect, Layer, Logger, Redacted } from 'effect'
 
 import { run } from './app'
+import { riskBalancedTrendBehaviorHash } from './behavior'
 import { BrokerRead, alpacaHttpLayer, live as AlpacaReadLive } from './broker/alpaca'
 import { BrokerMutation, makeMutation } from './broker/alpaca-mutations'
-import { verifyParameterHash } from './build'
+import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
 import { EvidenceStoreLive } from './db/evidence-store'
@@ -27,7 +28,10 @@ const main = Effect.gen(function* () {
   const config = yield* loadConfig()
   const protocol = yield* loadDefaultProtocol
   const parameterHash = hashParameters(protocol)
-  yield* verifyParameterHash(config.build, parameterHash)
+  yield* Effect.all([
+    verifyBehaviorHash(config.build, riskBalancedTrendBehaviorHash),
+    verifyParameterHash(config.build, parameterHash),
+  ])
   const provenance = makeRuntimeProvenance({
     sourceRevision: config.build.sourceRevision,
     image: {
@@ -36,7 +40,7 @@ const main = Effect.gen(function* () {
     },
     strategy: {
       name: 'risk-balanced-trend',
-      behaviorHash: config.build.strategyBehaviorHash,
+      behaviorHash: riskBalancedTrendBehaviorHash,
       parameterHash,
       parameterSchemaVersion: protocol.schemaVersion,
     },

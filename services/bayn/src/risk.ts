@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 
 import { canonicalHashV1 } from './hash'
+import { ExecutionSessionBindingSchema } from './execution-session'
 import {
   AccountSnapshotSchema,
   AccountStatus,
@@ -157,7 +158,7 @@ export const PolicySchema = Schema.Struct({
 export type Policy = typeof PolicySchema.Type
 
 const StateBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.paper-risk-state.v1'),
+  schemaVersion: Schema.Literal('bayn.paper-risk-state.v2'),
   brokerMode: Schema.Literal(BrokerMode.Paper),
   account: AccountSnapshotSchema,
   positions: Schema.Array(PositionSchema),
@@ -177,8 +178,8 @@ const StateBase = Schema.Struct({
   referencePriceMicros: PositiveMicrosSchema,
   expectedExecutionPriceMicros: PositiveMicrosSchema,
   marketDataObservedAt: UtcInstant,
-  sessionOpenAt: UtcInstant,
-  submissionCutoffAt: UtcInstant,
+  executionSession: ExecutionSessionBindingSchema,
+  reservedBuyingPowerMicros: UnsignedMicrosSchema,
   evaluatedAt: UtcInstant,
 })
 
@@ -188,8 +189,17 @@ export const StateSchema = StateBase.check(
   Schema.makeFilter((state: typeof StateBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
     const accountId = state.account.accountId
-    if (state.sessionOpenAt >= state.submissionCutoffAt) {
-      issues.push({ path: ['submissionCutoffAt'], issue: 'must follow sessionOpenAt' })
+    if (state.executionSession.signal.contentHash !== state.marketDataHash) {
+      issues.push({ path: ['marketDataHash'], issue: 'must match the finalized signal-session binding' })
+    }
+    if (
+      state.executionSession.planningBrokerState.contentHash !== state.reconciliation.observedHash ||
+      state.executionSession.planningBrokerState.observedAt !== state.reconciliation.reconciledAt
+    ) {
+      issues.push({
+        path: ['executionSession', 'planningBrokerState'],
+        issue: 'must match the exact reconciled broker state used for planning',
+      })
     }
     const timestamps = [
       ['account', 'observedAt', state.account.observedAt],
@@ -292,6 +302,7 @@ export type Evaluation = {
     readonly dailyLossMicros: string
     readonly drawdownMicros: string
     readonly adverseSlippageBps: string
+    readonly aggregateBuyingPowerMicros: string
     readonly unresolvedOrderCount: number
   }
 }
@@ -329,7 +340,6 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
   const currentSymbolQuantity = state.positions
     .filter((position) => position.symbol === intent.symbol)
     .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
-  const currentSymbolExposureNumerator = currentSymbolQuantity * referencePrice
   const postTradeSymbolQuantity = currentSymbolQuantity + direction * BigInt(intent.quantityMicros)
   const postTradeSymbolExposureNumerator = postTradeSymbolQuantity * referencePrice
   const postTradeSymbolExposure = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
@@ -344,10 +354,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
   const postTradeNetExposureNumerator = otherNetExposure * QUANTITY_SCALE + postTradeSymbolExposureNumerator
   const postTradeNetExposure = divideAwayFromZero(postTradeNetExposureNumerator, QUANTITY_SCALE)
   const postTradeNetExposureMagnitude = divideUp(absolute(postTradeNetExposureNumerator), QUANTITY_SCALE)
-  const exposureIncrease = divideUp(
-    positiveDifference(absolute(postTradeSymbolExposureNumerator), absolute(currentSymbolExposureNumerator)),
-    QUANTITY_SCALE,
-  )
+  const aggregateBuyingPower =
+    BigInt(state.reservedBuyingPowerMicros) + (intent.side === OrderSide.Buy ? orderNotional : 0n)
   const dailyTradedNotional = BigInt(state.dailyTradedNotionalMicros) + orderNotional
   const dailyLoss = positiveDifference(BigInt(state.dayStartEquityMicros), BigInt(state.account.equityMicros))
   const drawdown = positiveDifference(BigInt(state.peakEquityMicros), BigInt(state.account.equityMicros))
@@ -375,17 +383,17 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
   )
   const brokerFreshUntil = oldestBrokerState + policy.maxBrokerStateAgeMs
   const marketFreshUntil = instant(state.marketDataObservedAt) + policy.maxMarketDataAgeMs
-  const sessionOpen = instant(state.sessionOpenAt)
-  const submissionCutoff = instant(state.submissionCutoffAt)
+  const submissionOpen = instant(state.executionSession.submissionOpenAt)
+  const submissionCutoff = instant(state.executionSession.submissionCutoffAt)
 
   const gates = [
     makeGate(Gate.IntentState, Reason.IntentNotPlanned, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
     makeGate(
       Gate.IntentTime,
       Reason.IntentTimeInvalid,
-      instant(intent.createdAt) <= evaluatedAt,
+      instant(intent.createdAt) >= submissionOpen && instant(intent.createdAt) <= evaluatedAt,
       intent.createdAt,
-      `<=${state.evaluatedAt}`,
+      `[${state.executionSession.submissionOpenAt},${state.evaluatedAt}]`,
     ),
     makeGate(
       Gate.IntentFreshness,
@@ -477,9 +485,9 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.Session,
       Reason.OutsideSession,
-      evaluatedAt >= sessionOpen && evaluatedAt < submissionCutoff,
+      evaluatedAt >= submissionOpen && evaluatedAt < submissionCutoff,
       state.evaluatedAt,
-      `[${state.sessionOpenAt},${state.submissionCutoffAt})`,
+      `[${state.executionSession.submissionOpenAt},${state.executionSession.submissionCutoffAt})`,
     ),
     makeGate(
       Gate.UnknownMutations,
@@ -512,8 +520,8 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.BuyingPower,
       Reason.BuyingPowerExceeded,
-      exposureIncrease <= BigInt(state.account.buyingPowerMicros),
-      exposureIncrease,
+      aggregateBuyingPower <= BigInt(state.account.buyingPowerMicros),
+      aggregateBuyingPower,
       `<=${state.account.buyingPowerMicros}`,
     ),
     makeGate(
@@ -609,8 +617,7 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     observedAt: state.marketDataObservedAt,
     referencePriceMicros: state.referencePriceMicros,
     expectedExecutionPriceMicros: state.expectedExecutionPriceMicros,
-    sessionOpenAt: state.sessionOpenAt,
-    submissionCutoffAt: state.submissionCutoffAt,
+    executionSession: state.executionSession,
   })
   const inputMaterial = {
     schemaVersion: 'bayn.paper-risk-evaluation-input.v1',
@@ -658,6 +665,7 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
       dailyLossMicros: dailyLoss.toString(),
       drawdownMicros: drawdown.toString(),
       adverseSlippageBps: adverseSlippageBps.toString(),
+      aggregateBuyingPowerMicros: aggregateBuyingPower.toString(),
       unresolvedOrderCount,
     },
   }

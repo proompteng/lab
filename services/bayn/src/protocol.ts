@@ -22,6 +22,7 @@ export const DIRECT_VOLATILITY_WINDOW = 63
 const PositiveUnitInterval = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
 const BasisPoints = NonNegativeFinite.check(Schema.isLessThanOrEqualTo(10_000))
 const PartsPerMillion = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1_000_000 }))
+const SubmissionCutoffLeadMinutes = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 120 }))
 const EconomicThresholdsSchema = Schema.Struct({
   minimumObservations: PositiveInteger,
   minimumAnnualizedReturn: Schema.Finite.check(Schema.isGreaterThan(-1)),
@@ -32,18 +33,9 @@ const EconomicThresholdsSchema = Schema.Struct({
 })
 export type EconomicThresholds = typeof EconomicThresholdsSchema.Type
 
-export const ExecutionModelSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-model.v1'),
+const ExecutionModelCommon = {
   venue: Schema.Literal('alpaca-paper'),
   assetClass: Schema.Literal('us-equity'),
-  order: Schema.Struct({
-    type: Schema.Literal('market'),
-    timeInForce: Schema.Literal('day'),
-    extendedHours: Schema.Literal(false),
-    submitAfter: Schema.Literal('signal-session-close'),
-    submitBefore: Schema.Literal('next-session-open'),
-    priceReference: Schema.Literal('next-session-open'),
-  }),
   precision: Schema.Struct({
     quantityIncrementMicros: PositiveMicros,
     priceIncrementMicros: PositiveMicros,
@@ -75,21 +67,58 @@ export const ExecutionModelSchema = Schema.Struct({
     remainder: Schema.Literal('cancel'),
   }),
   doubleCostMultiplier: Schema.Literal(2),
-}).check(
-  Schema.makeFilter((model: typeof ExecutionModelSchema.Type) => {
-    const issues: Schema.FilterIssue[] = []
-    if (model.partialFills.probabilityPpm > 0 && model.partialFills.filledFractionPpm === 0) {
-      issues.push({
-        path: ['partialFills', 'filledFractionPpm'],
-        issue: 'must be positive when partial fills are enabled',
-      })
-    }
-    if (model.partialFills.filledFractionPpm >= 1_000_000) {
-      issues.push({ path: ['partialFills', 'filledFractionPpm'], issue: 'must describe a partial, not complete, fill' })
-    }
-    return issues
+} as const
+
+const ExecutionModelV1Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-model.v1'),
+  ...ExecutionModelCommon,
+  order: Schema.Struct({
+    type: Schema.Literal('market'),
+    timeInForce: Schema.Literal('day'),
+    extendedHours: Schema.Literal(false),
+    submitAfter: Schema.Literal('signal-session-close'),
+    submitBefore: Schema.Literal('next-session-open'),
+    priceReference: Schema.Literal('next-session-open'),
   }),
-)
+})
+
+const ExecutionModelV2Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-model.v2'),
+  ...ExecutionModelCommon,
+  order: Schema.Struct({
+    type: Schema.Literal('market'),
+    timeInForce: Schema.Literal('day'),
+    extendedHours: Schema.Literal(false),
+    planAfter: Schema.Literal('signal-session-finalized'),
+    submitAfter: Schema.Literal('plan-committed'),
+    submitBefore: Schema.Literal('fixed-pre-open-cutoff'),
+    planningPriceReference: Schema.Literal('signal-session-close'),
+    planningBrokerStateReference: Schema.Literal('reconciled-pre-plan-broker-state'),
+    fillPriceReference: Schema.Literal('next-session-open'),
+    buyingPowerPolicy: Schema.Literal('pre-submit-cash-without-sell-proceeds'),
+    submissionCutoffLeadMinutes: SubmissionCutoffLeadMinutes,
+  }),
+})
+
+const executionModelIssues = (
+  model: typeof ExecutionModelV1Base.Type | typeof ExecutionModelV2Base.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  if (model.partialFills.probabilityPpm > 0 && model.partialFills.filledFractionPpm === 0) {
+    issues.push({
+      path: ['partialFills', 'filledFractionPpm'],
+      issue: 'must be positive when partial fills are enabled',
+    })
+  }
+  if (model.partialFills.filledFractionPpm >= 1_000_000) {
+    issues.push({ path: ['partialFills', 'filledFractionPpm'], issue: 'must describe a partial, not complete, fill' })
+  }
+  return issues
+}
+
+export const ExecutionModelV1Schema = ExecutionModelV1Base.check(Schema.makeFilter(executionModelIssues))
+export const ExecutionModelV2Schema = ExecutionModelV2Base.check(Schema.makeFilter(executionModelIssues))
+export const ExecutionModelSchema = Schema.Union([ExecutionModelV1Schema, ExecutionModelV2Schema])
 export type ExecutionModel = typeof ExecutionModelSchema.Type
 
 const defaultEconomicThresholds = {
@@ -109,8 +138,7 @@ const universeContract = {
   evaluationStart: '2017-01-03',
 } as const
 
-const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
+const ProtocolCommon = {
   universeId: UniverseIdSchema,
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
@@ -124,55 +152,71 @@ const ProtocolBase = Schema.Struct({
   maximumPortfolioVolatility: PositiveUnitInterval,
   directVolatilityTarget: PositiveUnitInterval,
   initialCapitalMicros: PositiveMicros,
-  executionModel: ExecutionModelSchema,
   thresholds: EconomicThresholdsSchema,
+} as const
+
+const ProtocolV2Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
+  ...ProtocolCommon,
+  executionModel: ExecutionModelV1Schema,
 })
 
-export const ProtocolSchema = ProtocolBase.check(
-  Schema.makeFilter((parameters: typeof ProtocolBase.Type) => {
-    const issues: Schema.FilterIssue[] = []
-    const sortedUniverse = [...new Set(parameters.universe)].sort()
-    if (sortedUniverse.length !== parameters.universe.length) {
-      issues.push({ path: ['universe'], issue: 'must not contain duplicate symbols' })
-    } else if (sortedUniverse.some((symbol, index) => symbol !== parameters.universe[index])) {
-      issues.push({ path: ['universe'], issue: 'must be sorted in canonical order' })
+const ProtocolV3Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v3'),
+  ...ProtocolCommon,
+  executionModel: ExecutionModelV2Schema,
+})
+
+const protocolIssues = (
+  parameters: typeof ProtocolV2Base.Type | typeof ProtocolV3Base.Type,
+): readonly Schema.FilterIssue[] => {
+  const issues: Schema.FilterIssue[] = []
+  const sortedUniverse = [...new Set(parameters.universe)].sort()
+  if (sortedUniverse.length !== parameters.universe.length) {
+    issues.push({ path: ['universe'], issue: 'must not contain duplicate symbols' })
+  } else if (sortedUniverse.some((symbol, index) => symbol !== parameters.universe[index])) {
+    issues.push({ path: ['universe'], issue: 'must be sorted in canonical order' })
+  }
+  if (parameters.universeSymbolHash !== sha256(parameters.universe.join(','))) {
+    issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
+  }
+  if (
+    parameters.universeSymbolHash !== universeContract.symbolHash ||
+    parameters.universe.join(',') !== universeContract.symbols.join(',') ||
+    parameters.historyStart !== universeContract.historyStart ||
+    parameters.evaluationStart !== universeContract.evaluationStart
+  ) {
+    issues.push({ path: ['universeId'], issue: 'must identify its exact source-controlled universe contract' })
+  }
+  if (parameters.evaluationStart <= parameters.historyStart) {
+    issues.push({ path: ['evaluationStart'], issue: 'must follow historyStart' })
+  }
+  for (let index = 1; index < parameters.horizons.length; index += 1) {
+    if (parameters.horizons[index] <= parameters.horizons[index - 1]) {
+      issues.push({ path: ['horizons', index], issue: 'must be unique and strictly increasing' })
+      break
     }
-    if (parameters.universeSymbolHash !== sha256(parameters.universe.join(','))) {
-      issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
-    }
-    if (
-      parameters.universeSymbolHash !== universeContract.symbolHash ||
-      parameters.universe.join(',') !== universeContract.symbols.join(',') ||
-      parameters.historyStart !== universeContract.historyStart ||
-      parameters.evaluationStart !== universeContract.evaluationStart
-    ) {
-      issues.push({ path: ['universeId'], issue: 'must identify its exact source-controlled universe contract' })
-    }
-    if (parameters.evaluationStart <= parameters.historyStart) {
-      issues.push({ path: ['evaluationStart'], issue: 'must follow historyStart' })
-    }
-    for (let index = 1; index < parameters.horizons.length; index += 1) {
-      if (parameters.horizons[index] <= parameters.horizons[index - 1]) {
-        issues.push({ path: ['horizons', index], issue: 'must be unique and strictly increasing' })
-        break
-      }
-    }
-    if (parameters.volatilityWindow < 2) {
-      issues.push({ path: ['volatilityWindow'], issue: 'must contain at least two returns for covariance' })
-    }
-    if (Math.max(parameters.volatilityWindow, ...parameters.horizons) < DIRECT_VOLATILITY_WINDOW) {
-      issues.push({
-        path: ['horizons'],
-        issue: `must provide at least ${DIRECT_VOLATILITY_WINDOW} sessions for the direct-volatility benchmark`,
-      })
-    }
-    return issues
-  }),
-)
+  }
+  if (parameters.volatilityWindow < 2) {
+    issues.push({ path: ['volatilityWindow'], issue: 'must contain at least two returns for covariance' })
+  }
+  if (Math.max(parameters.volatilityWindow, ...parameters.horizons) < DIRECT_VOLATILITY_WINDOW) {
+    issues.push({
+      path: ['horizons'],
+      issue: `must provide at least ${DIRECT_VOLATILITY_WINDOW} sessions for the direct-volatility benchmark`,
+    })
+  }
+  return issues
+}
+
+export const ProtocolV2Schema = ProtocolV2Base.check(Schema.makeFilter(protocolIssues))
+export const ProtocolV3Schema = ProtocolV3Base.check(Schema.makeFilter(protocolIssues))
+export const ProtocolSchema = Schema.Union([ProtocolV2Schema, ProtocolV3Schema])
 export type Protocol = typeof ProtocolSchema.Type
+export type CausalProtocol = typeof ProtocolV3Schema.Type
 
 export const defaultProtocolDocument = {
-  schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+  schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
   universeId: universeContract.id,
   universeSymbolHash: universeContract.symbolHash,
   universe: universeContract.symbols,
@@ -200,6 +244,13 @@ export const loadProtocol = (input: unknown): Effect.Effect<Protocol, Operationa
     ),
   )
 
-export const loadDefaultProtocol = loadProtocol(defaultProtocolDocument)
+export const loadDefaultProtocol: Effect.Effect<CausalProtocol, OperationalError> = Schema.decodeUnknownEffect(
+  ProtocolV3Schema,
+  StrictParseOptions,
+)(defaultProtocolDocument).pipe(
+  Effect.mapError((cause) =>
+    operationalError('strategy', 'parameters', 'invalid risk-balanced trend parameters', cause),
+  ),
+)
 
 export const hashParameters = (parameters: Protocol): string => canonicalHashV1(parameters)
