@@ -111,7 +111,7 @@ export const desiredQuantityMicros = (
   equityMicros: bigint,
   weight: number,
   priceMicros: bigint,
-  model: ExecutionModel,
+  model: Pick<ExecutionModel, 'precision'>,
 ): bigint => {
   if (equityMicros < 0n || priceMicros <= 0n) throw new Error('desired quantity requires valid equity and price')
   const weightUnits = scaledNumber(weight, 'target weight', Number(WEIGHT_SCALE))
