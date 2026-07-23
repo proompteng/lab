@@ -9,7 +9,7 @@ const sourceShaPattern = /^[0-9a-f]{40}$/
 const tagPattern = /^[A-Za-z0-9._-]{1,128}$/
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/
 const decimalPattern = /^[0-9]+$/
-const transportAddressesPattern = /^[A-Za-z0-9.[\]:_-]+(?:,[A-Za-z0-9.[\]:_-]+)*$/
+const transportAddressesPattern = /^[A-Za-z0-9.[\]:_-]+(?:[ \t]*,[ \t]*[A-Za-z0-9.[\]:_-]+)*$/
 const maximumTigerBeetleClusterId = (1n << 128n) - 1n
 const maximumTigerBeetleLedger = 2 ** 32 - 1
 
@@ -143,7 +143,7 @@ const validateCandidateRuntime = (runtime: BaynCandidateRuntime): void => {
   if (clusterId <= 0n || clusterId > maximumTigerBeetleClusterId) {
     throw new Error(`invalid candidate TigerBeetle cluster ID: ${runtime.BAYN_TIGERBEETLE_CLUSTER_ID}`)
   }
-  if (!transportAddressesPattern.test(runtime.BAYN_TIGERBEETLE_ADDRESSES)) {
+  if (!transportAddressesPattern.test(runtime.BAYN_TIGERBEETLE_ADDRESSES.trim())) {
     throw new Error(`invalid candidate TigerBeetle addresses: ${runtime.BAYN_TIGERBEETLE_ADDRESSES}`)
   }
   if (!decimalPattern.test(runtime.BAYN_TIGERBEETLE_LEDGER)) {

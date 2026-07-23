@@ -206,8 +206,16 @@ describe('Bayn manifest promotion', () => {
     const paths = makeFixture({
       tigerBeetleAddresses: 'ledger.bayn.svc.cluster.local:3000',
     })
+    const runtimeCompatibleAddresses = currentBindings.BAYN_TIGERBEETLE_ADDRESSES.replaceAll(',', ', ')
 
-    expect(promote(paths)).toMatchObject({
+    expect(
+      promote(paths, {
+        candidateRuntime: {
+          ...currentBindings,
+          BAYN_TIGERBEETLE_ADDRESSES: runtimeCompatibleAddresses,
+        },
+      }),
+    ).toMatchObject({
       promotionAction: 'promote',
       promotionReason: 'eligible',
       qualificationMode: 'preserve',
@@ -218,7 +226,7 @@ describe('Bayn manifest promotion', () => {
       environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim(),
     )
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
-      environmentBlock('BAYN_TIGERBEETLE_ADDRESSES', currentBindings.BAYN_TIGERBEETLE_ADDRESSES).trim(),
+      environmentBlock('BAYN_TIGERBEETLE_ADDRESSES', runtimeCompatibleAddresses).trim(),
     )
   })
 
