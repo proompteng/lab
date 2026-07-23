@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import cast
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,7 +12,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import ping
-from app.trading.tigerbeetle_client import check_tigerbeetle_health
+from app.trading.tigerbeetle_client import (
+    RealTigerBeetleClient,
+    check_tigerbeetle_health,
+    create_tigerbeetle_client,
+    parse_replica_addresses,
+)
 from app.trading.tigerbeetle_reconcile import (
     BLOCKER_RECONCILIATION_STALE,
     latest_tigerbeetle_reconciliation_payload,
@@ -21,6 +26,39 @@ from app.trading.tigerbeetle_reconcile import (
 )
 
 logger = logging.getLogger(__name__)
+
+_protocol_health_lock = threading.Lock()
+_protocol_health_client: RealTigerBeetleClient | None = None
+
+
+def _close_tigerbeetle_protocol_health_client_locked() -> None:
+    global _protocol_health_client
+
+    client = _protocol_health_client
+    _protocol_health_client = None
+    if client is None:
+        return
+    client.close()
+
+
+def close_tigerbeetle_protocol_health_client() -> None:
+    """Close the process-owned status probe client."""
+
+    with _protocol_health_lock:
+        _close_tigerbeetle_protocol_health_client_locked()
+
+
+def _protocol_health_client_for_settings(
+    timeout_seconds: float,
+) -> RealTigerBeetleClient:
+    global _protocol_health_client
+
+    if _protocol_health_client is None:
+        _protocol_health_client = create_tigerbeetle_client(
+            settings,
+            rpc_timeout_seconds=timeout_seconds,
+        )
+    return _protocol_health_client
 
 
 def apply_status_read_statement_timeout(
@@ -54,18 +92,16 @@ def check_postgres(session: Session) -> dict[str, object]:
 
 def check_tigerbeetle_protocol_health() -> dict[str, object]:
     if not settings.tigerbeetle_enabled:
+        close_tigerbeetle_protocol_health_client()
         health = check_tigerbeetle_health(settings)
         payload = health.as_dict()
         payload["protocol_ok"] = True
         payload["protocol_probe_skipped"] = False
         return payload
 
-    replica_addresses = [
-        item.strip()
-        for item in settings.tigerbeetle_replica_addresses.split(",")
-        if item.strip()
-    ]
+    replica_addresses = parse_replica_addresses(settings.tigerbeetle_replica_addresses)
     if not (settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required):
+        close_tigerbeetle_protocol_health_client()
         return {
             "enabled": True,
             "required": settings.tigerbeetle_required,
@@ -78,26 +114,11 @@ def check_tigerbeetle_protocol_health() -> dict[str, object]:
         }
 
     timeout_seconds = max(0.1, float(settings.tigerbeetle_health_timeout_seconds))
-    executor = ThreadPoolExecutor(max_workers=1)
-    future = executor.submit(check_tigerbeetle_health, settings)
-    try:
-        health = future.result(timeout=timeout_seconds)
-    except TimeoutError:
-        return {
-            "enabled": True,
-            "required": settings.tigerbeetle_required,
-            "ok": not settings.tigerbeetle_required,
-            "protocol_ok": False,
-            "protocol_probe_skipped": False,
-            "cluster_id": settings.tigerbeetle_cluster_id,
-            "replica_addresses": replica_addresses,
-            "last_error": (
-                f"TimeoutError: tigerbeetle protocol health timed out after "
-                f"{timeout_seconds:.2f}s"
-            ),
-        }
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    with _protocol_health_lock:
+        client = _protocol_health_client_for_settings(timeout_seconds)
+        health = check_tigerbeetle_health(settings, client=client)
+        if not health.ok:
+            _close_tigerbeetle_protocol_health_client_locked()
 
     payload = health.as_dict()
     protocol_ok = bool(payload.get("ok"))
@@ -432,6 +453,7 @@ __all__ = (
     "build_tigerbeetle_ledger_status",
     "check_postgres",
     "check_tigerbeetle_protocol_health",
+    "close_tigerbeetle_protocol_health_client",
     "empty_tigerbeetle_ref_counts",
     "latest_reconciliation_ref_counts",
     "sqlalchemy_error_indicates_statement_timeout",

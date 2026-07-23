@@ -322,13 +322,21 @@ class FakeTigerBeetleClient:
         return [self.transfers[item] for item in ids if item in self.transfers]
 
 
-def create_tigerbeetle_client(settings: Settings) -> RealTigerBeetleClient:
+def create_tigerbeetle_client(
+    settings: Settings,
+    *,
+    rpc_timeout_seconds: float | None = None,
+) -> RealTigerBeetleClient:
     return RealTigerBeetleClient(
         cluster_id=settings.tigerbeetle_cluster_id,
         replica_addresses=parse_replica_addresses(
             settings.tigerbeetle_replica_addresses
         ),
-        rpc_timeout_seconds=settings.tigerbeetle_rpc_timeout_seconds,
+        rpc_timeout_seconds=(
+            settings.tigerbeetle_rpc_timeout_seconds
+            if rpc_timeout_seconds is None
+            else rpc_timeout_seconds
+        ),
     )
 
 

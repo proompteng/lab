@@ -106,7 +106,7 @@ class SingleWriterSchedulerManifestTests(TestCase):
             env["TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS"].get("value"), "45"
         )
         self.assertEqual(
-            env["TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS"].get("value"), "30"
+            env["TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS"].get("value"), "300"
         )
         self.assertEqual(
             env["TRADING_BROKER_MUTATION_RECOVERY_ENABLED"].get("value"), "true"
