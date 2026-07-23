@@ -146,12 +146,16 @@ const finalizedPublication = (manifest = makeInputManifest()): FinalizedPublicat
   },
 })
 
-const marketDataService = (inspectPublication: MarketDataService['inspectPublication']): MarketDataService => {
+const marketDataService = (
+  inspectPublication: MarketDataService['inspectPublication'],
+  inspectSnapshotPublication: MarketDataService['inspectSnapshotPublication'] = (input) => inspectPublication(input),
+): MarketDataService => {
   const unused = Effect.die(new Error('cycle readiness must only inspect the exact finalized publication'))
   return {
     check: unused,
     inspect: unused,
     inspectPublication,
+    inspectSnapshotPublication,
     load: unused,
   }
 }
@@ -207,9 +211,10 @@ const provide = (
   cycle: AutonomousCycle,
   inspectPublication: MarketDataService['inspectPublication'],
   control: StoreControl,
+  inspectSnapshotPublication?: MarketDataService['inspectSnapshotPublication'],
 ) =>
   runCyclePublicationReadiness(cycle).pipe(
-    Effect.provideService(MarketData, marketDataService(inspectPublication)),
+    Effect.provideService(MarketData, marketDataService(inspectPublication, inspectSnapshotPublication)),
     Effect.provideService(CycleStore, cycleStore(control)),
   )
 
@@ -369,18 +374,17 @@ describe('autonomous cycle finalized-publication readiness', () => {
       updatedAt: '2026-01-30T21:20:00.000Z',
     }
     control.current = boundCycle
-    let inspections = 0
+    const inspectedSnapshotIds: string[] = []
+    const unexpectedSessionLookup = () =>
+      Effect.die(new Error('bound readiness must not rediscover publications by session and calendar'))
     const rebound = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:21:00.000Z'))
-        return yield* provide(
-          boundCycle,
-          () =>
-            Effect.sync(() => {
-              inspections += 1
-              return finalizedPublication()
-            }),
-          control,
+        return yield* provide(boundCycle, unexpectedSessionLookup, control, (request) =>
+          Effect.sync(() => {
+            inspectedSnapshotIds.push(request.snapshotId)
+            return finalizedPublication()
+          }),
         )
       }).pipe(Effect.provide(TestClock.layer())),
     )
@@ -396,21 +400,18 @@ describe('autonomous cycle finalized-publication readiness', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-01-30T21:22:00.000Z'))
         return yield* Effect.flip(
-          provide(
-            boundCycle,
-            () =>
-              Effect.sync(() => {
-                inspections += 1
-                const manifest = makeInputManifest()
-                return finalizedPublication({
-                  ...manifest,
-                  finalizedSnapshot: {
-                    ...manifest.finalizedSnapshot,
-                    snapshotId: 'e'.repeat(64),
-                  },
-                })
-              }),
-            control,
+          provide(boundCycle, unexpectedSessionLookup, control, (request) =>
+            Effect.sync(() => {
+              inspectedSnapshotIds.push(request.snapshotId)
+              const manifest = makeInputManifest()
+              return finalizedPublication({
+                ...manifest,
+                finalizedSnapshot: {
+                  ...manifest.finalizedSnapshot,
+                  snapshotId: 'e'.repeat(64),
+                },
+              })
+            }),
           ),
         )
       }).pipe(Effect.provide(TestClock.layer())),
@@ -420,7 +421,7 @@ describe('autonomous cycle finalized-publication readiness', () => {
       operation: 'inspect-publication',
       failure: 'contract',
     })
-    expect(inspections).toBe(2)
+    expect(inspectedSnapshotIds).toEqual([snapshotId, snapshotId])
     expect(control.binds).toBe(0)
   })
 })

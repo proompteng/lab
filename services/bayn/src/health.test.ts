@@ -69,6 +69,8 @@ describe('Bayn continuous health', () => {
           check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
           inspect: Effect.die(new Error('health probes must not inspect sessions')),
           inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+          inspectSnapshotPublication: () =>
+            Effect.die(new Error('health probes must not inspect bound cycle publications')),
           load: Effect.die(new Error('health probes must not load bars')),
         }),
         Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
@@ -120,6 +122,8 @@ describe('Bayn continuous health', () => {
       ),
       inspect: Effect.die(new Error('health probes must not inspect sessions')),
       inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+      inspectSnapshotPublication: () =>
+        Effect.die(new Error('health probes must not inspect bound cycle publications')),
       load: Effect.die(new Error('health probes must not load bars')),
     }
     const journal: JournalService = {
@@ -199,6 +203,8 @@ describe('Bayn continuous health', () => {
       }),
       inspect: Effect.die(new Error('health monitor must not inspect sessions')),
       inspectPublication: () => Effect.die(new Error('health monitor must not inspect cycle publications')),
+      inspectSnapshotPublication: () =>
+        Effect.die(new Error('health monitor must not inspect bound cycle publications')),
       load: Effect.die(new Error('health monitor must not load bars')),
     }
     const journal: JournalService = { ...successfulJournal, checkRun: () => Effect.void }
@@ -235,6 +241,8 @@ describe('Bayn continuous health', () => {
       ),
       inspect: Effect.die(new Error('health monitor must not inspect sessions')),
       inspectPublication: () => Effect.die(new Error('health monitor must not inspect cycle publications')),
+      inspectSnapshotPublication: () =>
+        Effect.die(new Error('health monitor must not inspect bound cycle publications')),
       load: Effect.die(new Error('health monitor must not load bars')),
     }
     const fiber = Effect.runFork(

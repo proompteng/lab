@@ -116,9 +116,14 @@ const blockMissedPublication = (
 const inspectBoundPublication = (
   cycle: AutonomousCycle,
   marketData: MarketDataService,
-): Effect.Effect<CyclePublicationReadiness, CycleReadinessError> =>
-  marketData
-    .inspectPublication({
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError> => {
+  const boundSnapshotId = cycle.bindings.snapshotId
+  if (boundSnapshotId === undefined) {
+    return Effect.fail(readinessError('inspect-publication', 'contract', 'bound cycle does not retain a snapshot ID'))
+  }
+  return marketData
+    .inspectSnapshotPublication({
+      snapshotId: boundSnapshotId,
       signalSessionDate: cycle.identity.signalSessionDate,
       signalCalendarVersion: cycle.identity.signalCalendarVersion,
     })
@@ -142,11 +147,7 @@ const inspectBoundPublication = (
               ),
             )
           }
-          const boundSnapshotId = cycle.bindings.snapshotId
-          if (
-            boundSnapshotId === undefined ||
-            publication.inspection.manifest.finalizedSnapshot.snapshotId !== boundSnapshotId
-          ) {
+          if (publication.inspection.manifest.finalizedSnapshot.snapshotId !== boundSnapshotId) {
             return yield* Effect.fail(
               readinessError(
                 'inspect-publication',
@@ -176,6 +177,7 @@ const inspectBoundPublication = (
         }),
       ),
     )
+}
 
 export const runCyclePublicationReadiness = (
   cycle: AutonomousCycle,

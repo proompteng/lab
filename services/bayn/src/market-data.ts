@@ -153,6 +153,10 @@ export interface FinalizedPublicationRequest {
   readonly signalCalendarVersion: string
 }
 
+export interface SnapshotPublicationRequest extends FinalizedPublicationRequest {
+  readonly snapshotId: string
+}
+
 export type FinalizedPublicationInspection =
   | {
       readonly outcome: 'MISSING'
@@ -169,6 +173,9 @@ export interface MarketDataService {
   readonly inspect: Effect.Effect<MarketDataInspection, OperationalError>
   readonly inspectPublication: (
     request: FinalizedPublicationRequest,
+  ) => Effect.Effect<FinalizedPublicationInspection, OperationalError>
+  readonly inspectSnapshotPublication: (
+    request: SnapshotPublicationRequest,
   ) => Effect.Effect<FinalizedPublicationInspection, OperationalError>
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
@@ -671,6 +678,36 @@ const makeMarketData = (
         ORDER BY snapshot_id, finalized_at
       `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
 
+    const loadSnapshotPublicationManifest = (request: SnapshotPublicationRequest) =>
+      sql`
+        SELECT
+          snapshot_id,
+          schema_version,
+          publisher_source_revision,
+          publisher_image_repository,
+          publisher_image_digest,
+          universe_id,
+          universe_symbol_hash,
+          provider,
+          source_feed,
+          adjustment,
+          calendar_version,
+          toString(requested_start) AS requested_start,
+          toString(publication_asof) AS publication_asof,
+          toString(first_session) AS first_session,
+          toString(last_session) AS last_session,
+          symbol_count,
+          session_count,
+          bar_count,
+          bars_content_hash,
+          sessions_content_hash,
+          manifest_content_hash,
+          toString(finalized_at) AS finalized_at
+        FROM signal.snapshot_manifests_v2
+        WHERE snapshot_id = ${sql.param('String', request.snapshotId)}
+        ORDER BY finalized_at
+      `.pipe(sql.withQueryId(`bayn-bound-manifest-${request.snapshotId.slice(-32)}`))
+
     const loadPublicationSessions = (snapshotId: string) =>
       sql`
         SELECT
@@ -708,6 +745,52 @@ const makeMarketData = (
         try: body,
         catch: (cause) => operationalError('market-data', operation, 'Signal snapshot verification failed', cause),
       })
+    const inspectPublicationRows = (
+      input: FinalizedPublicationRequest,
+      manifestRows: readonly unknown[],
+      expectedSnapshotId?: string,
+    ) =>
+      Effect.gen(function* () {
+        const manifests = yield* verify('inspect-publication', () => decodeSnapshotRows([], [], manifestRows).manifests)
+        const observedAt = (): Effect.Effect<string> =>
+          Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+        if (manifests.length === 0) {
+          return { outcome: 'MISSING', observedAt: yield* observedAt() } as const
+        }
+        if (
+          expectedSnapshotId !== undefined &&
+          manifests.some((manifest) => manifest.snapshot_id !== expectedSnapshotId)
+        ) {
+          return yield* verify('inspect-publication', () => {
+            throw new Error('bound finalized Signal query returned a different snapshot ID')
+          })
+        }
+        const manifest = manifests[0]
+        if (manifest === undefined) {
+          return yield* verify('inspect-publication', () => {
+            throw new Error('finalized Signal manifest disappeared before its session read')
+          })
+        }
+        const sessionRows = yield* loadPublicationSessions(manifest.snapshot_id)
+        const inspectedAt = yield* observedAt()
+        const inspection = yield* verify('inspect-publication', () =>
+          verifyFinalizedPublication(decodeSnapshotRows([], sessionRows, manifestRows), input, contract, inspectedAt),
+        )
+        if (inspection === undefined) {
+          return yield* verify('inspect-publication', () => {
+            throw new Error('finalized Signal manifest disappeared before verification')
+          })
+        }
+        if (
+          expectedSnapshotId !== undefined &&
+          inspection.manifest.finalizedSnapshot.snapshotId !== expectedSnapshotId
+        ) {
+          return yield* verify('inspect-publication', () => {
+            throw new Error('verified finalized Signal publication differs from the bound snapshot ID')
+          })
+        }
+        return { outcome: 'FINALIZED', observedAt: inspectedAt, inspection } as const
+      })
 
     return {
       check: Effect.gen(function* () {
@@ -732,39 +815,23 @@ const makeMarketData = (
         ),
       ),
       inspectPublication: (input) =>
-        Effect.gen(function* () {
-          const manifestRows = yield* loadPublicationManifests(input)
-          const manifests = yield* verify(
-            'inspect-publication',
-            () => decodeSnapshotRows([], [], manifestRows).manifests,
-          )
-          const observedAt = (): Effect.Effect<string> =>
-            Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
-          if (manifests.length === 0) {
-            return { outcome: 'MISSING', observedAt: yield* observedAt() } as const
-          }
-          const manifest = manifests[0]
-          if (manifest === undefined) {
-            return yield* verify('inspect-publication', () => {
-              throw new Error('finalized Signal manifest disappeared before its session read')
-            })
-          }
-          const sessionRows = yield* loadPublicationSessions(manifest.snapshot_id)
-          const inspectedAt = yield* observedAt()
-          const inspection = yield* verify('inspect-publication', () =>
-            verifyFinalizedPublication(decodeSnapshotRows([], sessionRows, manifestRows), input, contract, inspectedAt),
-          )
-          if (inspection === undefined) {
-            return yield* verify('inspect-publication', () => {
-              throw new Error('finalized Signal manifest disappeared before verification')
-            })
-          }
-          return { outcome: 'FINALIZED', observedAt: inspectedAt, inspection } as const
-        }).pipe(
+        loadPublicationManifests(input).pipe(
+          Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows)),
           Effect.mapError((cause) =>
             marketDataOperationError(
               'inspect-publication',
               `failed to inspect finalized Signal publication for ${input.signalSessionDate}`,
+              cause,
+            ),
+          ),
+        ),
+      inspectSnapshotPublication: (input) =>
+        loadSnapshotPublicationManifest(input).pipe(
+          Effect.flatMap((manifestRows) => inspectPublicationRows(input, manifestRows, input.snapshotId)),
+          Effect.mapError((cause) =>
+            marketDataOperationError(
+              'inspect-publication',
+              `failed to inspect bound finalized Signal publication ${input.snapshotId}`,
               cause,
             ),
           ),

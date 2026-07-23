@@ -112,6 +112,8 @@ export const marketDataService = (
     },
   })),
   inspectPublication: () => Effect.die(new Error('startup test market data must not inspect cycle publications')),
+  inspectSnapshotPublication: () =>
+    Effect.die(new Error('startup test market data must not inspect bound cycle publications')),
   load,
 })
 
