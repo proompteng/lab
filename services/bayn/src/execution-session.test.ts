@@ -12,7 +12,7 @@ const hash = (character: string): string => character.repeat(64)
 
 const calendar = (
   sessions: MarketCalendarObservation['sessions'],
-  requestedRange = { start: '2026-07-03', end: '2026-07-10' },
+  requestedRange = { start: '2026-07-02', end: '2026-07-10' },
 ): MarketCalendarObservation => {
   const material = {
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
@@ -85,7 +85,7 @@ describe('causal execution-session binding', () => {
       },
       calendar: calendar(
         [{ date: '2026-03-09', openAt: '2026-03-09T13:30:00.000Z', closeAt: '2026-03-09T20:00:00.000Z' }],
-        { start: '2026-03-07', end: '2026-03-10' },
+        { start: '2026-03-06', end: '2026-03-10' },
       ),
       executionModel: defaultExecutionModel,
     })
@@ -138,5 +138,16 @@ describe('causal execution-session binding', () => {
         bindingHash: canonicalHashV1(tamperedMaterial),
       }),
     ).toThrow('must equal execution open minus the declared fixed cutoff lead')
+  })
+
+  test('rejects a truncated calendar range that can skip the actual next exchange session', () => {
+    expect(() =>
+      bind(
+        calendar([{ date: '2026-07-10', openAt: '2026-07-10T13:30:00.000Z', closeAt: '2026-07-10T20:00:00.000Z' }], {
+          start: '2026-07-10',
+          end: '2026-07-10',
+        }),
+      ),
+    ).toThrow('market calendar request must start on or before the signal session')
   })
 })

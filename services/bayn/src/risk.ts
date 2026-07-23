@@ -391,9 +391,9 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     makeGate(
       Gate.IntentTime,
       Reason.IntentTimeInvalid,
-      instant(intent.createdAt) <= evaluatedAt,
+      instant(intent.createdAt) >= submissionOpen && instant(intent.createdAt) <= evaluatedAt,
       intent.createdAt,
-      `<=${state.evaluatedAt}`,
+      `[${state.executionSession.submissionOpenAt},${state.evaluatedAt}]`,
     ),
     makeGate(
       Gate.IntentFreshness,

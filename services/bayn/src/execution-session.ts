@@ -119,6 +119,9 @@ export const bindExecutionSession = (input: BindExecutionSessionInput): Executio
       throw new Error('Alpaca market calendar sessions must be unique and strictly ordered')
     }
   }
+  if (input.calendar.requestedRange.start > input.signal.sessionDate) {
+    throw new Error('Alpaca market calendar request must start on or before the signal session')
+  }
   const executionSession = input.calendar.sessions.find((session) => session.date > input.signal.sessionDate)
   if (executionSession === undefined) {
     throw new Error('Alpaca market calendar response does not contain a future execution session')

@@ -383,7 +383,9 @@ describe('bounded paper risk', () => {
       executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: evaluatedAt }),
     })
 
-    expect(evaluate(makeIntent(), atOpen, makePolicy()).decision.outcome).toBe(RiskOutcome.Approved)
+    expect(evaluate(makeIntent({ createdAt: evaluatedAt }), atOpen, makePolicy()).decision.outcome).toBe(
+      RiskOutcome.Approved,
+    )
     expectBlocked(Reason.OutsideSession, makeIntent(), beforeOpen, makePolicy())
     expectBlocked(Reason.OutsideSession, makeIntent(), atCutoff, makePolicy())
   })
@@ -591,6 +593,7 @@ describe('bounded paper risk', () => {
       }),
     )
     expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T21:00:00.001Z' }))
+    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T20:59:29.999Z' }))
     expectBlocked(
       Reason.IntentStale,
       makeIntent({ createdAt: '2026-07-21T20:59:00.000Z' }),
