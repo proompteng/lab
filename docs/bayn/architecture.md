@@ -15,8 +15,9 @@ The runtime has three external I/O boundaries:
 - a dedicated Bayn TigerBeetle cluster for deterministic simulation accounting; and
 - the existing `EvidenceStore` interface for durable qualification evidence.
 
-Alpaca is reachable only through the existing paper-host CONNECT proxy. Credential binding first performs a bounded,
-runtime-decoded GET-only preflight. Paper reconciliation and mutation remain separate authority-gated steps.
+Alpaca is reachable only through the existing paper-host CONNECT proxy. Credentials provide runtime-decoded GET-only
+broker access. Under `OBSERVE`, the canonical non-dispatchable autonomous shadow loop composes `PaperStore` and
+`WriterFence` and performs one same-pass reconciliation when it builds a decision; broker mutation remains absent.
 
 The implementation behind `EvidenceStore` is deliberately outside this document. Non-database cleanup must preserve
 that interface and every persisted evidence contract.
@@ -68,10 +69,10 @@ order identity, and consistency delay in PostgreSQL. Any unresolved submit or ca
 intents; terminal recovery releases that block. There is no scheduler, public order route, arbitrary order API, blind
 flatten, runtime registry, or alternate writer.
 
-This path is intentionally dormant: `src/index.ts` does not provide `BrokerMutation` or invoke the coordinator, and the
-current qualification is not execution authority. A credential mounted under `OBSERVE` performs GET-only preflight;
-the paper store, writer fence, and reconciliation loop are built only under `PAPER`. Enabling paper operation requires
-a separate reviewed change and an audited qualified result.
+This path is intentionally dormant: credentials provide GET-only broker access, while `OBSERVE` composes `PaperStore`
+and `WriterFence` for one same-pass reconciliation inside the canonical non-dispatchable autonomous shadow loop.
+`BrokerMutation`, `IntentStore`, `MutationStore`, and the coordinator remain absent. `PAPER` startup fails closed until
+the PROOMPT-375 Phase B authority generation and dispatch transition exists.
 
 ## Effect composition
 
@@ -94,9 +95,10 @@ Effect is used at resource and failure boundaries, not as a container for ordina
   operation.
 - HTTP receives the runtime state and the narrow evidence-read callback it needs. It does not depend on the strategy or
   the complete evidence service.
-- The Alpaca read adapter may enter runtime composition for GET-only preflight under `OBSERVE`. The mutation adapter,
-  intent and mutation stores, writer fence, reconciliation loop, and recovery coordinator remain outside composition
-  until the authority gates explicitly permit a paper slice.
+- The Alpaca read adapter enters runtime composition for GET-only access under `OBSERVE`. `PaperStore` and
+  `WriterFence` support one same-pass reconciliation inside the canonical non-dispatchable autonomous shadow loop.
+  `BrokerMutation`, `IntentStore`, `MutationStore`, and the coordinator remain outside composition, and `PAPER` startup
+  fails closed until the PROOMPT-375 Phase B authority generation and dispatch transition exists.
 
 Do not introduce a `Context.Service` or `Layer` for a pure value merely to make it injectable. Add an Effect service
 only when a capability needs acquisition, release, configuration, retry, concurrency, or typed I/O failure.
