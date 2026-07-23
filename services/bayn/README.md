@@ -131,7 +131,8 @@ strategy or target planner, or compose `PaperStore`, `WriterFence`, any intent/m
 latest cycle must be `COMPLETED` with zero unfinished cycles, and its strict persisted shadow document must remain
 `PLANNED`, unexpired, bound to the same cycle, operational snapshot, account, terminal qualification, strategy,
 source-controlled risk policy, and latest exact reconciliation. Durable maximum and effective authority must both be
-`OBSERVE`, and every delta must have only the mandatory `AuthorityNotPaper` risk failure.
+`OBSERVE`, the durable authority generation must match the configured decoded generation hash, and every delta must
+have only the mandatory `AuthorityNotPaper` risk failure.
 
 After that immutable read snapshot, DISCOVER performs exactly one account GET and one asset GET for every ordered
 persisted target delta, with bounded concurrency and restored document order. It emits every candidate without

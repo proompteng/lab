@@ -42,6 +42,7 @@ const documentHash = hash('4')
 const policyHash = hash('5')
 const reconciliationId = hash('6')
 const reconciliationHash = hash('7')
+const authorityGenerationHash = hash('e')
 const cutoff = '2099-07-24T13:15:00.000Z'
 const observedAt = '2099-07-24T12:00:00.000Z'
 const strategy: RuntimeProvenance['strategy'] = {
@@ -60,6 +61,7 @@ const identity: PaperProofDiscoveryIdentity = {
   strategyProtocolHash: makeStrategyProtocolHash(strategy),
   qualificationRunId,
   accountId,
+  authorityGenerationHash,
   policyHash,
 }
 
@@ -110,6 +112,7 @@ const projection = (): CycleOperationsProjection => ({
     terminalAt: '2099-07-23T20:10:00.000Z',
   },
   authority: {
+    generationHash: authorityGenerationHash,
     maximum: Authority.Observe,
     effective: Authority.Observe,
     kill: KillState.Clear,
@@ -405,6 +408,7 @@ describe('paper proof DISCOVER', () => {
       authority: Authority.Observe,
       dispatchable: false,
       binding: {
+        runtime: { authorityGenerationHash },
         cycle: { cycleId, decisionHash: documentHash },
         document: { reconciliationId, policyHash },
       },
@@ -550,8 +554,23 @@ describe('paper proof DISCOVER', () => {
       ['missing document', (base) => ({ ...base, document: Option.none() }), 'document-missing', observedAt],
       ['stale document', (base) => base, 'document-stale', '2099-07-24T13:15:00.000Z'],
       [
-        'missing durable authority',
+        'missing durable authority generation',
         (base) => ({ ...base, projection: { ...base.projection, authority: null } }),
+        'authority-mismatch',
+        observedAt,
+      ],
+      [
+        'mismatched durable authority generation',
+        (base) => ({
+          ...base,
+          projection: {
+            ...base.projection,
+            authority: {
+              ...base.projection.authority!,
+              generationHash: hash('f'),
+            },
+          },
+        }),
         'authority-mismatch',
         observedAt,
       ],
@@ -562,6 +581,7 @@ describe('paper proof DISCOVER', () => {
           projection: {
             ...base.projection,
             authority: {
+              generationHash: authorityGenerationHash,
               maximum: Authority.Paper,
               effective: Authority.Paper,
               kill: KillState.Clear,

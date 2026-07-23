@@ -118,6 +118,7 @@ const RuntimeIdentitySchema = Schema.Struct({
   strategyProtocolHash: Sha256Schema,
   qualificationRunId: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
+  authorityGenerationHash: Sha256Schema,
   policyHash: Sha256Schema,
 })
 export type PaperProofDiscoveryIdentity = typeof RuntimeIdentitySchema.Type
@@ -431,10 +432,11 @@ const validateSnapshot = (
   )
   requireInvariant(
     projection.authority !== null &&
+      projection.authority.generationHash === identity.authorityGenerationHash &&
       projection.authority.maximum === Authority.Observe &&
       projection.authority.effective === Authority.Observe,
     'authority-mismatch',
-    'durable authority must be present with OBSERVE maximum and effective authority',
+    'durable authority must match the configured generation with OBSERVE maximum and effective authority',
   )
   requireInvariant(
     document.targetPlan.status === TargetPlanStatus.Planned && document.targetPlan.intentTargets.length > 0,

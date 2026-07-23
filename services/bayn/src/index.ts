@@ -190,6 +190,7 @@ const runPaperProofDiscovery = (config: LoadedRuntimeConfig, strategy: Strategy)
       strategyProtocolHash: makeStrategyProtocolHash(strategy.provenance.strategy),
       qualificationRunId,
       accountId: alpaca.accountId,
+      authorityGenerationHash: alpaca.authorityGenerationHash,
       policyHash: canonicalHashV1(policy),
     }).pipe(
       Effect.provideService(PgClient.PgClient, Context.get(postgres, PgClient.PgClient)),
