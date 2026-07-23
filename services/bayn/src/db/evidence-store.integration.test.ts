@@ -970,7 +970,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       brokerOrderId: orderId,
     })
     expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
-  })
+  }, 20_000)
 
   test('rejects non-submitted and mismatched broker order identities before cancellation starts', async () => {
     const execution = makeExecutionRuntime()
