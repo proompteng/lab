@@ -1,6 +1,7 @@
 import { Clock, Effect, Fiber, Layer, Ref, Scope } from 'effect'
 
 import type { RuntimeConfig } from './config'
+import { makeStrategyProtocolHash } from './contracts'
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
@@ -16,6 +17,7 @@ export type RecordAutonomousCyclePass = (observation: AutonomousCyclePassObserva
 
 export interface AutonomousCycleStartupInput {
   readonly qualificationRunId: string
+  readonly strategyProtocolHash: string
   readonly recordPass: RecordAutonomousCyclePass
 }
 
@@ -88,6 +90,7 @@ export const run = (
           }))
           autonomousCycleFiber = yield* autonomousCycleStartup({
             qualificationRunId: initialized.evidence.evaluation.runId,
+            strategyProtocolHash: makeStrategyProtocolHash(strategy.provenance.strategy),
             recordPass: (observation) => recordAutonomousCyclePass(state, observation),
           })
         }
