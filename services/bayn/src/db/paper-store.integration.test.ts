@@ -251,6 +251,27 @@ const makeClientRuntime = () => ManagedRuntime.make(PostgresClientLive(config).p
 
 const makeEvidenceRuntime = () => ManagedRuntime.make(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
 
+const readAuthorityTupleEvidence = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const [evidence] = yield* sql<{ authority: unknown; history: unknown }>`
+    SELECT
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+        )
+        FROM authority_state AS authority
+      ) AS authority,
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+          ORDER BY history.authority_version
+        )
+        FROM authority_generations AS history
+      ) AS history
+  `
+  return evidence
+})
+
 const seedQualificationEvidence = (fixture: QualificationFixture) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
@@ -900,33 +921,16 @@ describePostgres('paper accounting persistence', () => {
         return await prepareRuntime.runPromise(
           Effect.gen(function* () {
             const store = yield* PaperStore
-            const sql = yield* PgClient.PgClient
             yield* seedQualificationEvidence(qualifiedEvidence)
             yield* seedExactReconciliation(reconciliation)
             yield* store.ensureAuthorityGeneration({
               generationHash: initialGenerationHash,
               maximum: Authority.Observe,
             })
-            const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
-              SELECT
-                (
-                  SELECT jsonb_agg(
-                    jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
-                  )
-                  FROM authority_state AS authority
-                ) AS authority,
-                (
-                  SELECT jsonb_agg(
-                    jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
-                    ORDER BY history.authority_version
-                  )
-                  FROM authority_generations AS history
-                ) AS history
-            `
-            const [before] = yield* readAuthorityEvidence
+            const before = yield* readAuthorityTupleEvidence
             const first = yield* store.preparePaperGeneration(proofBinding(expected))
             const second = yield* store.preparePaperGeneration(proofBinding(expected))
-            const [after] = yield* readAuthorityEvidence
+            const after = yield* readAuthorityTupleEvidence
             return { after, before, first, second }
           }),
         )
@@ -995,18 +999,9 @@ describePostgres('paper accounting persistence', () => {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
-          const sql = yield* PgClient.PgClient
-          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
-            SELECT
-              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
-              (
-                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
-                FROM authority_generations AS history
-              ) AS history
-          `
-          const [before] = yield* readAuthorityEvidence
+          const before = yield* readAuthorityTupleEvidence
           const failure = yield* Effect.flip(store.preparePaperGeneration(proofBinding(expected)))
-          const [after] = yield* readAuthorityEvidence
+          const after = yield* readAuthorityTupleEvidence
           return { after, before, failure }
         }),
       )
@@ -1052,18 +1047,9 @@ describePostgres('paper accounting persistence', () => {
       const result = await activationRuntime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
-          const sql = yield* PgClient.PgClient
-          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
-            SELECT
-              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
-              (
-                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
-                FROM authority_generations AS history
-              ) AS history
-          `
-          const [before] = yield* readAuthorityEvidence
+          const before = yield* readAuthorityTupleEvidence
           const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(prepared)))
-          const [after] = yield* readAuthorityEvidence
+          const after = yield* readAuthorityTupleEvidence
           return { after, before, failure }
         }),
       )
@@ -1112,18 +1098,9 @@ describePostgres('paper accounting persistence', () => {
       const result = await activationRuntime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
-          const sql = yield* PgClient.PgClient
-          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
-            SELECT
-              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
-              (
-                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
-                FROM authority_generations AS history
-              ) AS history
-          `
-          const [before] = yield* readAuthorityEvidence
+          const before = yield* readAuthorityTupleEvidence
           const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(prepared)))
-          const [after] = yield* readAuthorityEvidence
+          const after = yield* readAuthorityTupleEvidence
           return { after, before, failure }
         }),
       )
@@ -1492,26 +1469,9 @@ describePostgres('paper accounting persistence', () => {
       const result = await replayRuntime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
-          const sql = yield* PgClient.PgClient
-          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
-            SELECT
-              (
-                SELECT jsonb_agg(
-                  jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
-                )
-                FROM authority_state AS authority
-              ) AS authority,
-              (
-                SELECT jsonb_agg(
-                  jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
-                  ORDER BY history.authority_version
-                )
-                FROM authority_generations AS history
-              ) AS history
-          `
-          const [before] = yield* readAuthorityEvidence
+          const before = yield* readAuthorityTupleEvidence
           const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(activation)))
-          const [after] = yield* readAuthorityEvidence
+          const after = yield* readAuthorityTupleEvidence
           return { after, before, failure }
         }),
       )
@@ -1797,14 +1757,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: initialGenerationHash,
             maximum: Authority.Observe,
           })
-          const [before] = yield* sql<{ authority: unknown; history: unknown }>`
-            SELECT
-              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
-              (
-                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
-                FROM authority_generations AS history
-              ) AS history
-          `
+          const before = yield* readAuthorityTupleEvidence
           const changedProof = yield* Effect.flip(
             store.activatePaperGeneration({
               ...proofBinding(activation),
@@ -1823,14 +1776,7 @@ describePostgres('paper accounting persistence', () => {
             )
           `
           const stale = yield* Effect.flip(store.activatePaperGeneration(proofBinding(activation)))
-          const [after] = yield* sql<{ authority: unknown; history: unknown }>`
-            SELECT
-              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
-              (
-                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
-                FROM authority_generations AS history
-              ) AS history
-          `
+          const after = yield* readAuthorityTupleEvidence
           return { after, before, changedProof, stale }
         }),
       )
