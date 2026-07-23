@@ -3,7 +3,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { TestClock } from 'effect/testing'
 
+import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../broker/alpaca'
 import {
   CycleState,
   CycleTerminalReason,
@@ -14,6 +16,8 @@ import {
   makeExecutionCalendarObservation,
   type CycleDraft,
 } from '../cycle'
+import { runAutonomousCyclePass, type CycleCandidate, type CycleRunResult } from '../cycle-runner'
+import { canonicalHashV1 } from '../hash'
 import type { SignalSessionRow } from '../market-data'
 import type { IsoDate } from '../types'
 import { CycleStore, CycleStoreLive } from './cycle-store'
@@ -122,6 +126,65 @@ const activeAt = '2026-03-06T21:03:00.000Z'
 const decisionAt = '2026-03-06T21:04:00.000Z'
 const terminalAt = '2026-03-06T21:05:00.000Z'
 
+const runnerCandidate = (accountId: string): CycleCandidate => ({
+  qualificationRunId: 'a'.repeat(64),
+  strategyProtocolHash: 'b'.repeat(64),
+  accountId,
+  signalSession: signalSession('2026-01-30'),
+  executionPolicy: makeCycleExecutionPolicy({
+    schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+    strategyExecutionModelHash: 'c'.repeat(64),
+    submissionWindowMs: 30 * 60 * 1_000,
+    submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
+  }),
+})
+
+const runnerCalendar = (): MarketCalendarObservation => {
+  const material = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: { start: '2026-01-30', end: '2026-03-01' },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: '2026-01-30',
+        openAt: '2026-01-30T14:30:00.000Z',
+        closeAt: '2026-01-30T21:00:00.000Z',
+      },
+      {
+        date: '2026-02-02',
+        openAt: '2026-02-02T14:30:00.000Z',
+        closeAt: '2026-02-02T21:00:00.000Z',
+      },
+    ],
+  }
+  return { ...material, normalizedResponseHash: canonicalHashV1(material) }
+}
+
+const runnerBrokerRead = (queries: Array<{ readonly start: string; readonly end: string }>): BrokerReadShape => {
+  const unused = Effect.die(new Error('autonomous cycle runner must use only marketCalendar'))
+  return {
+    account: unused,
+    positions: unused,
+    orders: () => unused,
+    orderById: () => unused,
+    orderByClientId: () => unused,
+    fillActivities: () => unused,
+    marketCalendar: (query) => {
+      queries.push(query)
+      return Effect.succeed({
+        value: runnerCalendar(),
+        evidence: {
+          requestId: `calendar-${queries.length}`,
+          status: 200,
+          contentHash: String(queries.length).repeat(64),
+          observedAt: '2026-01-30T21:01:00.000Z',
+        },
+      })
+    },
+  }
+}
+
 describePostgres('PostgreSQL autonomous cycle store', () => {
   let runtime: ReturnType<typeof makeRuntime>
 
@@ -197,6 +260,116 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       },
     })
     expect(observed.count).toBe(1)
+  })
+
+  test('concurrent runner passes and restart converge on one OBSERVE cycle', async () => {
+    const candidate = runnerCandidate('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+    const queries: Array<{ readonly start: string; readonly end: string }> = []
+    const read = runnerBrokerRead(queries)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:01:00.000Z'))
+        const concurrent = yield* Effect.all(
+          [
+            runAutonomousCyclePass(candidate).pipe(Effect.provideService(BrokerRead, read)),
+            runAutonomousCyclePass(structuredClone(candidate)).pipe(Effect.provideService(BrokerRead, read)),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:02:00.000Z'))
+        const restarted = yield* runAutonomousCyclePass(candidate).pipe(Effect.provideService(BrokerRead, read))
+        const sql = yield* PgClient.PgClient
+        const [count] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM autonomous_cycles
+          WHERE qualification_run_id = ${candidate.qualificationRunId}
+            AND account_id = ${candidate.accountId}
+            AND signal_session_date = ${candidate.signalSession.session_date}
+        `
+        return { concurrent, count: count.count, restarted }
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.concurrent.map((pass) => pass.outcome).sort()).toEqual(['ACQUIRED', 'REACQUIRED'])
+    expect(result.restarted).toMatchObject({
+      outcome: 'REACQUIRED',
+      receipt: {
+        created: false,
+        cycle: {
+          state: CycleState.Pending,
+          identity: {
+            accountId: candidate.accountId,
+            signalSessionDate: candidate.signalSession.session_date,
+            executionSessionDate: '2026-02-02',
+          },
+        },
+      },
+    })
+    expect(result.count).toBe(1)
+    expect(queries).toEqual([
+      { start: '2026-01-30', end: '2026-03-01' },
+      { start: '2026-01-30', end: '2026-03-01' },
+      { start: '2026-01-30', end: '2026-03-01' },
+    ])
+  })
+
+  test('runner Clock preserves every pre-open acquisition boundary in PostgreSQL', async () => {
+    const cases = [
+      {
+        accountId: '10000000-0000-4000-8000-000000000001',
+        observedAt: '2026-02-02T13:57:59.999Z',
+        state: CycleState.Pending,
+      },
+      {
+        accountId: '10000000-0000-4000-8000-000000000002',
+        observedAt: '2026-02-02T13:58:00.000Z',
+        state: CycleState.Blocked,
+      },
+      {
+        accountId: '10000000-0000-4000-8000-000000000003',
+        observedAt: '2026-02-02T14:28:00.000Z',
+        state: CycleState.Blocked,
+      },
+      {
+        accountId: '10000000-0000-4000-8000-000000000004',
+        observedAt: '2026-02-02T14:30:00.000Z',
+        state: CycleState.Blocked,
+      },
+    ] as const
+    const queries: Array<{ readonly start: string; readonly end: string }> = []
+    const read = runnerBrokerRead(queries)
+    const results = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observed: Array<Extract<CycleRunResult, { readonly outcome: 'ACQUIRED' | 'REACQUIRED' }>> = []
+        for (const boundary of cases) {
+          yield* TestClock.setTime(Date.parse(boundary.observedAt))
+          const result = yield* runAutonomousCyclePass(runnerCandidate(boundary.accountId)).pipe(
+            Effect.provideService(BrokerRead, read),
+          )
+          if (result.outcome === 'NOT_DUE') throw new Error('month-end runner fixture must acquire a cycle')
+          observed.push(result)
+        }
+        return observed
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(results.map((result) => result.receipt.cycle.state)).toEqual(cases.map((boundary) => boundary.state))
+    expect(results.map((result) => result.receipt.cycle.updatedAt)).toEqual(
+      cases.map((boundary) => boundary.observedAt),
+    )
+    for (const result of results.slice(1)) {
+      expect(result.receipt.cycle).toMatchObject({
+        state: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.MissedPublication,
+      })
+    }
+    expect(
+      results.every(
+        (result) =>
+          result.receipt.cycle.window.submissionOpenAt < result.receipt.cycle.window.submissionCutoffAt &&
+          result.receipt.cycle.window.submissionCutoffAt < result.receipt.cycle.window.executionOpenAt,
+      ),
+    ).toBe(true)
   })
 
   test('reserves one capital-authority slot across changed calendar and policy inputs', async () => {
