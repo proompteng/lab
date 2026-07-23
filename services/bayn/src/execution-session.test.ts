@@ -140,6 +140,29 @@ describe('causal execution-session binding', () => {
     ).toThrow('must equal execution open minus the declared fixed cutoff lead')
   })
 
+  test('rejects a rehashed execution session that is not selected by the bound calendar observation', () => {
+    const valid = bind(
+      calendar([{ date: '2026-07-06', openAt: '2026-07-06T13:30:00.000Z', closeAt: '2026-07-06T20:00:00.000Z' }]),
+    )
+    const { bindingHash: _, ...validMaterial } = valid
+    const tamperedMaterial = {
+      ...validMaterial,
+      executionSession: {
+        date: '2026-07-07',
+        openAt: '2026-07-07T13:30:00.000Z',
+        closeAt: '2026-07-07T20:00:00.000Z',
+      },
+      submissionCutoffAt: '2026-07-07T13:15:00.000Z',
+    }
+
+    expect(() =>
+      decodeBinding({
+        ...tamperedMaterial,
+        bindingHash: canonicalHashV1(tamperedMaterial),
+      }),
+    ).toThrow('must be the first post-signal session in the normalized calendar observation')
+  })
+
   test('rejects a truncated calendar range that can skip the actual next exchange session', () => {
     expect(() =>
       bind(

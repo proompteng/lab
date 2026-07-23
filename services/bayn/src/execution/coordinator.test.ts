@@ -612,13 +612,13 @@ describe('paper execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Unknown)
   })
 
-  test('makes no broker call when the writer fence is lost after recording I/O start', async () => {
+  test('makes no broker call or durable start when the writer fence is already lost', async () => {
     const harness = makeHarness({ lostFence: true })
     const failure = await Effect.runPromise(harness.provide(Effect.flip(submit(intentId, 1_000))))
 
     expect(failure).toBeInstanceOf(WriterFenceError)
     expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
-    expect(harness.state()).toBe(IntentState.IoStarted)
+    expect(harness.state()).toBe(IntentState.Approved)
   })
 
   test('persists UNKNOWN and refuses lookup until the committed consistency delay elapses', async () => {

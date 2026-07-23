@@ -669,6 +669,57 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.state).toEqual({ state: 'ACKNOWLEDGED', state_version: 4, events: 2 })
   })
 
+  test('does not append a mutation start after its approved risk decision expires', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '0'.repeat(64) })))
+    const expiresAtMillis = Date.now() + 1_000
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
+    )
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+    await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 50))
+
+    const mutation = makeMutationRuntime()
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        const start = yield* Effect.exit(
+          store.beginSubmit(intent.intentId, '8'.repeat(64), 1_000, new Date().toISOString()),
+        )
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ events: number; state: string }>`
+          SELECT
+            state,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { start, state: rows[0] }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.start)).toBe(true)
+    if (Exit.isFailure(observed.start)) {
+      expect(Cause.pretty(observed.start.cause)).toContain('current approved risk decision')
+    }
+    expect(observed.state).toEqual({ state: 'APPROVED', events: 0 })
+  })
+
   test('keeps an ambiguous submit UNKNOWN until lookup recovers the exact broker order', async () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '2'.repeat(64) })))

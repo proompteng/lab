@@ -145,7 +145,9 @@ exposure remains cash. The strategy parameters and thresholds are unchanged from
 
 The v3 execution model is live-causal. Once the signal session is finalized, planning uses that session's close-price
 vector and a content-hashed reconciled broker state observed before planning. The bounded Alpaca calendar response
-binds its request range, source/version, response hash, and the selected future session's exact UTC open and close.
+binds its request range, source/version, complete normalized session set, response hash, and the selected future
+session's exact UTC open and close. Decoding revalidates the response hash and requires that selected session to be the
+first post-signal session in the bound observation.
 Ordinary non-extended `DAY` market orders may be submitted only after the plan is committed and before a fixed
 15-minute pre-open cutoff. Risk approval is valid in `[submissionOpenAt, submissionCutoffAt)`. Planned buys reserve
 aggregate pre-submit buying power and cannot spend planned sell proceeds. The selected session open is a fill outcome:

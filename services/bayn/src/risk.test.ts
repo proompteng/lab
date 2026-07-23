@@ -53,19 +53,27 @@ const changeExecutionWindow = (
   const signalDate = new Date(Date.parse(`${executionDate}T00:00:00.000Z`) - 24 * 60 * 60_000)
     .toISOString()
     .slice(0, 10) as State['executionSession']['signal']['sessionDate']
+  const executionSession = {
+    date: executionDate,
+    openAt: executionOpenAt,
+    closeAt: new Date(Date.parse(executionOpenAt) + 2 * 60 * 60_000).toISOString(),
+  }
+  const calendar = {
+    schemaVersion: material.calendar.schemaVersion,
+    source: material.calendar.source,
+    requestedRange: { start: signalDate, end: executionDate },
+    timeZone: material.calendar.timeZone,
+    sessions: [executionSession],
+  }
   return rehashExecutionSession({
     ...material,
     ...overrides,
     signal: { ...material.signal, sessionDate: signalDate },
     calendar: {
-      ...material.calendar,
-      requestedRange: { start: executionDate, end: executionDate },
+      ...calendar,
+      normalizedResponseHash: canonicalHashV1(calendar),
     },
-    executionSession: {
-      date: executionDate,
-      openAt: executionOpenAt,
-      closeAt: new Date(Date.parse(executionOpenAt) + 2 * 60 * 60_000).toISOString(),
-    },
+    executionSession,
   })
 }
 
@@ -138,6 +146,19 @@ const baseState = (): State => {
     ordersObservedAt: observedAt,
     accountingHash,
   })
+  const calendar = {
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+    source: 'alpaca-v2-calendar' as const,
+    requestedRange: { start: '2026-07-21' as const, end: '2026-07-31' as const },
+    timeZone: 'UTC' as const,
+    sessions: [
+      {
+        date: '2026-07-22' as const,
+        openAt: '2026-07-22T13:30:00.000Z',
+        closeAt: '2026-07-22T20:00:00.000Z',
+      },
+    ],
+  }
   const executionSession = rehashExecutionSession({
     schemaVersion: 'bayn.execution-session-binding.v1',
     signal: {
@@ -149,17 +170,8 @@ const baseState = (): State => {
       observedAt,
       contentHash: reconciledStateHashValue,
     },
-    calendar: {
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
-      source: 'alpaca-v2-calendar',
-      requestedRange: { start: '2026-07-22', end: '2026-07-31' },
-      normalizedResponseHash: hash('c'),
-    },
-    executionSession: {
-      date: '2026-07-22',
-      openAt: '2026-07-22T13:30:00.000Z',
-      closeAt: '2026-07-22T20:00:00.000Z',
-    },
+    calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
+    executionSession: calendar.sessions[0],
     submissionOpenAt: observedAt,
     submissionCutoffAt: '2026-07-22T13:15:00.000Z',
     submissionCutoffLeadMinutes: 15,

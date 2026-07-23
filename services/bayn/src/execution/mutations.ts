@@ -405,6 +405,28 @@ const makeStore = Effect.gen(function* () {
       }
     })
 
+  const assertCurrentRisk = (intentId: string, storeOperation: 'begin-submit' | 'begin-cancel') =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ current: boolean }>`
+        SELECT EXISTS (
+          SELECT 1
+          FROM intents AS intent
+          JOIN risk_decisions AS decision
+            ON decision.decision_id = intent.risk_decision_id
+            AND decision.intent_id = intent.intent_id
+          WHERE intent.intent_id = ${intentId}
+            AND decision.outcome = 'APPROVED'
+            AND decision.decided_at <= clock_timestamp()
+            AND decision.expires_at > clock_timestamp()
+        ) AS current
+      `
+      if (rows[0]?.current !== true) {
+        return yield* Effect.fail(
+          storeError(storeOperation, 'invariant', 'mutation start requires a current approved risk decision'),
+        )
+      }
+    })
+
   const begin = (
     operation: MutationOperation,
     intentId: string,
@@ -472,6 +494,7 @@ const makeStore = Effect.gen(function* () {
                 ),
               )
             }
+            yield* assertCurrentRisk(input.intentId, storeOperation)
             if (input.occurredAt <= intent.updated_at) {
               return yield* Effect.fail(
                 storeError(storeOperation, 'invariant', 'mutation time must follow the intent state'),

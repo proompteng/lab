@@ -86,11 +86,12 @@ paper mutation capability, execution entry point, and capital-promotion path rem
   does not build the paper store, reserve the writer fence, start reconciliation, or change PostgreSQL or TigerBeetle.
   The mutation adapter and recovery coordinator remain dormant source foundations.
 - The bounded Alpaca calendar observation is content-hashed with its request range, source/version, and normalized UTC
-  sessions. A causal execution-session binding selects the first future session and binds its exact open, close,
-  pre-open cutoff, finalized Signal identity, and reconciled planning-state identity. Paper risk approves only in
-  `[submissionOpenAt, submissionCutoffAt)` and reserves aggregate buying power across planned buys. The coordinator
-  rechecks the committed risk-decision expiry with the Effect clock immediately before POST or DELETE; the cutoff
-  instant itself permits zero broker mutations.
+  sessions. A causal execution-session binding retains and revalidates that complete observation, selects its first
+  post-signal session, and binds the session's exact open, close, pre-open cutoff, finalized Signal identity, and
+  reconciled planning-state identity. Paper risk approves only in `[submissionOpenAt, submissionCutoffAt)` and
+  reserves aggregate buying power across planned buys. The coordinator rechecks the committed risk-decision expiry
+  with the Effect clock, then atomically revalidates it in the fenced mutation-start transaction immediately before
+  POST or DELETE; the cutoff instant itself permits zero broker mutations and no durable STARTED event.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.

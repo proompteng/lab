@@ -12,6 +12,14 @@ const CalendarIdentitySchema = Schema.Struct({
     start: IsoDateSchema,
     end: IsoDateSchema,
   }),
+  timeZone: Schema.Literal('UTC'),
+  sessions: Schema.Array(
+    Schema.Struct({
+      date: IsoDateSchema,
+      openAt: UtcInstantSchema,
+      closeAt: UtcInstantSchema,
+    }),
+  ).check(Schema.isMinLength(1)),
   normalizedResponseHash: Sha256Schema,
 })
 
@@ -43,6 +51,54 @@ export const ExecutionSessionBindingSchema = ExecutionSessionBindingBase.check(
     const issues: Schema.FilterIssue[] = []
     if (binding.signal.sessionDate >= binding.executionSession.date) {
       issues.push({ path: ['executionSession', 'date'], issue: 'must follow the finalized signal session' })
+    }
+    if (binding.calendar.requestedRange.start > binding.signal.sessionDate) {
+      issues.push({
+        path: ['calendar', 'requestedRange', 'start'],
+        issue: 'must be on or before the signal session',
+      })
+    }
+    for (let index = 0; index < binding.calendar.sessions.length; index += 1) {
+      const session = binding.calendar.sessions[index]
+      if (
+        session.date < binding.calendar.requestedRange.start ||
+        session.date > binding.calendar.requestedRange.end ||
+        session.openAt >= session.closeAt
+      ) {
+        issues.push({
+          path: ['calendar', 'sessions', index],
+          issue: 'must have valid hours within the requested range',
+        })
+      }
+      if (index > 0 && binding.calendar.sessions[index - 1].date >= session.date) {
+        issues.push({
+          path: ['calendar', 'sessions', index],
+          issue: 'must be unique and strictly ordered',
+        })
+      }
+    }
+    const calendarMaterial = {
+      schemaVersion: binding.calendar.schemaVersion,
+      source: binding.calendar.source,
+      requestedRange: binding.calendar.requestedRange,
+      timeZone: binding.calendar.timeZone,
+      sessions: binding.calendar.sessions,
+    }
+    if (binding.calendar.normalizedResponseHash !== canonicalHashV1(calendarMaterial)) {
+      issues.push({
+        path: ['calendar', 'normalizedResponseHash'],
+        issue: 'must match the complete normalized calendar observation',
+      })
+    }
+    const selectedSession = binding.calendar.sessions.find((session) => session.date > binding.signal.sessionDate)
+    if (
+      selectedSession === undefined ||
+      canonicalHashV1(selectedSession) !== canonicalHashV1(binding.executionSession)
+    ) {
+      issues.push({
+        path: ['executionSession'],
+        issue: 'must be the first post-signal session in the normalized calendar observation',
+      })
     }
     if (binding.executionSession.openAt >= binding.executionSession.closeAt) {
       issues.push({ path: ['executionSession', 'closeAt'], issue: 'must follow the execution open' })
@@ -146,6 +202,8 @@ export const bindExecutionSession = (input: BindExecutionSessionInput): Executio
       schemaVersion: input.calendar.schemaVersion,
       source: input.calendar.source,
       requestedRange: input.calendar.requestedRange,
+      timeZone: input.calendar.timeZone,
+      sessions: input.calendar.sessions,
       normalizedResponseHash: input.calendar.normalizedResponseHash,
     },
     executionSession,

@@ -226,7 +226,6 @@ const validateRecovery = (stored: Intent, event: MutationEvent) =>
 
 export const submit = (intentId: string, consistencyDelayMs: number) =>
   Effect.gen(function* () {
-    const intents = yield* IntentStore
     const mutations = yield* MutationStore
     const broker = yield* BrokerMutation
     const fence = yield* WriterFence
@@ -237,6 +236,7 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
       const replay = yield* mutations.beginSubmit(intentId, hash, consistencyDelayMs, existing.occurredAt)
       return replay.event
     }
+    yield* fence.check
     yield* requireActiveRiskDecision(MutationOperation.Submit, before)
     const current = yield* now
     const started = yield* mutations.beginSubmit(
@@ -247,20 +247,9 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
     )
     if (!started.started) return started.event
 
-    const after = yield* intents.read(intentId)
-    if (Option.isNone(after) || after.value.intent.state !== IntentState.IoStarted) {
-      return yield* Effect.fail(
-        new ExecutionError({
-          operation: MutationOperation.Submit,
-          failure: ExecutionFailure.InvalidState,
-          message: 'started submit cannot read back its IO_STARTED intent',
-        }),
-      )
-    }
-    yield* fence.check
-    yield* requireActiveRiskDecision(MutationOperation.Submit, after.value, 'submission', true)
+    const submittedIntent: Intent = { ...before.intent, state: IntentState.IoStarted }
 
-    return yield* broker.submit(after.value.intent).pipe(
+    return yield* broker.submit(submittedIntent).pipe(
       Effect.matchEffect({
         onFailure: (error) => {
           if (
@@ -279,7 +268,7 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
               )
         },
         onSuccess: (receipt) => {
-          if (receipt.requestHash !== hash || !exactOrder(after.value.intent, receipt.order)) {
+          if (receipt.requestHash !== hash || !exactOrder(submittedIntent, receipt.order)) {
             return mutations.submitUnknown(
               intentId,
               hash,
@@ -323,6 +312,7 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
       return replay.event
     }
     const intent = yield* readIntent(MutationOperation.Cancel, intentId)
+    yield* fence.check
     yield* requireActiveRiskDecision(MutationOperation.Cancel, intent)
     const current = yield* now
     const started = yield* mutations.beginCancel(
@@ -333,9 +323,6 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
       nextInstant(intent.updatedAt, current),
     )
     if (!started.started) return started.event
-    yield* fence.check
-    const currentIntent = yield* readIntent(MutationOperation.Cancel, intentId)
-    yield* requireActiveRiskDecision(MutationOperation.Cancel, currentIntent)
 
     return yield* broker.cancel(orderId).pipe(
       Effect.matchEffect({
