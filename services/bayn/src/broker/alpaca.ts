@@ -12,6 +12,7 @@ import {
 export const paperTradingUrl = 'https://paper-api.alpaca.markets'
 const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
+const marketCalendarPreflightRangeDays = 14
 const millisecondsPerDay = 86_400_000
 const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v1' as const
 const marketCalendarSource = 'alpaca-v2-calendar' as const
@@ -408,6 +409,8 @@ export interface ReadPreflight {
   readonly ordersHash: string
   readonly fillCount: number
   readonly fillsHash: string
+  readonly marketCalendarSessionCount: number
+  readonly marketCalendarHash: string
   readonly orderById: 'MATCHED' | 'NOT_FOUND'
   readonly orderByClientId: 'MATCHED' | 'NOT_FOUND'
 }
@@ -1335,6 +1338,12 @@ const verifyOrderLookup = (
 export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPreflight, BrokerReadError> =>
   Effect.gen(function* () {
     const account = yield* read.account
+    const calendarStart = new Date(yield* Clock.currentTimeMillis).toISOString().slice(0, 10)
+    const calendarEnd = new Date(
+      Date.parse(`${calendarStart}T00:00:00.000Z`) + (marketCalendarPreflightRangeDays - 1) * millisecondsPerDay,
+    )
+      .toISOString()
+      .slice(0, 10)
     const responses = yield* Effect.all(
       {
         positions: read.positions,
@@ -1345,8 +1354,9 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
           direction: SortDirection.Descending,
         }),
         fills: read.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
+        marketCalendar: read.marketCalendar({ start: calendarStart, end: calendarEnd }),
       },
-      { concurrency: 4 },
+      { concurrency: 5 },
     )
     const order = responses.recentOrders.value[0] ?? responses.openOrders.value[0]
     const lookups =
@@ -1373,6 +1383,8 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
         }),
         fillCount: responses.fills.value.items.length,
         fillsHash: canonicalHashV1(responses.fills.value.items),
+        marketCalendarSessionCount: responses.marketCalendar.value.sessions.length,
+        marketCalendarHash: responses.marketCalendar.value.normalizedResponseHash,
         ...lookups,
       }),
       catch: (cause) =>
@@ -1395,6 +1407,8 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
         ordersHash: proof.ordersHash,
         fillCount: proof.fillCount,
         fillsHash: proof.fillsHash,
+        marketCalendarSessionCount: proof.marketCalendarSessionCount,
+        marketCalendarHash: proof.marketCalendarHash,
         orderById: proof.orderById,
         orderByClientId: proof.orderByClientId,
       }),

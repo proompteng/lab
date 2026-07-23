@@ -329,13 +329,17 @@ describe('Alpaca paper reads', () => {
       requests.push({ method: request.method, url })
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
       if (url.pathname === '/v2/positions') return Effect.succeed(jsonResponse(request, []))
-      if (url.pathname === '/v2/orders' || url.pathname === '/v2/account/activities/FILL') {
+      if (
+        url.pathname === '/v2/orders' ||
+        url.pathname === '/v2/account/activities/FILL' ||
+        url.pathname === '/v2/calendar'
+      ) {
         return Effect.succeed(jsonResponse(request, []))
       }
       return Effect.succeed(jsonResponse(request, { code: 40410000, message: 'order not found' }, 404))
     })
 
-    const proof = await Effect.runPromise(withClient(client, verifyReadAccess))
+    const proof = await Effect.runPromise(withClient(client, verifyReadAccess).pipe(Effect.provide(TestClock.layer())))
 
     expect(proof).toMatchObject({
       accountId,
@@ -343,6 +347,7 @@ describe('Alpaca paper reads', () => {
       openOrderCount: 0,
       recentOrderCount: 0,
       fillCount: 0,
+      marketCalendarSessionCount: 0,
       orderById: 'NOT_FOUND',
       orderByClientId: 'NOT_FOUND',
     })
@@ -350,7 +355,8 @@ describe('Alpaca paper reads', () => {
     expect(proof.positionsHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
     expect(proof.fillsHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(requests).toHaveLength(7)
+    expect(proof.marketCalendarHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(requests).toHaveLength(8)
     expect(requests.every(({ method }) => method === 'GET')).toBe(true)
     expect(
       requests
@@ -363,12 +369,18 @@ describe('Alpaca paper reads', () => {
     const fill = requests.find(({ url }) => url.pathname === '/v2/account/activities/FILL')
     expect(fill?.url.searchParams.get('page_size')).toBe('1')
     expect(fill?.url.searchParams.get('direction')).toBe('desc')
+    const calendar = requests.find(({ url }) => url.pathname === '/v2/calendar')
+    expect(calendar?.url.searchParams.toString()).toBe('start=1970-01-01&end=1970-01-14&date_type=TRADING')
   })
 
   test('preflights ordinary non-empty orders whose optional Alpaca fields are null', async () => {
     const client = HttpClient.make((request, url) => {
       if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
-      if (url.pathname === '/v2/positions' || url.pathname === '/v2/account/activities/FILL') {
+      if (
+        url.pathname === '/v2/positions' ||
+        url.pathname === '/v2/account/activities/FILL' ||
+        url.pathname === '/v2/calendar'
+      ) {
         return Effect.succeed(jsonResponse(request, []))
       }
       return Effect.succeed(jsonResponse(request, url.pathname === '/v2/orders' ? [orderResponse] : orderResponse))
@@ -384,6 +396,24 @@ describe('Alpaca paper reads', () => {
       orderByClientId: 'MATCHED',
     })
     expect(proof.ordersHash).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  test('fails the complete startup preflight when the market calendar payload is invalid', async () => {
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/calendar') {
+        return Effect.succeed(jsonResponse(request, [{ date: '2026-07-23', open: '9:30', close: '16:00' }]))
+      }
+      return Effect.succeed(jsonResponse(request, []))
+    })
+
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, verifyReadAccess)))
+
+    expect(failure).toMatchObject({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
   })
 
   test('bounds the complete startup preflight below the Kubernetes startup-probe budget', async () => {
