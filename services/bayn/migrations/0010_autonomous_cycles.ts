@@ -27,6 +27,9 @@ export default Effect.gen(function* () {
         strategy_execution_model_hash ~ '^[0-9a-f]{64}$'
       ),
       submission_window_ms integer NOT NULL CHECK (submission_window_ms BETWEEN 1 AND 86400000),
+      submission_cutoff_before_open_ms integer NOT NULL CHECK (
+        submission_cutoff_before_open_ms BETWEEN 1 AND 86400000
+      ),
       window_schema_version text NOT NULL CHECK (
         window_schema_version = 'bayn.autonomous-cycle-window.v1'
       ),
@@ -70,11 +73,15 @@ export default Effect.gen(function* () {
       CHECK (signal_close_at < submission_open_at),
       CHECK (publication_deadline_at = submission_open_at),
       CHECK (submission_open_at < submission_cutoff_at),
-      CHECK (submission_cutoff_at = execution_open_at),
+      CHECK (submission_cutoff_at < execution_open_at),
       CHECK (execution_open_at < execution_close_at),
       CHECK (
         submission_cutoff_at =
           submission_open_at + submission_window_ms * interval '1 millisecond'
+      ),
+      CHECK (
+        execution_open_at =
+          submission_cutoff_at + submission_cutoff_before_open_ms * interval '1 millisecond'
       ),
       CHECK (updated_at >= created_at),
       CHECK (decision_hash IS NULL OR snapshot_id IS NOT NULL),

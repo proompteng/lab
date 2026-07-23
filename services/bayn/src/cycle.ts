@@ -41,6 +41,7 @@ const CycleExecutionPolicyMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
   strategyExecutionModelHash: Sha256Schema,
   submissionWindowMs: SubmissionWindowMsSchema,
+  submissionCutoffBeforeOpenMs: SubmissionWindowMsSchema,
 })
 export type CycleExecutionPolicyMaterial = typeof CycleExecutionPolicyMaterialSchema.Type
 
@@ -114,8 +115,8 @@ export const CycleWindowSchema = CycleWindowBase.check(
     if (window.submissionOpenAt >= window.submissionCutoffAt) {
       issues.push({ path: ['submissionCutoffAt'], issue: 'must follow the submission window open' })
     }
-    if (window.submissionCutoffAt !== window.executionOpenAt) {
-      issues.push({ path: ['submissionCutoffAt'], issue: 'must equal the execution session open' })
+    if (window.submissionCutoffAt >= window.executionOpenAt) {
+      issues.push({ path: ['executionOpenAt'], issue: 'must follow the broker submission cutoff' })
     }
     if (window.executionOpenAt >= window.executionCloseAt) {
       issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
@@ -144,6 +145,14 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
     issues.push({
       path: ['window', 'submissionCutoffAt'],
       issue: 'must match the bound execution policy submission window',
+    })
+  }
+  const submissionCutoffBeforeOpenMs =
+    Date.parse(draft.window.executionOpenAt) - Date.parse(draft.window.submissionCutoffAt)
+  if (submissionCutoffBeforeOpenMs !== draft.identity.executionPolicy.submissionCutoffBeforeOpenMs) {
+    issues.push({
+      path: ['window', 'submissionCutoffAt'],
+      issue: 'must match the bound execution policy broker cutoff lead',
     })
   }
   return issues
@@ -295,11 +304,15 @@ export const makeCycleWindow = (
     'calendar_version' | 'session_date' | 'open_time' | 'close_time' | 'timezone'
   >[],
   signalSessionDate: string,
-  submissionWindowMs: number,
+  executionPolicy: Pick<CycleExecutionPolicy, 'submissionWindowMs' | 'submissionCutoffBeforeOpenMs'>,
 ): CycleWindow => {
   validateCalendar(sessions)
+  const { submissionCutoffBeforeOpenMs, submissionWindowMs } = executionPolicy
   if (!Number.isSafeInteger(submissionWindowMs) || submissionWindowMs <= 0) {
     throw new TypeError('submission window must be a positive integer number of milliseconds')
+  }
+  if (!Number.isSafeInteger(submissionCutoffBeforeOpenMs) || submissionCutoffBeforeOpenMs <= 0) {
+    throw new TypeError('broker cutoff lead must be a positive integer number of milliseconds')
   }
   const signalIndex = sessions.findIndex((session) => session.session_date === signalSessionDate)
   if (signalIndex < 0) throw new TypeError(`Signal session ${signalSessionDate} is absent from the exchange calendar`)
@@ -311,7 +324,8 @@ export const makeCycleWindow = (
   const signalCloseAt = localMarketTimeToUtc(signalSession.session_date, signalSession.close_time)
   const executionOpenAt = localMarketTimeToUtc(executionSession.session_date, executionSession.open_time)
   const executionCloseAt = localMarketTimeToUtc(executionSession.session_date, executionSession.close_time)
-  const submissionOpenAt = new Date(Date.parse(executionOpenAt) - submissionWindowMs).toISOString()
+  const submissionCutoffAt = new Date(Date.parse(executionOpenAt) - submissionCutoffBeforeOpenMs).toISOString()
+  const submissionOpenAt = new Date(Date.parse(submissionCutoffAt) - submissionWindowMs).toISOString()
   if (submissionOpenAt <= signalCloseAt) {
     throw new TypeError('submission window must begin after the Signal session close')
   }
@@ -325,7 +339,7 @@ export const makeCycleWindow = (
     submissionOpenAt,
     executionOpenAt,
     executionCloseAt,
-    submissionCutoffAt: executionOpenAt,
+    submissionCutoffAt,
   }
 }
 
@@ -339,6 +353,10 @@ export const makeCycleDraft = (identity: CycleIdentity, window: CycleWindow): Cy
   const submissionWindowMs = Date.parse(window.submissionCutoffAt) - Date.parse(window.submissionOpenAt)
   if (submissionWindowMs !== identity.executionPolicy.submissionWindowMs) {
     throw new TypeError('cycle window must match the bound execution policy')
+  }
+  const submissionCutoffBeforeOpenMs = Date.parse(window.executionOpenAt) - Date.parse(window.submissionCutoffAt)
+  if (submissionCutoffBeforeOpenMs !== identity.executionPolicy.submissionCutoffBeforeOpenMs) {
+    throw new TypeError('cycle broker cutoff must match the bound execution policy')
   }
   return { schemaVersion: 'bayn.autonomous-cycle.v1', identity, window }
 }

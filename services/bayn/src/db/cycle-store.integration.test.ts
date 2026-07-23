@@ -54,6 +54,7 @@ const makeDraft = (accountId = 'paper-account-1'): CycleDraft => {
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'c'.repeat(64),
     submissionWindowMs: 30 * 60 * 1_000,
+    submissionCutoffBeforeOpenMs: 2 * 60 * 1_000,
   })
   const identity = makeCycleIdentity({
     schemaVersion: 'bayn.autonomous-cycle-identity.v1',
@@ -67,7 +68,7 @@ const makeDraft = (accountId = 'paper-account-1'): CycleDraft => {
   })
   return makeCycleDraft(
     identity,
-    makeCycleWindow([session('2026-03-06'), session('2026-03-09')], '2026-03-06', 30 * 60 * 1_000),
+    makeCycleWindow([session('2026-03-06'), session('2026-03-09')], '2026-03-06', executionPolicy),
   )
 }
 
@@ -234,10 +235,10 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.acquire(cutoffDraft, acquireAt)
         yield* store.bindSnapshot(cutoffDraft.identity.cycleId, snapshotA, snapshotAt)
         yield* store.activate(cutoffDraft.identity.cycleId, activeAt)
-        const atMarketOpen = yield* store.bindDecision(
+        const atCutoff = yield* store.bindDecision(
           cutoffDraft.identity.cycleId,
           decisionHash,
-          cutoffDraft.window.executionOpenAt,
+          cutoffDraft.window.submissionCutoffAt,
         )
 
         yield* store.acquire(completionDraft, acquireAt)
@@ -264,7 +265,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           )
         `
         const completed = yield* store.finish(completionDraft.identity.cycleId, CycleState.Completed, terminalAt)
-        return { atMarketOpen, blocked, completed, earlyActiveMiss, missed, withoutIntent }
+        return { atCutoff, blocked, completed, earlyActiveMiss, missed, withoutIntent }
       }),
     )
 
@@ -279,12 +280,13 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       terminalReason: CycleTerminalReason.DataStale,
       terminalAt: blockedDraft.window.publicationDeadlineAt,
     })
-    expect(result.atMarketOpen.cycle).toMatchObject({
+    expect(result.atCutoff.cycle).toMatchObject({
       state: CycleState.Blocked,
       terminalReason: CycleTerminalReason.MissedWindow,
-      terminalAt: cutoffDraft.window.executionOpenAt,
+      terminalAt: cutoffDraft.window.submissionCutoffAt,
     })
-    expect(result.atMarketOpen.cycle.bindings.decisionHash).toBeUndefined()
+    expect(result.atCutoff.cycle.bindings.decisionHash).toBeUndefined()
+    expect(cutoffDraft.window.submissionCutoffAt < cutoffDraft.window.executionOpenAt).toBe(true)
     expect(Exit.isFailure(result.withoutIntent)).toBe(true)
     if (Exit.isFailure(result.withoutIntent)) {
       expect(Cause.pretty(result.withoutIntent.cause)).toContain('completed cycle requires canonical intents')
