@@ -386,7 +386,7 @@ describePostgres('paper accounting persistence', () => {
               kill_state = 'ACTIVE',
               reason = 'operator kill',
               version = version + 1,
-              updated_at = clock_timestamp() + interval '1 hour'
+              updated_at = clock_timestamp()
             WHERE singleton
             RETURNING updated_at
           `
@@ -409,6 +409,63 @@ describePostgres('paper accounting persistence', () => {
         updatedAt: expect.any(String),
       })
       expect(Date.parse(result.rotated.updatedAt)).toBeGreaterThan(Date.parse(result.killedAt))
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects a future durable authority timestamp without rotating it', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* store.ensureAuthorityGeneration({
+            generationHash: hash('future-authority-generation'),
+            maximum: Authority.Observe,
+          })
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            UPDATE authority_state
+            SET
+              version = version + 1,
+              updated_at = clock_timestamp() + interval '1 hour'
+            WHERE singleton
+          `
+          const [before] = yield* sql<{
+            generation_hash: string
+            tuple_id: string
+            updated_at: Date
+            version: number
+          }>`
+            SELECT generation_hash, xmin::text AS tuple_id, updated_at, version::integer
+            FROM authority_state
+          `
+          const failure = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: hash('rejected-future-authority-generation'),
+              maximum: Authority.Observe,
+            }),
+          )
+          const [after] = yield* sql<{
+            generation_hash: string
+            tuple_id: string
+            updated_at: Date
+            version: number
+          }>`
+            SELECT generation_hash, xmin::text AS tuple_id, updated_at, version::integer
+            FROM authority_state
+          `
+          return { before, failure, after }
+        }),
+      )
+
+      expect(result.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'durable authority update follows its database observation time',
+      })
+      expect(result.after).toEqual(result.before)
     } finally {
       await runtime.dispose()
     }

@@ -167,7 +167,12 @@ const AuthorityStateRow = Schema.Struct({
   version: Schema.String,
   updated_at: Schema.DateValid,
 })
+const AuthorityStateObservationRow = Schema.Struct({
+  ...AuthorityStateRow.fields,
+  observed_at: Schema.DateValid,
+})
 const AuthorityStateRows = Schema.Array(AuthorityStateRow).check(Schema.isMaxLength(1))
+const AuthorityStateObservationRows = Schema.Array(AuthorityStateObservationRow).check(Schema.isMaxLength(1))
 const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
@@ -196,6 +201,10 @@ const decodeEnsureAuthorityGenerationInput = Schema.decodeUnknownEffect(
   strictParseOptions,
 )
 const decodeAuthorityStateRows = Schema.decodeUnknownEffect(AuthorityStateRows, strictParseOptions)
+const decodeAuthorityStateObservationRows = Schema.decodeUnknownEffect(
+  AuthorityStateObservationRows,
+  strictParseOptions,
+)
 const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, strictParseOptions)
 const decodeReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
 const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, strictParseOptions)
@@ -956,11 +965,11 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                     const rows = yield* sql<Record<string, unknown>>`
                       SELECT
                         schema_version, generation_hash, maximum, effective, kill_state, reason,
-                        version::text AS version, updated_at
+                        version::text AS version, updated_at, clock_timestamp() AS observed_at
                       FROM authority_state
                       WHERE singleton
                       FOR UPDATE
-                    `.pipe(Effect.flatMap(decodeAuthorityStateRows))
+                    `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
                     const currentRow = rows[0]
                     if (currentRow === undefined) {
                       const inserted = yield* sql<Record<string, unknown>>`
@@ -983,6 +992,13 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
                     }
 
                     const current = yield* authorityStateFromRow(currentRow)
+                    if (currentRow.updated_at.getTime() > currentRow.observed_at.getTime()) {
+                      return yield* fail(
+                        'authority',
+                        'invariant',
+                        'durable authority update follows its database observation time',
+                      )
+                    }
                     if (current.generationHash === input.generationHash) {
                       if (current.maximum !== input.maximum) {
                         return yield* fail(
