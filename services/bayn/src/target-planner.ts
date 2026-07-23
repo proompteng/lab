@@ -1,4 +1,6 @@
-import type { IntentPlan } from './execution/intents'
+import { Schema } from 'effect'
+
+import { IntentPlanSchema, type IntentPlan } from './execution/intents'
 import { desiredQuantityMicros, MICROS } from './execution-model'
 import { canonicalHashV1 } from './hash'
 import {
@@ -12,7 +14,15 @@ import {
 } from './paper'
 import type { ExecutionModel } from './protocol'
 import { reconciledStateHash, type ReconciledStateMaterial } from './reconciliation'
-import type { IsoDate } from './schemas'
+import {
+  PositiveMicrosSchema,
+  Sha256Schema,
+  SignedMicrosSchema,
+  SymbolSchema,
+  UnitIntervalSchema,
+  UnsignedMicrosSchema,
+  type IsoDate,
+} from './schemas'
 import type { SignalDecision } from './types'
 
 const WEIGHT_SUM_TOLERANCE = 1e-12
@@ -93,6 +103,75 @@ export interface TargetPlanResult {
 }
 
 type OutputMaterial = Omit<TargetPlanResult, 'outputHash'>
+
+const PlannedTargetQuantitySchema = Schema.Struct({
+  symbol: SymbolSchema,
+  targetWeight: UnitIntervalSchema,
+  referencePriceMicros: PositiveMicrosSchema,
+  currentQuantityMicros: SignedMicrosSchema,
+  targetQuantityMicros: SignedMicrosSchema,
+})
+
+const ReferenceTargetIntentSchema = Schema.Struct({
+  strategyName: IntentPlanSchema.fields.strategyName,
+  cycleId: IntentPlanSchema.fields.cycleId,
+  decisionHash: IntentPlanSchema.fields.decisionHash,
+  policyHash: IntentPlanSchema.fields.policyHash,
+  accountId: IntentPlanSchema.fields.accountId,
+  symbol: IntentPlanSchema.fields.symbol,
+  side: IntentPlanSchema.fields.side,
+  orderType: IntentPlanSchema.fields.orderType,
+  timeInForce: IntentPlanSchema.fields.timeInForce,
+  quantityMicros: IntentPlanSchema.fields.quantityMicros,
+  createdAt: IntentPlanSchema.fields.createdAt,
+})
+
+const TargetPlanResultBase = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-reference-target-plan.v1'),
+  inputHash: Sha256Schema,
+  outputHash: Sha256Schema,
+  status: Schema.Enum(TargetPlanStatus),
+  reason: Schema.NullOr(Schema.Enum(TargetPlanReason)),
+  targets: Schema.Array(PlannedTargetQuantitySchema),
+  intentTargets: Schema.Array(ReferenceTargetIntentSchema),
+  requiredReferenceBuyNotionalMicros: UnsignedMicrosSchema,
+  availableBuyingPowerMicros: SignedMicrosSchema,
+  residualBuyingPowerMicros: SignedMicrosSchema,
+})
+
+export const TargetPlanResultSchema = TargetPlanResultBase.check(
+  Schema.makeFilter((result: typeof TargetPlanResultBase.Type): readonly Schema.FilterIssue[] => {
+    const issues: Schema.FilterIssue[] = []
+    const { outputHash, ...material } = result
+    if (outputHash !== canonicalHashV1(material)) {
+      issues.push({ path: ['outputHash'], issue: 'must match the canonical target-plan output material' })
+    }
+    if (result.status === TargetPlanStatus.Planned && (result.reason !== null || result.intentTargets.length === 0)) {
+      issues.push({ path: ['status'], issue: 'PLANNED requires target deltas and no reason' })
+    }
+    if (
+      result.status === TargetPlanStatus.NoTrade &&
+      (result.reason !== TargetPlanReason.TargetsSatisfied || result.intentTargets.length !== 0)
+    ) {
+      issues.push({ path: ['status'], issue: 'NO_TRADE requires TARGETS_SATISFIED and no target deltas' })
+    }
+    if (result.status === TargetPlanStatus.Blocked && (result.reason === null || result.intentTargets.length !== 0)) {
+      issues.push({ path: ['status'], issue: 'BLOCKED requires one reason and no target deltas' })
+    }
+    const targetSymbols = result.targets.map((target) => target.symbol)
+    if (new Set(targetSymbols).size !== targetSymbols.length) {
+      issues.push({ path: ['targets'], issue: 'must contain one target per symbol' })
+    }
+    const intentSymbols = result.intentTargets.map((intent) => intent.symbol)
+    if (
+      new Set(intentSymbols).size !== intentSymbols.length ||
+      intentSymbols.some((symbol) => !targetSymbols.includes(symbol))
+    ) {
+      issues.push({ path: ['intentTargets'], issue: 'must contain at most one delta for each persisted target' })
+    }
+    return issues
+  }),
+)
 
 const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 

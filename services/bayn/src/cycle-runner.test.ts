@@ -279,6 +279,7 @@ const cycleStore = (control: StoreControl): CycleStoreShape => {
         const cycle = readCycle(cycleId)
         return cycle === undefined ? Option.none() : Option.some(cycle)
       }),
+    readDecisionDocument: unused,
     bindSnapshot: (cycleId, manifest, observedAt) =>
       Effect.sync(() => {
         control.binds += 1

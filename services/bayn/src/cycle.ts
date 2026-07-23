@@ -11,7 +11,6 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from './schemas'
-
 const cycleTimeZone = 'America/New_York' as const
 const SubmissionWindowMsSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(86_400_000))
 const maximumSubmissionDurationMs = 86_400_000
@@ -310,7 +309,6 @@ export const AutonomousCycleSchema = AutonomousCycleBase.check(
     if (cycle.bindings.decisionHash !== undefined && cycle.bindings.snapshotId === undefined) {
       issues.push({ path: ['bindings', 'decisionHash'], issue: 'requires a bound snapshot' })
     }
-
     switch (cycle.state) {
       case CycleState.Pending:
         if (

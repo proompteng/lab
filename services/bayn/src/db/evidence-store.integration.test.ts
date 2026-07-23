@@ -240,15 +240,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const migrations = yield* sql<{ migration_id: number; name: string }>`
           SELECT migration_id, name FROM schema_migrations ORDER BY migration_id
         `
-        return { tables, migrations }
+        const [decisionHashColumn] = yield* sql<{ is_generated: string }>`
+          SELECT is_generated
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'autonomous_cycle_shadow_decisions'
+            AND column_name = 'decision_hash'
+        `
+        return { decisionHashColumn, tables, migrations }
       }),
     )
 
+    expect(schema.decisionHashColumn).toEqual({ is_generated: 'ALWAYS' })
     expect(schema.tables.map((row) => row.table_name)).toEqual([
       'account_snapshots',
       'accounting_receipts',
       'accounting_transactions',
       'authority_state',
+      'autonomous_cycle_shadow_decisions',
       'autonomous_cycles',
       'broker_errors',
       'broker_events',
@@ -286,6 +295,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 9, name: 'fill_source_timestamp' },
       { migration_id: 10, name: 'autonomous_cycles' },
       { migration_id: 11, name: 'causal_protocol' },
+      { migration_id: 12, name: 'observe_shadow_decisions' },
     ])
   })
 
