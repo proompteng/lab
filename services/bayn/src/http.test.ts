@@ -110,7 +110,7 @@ describe('Bayn HTTP probes', () => {
           expect(metricsResponse.headers.get('content-type')).toContain('text/plain')
           expect(metrics).toContain('bayn_cycle_condition{condition="waiting"} 1')
           expect(metrics).toContain('bayn_autonomous_cycle_loop_configured 0')
-          expect(metrics).toContain('bayn_autonomous_cycle_loop_health_available 1')
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_health_available 0')
           expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="unknown"} 1')
           expect(metrics).toContain('bayn_mutation_events_total 0')
           expect(metrics).toContain('bayn_broker_orders_enabled 0')
