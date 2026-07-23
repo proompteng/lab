@@ -8,4 +8,8 @@ data:
   redis-additional.conf: |
     appendonly yes
     appendfsync everysec
+    # The operator exports REDIS_MAX_MEMORY but the pinned Redis image does
+    # not translate it into redis.conf. Keep this equal to 75% of the 512 MiB
+    # container limit so Redis has headroom for allocator and AOF overhead.
+    maxmemory 384mb
     maxmemory-policy allkeys-lru
