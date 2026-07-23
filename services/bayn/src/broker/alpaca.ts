@@ -1,5 +1,5 @@
 import { NodeHttpClient, Undici } from '@effect/platform-node'
-import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Schema, Scope } from 'effect'
+import { Cause, Clock, Context, Data, DateTime, Effect, Layer, Redacted, Schema, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
@@ -11,6 +11,12 @@ import {
 
 export const paperTradingUrl = 'https://paper-api.alpaca.markets'
 const defaultFillActivitiesPageSize = 100
+const maxMarketCalendarRangeDays = 31
+const marketCalendarPreflightRangeDays = 14
+const millisecondsPerDay = 86_400_000
+const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v1' as const
+const marketCalendarSource = 'alpaca-v2-calendar' as const
+const marketCalendarTimeZone = 'America/New_York' as const
 export const readPreflightTimeoutMs = 45_000
 const responseParseOptions = { onExcessProperty: 'ignore' } as const
 const inputParseOptions = { onExcessProperty: 'error' } as const
@@ -206,6 +212,7 @@ export type BrokerReadOperation =
   | 'order-by-id'
   | 'order-by-client-id'
   | 'fill-activities'
+  | 'market-calendar'
 
 export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
   readonly operation: BrokerReadOperation
@@ -336,6 +343,29 @@ export interface FillActivityPage {
   readonly nextPageToken?: string
 }
 
+export interface MarketCalendarQuery {
+  readonly start: string
+  readonly end: string
+}
+
+export interface MarketCalendarSession {
+  readonly date: string
+  readonly openAt: string
+  readonly closeAt: string
+}
+
+export interface MarketCalendarObservation {
+  readonly schemaVersion: typeof marketCalendarSchemaVersion
+  readonly source: typeof marketCalendarSource
+  readonly requestedRange: {
+    readonly start: string
+    readonly end: string
+  }
+  readonly timeZone: 'UTC'
+  readonly sessions: readonly MarketCalendarSession[]
+  readonly normalizedResponseHash: string
+}
+
 export interface OrdersQuery {
   readonly status?: OrderCollection
   readonly limit?: number
@@ -362,6 +392,9 @@ export interface BrokerReadShape {
   readonly orderById: (orderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
+  readonly marketCalendar: (
+    query: MarketCalendarQuery,
+  ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
 }
 
 export class BrokerRead extends Context.Service<BrokerRead, BrokerReadShape>()('bayn/BrokerRead') {}
@@ -376,6 +409,8 @@ export interface ReadPreflight {
   readonly ordersHash: string
   readonly fillCount: number
   readonly fillsHash: string
+  readonly marketCalendarSessionCount: number
+  readonly marketCalendarHash: string
   readonly orderById: 'MATCHED' | 'NOT_FOUND'
   readonly orderByClientId: 'MATCHED' | 'NOT_FOUND'
 }
@@ -457,6 +492,15 @@ const FillActivityResponseSchema = Schema.Struct({
   order_status: Schema.optionalKey(Schema.Enum(OrderStatus)),
 })
 
+const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/))
+const MarketCalendarResponseSchema = Schema.Array(
+  Schema.Struct({
+    date: IsoDate,
+    open: MarketTimeSchema,
+    close: MarketTimeSchema,
+  }),
+)
+
 const ResponseHeadersSchema = Schema.Struct({
   'x-request-id': RequestId,
   'x-ratelimit-limit': Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d+$/))),
@@ -498,6 +542,23 @@ const FillActivitiesQuerySchema = FillActivitiesQueryBase.check(
   ),
 )
 
+const MarketCalendarQueryBase = Schema.Struct({
+  start: IsoDate,
+  end: IsoDate,
+})
+const MarketCalendarQuerySchema = MarketCalendarQueryBase.check(
+  Schema.makeFilter((query: typeof MarketCalendarQueryBase.Type) => {
+    if (query.start > query.end) {
+      return [{ path: ['end'], issue: 'must be on or after start' }]
+    }
+    const inclusiveDays =
+      (Date.parse(`${query.end}T00:00:00.000Z`) - Date.parse(`${query.start}T00:00:00.000Z`)) / millisecondsPerDay + 1
+    return inclusiveDays > maxMarketCalendarRangeDays
+      ? [{ path: ['end'], issue: `range must not exceed ${maxMarketCalendarRangeDays} inclusive calendar days` }]
+      : []
+  }),
+)
+
 const RuntimeOptionsSchema = Schema.Struct({
   expectedAccountId: Uuid,
   operationTimeoutMs: PositiveInteger,
@@ -511,10 +572,12 @@ const decodePositions = Schema.decodeUnknownEffect(Schema.Array(PositionResponse
 const decodeOrders = Schema.decodeUnknownEffect(Schema.Array(OrderResponseSchema), responseParseOptions)
 const decodeOrder = Schema.decodeUnknownEffect(OrderResponseSchema, responseParseOptions)
 const decodeFillActivities = Schema.decodeUnknownEffect(Schema.Array(FillActivityResponseSchema), responseParseOptions)
+const decodeMarketCalendar = Schema.decodeUnknownEffect(MarketCalendarResponseSchema, responseParseOptions)
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 const decodeErrorResponse = Schema.decodeUnknownEffect(ErrorResponseSchema, responseParseOptions)
 const decodeOrdersQuery = Schema.decodeUnknownEffect(OrdersQuerySchema, inputParseOptions)
 const decodeFillActivitiesQuery = Schema.decodeUnknownEffect(FillActivitiesQuerySchema, inputParseOptions)
+const decodeMarketCalendarQuery = Schema.decodeUnknownEffect(MarketCalendarQuerySchema, inputParseOptions)
 const decodeOrderId = Schema.decodeUnknownEffect(Uuid)
 const decodeClientOrderId = Schema.decodeUnknownEffect(ClientOrderId)
 const decodeRuntimeOptions = Schema.decodeUnknownEffect(RuntimeOptionsSchema, inputParseOptions)
@@ -848,6 +911,64 @@ const normalizeFillActivity = (raw: typeof FillActivityResponseSchema.Type, acco
   }
 }
 
+const marketCalendarInstant = (date: string, time: string, field: 'open' | 'close'): string => {
+  const zoned = DateTime.makeZoned(
+    {
+      year: Number(date.slice(0, 4)),
+      month: Number(date.slice(5, 7)),
+      day: Number(date.slice(8, 10)),
+      hour: Number(time.slice(0, 2)),
+      minute: Number(time.slice(3, 5)),
+      second: 0,
+      millisecond: 0,
+    },
+    {
+      timeZone: marketCalendarTimeZone,
+      adjustForTimeZone: true,
+      disambiguation: 'reject',
+    },
+  )
+  if (zoned._tag === 'None') {
+    throw new Error(`market calendar ${field} is not a valid ${marketCalendarTimeZone} wall-clock instant`)
+  }
+  return DateTime.formatIso(zoned.value)
+}
+
+const normalizeMarketCalendar = (
+  raw: typeof MarketCalendarResponseSchema.Type,
+  query: typeof MarketCalendarQueryBase.Type,
+): MarketCalendarObservation => {
+  const sessions = raw
+    .map((session): MarketCalendarSession => {
+      if (session.date < query.start || session.date > query.end) {
+        throw new Error(`market calendar session ${session.date} is outside the requested range`)
+      }
+      const openAt = marketCalendarInstant(session.date, session.open, 'open')
+      const closeAt = marketCalendarInstant(session.date, session.close, 'close')
+      if (openAt >= closeAt) throw new Error(`market calendar session ${session.date} has invalid hours`)
+      return { date: session.date, openAt, closeAt }
+    })
+    .sort((left, right) => (left.date < right.date ? -1 : left.date > right.date ? 1 : 0))
+
+  for (let index = 1; index < sessions.length; index += 1) {
+    if (sessions[index - 1]?.date === sessions[index]?.date) {
+      throw new Error(`market calendar contains duplicate session ${sessions[index]?.date ?? ''}`)
+    }
+  }
+
+  const normalized = {
+    schemaVersion: marketCalendarSchemaVersion,
+    source: marketCalendarSource,
+    requestedRange: { start: query.start, end: query.end },
+    timeZone: 'UTC' as const,
+    sessions,
+  }
+  return {
+    ...normalized,
+    normalizedResponseHash: canonicalHashV1(normalized),
+  }
+}
+
 const responseEvidence = (
   headers: typeof ResponseHeadersSchema.Type,
   status: number,
@@ -1080,6 +1201,21 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
       ),
     )
 
+    const marketCalendar = (query: MarketCalendarQuery) =>
+      decodeInput('market-calendar', decodeMarketCalendarQuery, query, 'invalid Alpaca market calendar query').pipe(
+        Effect.flatMap((decoded) => {
+          const url = new URL('/v2/calendar', paperTradingUrl)
+          url.searchParams.set('start', decoded.start)
+          url.searchParams.set('end', decoded.end)
+          url.searchParams.set('date_type', 'TRADING')
+          return readJson('market-calendar', url, decodeMarketCalendar).pipe(
+            Effect.flatMap((result) =>
+              normalize('market-calendar', result.evidence, () => normalizeMarketCalendar(result.value, decoded)),
+            ),
+          )
+        }),
+      )
+
     const orders = (query: OrdersQuery = {}) =>
       decodeInput('orders', decodeOrdersQuery, query, 'invalid Alpaca orders query').pipe(
         Effect.flatMap((decoded) => {
@@ -1153,7 +1289,7 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         ),
       )
 
-    return { account, positions, orders, orderById, orderByClientId, fillActivities }
+    return { account, positions, orders, orderById, orderByClientId, fillActivities, marketCalendar }
   })
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'
@@ -1202,6 +1338,12 @@ const verifyOrderLookup = (
 export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPreflight, BrokerReadError> =>
   Effect.gen(function* () {
     const account = yield* read.account
+    const calendarStart = new Date(yield* Clock.currentTimeMillis).toISOString().slice(0, 10)
+    const calendarEnd = new Date(
+      Date.parse(`${calendarStart}T00:00:00.000Z`) + (marketCalendarPreflightRangeDays - 1) * millisecondsPerDay,
+    )
+      .toISOString()
+      .slice(0, 10)
     const responses = yield* Effect.all(
       {
         positions: read.positions,
@@ -1212,8 +1354,9 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
           direction: SortDirection.Descending,
         }),
         fills: read.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
+        marketCalendar: read.marketCalendar({ start: calendarStart, end: calendarEnd }),
       },
-      { concurrency: 4 },
+      { concurrency: 5 },
     )
     const order = responses.recentOrders.value[0] ?? responses.openOrders.value[0]
     const lookups =
@@ -1240,6 +1383,8 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
         }),
         fillCount: responses.fills.value.items.length,
         fillsHash: canonicalHashV1(responses.fills.value.items),
+        marketCalendarSessionCount: responses.marketCalendar.value.sessions.length,
+        marketCalendarHash: responses.marketCalendar.value.normalizedResponseHash,
         ...lookups,
       }),
       catch: (cause) =>
@@ -1262,6 +1407,8 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
         ordersHash: proof.ordersHash,
         fillCount: proof.fillCount,
         fillsHash: proof.fillsHash,
+        marketCalendarSessionCount: proof.marketCalendarSessionCount,
+        marketCalendarHash: proof.marketCalendarHash,
         orderById: proof.orderById,
         orderByClientId: proof.orderByClientId,
       }),
