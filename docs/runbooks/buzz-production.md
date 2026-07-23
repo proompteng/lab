@@ -95,38 +95,39 @@ kubectl -n buzz get backup.postgresql.cnpg.io \
 kubectl cnpg status buzz-db -n buzz
 ```
 
-After the desktop smoke test has created representative data, take a named on-demand backup and wait for its phase to
-become `completed`:
-
-```sh
-kubectl cnpg backup buzz-db -n buzz \
-  --method plugin \
-  --plugin-name barman-cloud.cloudnative-pg.io \
-  --backup-target prefer-standby \
-  --backup-name buzz-db-acceptance-UTC_TIMESTAMP
-```
-
-For acceptance, restore into a temporary cluster named `buzz-db-restore-proof`; never restore over `buzz-db`. Use the
-same pinned PostgreSQL image, a new 20 GiB `rook-ceph-block` volume, and this recovery bootstrap:
+Before desktop onboarding, commit a named on-demand `Backup` and a temporary restore cluster to the Buzz GitOps
+application. The restore cluster must reference that exact backup so it cannot race the backup and accidentally select
+an older recovery point:
 
 ```yaml
-bootstrap:
-  recovery:
-    source: buzz-db-backup
-    database: buzz
-    owner: buzz
-externalClusters:
-  - name: buzz-db-backup
-    plugin:
-      name: barman-cloud.cloudnative-pg.io
-      parameters:
-        barmanObjectName: buzz-db
-        serverName: buzz-db-live
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: buzz-db-acceptance-UTC_TIMESTAMP
+spec:
+  cluster:
+    name: buzz-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  target: prefer-standby
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: buzz-db-restore-proof
+spec:
+  bootstrap:
+    recovery:
+      backup:
+        name: buzz-db-acceptance-UTC_TIMESTAMP
 ```
 
-Apply the proof resource through a temporary committed GitOps change or an explicitly approved emergency procedure.
-Wait for it to become healthy, connect with `kubectl cnpg psql`, and verify representative relay rows. Delete only the
-temporary proof cluster after recording evidence; never delete the source OBC or bucket.
+Never restore over `buzz-db`. The proof cluster uses the same pinned PostgreSQL image and a new 20 GiB
+`rook-ceph-block` volume. Wait for both resources to complete, connect with `kubectl cnpg psql`, and compare the
+migration count plus hashes of representative community and membership rows with the source snapshot. Remove the
+temporary proof resources through a follow-up Git change after recording evidence; never delete the source OBC or
+bucket.
 
 ## Resilience proof
 
