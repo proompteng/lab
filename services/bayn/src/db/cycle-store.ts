@@ -460,13 +460,11 @@ const makeCycleStore = Effect.gen(function* () {
   ): Effect.Effect<CycleMutationReceipt, CycleStoreError> =>
     run(
       'bind-snapshot',
-      Effect.all({
-        input: decodeSnapshotInput({ cycleId, observedAt }),
-        inputManifest: decodeInputManifestArtifact(inputManifest),
-      }).pipe(
-        Effect.flatMap(({ input, inputManifest: decodedManifest }) =>
+      decodeSnapshotInput({ cycleId, observedAt }).pipe(
+        Effect.flatMap((input) =>
           sql.withTransaction(
             Effect.gen(function* () {
+              const decodedManifest = yield* decodeInputManifestArtifact(inputManifest)
               const cycle = yield* readLocked('bind-snapshot', input.cycleId)
               const snapshot = decodedManifest.finalizedSnapshot
               if (input.observedAt < cycle.window.signalCloseAt) {
@@ -477,6 +475,7 @@ const makeCycleStore = Effect.gen(function* () {
                 )
               }
               if (
+                snapshot.asOfSession !== cycle.identity.signalSessionDate ||
                 snapshot.lastSession !== cycle.identity.signalSessionDate ||
                 snapshot.calendarVersion !== cycle.identity.signalCalendarVersion
               ) {

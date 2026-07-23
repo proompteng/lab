@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
+import { ClickhouseClient } from '@effect/sql-clickhouse'
+import { Effect, Layer, Redacted } from 'effect'
 import { AuthorizationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
 
+import { canonicalHashV1 } from './hash'
 import {
+  MarketData,
+  MarketDataLive,
   marketDataOperationError,
   verifyFinalizedCalendar,
   verifyFinalizedManifest,
@@ -11,6 +16,8 @@ import {
   type SnapshotRows,
   type SnapshotRequest,
   type FinalizedPublicationRequest,
+  type SignalManifestRow,
+  type SignalSessionRow,
 } from './market-data'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
@@ -160,6 +167,92 @@ const makeFixture = (): {
       observedAt: '2025-01-04T02:00:00.000Z',
     },
   }
+}
+
+const makeCalendarRevision = (
+  fixture: ReturnType<typeof makeFixture>,
+  calendarVersion: string,
+): {
+  readonly manifest: SignalManifestRow
+  readonly sessions: readonly SignalSessionRow[]
+} => {
+  const source = fixture.rows.manifests[0]
+  const sessionMaterial = fixture.rows.sessions.map(({ snapshot_id: _, ...session }) => ({
+    ...session,
+    calendar_version: calendarVersion,
+  }))
+  const sessionsContentHash = canonicalHashV1(sessionMaterial)
+  const revisedSnapshotId = canonicalHashV1({
+    schemaVersion: source.schema_version,
+    provider: source.provider,
+    feed: source.source_feed,
+    adjustment: source.adjustment,
+    calendarVersion,
+    requestedStart: source.requested_start,
+    publicationAsOf: source.publication_asof,
+    symbols,
+    barsContentHash: source.bars_content_hash,
+    sessionsContentHash,
+    universeId: source.universe_id,
+    universeSymbolHash: source.universe_symbol_hash,
+  })
+  const { manifest_content_hash: _, ...sourceWithoutManifestHash } = source
+  const manifestMaterial = {
+    ...sourceWithoutManifestHash,
+    snapshot_id: revisedSnapshotId,
+    calendar_version: calendarVersion,
+    sessions_content_hash: sessionsContentHash,
+  }
+  return {
+    manifest: {
+      ...manifestMaterial,
+      manifest_content_hash: canonicalHashV1(manifestMaterial),
+    },
+    sessions: sessionMaterial.map((session) => ({ snapshot_id: revisedSnapshotId, ...session })),
+  }
+}
+
+interface CapturedQuery {
+  readonly text: string
+  readonly parameters: readonly unknown[]
+}
+
+interface ClickhouseParameter {
+  readonly value: unknown
+}
+
+const makeClickhouseFixture = (
+  manifests: readonly SignalManifestRow[],
+  sessions: readonly SignalSessionRow[],
+  queries: CapturedQuery[],
+): ClickhouseClient.ClickhouseClient => {
+  const statement = (
+    strings: TemplateStringsArray,
+    ...fragments: readonly ClickhouseParameter[]
+  ): Effect.Effect<readonly unknown[]> => {
+    const text = strings.join('?')
+    const parameters = fragments.map((fragment) => fragment.value)
+    if (text.includes('FROM signal.snapshot_manifests_v2') && text.includes('WHERE universe_id')) {
+      queries.push({ text, parameters })
+      const calendarVersion = parameters.at(-1)
+      const rows = text.includes('AND calendar_version =')
+        ? manifests.filter((manifest) => manifest.calendar_version === calendarVersion)
+        : manifests
+      return Effect.succeed(rows)
+    }
+    if (text.includes('FROM signal.exchange_sessions_v1')) {
+      const requestedSnapshotId = parameters[0]
+      return Effect.succeed(sessions.filter((session) => session.snapshot_id === requestedSnapshotId))
+    }
+    return Effect.succeed([])
+  }
+  return Object.assign(statement, {
+    param: (_dataType: string, value: unknown): ClickhouseParameter => ({ value }),
+    withQueryId:
+      (_queryId: string) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect,
+  }) as unknown as ClickhouseClient.ClickhouseClient
 }
 
 describe('finalized Signal snapshot reader', () => {
@@ -312,6 +405,123 @@ describe('finalized Signal snapshot reader', () => {
         fixture.request.observedAt,
       ),
     ).toThrow('manifest content hash is invalid')
+  })
+
+  test('selects the exact calendar publication when the same Signal session has a revised calendar', () => {
+    const fixture = makeFixture()
+    const revisedCalendarVersion = 'alpaca-us-equity-calendar-v2'
+    const revision = makeCalendarRevision(fixture, revisedCalendarVersion)
+    const contract = {
+      universeId: fixture.request.universeId,
+      universeSymbolHash: fixture.request.universeSymbolHash,
+      universe: fixture.request.universe,
+      historyStart: fixture.request.historyStart,
+      evaluationStart: fixture.request.evaluationStart,
+    }
+    const manifests = [...fixture.rows.manifests, revision.manifest]
+    const original = verifyFinalizedPublication(
+      { manifests, sessions: fixture.rows.sessions },
+      {
+        signalSessionDate: '2025-01-03',
+        signalCalendarVersion: fixture.request.calendarVersion,
+      },
+      contract,
+      fixture.request.observedAt,
+    )
+    const revised = verifyFinalizedPublication(
+      { manifests, sessions: revision.sessions },
+      {
+        signalSessionDate: '2025-01-03',
+        signalCalendarVersion: revisedCalendarVersion,
+      },
+      contract,
+      fixture.request.observedAt,
+    )
+    const originalReadback = verifyFinalizedPublication(
+      { manifests, sessions: fixture.rows.sessions },
+      {
+        signalSessionDate: '2025-01-03',
+        signalCalendarVersion: fixture.request.calendarVersion,
+      },
+      contract,
+      fixture.request.observedAt,
+    )
+
+    expect(original?.manifest.finalizedSnapshot).toMatchObject({
+      snapshotId,
+      calendarVersion: fixture.request.calendarVersion,
+    })
+    expect(revised?.manifest.finalizedSnapshot).toMatchObject({
+      snapshotId: revision.manifest.snapshot_id,
+      calendarVersion: revisedCalendarVersion,
+    })
+    expect(originalReadback).toEqual(original)
+  })
+
+  test('queries and re-reads a finalized publication by exact calendar identity', async () => {
+    const fixture = makeFixture()
+    const revisedCalendarVersion = 'alpaca-us-equity-calendar-v2'
+    const revision = makeCalendarRevision(fixture, revisedCalendarVersion)
+    const queries: CapturedQuery[] = []
+    const client = makeClickhouseFixture(
+      [...fixture.rows.manifests, revision.manifest],
+      [...fixture.rows.sessions, ...revision.sessions],
+      queries,
+    )
+    const contract = {
+      universeId: fixture.request.universeId,
+      universeSymbolHash: fixture.request.universeSymbolHash,
+      universe: fixture.request.universe,
+      historyStart: fixture.request.historyStart,
+      evaluationStart: fixture.request.evaluationStart,
+    }
+    const layer = MarketDataLive(
+      {
+        operationTimeoutMs: 5_000,
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
+          snapshotId,
+          publicationAsOf: fixture.request.publicationAsOf,
+          calendarVersion: fixture.request.calendarVersion,
+          bounds: fixture.request.bounds,
+        },
+      },
+      contract,
+    ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+    const input = {
+      signalSessionDate: '2025-01-03',
+      signalCalendarVersion: fixture.request.calendarVersion,
+    } satisfies FinalizedPublicationRequest
+    const results = await Effect.runPromise(
+      Effect.gen(function* () {
+        const marketData = yield* MarketData
+        return [yield* marketData.inspectPublication(input), yield* marketData.inspectPublication(input)] as const
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(results[0]).toMatchObject({
+      outcome: 'FINALIZED',
+      inspection: {
+        manifest: { finalizedSnapshot: { snapshotId, calendarVersion: fixture.request.calendarVersion } },
+      },
+    })
+    expect(results[1]).toMatchObject({
+      outcome: 'FINALIZED',
+      inspection: {
+        manifest: { finalizedSnapshot: { snapshotId, calendarVersion: fixture.request.calendarVersion } },
+      },
+    })
+    if (results[0].outcome !== 'FINALIZED' || results[1].outcome !== 'FINALIZED') {
+      throw new Error('both exact-calendar publication reads must be finalized')
+    }
+    expect(results[1].inspection).toEqual(results[0].inspection)
+    expect(queries).toHaveLength(2)
+    for (const query of queries) {
+      expect(query.text).toContain('AND calendar_version =')
+      expect(query.parameters).toContain(fixture.request.calendarVersion)
+    }
   })
 
   test('rejects duplicate manifests, sessions, and bars', () => {

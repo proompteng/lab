@@ -462,33 +462,37 @@ export const verifyFinalizedPublication = (
   contract: MarketDataContract,
   observedAt: string,
 ): MarketDataInspection | undefined => {
-  if (rows.manifests.length === 0) return undefined
-  if (rows.manifests.length !== 1) {
+  const manifests = rows.manifests.filter((manifest) => manifest.calendar_version === input.signalCalendarVersion)
+  if (manifests.length === 0) return undefined
+  if (manifests.length !== 1) {
     throw new Error(
-      `Signal session ${input.signalSessionDate} has ${rows.manifests.length} finalized manifests; expected exactly one`,
+      `Signal session ${input.signalSessionDate} and calendar ${input.signalCalendarVersion} have ${manifests.length} finalized manifests; expected exactly one`,
     )
   }
-  const manifest = rows.manifests[0]
+  const manifest = manifests[0]
   if (manifest === undefined) throw new Error('finalized Signal manifest disappeared during verification')
-  return verifyFinalizedCalendar(rows, {
-    snapshotId: manifest.snapshot_id,
-    publicationAsOf: input.signalSessionDate,
-    calendarVersion: input.signalCalendarVersion,
-    universe: contract.universe,
-    bounds: {
-      schemaVersion: 'bayn.evaluation-bounds.v1',
-      dataStart: contract.historyStart,
-      dataEnd: input.signalSessionDate,
-      lookbackStart: contract.historyStart,
+  return verifyFinalizedCalendar(
+    { sessions: rows.sessions, manifests },
+    {
+      snapshotId: manifest.snapshot_id,
+      publicationAsOf: input.signalSessionDate,
+      calendarVersion: input.signalCalendarVersion,
+      universe: contract.universe,
+      bounds: {
+        schemaVersion: 'bayn.evaluation-bounds.v1',
+        dataStart: contract.historyStart,
+        dataEnd: input.signalSessionDate,
+        lookbackStart: contract.historyStart,
+        evaluationStart: contract.evaluationStart,
+        evaluationEnd: input.signalSessionDate,
+      },
+      observedAt,
+      universeId: contract.universeId,
+      universeSymbolHash: contract.universeSymbolHash,
+      historyStart: contract.historyStart,
       evaluationStart: contract.evaluationStart,
-      evaluationEnd: input.signalSessionDate,
     },
-    observedAt,
-    universeId: contract.universeId,
-    universeSymbolHash: contract.universeSymbolHash,
-    historyStart: contract.historyStart,
-    evaluationStart: contract.evaluationStart,
-  })
+  )
 }
 
 export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
@@ -663,6 +667,7 @@ const makeMarketData = (
         WHERE universe_id = ${sql.param('String', contract.universeId)}
           AND requested_start = toDate(${sql.param('String', contract.historyStart)})
           AND publication_asof = toDate(${sql.param('String', request.signalSessionDate)})
+          AND calendar_version = ${sql.param('String', request.signalCalendarVersion)}
         ORDER BY snapshot_id, finalized_at
       `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
 

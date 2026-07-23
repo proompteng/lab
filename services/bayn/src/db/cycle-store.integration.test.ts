@@ -32,6 +32,7 @@ const snapshotA = 'd'.repeat(64)
 const snapshotB = 'e'.repeat(64)
 const staleSnapshot = '6'.repeat(64)
 const wrongCalendarSnapshot = '7'.repeat(64)
+const wrongAsOfSnapshot = '8'.repeat(64)
 const missingSnapshot = '9'.repeat(64)
 const decisionHash = 'f'.repeat(64)
 
@@ -123,6 +124,7 @@ const insertSnapshotReference = (
 const makeInputManifest = (
   snapshotId: string,
   options: {
+    readonly asOfSession?: IsoDate
     readonly calendarVersion?: string
     readonly lastSession?: IsoDate
   } = {},
@@ -149,7 +151,7 @@ const makeInputManifest = (
     requestedStart: lastSession,
     firstSession: lastSession,
     lastSession,
-    asOfSession: lastSession,
+    asOfSession: options.asOfSession ?? lastSession,
     symbols: [symbol],
     rowCount: 1,
     sessionCount: 1,
@@ -564,6 +566,41 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     const reboundSnapshotId = result.rebound.cycle.bindings.snapshotId
     if (reboundSnapshotId === undefined) throw new Error('successful binding must retain its snapshot ID')
     expect(result.references.map((row) => row.snapshot_id)).toContain(reboundSnapshotId)
+  })
+
+  test('rolls back snapshot persistence when publication as-of identity differs from the cycle session', async () => {
+    const draft = makeDraft('paper-account-as-of-mismatch')
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+
+        const binding = yield* Effect.exit(
+          store.bindSnapshot(
+            draft.identity.cycleId,
+            makeInputManifest(wrongAsOfSnapshot, { asOfSession: '2026-03-05' }),
+            snapshotAt,
+          ),
+        )
+        const cycle = yield* store.read(draft.identity.cycleId)
+        const sql = yield* PgClient.PgClient
+        const [reference] = yield* sql<{ count: number }>`
+          SELECT count(*)::integer AS count
+          FROM snapshot_references
+          WHERE snapshot_id = ${wrongAsOfSnapshot}
+        `
+        return { binding, cycle, referenceCount: reference.count }
+      }),
+    )
+
+    expect(Exit.isFailure(result.binding)).toBe(true)
+    expect(result.referenceCount).toBe(0)
+    expect(Option.isSome(result.cycle)).toBe(true)
+    if (Option.isNone(result.cycle)) throw new Error('acquired cycle must remain readable after rejected binding')
+    expect(result.cycle.value).toMatchObject({
+      state: CycleState.Pending,
+      bindings: {},
+    })
   })
 
   test('keeps completion unreachable and preserves blocked terminal history across runtimes', async () => {
