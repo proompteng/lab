@@ -78,14 +78,15 @@ spec:
     - Ingress
   ingress:
     - from:
-        # kube-router SNATs host-networked kube-apiserver pod-proxy traffic to
-        # the destination node's pod-CIDR gateway.
+        # Cross-node host traffic uses the node's Flannel VTEP (.0); local
+        # host traffic uses its CNI gateway (.1). Each /31 is limited to those
+        # two node-local addresses.
         - ipBlock:
-            cidr: 10.244.0.1/32
+            cidr: 10.244.0.0/31
         - ipBlock:
-            cidr: 10.244.3.1/32
+            cidr: 10.244.3.0/31
         - ipBlock:
-            cidr: 10.244.5.1/32
+            cidr: 10.244.5.0/31
       ports:
         - port: 8000
           protocol: TCP
