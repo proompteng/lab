@@ -5,6 +5,8 @@ import { Effect, Exit } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarSession } from './broker/alpaca'
 import {
   CycleState,
+  CycleTerminalReason,
+  cycleTerminalReasonForTargetPlanBlock,
   decodeCycleDraft,
   decodeCycleIdentity,
   decodeCycleWindow,
@@ -12,6 +14,7 @@ import {
   isCycleStateTransitionAllowed,
   makeCycleDraft,
   makeCycleExecutionPolicy,
+  makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
@@ -19,7 +22,10 @@ import {
   type CycleIdentityMaterial,
   type ExecutionCalendarObservation,
 } from './cycle'
+import { defaultExecutionModel } from './execution-model'
+import { canonicalHashV1 } from './hash'
 import type { SignalSessionRow } from './market-data'
+import { TargetPlanReason } from './target-planner'
 import type { IsoDate } from './types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -97,6 +103,61 @@ const makeIdentityMaterial = (
 })
 
 describe('autonomous cycle identity and calendar', () => {
+  test('derives the one source-controlled runner policy from the loaded v2 execution model', () => {
+    if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v2') {
+      throw new Error('default execution model must be the causal v2 contract')
+    }
+    const policy = makeCycleExecutionPolicyFromModel(defaultExecutionModel)
+
+    expect(policy).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+      strategyExecutionModelHash: canonicalHashV1(defaultExecutionModel),
+      submissionWindowMs: 30 * 60_000,
+      submissionCutoffBeforeOpenMs: defaultExecutionModel.order.submissionCutoffLeadMinutes * 60_000,
+    })
+    expect(policy.executionPolicyHash).toBe(
+      canonicalHashV1({
+        schemaVersion: policy.schemaVersion,
+        strategyExecutionModelHash: policy.strategyExecutionModelHash,
+        submissionWindowMs: policy.submissionWindowMs,
+        submissionCutoffBeforeOpenMs: policy.submissionCutoffBeforeOpenMs,
+      }),
+    )
+  })
+
+  test('maps every blocked target-plan reason to its exact cycle terminal reason', () => {
+    expect([
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.SubmissionCutoffReached),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.IdentityMismatch),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.InputMismatch),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.InputStale),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.ReconciliationNotExact),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.AccountNotActive),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.UnknownOrder),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.UnresolvedOrder),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.BelowMinimumBuyNotional),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.InsufficientBuyingPower),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.NonPositiveEquity),
+      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.ShortPositionNotAllowed),
+    ]).toEqual([
+      CycleTerminalReason.MissedSubmission,
+      CycleTerminalReason.ProvenanceMismatch,
+      CycleTerminalReason.DataInvalid,
+      CycleTerminalReason.DataStale,
+      CycleTerminalReason.Reconciliation,
+      CycleTerminalReason.BrokerDisabled,
+      CycleTerminalReason.UnresolvedMutation,
+      CycleTerminalReason.UnresolvedMutation,
+      CycleTerminalReason.Risk,
+      CycleTerminalReason.Risk,
+      CycleTerminalReason.Risk,
+      CycleTerminalReason.Risk,
+    ])
+    expect(() => cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.TargetsSatisfied)).toThrow(
+      'blocked target plan cannot use the no-trade reason',
+    )
+  })
+
   test('derives stable identities from all Signal, execution-calendar, account, and policy inputs', () => {
     const material = makeIdentityMaterial('2026-03-06')
     const first = makeCycleIdentity(material)
@@ -314,8 +375,8 @@ describe('autonomous cycle identity and calendar', () => {
 
     expect(isCycleStateTransitionAllowed(CycleState.Pending, CycleState.Active)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.Blocked)).toBe(true)
-    expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.NoTrade)).toBe(false)
-    expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.Completed)).toBe(false)
+    expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.NoTrade)).toBe(true)
+    expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.Completed)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Blocked, CycleState.Blocked)).toBe(false)
   })
 })

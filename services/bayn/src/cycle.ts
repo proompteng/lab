@@ -3,6 +3,7 @@ import { DateTime, Schema } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarSession } from './broker/alpaca'
 import { canonicalHashV1 } from './hash'
 import type { SignalSessionRow } from './market-data'
+import type { CausalProtocol } from './protocol'
 import {
   IsoDateSchema,
   PositiveIntegerSchema,
@@ -11,7 +12,10 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from './schemas'
+import { TargetPlanReason } from './target-planner'
+
 const cycleTimeZone = 'America/New_York' as const
+const autonomousCycleSubmissionWindowMs = 30 * 60_000
 const SubmissionWindowMsSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(86_400_000))
 const maximumSubmissionDurationMs = 86_400_000
 
@@ -50,6 +54,7 @@ export enum CycleState {
   NoTrade = 'NO_TRADE',
   Blocked = 'BLOCKED',
 }
+export type CycleCompletionState = CycleState.Completed | CycleState.NoTrade
 
 export enum CycleTerminalReason {
   MissedPublication = 'BLOCKED_MISSED_PUBLICATION_DEADLINE',
@@ -65,6 +70,33 @@ export enum CycleTerminalReason {
   UnresolvedMutation = 'BLOCKED_UNRESOLVED_MUTATION',
   Reconciliation = 'BLOCKED_RECONCILIATION',
   Risk = 'BLOCKED_RISK',
+}
+
+export const cycleTerminalReasonForTargetPlanBlock = (reason: TargetPlanReason): CycleTerminalReason => {
+  switch (reason) {
+    case TargetPlanReason.SubmissionCutoffReached:
+      return CycleTerminalReason.MissedSubmission
+    case TargetPlanReason.IdentityMismatch:
+      return CycleTerminalReason.ProvenanceMismatch
+    case TargetPlanReason.InputMismatch:
+      return CycleTerminalReason.DataInvalid
+    case TargetPlanReason.InputStale:
+      return CycleTerminalReason.DataStale
+    case TargetPlanReason.ReconciliationNotExact:
+      return CycleTerminalReason.Reconciliation
+    case TargetPlanReason.AccountNotActive:
+      return CycleTerminalReason.BrokerDisabled
+    case TargetPlanReason.UnknownOrder:
+    case TargetPlanReason.UnresolvedOrder:
+      return CycleTerminalReason.UnresolvedMutation
+    case TargetPlanReason.BelowMinimumBuyNotional:
+    case TargetPlanReason.InsufficientBuyingPower:
+    case TargetPlanReason.NonPositiveEquity:
+    case TargetPlanReason.ShortPositionNotAllowed:
+      return CycleTerminalReason.Risk
+    case TargetPlanReason.TargetsSatisfied:
+      throw new TypeError('blocked target plan cannot use the no-trade reason')
+  }
 }
 
 const ExecutionCalendarObservationMaterialBase = Schema.Struct({
@@ -376,6 +408,16 @@ export const makeCycleExecutionPolicy = (material: CycleExecutionPolicyMaterial)
   executionPolicyHash: canonicalHashV1(material),
 })
 
+export const makeCycleExecutionPolicyFromModel = (
+  executionModel: CausalProtocol['executionModel'],
+): CycleExecutionPolicy =>
+  makeCycleExecutionPolicy({
+    schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
+    strategyExecutionModelHash: canonicalHashV1(executionModel),
+    submissionWindowMs: autonomousCycleSubmissionWindowMs,
+    submissionCutoffBeforeOpenMs: executionModel.order.submissionCutoffLeadMinutes * 60_000,
+  })
+
 export const makeExecutionCalendarObservation = (
   session: SelectedExecutionCalendarSession,
 ): ExecutionCalendarObservation => {
@@ -477,7 +519,9 @@ export const isTerminalCycleState = (state: CycleState): boolean =>
 
 export const isCycleStateTransitionAllowed = (from: CycleState, to: CycleState): boolean => {
   if (from === CycleState.Pending) return to === CycleState.Active || to === CycleState.Blocked
-  if (from === CycleState.Active) return to === CycleState.Blocked
+  if (from === CycleState.Active) {
+    return to === CycleState.Completed || to === CycleState.NoTrade || to === CycleState.Blocked
+  }
   return false
 }
 
