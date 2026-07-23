@@ -6,7 +6,7 @@ import { TestClock } from 'effect/testing'
 import { config, successfulJournal, readyState, recoveringStore } from './app-test-support'
 import { monitor, probe } from './app'
 import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
-import { unusedMarketCalendar } from './broker/alpaca-test-support'
+import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
 import { CycleState } from './cycle'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
@@ -43,6 +43,7 @@ const brokerRead = (account: BrokerReadShape['account']): BrokerReadShape => {
   const unused = Effect.die(new Error('continuous broker health must only read the account'))
   return {
     account,
+    assetBySymbol: unusedAssetBySymbol,
     positions: unused,
     orders: () => unused,
     orderById: () => unused,

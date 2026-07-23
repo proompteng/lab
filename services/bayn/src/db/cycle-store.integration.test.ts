@@ -6,6 +6,7 @@ import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted } from 'ef
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../broker/alpaca'
+import { unusedAssetBySymbol } from '../broker/alpaca-test-support'
 import {
   CycleState,
   CycleTerminalReason,
@@ -387,6 +388,7 @@ const runnerBrokerRead = (queries: Array<{ readonly start: string; readonly end:
   const unused = Effect.die(new Error('autonomous cycle runner must use only marketCalendar'))
   return {
     account: unused,
+    assetBySymbol: unusedAssetBySymbol,
     positions: unused,
     orders: () => unused,
     orderById: () => unused,

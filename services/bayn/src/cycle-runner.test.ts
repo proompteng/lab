@@ -11,6 +11,7 @@ import {
   type MarketCalendarObservation,
   type MarketCalendarQuery,
 } from './broker/alpaca'
+import { unusedAssetBySymbol } from './broker/alpaca-test-support'
 import {
   CycleState,
   CycleTerminalReason,
@@ -122,6 +123,7 @@ const brokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): BrokerRe
   const unused = Effect.die(new Error('cycle runner must use only the broker calendar read'))
   return {
     account: unused,
+    assetBySymbol: unusedAssetBySymbol,
     positions: unused,
     orders: () => unused,
     orderById: () => unused,

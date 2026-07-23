@@ -26,7 +26,7 @@ import {
   type BrokerReadShape,
   type Order,
 } from '../broker/alpaca'
-import { unusedMarketCalendar } from '../broker/alpaca-test-support'
+import { unusedAssetBySymbol, unusedMarketCalendar } from '../broker/alpaca-test-support'
 import { canonicalHashV1 } from '../hash'
 import {
   IntentState,
@@ -378,6 +378,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   const read: BrokerReadShape = {
     account: Effect.die(new Error('unexpected account read')),
+    assetBySymbol: unusedAssetBySymbol,
     positions: Effect.die(new Error('unexpected positions read')),
     orders: () => Effect.die(new Error('unexpected orders read')),
     orderById: () => Effect.die(new Error('unexpected order-by-id read')),
