@@ -95,9 +95,9 @@ kubectl -n buzz get backup.postgresql.cnpg.io \
 kubectl cnpg status buzz-db -n buzz
 ```
 
-Before desktop onboarding, commit a named on-demand `Backup` and a temporary restore cluster to the Buzz GitOps
-application. The restore cluster must reference that exact backup so it cannot race the backup and accidentally select
-an older recovery point:
+Before desktop onboarding, commit a named on-demand `Backup` to the Buzz GitOps application and wait for it to become
+`completed`. Only then commit the temporary restore cluster. Keeping these as two reconciliations ensures the Barman
+plugin selects the new backup as the latest completed recovery point:
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -119,8 +119,16 @@ metadata:
 spec:
   bootstrap:
     recovery:
-      backup:
-        name: buzz-db-acceptance-UTC_TIMESTAMP
+      source: buzz-db-backup
+      database: buzz
+      owner: buzz
+  externalClusters:
+    - name: buzz-db-backup
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: buzz-db
+          serverName: buzz-db-live
 ```
 
 Never restore over `buzz-db`. The proof cluster uses the same pinned PostgreSQL image and a new 20 GiB
