@@ -250,6 +250,16 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
       throw new Error('qualification installation must pin the exact deployed source, image, strategy, and runtime')
     }
   }
+  const unpinnedCandidateReplay = !hadQualificationPin && acceptedQualificationRunId === undefined
+  if (
+    unpinnedCandidateReplay &&
+    (deployedSourceSha !== options.sourceSha ||
+      deployedImageDigest !== options.digest ||
+      !strategyIdentityMatches ||
+      !candidateRuntimeMatchesDeployment)
+  ) {
+    throw new Error('an unpinned qualification candidate is immutable until its terminal run is pinned')
+  }
   let qualificationMode: BaynManifestUpdate['qualificationMode']
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
     qualificationMode = 'install'
@@ -290,8 +300,12 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
-  if (!hadQualificationPin && !snapshotChanged && deployedSourceSha !== options.sourceSha) {
-    throw new Error('an unpinned qualification snapshot cannot accept a second source release')
+  if (unpinnedCandidateReplay) {
+    return {
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
+      ...updateDetails,
+    }
   }
   const imageBlock =
     /(  - name: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newName: registry\.ide-newton\.ts\.net\/lab\/bayn\n    newTag: )[^\n]+(?:\n    digest: [^\n]+)?/

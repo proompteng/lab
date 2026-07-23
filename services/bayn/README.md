@@ -50,12 +50,12 @@ paper mutation capability, execution entry point, and capital-promotion path rem
 - `BAYN_QUALIFICATION_RUN_ID` optionally pins one terminal qualification across operational image updates. Startup
   verifies the stored strategy and Signal bindings, then recovers it without inspecting bars, opening a lock,
   evaluating, journaling, or persisting.
-- Production GitOps carries that pin outside an explicit one-shot qualification release. The release writer refuses a
-  second source revision on the same unpinned snapshot. A controlled invocation may pin the exact independently
-  accepted terminal run only for the already deployed unpinned source, image digest, compiled strategy, and complete
-  reviewed runtime; it cannot combine fresh-candidate deployment with pin installation. Automatic image promotion
-  supplies neither. Once pinned, a later operational release may change source only while preserving compiled strategy
-  and qualification identity. This prevents extra trials or rebinding evidence to implicit inputs.
+- Production GitOps carries that pin outside an explicit one-shot qualification release. Once a fresh candidate is
+  deployed without a pin, its source, image digest, compiled strategy, and complete runtime are immutable until the
+  exact independently accepted terminal run is pinned. Fresh-candidate deployment and pin installation cannot be
+  combined, and automatic image promotion supplies neither candidate material nor a run ID. Once pinned, a later
+  operational release may change source only while preserving compiled strategy and qualification identity. This
+  prevents extra trials or rebinding evidence to implicit inputs.
 - The compiled risk-balanced trend decision function records every normalized trend horizon, volatility estimate,
   portfolio-volatility scale, and target weight at a month-end close. Quantities are planned only after that Signal
   session is finalized, using its close prices and reconciled broker state observed before planning. Ordinary

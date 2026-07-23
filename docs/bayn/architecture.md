@@ -199,8 +199,9 @@ ID, and TigerBeetle ledger remain identical. TigerBeetle replica addresses are t
 identity, so an explicit reviewed candidate may change them without relabeling terminal evidence. A cluster-ID or
 ledger change still requires a fresh Signal snapshot. The writer has no source-coded current snapshot: ordinary image
 promotion reads the deployed runtime, while a qualification transition must supply the complete candidate runtime.
-After a fresh snapshot removes the pin for its one allowed source revision, promotion rejects a different source
-revision. A controlled invocation may install the exact independently accepted terminal run only for that already
-deployed unpinned source, image digest, compiled strategy, and complete runtime. It cannot replace an old pin and
-advance to a fresh candidate in the same change. A later pinned operational release may change source while preserving
-identical compiled strategy and qualification identity. Automatic image promotion never creates a qualification pin.
+After a fresh snapshot removes the pin, the complete deployed candidate becomes immutable: source, image digest,
+compiled strategy, Signal and TigerBeetle runtime may only be replayed exactly until its terminal run is pinned. A
+controlled invocation may install the exact independently accepted terminal run only for that deployed candidate. It
+cannot replace an old pin and advance to a fresh candidate in the same change. A later pinned operational release may
+change source while preserving identical compiled strategy and qualification identity. Automatic image promotion
+never creates a qualification pin.
