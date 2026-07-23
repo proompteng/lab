@@ -132,27 +132,17 @@ const isSubmitResolved = (event: MutationEvent): boolean =>
   event.eventType === MutationEventType.SubmitRejected ||
   event.eventType === MutationEventType.RecoveryFound
 
-const requireActiveRiskDecision = (
-  operation: MutationOperation,
-  stored: StoredIntent,
-  operationLabel = operation === MutationOperation.Submit ? 'submission' : 'cancellation',
-  allowIoStarted = false,
-) =>
+const requireActiveSubmitRiskDecision = (stored: StoredIntent, operationLabel = 'submission') =>
   Effect.gen(function* () {
     const decision = stored.decision
-    const validIntentState =
-      operation === MutationOperation.Submit
-        ? stored.intent.state === IntentState.Approved ||
-          (allowIoStarted && stored.intent.state === IntentState.IoStarted)
-        : stored.intent.state === IntentState.Acknowledged || stored.intent.state === IntentState.Unknown
     if (
-      !validIntentState ||
+      stored.intent.state !== IntentState.Approved ||
       decision?.outcome !== RiskOutcome.Approved ||
       stored.intent.riskDecisionId !== decision.decisionId
     ) {
       return yield* Effect.fail(
         new ExecutionError({
-          operation,
+          operation: MutationOperation.Submit,
           failure: ExecutionFailure.InvalidState,
           message: `${operationLabel} requires one committed approved intent and matching risk decision`,
         }),
@@ -162,7 +152,7 @@ const requireActiveRiskDecision = (
     if (currentTime >= Date.parse(decision.expiresAt)) {
       return yield* Effect.fail(
         new ExecutionError({
-          operation,
+          operation: MutationOperation.Submit,
           failure: ExecutionFailure.InvalidState,
           message: `${operationLabel} risk decision expired at ${decision.expiresAt}`,
         }),
@@ -177,7 +167,7 @@ export const dryRunSubmit = (
   readIntent(MutationOperation.Submit, intentId).pipe(
     Effect.flatMap((stored) =>
       Effect.gen(function* () {
-        yield* requireActiveRiskDecision(MutationOperation.Submit, stored, 'dry-run submission')
+        yield* requireActiveSubmitRiskDecision(stored, 'dry-run submission')
         return yield* Effect.try({
           try: (): DryRunSubmit => {
             const request = orderRequestBody(stored.intent)
@@ -237,7 +227,7 @@ export const submit = (intentId: string, consistencyDelayMs: number) =>
       return replay.event
     }
     yield* fence.check
-    yield* requireActiveRiskDecision(MutationOperation.Submit, before)
+    yield* requireActiveSubmitRiskDecision(before)
     const current = yield* now
     const started = yield* mutations.beginSubmit(
       intentId,
@@ -313,7 +303,6 @@ export const cancel = (intentId: string, consistencyDelayMs: number) =>
     }
     const intent = yield* readIntent(MutationOperation.Cancel, intentId)
     yield* fence.check
-    yield* requireActiveRiskDecision(MutationOperation.Cancel, intent)
     const current = yield* now
     const started = yield* mutations.beginCancel(
       intentId,

@@ -220,13 +220,30 @@ export interface MutationStoreShape {
 
 export class MutationStore extends Context.Service<MutationStore, MutationStoreShape>()('bayn/MutationStore') {}
 
-const isIdentifiedUnresolvedSubmit = (event: MutationEvent | undefined, brokerOrderId: string): boolean => {
-  if (event?.operation !== MutationOperation.Submit || event.brokerOrderId !== brokerOrderId) return false
-  return (
-    event.eventType === MutationEventType.SubmitUnknown ||
-    event.eventType === MutationEventType.RecoveryNotFound ||
-    event.eventType === MutationEventType.RecoveryUnknown
-  )
+const intentStateForIdentifiedSubmit = (
+  event: MutationEvent | undefined,
+  intentId: string,
+  brokerOrderId: string,
+): IntentState | undefined => {
+  if (
+    event?.operation !== MutationOperation.Submit ||
+    event.intentId !== intentId ||
+    event.mutationId !== mutationId(intentId, MutationOperation.Submit) ||
+    event.brokerOrderId !== brokerOrderId
+  ) {
+    return undefined
+  }
+  switch (event.eventType) {
+    case MutationEventType.SubmitAccepted:
+    case MutationEventType.RecoveryFound:
+      return IntentState.Acknowledged
+    case MutationEventType.SubmitUnknown:
+    case MutationEventType.RecoveryNotFound:
+    case MutationEventType.RecoveryUnknown:
+      return IntentState.Unknown
+    default:
+      return undefined
+  }
 }
 
 const storeError = (
@@ -473,16 +490,21 @@ const makeStore = Effect.gen(function* () {
               return yield* Effect.fail(storeError(storeOperation, 'invariant', 'intent does not exist'))
             }
             const requiredState =
-              operation === MutationOperation.Submit ? IntentState.Approved : IntentState.Acknowledged
-            const identifiedUnknownSubmit =
-              operation === MutationOperation.Cancel &&
-              intent.state === IntentState.Unknown &&
-              input.brokerOrderId !== undefined &&
-              isIdentifiedUnresolvedSubmit(
-                yield* readLatest(input.intentId, MutationOperation.Submit),
-                input.brokerOrderId,
+              operation === MutationOperation.Submit
+                ? IntentState.Approved
+                : input.brokerOrderId === undefined
+                  ? undefined
+                  : intentStateForIdentifiedSubmit(
+                      yield* readLatest(input.intentId, MutationOperation.Submit),
+                      input.intentId,
+                      input.brokerOrderId,
+                    )
+            if (requiredState === undefined) {
+              return yield* Effect.fail(
+                storeError('begin-cancel', 'invariant', 'cancel requires the exact durable submitted order identity'),
               )
-            if (intent.state !== requiredState && !identifiedUnknownSubmit) {
+            }
+            if (intent.state !== requiredState) {
               return yield* Effect.fail(
                 storeError(
                   storeOperation,
@@ -511,7 +533,7 @@ const makeStore = Effect.gen(function* () {
               ...(input.brokerOrderId === undefined ? {} : { brokerOrderId: input.brokerOrderId }),
               occurredAt: input.occurredAt,
             })
-            yield* append(event, true)
+            yield* append(event, operation === MutationOperation.Submit)
             if (operation === MutationOperation.Submit) {
               const transitioned = yield* sql<{ intent_id: string }>`
                 UPDATE intents
