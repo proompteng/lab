@@ -378,20 +378,49 @@ describe('autonomous cycle finalized-publication readiness', () => {
           () =>
             Effect.sync(() => {
               inspections += 1
-              return finalizedPublication({
-                ...makeInputManifest(),
-                finalizedSnapshot: {
-                  ...makeInputManifest().finalizedSnapshot,
-                  snapshotId: 'e'.repeat(64),
-                },
-              })
+              return finalizedPublication()
             }),
           control,
         )
       }).pipe(Effect.provide(TestClock.layer())),
     )
-    expect(rebound).toMatchObject({ outcome: 'ALREADY_BOUND', snapshotId })
-    expect(inspections).toBe(0)
+    expect(rebound).toMatchObject({
+      outcome: 'ALREADY_BOUND',
+      snapshotId,
+      freshness: {
+        dataAgeMs: 6 * 60 * 1_000,
+        publicationDelayMs: 15 * 60 * 1_000,
+      },
+    })
+    const replacement = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:22:00.000Z'))
+        return yield* Effect.flip(
+          provide(
+            boundCycle,
+            () =>
+              Effect.sync(() => {
+                inspections += 1
+                const manifest = makeInputManifest()
+                return finalizedPublication({
+                  ...manifest,
+                  finalizedSnapshot: {
+                    ...manifest.finalizedSnapshot,
+                    snapshotId: 'e'.repeat(64),
+                  },
+                })
+              }),
+            control,
+          ),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(replacement).toMatchObject({
+      _tag: 'CycleReadinessError',
+      operation: 'inspect-publication',
+      failure: 'contract',
+    })
+    expect(inspections).toBe(2)
     expect(control.binds).toBe(0)
   })
 })

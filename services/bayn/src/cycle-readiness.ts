@@ -3,7 +3,7 @@ import { Clock, Data, Effect } from 'effect'
 import { CycleState, CycleTerminalReason, signalSessionCloseAt, type AutonomousCycle } from './cycle'
 import { CycleStore, type CycleMutationReceipt, type CycleStoreError, type CycleStoreShape } from './db/cycle-store'
 import type { OperationalError } from './errors'
-import { MarketData, type MarketDataInspection } from './market-data'
+import { MarketData, type MarketDataInspection, type MarketDataService } from './market-data'
 
 export interface PublicationFreshness {
   readonly dataAgeMs: number
@@ -113,6 +113,70 @@ const blockMissedPublication = (
     ),
   )
 
+const inspectBoundPublication = (
+  cycle: AutonomousCycle,
+  marketData: MarketDataService,
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError> =>
+  marketData
+    .inspectPublication({
+      signalSessionDate: cycle.identity.signalSessionDate,
+      signalCalendarVersion: cycle.identity.signalCalendarVersion,
+    })
+    .pipe(
+      Effect.mapError((cause) =>
+        readinessError(
+          'inspect-publication',
+          'market-data',
+          'failed to read back the bound finalized Signal publication',
+          cause,
+        ),
+      ),
+      Effect.flatMap((publication) =>
+        Effect.gen(function* () {
+          if (publication.outcome === 'MISSING') {
+            return yield* Effect.fail(
+              readinessError(
+                'inspect-publication',
+                'contract',
+                'bound finalized Signal publication is missing from its durable source',
+              ),
+            )
+          }
+          const boundSnapshotId = cycle.bindings.snapshotId
+          if (
+            boundSnapshotId === undefined ||
+            publication.inspection.manifest.finalizedSnapshot.snapshotId !== boundSnapshotId
+          ) {
+            return yield* Effect.fail(
+              readinessError(
+                'inspect-publication',
+                'contract',
+                'finalized Signal publication does not match the immutable cycle binding',
+              ),
+            )
+          }
+          const observedAt = yield* currentTime
+          const freshness = yield* Effect.try({
+            try: () => measurePublicationFreshness(cycle, publication.inspection, observedAt),
+            catch: (cause) =>
+              readinessError(
+                'measure-freshness',
+                'contract',
+                'bound finalized Signal publication freshness is invalid',
+                cause,
+              ),
+          })
+          return {
+            outcome: 'ALREADY_BOUND',
+            observedAt,
+            cycle,
+            snapshotId: boundSnapshotId,
+            freshness,
+          } as const
+        }),
+      ),
+    )
+
 export const runCyclePublicationReadiness = (
   cycle: AutonomousCycle,
 ): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, MarketData | CycleStore> =>
@@ -125,12 +189,7 @@ export const runCyclePublicationReadiness = (
       return { outcome: 'BLOCKED', observedAt: initialObservedAt, cycle }
     }
     if (cycle.bindings.snapshotId !== undefined) {
-      return {
-        outcome: 'ALREADY_BOUND',
-        observedAt: initialObservedAt,
-        cycle,
-        snapshotId: cycle.bindings.snapshotId,
-      }
+      return yield* inspectBoundPublication(cycle, marketData)
     }
     if (cycle.state !== CycleState.Pending) {
       return yield* Effect.fail(
