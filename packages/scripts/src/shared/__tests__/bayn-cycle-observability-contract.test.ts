@@ -55,8 +55,10 @@ describe('Bayn cycle operations alert contract', () => {
     ) as Record<string, any>
     const digest = createHash('sha256').update(alloy).digest('hex')
 
-    expect(alloy).toContain('prometheus.scrape "bayn"')
-    expect(alloy).toContain('"__address__" = "bayn.bayn.svc.cluster.local:80"')
+    expect(alloy).toContain('discovery.kubernetes "bayn_pods"')
+    expect(alloy).toContain('label = "app.kubernetes.io/name=bayn"')
+    expect(alloy).toContain('targets         = discovery.relabel.bayn_metrics.output')
+    expect(alloy).not.toContain('__meta_kubernetes_pod_ready')
     expect(alloy).toContain('regex         = "up|bayn_.*"')
     expect(deployment.spec.template.metadata.annotations['observability.proompteng.ai/config-sha256']).toBe(digest)
 

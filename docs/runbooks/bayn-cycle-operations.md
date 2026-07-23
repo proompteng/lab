@@ -13,7 +13,7 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 
 ## Alert actions
 
-- `BaynMetricsUnavailable`: verify the Bayn pod and Service, the observability Alloy scrape target, and the NetworkPolicy.
+- `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
 - `BaynCycleObservationUnavailable`: inspect `cycle.error` in `GET /v1/status`, then restore the existing PostgreSQL
   projection path. Do not substitute cached or synthetic state.
 - `BaynCycleStalled`: branch on `cycle.reason` in `GET /v1/status`. `submissionCutoffAt` is a deadline only while the

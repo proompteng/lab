@@ -90,6 +90,39 @@ prometheus.scrape "ceph_storage" {
   forward_to      = [prometheus.relabel.ceph_storage_metrics.receiver]
 }
 
+discovery.kubernetes "bayn_pods" {
+  role = "pod"
+
+  namespaces {
+    names = ["bayn"]
+  }
+
+  selectors {
+    role  = "pod"
+    label = "app.kubernetes.io/name=bayn"
+  }
+}
+
+discovery.relabel "bayn_metrics" {
+  targets = discovery.kubernetes.bayn_pods.targets
+
+  rule {
+    action        = "keep"
+    source_labels = ["__meta_kubernetes_pod_container_port_name"]
+    regex         = "http"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  rule {
+    replacement  = "bayn"
+    target_label = "service"
+  }
+}
+
 prometheus.relabel "bayn_metrics" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 
@@ -101,14 +134,8 @@ prometheus.relabel "bayn_metrics" {
 }
 
 prometheus.scrape "bayn" {
-  job_name = "bayn"
-  targets = [
-    {
-      "__address__" = "bayn.bayn.svc.cluster.local:80",
-      "namespace"   = "bayn",
-      "service"     = "bayn",
-    },
-  ]
+  job_name        = "bayn"
+  targets         = discovery.relabel.bayn_metrics.output
   scrape_interval = "30s"
   scrape_timeout  = "10s"
   forward_to      = [prometheus.relabel.bayn_metrics.receiver]
