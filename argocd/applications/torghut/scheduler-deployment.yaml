@@ -470,9 +470,9 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.596.0-2411-gb9b3f9aae
+              value: v0.596.0-2517-g314c93ab0
             - name: TORGHUT_COMMIT
-              value: b9b3f9aaed7508518ba63a889e3492a4729ed361
+              value: 314c93ab0289304193a287697665d6da9b409ba0
             - name: TORGHUT_IMAGE_DIGEST
               value: sha256:e6448c4c476344eea647f4926872169c25adaa011a5d69c60dfc017cff8d05d9
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
