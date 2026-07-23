@@ -6,6 +6,136 @@ metadata:
 data:
   graf-rules.yaml: |
     groups:
+      - name: buzz-production.rules
+        rules:
+          - alert: BuzzRelayUnavailable
+            expr: |
+              (
+                sum(up{job="buzz-relay",namespace="buzz"}) < 1
+              )
+              or
+              absent(up{job="buzz-relay",namespace="buzz"})
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz
+              notify: email
+            annotations:
+              summary: Buzz relay is unavailable
+              description: No Buzz relay metrics target has been healthy for five minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzRelayReplicaDegraded
+            expr: |
+              sum(up{job="buzz-relay",namespace="buzz"} == 1) < 2
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: buzz
+            annotations:
+              summary: Buzz relay has fewer than two healthy replicas
+              description: Buzz has lost its two-replica availability target for ten minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzContainerRestarting
+            expr: |
+              sum by (container) (
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="buzz",
+                    pod=~"buzz-.*"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: buzz
+            annotations:
+              summary: Buzz container is restarting
+              description: Buzz container {{ $labels.container }} restarted during the last 15 minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzRedisUnavailable
+            expr: |
+              (
+                max(redis_up{job="buzz-redis",namespace="buzz"}) < 1
+              )
+              or
+              absent(redis_up{job="buzz-redis",namespace="buzz"})
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz-redis
+              notify: email
+            annotations:
+              summary: Buzz Redis is unavailable
+              description: The authenticated Buzz Redis instance has been unavailable for five minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzRedisMemoryHigh
+            expr: |
+              max(redis_memory_used_bytes{job="buzz-redis",namespace="buzz"})
+              /
+              clamp_min(max(redis_memory_max_bytes{job="buzz-redis",namespace="buzz"}), 1)
+              > 0.85
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: buzz-redis
+            annotations:
+              summary: Buzz Redis memory is above 85 percent
+              description: Redis memory use has exceeded 85 percent of its configured maximum for 15 minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzPostgresReplicaDegraded
+            expr: |
+              (
+                sum(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"} == 1) < 3
+              )
+              or
+              absent(up{job="cnpg-postgres",namespace="buzz",cluster="buzz-db"})
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz-postgres
+              notify: email
+            annotations:
+              summary: Buzz PostgreSQL has fewer than three healthy instances
+              description: The Buzz CNPG cluster has not met its three-instance availability target for ten minutes.
+              runbook_url: docs/runbooks/buzz-production.md
+          - alert: BuzzPostgresBackupStale
+            expr: |
+              (
+                time()
+                -
+                max(
+                  kube_cnpg_backup_stopped_at{
+                    namespace="buzz",
+                    cluster="buzz-db",
+                    phase="completed"
+                  }
+                )
+              ) > 129600
+              or
+              absent(
+                kube_cnpg_backup_stopped_at{
+                  namespace="buzz",
+                  cluster="buzz-db",
+                  phase="completed"
+                }
+              )
+            for: 15m
+            labels:
+              severity: critical
+              team: platform
+              service: buzz-postgres
+              notify: email
+            annotations:
+              summary: Buzz PostgreSQL backup is stale
+              description: Buzz has no successful CNPG backup from the last 36 hours.
+              runbook_url: docs/runbooks/buzz-production.md
       - name: hermes-production.rules
         rules:
           - record: hermes_rollout_enabled

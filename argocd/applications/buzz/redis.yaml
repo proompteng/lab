@@ -1,0 +1,83 @@
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: Redis
+metadata:
+  name: buzz-redis
+  labels:
+    app.kubernetes.io/name: buzz-redis
+    app.kubernetes.io/part-of: buzz
+  annotations:
+    argocd.argoproj.io/sync-wave: "-7"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  kubernetesConfig:
+    image: quay.io/opstree/redis:v7.4.8@sha256:b3bbb254bfe964f4333c581e1461e738853ec2351aa3a620a5fff45b94fba2b3
+    imagePullPolicy: IfNotPresent
+    redisSecret:
+      name: buzz-redis-auth
+      key: password
+    persistentVolumeClaimRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: false
+  redisConfig:
+    maxMemoryPercentOfLimit: 75
+    additionalRedisConfig: |-
+      appendonly yes
+      appendfsync everysec
+      maxmemory-policy allkeys-lru
+  redisExporter:
+    enabled: true
+    image: quay.io/opstree/redis-exporter:v1.78.0@sha256:8edf2c77220a6e8fc290d13a4ec78bedcbdf08b8bf03a64119f448131f733d3f
+    imagePullPolicy: IfNotPresent
+    port: 9121
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+  storage:
+    keepAfterDelete: true
+    volumeClaimTemplate:
+      metadata:
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false,Delete=false
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: rook-ceph-block

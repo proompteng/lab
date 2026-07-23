@@ -21,6 +21,14 @@ rbac:
       verbs:
         - list
         - watch
+    - apiGroups:
+        - postgresql.cnpg.io
+      resources:
+        - backups
+        - scheduledbackups
+      verbs:
+        - list
+        - watch
 
 customResourceState:
   enabled: true
@@ -55,6 +63,63 @@ customResourceState:
                       - deployedAt
                     revision:
                       - revision
+        - groupVersionKind:
+            group: postgresql.cnpg.io
+            version: v1
+            kind: Backup
+          metricNamePrefix: kube_cnpg
+          labelsFromPath:
+            namespace:
+              - metadata
+              - namespace
+            backup:
+              - metadata
+              - name
+            cluster:
+              - metadata
+              - labels
+              - cnpg.io/cluster
+            scheduled_backup:
+              - metadata
+              - labels
+              - cnpg.io/scheduled-backup
+            phase:
+              - status
+              - phase
+          metrics:
+            - name: backup_stopped_at
+              help: CloudNativePG backup completion timestamp in Unix seconds.
+              each:
+                type: Gauge
+                gauge:
+                  path:
+                    - status
+                    - stoppedAt
+        - groupVersionKind:
+            group: postgresql.cnpg.io
+            version: v1
+            kind: ScheduledBackup
+          metricNamePrefix: kube_cnpg
+          labelsFromPath:
+            namespace:
+              - metadata
+              - namespace
+            scheduled_backup:
+              - metadata
+              - name
+            cluster:
+              - spec
+              - cluster
+              - name
+          metrics:
+            - name: scheduled_backup_last_schedule_time
+              help: CloudNativePG most recent scheduled backup timestamp in Unix seconds.
+              each:
+                type: Gauge
+                gauge:
+                  path:
+                    - status
+                    - lastScheduleTime
 
 resources:
   requests:

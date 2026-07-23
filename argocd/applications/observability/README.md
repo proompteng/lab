@@ -82,10 +82,13 @@ kubectl -n argocd get app observability
 
 The observability app owns the cluster metrics pipeline used for ARC runner sizing and shared-storage diagnosis:
 
-- `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics.
+- `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics, plus
+  CloudNativePG backup and scheduled-backup timestamps.
 - `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, and the Ceph manager; it applies bounded metric allowlists, including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
-- `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on missing telemetry, low PVC capacity, WAL archive backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+- `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
+  health, stale Buzz backups, missing telemetry, low PVC capacity, WAL archive backlog, logical-slot WAL retention,
+  forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
 Validate the Mimir tenant after sync:
 
