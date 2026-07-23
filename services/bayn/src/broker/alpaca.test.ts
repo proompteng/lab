@@ -26,6 +26,7 @@ import {
   readPreflightTimeoutMs,
   verifyReadAccess,
   type BrokerReadShape,
+  type MarketCalendarQuery,
   type ReadOptions,
 } from './alpaca'
 
@@ -152,6 +153,11 @@ const withClient = <A, E>(
 ): Effect.Effect<A, BrokerReadError | E> =>
   make(readOptions).pipe(Effect.flatMap(use), Effect.provideService(HttpClient.HttpClient, client))
 
+const readMarketCalendar = (read: BrokerReadShape, query: MarketCalendarQuery) => {
+  if (read.marketCalendar === undefined) return Effect.die('live Alpaca read is missing marketCalendar')
+  return read.marketCalendar(query)
+}
+
 describe('Alpaca paper reads', () => {
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
     let method = ''
@@ -184,7 +190,15 @@ describe('Alpaca paper reads', () => {
     expect(secret).toBe('paper-secret')
     expect(inspected).not.toContain('paper-key')
     expect(inspected).not.toContain('paper-secret')
-    expect(surface).toEqual(['account', 'fillActivities', 'orderByClientId', 'orderById', 'orders', 'positions'])
+    expect(surface).toEqual([
+      'account',
+      'fillActivities',
+      'marketCalendar',
+      'orderByClientId',
+      'orderById',
+      'orders',
+      'positions',
+    ])
     expect(result.value).toMatchObject({
       id: accountId,
       status: AccountStatus.Active,
@@ -204,6 +218,120 @@ describe('Alpaca paper reads', () => {
         reset: '1784664000',
         retryAfter: undefined,
       },
+    })
+  })
+
+  test('reads one bounded market calendar range and returns deterministic UTC observation evidence', async () => {
+    let method = ''
+    let requestedUrl: URL | undefined
+    const response = [
+      { date: '2026-03-09', open: '09:30', close: '16:00', session_open: '0400', session_close: '2000' },
+      { date: '2026-03-06', open: '09:30', close: '16:00', session_open: '0400', session_close: '2000' },
+    ]
+    const client = HttpClient.make((request, url) => {
+      method = request.method
+      requestedUrl = url
+      return Effect.succeed(jsonResponse(request, response))
+    })
+
+    const result = await Effect.runPromise(
+      withClient(client, (read) => readMarketCalendar(read, { start: '2026-03-06', end: '2026-03-10' })),
+    )
+
+    expect(method).toBe('GET')
+    expect(requestedUrl?.pathname).toBe('/v2/calendar')
+    expect(requestedUrl?.searchParams.toString()).toBe('start=2026-03-06&end=2026-03-10&date_type=TRADING')
+    const normalized = {
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      requestedRange: { start: '2026-03-06', end: '2026-03-10' },
+      timeZone: 'UTC',
+      sessions: [
+        {
+          date: '2026-03-06',
+          openAt: '2026-03-06T14:30:00.000Z',
+          closeAt: '2026-03-06T21:00:00.000Z',
+        },
+        {
+          date: '2026-03-09',
+          openAt: '2026-03-09T13:30:00.000Z',
+          closeAt: '2026-03-09T20:00:00.000Z',
+        },
+      ],
+    } as const
+    expect(result.value).toEqual({
+      ...normalized,
+      normalizedResponseHash: canonicalHashV1(normalized),
+    })
+    expect(result.evidence).toMatchObject({
+      requestId: 'req-123',
+      status: 200,
+      contentHash: canonicalHashV1(response),
+    })
+  })
+
+  test('rejects reversed or overlong market calendar ranges before broker I/O', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, []))
+    })
+
+    const reversed = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => readMarketCalendar(read, { start: '2026-03-10', end: '2026-03-09' }))),
+    )
+    expect(reversed).toMatchObject({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.InvalidRequest,
+      retryable: false,
+    })
+
+    const overlong = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => readMarketCalendar(read, { start: '2026-01-01', end: '2026-02-01' }))),
+    )
+    expect(overlong).toMatchObject({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.InvalidRequest,
+      retryable: false,
+    })
+    expect(calls).toBe(0)
+  })
+
+  test('fails closed on malformed, duplicate, or out-of-range market calendar rows', async () => {
+    let response: unknown = [{ date: '2026-03-09', open: '9:30', close: '16:00' }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+    const query = { start: '2026-03-06', end: '2026-03-10' }
+
+    const malformed = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => readMarketCalendar(read, query))),
+    )
+    expect(malformed).toMatchObject({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
+
+    response = [
+      { date: '2026-03-09', open: '09:30', close: '16:00' },
+      { date: '2026-03-09', open: '09:30', close: '16:00' },
+    ]
+    const duplicate = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => readMarketCalendar(read, query))),
+    )
+    expect(duplicate).toMatchObject({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
+
+    response = [{ date: '2026-03-11', open: '09:30', close: '16:00' }]
+    const outsideRange = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => readMarketCalendar(read, query))),
+    )
+    expect(outsideRange).toMatchObject({
+      operation: 'market-calendar',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
     })
   })
 
