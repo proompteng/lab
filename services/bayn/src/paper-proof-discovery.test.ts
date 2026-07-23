@@ -23,7 +23,7 @@ import { CycleObservability, type CycleObservabilityShape } from './db/cycle-obs
 import { CycleStore, type CycleStoreShape } from './db/cycle-store'
 import { PostgresClientLive } from './db/evidence-store'
 import { canonicalHashV1 } from './hash'
-import { Authority, OrderSide, OrderType, ReconciliationStatus, RiskOutcome, TimeInForce } from './paper'
+import { Authority, KillState, OrderSide, OrderType, ReconciliationStatus, RiskOutcome, TimeInForce } from './paper'
 import {
   PaperProofCandidateIneligibility,
   discoverPaperProofCandidates,
@@ -109,7 +109,13 @@ const projection = (): CycleOperationsProjection => ({
     updatedAt: '2099-07-23T20:10:00.000Z',
     terminalAt: '2099-07-23T20:10:00.000Z',
   },
-  authority: null,
+  authority: {
+    maximum: Authority.Observe,
+    effective: Authority.Observe,
+    kill: KillState.Clear,
+    reason: null,
+    updatedAt: '2099-07-23T20:04:00.000Z',
+  },
   reconciliation: {
     accountId,
     reconciliationId,
@@ -543,6 +549,30 @@ describe('paper proof DISCOVER', () => {
       ['missing cycle', (base) => ({ ...base, cycle: Option.none() }), 'cycle-missing', observedAt],
       ['missing document', (base) => ({ ...base, document: Option.none() }), 'document-missing', observedAt],
       ['stale document', (base) => base, 'document-stale', '2099-07-24T13:15:00.000Z'],
+      [
+        'missing durable authority',
+        (base) => ({ ...base, projection: { ...base.projection, authority: null } }),
+        'authority-mismatch',
+        observedAt,
+      ],
+      [
+        'PAPER durable authority',
+        (base) => ({
+          ...base,
+          projection: {
+            ...base.projection,
+            authority: {
+              maximum: Authority.Paper,
+              effective: Authority.Paper,
+              kill: KillState.Clear,
+              reason: null,
+              updatedAt: '2099-07-23T20:04:00.000Z',
+            },
+          },
+        }),
+        'authority-mismatch',
+        observedAt,
+      ],
       [
         'mismatched policy',
         (base) => ({

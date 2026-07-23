@@ -252,6 +252,7 @@ export class PaperProofDiscoveryError extends Data.TaggedError('PaperProofDiscov
   readonly operation: 'broker-read' | 'decode' | 'read-snapshot' | 'validate'
   readonly failure:
     | 'account-mismatch'
+    | 'authority-mismatch'
     | 'broker'
     | 'cycle-mismatch'
     | 'cycle-missing'
@@ -427,6 +428,13 @@ const validateSnapshot = (
     document.bindings.policyHash === identity.policyHash,
     'document-mismatch',
     'shadow document policy does not match the current source-controlled risk policy',
+  )
+  requireInvariant(
+    projection.authority !== null &&
+      projection.authority.maximum === Authority.Observe &&
+      projection.authority.effective === Authority.Observe,
+    'authority-mismatch',
+    'durable authority must be present with OBSERVE maximum and effective authority',
   )
   requireInvariant(
     document.targetPlan.status === TargetPlanStatus.Planned && document.targetPlan.intentTargets.length > 0,
