@@ -12,8 +12,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class MarketDataArchiveJobTest {
-  private val symbols = setOf("AMD", "AVGO", "COHR", "CRDO", "LITE", "MRVL", "MU", "NVDA", "WDC")
-  private val universe = ArchiveUniverse("equity-infrastructure-v1", symbolHash(symbols), symbols)
+  private val symbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
+  private val universe = ArchiveUniverse("cross-asset-taa-v1", symbolHash(symbols), symbols)
   private val topics =
     mapOf(
       "torghut.bars.1m.v1" to "iex",
@@ -44,7 +44,7 @@ class MarketDataArchiveJobTest {
       )
 
     assertEquals("iex", iex.feed)
-    assertEquals("equity-infrastructure-v1", iex.universeId)
+    assertEquals("cross-asset-taa-v1", iex.universeId)
     assertEquals(universe.symbolHash, iex.universeSymbolHash)
     assertEquals("bars", iex.channel)
     assertEquals("delayed_sip", delayed.feed)
@@ -158,7 +158,7 @@ class MarketDataArchiveJobTest {
     delayClass: String,
     session: String = "regular",
     high: Double = 101.0,
-    symbol: String = "NVDA",
+    symbol: String = "SPY",
   ): Envelope<AlpacaBarPayload> {
     val eventTime = Instant.parse("2026-07-21T14:00:00Z")
     return Envelope(

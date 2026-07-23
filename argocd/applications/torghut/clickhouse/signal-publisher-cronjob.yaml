@@ -13,7 +13,7 @@ spec:
   timeZone: America/New_York
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
-  suspend: false
+  suspend: true
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -49,27 +49,27 @@ spec:
                 - name: SIGNAL_UNIVERSE_ID
                   valueFrom:
                     configMapKeyRef:
-                      name: bayn-universe-v1
+                      name: bayn-universe-v2
                       key: UNIVERSE_ID
                 - name: SIGNAL_UNIVERSE_SYMBOL_HASH
                   valueFrom:
                     configMapKeyRef:
-                      name: bayn-universe-v1
+                      name: bayn-universe-v2
                       key: UNIVERSE_SYMBOL_HASH
                 - name: SIGNAL_SYMBOLS
                   valueFrom:
                     configMapKeyRef:
-                      name: bayn-universe-v1
+                      name: bayn-universe-v2
                       key: UNIVERSE_SYMBOLS
                 - name: SIGNAL_START_DATE
                   valueFrom:
                     configMapKeyRef:
-                      name: bayn-universe-v1
+                      name: bayn-universe-v2
                       key: HISTORY_START_DATE
                 - name: SIGNAL_ALPACA_FEED
                   valueFrom:
                     configMapKeyRef:
-                      name: bayn-universe-v1
+                      name: bayn-universe-v2
                       key: HISTORY_FEED
                 - name: SIGNAL_CODE_REVISION
                   value: "72006ac26afef02e42fc1af8d434e49835cc40d6"

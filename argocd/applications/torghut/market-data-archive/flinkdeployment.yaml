@@ -42,7 +42,7 @@ spec:
             - configMapRef:
                 name: market-data-archive-config
             - configMapRef:
-                name: bayn-universe-v1
+                name: bayn-universe-v2
           env:
             - name: ARCHIVE_KAFKA_PASSWORD
               valueFrom:

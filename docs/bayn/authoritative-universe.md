@@ -1,167 +1,113 @@
 # Bayn authoritative universe
 
-Status: **selected, published, compiled, and live-verified**
+Status: **precommitted; Signal publication in progress**
 
-Last verified: 2026-07-22T04:25:49.456Z
+## Current contract
 
-## Decision
-
-`equity-infrastructure-v1` contains these executable symbols, in canonical order:
+Bayn's next qualification candidate uses one fixed, canonically ordered universe:
 
 ```text
-AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,NVDA,WDC
+DBC,EFA,IEF,SPY,VNQ
 ```
 
-The candidate pool was the fixed production websocket universe. Selection used only availability, history, feed, and
-capacity facts before any candidate return series was read. `SNDK` is the sole exclusion because it has only 358
-adjusted daily sessions; the unchanged research gate requires 252 warm-up sessions plus at least 504 evaluation
-sessions.
+| Field | Value |
+| --- | --- |
+| Universe ID | `cross-asset-taa-v1` |
+| Symbol hash | `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
+| History start | `2016-01-04` |
+| Evaluation start | `2017-01-03` |
+| Historical feed | delayed consolidated `sip` |
+| Adjustment | `all` |
+| Calendar | `alpaca-us-equity-calendar-v1` |
 
-The procedure is deterministic: admit every common stock in the fixed pool that is active, tradable, supported by
-both required feeds, has the required common history, and passes the capacity floor. All nine eligible instruments are
-selected, so no performance ranking or tie-breaker exists. There are no leveraged or inverse products. Alpaca's US
-equity calendar defines sessions and `adjustment=all` defines corporate-action handling. There is no automatic
-substitution; an addition, removal, calendar change, or adjustment change requires a new universe ID, symbol hash, and
-qualification record.
+The hash is SHA-256 over the exact CSV string above. A reorder, addition, removal, feed change, adjustment change, or
+calendar change is a different contract and requires a new candidate.
 
-The ETF universe from `PROOMPT-392` is abandoned. It was inherited without a selection procedure and is absent from
-the websocket subscription. Bayn's compiled `bayn.risk-balanced-trend.protocol.v2` now binds this exact universe,
-universe ID, and symbol hash. Strategy construction and market-data inspection both reject any different universe.
+## Selection rationale
 
-## Pre-return eligibility evidence
+The five unlevered US-listed ETFs provide one executable sleeve for commodities (`DBC`), developed ex-US equities
+(`EFA`), intermediate US Treasuries (`IEF`), US equities (`SPY`), and US real estate (`VNQ`). This is the deliberately
+small cross-asset opportunity set used to test the already committed risk-balanced trend rule; it is not a portfolio
+selected by historical candidate performance.
 
-Evidence was read from the configured Alpaca Basic account on 2026-07-21. Delayed consolidated SIP adjusted daily bars
-provide history and execution-capacity screening after the account's 15-minute restriction; the live websocket
-provides real-time IEX observations. Every selected instrument is active, tradable, and already acknowledged on the
-production IEX websocket. The same live asset probe reported every selected symbol as a fractionable, marginable,
-shortable US equity; these flags are descriptive eligibility facts, not strategy inputs.
+The opportunity-set design follows the simple diversified asset-class framing in Meb Faber's
+[A Quantitative Approach to Tactical Asset Allocation](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=962461).
+The exact Bayn horizons, volatility normalization, symbol cap, and portfolio-volatility target are Bayn's existing
+M2.1 rule, not a formula attributed to that paper. The rule and all qualification thresholds remain unchanged for this
+candidate.
 
-At $1,000,000 simulated capital and a 35% per-symbol cap, the largest planned one-day order is $350,000. The committed
-capacity rule limits that amount to 1% of trailing-252-session fifth-percentile consolidated daily dollar volume, so a
-symbol must provide at least $35,000,000.
+Before precommit, availability-only checks established that each symbol had daily coverage from `2016-01-04`; no OHLCV
+value, return, candidate weight, metric, benchmark, or verdict was inspected to choose the symbols. The subsequent
+publication and qualification stages are allowed to fail. Missing symbol-session rows are never dropped or filled.
 
-| Symbol | Selected | SIP sessions through 2026-07-20 | First session | SIP p05 daily dollar volume | Reason               |
-| ------ | -------- | ------------------------------: | ------------- | --------------------------: | -------------------- |
-| AMD    | yes      |                           1,122 | 2022-01-27    |                     $4.909B | Eligible             |
-| AVGO   | yes      |                           1,122 | 2022-01-27    |                     $4.418B | Eligible             |
-| COHR   | yes      |                           1,122 | 2022-01-27    |                     $261.9M | Eligible             |
-| CRDO   | yes      |                           1,122 | 2022-01-27    |                     $384.4M | Eligible             |
-| LITE   | yes      |                           1,122 | 2022-01-27    |                     $262.7M | Eligible             |
-| MRVL   | yes      |                           1,122 | 2022-01-27    |                     $769.6M | Eligible             |
-| MU     | yes      |                           1,122 | 2022-01-27    |                     $1.819B | Eligible             |
-| NVDA   | yes      |                           1,122 | 2022-01-27    |                    $22.183B | Eligible             |
-| WDC    | yes      |                           1,122 | 2022-01-27    |                     $408.8M | Eligible             |
-| SNDK   | no       |                             358 | 2025-02-13    |                      $76.4M | Insufficient history |
+## Shared production contract
 
-All nine selected symbols share the same 1,122 complete sessions and have 870 sessions after the 252-session warm-up,
-exceeding the 504-session minimum. No symbol was included or excluded using strategy performance.
+`argocd/applications/torghut/clickhouse/bayn-universe-v2-configmap.yaml` is the single active source for:
 
-Every selected symbol has both the executable and reference role: it must exist in the live producer and the finalized
-historical publication, with no reference-only substitute. The following operational exposure labels were committed
-without consulting candidate returns and exist only to make concentration visible:
+- the WebSocket delayed-SIP observation symbols and their universe identity;
+- the market-data archive universe identity; and
+- the adjusted-daily Signal publisher universe, history start, and feed.
 
-| Symbol | Non-return exposure role        | Decision reason                                  |
-| ------ | ------------------------------- | ------------------------------------------------ |
-| AMD    | compute processors              | complete history, supported feeds, capacity pass |
-| AVGO   | networking and custom silicon   | complete history, supported feeds, capacity pass |
-| COHR   | optical components              | complete history, supported feeds, capacity pass |
-| CRDO   | high-speed connectivity silicon | complete history, supported feeds, capacity pass |
-| LITE   | optical components              | complete history, supported feeds, capacity pass |
-| MRVL   | networking and storage silicon  | complete history, supported feeds, capacity pass |
-| MU     | memory                          | complete history, supported feeds, capacity pass |
-| NVDA   | accelerated compute             | complete history, supported feeds, capacity pass |
-| WDC    | data storage                    | complete history, supported feeds, capacity pass |
-| SNDK   | flash storage                   | excluded: only 358 adjusted daily sessions       |
+The WebSocket Deployment remains one replica with `Recreate`. Its core IEX topics retain the ten-symbol Torghut trading
+universe, while `ALPACA_OBSERVATION_SYMBOLS` binds only the delayed-SIP feed to Bayn's five symbols. The resulting 15
+symbol-feed subscriptions remain below the Alpaca Basic limit of 30. The archive and publisher remain the existing
+services; Bayn does not gain a data writer. The Signal publisher alone writes the three publication tables and
+finalizes a snapshot only after exact readback. Bayn retains explicit `SELECT` grants only.
 
-## Historical pre-rollout baseline (superseded)
+The scheduled CronJob is removed from rendered GitOps during the universe switch. This prevents it from publishing the
+new full-history contract before the bounded backfill has been reviewed. It is restored only after the backfill Job is
+complete, its evidence is retained, and that Job has been removed through GitOps.
 
-Read-only verification at 2026-07-21T09:20:51Z found one healthy websocket pod and one Alpaca connection. Alpaca had
-acknowledged the legacy ten-symbol set, including `SNDK`, on trades, quotes, bars, and updated bars. The scheduled V1
-Signal publisher was active. Both ClickHouse replicas agreed on two finalized V1 manifests; the latest snapshot
-`0e3188062fb6781f9dfdc048b4bfe9846d8f4ce74c5e429e296e3ebcd75e93a5` contains 2,398 sessions and 19,184 bars for
-the eight legacy ETFs `DBC,EEM,EFA,GLD,IEF,SPY,TLT,VNQ` through 2026-07-20. At that timestamp neither the producer nor
-the publication matched the selected universe. This paragraph is retained only as the before-rollout observation.
+The first historical publication is a separately reviewed, bounded GitOps Job using the same service account, secrets,
+immutable image, and least-privilege ClickHouse principal as the scheduled publisher. It is removed after evidence is
+retained. The scheduled publisher must then produce two additional complete snapshots before qualification begins.
 
-## Data contract
+## Preserved M2.1 evidence
 
-- `argocd/applications/torghut/clickhouse/bayn-universe-v1-configmap.yaml` is the versioned selection artifact.
-- The Git commit containing this document and ConfigMap is the immutable eligibility record. Runtime identity is the
-  universe ID plus canonical symbol hash; neither is inferred from a mutable database row.
-- The ConfigMap binds universe ID `equity-infrastructure-v1` to canonical symbol hash
-  `ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18`.
-- The production websocket remains the live IEX producer. `SYMBOLS` and `SYMBOLS_ALLOWLIST` both reference the exact
-  nine-symbol ConfigMap value; a subset, superset, reorder, duplicate, or Jangar override fails startup.
-- The Signal publisher uses delayed consolidated SIP and the exact nine-symbol set. A bounded REST backfill supplies
-  history that a live websocket cannot provide; daily publications run after the Basic plan's 15-minute delay and use
-  the same validation and immutable `snapshot_manifests_v2` finalization path. Every manifest binds the universe ID and
-  symbol hash.
-- Bayn accepts only a finalized V2 publication whose universe ID, symbol hash, feed, adjustment, calendar, bounds, and
-  canonical symbols match the compiled strategy. A superset, subset, duplicate, mixed feed, or missing session fails
-  closed.
-- Historical and live events retain their transport and feed identity. Delayed SIP REST history is not relabeled as
-  real-time IEX websocket data.
-- Live envelopes preserve provider source, feed, provider event time, ingestion time, and updated-bar corrections.
-  Historical reconciliation is the exact replica readback and content-hash check performed before V2 finalization.
+The prior `equity-infrastructure-v1` contract remains immutable historical evidence even though it is no longer an
+active ConfigMap. Production Bayn stays pinned to:
 
-The websocket itself is not the current latency bottleneck. A read-only production check at 2026-07-21 08:44 UTC
-measured about 32 milliseconds from the latest trade/bar event to Kafka, while the latest selected-symbol rows reached
-`ta_microbars` and `ta_signals` 14.2-35.9 seconds after event time. Those derived ClickHouse tables are therefore not
-an execution-price source. The first Bayn strategy remains finalized-daily; later order routing must consume a fresh
-websocket/Kafka quote or prove a materially tighter downstream bound.
+- run `87c0dac69efcfa7bdedb5bbcffe26f7ee9a14de8c05baea613f488eb869a305f`;
+- snapshot `0945e3331d67437a072d5eb33f65e469b9883a5e762e29e80f7acb389864c79f`;
+- qualification result hash `da3f914ae5ea3bf8be8bb08b4b3488b5dfbd04464045f7add8b3d7550c000bf4`; and
+- maximum authority `OBSERVE`.
 
-## Alpaca Basic coverage boundary
+The M2.1 economic gates passed, but its terminal qualification is `REJECTED` for insufficient power and walk-forward
+history. Replacing the active ingestion universe does not rewrite that snapshot, PostgreSQL graph, dossier, or
+TigerBeetle journal.
 
-Live authentication probes confirmed the account can use real-time `iex`, 15-minute-delayed `delayed_sip`, and the
-derived `overnight` feed. Real-time `sip` and `boats` authentication are not included. The active production IEX socket
-also occupies the account's single connection for that feed. The Basic plan permits 30 equity websocket symbols and
-200 historical requests per minute.
+## Pre-change live baseline
 
-The configured paper account's asset responses returned every selected symbol as active, tradable, and fractionable,
-but did not expose a non-null `overnight_tradable` field. Overnight eligibility is therefore unproven here and must be
-measured by `PROOMPT-396`, not inferred. The free overnight feed provides indicative real-time quotes and latest bars,
-but its trades are delayed 15 minutes; delayed BOATS history is available through REST. It may be added for observation
-and research, but it cannot become execution-price authority. Real-time consolidated pre-market and after-hours pricing
-requires Alpaca Algo Trader Plus. Any extended or overnight order path is a later authority change and must use
-supported limit-order semantics; this milestone submits no orders. The external contract is documented in Alpaca's
-[market-data plan matrix](https://docs.alpaca.markets/us/docs/about-market-data-api),
-[24/5 feed specification](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api), and
-[extended-hours order rules](https://docs.alpaca.markets/us/docs/orders-at-alpaca).
+Read-only verification at `2026-07-23T00:24Z`, before the v2 GitOps change, found:
 
-## Current integration and live proof
+- Argo applications `torghut` and `bayn` Synced/Healthy at
+  `b8bf36d01f31f5352630fc3f9f5d1ec408452016`;
+- one ready WebSocket replica on image digest
+  `sha256:c5753db003befaa6525469de4bf659bc774c4543531bae2dcd2f145ecb8e608b`;
+- the archive job running on image digest
+  `sha256:1a3fba53b409b7f1f37d2836c59497a73ed4c6ea244d9004ee3c2dbf945043d4`;
+- the scheduled Signal publisher last successful at `2026-07-22T22:30:15Z` on digest
+  `sha256:2561a79d2baaa998036344c121cc3986aedec365881911dd592d334163d82729`;
+- both ClickHouse replicas agreeing on the pinned M2.1 manifest, 10,116 unique bars, 1,124 unique sessions, and all
+  content hashes; and
+- Bayn ready with exact 15-account/578-transfer TigerBeetle reconciliation and zero broker events, orders, fills, or
+  paper accounting transactions.
 
-- The versioned ConfigMap supplies the exact universe to the websocket, archive pipeline, and Signal publisher.
-- GitOps renders the scheduled Signal publisher with delayed SIP history and the V2 finalization contract.
-- Bayn's compiled strategy, market-data reader, qualification lock, and tests all bind the same universe ID and symbol
-  hash.
-- Bayn GitOps selects finalized snapshot
-  `98f9b0cdee311b248d4ed36104fa46ff86c34d587d6e71a6706a9d778c110292` through 2026-07-20.
-- Live verification observed one ready, zero-restart Bayn writer at source revision
-  `407d9d20b47374efd0c53f94befd9aac719e3bee` and image-index digest
-  `sha256:3cacc27ace90ce637362f0dcf408d43c03e69c6018461bd1fd72b9cc24c82cbf`.
-- Run `b88f53887a31b6696f5bf6b56e4e10d9966057c6109a1d0721dc94677e566ec7` evaluated the exact nine-symbol snapshot.
-  Data and evidence were `CURRENT`, all four continuous dependencies were `AVAILABLE`, accounting was `EXACT`, and
-  readiness remained open through probe sequence 19.
-- The economic evaluation passed all seven gates, while the terminal qualification correctly remained `REJECTED` and
-  non-executable for insufficient statistical power. Status retained maximum authority `observe`, with broker orders
-  and capital promotion disabled.
+## Publication acceptance
 
-Rollback remains fail-closed: stop the active Signal writer through GitOps, preserve finalized and partially staged
-publications, and revert only after no publication Job is active. A rollback does not grant broker or capital
-authority.
+For the bounded backfill and two scheduled snapshots, both physical ClickHouse replicas must independently report:
 
-## Read-only ClickHouse proof
+- exactly one V2 manifest with the current universe ID and symbol hash;
+- exactly one adjusted daily bar for every symbol and exchange session;
+- `bar_count = session_count * 5`;
+- no duplicate bar or session keys;
+- identical requested bounds, source revision, image digest, ordered bar hash, ordered session hash, and manifest hash;
+  and
+- publisher grants restricted to the documented `SELECT, INSERT` set while Bayn remains `SELECT`-only.
 
-After publication, the following aggregate must return nine rows with 1,122 sessions and a common 2022-01-27 through
-2026-07-20 range:
+No candidate returns, weights, metrics, or benchmark comparisons are calculated in this publication ticket. Bayn's
+deployment snapshot and qualification pin do not change.
 
-```sql
-SELECT
-  symbol,
-  count() AS sessions,
-  min(session_date) AS first_session,
-  max(session_date) AS last_session
-FROM signal.adjusted_daily_bars_v2
-WHERE snapshot_id = '<finalized-snapshot-id>'
-GROUP BY symbol
-ORDER BY symbol;
-```
+Rollback is fail-closed: stop new publication through GitOps, preserve finalized and partially staged rows for
+diagnosis, and revert the shared contract only after no publisher Job is active. Never delete the M2.1 evidence or
+Signal publication tables.

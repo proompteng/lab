@@ -121,9 +121,13 @@ fixed exclusively by `authority`.
 
 ## Strategy and economic contract
 
-The compiled `bayn.risk-balanced-trend.protocol.v2` uses the exact `equity-infrastructure-v1` universe:
+The compiled `bayn.risk-balanced-trend.protocol.v2` candidate uses the exact `cross-asset-taa-v1` universe:
 
-`AMD, AVGO, COHR, CRDO, LITE, MRVL, MU, NVDA, WDC`.
+`DBC, EFA, IEF, SPY, VNQ`.
+
+The production deployment remains pinned to the terminal `equity-infrastructure-v1` M2.1 run until the cross-asset
+Signal history is finalized and the new candidate completes qualification. Changing the active ingestion contract
+does not relabel or rewrite that historical run.
 
 At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
 averages them into a composite score, and assigns weight only to positive scores. Weights are redistributed under a 35%

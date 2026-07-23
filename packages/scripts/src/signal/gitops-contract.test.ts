@@ -11,11 +11,13 @@ const clickhouseDirectory = resolve(root, 'argocd/applications/torghut/clickhous
 const read = (path: string) => readFileSync(resolve(clickhouseDirectory, path), 'utf8')
 const readWsConfig = () => readFileSync(resolve(root, 'argocd/applications/torghut/ws/configmap.yaml'), 'utf8')
 const readWsDeployment = () => readFileSync(resolve(root, 'argocd/applications/torghut/ws/deployment.yaml'), 'utf8')
+const readSchedulerDeployment = () =>
+  readFileSync(resolve(root, 'argocd/applications/torghut/scheduler-deployment.yaml'), 'utf8')
 
 const csv = (value: string): string[] => value.split(',').map((item) => item.trim())
 const environment = (container: { env: Array<{ name: string }> }) =>
   new Map(container.env.map((entry) => [entry.name, entry]))
-const universeRef = (key: string) => ({ valueFrom: { configMapKeyRef: { name: 'bayn-universe-v1', key } } })
+const universeRef = (key: string) => ({ valueFrom: { configMapKeyRef: { name: 'bayn-universe-v2', key } } })
 
 const assertActivationProvenance = (cronJob: ReturnType<typeof parse>, kustomization: ReturnType<typeof parse>) => {
   if (cronJob.spec.suspend) return
@@ -63,27 +65,32 @@ describe('Signal publisher GitOps authority contract', () => {
   })
 
   test('binds one exact versioned universe to websocket and the scheduled publisher', () => {
-    const universe = parse(read('bayn-universe-v1-configmap.yaml'))
+    const universe = parse(read('bayn-universe-v2-configmap.yaml'))
     const websocketConfig = parse(readWsConfig())
     const websocketDeployment = parse(readWsDeployment())
+    const schedulerDeployment = parse(readSchedulerDeployment())
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
     const selected = csv(universe.data.UNIVERSE_SYMBOLS)
     const expectedHash = createHash('sha256').update(selected.join(',')).digest('hex')
     const websocketVariables = environment(websocketDeployment.spec.template.spec.containers[0])
+    const schedulerVariables = environment(schedulerDeployment.spec.template.spec.containers[0])
     const cronVariables = environment(cronJob.spec.jobTemplate.spec.template.spec.containers[0])
+    const coreSymbols = csv(websocketConfig.data.SYMBOLS)
+    const schedulerSymbols = csv(schedulerVariables.get('TRADING_UNIVERSE_SYMBOL_ALLOWLIST')?.value ?? '')
 
-    expect(universe.metadata.annotations['bayn.proompteng.ai/contract']).toBe('equity-infrastructure-v1')
-    expect(selected).toEqual(['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'])
+    expect(universe.metadata.annotations['bayn.proompteng.ai/contract']).toBe('cross-asset-taa-v1')
+    expect(selected).toEqual(['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'])
     expect(universe.data).toMatchObject({
-      UNIVERSE_ID: 'equity-infrastructure-v1',
+      UNIVERSE_ID: 'cross-asset-taa-v1',
       UNIVERSE_SYMBOL_HASH: expectedHash,
-      HISTORY_START_DATE: '2022-01-27',
+      HISTORY_START_DATE: '2016-01-04',
       HISTORY_FEED: 'sip',
     })
-    expect(websocketConfig.data.SYMBOLS).toBeUndefined()
-    expect(websocketConfig.data.SYMBOLS_ALLOWLIST).toBeUndefined()
-    expect(websocketVariables.get('SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
-    expect(websocketVariables.get('SYMBOLS_ALLOWLIST')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
+    expect(coreSymbols).toEqual(schedulerSymbols)
+    expect(csv(websocketConfig.data.SYMBOLS_ALLOWLIST)).toEqual(coreSymbols)
+    expect(coreSymbols).toHaveLength(10)
+    expect(coreSymbols.length + selected.length).toBeLessThanOrEqual(30)
+    expect(websocketVariables.get('ALPACA_OBSERVATION_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
     expect(websocketVariables.get('MARKET_DATA_UNIVERSE_SYMBOL_HASH')).toMatchObject(
       universeRef('UNIVERSE_SYMBOL_HASH'),
@@ -94,7 +101,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(cronVariables.get('SIGNAL_START_DATE')).toMatchObject(universeRef('HISTORY_START_DATE'))
     expect(cronVariables.get('SIGNAL_ALPACA_FEED')).toMatchObject(universeRef('HISTORY_FEED'))
     expect(cronVariables.get('SIGNAL_OPERATION_TIMEOUT_MS')).toMatchObject({ value: '180000' })
-    expect(cronJob.spec.suspend).toBe(false)
+    expect(cronJob.spec.suspend).toBe(true)
   })
 
   test('always permits a fail-closed suspension', () => {
@@ -136,6 +143,7 @@ describe('Signal publisher GitOps authority contract', () => {
 
   test('orders schema creation before the publisher and wires every owned resource', () => {
     const schema = parse(read('signal-schema-job.yaml'))
+    const cronJob = parse(read('signal-publisher-cronjob.yaml'))
     const migration = schema.spec.template.spec.containers[0].args[0] as string
     const kustomization = parse(read('kustomization.yaml'))
     const shellSyntax = spawnSync('bash', ['-n'], { input: migration, encoding: 'utf8' })
@@ -143,16 +151,16 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(shellSyntax.stderr).toBe('')
     expect(shellSyntax.status).toBe(0)
     expect(schema.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('3')
-    expect(parse(read('signal-publisher-cronjob.yaml')).metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('4')
+    expect(cronJob.metadata.annotations['argocd.argoproj.io/sync-wave']).toBe('4')
     expect(migration.match(/ENGINE = ReplicatedMergeTree/g)).toHaveLength(4)
     expect(kustomization.resources).toEqual(
       expect.arrayContaining([
         'signal-publisher-sealed-secret.yaml',
         'signal-schema-job.yaml',
-        'bayn-universe-v1-configmap.yaml',
+        'bayn-universe-v2-configmap.yaml',
       ]),
     )
-    expect(kustomization.resources).toContain('signal-publisher-cronjob.yaml')
+    expect(kustomization.resources.includes('signal-publisher-cronjob.yaml')).toBe(!cronJob.spec.suspend)
     expect(kustomization.resources).not.toContain('signal-publisher-bayn-v1-backfill-job.yaml')
   })
 
@@ -217,7 +225,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
       expect.arrayContaining([
         { configMapRef: { name: 'market-data-archive-config' } },
-        { configMapRef: { name: 'bayn-universe-v1' } },
+        { configMapRef: { name: 'bayn-universe-v2' } },
       ]),
     )
     expect(archiveEnvironment.get('ARCHIVE_CLICKHOUSE_PASSWORD')).toMatchObject({
@@ -231,7 +239,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'argocd.argoproj.io/sync-wave': '5',
     })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-delayed-sip-v1',
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-cross-asset-v2',
     })
   })
 
