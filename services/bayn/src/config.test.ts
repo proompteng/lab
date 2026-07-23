@@ -52,6 +52,13 @@ describe('Effect configuration', () => {
     expect(config.maximumAuthority).toBe(Authority.Observe)
     expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
+    expect(config.cycleStallThresholdMs).toBe(300_000)
+    expect(config.reconciliationStaleThresholdMs).toBe(120_000)
+    expect(config.unknownMutationThresholdMs).toBe(300_000)
+    expect(config.autonomousCycle).toEqual({
+      enabled: false,
+      pollIntervalMs: 30_000,
+    })
     expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -135,6 +142,26 @@ describe('Effect configuration', () => {
     })
   })
 
+  test('requires a complete read-only Alpaca binding before enabling the autonomous loop', async () => {
+    const enabled = new Map(runtimeEnvironment)
+    enabled.set('BAYN_AUTONOMOUS_CYCLE_ENABLED', 'true')
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), enabled)))
+
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'alpaca',
+      message: 'the autonomous cycle loop requires a complete Alpaca account binding',
+    })
+
+    enabled.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+    enabled.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    enabled.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
+    expect(
+      (await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), enabled))).autonomousCycle.enabled,
+    ).toBe(true)
+  })
+
   test('supports an explicit, visibly unverified development provenance path', async () => {
     const development = new Map(runtimeEnvironment)
     development.set('BAYN_PROVENANCE_MODE', 'development')
@@ -179,6 +206,24 @@ describe('Effect configuration', () => {
       component: 'config',
       operation: 'load',
     })
+  })
+
+  test('keeps operational alert thresholds positive and bounded to one day', async () => {
+    for (const [name, value] of [
+      ['BAYN_CYCLE_STALL_THRESHOLD_MS', '999'],
+      ['BAYN_RECONCILIATION_STALE_THRESHOLD_MS', '86400001'],
+      ['BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', '0'],
+    ] as const) {
+      const invalid = new Map(runtimeEnvironment)
+      invalid.set(name, value)
+
+      const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))
+      expect(error).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'config',
+        operation: 'load',
+      })
+    }
   })
 
   test('rejects an invalid pinned qualification run ID', async () => {

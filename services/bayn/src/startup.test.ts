@@ -25,6 +25,7 @@ import {
 } from './app-test-support'
 import { initialize, run } from './app'
 import { makeStrategyProtocolHash } from './contracts'
+import { CycleObservability } from './db/cycle-observability'
 import {
   DatabaseError,
   EvidenceStore,
@@ -42,6 +43,18 @@ import { evaluateRiskBalancedTrend, summarizeEvaluation } from './risk-balanced-
 import { initialState } from './runtime-state'
 import type { Strategy } from './strategy'
 import { fixtureProtocol, makeSnapshot, makeTestProvenance } from './test-fixtures'
+
+const cycleObservability = {
+  read: () =>
+    Effect.succeed({
+      current: null,
+      last: null,
+      unfinishedCycleCount: 0,
+      authority: null,
+      reconciliation: null,
+      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null },
+    }),
+}
 
 describe('Bayn startup lifecycle', () => {
   test('recovers a pinned terminal qualification without inspecting data or writing state', async () => {
@@ -519,6 +532,32 @@ describe('Bayn startup lifecycle', () => {
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', evidence: null, error: null })
   })
 
+  test('fails closed when the autonomous loop has no broker and verified-candidate composition', async () => {
+    const error = await Effect.runPromise(
+      Effect.flip(
+        run(
+          {
+            ...config,
+            autonomousCycle: { ...config.autonomousCycle, enabled: true },
+          },
+          fixtureStrategy,
+        ),
+      ).pipe(
+        Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
+        Effect.provideService(Journal, successfulJournal),
+        Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(CycleObservability, cycleObservability),
+      ),
+    )
+
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'autonomous-cycle',
+      message: 'enabled autonomous cycle composition requires BrokerRead, CycleStore, and a verified candidate source',
+    })
+  })
+
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {
     const marketData = marketDataService(Effect.die(new Error('unexpected startup defect')))
     const exit = await Effect.runPromiseExit(
@@ -526,6 +565,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketData),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(CycleObservability, cycleObservability),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>
@@ -547,6 +587,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, successfulJournal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(CycleObservability, cycleObservability),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () => Effect.fail(operationalError('http', 'test', 'run remained alive after reconciliation died')),
@@ -572,6 +613,7 @@ describe('Bayn startup lifecycle', () => {
         Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
         Effect.provideService(Journal, journal),
         Effect.provideService(EvidenceStore, successfulEvidenceStore),
+        Effect.provideService(CycleObservability, cycleObservability),
         Effect.timeoutOrElse({
           duration: 250,
           orElse: () =>

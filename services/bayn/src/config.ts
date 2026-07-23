@@ -26,6 +26,13 @@ export interface RuntimeConfig {
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
   readonly operationTimeoutMs: number
+  readonly cycleStallThresholdMs: number
+  readonly reconciliationStaleThresholdMs: number
+  readonly unknownMutationThresholdMs: number
+  readonly autonomousCycle: {
+    readonly enabled: boolean
+    readonly pollIntervalMs: number
+  }
   readonly alpaca?: {
     readonly accountId: string
     readonly key: Redacted.Redacted<string>
@@ -57,6 +64,7 @@ export interface RuntimeConfig {
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
+const OperationalThresholdMs = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 86_400_000 }))
 const ReplicaAddresses = Schema.Trim.pipe(
   Schema.decodeTo(
     Schema.Array(NonEmptyString).check(Schema.isMinLength(1)),
@@ -78,6 +86,9 @@ const secretString = (name: string) => nonEmptyString(name).pipe(Config.map((val
 const positiveInteger = (name: string, fallback: number) =>
   Config.schema(PositiveInteger, name).pipe(Config.withDefault(fallback))
 
+const operationalThreshold = (name: string, fallback: number) =>
+  Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
+
 const runtimeConfig = Config.all({
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
   port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
@@ -93,6 +104,11 @@ const runtimeConfig = Config.all({
   ),
   healthIntervalMs: positiveInteger('BAYN_HEALTH_INTERVAL_MS', 30_000),
   operationTimeoutMs: positiveInteger('BAYN_OPERATION_TIMEOUT_MS', 30_000),
+  cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
+  reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
+  unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
+  autonomousCycleEnabled: Config.boolean('BAYN_AUTONOMOUS_CYCLE_ENABLED').pipe(Config.withDefault(false)),
+  autonomousCyclePollIntervalMs: positiveInteger('BAYN_AUTONOMOUS_CYCLE_POLL_INTERVAL_MS', 30_000),
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
@@ -136,6 +152,13 @@ const runtimeConfig = Config.all({
     provenanceMode: config.provenanceMode,
     healthIntervalMs: config.healthIntervalMs,
     operationTimeoutMs: config.operationTimeoutMs,
+    cycleStallThresholdMs: config.cycleStallThresholdMs,
+    reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+    unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+    autonomousCycle: {
+      enabled: config.autonomousCycleEnabled,
+      pollIntervalMs: config.autonomousCyclePollIntervalMs,
+    },
     configuredAlpaca: {
       accountId: config.alpacaAccountId,
       key: config.alpacaKey,
@@ -216,6 +239,11 @@ export const loadConfig = (
       if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
         return Effect.fail(
           operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
+        )
+      }
+      if (config.autonomousCycle.enabled && Option.isNone(alpaca)) {
+        return Effect.fail(
+          operationalError('config', 'alpaca', 'the autonomous cycle loop requires a complete Alpaca account binding'),
         )
       }
       const { configuredAlpaca: _configuredAlpaca, ...runtime } = config

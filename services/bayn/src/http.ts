@@ -6,6 +6,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstab
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
+import { CycleOperationsCondition, CycleOperationsReason } from './cycle-observability'
+import { CycleState } from './cycle'
 import { Authority } from './paper'
 import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
 
@@ -30,6 +32,24 @@ const publicBrokerState = (state: RuntimeState) =>
         error: null,
       }
     : state.broker
+
+const publicCycleState = (state: RuntimeState) =>
+  state.cycle.condition === CycleOperationsCondition.Unknown
+    ? {
+        schemaVersion: state.cycle.schemaVersion,
+        observationAvailable: false,
+        condition: state.cycle.condition,
+        reason: state.cycle.reason,
+        checkedAt: state.cycle.checkedAt,
+        zeroMutation: null,
+        error: state.cycle.error,
+        runner: state.cycleRunner,
+      }
+    : {
+        ...state.cycle,
+        observationAvailable: true,
+        runner: state.cycleRunner,
+      }
 
 const publicState = (
   state: RuntimeState,
@@ -78,9 +98,34 @@ const publicState = (
       status: accounting,
       reconciliation: state.evidence?.reconciliation ?? null,
     },
+    cycle: publicCycleState(state),
     broker: publicBrokerState(state),
     authority: {
       maximum: maximumAuthority === Authority.Paper ? 'paper' : 'observe',
+      durable:
+        state.cycle.condition === CycleOperationsCondition.Unknown
+          ? {
+              available: false,
+            }
+          : state.cycle.authority === null
+            ? {
+                available: true,
+                configured: false,
+                maximum: null,
+                effective: null,
+                kill: null,
+                reason: null,
+                updatedAt: null,
+              }
+            : {
+                available: true,
+                configured: true,
+                maximum: state.cycle.authority.maximum === Authority.Paper ? 'paper' : 'observe',
+                effective: state.cycle.authority.effective === Authority.Paper ? 'paper' : 'observe',
+                kill: state.cycle.authority.kill.toLowerCase(),
+                reason: state.cycle.authority.reason,
+                updatedAt: state.cycle.authority.updatedAt,
+              },
       brokerOrders: false,
       capitalPromotion: false,
     },
@@ -93,11 +138,181 @@ const publicState = (
   }
 }
 
+const prometheusLabel = (value: string): string =>
+  value.replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll('"', '\\"')
+
+const prometheusNumber = (value: number): string => (Number.isFinite(value) ? String(value) : '0')
+
+const epochSeconds = (instant: string | null | undefined): number =>
+  instant === null || instant === undefined ? 0 : Date.parse(instant) / 1_000
+
+const booleanMetric = (value: boolean | null): number => (value === true ? 1 : 0)
+
+export const renderPrometheusMetrics = (
+  state: RuntimeState,
+  config: Pick<
+    RuntimeConfig,
+    'cycleStallThresholdMs' | 'maximumAuthority' | 'reconciliationStaleThresholdMs' | 'unknownMutationThresholdMs'
+  >,
+  provenance: RuntimeProvenance,
+  provenanceVerification: RuntimeBuildMetadata['verification'],
+): string => {
+  const publicBroker = publicBrokerState(state)
+  const cycleObservationAvailable = state.cycle.condition !== CycleOperationsCondition.Unknown
+  const cyclePhase =
+    cycleObservationAvailable === false
+      ? 'unknown'
+      : (state.cycle.current?.phase ?? state.cycle.last?.phase ?? 'none').toLowerCase()
+  const conditions = Object.values(CycleOperationsCondition)
+  const reasons = Object.values(CycleOperationsReason)
+  const phases = ['unknown', 'none', ...Object.values(CycleState).map((phase) => phase.toLowerCase())]
+  const runnerStatuses = ['DISABLED', 'STARTING', 'RUNNING', 'FAILED'] as const
+  const effectiveAuthority =
+    state.cycle.authority === null
+      ? 'unknown'
+      : state.cycle.authority.effective === Authority.Paper
+        ? 'paper'
+        : 'observe'
+  const lines = [
+    '# HELP bayn_cycle_observation_available Whether the bounded PostgreSQL cycle projection is current.',
+    '# TYPE bayn_cycle_observation_available gauge',
+    `bayn_cycle_observation_available ${cycleObservationAvailable ? 1 : 0}`,
+    '# HELP bayn_cycle_condition Current bounded autonomous-cycle operations condition.',
+    '# TYPE bayn_cycle_condition gauge',
+    ...conditions.map(
+      (condition) =>
+        `bayn_cycle_condition{condition="${condition.toLowerCase()}"} ${state.cycle.condition === condition ? 1 : 0}`,
+    ),
+    '# HELP bayn_cycle_reason Current bounded autonomous-cycle operations reason.',
+    '# TYPE bayn_cycle_reason gauge',
+    ...reasons.map(
+      (reason) => `bayn_cycle_reason{reason="${reason.toLowerCase()}"} ${state.cycle.reason === reason ? 1 : 0}`,
+    ),
+    '# HELP bayn_cycle_phase Current unfinished cycle phase, or the latest terminal phase when idle.',
+    '# TYPE bayn_cycle_phase gauge',
+    ...phases.map((phase) => `bayn_cycle_phase{phase="${phase}"} ${cyclePhase === phase ? 1 : 0}`),
+    '# HELP bayn_cycle_runner_enabled Whether GitOps enables the sole in-process autonomous cycle runner.',
+    '# TYPE bayn_cycle_runner_enabled gauge',
+    `bayn_cycle_runner_enabled ${state.cycleRunner.enabled ? 1 : 0}`,
+    '# HELP bayn_cycle_runner_status Current state of the sole in-process autonomous cycle runner.',
+    '# TYPE bayn_cycle_runner_status gauge',
+    ...runnerStatuses.map(
+      (status) =>
+        `bayn_cycle_runner_status{status="${status.toLowerCase()}"} ${state.cycleRunner.status === status ? 1 : 0}`,
+    ),
+    ...(cycleObservationAvailable
+      ? [
+          '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
+          '# TYPE bayn_cycle_unfinished_count gauge',
+          `bayn_cycle_unfinished_count ${state.cycle.unfinishedCycleCount}`,
+          '# HELP bayn_cycle_attempt_age_seconds Age of the current cycle state transition.',
+          '# TYPE bayn_cycle_attempt_age_seconds gauge',
+          `bayn_cycle_attempt_age_seconds ${prometheusNumber((state.cycle.attemptAgeMs ?? 0) / 1_000)}`,
+          '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
+          '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
+          `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.submissionCutoffAt))}`,
+          '# HELP bayn_cycle_execution_close_timestamp_seconds Bound current execution-session close.',
+          '# TYPE bayn_cycle_execution_close_timestamp_seconds gauge',
+          `bayn_cycle_execution_close_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current?.executionCloseAt))}`,
+          '# HELP bayn_cycle_last_terminal_timestamp_seconds Latest terminal cycle timestamp.',
+          '# TYPE bayn_cycle_last_terminal_timestamp_seconds gauge',
+          `bayn_cycle_last_terminal_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.last?.terminalAt))}`,
+        ]
+      : []),
+    '# HELP bayn_cycle_stall_threshold_seconds Configured attempt-stall threshold.',
+    '# TYPE bayn_cycle_stall_threshold_seconds gauge',
+    `bayn_cycle_stall_threshold_seconds ${prometheusNumber(config.cycleStallThresholdMs / 1_000)}`,
+    ...(cycleObservationAvailable
+      ? [
+          '# HELP bayn_mutation_events_total Durable broker mutation event count.',
+          '# TYPE bayn_mutation_events_total counter',
+          `bayn_mutation_events_total ${state.cycle.mutations.eventCount}`,
+          '# HELP bayn_unresolved_mutations Durable unresolved broker mutation count.',
+          '# TYPE bayn_unresolved_mutations gauge',
+          `bayn_unresolved_mutations ${state.cycle.mutations.unresolvedCount}`,
+          '# HELP bayn_oldest_unresolved_mutation_age_seconds Age of the oldest unresolved broker mutation.',
+          '# TYPE bayn_oldest_unresolved_mutation_age_seconds gauge',
+          `bayn_oldest_unresolved_mutation_age_seconds ${prometheusNumber((state.cycle.oldestUnresolvedMutationAgeMs ?? 0) / 1_000)}`,
+        ]
+      : []),
+    '# HELP bayn_zero_mutation_confirmed Whether the current projection confirms zero durable mutation events.',
+    '# TYPE bayn_zero_mutation_confirmed gauge',
+    `bayn_zero_mutation_confirmed ${state.cycle.zeroMutation === true ? 1 : 0}`,
+    '# HELP bayn_unknown_mutation_threshold_seconds Configured unresolved-mutation alert threshold.',
+    '# TYPE bayn_unknown_mutation_threshold_seconds gauge',
+    `bayn_unknown_mutation_threshold_seconds ${prometheusNumber(config.unknownMutationThresholdMs / 1_000)}`,
+    ...(cycleObservationAvailable
+      ? [
+          '# HELP bayn_reconciliation_available Whether a complete reconciliation exists for the selected account.',
+          '# TYPE bayn_reconciliation_available gauge',
+          `bayn_reconciliation_available ${booleanMetric(state.cycle.reconciliation !== null)}`,
+          '# HELP bayn_reconciliation_exact Whether the latest selected-account reconciliation is exact.',
+          '# TYPE bayn_reconciliation_exact gauge',
+          `bayn_reconciliation_exact ${booleanMetric(state.cycle.reconciliation?.status === 'EXACT')}`,
+          '# HELP bayn_reconciliation_age_seconds Age of the latest selected-account reconciliation.',
+          '# TYPE bayn_reconciliation_age_seconds gauge',
+          `bayn_reconciliation_age_seconds ${prometheusNumber((state.cycle.reconciliationAgeMs ?? 0) / 1_000)}`,
+        ]
+      : []),
+    '# HELP bayn_reconciliation_stale_threshold_seconds Configured reconciliation staleness threshold.',
+    '# TYPE bayn_reconciliation_stale_threshold_seconds gauge',
+    `bayn_reconciliation_stale_threshold_seconds ${prometheusNumber(config.reconciliationStaleThresholdMs / 1_000)}`,
+    '# HELP bayn_authority_maximum Configured maximum authority.',
+    '# TYPE bayn_authority_maximum gauge',
+    `bayn_authority_maximum{authority="observe"} ${config.maximumAuthority === Authority.Observe ? 1 : 0}`,
+    `bayn_authority_maximum{authority="paper"} ${config.maximumAuthority === Authority.Paper ? 1 : 0}`,
+    ...(cycleObservationAvailable
+      ? [
+          '# HELP bayn_authority_effective Durable effective authority when initialized.',
+          '# TYPE bayn_authority_effective gauge',
+          ...(['unknown', 'observe', 'paper'] as const).map(
+            (authority) =>
+              `bayn_authority_effective{authority="${authority}"} ${effectiveAuthority === authority ? 1 : 0}`,
+          ),
+          '# HELP bayn_authority_coherent Whether durable and configured authority agree.',
+          '# TYPE bayn_authority_coherent gauge',
+          `bayn_authority_coherent ${state.cycle.alerts.authorityIncoherent ? 0 : 1}`,
+          '# HELP bayn_authority_kill_active Whether the durable paper kill is active.',
+          '# TYPE bayn_authority_kill_active gauge',
+          `bayn_authority_kill_active ${state.cycle.alerts.killActive ? 1 : 0}`,
+        ]
+      : []),
+    '# HELP bayn_broker_configured Whether an exact Alpaca account binding is configured.',
+    '# TYPE bayn_broker_configured gauge',
+    `bayn_broker_configured ${publicBroker.configured ? 1 : 0}`,
+    '# HELP bayn_broker_read_available Whether the bounded Alpaca GET probe succeeds.',
+    '# TYPE bayn_broker_read_available gauge',
+    `bayn_broker_read_available ${booleanMetric(publicBroker.readAvailable)}`,
+    '# HELP bayn_broker_account_bound Whether the observed Alpaca account matches the configured identity.',
+    '# TYPE bayn_broker_account_bound gauge',
+    `bayn_broker_account_bound ${booleanMetric(publicBroker.accountBound)}`,
+    '# HELP bayn_broker_orders_enabled Whether broker mutation dispatch is enabled in this runtime.',
+    '# TYPE bayn_broker_orders_enabled gauge',
+    'bayn_broker_orders_enabled 0',
+    '# HELP bayn_capital_promotion_enabled Whether capital promotion is enabled in this runtime.',
+    '# TYPE bayn_capital_promotion_enabled gauge',
+    'bayn_capital_promotion_enabled 0',
+    '# HELP bayn_build_info Verified runtime build provenance.',
+    '# TYPE bayn_build_info gauge',
+    `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,
+  ]
+  return `${lines.join('\n')}\n`
+}
+
 const jsonResponse = (body: unknown, status = 200, headers?: Readonly<Record<string, string>>) =>
   HttpServerResponse.json(body, { status, headers }).pipe(Effect.orDie)
 
 export const makeHttpLayer = (
-  config: Pick<RuntimeConfig, 'host' | 'maximumAuthority' | 'operationTimeoutMs' | 'port'>,
+  config: Pick<
+    RuntimeConfig,
+    | 'cycleStallThresholdMs'
+    | 'host'
+    | 'maximumAuthority'
+    | 'operationTimeoutMs'
+    | 'port'
+    | 'reconciliationStaleThresholdMs'
+    | 'unknownMutationThresholdMs'
+  >,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
@@ -111,6 +326,13 @@ export const makeHttpLayer = (
         .map(([name]) => name)
       if (current.broker !== null && (current.broker.accountBound !== true || current.broker.readAvailable !== true)) {
         failedDependencies.push('broker')
+      }
+      if (
+        current.cycle.condition === CycleOperationsCondition.Unknown ||
+        current.cycle.condition === CycleOperationsCondition.Stalled ||
+        current.cycle.condition === CycleOperationsCondition.Failed
+      ) {
+        if (!failedDependencies.includes('cycle')) failedDependencies.push('cycle')
       }
       return jsonResponse(
         {
@@ -127,6 +349,14 @@ export const makeHttpLayer = (
   const status = Ref.get(state).pipe(
     Effect.flatMap((current) =>
       jsonResponse(publicState(current, config.maximumAuthority, provenance, provenanceVerification)),
+    ),
+  )
+  const metrics = Ref.get(state).pipe(
+    Effect.map((current) =>
+      HttpServerResponse.text(renderPrometheusMetrics(current, config, provenance, provenanceVerification), {
+        contentType: 'text/plain; version=0.0.4; charset=utf-8',
+        headers: { 'cache-control': 'no-store' },
+      }),
     ),
   )
   const historicalEvaluation = HttpRouter.params.pipe(
@@ -163,6 +393,7 @@ export const makeHttpLayer = (
   const routes = HttpRouter.addAll([
     HttpRouter.route('GET', '/livez', jsonResponse({ service: 'bayn', live: true })),
     HttpRouter.route('GET', '/readyz', ready),
+    HttpRouter.route('GET', '/metrics', metrics),
     HttpRouter.route('GET', '/v1/status', status),
     HttpRouter.route('GET', '/v1/evaluations/:runId', historicalEvaluation),
     HttpRouter.route('*', '*', fallback),

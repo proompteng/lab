@@ -1,4 +1,9 @@
 import type { RuntimeProvenance } from './contracts'
+import {
+  CycleOperationsCondition,
+  type CycleOperationsStatus,
+  unknownCycleOperationsStatus,
+} from './cycle-observability'
 import type { QualificationResult } from './qualification'
 import type { EvaluationSummary, ReconciliationResult } from './types'
 
@@ -33,7 +38,16 @@ export interface RuntimeHealth {
     readonly signal: DependencyHealth
     readonly tigerBeetle: DependencyHealth
     readonly evidence: DependencyHealth
+    readonly cycle: DependencyHealth
+    readonly cycleRunner: DependencyHealth
   }
+}
+
+export interface CycleRunnerStatus {
+  readonly enabled: boolean
+  readonly status: 'DISABLED' | 'STARTING' | 'RUNNING' | 'FAILED'
+  readonly checkedAt: string | null
+  readonly error: string | null
 }
 
 export interface BrokerConfiguration {
@@ -55,13 +69,15 @@ export interface RuntimeState {
   readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
   readonly evidence: RuntimeEvidence | null
   readonly health: RuntimeHealth
+  readonly cycle: CycleOperationsStatus
+  readonly cycleRunner: CycleRunnerStatus
   readonly broker: BrokerStatus | null
   readonly error: string | null
 }
 
 const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
 
-export const initialState = (broker?: BrokerConfiguration): RuntimeState => ({
+export const initialState = (broker?: BrokerConfiguration, autonomousCycleEnabled = false): RuntimeState => ({
   status: 'STARTING',
   evidence: null,
   health: {
@@ -72,7 +88,16 @@ export const initialState = (broker?: BrokerConfiguration): RuntimeState => ({
       signal: unknownDependency(),
       tigerBeetle: unknownDependency(),
       evidence: unknownDependency(),
+      cycle: unknownDependency(),
+      cycleRunner: autonomousCycleEnabled ? unknownDependency() : { ...unknownDependency(), status: 'AVAILABLE' },
     },
+  },
+  cycle: unknownCycleOperationsStatus(),
+  cycleRunner: {
+    enabled: autonomousCycleEnabled,
+    status: autonomousCycleEnabled ? 'STARTING' : 'DISABLED',
+    checkedAt: null,
+    error: null,
   },
   broker:
     broker === undefined
@@ -94,5 +119,9 @@ export const initialState = (broker?: BrokerConfiguration): RuntimeState => ({
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&
   state.evidence !== null &&
+  state.cycle.condition !== CycleOperationsCondition.Unknown &&
+  state.cycle.condition !== CycleOperationsCondition.Stalled &&
+  state.cycle.condition !== CycleOperationsCondition.Failed &&
+  (state.cycleRunner.status === 'DISABLED' || state.cycleRunner.status === 'RUNNING') &&
   (state.broker === null || (state.broker.accountBound === true && state.broker.readAvailable === true)) &&
   Object.values(state.health.dependencies).every((dependency) => dependency.status === 'AVAILABLE')
