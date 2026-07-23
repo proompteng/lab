@@ -1,0 +1,142 @@
+name: Buzz Relay Build and Push
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'third_party/buzz/**'
+      - '.github/workflows/buzz-relay-build-push.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'third_party/buzz/**'
+      - '.github/workflows/buzz-relay-build-push.yml'
+  workflow_dispatch:
+
+env:
+  UPSTREAM_REVISION: acfbb1bb6af54cb29cb152496ff43b8285dcb8cf
+  UPSTREAM_IMAGE: ghcr.io/block/buzz@sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428
+  IMAGE_REPOSITORY: registry.ide-newton.ts.net/lab/buzz
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout deployment repository
+        uses: actions/checkout@v5
+
+      - name: Checkout pinned Buzz source
+        uses: actions/checkout@v5
+        with:
+          repository: block/buzz
+          ref: ${{ env.UPSTREAM_REVISION }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Verify and apply compatibility patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream rev-parse HEAD)" = "$UPSTREAM_REVISION"
+          git -C upstream apply --check ../third_party/buzz/ceph-rgw.patch
+          git -C upstream apply ../third_party/buzz/ceph-rgw.patch
+          git -C upstream diff --check
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and test arm64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: upstream
+          file: third_party/buzz/Dockerfile
+          platforms: linux/arm64
+          push: false
+          build-args: |
+            LAB_GIT_SHA=${{ github.sha }}
+            UPSTREAM_IMAGE=${{ env.UPSTREAM_IMAGE }}
+          cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-arm64
+
+  build:
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout deployment repository
+        uses: actions/checkout@v5
+
+      - name: Checkout pinned Buzz source
+        uses: actions/checkout@v5
+        with:
+          repository: block/buzz
+          ref: ${{ env.UPSTREAM_REVISION }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Verify and apply compatibility patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream rev-parse HEAD)" = "$UPSTREAM_REVISION"
+          git -C upstream apply --check ../third_party/buzz/ceph-rgw.patch
+          git -C upstream apply ../third_party/buzz/ceph-rgw.patch
+          git -C upstream diff --check
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push native image
+        uses: docker/build-push-action@v6
+        with:
+          context: upstream
+          file: third_party/buzz/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          push: true
+          tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          build-args: |
+            LAB_GIT_SHA=${{ github.sha }}
+            UPSTREAM_IMAGE=${{ env.UPSTREAM_IMAGE }}
+          cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }}
+          cache-to: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }},mode=max
+
+  publish-index:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: arc-arm64
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Publish multi-architecture index
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "$tag" \
+            "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-amd64" \
+            "${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-arm64"
+          docker buildx imagetools inspect --raw "$tag" > index.json
+          jq -e '
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' index.json
+          digest="sha256:$(sha256sum index.json | cut -d ' ' -f1)"
+          {
+            echo '### Buzz relay image'
+            echo
+            echo "- Image: ${tag}@${digest}"
+            echo '- Platforms: linux/amd64, linux/arm64'
+            echo "- Upstream: ${UPSTREAM_REVISION}"
+          } >> "$GITHUB_STEP_SUMMARY"
