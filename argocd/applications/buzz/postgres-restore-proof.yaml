@@ -1,0 +1,36 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: buzz-db-restore-proof
+  labels:
+    app.kubernetes.io/name: buzz-db-restore-proof
+    app.kubernetes.io/part-of: buzz
+    app.kubernetes.io/component: restore-proof
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  description: Temporary restore proof for the Buzz production backup
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.7-system-trixie@sha256:08775f8bdeb112878b8f2ef63578c47959ee332fc9e076d5d6735a710c4500e2
+  imagePullPolicy: IfNotPresent
+  enablePDB: false
+  enableSuperuserAccess: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  storage:
+    storageClass: rook-ceph-block
+    size: 20Gi
+    resizeInUseVolumes: true
+  bootstrap:
+    recovery:
+      backup:
+        name: buzz-db-acceptance-20260723t091130z
+  postgresql:
+    parameters:
+      password_encryption: scram-sha-256
+      ssl_min_protocol_version: TLSv1.3

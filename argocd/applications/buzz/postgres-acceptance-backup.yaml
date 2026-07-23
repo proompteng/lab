@@ -1,0 +1,17 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: buzz-db-acceptance-20260723t091130z
+  labels:
+    app.kubernetes.io/name: buzz-db
+    app.kubernetes.io/part-of: buzz
+    app.kubernetes.io/component: acceptance-backup
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  cluster:
+    name: buzz-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  target: prefer-standby
