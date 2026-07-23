@@ -194,6 +194,7 @@ const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.
     },
     window: {
       schemaVersion: row.window_schema_version,
+      calendarVersion: row.calendar_version,
       signalSessionDate: row.signal_session_date,
       executionSessionDate: row.execution_session_date,
       signalCloseAt: row.signal_close_at.toISOString(),

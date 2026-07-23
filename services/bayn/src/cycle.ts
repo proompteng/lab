@@ -88,6 +88,7 @@ export type CycleIdentity = typeof CycleIdentitySchema.Type
 
 const CycleWindowBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-window.v1'),
+  calendarVersion: StrictNonEmptyStringSchema,
   signalSessionDate: IsoDateSchema,
   executionSessionDate: IsoDateSchema,
   signalCloseAt: UtcInstantSchema,
@@ -130,6 +131,9 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
   const issues: Schema.FilterIssue[] = []
   if (draft.identity.signalSessionDate !== draft.window.signalSessionDate) {
     issues.push({ path: ['window', 'signalSessionDate'], issue: 'must match the cycle identity' })
+  }
+  if (draft.identity.calendarVersion !== draft.window.calendarVersion) {
+    issues.push({ path: ['window', 'calendarVersion'], issue: 'must match the cycle identity' })
   }
   const submissionWindowMs = Date.parse(draft.window.submissionCutoffAt) - Date.parse(draft.window.executionOpenAt)
   if (submissionWindowMs !== draft.identity.executionPolicy.submissionWindowMs) {
@@ -309,6 +313,7 @@ export const makeCycleWindow = (
   }
   return {
     schemaVersion: 'bayn.autonomous-cycle-window.v1',
+    calendarVersion: signalSession.calendar_version,
     signalSessionDate: signalSession.session_date,
     executionSessionDate: executionSession.session_date,
     signalCloseAt,
@@ -322,6 +327,9 @@ export const makeCycleWindow = (
 export const makeCycleDraft = (identity: CycleIdentity, window: CycleWindow): CycleDraft => {
   if (identity.signalSessionDate !== window.signalSessionDate) {
     throw new TypeError('cycle identity and window must bind the same Signal session')
+  }
+  if (identity.calendarVersion !== window.calendarVersion) {
+    throw new TypeError('cycle identity and window must bind the same exchange calendar')
   }
   const submissionWindowMs = Date.parse(window.submissionCutoffAt) - Date.parse(window.executionOpenAt)
   if (submissionWindowMs !== identity.executionPolicy.submissionWindowMs) {

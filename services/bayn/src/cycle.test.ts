@@ -24,8 +24,9 @@ const session = (
   sessionDate: IsoDate,
   openTime = '09:30',
   closeTime = '16:00',
+  version = calendarVersion,
 ): Pick<SignalSessionRow, 'calendar_version' | 'session_date' | 'open_time' | 'close_time' | 'timezone'> => ({
-  calendar_version: calendarVersion,
+  calendar_version: version,
   session_date: sessionDate,
   open_time: openTime,
   close_time: closeTime,
@@ -75,6 +76,7 @@ describe('autonomous cycle identity and calendar', () => {
 
     expect(window).toEqual({
       schemaVersion: 'bayn.autonomous-cycle-window.v1',
+      calendarVersion,
       signalSessionDate: '2026-03-06',
       executionSessionDate: '2026-03-09',
       signalCloseAt: '2026-03-06T21:00:00.000Z',
@@ -109,6 +111,19 @@ describe('autonomous cycle identity and calendar', () => {
     expect(() =>
       makeCycleDraft(makeCycleIdentity(makeIdentityMaterial('2026-03-06', 15 * 60 * 1_000)), window),
     ).toThrow('cycle window must match the bound execution policy')
+    expect(() =>
+      makeCycleDraft(
+        identity,
+        makeCycleWindow(
+          [
+            session('2026-03-06', '09:30', '16:00', 'XNYS-2026-other'),
+            session('2026-03-09', '09:30', '16:00', 'XNYS-2026-other'),
+          ],
+          '2026-03-06',
+          30 * 60 * 1_000,
+        ),
+      ),
+    ).toThrow('cycle identity and window must bind the same exchange calendar')
 
     expect(isCycleStateTransitionAllowed(CycleState.Pending, CycleState.Active)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.NoTrade)).toBe(true)

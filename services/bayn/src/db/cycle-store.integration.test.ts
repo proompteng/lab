@@ -127,6 +127,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     ).toEqual([false, true])
     expect(new Set(observed.receipts.map((receipt) => receipt.cycle.identity.cycleId)).size).toBe(1)
     expect(observed.receipts[0].cycle.state).toBe(CycleState.Pending)
+    expect(observed.receipts[0].cycle.window.calendarVersion).toBe(calendarVersion)
     expect(observed.count).toBe(1)
   })
 
