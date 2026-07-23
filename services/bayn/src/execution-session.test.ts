@@ -163,6 +163,40 @@ describe('causal execution-session binding', () => {
     ).toThrow('must be the first post-signal session in the normalized calendar observation')
   })
 
+  test('rejects a rehashed calendar whose UTC instants do not belong to the declared session date', () => {
+    const valid = bind(
+      calendar([{ date: '2026-07-06', openAt: '2026-07-06T13:30:00.000Z', closeAt: '2026-07-06T20:00:00.000Z' }]),
+    )
+    const shiftedSession = {
+      date: '2026-07-06',
+      openAt: '2026-07-10T13:30:00.000Z',
+      closeAt: '2026-07-10T20:00:00.000Z',
+    } as const
+    const shiftedCalendarMaterial = {
+      ...valid.calendar,
+      sessions: [shiftedSession],
+    }
+    const { normalizedResponseHash: _, ...calendarMaterial } = shiftedCalendarMaterial
+    const shiftedCalendar = {
+      ...calendarMaterial,
+      normalizedResponseHash: canonicalHashV1(calendarMaterial),
+    }
+    const { bindingHash: __, ...validMaterial } = valid
+    const tamperedMaterial = {
+      ...validMaterial,
+      calendar: shiftedCalendar,
+      executionSession: shiftedSession,
+      submissionCutoffAt: '2026-07-10T13:15:00.000Z',
+    }
+
+    expect(() =>
+      decodeBinding({
+        ...tamperedMaterial,
+        bindingHash: canonicalHashV1(tamperedMaterial),
+      }),
+    ).toThrow('must have valid hours on its declared UTC session date within the requested range')
+  })
+
   test('rejects a truncated calendar range that can skip the actual next exchange session', () => {
     expect(() =>
       bind(

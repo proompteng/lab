@@ -63,11 +63,13 @@ export const ExecutionSessionBindingSchema = ExecutionSessionBindingBase.check(
       if (
         session.date < binding.calendar.requestedRange.start ||
         session.date > binding.calendar.requestedRange.end ||
+        session.openAt.slice(0, 10) !== session.date ||
+        session.closeAt.slice(0, 10) !== session.date ||
         session.openAt >= session.closeAt
       ) {
         issues.push({
           path: ['calendar', 'sessions', index],
-          issue: 'must have valid hours within the requested range',
+          issue: 'must have valid hours on its declared UTC session date within the requested range',
         })
       }
       if (index > 0 && binding.calendar.sessions[index - 1].date >= session.date) {
