@@ -372,6 +372,12 @@ const makeMutationPaperAuthorityGeneration = (
   })
 }
 
+const proofBinding = (activation: PaperAuthorityGeneration) => ({
+  schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
+  riskPolicyHash: activation.riskPolicyHash,
+  proofPlanHash: activation.proofPlanHash,
+})
+
 const makePaperActivationConfig = (activation: PaperAuthorityGeneration): RuntimeConfig => {
   const config = makeConfig()
   return {
@@ -516,7 +522,7 @@ const activateAuditedPaperAuthority = async () => {
           generationHash: observeGenerationHash,
           maximum: Authority.Observe,
         })
-        yield* store.activatePaperGeneration(activation)
+        yield* store.activatePaperGeneration(proofBinding(activation))
       }),
     )
   } finally {
@@ -1125,7 +1131,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             }
 
             const activationFiber = yield* Effect.forkChild(
-              Effect.exit(paperStore.activatePaperGeneration(paperActivation)),
+              Effect.exit(paperStore.activatePaperGeneration(proofBinding(paperActivation))),
               { startImmediately: true },
             )
             yield* Effect.sleep(Duration.millis(20))
@@ -1148,7 +1154,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(observed.activationFailure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER activation requires zero unresolved mutations covered by reconciliation',
+        message: 'PAPER generation requires zero unresolved mutations covered by reconciliation',
       })
       expect(observed.after).toEqual(observed.before)
     } finally {

@@ -578,6 +578,13 @@ export const ReconciliationSchema = ReconciliationBase.check(
 )
 export type Reconciliation = typeof ReconciliationSchema.Type
 
+export const PaperAuthorityProofBindingSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.paper-authority-proof-binding.v1'),
+  riskPolicyHash: Sha256,
+  proofPlanHash: Sha256,
+})
+export type PaperAuthorityProofBinding = typeof PaperAuthorityProofBindingSchema.Type
+
 export const PaperAuthorityGenerationMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.paper-authority-generation.v1'),
   maximum: Schema.Literal(Authority.Paper),
@@ -679,6 +686,10 @@ export const decodeRiskDecision = Schema.decodeUnknownEffect(RiskDecisionSchema,
 export const decodeAccountingReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
 export const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, StrictParseOptions)
 export const decodeReconciliation = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
+export const decodePaperAuthorityProofBinding = Schema.decodeUnknownEffect(
+  PaperAuthorityProofBindingSchema,
+  StrictParseOptions,
+)
 export const decodePaperAuthorityGeneration = Schema.decodeUnknownEffect(
   PaperAuthorityGenerationSchema,
   StrictParseOptions,
