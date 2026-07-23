@@ -24,7 +24,17 @@ env:
 jobs:
   verify:
     if: github.event_name == 'pull_request'
-    runs-on: arc-arm64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+            upstream_image: ghcr.io/block/buzz@sha256:0c015d0942b2b302b7264362a103165093960aaacc87d3c0f7bbcf68116950f5
+          - architecture: arm64
+            runner: arc-arm64
+            upstream_image: ghcr.io/block/buzz@sha256:5a091bb6b91572dbc34743cb36d6e56fd170408243b263c825ff764017c524f5
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout deployment repository
         uses: actions/checkout@v5
@@ -49,17 +59,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and test arm64 image
+      - name: Build and test native image
         uses: docker/build-push-action@v6
         with:
           context: upstream
           file: third_party/buzz/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/${{ matrix.architecture }}
           push: false
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
-            UPSTREAM_IMAGE=${{ env.UPSTREAM_IMAGE }}
-          cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-arm64
+            UPSTREAM_IMAGE=${{ matrix.upstream_image }}
+          cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }}
 
   build:
     if: github.event_name != 'pull_request'
