@@ -94,7 +94,7 @@ jobs:
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
-      - name: Verify and pin image
+      - name: Verify image and decide promotion
         id: promotion
         shell: bash
         env:
@@ -129,8 +129,10 @@ jobs:
               --strategy-parameter-hash "$strategy_parameter_hash" \
               --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           )"
-          jq -e '.qualificationMode == "preserve" or .qualificationMode == "replace"' <<< "$promotion"
+          jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace")' <<< "$promotion"
           {
+            echo "promotion_action=$(jq -r '.promotionAction' <<< "$promotion")"
+            echo "promotion_reason=$(jq -r '.promotionReason' <<< "$promotion")"
             echo "qualification_mode=$(jq -r '.qualificationMode' <<< "$promotion")"
             echo "had_qualification_pin=$(jq -r '.hadQualificationPin' <<< "$promotion")"
             echo "qualification_bindings_match=$(jq -r '.qualificationBindingsMatch' <<< "$promotion")"
@@ -144,7 +146,30 @@ jobs:
             echo "candidate_parameter_hash=$(jq -r '.candidateParameterHash' <<< "$promotion")"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Record held candidate
+        if: steps.promotion.outputs.promotion_action == 'hold'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          IMAGE_DIGEST: ${{ steps.release.outputs.digest }}
+          PROMOTION_REASON: ${{ steps.promotion.outputs.promotion_reason }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- \
+            argocd/applications/bayn/kustomization.yaml \
+            argocd/applications/bayn/deployment.yaml \
+            argocd/applicationsets/product.yaml
+          {
+            echo '## Bayn candidate image held'
+            echo
+            echo "- Source commit: \`${SOURCE_SHA}\`"
+            echo "- Image digest: \`${IMAGE_DIGEST}\`"
+            echo "- Reason: \`${PROMOTION_REASON}\`"
+            echo '- GitOps remained unchanged; no deployment pull request was created.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Create deploy pull request
+        if: steps.promotion.outputs.promotion_action == 'promote'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}

@@ -12,19 +12,25 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class MarketDataArchiveJobTest {
-  private val symbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
-  private val universe = ArchiveUniverse("cross-asset-taa-v1", symbolHash(symbols), symbols)
-  private val topics =
+  private val observationSymbols = setOf("DBC", "EFA", "IEF", "SPY", "VNQ")
+  private val observationUniverse =
+    ArchiveUniverse("cross-asset-taa-v1", symbolHash(observationSymbols), observationSymbols)
+  private val coreSymbols = setOf("AMD", "AVGO", "COHR", "CRDO", "LITE", "MRVL", "MU", "NVDA", "SNDK", "WDC")
+  private val coreUniverse = ArchiveUniverse("torghut-core-equity-v1", symbolHash(coreSymbols), coreSymbols)
+  private val routes =
     mapOf(
-      "torghut.bars.1m.v1" to "iex",
-      "bayn.market-data.delayed-sip.bars.1m.v1" to "delayed_sip",
-      "bayn.market-data.overnight.bars.1m.v1" to "overnight",
+      "torghut.bars.1m.v1" to ArchiveRoute("iex", coreUniverse),
+      "bayn.market-data.delayed-sip.bars.1m.v1" to ArchiveRoute("delayed_sip", observationUniverse),
+      "bayn.market-data.overnight.bars.1m.v1" to ArchiveRoute("overnight", observationUniverse),
     )
 
   @Test
   fun `decodes enriched bars with source-offset lineage and cross-feed separation`() {
     val iex =
-      decodeArchiveBar(record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only")), topics, universe)
+      decodeArchiveBar(
+        record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only", symbol = "NVDA")),
+        routes,
+      )
     val delayed =
       decodeArchiveBar(
         record(
@@ -33,21 +39,21 @@ class MarketDataArchiveJobTest {
           partition = 2,
           offset = 42,
         ),
-        topics,
-        universe,
+        routes,
       )
     val overnight =
       decodeArchiveBar(
         record("bayn.market-data.overnight.bars.1m.v1", envelope("overnight", "derived", session = "overnight")),
-        topics,
-        universe,
+        routes,
       )
 
     assertEquals("iex", iex.feed)
-    assertEquals("cross-asset-taa-v1", iex.universeId)
-    assertEquals(universe.symbolHash, iex.universeSymbolHash)
+    assertEquals("torghut-core-equity-v1", iex.universeId)
+    assertEquals(coreUniverse.symbolHash, iex.universeSymbolHash)
     assertEquals("bars", iex.channel)
     assertEquals("delayed_sip", delayed.feed)
+    assertEquals("cross-asset-taa-v1", delayed.universeId)
+    assertEquals(observationUniverse.symbolHash, delayed.universeSymbolHash)
     assertEquals(2, delayed.sourcePartition)
     assertEquals(42, delayed.sourceOffset)
     assertEquals("overnight", overnight.feed)
@@ -58,20 +64,21 @@ class MarketDataArchiveJobTest {
   @Test
   fun `rejects topic-feed mismatch metadata drift and invalid prices`() {
     assertFailsWith<IllegalArgumentException> {
-      decodeArchiveBar(record("torghut.bars.1m.v1", envelope("overnight", "derived")), topics, universe)
-    }
-    assertFailsWith<IllegalArgumentException> {
       decodeArchiveBar(
-        record("bayn.market-data.overnight.bars.1m.v1", envelope("overnight", "indicative_real_time")),
-        topics,
-        universe,
+        record("torghut.bars.1m.v1", envelope("overnight", "derived", symbol = "NVDA")),
+        routes,
       )
     }
     assertFailsWith<IllegalArgumentException> {
       decodeArchiveBar(
-        record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only", high = 99.0)),
-        topics,
-        universe,
+        record("bayn.market-data.overnight.bars.1m.v1", envelope("overnight", "indicative_real_time")),
+        routes,
+      )
+    }
+    assertFailsWith<IllegalArgumentException> {
+      decodeArchiveBar(
+        record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only", high = 99.0, symbol = "NVDA")),
+        routes,
       )
     }
   }
@@ -80,25 +87,42 @@ class MarketDataArchiveJobTest {
   fun `rejects bars outside the configured universe and invalid Kafka lineage`() {
     assertFailsWith<IllegalArgumentException> {
       decodeArchiveBar(
-        record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only", symbol = "AAPL")),
-        topics,
-        universe,
+        record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only", symbol = "SPY")),
+        routes,
       )
     }
     assertFailsWith<IllegalArgumentException> {
       decodeArchiveBar(
-        record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only"), offset = -1),
-        topics,
-        universe,
+        record(
+          "bayn.market-data.delayed-sip.bars.1m.v1",
+          envelope("delayed_sip", "delayed_15m_consolidated", symbol = "NVDA"),
+        ),
+        routes,
+      )
+    }
+    assertFailsWith<IllegalArgumentException> {
+      decodeArchiveBar(
+        record(
+          "torghut.bars.1m.v1",
+          envelope("iex", "real_time_exchange_only", symbol = "NVDA"),
+          offset = -1,
+        ),
+        routes,
       )
     }
   }
 
   @Test
   fun `same Kafka record decodes deterministically for at-least-once replay`() {
-    val record = record("torghut.bars.1m.v1", envelope("iex", "real_time_exchange_only"), partition = 1, offset = 99)
+    val record =
+      record(
+        "bayn.market-data.delayed-sip.bars.1m.v1",
+        envelope("delayed_sip", "delayed_15m_consolidated"),
+        partition = 1,
+        offset = 99,
+      )
 
-    assertEquals(decodeArchiveBar(record, topics, universe), decodeArchiveBar(record, topics, universe))
+    assertEquals(decodeArchiveBar(record, routes), decodeArchiveBar(record, routes))
   }
 
   @Test
@@ -111,13 +135,20 @@ class MarketDataArchiveJobTest {
         "ARCHIVE_CLICKHOUSE_URL" to "jdbc:clickhouse://clickhouse:8123/signal",
         "ARCHIVE_CLICKHOUSE_PASSWORD" to "clickhouse-password",
         "ARCHIVE_KAFKA_PASSWORD" to "password",
-        "UNIVERSE_ID" to universe.id,
-        "UNIVERSE_SYMBOLS" to universe.symbols.sorted().joinToString(","),
-        "UNIVERSE_SYMBOL_HASH" to universe.symbolHash,
+        "ARCHIVE_CORE_UNIVERSE_ID" to coreUniverse.id,
+        "ARCHIVE_CORE_UNIVERSE_SYMBOLS" to coreUniverse.symbols.sorted().joinToString(","),
+        "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to coreUniverse.symbolHash,
+        "UNIVERSE_ID" to observationUniverse.id,
+        "UNIVERSE_SYMBOLS" to observationUniverse.symbols.sorted().joinToString(","),
+        "UNIVERSE_SYMBOL_HASH" to observationUniverse.symbolHash,
       )
     val config = MarketDataArchiveConfig.fromEnv(valid)
-    assertEquals(3, config.topics.size)
-    assertEquals(universe, config.universe)
+    assertEquals(3, config.routes.size)
+    assertEquals(coreUniverse, config.routes.getValue("torghut.bars.1m.v1").universe)
+    assertEquals(
+      observationUniverse,
+      config.routes.getValue("bayn.market-data.delayed-sip.bars.1m.v1").universe,
+    )
     assertEquals(100, config.clickhouseBatchSize)
     assertEquals("signal_publisher", config.clickhouseUsername)
 
@@ -137,6 +168,9 @@ class MarketDataArchiveJobTest {
     }
     assertFailsWith<IllegalArgumentException> {
       MarketDataArchiveConfig.fromEnv(valid + ("UNIVERSE_SYMBOL_HASH" to "0".repeat(64)))
+    }
+    assertFailsWith<IllegalArgumentException> {
+      MarketDataArchiveConfig.fromEnv(valid + ("ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH" to "0".repeat(64)))
     }
   }
 
