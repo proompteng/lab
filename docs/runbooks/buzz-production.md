@@ -67,7 +67,8 @@ Required state:
 - `buzz-kubernetes`, `buzz-redis-auth`, and `buzz-secrets` are `Ready`.
 - `buzz-db` reports three ready instances, one primary, one synchronous standby, and a healthy continuous archive.
 - The immediate `buzz-db-daily-*` backup is `completed`.
-- `buzz-redis` is ready, accepts only authenticated commands, and has AOF enabled.
+- `buzz-redis` is ready, accepts only authenticated commands, has AOF enabled, and reports
+  `maxmemory=402653184` (384 MiB).
 - Two Buzz relay pods are Ready on different nodes.
 - The Tailscale Ingress has an assigned device and a valid tailnet TLS certificate.
 
