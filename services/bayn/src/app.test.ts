@@ -4,12 +4,13 @@ import { Cause, Clock, Effect, Exit } from 'effect'
 
 import {
   config,
+  fixtureEvaluation,
   fixtureStrategy,
   marketDataService,
   successfulEvidenceStore,
   successfulJournal,
 } from './app-test-support'
-import { run, type RecordAutonomousCyclePass } from './app'
+import { run, type AutonomousCycleStartupInput } from './app'
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import { operationalError } from './errors'
@@ -39,9 +40,11 @@ describe('Bayn application composition', () => {
         return makeSnapshot()
       }),
     )
-    const autonomousCycleStartup = (recordPass: RecordAutonomousCyclePass) =>
+    let startupQualificationRunId: string | undefined
+    const autonomousCycleStartup = ({ qualificationRunId, recordPass }: AutonomousCycleStartupInput) =>
       Effect.gen(function* () {
         calls.push('autonomous-cycle')
+        startupQualificationRunId = qualificationRunId
         yield* recordPass({
           result: 'SUCCESS',
           observedAt: new Date(yield* Clock.currentTimeMillis).toISOString(),
@@ -75,6 +78,7 @@ describe('Bayn application composition', () => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('stop after composition proof')
     expect(calls).toEqual(['initialize', 'autonomous-cycle', 'reconciliation'])
+    expect(startupQualificationRunId).toBe(fixtureEvaluation.runId)
     expect(backgroundInterrupted).toBe(true)
   })
 })

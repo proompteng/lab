@@ -14,8 +14,13 @@ import type { Strategy } from './strategy'
 
 export type RecordAutonomousCyclePass = (observation: AutonomousCyclePassObservation) => Effect.Effect<void>
 
+export interface AutonomousCycleStartupInput {
+  readonly qualificationRunId: string
+  readonly recordPass: RecordAutonomousCyclePass
+}
+
 export type AutonomousCycleStartup = (
-  recordPass: RecordAutonomousCyclePass,
+  input: AutonomousCycleStartupInput,
 ) => Effect.Effect<Fiber.Fiber<void, never>, OperationalError, Scope.Scope>
 
 const cyclePassError = (observation: Extract<AutonomousCyclePassObservation, { readonly result: 'FAILURE' }>): string =>
@@ -74,14 +79,18 @@ export const run = (
       yield* initialize(config, state, strategy)
       let autonomousCycleFiber: Fiber.Fiber<void, never> | undefined
       if (autonomousCycleStartup !== undefined) {
-        const startedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-        yield* Ref.update(state, (current) => ({
-          ...current,
-          autonomousCycleLoop: { ...current.autonomousCycleLoop, startedAt },
-        }))
-        autonomousCycleFiber = yield* autonomousCycleStartup((observation) =>
-          recordAutonomousCyclePass(state, observation),
-        )
+        const initialized = yield* Ref.get(state)
+        if (initialized.evidence !== null) {
+          const startedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+          yield* Ref.update(state, (current) => ({
+            ...current,
+            autonomousCycleLoop: { ...current.autonomousCycleLoop, startedAt },
+          }))
+          autonomousCycleFiber = yield* autonomousCycleStartup({
+            qualificationRunId: initialized.evidence.evaluation.runId,
+            recordPass: (observation) => recordAutonomousCyclePass(state, observation),
+          })
+        }
       }
       yield* monitor(config, state, broker, autonomousCycleFiber).pipe(Effect.forkScoped({ startImmediately: true }))
       yield* reconciliation
