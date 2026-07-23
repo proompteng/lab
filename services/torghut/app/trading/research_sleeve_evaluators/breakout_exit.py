@@ -7,9 +7,8 @@ from typing import Any, Mapping, cast
 from .core import (
     SleeveSignalEvaluation,
     SleeveSignalResult,
-    build_gate,
     build_sleeve_result,
-    threshold_bool,
+    exit_trigger_gate,
 )
 from .helpers import (
     decimal_param,
@@ -198,22 +197,19 @@ def breakout_exit_result(
             )
         )
     )
-    exit_gate = build_gate(
-        name="exit",
-        category="exit",
-        thresholds=(
-            threshold_bool(
-                metric="breakout_failure_confirmed",
-                passed=breakout_failure_confirmed,
-                threshold=True,
-            ),
-            threshold_bool(
-                metric="session_strength_reversal_confirmed",
-                passed=session_strength_reversal_confirmed,
-                threshold=False,
-                value=session_strength_reversal_confirmed,
-            ),
-        ),
+    price_below_opening_range_high = (
+        resolved_request.price_vs_opening_range_high_bps is not None
+        and optional_max_threshold(
+            resolved_request.price_vs_opening_range_high_bps,
+            exit_price_below_opening_range_high_bps,
+        )
+    )
+    exit_gate = exit_trigger_gate(
+        reason_flags={
+            "breakout_failure_confirmed": breakout_failure_confirmed,
+            "price_below_opening_range_high": price_below_opening_range_high,
+            "session_strength_reversal_confirmed": session_strength_reversal_confirmed,
+        }
     )
     if breakout_failure_confirmed:
         return build_sleeve_result(
@@ -231,13 +227,6 @@ def breakout_exit_result(
             trace_enabled=resolved_request.trace_enabled,
             context=resolved_request.trace_context,
         )
-    price_below_opening_range_high = (
-        resolved_request.price_vs_opening_range_high_bps is not None
-        and optional_max_threshold(
-            resolved_request.price_vs_opening_range_high_bps,
-            exit_price_below_opening_range_high_bps,
-        )
-    )
     if price_below_opening_range_high or session_strength_reversal_confirmed:
         return build_sleeve_result(
             strategy_id=resolved_request.strategy_id,
