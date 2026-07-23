@@ -60,6 +60,26 @@ spec:
               value: "7a521052ff039376267eb16f222023edf5d72f308af380c71f2d50da6e6a1b32"
             - name: BAYN_MAXIMUM_AUTHORITY
               value: OBSERVE
+            # sha256("bayn/authority-generation/autonomous-observe-v1")
+            - name: BAYN_AUTHORITY_GENERATION_HASH
+              value: "d290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063"
+            - name: BAYN_CYCLE_POLL_INTERVAL_MS
+              value: "30000"
+            - name: BAYN_ALPACA_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: account-id
+            - name: BAYN_ALPACA_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: key-id
+            - name: BAYN_ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: secret-key
             - name: BAYN_HEALTH_INTERVAL_MS
               value: "30000"
             - name: BAYN_OPERATION_TIMEOUT_MS

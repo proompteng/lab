@@ -26,7 +26,41 @@ const baynRules = (): readonly MimirRule[] => {
   return group.rules
 }
 
-describe('Bayn cycle operations alert contract', () => {
+describe('Bayn cycle operations contract', () => {
+  test('keeps autonomous broker observation explicitly bounded to OBSERVE authority', () => {
+    const deployment = YAML.parse(readRepoFile('argocd/applications/bayn/deployment.yaml')) as Record<string, any>
+    const container = deployment.spec.template.spec.containers.find(
+      ({ name }: { readonly name: string }) => name === 'bayn',
+    )
+    const environment = Object.fromEntries(container.env.map((entry: { readonly name: string }) => [entry.name, entry]))
+    const generationHash = createHash('sha256').update('bayn/authority-generation/autonomous-observe-v1').digest('hex')
+
+    expect(environment.BAYN_MAXIMUM_AUTHORITY).toEqual({
+      name: 'BAYN_MAXIMUM_AUTHORITY',
+      value: 'OBSERVE',
+    })
+    expect(environment.BAYN_AUTHORITY_GENERATION_HASH).toEqual({
+      name: 'BAYN_AUTHORITY_GENERATION_HASH',
+      value: generationHash,
+    })
+    expect(environment.BAYN_CYCLE_POLL_INTERVAL_MS).toEqual({
+      name: 'BAYN_CYCLE_POLL_INTERVAL_MS',
+      value: '30000',
+    })
+    expect(environment.BAYN_ALPACA_ACCOUNT_ID.valueFrom.secretKeyRef).toEqual({
+      name: 'bayn-alpaca-auth',
+      key: 'account-id',
+    })
+    expect(environment.BAYN_ALPACA_KEY_ID.valueFrom.secretKeyRef).toEqual({
+      name: 'bayn-alpaca-auth',
+      key: 'key-id',
+    })
+    expect(environment.BAYN_ALPACA_SECRET_KEY.valueFrom.secretKeyRef).toEqual({
+      name: 'bayn-alpaca-auth',
+      key: 'secret-key',
+    })
+  })
+
   test('alerts only on scrape health and canonical service conditions', () => {
     const rules = baynRules()
     expect(rules.map(({ alert }) => alert)).toEqual([
