@@ -48,6 +48,9 @@ spec:
       ssl_min_protocol_version: TLSv1.3
   plugins:
     - name: barman-cloud.cloudnative-pg.io
+      # CNPG defaults this field to true. Keep it explicit so Argo's
+      # client-side and server-side comparison paths produce the same object.
+      enabled: true
       isWALArchiver: true
       parameters:
         barmanObjectName: buzz-db
