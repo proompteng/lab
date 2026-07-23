@@ -19,6 +19,9 @@ configMapGenerator:
   - name: bayn-egress-proxy
     files:
       - squid.conf
+  - name: bayn-qualification-dossier
+    files:
+      - qualification-dossier.json=qualification-dossiers/7a521052ff039376267eb16f222023edf5d72f308af380c71f2d50da6e6a1b32.json
 images:
   - name: registry.ide-newton.ts.net/lab/bayn
     newName: registry.ide-newton.ts.net/lab/bayn
