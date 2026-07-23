@@ -3,12 +3,27 @@ import { describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
 
 import type { MarketCalendarObservation } from './broker/alpaca'
+import {
+  CycleState,
+  makeCycleDraft,
+  makeCycleExecutionPolicyFromModel,
+  makeCycleIdentity,
+  makeCycleWindow,
+  makeExecutionCalendarObservation,
+  type AutonomousCycle,
+} from './cycle'
 import { defaultExecutionModel } from './execution-model'
-import { bindExecutionSession, ExecutionSessionBindingSchema } from './execution-session'
+import { bindCycleExecutionSession, bindExecutionSession, ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import { strictParseOptions } from './schemas'
 
 const hash = (character: string): string => character.repeat(64)
+const causalExecutionModel = (() => {
+  if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v2') {
+    throw new Error('execution-session cycle fixtures require the causal v2 execution model')
+  }
+  return defaultExecutionModel
+})()
 
 const calendar = (
   sessions: MarketCalendarObservation['sessions'],
@@ -40,6 +55,89 @@ const bind = (observation: MarketCalendarObservation) =>
   })
 
 const decodeBinding = Schema.decodeUnknownSync(ExecutionSessionBindingSchema, strictParseOptions)
+
+const monthEndCalendar = calendar(
+  [
+    {
+      date: '2026-01-30',
+      openAt: '2026-01-30T14:30:00.000Z',
+      closeAt: '2026-01-30T21:00:00.000Z',
+    },
+    {
+      date: '2026-02-02',
+      openAt: '2026-02-02T14:30:00.000Z',
+      closeAt: '2026-02-02T21:00:00.000Z',
+    },
+    {
+      date: '2026-02-03',
+      openAt: '2026-02-03T14:30:00.000Z',
+      closeAt: '2026-02-03T21:00:00.000Z',
+    },
+  ],
+  { start: '2026-01-30', end: '2026-02-03' },
+)
+
+const makeActiveCycle = (): AutonomousCycle => {
+  const executionSession = monthEndCalendar.sessions[1]
+  if (executionSession === undefined) throw new Error('cycle fixture requires the first post-signal session')
+  const executionCalendar = makeExecutionCalendarObservation({
+    schemaVersion: monthEndCalendar.schemaVersion,
+    source: monthEndCalendar.source,
+    ...executionSession,
+  })
+  const executionPolicy = makeCycleExecutionPolicyFromModel(causalExecutionModel)
+  const identity = makeCycleIdentity({
+    schemaVersion: 'bayn.autonomous-cycle-identity.v1',
+    strategyName: 'risk-balanced-trend',
+    qualificationRunId: hash('1'),
+    strategyProtocolHash: hash('2'),
+    accountId: 'paper-account-1',
+    signalSessionDate: '2026-01-30',
+    signalCalendarVersion: 'signal-calendar-v1',
+    executionSessionDate: executionCalendar.executionSessionDate,
+    executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
+    executionCalendarSource: executionCalendar.executionCalendarSource,
+    executionCalendarHash: executionCalendar.executionCalendarHash,
+    executionPolicy,
+  })
+  const window = makeCycleWindow(
+    {
+      calendar_version: 'signal-calendar-v1',
+      session_date: '2026-01-30',
+      close_time: '16:00',
+      timezone: 'America/New_York',
+    },
+    executionCalendar,
+    executionPolicy,
+  )
+  return {
+    ...makeCycleDraft(identity, window),
+    state: CycleState.Active,
+    bindings: { snapshotId: hash('3') },
+    stateVersion: 3,
+    createdAt: '2026-01-30T21:15:00.000Z',
+    updatedAt: window.submissionOpenAt,
+  }
+}
+
+const bindCycle = (overrides: Partial<Parameters<typeof bindCycleExecutionSession>[0]> = {}) => {
+  const cycle = makeActiveCycle()
+  return bindCycleExecutionSession({
+    cycle,
+    signal: {
+      sessionDate: cycle.identity.signalSessionDate,
+      finalizedAt: '2026-01-30T21:15:00.000Z',
+      contentHash: hash('a'),
+    },
+    planningBrokerState: {
+      observedAt: cycle.window.submissionOpenAt,
+      contentHash: hash('b'),
+    },
+    calendar: monthEndCalendar,
+    executionModel: causalExecutionModel,
+    ...overrides,
+  })
+}
 
 describe('causal execution-session binding', () => {
   test('binds a holiday gap, fixed pre-open cutoff, and early close without assuming session hours', () => {
@@ -206,5 +304,82 @@ describe('causal execution-session binding', () => {
         }),
       ),
     ).toThrow('market calendar request must start on or before the signal session')
+  })
+
+  test('binds one complete real calendar to the exact durable cycle and preserves adjacency evidence', () => {
+    const binding = bindCycle()
+
+    expect(binding).toMatchObject({
+      signal: { sessionDate: '2026-01-30' },
+      calendar: monthEndCalendar,
+      executionSession: {
+        date: '2026-02-02',
+        openAt: '2026-02-02T14:30:00.000Z',
+        closeAt: '2026-02-02T21:00:00.000Z',
+      },
+      submissionOpenAt: '2026-02-02T13:45:00.000Z',
+      submissionCutoffAt: '2026-02-02T14:15:00.000Z',
+      submissionCutoffLeadMinutes: 15,
+    })
+  })
+
+  test('allows later evidence to narrow but never widen the durable cycle submission window', () => {
+    expect(
+      bindCycle({
+        planningBrokerState: {
+          observedAt: '2026-02-02T14:00:00.000Z',
+          contentHash: hash('c'),
+        },
+      }).submissionOpenAt,
+    ).toBe('2026-02-02T14:00:00.000Z')
+
+    expect(() =>
+      bindCycle({
+        planningBrokerState: {
+          observedAt: '2026-02-02T13:44:59.999Z',
+          contentHash: hash('d'),
+        },
+      }),
+    ).toThrow('cannot widen the durable cycle submission window')
+  })
+
+  test('fails closed when the complete calendar no longer selects the cycle session', () => {
+    expect(() =>
+      bindCycle({
+        signal: {
+          sessionDate: '2026-01-31',
+          finalizedAt: '2026-01-30T21:15:00.000Z',
+          contentHash: hash('e'),
+        },
+      }),
+    ).toThrow('does not match the durable cycle calendar')
+
+    const changedHours = calendar(
+      monthEndCalendar.sessions.map((session) =>
+        session.date === '2026-02-02' ? { ...session, closeAt: '2026-02-02T18:00:00.000Z' } : session,
+      ),
+      monthEndCalendar.requestedRange,
+    )
+    expect(() => bindCycle({ calendar: changedHours })).toThrow('does not match the durable cycle calendar')
+
+    const skippedSession = calendar(
+      monthEndCalendar.sessions.filter((session) => session.date !== '2026-02-02'),
+      monthEndCalendar.requestedRange,
+    )
+    expect(() => bindCycle({ calendar: skippedSession })).toThrow('does not match the durable cycle calendar')
+  })
+
+  test('fails closed when the current execution model differs from the cycle policy', () => {
+    const changedModel = {
+      ...causalExecutionModel,
+      order: {
+        ...causalExecutionModel.order,
+        submissionCutoffLeadMinutes: causalExecutionModel.order.submissionCutoffLeadMinutes - 1,
+      },
+    }
+
+    expect(() => bindCycle({ executionModel: changedModel })).toThrow(
+      'does not match the durable cycle execution policy',
+    )
   })
 })

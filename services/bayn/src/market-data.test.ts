@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Layer, Redacted } from 'effect'
+import { TestClock } from 'effect/testing'
 import { AuthorizationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
 
+import type { OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
 import {
   MarketData,
@@ -286,16 +288,22 @@ interface ClickhouseParameter {
   readonly value: unknown
 }
 
+interface ClickhouseFixtureOptions {
+  readonly bars?: SnapshotRows['bars']
+  readonly beforeBarsReturn?: Effect.Effect<void>
+}
+
 const makeClickhouseFixture = (
   manifests: readonly SignalManifestRow[],
   sessions: readonly SignalSessionRow[],
   queries: CapturedQuery[],
+  options: ClickhouseFixtureOptions = {},
 ): ClickhouseClient.ClickhouseClient => {
   const statement = (
     strings: TemplateStringsArray,
     ...fragments: readonly ClickhouseParameter[]
   ): Effect.Effect<readonly unknown[]> =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const text = strings.join('?')
       const parameters = fragments.map((fragment) => fragment.value)
       if (text.includes('FROM signal.snapshot_manifests_v2') && text.includes('WHERE universe_id')) {
@@ -334,6 +342,9 @@ const makeClickhouseFixture = (
       }
       if (text.includes('FROM signal.adjusted_daily_bars_v2')) {
         queries.push({ kind: 'bars', text, parameters })
+        if (options.beforeBarsReturn !== undefined) yield* options.beforeBarsReturn
+        const requestedSnapshotId = parameters[0]
+        return (options.bars ?? []).filter((bar) => bar.snapshot_id === requestedSnapshotId)
       }
       return []
     })
@@ -762,6 +773,127 @@ describe('finalized Signal snapshot reader', () => {
       snapshotId,
     ])
     expect(manifestQueries.every((query) => query.text.includes('WHERE snapshot_id ='))).toBe(true)
+  })
+
+  test('loads exact bound bars with contract-derived bounds after all snapshot queries complete', async () => {
+    const fixture = makeFixture()
+    const queries: CapturedQuery[] = []
+    const staticSnapshotId = '0'.repeat(64)
+    const client = makeClickhouseFixture(fixture.rows.manifests, fixture.rows.sessions, queries, {
+      bars: fixture.rows.bars,
+      beforeBarsReturn: TestClock.setTime(Date.parse('2025-01-04T01:00:01.000Z')),
+    })
+    const layer = MarketDataLive(
+      {
+        operationTimeoutMs: 5_000,
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
+          snapshotId: staticSnapshotId,
+          publicationAsOf: '2024-12-31',
+          calendarVersion: 'static-calendar-v0',
+          bounds: {
+            ...fixture.request.bounds,
+            dataStart: '2024-01-02',
+            dataEnd: '2024-12-31',
+            lookbackStart: '2024-01-02',
+            evaluationStart: '2024-12-02',
+            evaluationEnd: '2024-12-31',
+          },
+        },
+      },
+      {
+        universeId: fixture.request.universeId,
+        universeSymbolHash: fixture.request.universeSymbolHash,
+        universe: fixture.request.universe,
+        historyStart: fixture.request.historyStart,
+        evaluationStart: fixture.request.evaluationStart,
+      },
+    ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2025-01-04T00:59:59.000Z'))
+        const marketData = yield* MarketData
+        return yield* marketData.loadSnapshotPublication({
+          snapshotId,
+          signalSessionDate: '2025-01-03',
+          signalCalendarVersion: fixture.request.calendarVersion,
+        })
+      }).pipe(Effect.provide(layer), Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.bars).toHaveLength(fixture.rows.bars.length)
+    expect(result.manifest).toMatchObject({
+      bounds: fixture.request.bounds,
+      finalizedSnapshot: {
+        snapshotId,
+        asOfSession: fixture.request.publicationAsOf,
+        calendarVersion: fixture.request.calendarVersion,
+      },
+    })
+    expect(queries.map((query) => query.kind).sort()).toEqual(['bars', 'manifest', 'sessions'])
+    expect(queries.every((query) => query.parameters[0] === snapshotId)).toBe(true)
+    expect(queries.every((query) => !query.parameters.includes(staticSnapshotId))).toBe(true)
+  })
+
+  test('fails the exact bound load closed on snapshot, session, calendar, and content drift', async () => {
+    const fixture = makeFixture()
+    const baseRequest: SnapshotPublicationRequest = {
+      snapshotId,
+      signalSessionDate: '2025-01-03',
+      signalCalendarVersion: fixture.request.calendarVersion,
+    }
+    const load = (
+      request: SnapshotPublicationRequest,
+      rows: SnapshotRows = fixture.rows,
+    ): Promise<OperationalError> => {
+      const client = makeClickhouseFixture(rows.manifests, rows.sessions, [], { bars: rows.bars })
+      const layer = MarketDataLive(
+        {
+          operationTimeoutMs: 5_000,
+          clickhouse: {
+            url: 'http://clickhouse.test:8123',
+            username: 'bayn',
+            password: Redacted.make('secret'),
+            snapshotId: '0'.repeat(64),
+            publicationAsOf: fixture.request.publicationAsOf,
+            calendarVersion: fixture.request.calendarVersion,
+            bounds: fixture.request.bounds,
+          },
+        },
+        {
+          universeId: fixture.request.universeId,
+          universeSymbolHash: fixture.request.universeSymbolHash,
+          universe: fixture.request.universe,
+          historyStart: fixture.request.historyStart,
+          evaluationStart: fixture.request.evaluationStart,
+        },
+      ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+      return Effect.runPromise(
+        Effect.flip(
+          Effect.gen(function* () {
+            const marketData = yield* MarketData
+            return yield* marketData.loadSnapshotPublication(request)
+          }).pipe(Effect.provide(layer)),
+        ),
+      )
+    }
+
+    const wrongId = await load({ ...baseRequest, snapshotId: 'f'.repeat(64) })
+    const wrongSession = await load({ ...baseRequest, signalSessionDate: '2025-01-02' })
+    const wrongCalendar = await load({ ...baseRequest, signalCalendarVersion: 'other-calendar-v1' })
+    const changedBars = [
+      { ...fixture.rows.bars[0], adjusted_volume: '1000099.00000000' },
+      ...fixture.rows.bars.slice(1),
+    ]
+    const changedContent = await load(baseRequest, { ...fixture.rows, bars: changedBars })
+
+    expect(wrongId.message).toContain('0 manifests; expected exactly one')
+    expect(wrongSession.message).toContain('does not match expected session')
+    expect(wrongCalendar.message).toContain('manifest calendar version does not match')
+    expect(changedContent.message).toContain('adjusted-bar content hash is invalid')
   })
 
   test('rejects duplicate manifests, sessions, and bars', () => {

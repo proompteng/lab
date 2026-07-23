@@ -74,6 +74,7 @@ describe('Bayn startup lifecycle', () => {
           inspectCyclePublications: forbidden('pinned startup must not inspect cycle publication candidates'),
           inspectPublication: () => forbidden('pinned startup must not inspect a cycle publication'),
           inspectSnapshotPublication: () => forbidden('pinned startup must not inspect a bound cycle publication'),
+          loadSnapshotPublication: () => forbidden('pinned startup must not load bound cycle bars'),
           load: forbidden('pinned startup must not load Signal bars'),
         }),
         Effect.provideService(Journal, {

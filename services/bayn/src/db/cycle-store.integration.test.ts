@@ -356,6 +356,7 @@ const runnerMarketData = (): MarketDataService => {
     }),
     inspectPublication: inspectExactPublication,
     inspectSnapshotPublication: inspectExactPublication,
+    loadSnapshotPublication: () => unused,
     load: unused,
   }
 }
