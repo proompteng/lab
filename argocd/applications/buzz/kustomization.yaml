@@ -10,7 +10,6 @@ resources:
   - postgres-cluster.yaml
   - postgres-scheduled-backup.yaml
   - postgres-acceptance-backup.yaml
-  - postgres-restore-proof.yaml
   - redis-config.yaml
   - redis.yaml
   - buzz-externalsecret.yaml
