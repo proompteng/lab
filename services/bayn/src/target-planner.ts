@@ -3,17 +3,9 @@ import { Schema } from 'effect'
 import { IntentPlanSchema, type IntentPlan } from './execution/intents'
 import { desiredQuantityMicros, MICROS } from './execution-model'
 import { canonicalHashV1 } from './hash'
-import {
-  AccountStatus,
-  OrderSide,
-  OrderStatus,
-  OrderType,
-  ReconciliationStatus,
-  TimeInForce,
-  type Reconciliation,
-} from './paper'
+import { AccountStatus, OrderSide, OrderStatus, OrderType, ReconciliationStatus, TimeInForce } from './paper'
 import type { ExecutionModel } from './protocol'
-import { reconciledStateHash, type ReconciledStateMaterial } from './reconciliation'
+import { reconciledStateHash, type ReconciledBrokerState } from './reconciliation'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -35,10 +27,7 @@ export interface SignalSessionReferencePrices {
   readonly priceMicros: Readonly<Record<string, string>>
 }
 
-export interface TargetPlannerBrokerState extends ReconciledStateMaterial {
-  readonly reconciliation: Reconciliation
-  readonly unknownOrderCount: number
-}
+export type TargetPlannerBrokerState = ReconciledBrokerState
 
 export interface TargetPlannerInput {
   readonly schemaVersion: 'bayn.paper-target-planner-input.v1'

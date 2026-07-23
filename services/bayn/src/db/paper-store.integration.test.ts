@@ -14,6 +14,7 @@ import {
   Authority,
   Broker,
   DiscrepancyKind,
+  KillState,
   OrderSide,
   OrderStatus,
   OrderType,
@@ -108,17 +109,17 @@ const makeClientRuntime = () => ManagedRuntime.make(PostgresClientLive(config).p
 
 const makeEvidenceRuntime = () => ManagedRuntime.make(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
 
-const accountEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => ({
+const accountEvent = (eventAccountId = accountId): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => ({
   _tag: 'Account',
   broker: Broker.Alpaca,
-  accountId,
+  accountId: eventAccountId,
   sourceEventId: 'account-response-1',
   contentHash: hash('account-response-1'),
   occurredAt,
   observedAt,
   account: {
     schemaVersion: 'bayn.paper-account-snapshot.v1',
-    accountId,
+    accountId: eventAccountId,
     status: AccountStatus.Active,
     currency: 'USD',
     cashMicros: '1000000000',
@@ -159,10 +160,12 @@ const fillEvent = (
   priceMicros: string,
   eventOccurredAt = occurredAt,
   brokerTimestamp = sourceTimestamp(eventOccurredAt),
+  eventAccountId = accountId,
+  eventObservedAt = observedAt,
 ): FillEventInput => {
   const fill = {
     schemaVersion: 'bayn.paper-fill.v1' as const,
-    accountId,
+    accountId: eventAccountId,
     fillId: id,
     brokerOrderId: `order-${id}`,
     clientOrderId: `client-${id}`,
@@ -176,7 +179,7 @@ const fillEvent = (
   return {
     _tag: 'Fill',
     broker: Broker.Alpaca,
-    accountId,
+    accountId: eventAccountId,
     sourceEventId: id,
     sourceTimestamp: brokerTimestamp,
     contentHash: canonicalHashV1({
@@ -185,7 +188,7 @@ const fillEvent = (
       brokerTransactionTime: brokerTimestamp,
     }),
     occurredAt: eventOccurredAt,
-    observedAt,
+    observedAt: eventObservedAt,
     fill,
   }
 }
@@ -220,10 +223,12 @@ const positionEvent = (
 const positionSnapshotInput = (
   sourceHash: string,
   positions: readonly PositionEventInput[],
+  snapshotAccountId = accountId,
+  snapshotObservedAt = observedAt,
 ): PositionSnapshotInput => ({
-  accountId,
+  accountId: snapshotAccountId,
   sourceHash,
-  observedAt,
+  observedAt: snapshotObservedAt,
   positions,
 })
 
@@ -368,33 +373,126 @@ describePostgres('paper accounting persistence', () => {
         observed: `UNKNOWN:${occurredAt}`,
       })
       expect(result.metrics.oldestUnknownMutationAgeMs).toBe(3_000)
+      expect(result.riskContext).toMatchObject({
+        tradingDate: '2026-07-22',
+        authority: null,
+        authorityObservedAt: null,
+        unknownMutationCount: 1,
+        dailyTradedNotionalMicros: '0',
+        dayStartEquityMicros: accountEvent().account.cashMicros,
+        peakEquityMicros: accountEvent().account.cashMicros,
+      })
     } finally {
       await runtime.dispose()
     }
   }, 15_000)
 
   test('recovers the PostgreSQL-to-TigerBeetle crash window without duplicate accounting', async () => {
-    const control: JournalControl = { fail: true, planHashes: [] }
+    const control: JournalControl = { fail: false, planHashes: [] }
     const runtime = makeStoreRuntime(control)
     const buy = fillEvent('fill-buy', OrderSide.Buy, '3000000', '100000000')
     const sell = fillEvent('fill-sell', OrderSide.Sell, '1000000', '120000000')
+    const priorBuy = fillEvent(
+      'fill-prior-buy',
+      OrderSide.Buy,
+      '1000000',
+      '70000000',
+      '2026-07-21T19:58:00.000Z',
+      sourceTimestamp('2026-07-21T19:58:00.000Z'),
+      accountId,
+      '2026-07-21T19:58:01.000Z',
+    )
+    const priorSell = fillEvent(
+      'fill-prior-sell',
+      OrderSide.Sell,
+      '1000000',
+      '70000000',
+      '2026-07-21T19:59:00.000Z',
+      sourceTimestamp('2026-07-21T19:59:00.000Z'),
+      accountId,
+      '2026-07-21T19:59:01.000Z',
+    )
+    const otherAccountId = 'paper-account-2'
+    const otherFill = fillEvent(
+      'fill-other-account',
+      OrderSide.Buy,
+      '1000000',
+      '70000000',
+      occurredAt,
+      sourceTimestamp(occurredAt),
+      otherAccountId,
+    )
     try {
       await runtime.runPromise(
-        Effect.flatMap(PaperStore, (store) =>
-          store.ingest({
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const opening = {
             ...accountEvent(),
             sourceEventId: 'opening-account',
             contentHash: hash('opening-account'),
-            occurredAt: '2026-07-22T15:29:59.000Z',
-            observedAt: '2026-07-22T15:29:59.000Z',
+            occurredAt: '2026-07-21T19:57:00.000Z',
+            observedAt: '2026-07-21T19:57:01.000Z',
             account: {
               ...accountEvent().account,
               equityMicros: accountEvent().account.cashMicros,
-              observedAt: '2026-07-22T15:29:59.000Z',
+              observedAt: '2026-07-21T19:57:01.000Z',
             },
-          }),
-        ),
+          } satisfies BrokerEventInput
+          const openingReceipt = yield* store.ingest(opening)
+          const openingPositions = yield* store.ingestPositions(
+            positionSnapshotInput(hash('opening-empty-positions'), [], accountId, '2026-07-21T19:57:01.000Z'),
+          )
+          yield* store.value({
+            accountEventId: openingReceipt.eventId,
+            positionSnapshotId: openingPositions.snapshotId,
+          })
+
+          const otherOpening = {
+            ...accountEvent(otherAccountId),
+            sourceEventId: 'other-opening-account',
+            contentHash: hash('other-opening-account'),
+            account: {
+              ...accountEvent(otherAccountId).account,
+              equityMicros: accountEvent(otherAccountId).account.cashMicros,
+            },
+          } satisfies BrokerEventInput
+          const otherReceipt = yield* store.ingest(otherOpening)
+          const otherPositions = yield* store.ingestPositions(
+            positionSnapshotInput(hash('other-opening-empty-positions'), [], otherAccountId),
+          )
+          yield* store.value({
+            accountEventId: otherReceipt.eventId,
+            positionSnapshotId: otherPositions.snapshotId,
+          })
+
+          yield* store.account(priorBuy)
+          yield* store.account(priorSell)
+
+          const dayStartObservedAt = '2026-07-22T13:30:00.000Z'
+          const dayStartAccount = {
+            ...accountEvent(),
+            sourceEventId: 'day-start-account',
+            contentHash: hash('day-start-account'),
+            occurredAt: dayStartObservedAt,
+            observedAt: dayStartObservedAt,
+            account: {
+              ...accountEvent().account,
+              cashMicros: '999999800',
+              equityMicros: '999999800',
+              observedAt: dayStartObservedAt,
+            },
+          } satisfies BrokerEventInput
+          const dayStartReceipt = yield* store.ingest(dayStartAccount)
+          const dayStartPositions = yield* store.ingestPositions(
+            positionSnapshotInput(hash('day-start-empty-positions'), [], accountId, dayStartObservedAt),
+          )
+          yield* store.value({
+            accountEventId: dayStartReceipt.eventId,
+            positionSnapshotId: dayStartPositions.snapshotId,
+          })
+        }),
       )
+      control.fail = true
       const failed = await runtime.runPromiseExit(Effect.flatMap(PaperStore, (store) => store.account(buy)))
       expect(Exit.isFailure(failed)).toBe(true)
 
@@ -409,26 +507,28 @@ describePostgres('paper accounting persistence', () => {
           return counts
         }),
       )
-      expect(afterFailure).toEqual({ transactions: 1, receipts: 0 })
+      expect(afterFailure).toEqual({ transactions: 3, receipts: 2 })
 
       control.fail = false
       const outOfOrder = await runtime.runPromiseExit(Effect.flatMap(PaperStore, (store) => store.account(sell)))
       expect(Exit.isFailure(outOfOrder)).toBe(true)
       if (Exit.isFailure(outOfOrder)) expect(Cause.pretty(outOfOrder.cause)).toContain('earlier fill')
-      expect(control.planHashes).toHaveLength(1)
+      expect(control.planHashes).toHaveLength(3)
 
-      const [receipt, replay, sale] = await runtime.runPromise(
+      const [receipt, replay, sale, otherAccountFill] = await runtime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
           const receipt = yield* store.account(buy)
           const replay = yield* store.account(buy)
           const sale = yield* store.account(sell)
-          return [receipt, replay, sale] as const
+          const otherAccountFill = yield* store.account(otherFill)
+          return [receipt, replay, sale, otherAccountFill] as const
         }),
       )
       expect(replay).toEqual(receipt)
       expect(sale.brokerEventId).not.toBe(receipt.brokerEventId)
-      expect(new Set(control.planHashes.slice(0, 3)).size).toBe(1)
+      expect(otherAccountFill.brokerEventId).not.toBe(sale.brokerEventId)
+      expect(new Set(control.planHashes.slice(2, 5)).size).toBe(1)
 
       const stored = await runtime.runPromise(
         Effect.gen(function* () {
@@ -463,11 +563,11 @@ describePostgres('paper accounting persistence', () => {
         ]),
       )
       expect(stored.transactions.every((transaction) => /^[a-f0-9]{64}$/.test(transaction.ledger_plan_hash))).toBe(true)
-      expect(stored.counts).toEqual({ events: 3, transactions: 2, receipts: 2 })
+      expect(stored.counts).toEqual({ events: 8, transactions: 5, receipts: 5 })
       expect(Exit.isFailure(stored.immutable)).toBe(true)
       expect(Exit.isFailure(stored.truncate)).toBe(true)
 
-      const exact = await runtime.runPromise(
+      const result = await runtime.runPromise(
         Effect.gen(function* () {
           const store = yield* PaperStore
           const currentAccount = {
@@ -476,8 +576,8 @@ describePostgres('paper accounting persistence', () => {
             contentHash: hash('current-account'),
             account: {
               ...accountEvent().account,
-              cashMicros: '819999800',
-              equityMicros: '1019999800',
+              cashMicros: '819999600',
+              equityMicros: '1019999600',
             },
           } satisfies BrokerEventInput
           const accountReceipt = yield* store.ingest(currentAccount)
@@ -489,20 +589,77 @@ describePostgres('paper accounting persistence', () => {
             accountEventId: accountReceipt.eventId,
             positionSnapshotId: positionsReceipt.snapshotId,
           })
-          return yield* store.reconcile({
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            INSERT INTO valuations (
+              valuation_id, schema_version, account_id, source_hash, cash_micros,
+              long_market_value_micros, short_market_value_micros, equity_micros, as_of
+            ) VALUES
+              (
+                ${hash('future-primary-valuation')}, 'bayn.paper-valuation.v1', ${accountId},
+                ${hash('future-primary-source')}, 9000000000, 0, 0, 9000000000,
+                '2026-07-22T16:00:00.000Z'
+              ),
+              (
+                ${hash('other-account-valuation')}, 'bayn.paper-valuation.v1', ${otherAccountId},
+                ${hash('other-account-source')}, 8000000000, 0, 0, 8000000000,
+                '2026-07-22T15:30:30.000Z'
+              )
+          `
+          yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${hash('observe-generation')}, 'OBSERVE', 'OBSERVE', 'CLEAR', 1,
+              '2026-07-22T15:30:02.000Z'
+            )
+          `
+          const [observationBefore] = yield* sql<{ observed_at: Date }>`
+            SELECT clock_timestamp() AS observed_at
+          `
+          const exact = yield* store.reconcile({
             account: currentAccount.account,
             positions: [position.position],
             positionsObservedAt: observedAt,
             orders: [],
             ordersObservedAt: observedAt,
-            fills: [buy.fill, sell.fill],
+            fills: [priorBuy.fill, priorSell.fill, buy.fill, sell.fill],
             valuation,
             reconciledAt: '2026-07-22T15:31:00.000Z',
           })
+          const [observationAfter] = yield* sql<{ observed_at: Date }>`
+            SELECT clock_timestamp() AS observed_at
+          `
+          return {
+            exact,
+            observationBefore: observationBefore.observed_at,
+            observationAfter: observationAfter.observed_at,
+          }
         }),
       )
+      const { exact, observationBefore, observationAfter } = result
       expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
       expect(exact.reconciliation.discrepancies).toEqual([])
+      const { authorityObservedAt, ...riskContext } = exact.riskContext
+      expect(riskContext).toMatchObject({
+        tradingDate: '2026-07-22',
+        authority: {
+          generationHash: hash('observe-generation'),
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+          kill: KillState.Clear,
+          version: 1,
+          updatedAt: '2026-07-22T15:30:02.000Z',
+        },
+        unknownMutationCount: 0,
+        dailyTradedNotionalMicros: '420000000',
+        dayStartEquityMicros: '999999800',
+        peakEquityMicros: '1019999600',
+      })
+      if (authorityObservedAt === null) throw new Error('expected a durable authority observation')
+      expect(Date.parse(authorityObservedAt)).toBeGreaterThanOrEqual(observationBefore.getTime())
+      expect(Date.parse(authorityObservedAt)).toBeLessThanOrEqual(observationAfter.getTime())
+      expect(Date.parse(authorityObservedAt)).toBeGreaterThanOrEqual(Date.parse('2026-07-22T15:30:02.000Z'))
     } finally {
       await runtime.dispose()
     }
@@ -804,7 +961,21 @@ describePostgres('paper accounting persistence', () => {
 
       expect(result.exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
       expect(result.mismatch.reconciliation.status).toBe(ReconciliationStatus.Discrepancy)
-      expect(result.replay).toEqual(result.mismatch)
+      const mismatchRiskContext = result.mismatch.riskContext
+      const replayRiskContext = result.replay.riskContext
+      if (mismatchRiskContext.authorityObservedAt === null || replayRiskContext.authorityObservedAt === null) {
+        throw new Error('expected authority observations for discrepancy replay')
+      }
+      expect(result.replay).toEqual({
+        ...result.mismatch,
+        riskContext: {
+          ...mismatchRiskContext,
+          authorityObservedAt: replayRiskContext.authorityObservedAt,
+        },
+      })
+      expect(Date.parse(replayRiskContext.authorityObservedAt)).toBeGreaterThanOrEqual(
+        Date.parse(mismatchRiskContext.authorityObservedAt),
+      )
       expect(result.mismatch.reconciliation.discrepancies).toHaveLength(1)
       expect(result.ongoing.reconciliation.discrepancies[0]).toMatchObject({
         discrepancyId: result.mismatch.reconciliation.discrepancies[0]?.discrepancyId,

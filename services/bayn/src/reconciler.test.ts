@@ -25,9 +25,10 @@ import { unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './paper'
 import { PaperStore, type PaperStoreShape } from './db/paper-store'
-import type { BrokerSnapshot, ReconciliationReport } from './db/reconciliation'
+import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationError, runContinuously, runOnce } from './reconciler'
+import { reconciledStateHash } from './reconciliation'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '1970-01-01T00:00:00.000Z'
@@ -116,28 +117,49 @@ const receipt: AccountingReceipt = {
   recordedAt: observedAt,
 }
 
-const report = (snapshot: BrokerSnapshot): ReconciliationReport => ({
-  reconciliation: {
-    schemaVersion: 'bayn.paper-reconciliation.v1',
-    reconciliationId: hash('reconciliation'),
-    accountId,
-    expectedHash: hash('state'),
-    observedHash: hash('state'),
-    contentHash: hash('reconciliation-content'),
-    status: ReconciliationStatus.Exact,
-    discrepancies: [],
-    reconciledAt: snapshot.reconciledAt,
-  },
-  metrics: {
-    brokerPollAgeMs: 0,
-    oldestUnknownMutationAgeMs: 0,
-    cashDifferenceMicros: '0',
-    positionDifferenceMicros: '0',
-    equityDifferenceMicros: '0',
-    accountingExact: true,
-    discrepancyCount: 0,
-  },
-})
+const report = (snapshot: BrokerSnapshot): ReconciliationWriteResult => {
+  const accountingHash = hash('accounting-state')
+  const stateHash = reconciledStateHash({
+    account: snapshot.account,
+    positions: snapshot.positions,
+    positionsObservedAt: snapshot.positionsObservedAt,
+    orders: snapshot.orders,
+    ordersObservedAt: snapshot.ordersObservedAt,
+    accountingHash,
+  })
+  return {
+    reconciliation: {
+      schemaVersion: 'bayn.paper-reconciliation.v1',
+      reconciliationId: hash('reconciliation'),
+      accountId,
+      expectedHash: stateHash,
+      observedHash: stateHash,
+      contentHash: hash('reconciliation-content'),
+      status: ReconciliationStatus.Exact,
+      discrepancies: [],
+      reconciledAt: snapshot.reconciledAt,
+    },
+    metrics: {
+      brokerPollAgeMs: 0,
+      oldestUnknownMutationAgeMs: 0,
+      cashDifferenceMicros: '0',
+      positionDifferenceMicros: '0',
+      equityDifferenceMicros: '0',
+      accountingExact: true,
+      discrepancyCount: 0,
+    },
+    accountingHash,
+    riskContext: {
+      tradingDate: '1969-12-31',
+      authority: null,
+      authorityObservedAt: null,
+      unknownMutationCount: 0,
+      dailyTradedNotionalMicros: '0',
+      dayStartEquityMicros: snapshot.account.equityMicros,
+      peakEquityMicros: snapshot.account.equityMicros,
+    },
+  }
+}
 
 interface StoreControl {
   writes: number
@@ -232,7 +254,7 @@ describe('paper reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
-    await Effect.runPromise(provide(read, makeStore(control)))
+    const result = await Effect.runPromise(provide(read, makeStore(control)))
 
     expect(orderCursors).toEqual([undefined, allOrders[499].submittedAt, undefined, allOrders[499].submittedAt])
     expect(fillCursors).toEqual([undefined, allFills[99].activityId, undefined, allFills[99].activityId])
@@ -241,6 +263,19 @@ describe('paper reconciliation loop', () => {
     expect(control.reconciliations[0].fills).toHaveLength(101)
     expect(control.reconciliations[0].orders[0].intentId).toBe(hash('intent'))
     expect(control.reconciliations[0].fills[0].intentId).toBe(hash('intent'))
+    expect(result.brokerState.orders.map((candidate) => candidate.brokerOrderId)).toEqual(
+      allOrders.map((candidate) => candidate.brokerOrderId).sort(),
+    )
+    expect(result.brokerState.unknownOrderCount).toBe(500)
+    const stateHash = reconciledStateHash(result.brokerState)
+    expect(result.report.reconciliation.expectedHash).toBe(stateHash)
+    expect(result.report.reconciliation.observedHash).toBe(stateHash)
+    expect(result.brokerState.reconciliation).toEqual(result.report.reconciliation)
+    expect(result.riskContext).toMatchObject({
+      authority: null,
+      authorityObservedAt: null,
+      unknownMutationCount: 0,
+    })
     expect(control.restrictions).toEqual([])
   })
 

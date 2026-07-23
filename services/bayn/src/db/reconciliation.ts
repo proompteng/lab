@@ -7,14 +7,19 @@ import type { RuntimeConfig } from '../config'
 import { canonicalHashV1 } from '../hash'
 import type { JournalService } from '../ledger'
 import {
+  Authority,
   DiscrepancySchema,
   IntentState,
+  KillState,
   OrderSide,
   OrderType,
   ReconciliationStatus,
+  SignedMicrosSchema,
   TerminalOutcome,
   TimeInForce,
+  UnsignedMicrosSchema,
   decodeAccountingReceipt,
+  decodeAuthorityState,
   decodeReconciliation,
   type AccountSnapshot,
   type AccountingReceipt,
@@ -30,8 +35,10 @@ import {
   reconciledStateHash,
   type IntentExpectation,
   type ReconciliationMetrics,
+  type ReconciliationRiskContext,
 } from '../reconciliation'
 import {
+  IsoDateSchema,
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
@@ -64,6 +71,11 @@ export interface BrokerSnapshot {
 export interface ReconciliationReport {
   readonly reconciliation: Reconciliation
   readonly metrics: ReconciliationMetrics
+}
+
+export interface ReconciliationWriteResult extends ReconciliationReport {
+  readonly accountingHash: string
+  readonly riskContext: ReconciliationRiskContext
 }
 
 const IntentBindingRow = Schema.Struct({ intent_id: Sha256, client_order_id: NonEmptyString })
@@ -99,6 +111,23 @@ const PreviousReconciliationRows = Schema.Array(
   Schema.Struct({ discrepancies: Schema.Array(DiscrepancySchema) }),
 ).check(Schema.isMaxLength(1))
 const ReconciliationContentRow = Schema.Tuple([Schema.Struct({ content_hash: Sha256 })])
+const ReconciliationRiskContextRow = Schema.Tuple([
+  Schema.Struct({
+    trading_date: IsoDateSchema,
+    authority_schema_version: Schema.NullOr(Schema.Literal('bayn.paper-authority.v1')),
+    authority_generation_hash: Schema.NullOr(Sha256),
+    authority_maximum: Schema.NullOr(Schema.Enum(Authority)),
+    authority_effective: Schema.NullOr(Schema.Enum(Authority)),
+    authority_kill: Schema.NullOr(Schema.Enum(KillState)),
+    authority_reason: Schema.NullOr(NonEmptyString),
+    authority_version: Schema.NullOr(Schema.String),
+    authority_updated_at: Schema.NullOr(Schema.DateValid),
+    authority_observed_at: Schema.NullOr(Schema.DateValid),
+    daily_traded_notional_micros: UnsignedMicrosSchema,
+    day_start_equity_micros: SignedMicrosSchema,
+    peak_equity_micros: SignedMicrosSchema,
+  }),
+])
 
 const decodeBindings = Schema.decodeUnknownEffect(Schema.Array(IntentBindingRow), strictParseOptions)
 const decodeIntents = Schema.decodeUnknownEffect(Schema.Array(IntentRow), strictParseOptions)
@@ -109,10 +138,74 @@ const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(AccountingTra
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconciliationRows, strictParseOptions)
 const decodeContent = Schema.decodeUnknownEffect(ReconciliationContentRow, strictParseOptions)
+const decodeRiskContext = Schema.decodeUnknownEffect(ReconciliationRiskContextRow, strictParseOptions)
 const encodeDiscrepancies = Schema.encodeSync(Schema.fromJsonString(Schema.Array(DiscrepancySchema)))
 
 const attempt = <A>(evaluate: () => A): Effect.Effect<A, unknown> =>
   Effect.try({ try: evaluate, catch: (cause) => cause })
+
+const riskContextFromRow = (
+  row: (typeof ReconciliationRiskContextRow.Type)[0],
+  unknownMutationCount: number,
+): Effect.Effect<ReconciliationRiskContext, unknown> =>
+  Effect.gen(function* () {
+    const requiredAuthority = [
+      row.authority_schema_version,
+      row.authority_generation_hash,
+      row.authority_maximum,
+      row.authority_effective,
+      row.authority_kill,
+      row.authority_version,
+      row.authority_updated_at,
+    ]
+    const authorityMissing = requiredAuthority.every((value) => value === null)
+    if (authorityMissing && (row.authority_reason !== null || row.authority_observed_at !== null)) {
+      return yield* Effect.fail(new Error('authority evidence exists without durable authority state'))
+    }
+    if (
+      !authorityMissing &&
+      (requiredAuthority.some((value) => value === null) || row.authority_observed_at === null)
+    ) {
+      return yield* Effect.fail(new Error('durable authority state is incomplete'))
+    }
+
+    const authority = authorityMissing
+      ? null
+      : yield* Effect.gen(function* () {
+          const version = Number(row.authority_version)
+          if (!Number.isSafeInteger(version) || version <= 0) {
+            return yield* Effect.fail(new Error('durable authority version is not a safe positive integer'))
+          }
+          return yield* decodeAuthorityState({
+            schemaVersion: row.authority_schema_version,
+            generationHash: row.authority_generation_hash,
+            maximum: row.authority_maximum,
+            effective: row.authority_effective,
+            kill: row.authority_kill,
+            ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
+            version,
+            updatedAt: row.authority_updated_at?.toISOString(),
+          })
+        })
+
+    const material = {
+      tradingDate: row.trading_date,
+      unknownMutationCount,
+      dailyTradedNotionalMicros: row.daily_traded_notional_micros,
+      dayStartEquityMicros: row.day_start_equity_micros,
+      peakEquityMicros: row.peak_equity_micros,
+    }
+    if (authority === null) return { ...material, authority: null, authorityObservedAt: null }
+    const authorityObservedAt = row.authority_observed_at
+    if (authorityObservedAt === null) {
+      return yield* Effect.fail(new Error('durable authority observation time is missing'))
+    }
+    const authorityObservedAtIso = authorityObservedAt.toISOString()
+    if (authority.updatedAt > authorityObservedAtIso) {
+      return yield* Effect.fail(new Error('durable authority update follows its observation time'))
+    }
+    return { ...material, authority, authorityObservedAt: authorityObservedAtIso }
+  })
 
 const unresolvedEvents = new Set<MutationEventType>([
   MutationEventType.SubmitStarted,
@@ -194,7 +287,7 @@ export const makeReconciliation = (
       Effect.map((rows) => rows.map((row) => ({ intentId: row.intent_id, clientOrderId: row.client_order_id }))),
     )
 
-  const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationReport, unknown> =>
+  const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, unknown> =>
     sql.withTransaction(
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
@@ -258,6 +351,7 @@ export const makeReconciliation = (
             ? { unknownSince: row.mutation_occurred_at }
             : {}),
         }))
+        const unknownMutationCount = intents.filter((intent) => intent.unknownSince !== undefined).length
 
         const transactionRows = yield* sql<Record<string, unknown>>`
           SELECT
@@ -356,7 +450,7 @@ export const makeReconciliation = (
           ORDER BY event.source_sequence
           LIMIT 1
         `.pipe(Effect.flatMap(decodeOpeningCash))
-        const comparison = yield* attempt(() => {
+        const { accountingHash, comparison } = yield* attempt(() => {
           if (transactions.some((transaction) => transaction.occurredAt < openingCash.observed_at)) {
             throw new Error('paper accounting predates the opening cash snapshot')
           }
@@ -379,22 +473,25 @@ export const makeReconciliation = (
             ordersObservedAt: snapshot.ordersObservedAt,
             accountingHash,
           })
-          return compareReconciliation({
-            accountId,
-            stateHash,
-            account: snapshot.account,
-            positions: snapshot.positions,
-            orders: snapshot.orders,
-            fills: snapshot.fills,
-            intents,
-            durableFills,
-            projectedPositions,
-            expectedCashMicros,
-            valuation: snapshot.valuation,
+          return {
             accountingHash,
-            ledgerExact,
-            reconciledAt: snapshot.reconciledAt,
-          })
+            comparison: compareReconciliation({
+              accountId,
+              stateHash,
+              account: snapshot.account,
+              positions: snapshot.positions,
+              orders: snapshot.orders,
+              fills: snapshot.fills,
+              intents,
+              durableFills,
+              projectedPositions,
+              expectedCashMicros,
+              valuation: snapshot.valuation,
+              accountingHash,
+              ledgerExact,
+              reconciledAt: snapshot.reconciledAt,
+            }),
+          }
         })
 
         const [previous] = yield* sql<Record<string, unknown>>`
@@ -463,7 +560,49 @@ export const makeReconciliation = (
           yield* restrictAuthority(sql, `reconciliation discrepancy ${reconciliationId}`, snapshot.reconciledAt)
         }
 
-        return { reconciliation, metrics: comparison.metrics }
+        const [riskContextRow] = yield* sql<Record<string, unknown>>`
+          WITH boundary AS (
+            SELECT (${snapshot.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date AS trading_date
+          )
+          SELECT
+            boundary.trading_date::text AS trading_date,
+            authority.schema_version AS authority_schema_version,
+            authority.generation_hash AS authority_generation_hash,
+            authority.maximum AS authority_maximum,
+            authority.effective AS authority_effective,
+            authority.kill_state AS authority_kill,
+            authority.reason AS authority_reason,
+            authority.version::text AS authority_version,
+            authority.updated_at AS authority_updated_at,
+            CASE WHEN authority.singleton IS NULL THEN NULL ELSE clock_timestamp() END AS authority_observed_at,
+            coalesce((
+              SELECT sum(transaction.notional_micros)::text
+              FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = ${accountId}
+                AND transaction.occurred_at <= ${snapshot.reconciledAt}
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
+            ), '0') AS daily_traded_notional_micros,
+            (
+              SELECT valuation.equity_micros::text
+              FROM valuations AS valuation
+              WHERE valuation.account_id = ${accountId}
+                AND valuation.as_of <= ${snapshot.reconciledAt}
+                AND (valuation.as_of AT TIME ZONE 'America/New_York')::date = boundary.trading_date
+              ORDER BY valuation.as_of, valuation.valuation_id
+              LIMIT 1
+            ) AS day_start_equity_micros,
+            (
+              SELECT max(valuation.equity_micros)::text
+              FROM valuations AS valuation
+              WHERE valuation.account_id = ${accountId}
+                AND valuation.as_of <= ${snapshot.reconciledAt}
+            ) AS peak_equity_micros
+          FROM boundary
+          LEFT JOIN authority_state AS authority ON authority.singleton
+        `.pipe(Effect.flatMap(decodeRiskContext))
+        const riskContext = yield* riskContextFromRow(riskContextRow, unknownMutationCount)
+
+        return { reconciliation, metrics: comparison.metrics, accountingHash, riskContext }
       }),
     )
 

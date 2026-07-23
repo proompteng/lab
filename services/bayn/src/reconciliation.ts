@@ -6,11 +6,14 @@ import {
   OrderStatus,
   TerminalOutcome,
   type AccountSnapshot,
+  type AuthorityState,
   type Fill,
   type Order,
   type Position,
+  type Reconciliation,
   type Valuation,
 } from './paper'
+import type { IsoDate } from './schemas'
 
 export interface IntentExpectation {
   readonly intentId: string
@@ -64,6 +67,31 @@ export interface ReconciledStateMaterial {
   readonly ordersObservedAt: string
   readonly accountingHash: string
 }
+
+export interface ReconciledBrokerState extends ReconciledStateMaterial {
+  readonly reconciliation: Reconciliation
+  readonly unknownOrderCount: number
+}
+
+interface ReconciliationRiskMaterial {
+  readonly tradingDate: IsoDate
+  readonly unknownMutationCount: number
+  readonly dailyTradedNotionalMicros: string
+  readonly dayStartEquityMicros: string
+  readonly peakEquityMicros: string
+}
+
+export type ReconciliationRiskContext = ReconciliationRiskMaterial &
+  (
+    | {
+        readonly authority: AuthorityState
+        readonly authorityObservedAt: string
+      }
+    | {
+        readonly authority: null
+        readonly authorityObservedAt: null
+      }
+  )
 
 export interface DiscrepancyInput {
   readonly discrepancyId: string
