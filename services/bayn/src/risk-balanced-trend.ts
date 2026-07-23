@@ -1,6 +1,9 @@
+import { Schema } from 'effect'
+
 import type { RuntimeProvenance } from './contracts'
 import { MICROS, referencePriceMicros } from './execution-model'
 import { canonicalHashV1 } from './hash'
+import { IsoDateSchema, strictParseOptions } from './schemas'
 import { reconcileMarkedEquity } from './simulation-reconciliation'
 import {
   alignBars,
@@ -288,20 +291,42 @@ export interface CurrentRiskBalancedTrendDecision {
   readonly priceMicros: Readonly<Record<string, string>>
 }
 
+const CurrentDecisionCycleBindingSchema = Schema.Struct({
+  signalSessionDate: IsoDateSchema,
+  executionSessionDate: IsoDateSchema,
+})
+export type CurrentDecisionCycleBinding = typeof CurrentDecisionCycleBindingSchema.Type
+const decodeCurrentDecisionCycleBinding = Schema.decodeUnknownSync(
+  CurrentDecisionCycleBindingSchema,
+  strictParseOptions,
+)
+
 export const compileCurrentRiskBalancedTrendDecision = (
   bars: readonly DailyBar[],
   inputManifest: InputManifest,
   protocol: Protocol,
+  cycleBinding: CurrentDecisionCycleBinding,
 ): CurrentRiskBalancedTrendDecision => {
+  const binding = decodeCurrentDecisionCycleBinding(cycleBinding)
   const sessions = alignBars(bars, protocol.universe, inputManifest)
   const signalIndex = sessions.length - 1
   const terminalSession = sessions[signalIndex]
   if (
     terminalSession === undefined ||
     terminalSession.date !== inputManifest.finalizedSnapshot.lastSession ||
-    terminalSession.date !== inputManifest.lastSession
+    terminalSession.date !== inputManifest.lastSession ||
+    terminalSession.date !== binding.signalSessionDate
   ) {
-    throw new Error('current strategy decision must end on the bound Signal terminal session')
+    throw new Error('current strategy decision must end on the due cycle Signal terminal session')
+  }
+  if (binding.executionSessionDate <= binding.signalSessionDate) {
+    throw new Error('current strategy execution session must follow its Signal session')
+  }
+  if (
+    protocol.rebalance === 'month-end' &&
+    binding.signalSessionDate.slice(0, 7) === binding.executionSessionDate.slice(0, 7)
+  ) {
+    throw new Error('current strategy decision requires a month-end due cycle')
   }
   const decision = decisionFromAlignedSessions(sessions, signalIndex, protocol)
   const priceMicros = Object.fromEntries(

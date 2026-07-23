@@ -207,7 +207,10 @@ describe('risk-balanced trend candidate', () => {
         ? { ...bar, close: 100.123456 }
         : bar,
     )
-    const current = strategy.currentDecision(bars, snapshot.manifest)
+    const current = strategy.currentDecision(bars, snapshot.manifest, {
+      signalSessionDate: snapshot.manifest.lastSession,
+      executionSessionDate: '2020-05-01',
+    })
     const sessionDates = [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort()
     const historyLength = Math.max(fixtureProtocol.volatilityWindow, ...fixtureProtocol.horizons) + 1
     const historyDates = sessionDates.slice(-historyLength)
@@ -244,14 +247,46 @@ describe('risk-balanced trend candidate', () => {
     expect(Object.values(current.priceMicros).every((price) => /^[1-9][0-9]*$/.test(price))).toBe(true)
   })
 
+  test('rejects a current decision outside the bound month-end cycle', () => {
+    const snapshot = makeSnapshot()
+    const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
+
+    expect(() =>
+      strategy.currentDecision(snapshot.bars, snapshot.manifest, {
+        signalSessionDate: snapshot.manifest.lastSession,
+        executionSessionDate: '2020-04-22',
+      }),
+    ).toThrow('current strategy decision requires a month-end due cycle')
+    expect(() =>
+      strategy.currentDecision(snapshot.bars, snapshot.manifest, {
+        signalSessionDate: '2020-04-20',
+        executionSessionDate: '2020-05-01',
+      }),
+    ).toThrow('current strategy decision must end on the due cycle Signal terminal session')
+    expect(() =>
+      strategy.currentDecision(snapshot.bars, snapshot.manifest, {
+        signalSessionDate: snapshot.manifest.lastSession,
+        executionSessionDate: '2020-04-20',
+      }),
+    ).toThrow('current strategy execution session must follow its Signal session')
+  })
+
   test('rejects an invalid or snapshot-divergent manifest before compiling a current decision', () => {
     const snapshot = makeSnapshot()
     const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
+    const cycleBinding = {
+      signalSessionDate: snapshot.manifest.lastSession,
+      executionSessionDate: '2020-05-01',
+    } as const
     expect(() =>
-      strategy.currentDecision(snapshot.bars, {
-        ...snapshot.manifest,
-        hash: '0'.repeat(64),
-      }),
+      strategy.currentDecision(
+        snapshot.bars,
+        {
+          ...snapshot.manifest,
+          hash: '0'.repeat(64),
+        },
+        cycleBinding,
+      ),
     ).toThrow()
 
     const priorSession = snapshot.bars
@@ -276,7 +311,7 @@ describe('risk-balanced trend candidate', () => {
       hash: canonicalHashV1(divergentMaterial),
     }
 
-    expect(() => strategy.currentDecision(snapshot.bars, divergent)).toThrow(
+    expect(() => strategy.currentDecision(snapshot.bars, divergent, cycleBinding)).toThrow(
       'Signal manifest does not match its finalized snapshot bounds',
     )
   })

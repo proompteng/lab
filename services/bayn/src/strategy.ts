@@ -18,19 +18,25 @@ import {
   compileCurrentRiskBalancedTrendDecision,
   evaluateRiskBalancedTrend,
   prepareRiskBalancedTrendQualification,
+  type CurrentDecisionCycleBinding,
   type CurrentRiskBalancedTrendDecision,
 } from './risk-balanced-trend'
 import { strictParseOptions } from './schemas'
 import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } from './types'
 
 export type CurrentStrategyDecision = CurrentRiskBalancedTrendDecision
+export type CurrentStrategyDecisionCycleBinding = CurrentDecisionCycleBinding
 
 export interface Strategy {
   readonly name: string
   readonly parameters: Protocol
   readonly provenance: RuntimeProvenance
   readonly evaluate: (bars: readonly DailyBar[], manifest: InputManifest) => EvaluationResult
-  readonly currentDecision: (bars: readonly DailyBar[], manifest: InputManifest) => CurrentStrategyDecision
+  readonly currentDecision: (
+    bars: readonly DailyBar[],
+    manifest: InputManifest,
+    cycleBinding: CurrentStrategyDecisionCycleBinding,
+  ) => CurrentStrategyDecision
   readonly prepareLock: (
     manifest: InputManifest,
     sessionDates: readonly IsoDate[],
@@ -88,8 +94,13 @@ export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance):
     provenance,
     evaluate: (bars, manifest) =>
       evaluateRiskBalancedTrend(bars, requireMatchingUniverse(manifest, protocol), protocol, provenance),
-    currentDecision: (bars, manifest) =>
-      compileCurrentRiskBalancedTrendDecision(bars, requireMatchingUniverse(manifest, protocol), protocol),
+    currentDecision: (bars, manifest, cycleBinding) =>
+      compileCurrentRiskBalancedTrendDecision(
+        bars,
+        requireMatchingUniverse(manifest, protocol),
+        protocol,
+        cycleBinding,
+      ),
     prepareLock: (manifest, sessionDates, priorTrialRunIds) => {
       const inputManifest = requireMatchingUniverse(manifest, protocol)
       const precommit = prepareRiskBalancedTrendQualification(sessionDates, inputManifest, protocol, provenance)
