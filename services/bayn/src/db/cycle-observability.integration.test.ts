@@ -13,6 +13,7 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
 } from '../cycle'
+import { CycleOperationsCondition, CycleOperationsReason, deriveCycleOperationsStatus } from '../cycle-observability'
 import type { SignalSessionRow } from '../market-data'
 import { Authority, KillState } from '../paper'
 import type { IsoDate } from '../types'
@@ -51,7 +52,7 @@ const signalSession = (
   timezone: 'America/New_York',
 })
 
-const makeDraft = () => {
+const makeDraft = (dedicatedAccountId = accountId) => {
   const executionPolicy = makeCycleExecutionPolicy({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: 'b'.repeat(64),
@@ -70,7 +71,7 @@ const makeDraft = () => {
     strategyName: 'risk-balanced-trend',
     qualificationRunId,
     strategyProtocolHash: 'c'.repeat(64),
-    accountId,
+    accountId: dedicatedAccountId,
     signalSessionDate: '2026-03-06',
     signalCalendarVersion: 'signal-XNYS-2026-v1',
     executionSessionDate: executionCalendar.executionSessionDate,
@@ -82,23 +83,24 @@ const makeDraft = () => {
   return makeCycleDraft(identity, makeCycleWindow(signalSession('2026-03-06'), executionCalendar, executionPolicy))
 }
 
-const seedSafetyState = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`
+const seedSafetyState = (maximum = Authority.Observe, effective = Authority.Observe) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`
     INSERT INTO authority_state (
       schema_version, generation_hash, maximum, effective, kill_state, reason, version, updated_at
     ) VALUES (
       'bayn.paper-authority.v1',
       ${'f'.repeat(64)},
-      ${Authority.Observe},
-      ${Authority.Observe},
+      ${maximum},
+      ${effective},
       ${KillState.Clear},
       NULL,
       1,
       ${'2026-03-06T21:00:00.000Z'}
     )
   `
-  yield* sql`
+    yield* sql`
     INSERT INTO reconciliations (
       reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
       content_hash, status, discrepancies, reconciled_at
@@ -114,12 +116,13 @@ const seedSafetyState = Effect.gen(function* () {
       ${'2026-03-06T21:00:00.000Z'}
     )
   `
-})
+  })
 
-const seedUnresolvedMutation = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const intentId = '2'.repeat(64)
-  yield* sql`
+const seedUnresolvedMutation = (mutationAccountId = accountId) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const intentId = '2'.repeat(64)
+    yield* sql`
     INSERT INTO intents (
       intent_id, schema_version, risk_decision_id, account_id, client_order_id,
       symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
@@ -128,7 +131,7 @@ const seedUnresolvedMutation = Effect.gen(function* () {
       ${intentId},
       'bayn.paper-intent.v1',
       NULL,
-      ${accountId},
+      ${mutationAccountId},
       'bayn-observability-test-order',
       'SPY',
       'BUY',
@@ -143,7 +146,7 @@ const seedUnresolvedMutation = Effect.gen(function* () {
       ${'2026-03-06T21:02:00.000Z'}
     )
   `
-  yield* sql`
+    yield* sql`
     INSERT INTO mutation_events (
       event_id, schema_version, mutation_id, intent_id, sequence, operation,
       event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -163,6 +166,32 @@ const seedUnresolvedMutation = Effect.gen(function* () {
       NULL,
       NULL,
       ${'2026-03-06T21:02:00.000Z'}
+    )
+  `
+  })
+
+const seedAcceptedMutation = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  yield* sql`
+    INSERT INTO mutation_events (
+      event_id, schema_version, mutation_id, intent_id, sequence, operation,
+      event_type, request_hash, consistency_delay_ms, broker_order_id,
+      request_id, response_status, response_content_hash, occurred_at
+    ) VALUES (
+      ${'6'.repeat(64)},
+      'bayn.paper-mutation-event.v1',
+      ${'4'.repeat(64)},
+      ${'2'.repeat(64)},
+      2,
+      'SUBMIT',
+      'SUBMIT_ACCEPTED',
+      ${'5'.repeat(64)},
+      1000,
+      'broker-order-observability',
+      'broker-request-observability',
+      200,
+      ${'7'.repeat(64)},
+      ${'2026-03-06T21:03:00.000Z'}
     )
   `
 })
@@ -202,7 +231,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         const store = yield* CycleStore
         const observability = yield* CycleObservability
         const sql = yield* PgClient.PgClient
-        yield* seedSafetyState
+        yield* seedSafetyState()
         const empty = yield* observability.read(qualificationRunId, accountId)
         yield* store.acquire(draft, '2026-03-06T21:01:00.000Z')
 
@@ -212,7 +241,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
           CycleTerminalReason.MissedPublication,
           draft.window.publicationDeadlineAt,
         )
-        yield* seedUnresolvedMutation
+        yield* seedUnresolvedMutation()
         const blocked = yield* observability.read(qualificationRunId, accountId)
         const blockedReplay = yield* observability.read(qualificationRunId, accountId)
         const [counts] = yield* sql<{
@@ -258,7 +287,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         status: 'EXACT',
         discrepancyCount: 0,
       },
-      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null },
+      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
     })
     expect(result.blocked).toMatchObject({
       current: null,
@@ -273,9 +302,79 @@ describePostgres('PostgreSQL cycle observability projection', () => {
         eventCount: 1,
         unresolvedCount: 1,
         oldestUnresolvedAt: '2026-03-06T21:02:00.000Z',
+        latestOccurredAt: '2026-03-06T21:02:00.000Z',
       },
     })
     expect(result.blockedReplay).toEqual(result.blocked)
     expect(result.counts).toEqual({ cycles: 1, intents: 1, mutations: 1, reconciliations: 1 })
+  })
+
+  test('isolates mutation evidence by account and rejects an explicit account-to-cycle mismatch', async () => {
+    const otherAccountId = 'paper-account-unrelated'
+    const otherDraft = makeDraft(otherAccountId)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const observability = yield* CycleObservability
+        yield* seedSafetyState()
+        yield* seedUnresolvedMutation(otherAccountId)
+
+        const isolated = yield* observability.read(qualificationRunId, accountId)
+        yield* store.acquire(otherDraft, '2026-03-06T21:01:00.000Z')
+        const mismatch = yield* Effect.flip(observability.read(qualificationRunId, accountId))
+        return { isolated, mismatch }
+      }),
+    )
+
+    expect(result.isolated).toMatchObject({
+      current: null,
+      last: null,
+      reconciliation: { accountId },
+      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
+    })
+    expect(result.mismatch).toMatchObject({
+      _tag: 'CycleObservabilityError',
+      operation: 'read',
+      failure: 'invariant',
+      message: `configured account ${accountId} differs from the projected current or last cycle`,
+    })
+  })
+
+  test('keeps PAPER blocked when a resolved mutation is newer than the last exact reconciliation', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        yield* seedSafetyState(Authority.Paper, Authority.Paper)
+        yield* seedUnresolvedMutation()
+        yield* seedAcceptedMutation
+        const projected = yield* observability.read(qualificationRunId, accountId)
+        const status = deriveCycleOperationsStatus(projected, Date.parse('2026-03-06T21:03:30.000Z'), Authority.Paper, {
+          cycleStallThresholdMs: 300_000,
+          reconciliationStaleThresholdMs: 300_000,
+          unknownMutationThresholdMs: 300_000,
+        })
+        return { projected, status }
+      }),
+    )
+
+    expect(result.projected).toMatchObject({
+      reconciliation: {
+        accountId,
+        status: 'EXACT',
+        reconciledAt: '2026-03-06T21:00:00.000Z',
+      },
+      mutations: {
+        eventCount: 2,
+        unresolvedCount: 0,
+        oldestUnresolvedAt: null,
+        latestOccurredAt: '2026-03-06T21:03:00.000Z',
+      },
+    })
+    expect(result.status).toMatchObject({
+      condition: CycleOperationsCondition.Failed,
+      reason: CycleOperationsReason.ReconciliationPredatesMutation,
+      reconciliationCoversLatestMutation: false,
+      alerts: { reconciliationBlocked: true, unknownMutationStale: false },
+    })
   })
 })

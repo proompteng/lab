@@ -45,6 +45,7 @@ export interface MutationObservation {
   readonly eventCount: number
   readonly unresolvedCount: number
   readonly oldestUnresolvedAt: string | null
+  readonly latestOccurredAt: string | null
 }
 
 export interface CycleOperationsProjection {
@@ -85,6 +86,7 @@ export enum CycleOperationsReason {
   UnresolvedMutation = 'UNRESOLVED_MUTATION',
   ReconciliationMissing = 'RECONCILIATION_MISSING',
   ReconciliationDiscrepancy = 'RECONCILIATION_DISCREPANCY',
+  ReconciliationPredatesMutation = 'RECONCILIATION_PREDATES_MUTATION',
   ReconciliationStale = 'RECONCILIATION_STALE',
 }
 
@@ -105,6 +107,7 @@ export interface CycleOperationsStatus extends CycleOperationsProjection {
   readonly attemptAgeMs: number | null
   readonly oldestUnresolvedMutationAgeMs: number | null
   readonly reconciliationAgeMs: number | null
+  readonly reconciliationCoversLatestMutation: boolean | null
   readonly zeroMutation: boolean | null
   readonly alerts: CycleOperationsAlerts
   readonly error: string | null
@@ -123,6 +126,7 @@ const initialProjection = (): CycleOperationsProjection => ({
     eventCount: 0,
     unresolvedCount: 0,
     oldestUnresolvedAt: null,
+    latestOccurredAt: null,
   },
 })
 
@@ -135,6 +139,7 @@ export const unknownCycleOperationsStatus = (error: string | null = null): Cycle
   attemptAgeMs: null,
   oldestUnresolvedMutationAgeMs: null,
   reconciliationAgeMs: null,
+  reconciliationCoversLatestMutation: null,
   zeroMutation: null,
   alerts: {
     cycleStalled: false,
@@ -212,11 +217,19 @@ export const deriveCycleOperationsStatus = (
   const killActive = projection.authority?.kill === KillState.Active
   const reconciliationMissing = maximumAuthority === Authority.Paper && projection.reconciliation === null
   const reconciliationDiscrepancy = projection.reconciliation?.status === ReconciliationStatus.Discrepancy
+  const reconciliationCoversLatestMutation =
+    projection.reconciliation === null
+      ? null
+      : projection.mutations.latestOccurredAt === null ||
+        Date.parse(projection.reconciliation.reconciledAt) >= Date.parse(projection.mutations.latestOccurredAt)
+  const reconciliationPredatesMutation =
+    maximumAuthority === Authority.Paper && reconciliationCoversLatestMutation === false
   const reconciliationStale =
     maximumAuthority === Authority.Paper &&
     reconciliationAgeMs !== null &&
     reconciliationAgeMs >= thresholds.reconciliationStaleThresholdMs
-  const reconciliationBlocked = reconciliationMissing || reconciliationDiscrepancy || reconciliationStale
+  const reconciliationBlocked =
+    reconciliationMissing || reconciliationDiscrepancy || reconciliationPredatesMutation || reconciliationStale
   const unknownMutationStale =
     projection.mutations.unresolvedCount > 0 &&
     oldestUnresolvedMutationAgeMs !== null &&
@@ -245,6 +258,9 @@ export const deriveCycleOperationsStatus = (
   } else if (reconciliationDiscrepancy) {
     condition = CycleOperationsCondition.Failed
     reason = CycleOperationsReason.ReconciliationDiscrepancy
+  } else if (reconciliationPredatesMutation) {
+    condition = CycleOperationsCondition.Failed
+    reason = CycleOperationsReason.ReconciliationPredatesMutation
   } else if (reconciliationStale) {
     condition = CycleOperationsCondition.Failed
     reason = CycleOperationsReason.ReconciliationStale
@@ -261,6 +277,7 @@ export const deriveCycleOperationsStatus = (
     attemptAgeMs,
     oldestUnresolvedMutationAgeMs,
     reconciliationAgeMs,
+    reconciliationCoversLatestMutation,
     zeroMutation: projection.mutations.eventCount === 0,
     alerts: {
       cycleStalled: condition === CycleOperationsCondition.Stalled,

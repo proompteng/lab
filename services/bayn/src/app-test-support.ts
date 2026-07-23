@@ -62,10 +62,6 @@ export const config: RuntimeConfig = {
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
   unknownMutationThresholdMs: 300_000,
-  autonomousCycle: {
-    enabled: false,
-    pollIntervalMs: 30_000,
-  },
   clickhouse: {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
@@ -286,7 +282,6 @@ export const readyState = (): RuntimeState => {
         tigerBeetle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
         evidence: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
         cycle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
-        cycleRunner: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
       },
     },
     cycle: deriveCycleOperationsStatus(
@@ -296,13 +291,12 @@ export const readyState = (): RuntimeState => {
         unfinishedCycleCount: 0,
         authority: null,
         reconciliation: null,
-        mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null },
+        mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
       },
       Date.parse('2026-07-20T00:00:00.000Z'),
       Authority.Observe,
       config,
     ),
-    cycleRunner: { enabled: false, status: 'DISABLED', checkedAt: null, error: null },
     broker: null,
     error: null,
   }

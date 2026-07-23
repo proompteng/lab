@@ -43,12 +43,10 @@ const publicCycleState = (state: RuntimeState) =>
         checkedAt: state.cycle.checkedAt,
         zeroMutation: null,
         error: state.cycle.error,
-        runner: state.cycleRunner,
       }
     : {
         ...state.cycle,
         observationAvailable: true,
-        runner: state.cycleRunner,
       }
 
 const publicState = (
@@ -166,7 +164,6 @@ export const renderPrometheusMetrics = (
   const conditions = Object.values(CycleOperationsCondition)
   const reasons = Object.values(CycleOperationsReason)
   const phases = ['unknown', 'none', ...Object.values(CycleState).map((phase) => phase.toLowerCase())]
-  const runnerStatuses = ['DISABLED', 'STARTING', 'RUNNING', 'FAILED'] as const
   const effectiveAuthority =
     state.cycle.authority === null
       ? 'unknown'
@@ -191,15 +188,6 @@ export const renderPrometheusMetrics = (
     '# HELP bayn_cycle_phase Current unfinished cycle phase, or the latest terminal phase when idle.',
     '# TYPE bayn_cycle_phase gauge',
     ...phases.map((phase) => `bayn_cycle_phase{phase="${phase}"} ${cyclePhase === phase ? 1 : 0}`),
-    '# HELP bayn_cycle_runner_enabled Whether GitOps enables the sole in-process autonomous cycle runner.',
-    '# TYPE bayn_cycle_runner_enabled gauge',
-    `bayn_cycle_runner_enabled ${state.cycleRunner.enabled ? 1 : 0}`,
-    '# HELP bayn_cycle_runner_status Current state of the sole in-process autonomous cycle runner.',
-    '# TYPE bayn_cycle_runner_status gauge',
-    ...runnerStatuses.map(
-      (status) =>
-        `bayn_cycle_runner_status{status="${status.toLowerCase()}"} ${state.cycleRunner.status === status ? 1 : 0}`,
-    ),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_cycle_unfinished_count Number of unfinished cycles for the bound qualification run.',
@@ -252,6 +240,9 @@ export const renderPrometheusMetrics = (
           '# HELP bayn_reconciliation_age_seconds Age of the latest selected-account reconciliation.',
           '# TYPE bayn_reconciliation_age_seconds gauge',
           `bayn_reconciliation_age_seconds ${prometheusNumber((state.cycle.reconciliationAgeMs ?? 0) / 1_000)}`,
+          '# HELP bayn_reconciliation_covers_latest_mutation Whether reconciliation is at or after the latest selected-account mutation.',
+          '# TYPE bayn_reconciliation_covers_latest_mutation gauge',
+          `bayn_reconciliation_covers_latest_mutation ${booleanMetric(state.cycle.reconciliationCoversLatestMutation)}`,
         ]
       : []),
     '# HELP bayn_reconciliation_stale_threshold_seconds Configured reconciliation staleness threshold.',

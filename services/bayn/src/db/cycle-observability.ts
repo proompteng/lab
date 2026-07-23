@@ -74,6 +74,8 @@ const ProjectionRowSchema = Schema.Struct({
   last_created_at: NullableDate,
   last_updated_at: NullableDate,
   last_terminal_at: NullableInstant,
+  selected_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
+  account_mismatch: Schema.Boolean,
   unfinished_cycle_count: NonNegativeIntegerSchema,
   authority_maximum: Schema.NullOr(Schema.Enum(Authority)),
   authority_effective: Schema.NullOr(Schema.Enum(Authority)),
@@ -88,6 +90,7 @@ const ProjectionRowSchema = Schema.Struct({
   mutation_event_count: NonNegativeIntegerSchema,
   unresolved_mutation_count: NonNegativeIntegerSchema,
   oldest_unresolved_mutation_at: NullableDate,
+  latest_mutation_at: NullableDate,
 })
 type ProjectionRow = typeof ProjectionRowSchema.Type
 
@@ -189,18 +192,27 @@ const reconciliationFromRow = (row: ProjectionRow): ReconciliationObservation | 
   }
 }
 
-const projectionFromRow = (row: ProjectionRow): CycleOperationsProjection => ({
-  current: snapshotFromRow(row, 'current'),
-  last: snapshotFromRow(row, 'last'),
-  unfinishedCycleCount: row.unfinished_cycle_count,
-  authority: authorityFromRow(row),
-  reconciliation: reconciliationFromRow(row),
-  mutations: {
-    eventCount: row.mutation_event_count,
-    unresolvedCount: row.unresolved_mutation_count,
-    oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
-  },
-})
+const projectionFromRow = (row: ProjectionRow): CycleOperationsProjection => {
+  if (row.account_mismatch) {
+    throw readError(
+      'invariant',
+      `configured account ${row.selected_account_id ?? 'unknown'} differs from the projected current or last cycle`,
+    )
+  }
+  return {
+    current: snapshotFromRow(row, 'current'),
+    last: snapshotFromRow(row, 'last'),
+    unfinishedCycleCount: row.unfinished_cycle_count,
+    authority: authorityFromRow(row),
+    reconciliation: reconciliationFromRow(row),
+    mutations: {
+      eventCount: row.mutation_event_count,
+      unresolvedCount: row.unresolved_mutation_count,
+      oldestUnresolvedAt: row.oldest_unresolved_mutation_at?.toISOString() ?? null,
+      latestOccurredAt: row.latest_mutation_at?.toISOString() ?? null,
+    },
+  }
+}
 
 const makeCycleObservability = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -240,18 +252,15 @@ const makeCycleObservability = Effect.gen(function* () {
             ORDER BY execution_session_date DESC, terminal_at DESC, cycle_id
             LIMIT 1
           ),
+          requested_account AS (
+            SELECT ${expectedAccountId ?? null}::text AS account_id
+          ),
           selected_account AS (
-            SELECT account_id
-            FROM (
-              SELECT 1 AS priority, account_id FROM current_cycle
-              UNION ALL
-              SELECT 2 AS priority, account_id FROM last_cycle
-              UNION ALL
-              SELECT 3 AS priority, ${expectedAccountId ?? null}::text AS account_id
-            ) AS candidates
-            WHERE account_id IS NOT NULL
-            ORDER BY priority
-            LIMIT 1
+            SELECT coalesce(
+              (SELECT account_id FROM requested_account),
+              (SELECT account_id FROM current_cycle),
+              (SELECT account_id FROM last_cycle)
+            ) AS account_id
           ),
           latest_reconciliation AS (
             SELECT *
@@ -260,14 +269,21 @@ const makeCycleObservability = Effect.gen(function* () {
             ORDER BY reconciled_at DESC, reconciliation_id
             LIMIT 1
           ),
+          account_mutation_events AS (
+            SELECT
+              events.*,
+              intents.state
+            FROM mutation_events AS events
+            JOIN intents ON intents.intent_id = events.intent_id
+            WHERE intents.account_id = (SELECT account_id FROM selected_account)
+          ),
           latest_mutations AS (
             SELECT DISTINCT ON (events.mutation_id)
               events.event_type,
               events.occurred_at,
               events.operation,
-              intents.state
-            FROM mutation_events AS events
-            JOIN intents ON intents.intent_id = events.intent_id
+              events.state
+            FROM account_mutation_events AS events
             ORDER BY events.mutation_id, events.sequence DESC
           ),
           unresolved_mutations AS (
@@ -320,6 +336,21 @@ const makeCycleObservability = Effect.gen(function* () {
             last.created_at AS last_created_at,
             last.updated_at AS last_updated_at,
             last.terminal_at AS last_terminal_at,
+            (SELECT account_id FROM selected_account) AS selected_account_id,
+            (
+              (SELECT account_id FROM requested_account) IS NOT NULL
+              AND (
+                (
+                  current.account_id IS NOT NULL
+                  AND current.account_id <> (SELECT account_id FROM requested_account)
+                )
+                OR
+                (
+                  last.account_id IS NOT NULL
+                  AND last.account_id <> (SELECT account_id FROM requested_account)
+                )
+              )
+            ) AS account_mismatch,
             (
               SELECT count(*)::integer
               FROM scoped_cycles
@@ -335,9 +366,10 @@ const makeCycleObservability = Effect.gen(function* () {
             reconciliation.status AS reconciliation_status,
             jsonb_array_length(reconciliation.discrepancies) AS reconciliation_discrepancy_count,
             reconciliation.reconciled_at,
-            (SELECT count(*)::integer FROM mutation_events) AS mutation_event_count,
+            (SELECT count(*)::integer FROM account_mutation_events) AS mutation_event_count,
             (SELECT count(*)::integer FROM unresolved_mutations) AS unresolved_mutation_count,
-            (SELECT min(occurred_at) FROM unresolved_mutations) AS oldest_unresolved_mutation_at
+            (SELECT min(occurred_at) FROM unresolved_mutations) AS oldest_unresolved_mutation_at,
+            (SELECT max(occurred_at) FROM account_mutation_events) AS latest_mutation_at
           FROM (VALUES (true)) AS singleton(seed)
           LEFT JOIN current_cycle AS current ON true
           LEFT JOIN last_cycle AS last ON true

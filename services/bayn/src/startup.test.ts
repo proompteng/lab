@@ -52,7 +52,7 @@ const cycleObservability = {
       unfinishedCycleCount: 0,
       authority: null,
       reconciliation: null,
-      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null },
+      mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
     }),
 }
 
@@ -530,32 +530,6 @@ describe('Bayn startup lifecycle', () => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('load timed out')
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({ status: 'STARTING', evidence: null, error: null })
-  })
-
-  test('fails closed when the autonomous loop has no broker and verified-candidate composition', async () => {
-    const error = await Effect.runPromise(
-      Effect.flip(
-        run(
-          {
-            ...config,
-            autonomousCycle: { ...config.autonomousCycle, enabled: true },
-          },
-          fixtureStrategy,
-        ),
-      ).pipe(
-        Effect.provideService(MarketData, marketDataService(Effect.succeed(makeSnapshot()))),
-        Effect.provideService(Journal, successfulJournal),
-        Effect.provideService(EvidenceStore, successfulEvidenceStore),
-        Effect.provideService(CycleObservability, cycleObservability),
-      ),
-    )
-
-    expect(error).toMatchObject({
-      _tag: 'OperationalError',
-      component: 'config',
-      operation: 'autonomous-cycle',
-      message: 'enabled autonomous cycle composition requires BrokerRead, CycleStore, and a verified candidate source',
-    })
   })
 
   test('propagates an unexpected defect instead of leaving a detached STARTING worker', async () => {

@@ -9,13 +9,12 @@ import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } fr
 import { unusedMarketCalendar } from './broker/alpaca-test-support'
 import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsProjection } from './cycle-observability'
 import { CycleState } from './cycle'
-import { CycleRunnerError } from './cycle-runner'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { initialState, type RuntimeState } from './runtime-state'
+import { initialState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -59,7 +58,7 @@ const emptyCycleProjection = (): CycleOperationsProjection => ({
   unfinishedCycleCount: 0,
   authority: null,
   reconciliation: null,
-  mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null },
+  mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
 })
 
 const cycleObservability = (
@@ -372,67 +371,5 @@ describe('Bayn continuous health', () => {
     }).pipe(Effect.provide(TestClock.layer()))
 
     await Effect.runPromise(program)
-  })
-
-  test('surfaces the sole runner fiber failure and clears only after a live replacement is observed', async () => {
-    const enabledConfig = { ...config, autonomousCycle: { ...config.autonomousCycle, enabled: true } }
-    const initial: RuntimeState = {
-      ...readyState(),
-      cycleRunner: { enabled: true, status: 'STARTING', checkedAt: null, error: null },
-      health: {
-        ...readyState().health,
-        dependencies: {
-          ...readyState().health.dependencies,
-          cycleRunner: { status: 'UNKNOWN', checkedAt: null, error: null },
-        },
-      },
-    }
-    const state = await Effect.runPromise(Ref.make(initial))
-    const dependencies = (
-      effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability>,
-    ) =>
-      effect.pipe(
-        Effect.provideService(MarketData, {
-          check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
-          inspect: Effect.die(new Error('health probes must not inspect sessions')),
-          load: Effect.die(new Error('health probes must not load bars')),
-        }),
-        Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
-        Effect.provideService(EvidenceStore, recoveringStore(initial)),
-        Effect.provideService(CycleObservability, cycleObservability()),
-      )
-
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const failed = yield* Effect.fail(
-            new CycleRunnerError({
-              operation: 'market-calendar',
-              failure: 'calendar-read',
-              message: 'calendar unavailable',
-            }),
-          ).pipe(Effect.forkScoped({ startImmediately: true }))
-          yield* Effect.yieldNow
-          yield* dependencies(probe(enabledConfig, state, undefined, failed))
-          expect(yield* Ref.get(state)).toMatchObject({
-            status: 'DEGRADED',
-            health: { dependencies: { cycleRunner: { status: 'UNAVAILABLE' } } },
-            cycleRunner: {
-              enabled: true,
-              status: 'FAILED',
-              error: expect.stringContaining('calendar unavailable'),
-            },
-          })
-
-          const running = yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
-          yield* dependencies(probe(enabledConfig, state, undefined, running))
-          expect(yield* Ref.get(state)).toMatchObject({
-            status: 'READY',
-            health: { dependencies: { cycleRunner: { status: 'AVAILABLE', error: null } } },
-            cycleRunner: { enabled: true, status: 'RUNNING', error: null },
-          })
-        }),
-      ),
-    )
   })
 })

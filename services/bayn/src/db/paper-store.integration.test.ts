@@ -56,10 +56,6 @@ const config: RuntimeConfig = {
   cycleStallThresholdMs: 300_000,
   reconciliationStaleThresholdMs: 120_000,
   unknownMutationThresholdMs: 300_000,
-  autonomousCycle: {
-    enabled: false,
-    pollIntervalMs: 30_000,
-  },
   clickhouse: {
     url: 'http://clickhouse.invalid',
     username: 'bayn',

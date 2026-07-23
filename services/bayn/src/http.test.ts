@@ -315,8 +315,6 @@ describe('Bayn HTTP probes', () => {
     expect(metrics).toContain('bayn_cycle_condition{condition="unknown"} 1')
     expect(metrics).toContain('bayn_cycle_reason{reason="observation_unavailable"} 1')
     expect(metrics).toContain('bayn_cycle_phase{phase="unknown"} 1')
-    expect(metrics).toContain('bayn_cycle_runner_enabled 0')
-    expect(metrics).toContain('bayn_cycle_runner_status{status="disabled"} 1')
     expect(metrics).toContain('bayn_zero_mutation_confirmed 0')
     expect(metrics).not.toContain('bayn_cycle_unfinished_count ')
     expect(metrics).not.toContain('bayn_mutation_events_total ')

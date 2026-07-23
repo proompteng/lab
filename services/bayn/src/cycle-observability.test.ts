@@ -45,7 +45,7 @@ const projection = (overrides: Partial<CycleOperationsProjection> = {}): CycleOp
   unfinishedCycleCount: 0,
   authority: null,
   reconciliation: null,
-  mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null },
+  mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
   ...overrides,
 })
 
@@ -254,6 +254,7 @@ describe('autonomous cycle operations classification', () => {
         eventCount: 1,
         unresolvedCount: 1,
         oldestUnresolvedAt: '2026-07-20T11:55:00.000Z',
+        latestOccurredAt: '2026-07-20T11:55:00.000Z',
       },
     })
     const before = deriveCycleOperationsStatus(
@@ -273,6 +274,54 @@ describe('autonomous cycle operations classification', () => {
     expect(atThreshold).toMatchObject({
       oldestUnresolvedMutationAgeMs: 300_000,
       alerts: { unknownMutationStale: true },
+    })
+  })
+
+  test('requires PAPER reconciliation at or after the latest selected-account mutation', () => {
+    const authority = {
+      maximum: Authority.Paper,
+      effective: Authority.Paper,
+      kill: KillState.Clear,
+      reason: null,
+      updatedAt: now,
+    } as const
+    const latestOccurredAt = '2026-07-20T11:59:00.000Z'
+    const input = (reconciledAt: string) =>
+      projection({
+        authority,
+        reconciliation: {
+          accountId: 'paper-account-1',
+          reconciliationId: '8'.repeat(64),
+          status: ReconciliationStatus.Exact,
+          discrepancyCount: 0,
+          reconciledAt,
+        },
+        mutations: {
+          eventCount: 2,
+          unresolvedCount: 0,
+          oldestUnresolvedAt: null,
+          latestOccurredAt,
+        },
+      })
+    const covered = deriveCycleOperationsStatus(input(latestOccurredAt), Date.parse(now), Authority.Paper, thresholds)
+    const predates = deriveCycleOperationsStatus(
+      input('2026-07-20T11:58:59.999Z'),
+      Date.parse(now),
+      Authority.Paper,
+      thresholds,
+    )
+
+    expect(covered).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.NoCycleRecorded,
+      reconciliationCoversLatestMutation: true,
+      alerts: { reconciliationBlocked: false },
+    })
+    expect(predates).toMatchObject({
+      condition: CycleOperationsCondition.Failed,
+      reason: CycleOperationsReason.ReconciliationPredatesMutation,
+      reconciliationCoversLatestMutation: false,
+      alerts: { reconciliationBlocked: true },
     })
   })
 

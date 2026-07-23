@@ -55,10 +55,6 @@ describe('Effect configuration', () => {
     expect(config.cycleStallThresholdMs).toBe(300_000)
     expect(config.reconciliationStaleThresholdMs).toBe(120_000)
     expect(config.unknownMutationThresholdMs).toBe(300_000)
-    expect(config.autonomousCycle).toEqual({
-      enabled: false,
-      pollIntervalMs: 30_000,
-    })
     expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -140,26 +136,6 @@ describe('Effect configuration', () => {
       operation: 'alpaca',
       message: 'PAPER maximum authority requires a complete Alpaca account binding',
     })
-  })
-
-  test('requires a complete read-only Alpaca binding before enabling the autonomous loop', async () => {
-    const enabled = new Map(runtimeEnvironment)
-    enabled.set('BAYN_AUTONOMOUS_CYCLE_ENABLED', 'true')
-    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), enabled)))
-
-    expect(error).toMatchObject({
-      _tag: 'OperationalError',
-      component: 'config',
-      operation: 'alpaca',
-      message: 'the autonomous cycle loop requires a complete Alpaca account binding',
-    })
-
-    enabled.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
-    enabled.set('BAYN_ALPACA_KEY_ID', 'paper-key')
-    enabled.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
-    expect(
-      (await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), enabled))).autonomousCycle.enabled,
-    ).toBe(true)
   })
 
   test('supports an explicit, visibly unverified development provenance path', async () => {

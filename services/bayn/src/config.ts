@@ -29,10 +29,6 @@ export interface RuntimeConfig {
   readonly cycleStallThresholdMs: number
   readonly reconciliationStaleThresholdMs: number
   readonly unknownMutationThresholdMs: number
-  readonly autonomousCycle: {
-    readonly enabled: boolean
-    readonly pollIntervalMs: number
-  }
   readonly alpaca?: {
     readonly accountId: string
     readonly key: Redacted.Redacted<string>
@@ -107,8 +103,6 @@ const runtimeConfig = Config.all({
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
-  autonomousCycleEnabled: Config.boolean('BAYN_AUTONOMOUS_CYCLE_ENABLED').pipe(Config.withDefault(false)),
-  autonomousCyclePollIntervalMs: positiveInteger('BAYN_AUTONOMOUS_CYCLE_POLL_INTERVAL_MS', 30_000),
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
@@ -155,10 +149,6 @@ const runtimeConfig = Config.all({
     cycleStallThresholdMs: config.cycleStallThresholdMs,
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
     unknownMutationThresholdMs: config.unknownMutationThresholdMs,
-    autonomousCycle: {
-      enabled: config.autonomousCycleEnabled,
-      pollIntervalMs: config.autonomousCyclePollIntervalMs,
-    },
     configuredAlpaca: {
       accountId: config.alpacaAccountId,
       key: config.alpacaKey,
@@ -239,11 +229,6 @@ export const loadConfig = (
       if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
         return Effect.fail(
           operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
-        )
-      }
-      if (config.autonomousCycle.enabled && Option.isNone(alpaca)) {
-        return Effect.fail(
-          operationalError('config', 'alpaca', 'the autonomous cycle loop requires a complete Alpaca account binding'),
         )
       }
       const { configuredAlpaca: _configuredAlpaca, ...runtime } = config
