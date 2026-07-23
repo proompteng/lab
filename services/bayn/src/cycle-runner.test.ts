@@ -568,7 +568,42 @@ describe('autonomous cycle runner', () => {
         }),
       ),
     ).toEqual({ action: 'ACTIVATE', cycleId: bound.identity.cycleId, observedAt: bound.updatedAt })
-    expect(selectCycleRecovery(recoveryState(active))).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    expect(selectCycleRecovery(recoveryState(active))).toEqual({
+      action: 'WAIT',
+      cycle: active,
+      observedAt: '2026-01-30T21:23:00.000Z',
+    })
+    expect(
+      selectCycleRecovery(
+        recoveryState(active, {
+          observedAt: active.window.submissionOpenAt,
+        }),
+      ),
+    ).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    expect(
+      selectCycleRecovery(
+        recoveryState(active, {
+          observedAt: active.window.submissionCutoffAt,
+        }),
+      ),
+    ).toEqual({
+      action: 'BLOCK',
+      cycleId: active.identity.cycleId,
+      observedAt: active.window.submissionCutoffAt,
+      reason: CycleTerminalReason.MissedSubmission,
+    })
+    expect(
+      selectCycleRecovery(
+        recoveryState(active, {
+          strategyProtocolHash: 'f'.repeat(64),
+        }),
+      ),
+    ).toEqual({
+      action: 'BLOCK',
+      cycleId: active.identity.cycleId,
+      observedAt: '2026-01-30T21:23:00.000Z',
+      reason: CycleTerminalReason.ProvenanceMismatch,
+    })
     expect(() =>
       selectCycleRecovery(
         recoveryState({
@@ -694,6 +729,41 @@ describe('autonomous cycle runner', () => {
     )
 
     expect(result).toEqual({ outcome: 'NO_PUBLICATION', observedAt: '2026-01-30T21:01:00.000Z' })
+    expect(control).toEqual({ acquisitions: [], binds: 0 })
+  })
+
+  test('observes a missing publication as a healthy completed loop pass', async () => {
+    const control: StoreControl = { acquisitions: [], binds: 0 }
+    const observations: CyclePassObservation[] = []
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-01-30T21:20:00.000Z'))
+        const fiber = yield* provide(
+          startAutonomousCycleLoop({
+            context: Effect.succeed(context()),
+            observePass: (observation) => Effect.sync(() => observations.push(observation)),
+            pollIntervalMs: 100,
+          }),
+          brokerRead(() => Effect.die(new Error('missing publication must not read the broker'))),
+          cycleStore(control),
+          marketDataService(Effect.succeed({ outcome: 'MISSING', observedAt: '2026-01-30T21:20:00.000Z' })),
+        )
+        yield* Effect.yieldNow
+        yield* Fiber.interrupt(fiber)
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+    expect(observations).toEqual([
+      {
+        outcome: 'SUCCEEDED',
+        observedAt: '2026-01-30T21:20:00.000Z',
+        result: {
+          outcome: 'NO_PUBLICATION',
+          observedAt: '2026-01-30T21:20:00.000Z',
+        },
+      },
+    ])
     expect(control).toEqual({ acquisitions: [], binds: 0 })
   })
 
@@ -1118,6 +1188,7 @@ describe('autonomous cycle runner', () => {
   test('runs immediately, repeats on Schedule.spaced, and avoids duplicate work after acquisition', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const store = cycleStore(control)
+    const observations: CyclePassObservation[] = []
     let calendarReads = 0
     const read = brokerRead(() => {
       calendarReads += 1
@@ -1129,7 +1200,7 @@ describe('autonomous cycle runner', () => {
         const fiber = yield* provide(
           startAutonomousCycleLoop({
             context: Effect.succeed(context()),
-            observePass: ignorePass,
+            observePass: (observation) => Effect.sync(() => observations.push(observation)),
             pollIntervalMs: 100,
           }),
           read,
@@ -1142,6 +1213,8 @@ describe('autonomous cycle runner', () => {
         expect(control.acquisitions).toHaveLength(1)
         yield* TestClock.adjust(1)
         expect(control.acquisitions).toHaveLength(1)
+        yield* TestClock.adjust(100)
+        expect(control.acquisitions).toHaveLength(1)
         yield* Fiber.interrupt(fiber)
       }),
     ).pipe(Effect.provide(TestClock.layer()))
@@ -1149,6 +1222,26 @@ describe('autonomous cycle runner', () => {
     await Effect.runPromise(program)
     expect(calendarReads).toBe(1)
     expect(control.binds).toBe(1)
+    expect(observations).toHaveLength(3)
+    expect(observations[0]).toMatchObject({
+      outcome: 'SUCCEEDED',
+      result: { outcome: 'ACQUIRED' },
+    })
+    expect(observations[1]).toMatchObject({
+      outcome: 'SUCCEEDED',
+      result: { outcome: 'RECOVERED', action: 'ACTIVATED' },
+    })
+    expect(observations[2]).toMatchObject({
+      outcome: 'SUCCEEDED',
+      result: {
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        cycle: {
+          state: CycleState.Active,
+          bindings: { snapshotId },
+        },
+      },
+    })
   })
 
   test('scope closure interrupts in-flight publication discovery', async () => {

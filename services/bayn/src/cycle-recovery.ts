@@ -29,6 +29,11 @@ export type CycleRecoverySelection =
       readonly cycleId: string
       readonly observedAt: string
     }
+  | {
+      readonly action: 'WAIT'
+      readonly cycle: AutonomousCycle
+      readonly observedAt: string
+    }
   | { readonly action: 'BUILD_DECISION'; readonly cycle: AutonomousCycle }
   | { readonly action: 'READ_DECISION'; readonly cycle: AutonomousCycle }
   | {
@@ -152,6 +157,9 @@ export const selectCycleRecovery = (state: CycleRecoveryState): CycleRecoverySel
     if (readiness !== undefined) throw new TypeError('active cycle recovery does not accept publication readiness')
     if (decisionDocument !== undefined) {
       throw new TypeError('unbound active cycle cannot have durable decision evidence')
+    }
+    if (state.observedAt < cycle.window.submissionOpenAt) {
+      return { action: 'WAIT', cycle, observedAt: state.observedAt }
     }
     return { action: 'BUILD_DECISION', cycle }
   }

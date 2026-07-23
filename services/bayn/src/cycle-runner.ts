@@ -504,6 +504,13 @@ const recoverCycle = (
           cycle: activation.cycle,
         }
       })
+    case 'WAIT':
+      return Effect.succeed({
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        observedAt: selection.observedAt,
+        cycle: selection.cycle,
+      })
     case 'BUILD_DECISION':
       return context.buildDecision(selection.cycle).pipe(
         Effect.mapError((cause) =>
