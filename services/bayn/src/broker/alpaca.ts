@@ -391,7 +391,7 @@ export interface BrokerReadShape {
   readonly orderById: (orderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
-  readonly marketCalendar?: (
+  readonly marketCalendar: (
     query: MarketCalendarQuery,
   ) => Effect.Effect<ReadResult<MarketCalendarObservation>, BrokerReadError>
 }

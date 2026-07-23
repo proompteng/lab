@@ -26,7 +26,6 @@ import {
   readPreflightTimeoutMs,
   verifyReadAccess,
   type BrokerReadShape,
-  type MarketCalendarQuery,
   type ReadOptions,
 } from './alpaca'
 
@@ -153,11 +152,6 @@ const withClient = <A, E>(
 ): Effect.Effect<A, BrokerReadError | E> =>
   make(readOptions).pipe(Effect.flatMap(use), Effect.provideService(HttpClient.HttpClient, client))
 
-const readMarketCalendar = (read: BrokerReadShape, query: MarketCalendarQuery) => {
-  if (read.marketCalendar === undefined) return Effect.die('live Alpaca read is missing marketCalendar')
-  return read.marketCalendar(query)
-}
-
 describe('Alpaca paper reads', () => {
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
     let method = ''
@@ -235,7 +229,7 @@ describe('Alpaca paper reads', () => {
     })
 
     const result = await Effect.runPromise(
-      withClient(client, (read) => readMarketCalendar(read, { start: '2026-03-06', end: '2026-03-10' })),
+      withClient(client, (read) => read.marketCalendar({ start: '2026-03-06', end: '2026-03-10' })),
     )
 
     expect(method).toBe('GET')
@@ -278,7 +272,7 @@ describe('Alpaca paper reads', () => {
     })
 
     const reversed = await Effect.runPromise(
-      Effect.flip(withClient(client, (read) => readMarketCalendar(read, { start: '2026-03-10', end: '2026-03-09' }))),
+      Effect.flip(withClient(client, (read) => read.marketCalendar({ start: '2026-03-10', end: '2026-03-09' }))),
     )
     expect(reversed).toMatchObject({
       operation: 'market-calendar',
@@ -287,7 +281,7 @@ describe('Alpaca paper reads', () => {
     })
 
     const overlong = await Effect.runPromise(
-      Effect.flip(withClient(client, (read) => readMarketCalendar(read, { start: '2026-01-01', end: '2026-02-01' }))),
+      Effect.flip(withClient(client, (read) => read.marketCalendar({ start: '2026-01-01', end: '2026-02-01' }))),
     )
     expect(overlong).toMatchObject({
       operation: 'market-calendar',
@@ -302,9 +296,7 @@ describe('Alpaca paper reads', () => {
     const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
     const query = { start: '2026-03-06', end: '2026-03-10' }
 
-    const malformed = await Effect.runPromise(
-      Effect.flip(withClient(client, (read) => readMarketCalendar(read, query))),
-    )
+    const malformed = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(malformed).toMatchObject({
       operation: 'market-calendar',
       kind: BrokerReadErrorKind.InvalidResponse,
@@ -315,9 +307,7 @@ describe('Alpaca paper reads', () => {
       { date: '2026-03-09', open: '09:30', close: '16:00' },
       { date: '2026-03-09', open: '09:30', close: '16:00' },
     ]
-    const duplicate = await Effect.runPromise(
-      Effect.flip(withClient(client, (read) => readMarketCalendar(read, query))),
-    )
+    const duplicate = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(duplicate).toMatchObject({
       operation: 'market-calendar',
       kind: BrokerReadErrorKind.InvalidResponse,
@@ -325,9 +315,7 @@ describe('Alpaca paper reads', () => {
     })
 
     response = [{ date: '2026-03-11', open: '09:30', close: '16:00' }]
-    const outsideRange = await Effect.runPromise(
-      Effect.flip(withClient(client, (read) => readMarketCalendar(read, query))),
-    )
+    const outsideRange = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(outsideRange).toMatchObject({
       operation: 'market-calendar',
       kind: BrokerReadErrorKind.InvalidResponse,

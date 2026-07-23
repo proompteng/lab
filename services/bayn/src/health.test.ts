@@ -6,6 +6,7 @@ import { TestClock } from 'effect/testing'
 import { config, successfulJournal, readyState, recoveringStore } from './app-test-support'
 import { monitor, probe } from './app'
 import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
+import { unusedMarketCalendar } from './broker/alpaca-test-support'
 import { EvidenceStore } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import { Journal, type JournalService } from './ledger'
@@ -44,6 +45,7 @@ const brokerRead = (account: BrokerReadShape['account']): BrokerReadShape => {
     orderById: () => unused,
     orderByClientId: () => unused,
     fillActivities: () => unused,
+    marketCalendar: unusedMarketCalendar,
   }
 }
 

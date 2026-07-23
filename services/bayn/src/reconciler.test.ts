@@ -21,6 +21,7 @@ import {
   type Order as BrokerOrder,
   type ReadEvidence,
 } from './broker/alpaca'
+import { unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './paper'
 import { PaperStore, type PaperStoreShape } from './db/paper-store'
@@ -186,6 +187,7 @@ const emptyRead = (): BrokerReadShape => ({
   fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fills') }),
   orderById: () => Effect.die(new Error('unexpected order lookup')),
   orderByClientId: () => Effect.die(new Error('unexpected client order lookup')),
+  marketCalendar: unusedMarketCalendar,
 })
 
 const fence: WriterFenceService = {

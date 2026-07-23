@@ -26,6 +26,7 @@ import {
   type BrokerReadShape,
   type Order,
 } from '../broker/alpaca'
+import { unusedMarketCalendar } from '../broker/alpaca-test-support'
 import { canonicalHashV1 } from '../hash'
 import {
   IntentState,
@@ -389,6 +390,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       return Effect.succeed({ value, evidence: evidence(200, '1970-01-01T00:00:02.000Z') })
     },
     fillActivities: () => Effect.die(new Error('unexpected fill read')),
+    marketCalendar: unusedMarketCalendar,
   }
 
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
