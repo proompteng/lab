@@ -292,6 +292,7 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       last: null,
       unfinishedCycleCount: 1,
       authority: {
+        generationHash: 'f'.repeat(64),
         maximum: Authority.Observe,
         effective: Authority.Observe,
         kill: KillState.Clear,
@@ -353,6 +354,45 @@ describePostgres('PostgreSQL cycle observability projection', () => {
       failure: 'invariant',
       message: `configured account ${accountId} differs from the projected current or last cycle`,
     })
+  })
+
+  test('uses the canonical reconciliation-id tie-break for equal timestamps', async () => {
+    const higherReconciliationId = 'f'.repeat(64)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const observability = yield* CycleObservability
+        const sql = yield* PgClient.PgClient
+        yield* seedSafetyState()
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${higherReconciliationId},
+            'bayn.paper-reconciliation.v1',
+            ${accountId},
+            ${reconciliationHash},
+            ${reconciliationHash},
+            ${'2'.repeat(64)},
+            'EXACT',
+            ${sql.json(JSON.stringify([]))},
+            ${'2026-03-06T21:00:00.000Z'}
+          )
+        `
+        const projection = yield* observability.read(qualificationRunId, accountId)
+        const [historyLatest] = yield* sql<{ reconciliation_id: string }>`
+          SELECT reconciliation_id
+          FROM reconciliations
+          WHERE account_id = ${accountId}
+          ORDER BY reconciled_at DESC, reconciliation_id DESC
+          LIMIT 1
+        `
+        return { historyLatest, projection }
+      }),
+    )
+
+    expect(result.historyLatest?.reconciliation_id).toBe(higherReconciliationId)
+    expect(result.projection.reconciliation?.reconciliationId).toBe(result.historyLatest?.reconciliation_id)
   })
 
   test('keeps PAPER blocked when a sub-millisecond resolved mutation follows exact reconciliation', async () => {

@@ -212,6 +212,7 @@ describe('autonomous cycle operations classification', () => {
     const readyPaper = deriveCycleOperationsStatus(
       projection({
         authority: {
+          generationHash: '4'.repeat(64),
           maximum: Authority.Paper,
           effective: Authority.Observe,
           kill: KillState.Clear,
@@ -245,6 +246,7 @@ describe('autonomous cycle operations classification', () => {
     expect(readyPaper).toMatchObject({
       condition: CycleOperationsCondition.Waiting,
       reason: CycleOperationsReason.NoCycleRecorded,
+      authority: { generationHash: '4'.repeat(64) },
       alerts: { authorityIncoherent: false, reconciliationBlocked: false },
     })
   })
@@ -280,6 +282,7 @@ describe('autonomous cycle operations classification', () => {
 
   test('requires PAPER reconciliation to cover the latest selected-account mutation', () => {
     const authority = {
+      generationHash: '4'.repeat(64),
       maximum: Authority.Paper,
       effective: Authority.Paper,
       kill: KillState.Clear,
@@ -324,6 +327,7 @@ describe('autonomous cycle operations classification', () => {
 
   test('blocks PAPER on discrepancy and exact reconciliation staleness boundaries', () => {
     const authority = {
+      generationHash: '4'.repeat(64),
       maximum: Authority.Paper,
       effective: Authority.Paper,
       kill: KillState.Clear,

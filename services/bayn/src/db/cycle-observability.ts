@@ -77,6 +77,7 @@ const ProjectionRowSchema = Schema.Struct({
   selected_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   account_mismatch: Schema.Boolean,
   unfinished_cycle_count: NonNegativeIntegerSchema,
+  authority_generation_hash: NullableSha256,
   authority_maximum: Schema.NullOr(Schema.Enum(Authority)),
   authority_effective: Schema.NullOr(Schema.Enum(Authority)),
   authority_kill: Schema.NullOr(Schema.Enum(KillState)),
@@ -162,10 +163,16 @@ const snapshotFromRow = (row: ProjectionRow, prefix: 'current' | 'last'): CycleO
 
 const authorityFromRow = (row: ProjectionRow): DurableAuthorityObservation | null => {
   if (row.authority_maximum === null) return null
-  if (row.authority_effective === null || row.authority_kill === null || row.authority_updated_at === null) {
+  if (
+    row.authority_generation_hash === null ||
+    row.authority_effective === null ||
+    row.authority_kill === null ||
+    row.authority_updated_at === null
+  ) {
     throw readError('invariant', 'durable authority projection is incomplete')
   }
   return {
+    generationHash: row.authority_generation_hash,
     maximum: row.authority_maximum,
     effective: row.authority_effective,
     kill: row.authority_kill,
@@ -269,7 +276,7 @@ const makeCycleObservability = Effect.gen(function* () {
             SELECT *
             FROM reconciliations
             WHERE account_id = (SELECT account_id FROM selected_account)
-            ORDER BY reconciled_at DESC, reconciliation_id
+            ORDER BY reconciled_at DESC, reconciliation_id DESC
             LIMIT 1
           ),
           account_mutation_events AS (
@@ -359,6 +366,7 @@ const makeCycleObservability = Effect.gen(function* () {
               FROM scoped_cycles
               WHERE state IN ('PENDING', 'ACTIVE')
             ) AS unfinished_cycle_count,
+            authority.generation_hash AS authority_generation_hash,
             authority.maximum AS authority_maximum,
             authority.effective AS authority_effective,
             authority.kill_state AS authority_kill,
