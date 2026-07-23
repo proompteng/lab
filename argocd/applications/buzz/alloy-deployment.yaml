@@ -31,6 +31,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - run
+            - --server.http.listen-addr=0.0.0.0:12345
             - /etc/alloy/config.alloy
           workingDir: /var/lib/alloy
           ports:
