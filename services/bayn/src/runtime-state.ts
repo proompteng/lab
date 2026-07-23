@@ -36,16 +36,32 @@ export interface RuntimeHealth {
   }
 }
 
+export interface BrokerConfiguration {
+  readonly expectedAccountId: string
+  readonly executionEligible: boolean
+  readonly executionDisabledReason: string | null
+}
+
+export interface BrokerStatus extends BrokerConfiguration {
+  readonly configured: true
+  readonly accountId: string | null
+  readonly accountBound: boolean | null
+  readonly readAvailable: boolean | null
+  readonly checkedAt: string | null
+  readonly error: string | null
+}
+
 export interface RuntimeState {
   readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
   readonly evidence: RuntimeEvidence | null
   readonly health: RuntimeHealth
+  readonly broker: BrokerStatus | null
   readonly error: string | null
 }
 
 const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
 
-export const initialState = (): RuntimeState => ({
+export const initialState = (broker?: BrokerConfiguration): RuntimeState => ({
   status: 'STARTING',
   evidence: null,
   health: {
@@ -58,10 +74,25 @@ export const initialState = (): RuntimeState => ({
       evidence: unknownDependency(),
     },
   },
+  broker:
+    broker === undefined
+      ? null
+      : {
+          configured: true,
+          expectedAccountId: broker.expectedAccountId,
+          executionEligible: broker.executionEligible,
+          executionDisabledReason: broker.executionDisabledReason,
+          accountId: null,
+          accountBound: null,
+          readAvailable: null,
+          checkedAt: null,
+          error: null,
+        },
   error: null,
 })
 
 export const isReady = (state: RuntimeState): boolean =>
   state.status === 'READY' &&
   state.evidence !== null &&
+  (state.broker === null || (state.broker.accountBound === true && state.broker.readAvailable === true)) &&
   Object.values(state.health.dependencies).every((dependency) => dependency.status === 'AVAILABLE')

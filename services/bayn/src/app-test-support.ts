@@ -270,6 +270,7 @@ export const readyState = (): RuntimeState => {
         evidence: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
       },
     },
+    broker: null,
     error: null,
   }
 }

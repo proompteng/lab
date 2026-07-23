@@ -3,6 +3,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 
 import { canonicalHashV1 } from '../hash'
 import {
+  Authority,
   IntentSchema,
   IntentState,
   MutationOutcome,
@@ -51,6 +52,7 @@ const ErrorResponseSchema = Schema.Struct({
 })
 const OptionsSchema = Schema.Struct({
   expectedAccountId: Uuid,
+  maximumAuthority: Schema.Enum(Authority),
   operationTimeoutMs: PositiveInteger,
 })
 
@@ -94,6 +96,7 @@ export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')
 
 export interface MutationOptions {
   readonly expectedAccountId: string
+  readonly maximumAuthority: Authority
   readonly key: Redacted.Redacted<string>
   readonly secret: Redacted.Redacted<string>
   readonly proxyUrl: string
@@ -283,8 +286,14 @@ export const makeMutation = (
   Effect.gen(function* () {
     const runtime = yield* decodeOptions({
       expectedAccountId: options.expectedAccountId,
+      maximumAuthority: options.maximumAuthority,
       operationTimeoutMs: options.operationTimeoutMs,
     }).pipe(Effect.mapError((cause) => configurationError('invalid Alpaca mutation options', cause)))
+    if (runtime.maximumAuthority !== Authority.Paper) {
+      return yield* Effect.fail(
+        configurationError('Alpaca mutation capability requires explicit PAPER maximum authority'),
+      )
+    }
     const key = Redacted.value(options.key)
     const secret = Redacted.value(options.secret)
     if (key.length === 0 || key.trim() !== key || secret.length === 0 || secret.trim() !== secret) {

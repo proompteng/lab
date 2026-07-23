@@ -5,7 +5,7 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1 } from '../hash'
-import { IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
+import { Authority, IntentState, MutationOutcome, OrderSide, OrderType, TimeInForce, type Intent } from '../paper'
 import {
   BrokerMutationError,
   MutationFailure,
@@ -35,6 +35,7 @@ const accountResponse = {
 
 const options: MutationOptions = {
   expectedAccountId: accountId,
+  maximumAuthority: Authority.Paper,
   key: Redacted.make('paper-key'),
   secret: Redacted.make('paper-secret'),
   proxyUrl: 'http://bayn-egress-proxy:3128',
@@ -137,6 +138,30 @@ const requestBody = (request: Parameters<Parameters<typeof HttpClient.make>[0]>[
 }
 
 describe('Alpaca paper mutations', () => {
+  test('refuses to construct mutation capability below explicit PAPER authority', async () => {
+    let requests = 0
+    const client = HttpClient.make(() => {
+      requests += 1
+      return Effect.die(new Error('OBSERVE must not make a broker request through the mutation constructor'))
+    })
+
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        makeMutation({ ...options, maximumAuthority: Authority.Observe }).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        ),
+      ),
+    )
+
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Submit,
+      failure: MutationFailure.Configuration,
+      outcome: MutationOutcome.Known,
+      message: 'Alpaca mutation capability requires explicit PAPER maximum authority',
+    })
+    expect(requests).toBe(0)
+  })
+
   test('refuses to expose mutation capability when the credentials resolve a different account', async () => {
     let mutationCalls = 0
     const client = HttpClient.make(() => {

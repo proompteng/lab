@@ -5,12 +5,102 @@ import { TestClock } from 'effect/testing'
 
 import { config, successfulJournal, readyState, recoveringStore } from './app-test-support'
 import { monitor, probe } from './app'
+import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
 import { EvidenceStore } from './db/evidence-store'
+import type { BrokerProbe } from './health'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
+import { initialState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
 
+const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const accountResult = (id = brokerAccountId): ReadResult<Account> => ({
+  value: {
+    id,
+    status: AccountStatus.Active,
+    currency: 'USD',
+    cashMicros: '1000000',
+    equityMicros: '1000000',
+    buyingPowerMicros: '1000000',
+    accountBlocked: false,
+    tradingBlocked: false,
+    tradeSuspendedByUser: false,
+    observedAt: '2026-07-20T00:00:00.000Z',
+  },
+  evidence: {
+    requestId: 'broker-health-request',
+    status: 200,
+    contentHash: 'a'.repeat(64),
+    observedAt: '2026-07-20T00:00:00.000Z',
+  },
+})
+
+const brokerRead = (account: BrokerReadShape['account']): BrokerReadShape => {
+  const unused = Effect.die(new Error('continuous broker health must only read the account'))
+  return {
+    account,
+    positions: unused,
+    orders: () => unused,
+    orderById: () => unused,
+    orderByClientId: () => unused,
+    fillActivities: () => unused,
+  }
+}
+
 describe('Bayn continuous health', () => {
+  test('requires the configured broker account GET while keeping execution disabled under OBSERVE', async () => {
+    let observedAccountId = brokerAccountId
+    const broker: BrokerProbe = {
+      read: brokerRead(Effect.sync(() => accountResult(observedAccountId))),
+      expectedAccountId: brokerAccountId,
+      executionEligible: false,
+      executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+    }
+    const initial = {
+      ...readyState(),
+      broker: initialState(broker).broker,
+    }
+    const state = await Effect.runPromise(Ref.make(initial))
+    const dependencies = (effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore>) =>
+      effect.pipe(
+        Effect.provideService(MarketData, {
+          check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
+          inspect: Effect.die(new Error('health probes must not inspect sessions')),
+          load: Effect.die(new Error('health probes must not load bars')),
+        }),
+        Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
+        Effect.provideService(EvidenceStore, recoveringStore(initial)),
+      )
+
+    await Effect.runPromise(dependencies(probe(config, state, broker)))
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'READY',
+      broker: {
+        configured: true,
+        expectedAccountId: brokerAccountId,
+        accountId: brokerAccountId,
+        accountBound: true,
+        readAvailable: true,
+        executionEligible: false,
+        executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+        error: null,
+      },
+    })
+
+    observedAccountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    await Effect.runPromise(dependencies(probe(config, state, broker)))
+    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+      status: 'DEGRADED',
+      broker: {
+        accountId: observedAccountId,
+        accountBound: false,
+        readAvailable: true,
+        error: `Alpaca account probe resolved ${observedAccountId}, expected ${brokerAccountId}`,
+      },
+      error: expect.stringContaining('broker: Alpaca account probe resolved'),
+    })
+  })
+
   test('degrades on a probe defect, preserves evidence, and recovers only after a complete success', async () => {
     const initial = readyState()
     const initialEvidence = initial.evidence

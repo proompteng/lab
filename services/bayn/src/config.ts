@@ -213,6 +213,11 @@ export const loadConfig = (
         retryAttempts: config.configuredAlpaca.retryAttempts,
         reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
       }))
+      if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
+        return Effect.fail(
+          operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
+        )
+      }
       const { configuredAlpaca: _configuredAlpaca, ...runtime } = config
       return Effect.succeed({ ...runtime, ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}) })
     }),
