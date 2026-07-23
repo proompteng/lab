@@ -2,7 +2,7 @@ quickstart: false
 
 image:
   repository: ghcr.io/block/buzz
-  tag: 0.1.0
+  tag: sha-acfbb1b
   pullPolicy: IfNotPresent
 
 replicaCount: 2

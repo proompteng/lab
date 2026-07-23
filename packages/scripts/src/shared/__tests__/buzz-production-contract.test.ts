@@ -24,6 +24,8 @@ describe('Buzz production GitOps contract', () => {
 
     expect(kustomization).toContain('version: 0.1.6')
     expect(kustomization).toContain('sha256:88b96378cabd6b64c9bb8da9824a608daac3b0965d2aa17019e70248c07d517c')
+    expect(kustomization).toContain('newTag: sha-acfbb1b')
+    expect(kustomization).toContain('sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428')
 
     for (const manifest of [kustomization, postgres, redis, alloy]) {
       expect(manifest).toContain('sha256:')
