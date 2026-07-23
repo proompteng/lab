@@ -98,7 +98,9 @@ class ForwarderConfigTest {
     assertEquals(coreSymbols, cfg.staticSymbols)
     assertEquals(observationSymbols, cfg.observationSymbols)
     assertEquals(observationSymbols, cfg.universeContract?.symbols)
-    assertEquals(listOf(coreSymbols, observationSymbols), cfg.marketDataFeedConfigs().map { it.symbols })
+    val runtimes = cfg.marketDataFeedConfigs()
+    assertEquals(listOf(coreSymbols, observationSymbols), runtimes.map { it.symbols })
+    assertEquals(listOf(coreSymbols.toSet(), emptySet()), runtimes.map { it.symbolAllowlist })
   }
 
   @Test

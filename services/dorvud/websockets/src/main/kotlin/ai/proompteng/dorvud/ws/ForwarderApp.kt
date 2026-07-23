@@ -350,12 +350,12 @@ class ForwarderApp(
               launch {
                 val symbolsTracker =
                   SymbolsTracker(
-                    normalizeSymbols(feed.config.symbols),
+                    normalizeSymbols(feed.config.symbols, feed.config.symbolAllowlist),
                     config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let { url ->
                       suspend {
                         runCatching { fetchDesiredSymbols(url) }
                           .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
-                          .let(::normalizeSymbols)
+                          .let { symbols -> normalizeSymbols(symbols, feed.config.symbolAllowlist) }
                       }
                     },
                   )
@@ -1065,11 +1065,14 @@ class ForwarderApp(
     }
   }
 
-  private fun normalizeSymbols(symbols: List<String>): List<String> =
+  private fun normalizeSymbols(
+    symbols: List<String>,
+    symbolAllowlist: Set<String>,
+  ): List<String> =
     symbols
       .map { it.trim().uppercase() }
       .filter { it.isNotEmpty() }
-      .filter { config.symbolAllowlist.isEmpty() || it in config.symbolAllowlist }
+      .filter { symbolAllowlist.isEmpty() || it in symbolAllowlist }
       .filter { ownsSymbol(it) }
       .distinct()
 
