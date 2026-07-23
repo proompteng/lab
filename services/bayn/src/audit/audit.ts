@@ -103,10 +103,24 @@ export interface SignalAccessRecord {
   readonly kind: 'manifest' | 'sessions' | 'bars' | 'integrity'
 }
 
+export interface SignalIntegrityAuthority {
+  readonly principal: string
+  readonly queryIds: readonly string[]
+}
+
 export interface SignalPrincipals {
   readonly candidate: string
   readonly publishers: readonly string[]
+  readonly integrity: SignalIntegrityAuthority
 }
+
+export const classifySignalAccess = (
+  record: Omit<SignalAccessRecord, 'kind'> & { readonly kind: 'manifest' | 'sessions' | 'bars' },
+  authority: SignalIntegrityAuthority,
+): SignalAccessRecord =>
+  record.user === authority.principal && authority.queryIds.includes(record.queryId)
+    ? { ...record, kind: 'integrity' }
+    : record
 
 export interface RepositoryAudit {
   readonly sourceCommitExists: boolean
@@ -626,6 +640,9 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
       value.queryStartTime >= database.qualification.lockCreatedAt &&
       value.queryStartTime <= database.qualification.resultCommittedAt,
   )
+  const configuredIntegrityIds = [...input.signalPrincipals.integrity.queryIds].sort()
+  const observedIntegrity = sortedAccess.filter((value) => value.kind === 'integrity')
+  const observedIntegrityIds = [...new Set(observedIntegrity.map((value) => value.queryId))].sort()
   check(
     'signal-query-log-replica-coverage',
     sortedReplicas.length >= 2 &&
@@ -657,16 +674,30 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
     `preLock=${preLockManifestReads.length} locked=${lockedManifestReads.length}`,
   )
   check(
+    'signal-integrity-query-allowlist',
+    input.signalPrincipals.integrity.principal.length > 0 &&
+      new Set(configuredIntegrityIds).size === configuredIntegrityIds.length &&
+      same(observedIntegrityIds, configuredIntegrityIds) &&
+      observedIntegrity.every(
+        (value) =>
+          value.user === input.signalPrincipals.integrity.principal && configuredIntegrityIds.includes(value.queryId),
+      ),
+    `principal=${input.signalPrincipals.integrity.principal} queryIds=${configuredIntegrityIds.join(',')}`,
+  )
+  check(
     'signal-read-principals',
     input.signalPrincipals.candidate.length > 0 &&
       input.signalPrincipals.publishers.length > 0 &&
-      new Set([input.signalPrincipals.candidate, ...input.signalPrincipals.publishers]).size ===
-        input.signalPrincipals.publishers.length + 1 &&
-      sortedAccess.every(
-        (value) =>
-          value.kind === 'integrity' ||
-          value.user === input.signalPrincipals.candidate ||
-          input.signalPrincipals.publishers.includes(value.user),
+      new Set([
+        input.signalPrincipals.candidate,
+        ...input.signalPrincipals.publishers,
+        input.signalPrincipals.integrity.principal,
+      ]).size ===
+        input.signalPrincipals.publishers.length + 2 &&
+      sortedAccess.every((value) =>
+        value.kind === 'integrity'
+          ? value.user === input.signalPrincipals.integrity.principal && configuredIntegrityIds.includes(value.queryId)
+          : value.user === input.signalPrincipals.candidate || input.signalPrincipals.publishers.includes(value.user),
       ),
     `principals=${[...new Set(sortedAccess.map((value) => value.user))].join(',')} integrity=${sortedAccess
       .filter((value) => value.kind === 'integrity')

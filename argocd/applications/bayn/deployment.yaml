@@ -23,7 +23,7 @@ spec:
         app.kubernetes.io/name: bayn
         app.kubernetes.io/part-of: bayn
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-23T04:17:48Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-23T03:44:29Z"
     spec:
       serviceAccountName: bayn
       automountServiceAccountToken: false
@@ -152,9 +152,6 @@ spec:
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
-            - name: qualification-dossier
-              mountPath: /var/run/bayn/qualification
-              readOnly: true
       volumes:
         - name: tmp
           emptyDir:
@@ -166,10 +163,3 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
-        - name: qualification-dossier
-          configMap:
-            name: bayn-qualification-dossier
-            defaultMode: 0444
-            items:
-              - key: qualification-dossier.json
-                path: qualification-dossier.json

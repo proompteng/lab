@@ -3,7 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { makeEquitySeriesArtifact } from './evidence-contracts'
 import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
-import { auditQualification, type AuditDatabaseSnapshot, type QualificationAuditInput } from './audit/audit'
+import {
+  auditQualification,
+  classifySignalAccess,
+  type AuditDatabaseSnapshot,
+  type QualificationAuditInput,
+} from './audit/audit'
 import { makeQualificationDossier } from './audit/dossier'
 import { makeStrategy } from './strategy'
 import { summarizeEvaluation } from './risk-balanced-trend'
@@ -265,7 +270,11 @@ const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditIn
         kind: 'bars',
       },
     ],
-    signalPrincipals: { candidate: 'bayn', publishers: ['signal-publisher'] },
+    signalPrincipals: {
+      candidate: 'bayn',
+      publishers: ['signal-publisher'],
+      integrity: { principal: 'publication-auditor', queryIds: [] },
+    },
     repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: true, preLockResultReferences: [] },
   }
 }
@@ -364,6 +373,10 @@ describe('qualification audit', () => {
     const input = fixture()
     const report = auditQualification({
       ...input,
+      signalPrincipals: {
+        ...input.signalPrincipals,
+        integrity: { principal: 'publication-auditor', queryIds: ['publication-integrity'] },
+      },
       signalAccess: [
         ...input.signalAccess,
         {
@@ -379,6 +392,23 @@ describe('qualification audit', () => {
     expect(report.status).toBe('PASS')
     expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(true)
     expect(report.checks.find((check) => check.name === 'signal-read-principals')?.passed).toBe(true)
+  })
+
+  test('does not exempt a bars read unless its principal and exact query ID are allowlisted', () => {
+    const authority = { principal: 'publication-auditor', queryIds: ['bounded-proof'] }
+    const rawBarsRead = {
+      replica: 'replica-0',
+      queryId: 'raw-bars-with-spoofed-alias',
+      queryStartTime: '2026-07-20T11:59:58.500000Z',
+      user: 'publication-auditor',
+      kind: 'bars' as const,
+    }
+
+    expect(classifySignalAccess(rawBarsRead, authority).kind).toBe('bars')
+    expect(classifySignalAccess({ ...rawBarsRead, queryId: 'bounded-proof' }, authority).kind).toBe('integrity')
+    expect(classifySignalAccess({ ...rawBarsRead, queryId: 'bounded-proof', user: 'notebook' }, authority).kind).toBe(
+      'bars',
+    )
   })
 
   test.each([

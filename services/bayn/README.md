@@ -127,6 +127,7 @@ BAYN_AUDIT_POSTGRES_URL=<authenticated-postgres-uri> \
 BAYN_AUDIT_SIGNAL_URL=<signal-clickhouse-url> \
 BAYN_AUDIT_SIGNAL_USERNAME=<readonly-bayn-user> \
 BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME=<signal-publisher-user> \
+BAYN_AUDIT_SIGNAL_INTEGRITY_QUERY_IDS=<accepted-publication-proof-query-id>,... \
 BAYN_AUDIT_SIGNAL_PASSWORD=<readonly-bayn-password> \
 BAYN_AUDIT_CLICKHOUSE_URLS=<replica-0-audit-url>,<replica-1-audit-url> \
 BAYN_AUDIT_CLICKHOUSE_USERNAME=<query-log-audit-user> \
@@ -137,11 +138,15 @@ BAYN_AUDIT_REPOSITORY_PATH=<lab-checkout> \
 
 The audit command is not part of the deployed runtime and never calls TigerBeetle or a broker. Its privileged
 ClickHouse credential is operator-supplied only to read `system.query_log`; the service keeps its normal Signal
-read-only identity.
+read-only identity. `BAYN_AUDIT_SIGNAL_INTEGRITY_QUERY_IDS` must contain only the exact query IDs recorded for accepted,
+bounded publication count, coverage, and ordered-content-hash proofs. An integrity exemption requires both one of those
+IDs and the supplied audit principal; SQL aliases alone never grant it.
 
 Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
 binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
-verdict, and observe-only authority. It is an operator evidence artifact, not runtime configuration.
+verdict, and observe-only authority. It is ephemeral operator/CI evidence, not runtime configuration. Runtime recovery
+uses only `BAYN_QUALIFICATION_RUN_ID` to load the immutable EvidenceStore graph; Bayn never mounts or reads a dossier
+file.
 
 The PostgreSQL integration suite requires an isolated local database whose name ends in `_test`:
 

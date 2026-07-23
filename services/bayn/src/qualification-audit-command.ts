@@ -10,6 +10,7 @@ import { ProtocolSchema } from './protocol'
 import { QualificationLockSchema, QualificationResultSchema } from './qualification'
 import {
   auditQualification,
+  classifySignalAccess,
   type AuditDatabaseSnapshot,
   type RepositoryAudit,
   type SignalAccessRecord,
@@ -28,6 +29,7 @@ const IsoInstant = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2
 const ReplicaName = NonEmptyString
 const GateScalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const AuditClickhouseUrls = Config.Array(Schema.URLFromString).check(Schema.isMinLength(2), Schema.isUnique())
+const SignalIntegrityQueryIds = Config.Array(NonEmptyString).check(Schema.isUnique())
 
 const RunRow = Schema.Struct({
   run_id: Sha256,
@@ -103,7 +105,7 @@ const AccessRow = Schema.Struct({
   query_id: NonEmptyString,
   query_start_time: IsoInstant,
   user: NonEmptyString,
-  kind: Schema.Literals(['manifest', 'sessions', 'bars', 'integrity']),
+  kind: Schema.Literals(['manifest', 'sessions', 'bars']),
 })
 const ReplicaRow = Schema.Struct({ replica: ReplicaName })
 
@@ -129,6 +131,9 @@ const config = Config.all({
   signalUrl: Config.string('BAYN_AUDIT_SIGNAL_URL'),
   signalUsername: Config.string('BAYN_AUDIT_SIGNAL_USERNAME'),
   signalPublisherUsername: Config.string('BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME'),
+  signalIntegrityQueryIds: Config.schema(SignalIntegrityQueryIds, 'BAYN_AUDIT_SIGNAL_INTEGRITY_QUERY_IDS').pipe(
+    Config.withDefault([]),
+  ),
   signalPassword: Config.redacted('BAYN_AUDIT_SIGNAL_PASSWORD'),
   auditClickhouseUrls: Config.schema(AuditClickhouseUrls, 'BAYN_AUDIT_CLICKHOUSE_URLS'),
   auditClickhouseUsername: Config.string('BAYN_AUDIT_CLICKHOUSE_USERNAME'),
@@ -409,16 +414,9 @@ const readSignalReplicaAccess = (
         formatDateTime(toTimeZone(query_start_time_microseconds, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ') AS query_start_time,
         user,
         multiIf(
-          positionCaseInsensitive(query, ${sql.param('String', "'manifest' AS evidence_type")}) > 0
-            OR positionCaseInsensitive(query, ${sql.param('String', "'bars' AS evidence_type")}) > 0
-            OR positionCaseInsensitive(query, ${sql.param('String', "'sessions' AS evidence_type")}) > 0
-            OR positionCaseInsensitive(query, ${sql.param('String', "'per_symbol' AS evidence_type")}) > 0
-            OR positionCaseInsensitive(query, ${sql.param('String', 'AS ordered_bars_fingerprint')}) > 0
-            OR positionCaseInsensitive(query, ${sql.param('String', 'AS ordered_sessions_fingerprint')}) > 0,
-          'integrity',
-          has(tables, ${sql.param('String', manifestTable)}), 'manifest',
+          has(tables, ${sql.param('String', barsTable)}), 'bars',
           has(tables, ${sql.param('String', sessionsTable)}), 'sessions',
-          'bars'
+          'manifest'
         ) AS kind
       FROM system.query_log
       WHERE type = 'QueryStart'
@@ -438,13 +436,21 @@ const readSignalReplicaAccess = (
     return {
       replica,
       topology,
-      access: (yield* decodeAccessRows(rows)).map((row) => ({
-        replica: row.replica,
-        queryId: row.query_id,
-        queryStartTime: row.query_start_time,
-        user: row.user,
-        kind: row.kind,
-      })),
+      access: (yield* decodeAccessRows(rows)).map((row) =>
+        classifySignalAccess(
+          {
+            replica: row.replica,
+            queryId: row.query_id,
+            queryStartTime: row.query_start_time,
+            user: row.user,
+            kind: row.kind,
+          },
+          {
+            principal: input.auditClickhouseUsername,
+            queryIds: input.signalIntegrityQueryIds,
+          },
+        ),
+      ),
     }
   })
   return program.pipe(
@@ -558,7 +564,14 @@ const main = Effect.gen(function* () {
     database,
     signalReplicas: signalAccess.replicas,
     signalAccess: signalAccess.access,
-    signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
+    signalPrincipals: {
+      candidate: input.signalUsername,
+      publishers: [input.signalPublisherUsername],
+      integrity: {
+        principal: input.auditClickhouseUsername,
+        queryIds: input.signalIntegrityQueryIds,
+      },
+    },
     repository,
   }
   const report = yield* Effect.try({

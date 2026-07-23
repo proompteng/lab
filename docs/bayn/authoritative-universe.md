@@ -72,8 +72,9 @@ active ConfigMap. Before the explicit M2.2 release, production Bayn was pinned t
 - maximum authority `OBSERVE`.
 
 The M2.1 economic gates passed, but its terminal qualification is `REJECTED` for insufficient power and walk-forward
-history. The M2.2 one-shot release removes the runtime pin and mounted dossier together without rewriting that
-snapshot, PostgreSQL graph, source-controlled dossier, or TigerBeetle journal.
+history. The M2.2 one-shot release removes the runtime run-ID pin without rewriting that snapshot, PostgreSQL graph,
+ephemeral operator audit output, or TigerBeetle journal. Runtime recovery loads the durable EvidenceStore graph by run
+ID; no dossier file is mounted.
 
 ## Pre-change live baseline
 

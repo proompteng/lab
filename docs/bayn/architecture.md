@@ -126,8 +126,9 @@ The compiled `bayn.risk-balanced-trend.protocol.v2` candidate uses the exact `cr
 `DBC, EFA, IEF, SPY, VNQ`.
 
 The cross-asset Signal history is finalized and accepted. The explicit M2.2 release removes the terminal
-`equity-infrastructure-v1` M2.1 runtime pin and mounted dossier together while preserving the historical run, dossier,
-PostgreSQL graph, and TigerBeetle journal unchanged.
+`equity-infrastructure-v1` M2.1 runtime run-ID pin while preserving the historical PostgreSQL graph, ephemeral operator
+audit output, and TigerBeetle journal unchanged. Runtime recovery reads the durable EvidenceStore graph by run ID; no
+dossier file is mounted.
 
 At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
 averages them into a composite score, and assigns weight only to positive scores. Weights are redistributed under a 35%
