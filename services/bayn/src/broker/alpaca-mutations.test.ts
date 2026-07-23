@@ -218,6 +218,42 @@ describe('Alpaca paper mutations', () => {
     })
   })
 
+  test('samples submit evidence after the complete response body', async () => {
+    let releaseBody: () => void = () => {
+      throw new Error('submit response body reader did not start')
+    }
+    const client = HttpClient.make((request) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          releaseBody = () => {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(orderResponse)))
+            controller.close()
+          }
+        },
+      })
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(body, { status: 200, headers: responseHeaders })),
+      )
+    })
+
+    const program = withMutation(
+      client,
+      (mutation) =>
+        Effect.gen(function* () {
+          const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(2_000)
+          releaseBody()
+          return yield* Fiber.join(fiber)
+        }),
+      { ...options, operationTimeoutMs: 5_000 },
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    const receipt = await Effect.runPromise(program)
+    expect(receipt.evidence.observedAt).toBe('1970-01-01T00:00:02.000Z')
+    expect(receipt.order.observedAt).toBe('1970-01-01T00:00:02.000Z')
+  })
+
   test('preserves the broker order ID when Alpaca accepts a mismatched order', async () => {
     const mismatched = { ...orderResponse, symbol: 'NVDA' }
     const client = HttpClient.make((request) => Effect.succeed(response(request, mismatched)))
@@ -375,5 +411,51 @@ describe('Alpaca paper mutations', () => {
       { method: 'DELETE', url: `https://paper-api.alpaca.markets/v2/orders/${orderId}` },
       { method: 'DELETE', url: `https://paper-api.alpaca.markets/v2/orders/${orderId}` },
     ])
+  })
+
+  test('samples ambiguous cancel evidence after the complete response body', async () => {
+    const error = { code: 50010000, message: 'unknown' }
+    let releaseBody: () => void = () => {
+      throw new Error('cancel response body reader did not start')
+    }
+    const client = HttpClient.make((request) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          releaseBody = () => {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(error)))
+            controller.close()
+          }
+        },
+      })
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(body, { status: 500, headers: responseHeaders })),
+      )
+    })
+
+    const program = withMutation(
+      client,
+      (mutation) =>
+        Effect.gen(function* () {
+          const fiber = yield* Effect.flip(mutation.cancel(orderId)).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(2_000)
+          releaseBody()
+          return yield* Fiber.join(fiber)
+        }),
+      { ...options, operationTimeoutMs: 5_000 },
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    const failure = await Effect.runPromise(program)
+    expect(failure).toMatchObject({
+      operation: MutationOperation.Cancel,
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      evidence: {
+        contentHash: canonicalHashV1(error),
+        observedAt: '1970-01-01T00:00:02.000Z',
+        requestId: 'req-123',
+        status: 500,
+      },
+    })
   })
 })

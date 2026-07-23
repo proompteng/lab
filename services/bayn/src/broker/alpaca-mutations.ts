@@ -343,7 +343,6 @@ export const makeMutation = (
           runtime.operationTimeoutMs,
           Effect.gen(function* () {
             const response = yield* client.execute(request)
-            const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
             const headers = yield* decodeHeaders(response).pipe(
               Effect.mapError((cause) =>
                 unknownOutcome(
@@ -366,6 +365,7 @@ export const makeMutation = (
                 ),
               ),
             )
+            const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
             const contentHash = yield* Effect.try({
               try: () => canonicalHashV1(raw),
               catch: (cause) =>
@@ -463,7 +463,6 @@ export const makeMutation = (
           runtime.operationTimeoutMs,
           Effect.gen(function* () {
             const response = yield* client.execute(request)
-            const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
             const headers = yield* decodeHeaders(response).pipe(
               Effect.mapError((cause) =>
                 unknownOutcome(
@@ -495,6 +494,7 @@ export const makeMutation = (
                       ),
                     ),
                   )
+            const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
             const evidence = responseEvidence(headers['x-request-id'], response.status, contentHash, observedAt)
             if (response.status !== 204) {
               return yield* Effect.fail(
