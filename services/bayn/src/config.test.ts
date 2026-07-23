@@ -9,6 +9,7 @@ import { Authority } from './paper'
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
 const imageDigest = `sha256:${'b'.repeat(64)}`
+const authorityGenerationHash = '1'.repeat(64)
 const buildMetadata: EmbeddedBuildMetadata = {
   sourceRevision,
   imageRepository,
@@ -22,6 +23,7 @@ const runtimeEnvironment = new Map([
   ['BAYN_IMAGE_DIGEST', imageDigest],
   ['BAYN_STRATEGY_BEHAVIOR_HASH', buildMetadata.strategyBehaviorHash],
   ['BAYN_STRATEGY_PARAMETER_HASH', buildMetadata.strategyParameterHash],
+  ['BAYN_AUTHORITY_GENERATION_HASH', authorityGenerationHash],
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
@@ -56,6 +58,7 @@ describe('Effect configuration', () => {
     expect(config.reconciliationStaleThresholdMs).toBe(120_000)
     expect(config.unknownMutationThresholdMs).toBe(300_000)
     expect(config.cyclePollIntervalMs).toBe(30_000)
+    expect(config.authorityGenerationHash).toBe(authorityGenerationHash)
     expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -88,6 +91,25 @@ describe('Effect configuration', () => {
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), pinned))
 
     expect(config.qualificationRunId).toBe('e'.repeat(64))
+  })
+
+  test('requires an explicit valid source-controlled authority generation hash', async () => {
+    for (const value of [undefined, 'not-a-generation-hash']) {
+      const environment = new Map(runtimeEnvironment)
+      if (value === undefined) {
+        environment.delete('BAYN_AUTHORITY_GENERATION_HASH')
+      } else {
+        environment.set('BAYN_AUTHORITY_GENERATION_HASH', value)
+      }
+
+      const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
+
+      expect(error).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'config',
+        operation: 'load',
+      })
+    }
   })
 
   test('loads one complete redacted Alpaca read binding', async () => {
