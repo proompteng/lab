@@ -66,11 +66,11 @@ spec:
       runAsUser: 1000
       runAsGroup: 1000
   storage:
+    # The operator protects generated PVCs through these retention controls.
+    # Its CRD prunes metadata from volumeClaimTemplate, so Argo annotations here
+    # would create permanent drift without reaching the generated PVC.
     keepAfterDelete: true
     volumeClaimTemplate:
-      metadata:
-        annotations:
-          argocd.argoproj.io/sync-options: Prune=false,Delete=false
       spec:
         accessModes:
           - ReadWriteOnce
