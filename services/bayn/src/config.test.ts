@@ -51,6 +51,7 @@ describe('Effect configuration', () => {
     expect(config.host).toBe('0.0.0.0')
     expect(config.port).toBe(8080)
     expect(config.qualificationRunId).toBeUndefined()
+    expect(config.paperProofCommand).toBeUndefined()
     expect(config.maximumAuthority).toBe(Authority.Observe)
     expect(config.healthIntervalMs).toBe(30_000)
     expect(config.operationTimeoutMs).toBe(30_000)
@@ -90,6 +91,85 @@ describe('Effect configuration', () => {
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), pinned))
 
     expect(config.qualificationRunId).toBe('e'.repeat(64))
+  })
+
+  test('enables only an explicit OBSERVE PREPARE DISCOVER command', async () => {
+    const configured = new Map(runtimeEnvironment)
+    configured.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
+    configured.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+    configured.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    configured.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
+    configured.set('BAYN_PAPER_COMMAND', 'PREPARE')
+    configured.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))
+
+    expect(config.paperProofCommand).toEqual({ command: 'PREPARE', phase: 'DISCOVER' })
+    expect(config.maximumAuthority).toBe(Authority.Observe)
+  })
+
+  test('rejects invalid, incomplete, and PAPER discovery commands before runtime composition', async () => {
+    const complete = new Map(runtimeEnvironment)
+    complete.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
+    complete.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+    complete.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    complete.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
+
+    const invalid = new Map(complete)
+    invalid.set('BAYN_PAPER_COMMAND', 'SUBMIT')
+    invalid.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    expect(await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), invalid)))).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'load',
+    })
+
+    const incomplete = new Map(complete)
+    incomplete.set('BAYN_PAPER_COMMAND', 'PREPARE')
+    expect(
+      await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), incomplete))),
+    ).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'paper-command',
+    })
+
+    const missingPin = new Map(complete)
+    missingPin.delete('BAYN_QUALIFICATION_RUN_ID')
+    missingPin.set('BAYN_PAPER_COMMAND', 'PREPARE')
+    missingPin.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    expect(
+      await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), missingPin))),
+    ).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'paper-command',
+      message: 'PREPARE DISCOVER requires a pinned terminal qualification run',
+    })
+
+    const missingBroker = new Map(runtimeEnvironment)
+    missingBroker.set('BAYN_QUALIFICATION_RUN_ID', 'e'.repeat(64))
+    missingBroker.set('BAYN_PAPER_COMMAND', 'PREPARE')
+    missingBroker.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    expect(
+      await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), missingBroker))),
+    ).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'paper-command',
+      message: 'PREPARE DISCOVER requires a complete Alpaca read binding',
+    })
+
+    const paper = new Map(complete)
+    paper.set('BAYN_PAPER_COMMAND', 'PREPARE')
+    paper.set('BAYN_PAPER_PREPARE_PHASE', 'DISCOVER')
+    paper.set('BAYN_MAXIMUM_AUTHORITY', Authority.Paper)
+    expect(await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), paper)))).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'paper-command',
+      message: 'PREPARE DISCOVER requires OBSERVE maximum authority',
+    })
   })
 
   test('allows no authority generation while autonomous cycle composition is disabled', async () => {

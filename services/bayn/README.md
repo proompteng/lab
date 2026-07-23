@@ -117,6 +117,36 @@ paper mutation capability, execution entry point, and capital-promotion path rem
   the PostgreSQL commit, and one successful continuous check. Strategy rejection is an auditable economic
   `FAIL_CLOSED`; it remains separate from operational health and never expands authority.
 
+## PAPER proof discovery
+
+The production executable has one explicit non-mutating proof-discovery mode. With neither `BAYN_PAPER_COMMAND` nor
+`BAYN_PAPER_PREPARE_PHASE` set, Bayn follows its existing OBSERVE service and HTTP lifecycle unchanged. The only
+accepted command pair is `BAYN_PAPER_COMMAND=PREPARE` with `BAYN_PAPER_PREPARE_PHASE=DISCOVER`; it has no default,
+requires maximum authority `OBSERVE`, a terminal qualification pin, and a complete GET-only Alpaca account binding,
+and exits before the HTTP application or autonomous loop is constructed.
+
+DISCOVER opens one PostgreSQL `REPEATABLE READ, READ ONLY` transaction through the shared client and uses only
+`CycleObservability` and `CycleStore` domain reads. It does not run migrations, create a reconciliation, re-run the
+strategy or target planner, or compose `PaperStore`, `WriterFence`, any intent/mutation store, or broker mutation. The
+latest cycle must be `COMPLETED` with zero unfinished cycles, and its strict persisted shadow document must remain
+`PLANNED`, unexpired, bound to the same cycle, operational snapshot, account, terminal qualification, strategy,
+source-controlled risk policy, and latest exact reconciliation. Durable maximum and effective authority must both be
+`OBSERVE`, the durable authority generation must match the configured decoded generation hash, and every delta must
+have only the mandatory `AuthorityNotPaper` risk failure.
+
+After that immutable read snapshot, DISCOVER performs exactly one account GET and one asset GET for every ordered
+persisted target delta, with bounded concurrency and restored document order. It emits every candidate without
+selecting or filtering one. Persisted quantity, reference-price, notional, and risk values are labeled as historical
+OBSERVE plan facts; they are non-authorizing and are not a future quantity cap. Asset eligibility is an explicit
+review fact covering US equity class, active, tradable, fractionable, non-OTC, no `ipo`, and no `ptp_no_exception`;
+ineligible assets remain in the receipt with all reasons and raw normalized evidence.
+
+The ephemeral typed receipt contains an immutable cycle/document binding hash, a semantic `candidateFactsHash` that
+excludes volatile observation timestamps and request metadata, and a complete observation receipt hash that changes
+with fresh broker evidence. It exposes no Alpaca account number or credentials, writes no dossier, and reports
+`consistencyDelayMs.status=REQUIRED_UNBOUND`; final PREPARE/SUBMIT/CANCEL/RECOVER and fresh SUBMIT-time planning remain
+separate gated work.
+
 ## Endpoints
 
 - `GET /livez`: process liveness.
