@@ -77,6 +77,7 @@ const provideHealthyDependencies = (
       inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
       inspectSnapshotPublication: () =>
         Effect.die(new Error('health probes must not inspect bound cycle publications')),
+      loadSnapshotPublication: () => Effect.die(new Error('health probes must not load bound cycle bars')),
       load: Effect.die(new Error('health probes must not load bars')),
     }),
     Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
@@ -460,6 +461,7 @@ describe('Bayn continuous health', () => {
       inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
       inspectSnapshotPublication: () =>
         Effect.die(new Error('health probes must not inspect bound cycle publications')),
+      loadSnapshotPublication: () => Effect.die(new Error('health probes must not load bound cycle bars')),
       load: Effect.die(new Error('health probes must not load bars')),
     }
     const program = Effect.scoped(
