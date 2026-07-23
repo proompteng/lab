@@ -124,7 +124,6 @@ jobs:
             LAB_GIT_SHA=${{ github.sha }}
             UPSTREAM_IMAGE=${{ matrix.upstream_image }}
           cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }},mode=max
 
   publish-index:
     if: github.event_name != 'pull_request'
