@@ -14,6 +14,8 @@ const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
 const marketCalendarPreflightRangeDays = 14
 const millisecondsPerDay = 86_400_000
+const accountConfigurationObservationSchemaVersion = 'bayn.alpaca-account-configuration-observation.v1' as const
+const accountConfigurationObservationSource = 'alpaca-v2-account-configurations' as const
 const assetObservationSchemaVersion = 'bayn.alpaca-asset-observation.v1' as const
 const assetObservationSource = 'alpaca-v2-asset' as const
 const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v1' as const
@@ -55,9 +57,9 @@ const isUtcTimestamp = (value: string): boolean => {
   )
 }
 const Timestamp = Schema.String.check(Schema.makeFilter(isUtcTimestamp, { expected: 'an RFC 3339 UTC timestamp' }))
-const ClientOrderId = Schema.String.check(
+const ExternalClientOrderId = Schema.String.check(
   Schema.isMinLength(1),
-  Schema.isMaxLength(48),
+  Schema.isMaxLength(128),
   Schema.makeFilter((value: string) => value.trim() === value, {
     expected: 'a non-empty client order ID without surrounding whitespace',
   }),
@@ -216,6 +218,7 @@ export type BrokerReadOperation =
   | 'proxy'
   | 'preflight'
   | 'account'
+  | 'account-configuration'
   | 'positions'
   | 'orders'
   | 'order-by-id'
@@ -283,6 +286,15 @@ export interface Account {
   readonly observedAt: string
 }
 
+export interface AccountConfigurationObservation {
+  readonly schemaVersion: typeof accountConfigurationObservationSchemaVersion
+  readonly source: typeof accountConfigurationObservationSource
+  readonly requestHash: string
+  readonly fractionalTrading: boolean
+  readonly observedAt: string
+  readonly normalizedResponseHash: string
+}
+
 export interface Position {
   readonly accountId: string
   readonly assetId: string
@@ -303,8 +315,8 @@ export interface Order {
   readonly brokerOrderId: string
   readonly clientOrderId: string
   readonly createdAt: string
-  readonly updatedAt: string
-  readonly submittedAt: string
+  readonly updatedAt?: string
+  readonly submittedAt?: string
   readonly filledAt?: string
   readonly expiredAt?: string
   readonly canceledAt?: string
@@ -414,6 +426,7 @@ export interface FillActivitiesQuery {
 
 export interface BrokerReadShape {
   readonly account: Effect.Effect<ReadResult<Account>, BrokerReadError>
+  readonly accountConfiguration: Effect.Effect<ReadResult<AccountConfigurationObservation>, BrokerReadError>
   readonly assetBySymbol: (symbol: string) => Effect.Effect<ReadResult<AssetObservation>, BrokerReadError>
   readonly positions: Effect.Effect<ReadResult<readonly Position[]>, BrokerReadError>
   readonly orders: (query?: OrdersQuery) => Effect.Effect<ReadResult<readonly Order[]>, BrokerReadError>
@@ -456,6 +469,10 @@ const AccountResponseSchema = Schema.Struct({
   trade_suspended_by_user: Schema.Boolean,
 })
 
+const AccountConfigurationResponseSchema = Schema.Struct({
+  fractional_trading: Schema.Boolean,
+})
+
 const PositionResponseSchema = Schema.Struct({
   asset_id: Uuid,
   symbol: SymbolName,
@@ -496,10 +513,10 @@ const AssetResponseSchema = Schema.Struct({
 
 export const OrderResponseSchema = Schema.Struct({
   id: Uuid,
-  client_order_id: ClientOrderId,
+  client_order_id: ExternalClientOrderId,
   created_at: Timestamp,
-  updated_at: Timestamp,
-  submitted_at: Timestamp,
+  updated_at: Schema.optionalKey(Schema.NullOr(Timestamp)),
+  submitted_at: Schema.optionalKey(Schema.NullOr(Timestamp)),
   filled_at: Schema.NullOr(Timestamp),
   expired_at: Schema.NullOr(Timestamp),
   canceled_at: Schema.NullOr(Timestamp),
@@ -515,7 +532,7 @@ export const OrderResponseSchema = Schema.Struct({
   filled_qty: Decimal,
   filled_avg_price: Schema.NullOr(Decimal),
   order_class: Schema.Union([Schema.Literal(''), Schema.Enum(OrderClass)]),
-  order_type: Schema.Enum(OrderType),
+  order_type: Schema.optionalKey(Schema.Enum(OrderType)),
   type: Schema.Enum(OrderType),
   side: Schema.Enum(OrderSide),
   time_in_force: Schema.Enum(TimeInForce),
@@ -621,6 +638,7 @@ const RuntimeOptionsSchema = Schema.Struct({
 type Decoder<A> = (input: unknown) => Effect.Effect<A, unknown>
 
 const decodeAccount = Schema.decodeUnknownEffect(AccountResponseSchema, responseParseOptions)
+const decodeAccountConfiguration = Schema.decodeUnknownEffect(AccountConfigurationResponseSchema, responseParseOptions)
 const decodeAsset = Schema.decodeUnknownEffect(AssetResponseSchema, responseParseOptions)
 const decodePositions = Schema.decodeUnknownEffect(Schema.Array(PositionResponseSchema), responseParseOptions)
 const decodeOrders = Schema.decodeUnknownEffect(Schema.Array(OrderResponseSchema), responseParseOptions)
@@ -634,7 +652,7 @@ const decodeFillActivitiesQuery = Schema.decodeUnknownEffect(FillActivitiesQuery
 const decodeMarketCalendarQuery = Schema.decodeUnknownEffect(MarketCalendarQuerySchema, inputParseOptions)
 const decodeAssetSymbol = Schema.decodeUnknownEffect(SymbolName)
 const decodeOrderId = Schema.decodeUnknownEffect(Uuid)
-const decodeClientOrderId = Schema.decodeUnknownEffect(ClientOrderId)
+const decodeExternalClientOrderId = Schema.decodeUnknownEffect(ExternalClientOrderId)
 const decodeRuntimeOptions = Schema.decodeUnknownEffect(RuntimeOptionsSchema, inputParseOptions)
 
 const redactDiagnostic = (value: string, sensitiveValues: readonly string[]): string =>
@@ -834,6 +852,30 @@ const normalizeAccount = (
   }
 }
 
+const accountConfigurationRequestMaterial = {
+  schemaVersion: accountConfigurationObservationSchemaVersion,
+  source: accountConfigurationObservationSource,
+  method: 'GET',
+  path: '/v2/account/configurations',
+} as const
+
+const normalizeAccountConfiguration = (
+  raw: typeof AccountConfigurationResponseSchema.Type,
+  observedAt: string,
+): AccountConfigurationObservation => {
+  const normalized = {
+    schemaVersion: accountConfigurationObservationSchemaVersion,
+    source: accountConfigurationObservationSource,
+    requestHash: canonicalHashV1(accountConfigurationRequestMaterial),
+    fractionalTrading: raw.fractional_trading,
+  }
+  return {
+    ...normalized,
+    observedAt,
+    normalizedResponseHash: canonicalHashV1(normalized),
+  }
+}
+
 const normalizePosition = (
   raw: typeof PositionResponseSchema.Type,
   accountId: string,
@@ -900,7 +942,9 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
   if (raw.asset_class !== AssetClass.UsEquity) throw new Error(`unsupported order asset class ${raw.asset_class}`)
   if ((raw.qty === null) === (raw.notional === null))
     throw new Error('order must contain exactly one of qty or notional')
-  if (raw.order_type !== raw.type) throw new Error('deprecated order_type does not match type')
+  if (raw.order_type !== undefined && raw.order_type !== raw.type) {
+    throw new Error('deprecated order_type does not match type')
+  }
   if (raw.order_class === OrderClass.MultiLeg) throw new Error('multi-leg orders are outside the Bayn equity contract')
 
   const quantityMicros = raw.qty === null ? undefined : positiveMicros(raw.qty, 'order quantity')
@@ -923,6 +967,8 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
   }
 
   const filledAt = optionalTimestamp(raw.filled_at)
+  const updatedAt = raw.updated_at ?? undefined
+  const submittedAt = raw.submitted_at ?? undefined
   const expiredAt = optionalTimestamp(raw.expired_at)
   const canceledAt = optionalTimestamp(raw.canceled_at)
   const failedAt = optionalTimestamp(raw.failed_at)
@@ -941,8 +987,8 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
     brokerOrderId: raw.id,
     clientOrderId: raw.client_order_id,
     createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
-    submittedAt: raw.submitted_at,
+    ...(updatedAt === undefined ? {} : { updatedAt }),
+    ...(submittedAt === undefined ? {} : { submittedAt }),
     ...(filledAt === undefined ? {} : { filledAt }),
     ...(expiredAt === undefined ? {} : { expiredAt }),
     ...(canceledAt === undefined ? {} : { canceledAt }),
@@ -958,7 +1004,7 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
     filledQuantityMicros,
     ...(filledAveragePriceMicros === undefined ? {} : { filledAveragePriceMicros }),
     orderClass: raw.order_class === '' ? OrderClass.Simple : raw.order_class,
-    orderType: raw.order_type,
+    orderType: raw.type,
     side: raw.side,
     timeInForce: raw.time_in_force,
     ...(limitPriceMicros === undefined ? {} : { limitPriceMicros }),
@@ -1285,6 +1331,18 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
       ),
     )
 
+    const accountConfiguration = readJson(
+      'account-configuration',
+      new URL(accountConfigurationRequestMaterial.path, paperTradingUrl),
+      decodeAccountConfiguration,
+    ).pipe(
+      Effect.flatMap((result) =>
+        normalize('account-configuration', result.evidence, () =>
+          normalizeAccountConfiguration(result.value, result.evidence.observedAt),
+        ),
+      ),
+    )
+
     const positions = readJson('positions', new URL('/v2/positions', paperTradingUrl), decodePositions).pipe(
       Effect.flatMap((result) =>
         normalize('positions', result.evidence, () =>
@@ -1357,7 +1415,12 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
       )
 
     const orderByClientId = (clientOrderId: string) =>
-      decodeInput('order-by-client-id', decodeClientOrderId, clientOrderId, 'invalid Alpaca client order ID').pipe(
+      decodeInput(
+        'order-by-client-id',
+        decodeExternalClientOrderId,
+        clientOrderId,
+        'invalid Alpaca client order ID',
+      ).pipe(
         Effect.flatMap((decoded) => {
           const url = new URL('/v2/orders:by_client_order_id', paperTradingUrl)
           url.searchParams.set('client_order_id', decoded)
@@ -1397,7 +1460,17 @@ export const make = (options: ReadOptions): Effect.Effect<BrokerReadShape, Broke
         ),
       )
 
-    return { account, assetBySymbol, positions, orders, orderById, orderByClientId, fillActivities, marketCalendar }
+    return {
+      account,
+      accountConfiguration,
+      assetBySymbol,
+      positions,
+      orders,
+      orderById,
+      orderByClientId,
+      fillActivities,
+      marketCalendar,
+    }
   })
 
 const missingOrderId = '00000000-0000-4000-8000-000000000000'

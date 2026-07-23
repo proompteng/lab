@@ -350,6 +350,7 @@ describe('Bayn HTTP probes', () => {
     const unused = Effect.die(new Error('status must not invoke broker reads'))
     const read: BrokerReadShape = {
       account: unused,
+      accountConfiguration: unused,
       assetBySymbol: unusedAssetBySymbol,
       positions: unused,
       orders: () => unused,

@@ -379,6 +379,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   const read: BrokerReadShape = {
     account: Effect.die(new Error('unexpected account read')),
+    accountConfiguration: Effect.die(new Error('unexpected account configuration read')),
     assetBySymbol: unusedAssetBySymbol,
     positions: Effect.die(new Error('unexpected positions read')),
     orders: () => Effect.die(new Error('unexpected orders read')),

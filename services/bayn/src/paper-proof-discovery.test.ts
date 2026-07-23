@@ -11,6 +11,7 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
+  type AccountConfigurationObservation,
   type AssetObservation,
   type BrokerReadShape,
   type ReadEvidence,
@@ -243,6 +244,22 @@ const account = (suffix = 'a', time = observedAt): BrokerReadShape['account'] =>
     evidence: evidence(suffix, time),
   })
 
+const accountConfiguration = (
+  suffix = 'configuration',
+  time = observedAt,
+  fractionalTrading = true,
+): ReadResult<AccountConfigurationObservation> => ({
+  value: {
+    schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+    source: 'alpaca-v2-account-configurations',
+    requestHash: hash('a'),
+    fractionalTrading,
+    observedAt: time,
+    normalizedResponseHash: hash(fractionalTrading ? 'b' : 'c'),
+  },
+  evidence: evidence(suffix, time),
+})
+
 const asset = (symbol: string, suffix = symbol.toLowerCase(), time = observedAt): ReadResult<AssetObservation> => {
   const eligible = symbol === 'VNQ'
   return {
@@ -268,6 +285,7 @@ const asset = (symbol: string, suffix = symbol.toLowerCase(), time = observedAt)
 
 interface TestControl {
   assetSymbols: string[]
+  brokerAccountConfigurationReads: number
   brokerAccountReads: number
   cycleReads: number
   decisionReads: number
@@ -278,6 +296,7 @@ interface TestControl {
 
 const control = (): TestControl => ({
   assetSymbols: [],
+  brokerAccountConfigurationReads: 0,
   brokerAccountReads: 0,
   cycleReads: 0,
   decisionReads: 0,
@@ -350,12 +369,16 @@ const stores = (state: TestControl, input: Fixture) => {
   return { observability, cycleStore }
 }
 
-const broker = (state: TestControl, suffix = 'a', time = observedAt): BrokerReadShape => {
+const broker = (state: TestControl, suffix = 'a', time = observedAt, fractionalTrading = true): BrokerReadShape => {
   const unexpected = Effect.die(new Error('unexpected broker read'))
   return {
     account: Effect.sync(() => {
       state.brokerAccountReads += 1
     }).pipe(Effect.andThen(account(suffix, time))),
+    accountConfiguration: Effect.sync(() => {
+      state.brokerAccountConfigurationReads += 1
+      return accountConfiguration(`${suffix}-configuration`, time, fractionalTrading)
+    }),
     assetBySymbol: (symbol) =>
       Effect.sync(() => {
         state.assetSymbols.push(symbol)
@@ -401,8 +424,10 @@ describe('paper proof DISCOVER', () => {
     expect(state.cycleReads).toBe(1)
     expect(state.decisionReads).toBe(1)
     expect(state.brokerAccountReads).toBe(1)
+    expect(state.brokerAccountConfigurationReads).toBe(1)
     expect(state.assetSymbols).toEqual([...symbols])
     expect(receipt).toMatchObject({
+      schemaVersion: 'bayn.paper-proof-discovery.v2',
       command: 'PREPARE',
       phase: 'DISCOVER',
       authority: Authority.Observe,
@@ -413,6 +438,10 @@ describe('paper proof DISCOVER', () => {
         document: { reconciliationId, policyHash },
       },
       candidateFacts: {
+        schemaVersion: 'bayn.paper-proof-candidate-facts.v2',
+        accountConfiguration: {
+          fractionalTrading: true,
+        },
         consistencyDelayMs: { status: 'REQUIRED_UNBOUND' },
         candidates: [
           {
@@ -422,6 +451,7 @@ describe('paper proof DISCOVER', () => {
             observedPlannedQuantityMicros: '1250000',
             observedReferencePriceMicros: '100123500',
             assetEligibility: { eligible: true, reasons: [] },
+            fractionalTradingEligible: true,
           },
           {
             ordinal: 1,
@@ -439,8 +469,15 @@ describe('paper proof DISCOVER', () => {
                 PaperProofCandidateIneligibility.PtpNoException,
               ],
             },
+            fractionalTradingEligible: false,
           },
         ],
+      },
+      observationReceiptSchemaVersion: 'bayn.paper-proof-observation-receipt.v2',
+      observations: {
+        accountConfiguration: {
+          value: { fractionalTrading: true },
+        },
       },
     })
     const serialized = JSON.stringify(receipt)
@@ -475,6 +512,20 @@ describe('paper proof DISCOVER', () => {
           evidence: { ...result.evidence, rateLimit: undefined },
         })),
       ),
+      accountConfiguration: read.accountConfiguration.pipe(
+        Effect.map((result) => ({
+          ...result,
+          evidence: {
+            ...result.evidence,
+            rateLimit: {
+              limit: '200',
+              remaining: '199',
+              reset: undefined,
+              retryAfter: undefined,
+            },
+          },
+        })),
+      ),
       assetBySymbol: (symbol) =>
         read.assetBySymbol(symbol).pipe(
           Effect.map((result) => ({
@@ -504,12 +555,30 @@ describe('paper proof DISCOVER', () => {
           },
         })),
       ),
+      accountConfiguration: normalizedRead.accountConfiguration.pipe(
+        Effect.map((result) => ({
+          ...result,
+          evidence: {
+            requestId: result.evidence.requestId,
+            status: result.evidence.status,
+            contentHash: result.evidence.contentHash,
+            observedAt: result.evidence.observedAt,
+            rateLimit: { limit: '200', remaining: '199' },
+          },
+        })),
+      ),
     }
 
     const receipt = await Effect.runPromise(program(state, fixture(), adapterShaped))
     const normalizedReceipt = await Effect.runPromise(program(normalizedState, fixture(), alreadyNormalized))
 
     expect(receipt.observations.account.evidence).not.toHaveProperty('rateLimit')
+    expect(receipt.observations.accountConfiguration.evidence.rateLimit).toEqual({
+      limit: '200',
+      remaining: '199',
+    })
+    expect(receipt.observations.accountConfiguration.evidence.rateLimit).not.toHaveProperty('reset')
+    expect(receipt.observations.accountConfiguration.evidence.rateLimit).not.toHaveProperty('retryAfter')
     expect(receipt.observations.assets[0]?.evidence.rateLimit).toEqual({ limit: '200', remaining: '199' })
     expect(receipt.observations.assets[0]?.evidence.rateLimit).not.toHaveProperty('reset')
     expect(receipt.observations.assets[0]?.evidence.rateLimit).not.toHaveProperty('retryAfter')
@@ -534,6 +603,41 @@ describe('paper proof DISCOVER', () => {
     expect(error).toMatchObject({
       _tag: 'PaperProofDiscoveryError',
       failure: 'account-mismatch',
+    })
+    expect(state.brokerAccountReads).toBe(1)
+    expect(state.brokerAccountConfigurationReads).toBe(0)
+    expect(state.assetSymbols).toEqual([])
+  })
+
+  test('retains candidates but never marks them fractional-trading eligible when the account setting is disabled', async () => {
+    const state = control()
+    const receipt = await Effect.runPromise(program(state, fixture(), broker(state, 'a', observedAt, false)))
+
+    expect(receipt.candidateFacts.accountConfiguration.fractionalTrading).toBe(false)
+    expect(receipt.candidateFacts.candidates).toHaveLength(symbols.length)
+    expect(receipt.candidateFacts.candidates[0]).toMatchObject({
+      symbol: 'VNQ',
+      assetEligibility: { eligible: true, reasons: [] },
+      fractionalTradingEligible: false,
+    })
+    expect(receipt.candidateFacts.candidates.every((candidate) => !candidate.fractionalTradingEligible)).toBe(true)
+  })
+
+  test('fails typed before asset reads when account configuration evidence is not causal', async () => {
+    const state = control()
+    const read = broker(state)
+    const nonCausal: BrokerReadShape = {
+      ...read,
+      accountConfiguration: Effect.succeed(
+        accountConfiguration('configuration-before-account', '2099-07-24T11:59:59.999Z'),
+      ),
+    }
+
+    const error = await Effect.runPromise(Effect.flip(program(state, fixture(), nonCausal)))
+
+    expect(error).toMatchObject({
+      _tag: 'PaperProofDiscoveryError',
+      failure: 'broker',
     })
     expect(state.brokerAccountReads).toBe(1)
     expect(state.assetSymbols).toEqual([])
@@ -652,6 +756,7 @@ describe('paper proof DISCOVER', () => {
         failure: expectedFailure,
       })
       expect(state.brokerAccountReads, label).toBe(0)
+      expect(state.brokerAccountConfigurationReads, label).toBe(0)
       expect(state.assetSymbols, label).toEqual([])
     }
   })

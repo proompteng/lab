@@ -207,6 +207,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): PaperStore
 
 const emptyRead = (): BrokerReadShape => ({
   account: Effect.succeed({ value: account, evidence: evidence('account') }),
+  accountConfiguration: Effect.die(new Error('unexpected account configuration read')),
   assetBySymbol: unusedAssetBySymbol,
   positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
   orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
@@ -299,6 +300,26 @@ describe('paper reconciliation loop', () => {
       _tag: 'ReconciliationError',
       operation: 'snapshot',
       message: 'paper account has fill history before Bayn established an opening cash baseline',
+    })
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('fails closed before persistence when an order omits submitted_at', async () => {
+    const pendingOrder = { ...order(0), submittedAt: undefined }
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [pendingOrder], evidence: evidence('orders') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+
+    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+
+    expect(failure).toMatchObject({
+      _tag: 'ReconciliationError',
+      operation: 'pagination',
+      message: `Alpaca order ${pendingOrder.brokerOrderId} is missing submitted_at`,
     })
     expect(control.writes).toBe(0)
     expect(control.reconciliations).toEqual([])

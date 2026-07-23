@@ -123,6 +123,7 @@ const brokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): BrokerRe
   const unused = Effect.die(new Error('cycle runner must use only the broker calendar read'))
   return {
     account: unused,
+    accountConfiguration: unused,
     assetBySymbol: unusedAssetBySymbol,
     positions: unused,
     orders: () => unused,

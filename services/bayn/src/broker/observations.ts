@@ -271,6 +271,8 @@ export const orderObservation = (value: AlpacaOrder, evidence: ReadEvidence, int
     throw new Error('paper accounting requires a quantity order')
   }
   if (value.extendedHours) throw new Error('paper execution requires extended hours to be disabled')
+  if (value.updatedAt === undefined) throw new Error('paper order event requires Alpaca updated_at')
+  const updatedAt = value.updatedAt
   const order = {
     schemaVersion: 'bayn.paper-order.v1' as const,
     accountId: value.accountId,
@@ -287,16 +289,16 @@ export const orderObservation = (value: AlpacaOrder, evidence: ReadEvidence, int
     status: orderStatus(value.status, value.filledQuantityMicros, value.quantityMicros),
     observedAt: value.observedAt,
   }
-  const occurredAt = canonicalInstant(value.updatedAt)
+  const occurredAt = canonicalInstant(updatedAt)
   return decodeEvent({
     _tag: 'Order',
     broker: Broker.Alpaca,
     accountId: order.accountId,
-    sourceEventId: `order:${order.brokerOrderId}:${value.updatedAt}`,
+    sourceEventId: `order:${order.brokerOrderId}:${updatedAt}`,
     contentHash: canonicalHashV1({
       schemaVersion: 'bayn.paper-order-source.v1',
       order: withoutObservedAt(order),
-      brokerUpdatedAt: value.updatedAt,
+      brokerUpdatedAt: updatedAt,
     }),
     occurredAt,
     observedAt: order.observedAt,

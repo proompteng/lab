@@ -416,6 +416,7 @@ describe('OBSERVE runtime composition', () => {
     }
     const brokerRead: BrokerReadShape = {
       account: unused,
+      accountConfiguration: unused,
       assetBySymbol: unusedAssetBySymbol,
       positions: unused,
       orders: () => unused,

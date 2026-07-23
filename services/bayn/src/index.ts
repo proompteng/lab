@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Logger, Redacted, Schema, Stdio, Stream } from 
 
 import { run } from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
-import { BrokerRead, alpacaHttpLayer, live as AlpacaReadLive, make as makeAlpacaRead } from './broker/alpaca'
+import { BrokerRead, live as AlpacaReadLive } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
 import { makeRuntimeProvenance, makeStrategyProtocolHash } from './contracts'
@@ -169,17 +169,19 @@ const runPaperProofDiscovery = (config: LoadedRuntimeConfig, strategy: Strategy)
     const postgresLayer = Layer.succeedContext(postgres)
     const observabilityContext = yield* Layer.build(CycleObservabilityLive.pipe(Layer.provide(postgresLayer)))
     const cycleStoreContext = yield* Layer.build(CycleStoreLive.pipe(Layer.provide(postgresLayer)))
-    const brokerRead = yield* makeAlpacaRead({
-      expectedAccountId: alpaca.accountId,
-      key: alpaca.key,
-      secret: alpaca.secret,
-      proxyUrl: alpaca.proxyUrl,
-      operationTimeoutMs: config.operationTimeoutMs,
-      retryAttempts: alpaca.retryAttempts,
-    }).pipe(
-      Effect.provide(alpacaHttpLayer(alpaca.proxyUrl)),
+    const brokerReadContext = yield* Layer.build(
+      AlpacaReadLive({
+        expectedAccountId: alpaca.accountId,
+        key: alpaca.key,
+        secret: alpaca.secret,
+        proxyUrl: alpaca.proxyUrl,
+        operationTimeoutMs: config.operationTimeoutMs,
+        retryAttempts: alpaca.retryAttempts,
+      }),
+    ).pipe(
       Effect.mapError((cause) => operationalError('config', 'alpaca', 'Alpaca paper account binding failed', cause)),
     )
+    const brokerRead = Context.get(brokerReadContext, BrokerRead)
     const receipt = yield* discoverPaperProofCandidates({
       sourceRevision: config.build.sourceRevision,
       image: {
