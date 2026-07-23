@@ -127,7 +127,7 @@ export interface SnapshotRequest {
   readonly evaluationStart: IsoDate
 }
 
-type MarketDataContract = Pick<
+export type MarketDataContract = Pick<
   Protocol,
   'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
 >
@@ -137,21 +137,46 @@ export interface MarketDataSnapshot {
   readonly manifest: InputManifest
 }
 
+export type VerifiedSignalSession = Pick<
+  SignalSessionRow,
+  'calendar_version' | 'session_date' | 'close_time' | 'timezone'
+>
+
 export interface MarketDataInspection {
   readonly manifest: InputManifest
   readonly sessionDates: readonly IsoDate[]
+  readonly signalSession: VerifiedSignalSession
 }
+
+export interface FinalizedPublicationRequest {
+  readonly signalSessionDate: IsoDate
+  readonly signalCalendarVersion: string
+}
+
+export type FinalizedPublicationInspection =
+  | {
+      readonly outcome: 'MISSING'
+      readonly observedAt: string
+    }
+  | {
+      readonly outcome: 'FINALIZED'
+      readonly observedAt: string
+      readonly inspection: MarketDataInspection
+    }
 
 export interface MarketDataService {
   readonly check: Effect.Effect<FinalizedSnapshotProvenance, OperationalError>
   readonly inspect: Effect.Effect<MarketDataInspection, OperationalError>
+  readonly inspectPublication: (
+    request: FinalizedPublicationRequest,
+  ) => Effect.Effect<FinalizedPublicationInspection, OperationalError>
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
 
 export class MarketData extends Context.Service<MarketData, MarketDataService>()('bayn/MarketData') {}
 
 export const marketDataOperationError = (
-  operation: 'check' | 'inspect' | 'load',
+  operation: 'check' | 'inspect' | 'inspect-publication' | 'load',
   message: string,
   cause: unknown,
 ): OperationalError => {
@@ -417,10 +442,53 @@ export const verifyFinalizedCalendar = (
   request: SnapshotRequest,
 ): MarketDataInspection => {
   const calendar = verifyCalendar(rows.sessions, rows.manifests, request)
+  const signalSession = calendar.boundedSessions.at(-1)
+  if (signalSession === undefined) throw new Error('finalized Signal calendar has no terminal session')
   return {
     manifest: calendar.inputManifest,
     sessionDates: calendar.boundedSessions.map((session) => session.session_date),
+    signalSession: {
+      calendar_version: signalSession.calendar_version,
+      session_date: signalSession.session_date,
+      close_time: signalSession.close_time,
+      timezone: signalSession.timezone,
+    },
   }
+}
+
+export const verifyFinalizedPublication = (
+  rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
+  input: FinalizedPublicationRequest,
+  contract: MarketDataContract,
+  observedAt: string,
+): MarketDataInspection | undefined => {
+  if (rows.manifests.length === 0) return undefined
+  if (rows.manifests.length !== 1) {
+    throw new Error(
+      `Signal session ${input.signalSessionDate} has ${rows.manifests.length} finalized manifests; expected exactly one`,
+    )
+  }
+  const manifest = rows.manifests[0]
+  if (manifest === undefined) throw new Error('finalized Signal manifest disappeared during verification')
+  return verifyFinalizedCalendar(rows, {
+    snapshotId: manifest.snapshot_id,
+    publicationAsOf: input.signalSessionDate,
+    calendarVersion: input.signalCalendarVersion,
+    universe: contract.universe,
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: contract.historyStart,
+      dataEnd: input.signalSessionDate,
+      lookbackStart: contract.historyStart,
+      evaluationStart: contract.evaluationStart,
+      evaluationEnd: input.signalSessionDate,
+    },
+    observedAt,
+    universeId: contract.universeId,
+    universeSymbolHash: contract.universeSymbolHash,
+    historyStart: contract.historyStart,
+    evaluationStart: contract.evaluationStart,
+  })
 }
 
 export const verifyFinalizedSnapshot = (rows: SnapshotRows, request: SnapshotRequest): MarketDataSnapshot => {
@@ -566,6 +634,53 @@ const makeMarketData = (
             ORDER BY session_date, symbol
           `.pipe(sql.withQueryId(`bayn-bars-${config.clickhouse.snapshotId.slice(-32)}`))
 
+    const loadPublicationManifests = (request: FinalizedPublicationRequest) =>
+      sql`
+        SELECT
+          snapshot_id,
+          schema_version,
+          publisher_source_revision,
+          publisher_image_repository,
+          publisher_image_digest,
+          universe_id,
+          universe_symbol_hash,
+          provider,
+          source_feed,
+          adjustment,
+          calendar_version,
+          toString(requested_start) AS requested_start,
+          toString(publication_asof) AS publication_asof,
+          toString(first_session) AS first_session,
+          toString(last_session) AS last_session,
+          symbol_count,
+          session_count,
+          bar_count,
+          bars_content_hash,
+          sessions_content_hash,
+          manifest_content_hash,
+          toString(finalized_at) AS finalized_at
+        FROM signal.snapshot_manifests_v2
+        WHERE universe_id = ${sql.param('String', contract.universeId)}
+          AND requested_start = toDate(${sql.param('String', contract.historyStart)})
+          AND publication_asof = toDate(${sql.param('String', request.signalSessionDate)})
+        ORDER BY snapshot_id, finalized_at
+      `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
+
+    const loadPublicationSessions = (snapshotId: string) =>
+      sql`
+        SELECT
+          snapshot_id,
+          calendar_version,
+          toString(session_date) AS session_date,
+          open_time,
+          close_time,
+          timezone,
+          provider
+        FROM signal.exchange_sessions_v1
+        WHERE snapshot_id = ${sql.param('String', snapshotId)}
+        ORDER BY session_date
+      `.pipe(sql.withQueryId(`bayn-cycle-sessions-${snapshotId.slice(-32)}`))
+
     const request = (observedAt: string): SnapshotRequest => {
       const common = {
         snapshotId: config.clickhouse.snapshotId,
@@ -611,6 +726,44 @@ const makeMarketData = (
           marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),
         ),
       ),
+      inspectPublication: (input) =>
+        Effect.gen(function* () {
+          const manifestRows = yield* loadPublicationManifests(input)
+          const manifests = yield* verify(
+            'inspect-publication',
+            () => decodeSnapshotRows([], [], manifestRows).manifests,
+          )
+          const observedAt = (): Effect.Effect<string> =>
+            Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
+          if (manifests.length === 0) {
+            return { outcome: 'MISSING', observedAt: yield* observedAt() } as const
+          }
+          const manifest = manifests[0]
+          if (manifest === undefined) {
+            return yield* verify('inspect-publication', () => {
+              throw new Error('finalized Signal manifest disappeared before its session read')
+            })
+          }
+          const sessionRows = yield* loadPublicationSessions(manifest.snapshot_id)
+          const inspectedAt = yield* observedAt()
+          const inspection = yield* verify('inspect-publication', () =>
+            verifyFinalizedPublication(decodeSnapshotRows([], sessionRows, manifestRows), input, contract, inspectedAt),
+          )
+          if (inspection === undefined) {
+            return yield* verify('inspect-publication', () => {
+              throw new Error('finalized Signal manifest disappeared before verification')
+            })
+          }
+          return { outcome: 'FINALIZED', observedAt: inspectedAt, inspection } as const
+        }).pipe(
+          Effect.mapError((cause) =>
+            marketDataOperationError(
+              'inspect-publication',
+              `failed to inspect finalized Signal publication for ${input.signalSessionDate}`,
+              cause,
+            ),
+          ),
+        ),
       load: Effect.gen(function* () {
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const [manifests, sessions, bars] = yield* Effect.all([loadManifests, loadSessions, loadBars], {

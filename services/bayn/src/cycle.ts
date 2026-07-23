@@ -366,6 +366,13 @@ export type AutonomousCycle = typeof AutonomousCycleSchema.Type
 
 type SignalCycleSessionRow = Pick<SignalSessionRow, 'calendar_version' | 'session_date' | 'close_time' | 'timezone'>
 
+export const signalSessionCloseAt = (signalSession: SignalCycleSessionRow): string => {
+  if (signalSession.timezone !== cycleTimeZone) {
+    throw new TypeError('Signal session timezone must be America/New_York')
+  }
+  return localMarketTimeToUtc(signalSession.session_date, signalSession.close_time)
+}
+
 export const makeCycleExecutionPolicy = (material: CycleExecutionPolicyMaterial): CycleExecutionPolicy => ({
   ...material,
   executionPolicyHash: canonicalHashV1(material),
@@ -422,7 +429,7 @@ export const makeCycleWindow = (
   } catch {
     throw new TypeError('selected broker calendar session is invalid')
   }
-  const signalCloseAt = localMarketTimeToUtc(signalSession.session_date, signalSession.close_time)
+  const signalCloseAt = signalSessionCloseAt(signalSession)
   const executionOpenAt = executionCalendar.executionOpenAt
   const submissionCutoffAt = new Date(Date.parse(executionOpenAt) - submissionCutoffBeforeOpenMs).toISOString()
   const submissionOpenAt = new Date(Date.parse(submissionCutoffAt) - submissionWindowMs).toISOString()

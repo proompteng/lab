@@ -6,9 +6,11 @@ import {
   marketDataOperationError,
   verifyFinalizedCalendar,
   verifyFinalizedManifest,
+  verifyFinalizedPublication,
   verifyFinalizedSnapshot,
   type SnapshotRows,
   type SnapshotRequest,
+  type FinalizedPublicationRequest,
 } from './market-data'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
@@ -162,7 +164,7 @@ const makeFixture = (): {
 
 describe('finalized Signal snapshot reader', () => {
   test('preserves ClickHouse retryability for check, inspect, and load failures', () => {
-    for (const operation of ['check', 'inspect', 'load'] as const) {
+    for (const operation of ['check', 'inspect', 'inspect-publication', 'load'] as const) {
       const authorization = marketDataOperationError(
         operation,
         'Signal query failed',
@@ -236,6 +238,80 @@ describe('finalized Signal snapshot reader', () => {
 
     expect(inspection.manifest).toEqual(snapshot.manifest)
     expect(inspection.sessionDates).toEqual(['2025-01-02', '2025-01-03'])
+    expect(inspection.signalSession).toEqual({
+      calendar_version: 'alpaca-us-equity-calendar-v1',
+      session_date: '2025-01-03',
+      close_time: '16:00',
+      timezone: 'America/New_York',
+    })
+  })
+
+  test('resolves one exact finalized cycle publication and exposes its verified Signal session', () => {
+    const fixture = makeFixture()
+    const contract = {
+      universeId: fixture.request.universeId,
+      universeSymbolHash: fixture.request.universeSymbolHash,
+      universe: fixture.request.universe,
+      historyStart: fixture.request.historyStart,
+      evaluationStart: fixture.request.evaluationStart,
+    }
+    const input = {
+      signalSessionDate: '2025-01-03',
+      signalCalendarVersion: fixture.request.calendarVersion,
+    } satisfies FinalizedPublicationRequest
+    const rows = { manifests: fixture.rows.manifests, sessions: fixture.rows.sessions }
+
+    expect(
+      verifyFinalizedPublication({ manifests: [], sessions: [] }, input, contract, fixture.request.observedAt),
+    ).toBe(undefined)
+    const inspection = verifyFinalizedPublication(rows, input, contract, fixture.request.observedAt)
+    expect(inspection).toMatchObject({
+      manifest: {
+        bounds: {
+          dataStart: '2025-01-02',
+          dataEnd: '2025-01-03',
+          evaluationEnd: '2025-01-03',
+        },
+        finalizedSnapshot: {
+          snapshotId,
+          asOfSession: '2025-01-03',
+        },
+      },
+      signalSession: {
+        calendar_version: 'alpaca-us-equity-calendar-v1',
+        session_date: '2025-01-03',
+        close_time: '16:00',
+        timezone: 'America/New_York',
+      },
+    })
+
+    expect(() =>
+      verifyFinalizedPublication(
+        { ...rows, manifests: [...rows.manifests, rows.manifests[0]] },
+        input,
+        contract,
+        fixture.request.observedAt,
+      ),
+    ).toThrow('2 finalized manifests; expected exactly one')
+    expect(() =>
+      verifyFinalizedPublication(
+        { ...rows, sessions: rows.sessions.slice(0, -1) },
+        input,
+        contract,
+        fixture.request.observedAt,
+      ),
+    ).toThrow('exchange-session count does not match manifest')
+    expect(() =>
+      verifyFinalizedPublication(
+        {
+          ...rows,
+          manifests: [{ ...rows.manifests[0], universe_symbol_hash: '0'.repeat(64) }],
+        },
+        input,
+        contract,
+        fixture.request.observedAt,
+      ),
+    ).toThrow('manifest content hash is invalid')
   })
 
   test('rejects duplicate manifests, sessions, and bars', () => {

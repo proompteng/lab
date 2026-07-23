@@ -46,6 +46,7 @@ import type {
   ReconciliationResult,
 } from '../types'
 import { migrationLoader } from './migrations'
+import { ensureSnapshotReference as ensureSnapshotReferenceRow } from './snapshot-reference'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
 
@@ -1109,42 +1110,9 @@ const makeEvidenceStore = Effect.gen(function* () {
 
   const ensureSnapshotReference = (inputManifest: InputManifest) =>
     Effect.gen(function* () {
-      const snapshot = inputManifest.finalizedSnapshot
-      yield* sql`
-        INSERT INTO snapshot_references (
-          snapshot_id,
-          schema_version,
-          database_name,
-          table_name,
-          dataset_version,
-          source,
-          source_feed,
-          adjustment,
-          content_hash,
-          row_count,
-          first_session,
-          last_session,
-          manifest
-        ) VALUES (
-          ${snapshot.snapshotId},
-          ${snapshot.schemaVersion},
-          ${inputManifest.database},
-          ${inputManifest.tables.bars},
-          ${snapshot.publicationSchemaVersion},
-          ${snapshot.source},
-          ${snapshot.sourceFeed},
-          ${snapshot.adjustment},
-          ${snapshot.contentHash},
-          ${snapshot.rowCount},
-          ${snapshot.firstSession},
-          ${snapshot.lastSession},
-          ${sql.json(snapshot)}
-        )
-        ON CONFLICT (snapshot_id) DO NOTHING
-      `
-      const storedSnapshot = yield* getSnapshot({ snapshotId: snapshot.snapshotId })
+      const matches = yield* ensureSnapshotReferenceRow(sql, inputManifest)
       yield* ensure(
-        snapshotReferenceMatches(storedSnapshot, inputManifest),
+        matches,
         'snapshot-reference',
         'stored snapshot reference diverged from the evaluated input manifest',
       )

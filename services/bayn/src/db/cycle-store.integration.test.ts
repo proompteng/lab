@@ -17,9 +17,9 @@ import {
   type CycleDraft,
 } from '../cycle'
 import { runAutonomousCyclePass, type CycleCandidate, type CycleRunResult } from '../cycle-runner'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1, sha256 } from '../hash'
 import type { SignalSessionRow } from '../market-data'
-import type { IsoDate } from '../types'
+import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
 import { CycleStore, CycleStoreLive } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
 import { migrationLoader } from './migrations'
@@ -120,6 +120,68 @@ const insertSnapshotReference = (
     `
   })
 
+const makeInputManifest = (
+  snapshotId: string,
+  options: {
+    readonly calendarVersion?: string
+    readonly lastSession?: IsoDate
+  } = {},
+): InputManifest => {
+  const lastSession = options.lastSession ?? '2026-03-06'
+  const symbol = 'SPY'
+  const finalizedSnapshot = {
+    schemaVersion: 'bayn.finalized-snapshot.v3' as const,
+    snapshotId,
+    publicationId: snapshotId,
+    publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV2,
+    universeId: 'cross-asset-taa-v1' as const,
+    universeSymbolHash: sha256(symbol),
+    source: DataSource.Alpaca,
+    sourceFeed: DataFeed.Sip,
+    adjustment: PriceAdjustment.All,
+    calendarVersion: options.calendarVersion ?? signalCalendarVersion,
+    publisherSourceRevision: '1'.repeat(40),
+    publisherImage: {
+      repository: 'registry.example.com/signal-publisher',
+      digest: `sha256:${'2'.repeat(64)}`,
+    },
+    finalizedAt: '2026-03-06T21:01:00.000Z',
+    requestedStart: lastSession,
+    firstSession: lastSession,
+    lastSession,
+    asOfSession: lastSession,
+    symbols: [symbol],
+    rowCount: 1,
+    sessionCount: 1,
+    contentHash: snapshotId,
+    sessionsContentHash: '3'.repeat(64),
+  }
+  const material: Omit<InputManifest, 'hash'> = {
+    schemaVersion: 'bayn.input-manifest.v3',
+    database: 'signal',
+    tables: {
+      bars: 'adjusted_daily_bars_v2',
+      sessions: 'exchange_sessions_v1',
+      manifests: 'snapshot_manifests_v2',
+    },
+    bounds: {
+      schemaVersion: 'bayn.evaluation-bounds.v1',
+      dataStart: lastSession,
+      dataEnd: lastSession,
+      lookbackStart: lastSession,
+      evaluationStart: lastSession,
+      evaluationEnd: lastSession,
+    },
+    rowCount: 1,
+    sessionCount: 1,
+    firstSession: lastSession,
+    lastSession,
+    symbols: [{ symbol, rows: 1, firstSession: lastSession, lastSession }],
+    finalizedSnapshot,
+  }
+  return { ...material, hash: canonicalHashV1(material) }
+}
+
 const acquireAt = '2026-03-06T21:01:00.000Z'
 const snapshotAt = '2026-03-06T21:02:00.000Z'
 const activeAt = '2026-03-06T21:03:00.000Z'
@@ -207,16 +269,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     await runtime.dispose()
     runtime = makeRuntime()
     await runtime.runPromise(PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }))
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* insertSnapshotReference(snapshotA)
-        yield* insertSnapshotReference(snapshotB)
-        yield* insertSnapshotReference(staleSnapshot, { lastSession: '2026-03-05' })
-        yield* insertSnapshotReference(wrongCalendarSnapshot, {
-          calendarVersion: 'signal-XNYS-2026-revised',
-        })
-      }),
-    )
   })
 
   afterAll(async () => {
@@ -413,7 +465,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.count).toBe(1)
   })
 
-  test('requires durable snapshots, rejects pre-close binding, and serializes competing bindings', async () => {
+  test('atomically persists publications, rejects invalid timing/provenance, and serializes competing bindings', async () => {
     const temporalDraft = makeDraft('paper-account-temporal')
     const bindingDraft = makeDraft('paper-account-binding')
     const result = await runtime.runPromise(
@@ -422,38 +474,58 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
         yield* store.acquire(temporalDraft, '2026-03-06T20:58:00.000Z')
         const preClose = yield* Effect.exit(
-          store.bindSnapshot(temporalDraft.identity.cycleId, snapshotA, '2026-03-06T20:59:00.000Z'),
+          store.bindSnapshot(temporalDraft.identity.cycleId, makeInputManifest(snapshotA), '2026-03-06T20:59:00.000Z'),
         )
         const atClose = yield* store.bindSnapshot(
           temporalDraft.identity.cycleId,
-          snapshotA,
+          makeInputManifest(snapshotA),
           temporalDraft.window.signalCloseAt,
         )
 
         yield* store.acquire(bindingDraft, acquireAt)
+        yield* insertSnapshotReference(missingSnapshot)
         const missingReference = yield* Effect.exit(
-          store.bindSnapshot(bindingDraft.identity.cycleId, missingSnapshot, snapshotAt),
+          store.bindSnapshot(bindingDraft.identity.cycleId, makeInputManifest(missingSnapshot), snapshotAt),
         )
         const staleReference = yield* Effect.exit(
-          store.bindSnapshot(bindingDraft.identity.cycleId, staleSnapshot, snapshotAt),
+          store.bindSnapshot(
+            bindingDraft.identity.cycleId,
+            makeInputManifest(staleSnapshot, { lastSession: '2026-03-05' }),
+            snapshotAt,
+          ),
         )
         const wrongCalendarReference = yield* Effect.exit(
-          store.bindSnapshot(bindingDraft.identity.cycleId, wrongCalendarSnapshot, snapshotAt),
+          store.bindSnapshot(
+            bindingDraft.identity.cycleId,
+            makeInputManifest(wrongCalendarSnapshot, { calendarVersion: 'signal-XNYS-2026-revised' }),
+            snapshotAt,
+          ),
         )
         const bindingExits = yield* Effect.all(
           [
-            Effect.exit(store.bindSnapshot(bindingDraft.identity.cycleId, snapshotA, snapshotAt)),
-            Effect.exit(store.bindSnapshot(bindingDraft.identity.cycleId, snapshotB, snapshotAt)),
+            Effect.exit(store.bindSnapshot(bindingDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)),
+            Effect.exit(store.bindSnapshot(bindingDraft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)),
           ],
           { concurrency: 'unbounded' },
         )
         const selectedSnapshot = bindingExits.find(Exit.isSuccess)?.value.cycle.bindings.snapshotId ?? snapshotA
-        const rebound = yield* store.bindSnapshot(bindingDraft.identity.cycleId, selectedSnapshot, snapshotAt)
+        const rebound = yield* store.bindSnapshot(
+          bindingDraft.identity.cycleId,
+          makeInputManifest(selectedSnapshot),
+          snapshotAt,
+        )
+        const sql = yield* PgClient.PgClient
+        const references = yield* sql<{ snapshot_id: string }>`
+          SELECT snapshot_id
+          FROM snapshot_references
+          ORDER BY snapshot_id
+        `
         return {
           atClose,
           bindingExits,
           missingReference,
           preClose,
+          references,
           rebound,
           staleReference,
           wrongCalendarReference,
@@ -467,21 +539,31 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     }
     expect(result.atClose.changed).toBe(true)
     expect(Exit.isFailure(result.missingReference)).toBe(true)
+    if (Exit.isFailure(result.missingReference)) {
+      expect(Cause.pretty(result.missingReference.cause)).toContain(
+        'stored snapshot reference diverged from the finalized Signal publication',
+      )
+    }
     expect(Exit.isFailure(result.staleReference)).toBe(true)
     if (Exit.isFailure(result.staleReference)) {
       expect(Cause.pretty(result.staleReference.cause)).toContain(
-        'autonomous cycle snapshot does not match signal session and calendar',
+        'finalized Signal publication does not match the cycle signal session and calendar',
       )
     }
     expect(Exit.isFailure(result.wrongCalendarReference)).toBe(true)
     if (Exit.isFailure(result.wrongCalendarReference)) {
       expect(Cause.pretty(result.wrongCalendarReference.cause)).toContain(
-        'autonomous cycle snapshot does not match signal session and calendar',
+        'finalized Signal publication does not match the cycle signal session and calendar',
       )
     }
     expect(result.bindingExits.filter(Exit.isSuccess)).toHaveLength(1)
     expect(result.bindingExits.filter(Exit.isFailure)).toHaveLength(1)
     expect(result.rebound.changed).toBe(false)
+    expect(result.references.map((row) => row.snapshot_id)).not.toContain(staleSnapshot)
+    expect(result.references.map((row) => row.snapshot_id)).not.toContain(wrongCalendarSnapshot)
+    const reboundSnapshotId = result.rebound.cycle.bindings.snapshotId
+    if (reboundSnapshotId === undefined) throw new Error('successful binding must retain its snapshot ID')
+    expect(result.references.map((row) => row.snapshot_id)).toContain(reboundSnapshotId)
   })
 
   test('keeps completion unreachable and preserves blocked terminal history across runtimes', async () => {
@@ -490,7 +572,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       Effect.gen(function* () {
         const store = yield* CycleStore
         yield* store.acquire(draft, acquireAt)
-        yield* store.bindSnapshot(draft.identity.cycleId, snapshotA, snapshotAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         yield* store.activate(draft.identity.cycleId, activeAt)
         yield* store.bindDecision(draft.identity.cycleId, decisionHash, decisionAt)
 
@@ -572,7 +654,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       Effect.gen(function* () {
         const store = yield* CycleStore
         yield* store.acquire(initialDraft, acquireAt)
-        yield* store.bindSnapshot(initialDraft.identity.cycleId, snapshotA, snapshotAt)
+        yield* store.bindSnapshot(initialDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const sql = yield* PgClient.PgClient
         const invalidInitialActive = yield* Effect.exit(sql`
           INSERT INTO autonomous_cycles (
@@ -617,7 +699,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         `)
 
         yield* store.acquire(activationDraft, acquireAt)
-        yield* store.bindSnapshot(activationDraft.identity.cycleId, snapshotA, snapshotAt)
+        yield* store.bindSnapshot(activationDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const earlySubmissionMiss = yield* Effect.exit(
           store.block(
             activationDraft.identity.cycleId,
@@ -631,14 +713,14 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         )
 
         yield* store.acquire(afterCutoffDraft, acquireAt)
-        yield* store.bindSnapshot(afterCutoffDraft.identity.cycleId, snapshotA, snapshotAt)
+        yield* store.bindSnapshot(afterCutoffDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         const activationAfterCutoff = yield* store.activate(
           afterCutoffDraft.identity.cycleId,
           new Date(Date.parse(afterCutoffDraft.window.submissionCutoffAt) + 1).toISOString(),
         )
 
         yield* store.acquire(decisionDraft, acquireAt)
-        yield* store.bindSnapshot(decisionDraft.identity.cycleId, snapshotB, snapshotAt)
+        yield* store.bindSnapshot(decisionDraft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
         yield* store.activate(decisionDraft.identity.cycleId, activeAt)
         const decisionAtCutoff = yield* store.bindDecision(
           decisionDraft.identity.cycleId,

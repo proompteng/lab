@@ -71,8 +71,15 @@ const marketDataService = (load: MarketDataService['load']): MarketDataService =
     return {
       manifest: snapshot.manifest,
       sessionDates: [...new Set(snapshot.bars.map((bar) => bar.sessionDate))].sort(),
+      signalSession: {
+        calendar_version: snapshot.manifest.finalizedSnapshot.calendarVersion,
+        session_date: snapshot.manifest.lastSession,
+        close_time: '16:00',
+        timezone: 'America/New_York',
+      },
     }
   }),
+  inspectPublication: () => Effect.die(new Error('resource lifecycle must not inspect cycle publications')),
   load,
 })
 
