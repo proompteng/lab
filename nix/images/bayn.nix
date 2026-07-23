@@ -20,14 +20,15 @@ import ./bun-workspace-service.nix {
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
   depsHash = {
-    x86_64-linux = "sha256-3T9NleNP3UBEZPRTft2TnFqWzjiElCQClS+tS+RJJJ8=";
-    aarch64-linux = "sha256-hROeunyxMcEa5uVtPM+AHHkuYvzV1aqx7YYeEK1EsWs=";
+    x86_64-linux = "sha256-rHuG2j4rs9YZ1FIz6QCNnF8Nj0/10oUeMUZdqMeKi7I=";
+    aarch64-linux = "sha256-pn7Lh1Y8RLuKGy5erc/da0DbWgUvoipnaMMWGgzM9+Q=";
   };
   installFilters = [
     "@proompteng/bayn"
   ];
   sourcePaths = [
     "services/bayn"
+    "packages/scripts/src/bayn/update-manifests.ts"
   ];
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
