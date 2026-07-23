@@ -63,7 +63,7 @@ export interface AutonomousCycleRuntimeConfig {
 }
 
 export interface AuthorityGenerationRuntimeConfig {
-  readonly authorityGenerationHash: string
+  readonly authorityGenerationHash?: string
 }
 
 export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig & AuthorityGenerationRuntimeConfig
@@ -114,7 +114,7 @@ const runtimeConfig = Config.all({
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
   cyclePollIntervalMs: operationalThreshold('BAYN_CYCLE_POLL_INTERVAL_MS', 30_000),
-  authorityGenerationHash: Config.schema(Sha256Schema, 'BAYN_AUTHORITY_GENERATION_HASH'),
+  authorityGenerationHash: Config.option(Config.schema(Sha256Schema, 'BAYN_AUTHORITY_GENERATION_HASH')),
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
@@ -162,7 +162,7 @@ const runtimeConfig = Config.all({
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
     unknownMutationThresholdMs: config.unknownMutationThresholdMs,
     cyclePollIntervalMs: config.cyclePollIntervalMs,
-    authorityGenerationHash: config.authorityGenerationHash,
+    authorityGenerationHash: Option.getOrUndefined(config.authorityGenerationHash),
     configuredAlpaca: {
       accountId: config.alpacaAccountId,
       key: config.alpacaKey,
@@ -254,6 +254,19 @@ export const loadConfig = (
       if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
         return Effect.fail(
           operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
+        )
+      }
+      if (
+        config.maximumAuthority === Authority.Observe &&
+        Option.isSome(alpaca) &&
+        config.authorityGenerationHash === undefined
+      ) {
+        return Effect.fail(
+          operationalError(
+            'config',
+            'authority-generation',
+            'OBSERVE autonomous cycle composition requires an authority generation hash',
+          ),
         )
       }
       const { configuredAlpaca: _configuredAlpaca, ...runtime } = config

@@ -93,9 +93,22 @@ describe('Effect configuration', () => {
     expect(config.qualificationRunId).toBe('e'.repeat(64))
   })
 
-  test('requires an explicit valid source-controlled authority generation hash', async () => {
+  test('allows no authority generation while autonomous cycle composition is disabled', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.delete('BAYN_AUTHORITY_GENERATION_HASH')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+
+    expect(config.authorityGenerationHash).toBeUndefined()
+    expect(config.alpaca).toBeUndefined()
+  })
+
+  test('requires an explicit valid authority generation for OBSERVE broker composition', async () => {
     for (const value of [undefined, 'not-a-generation-hash']) {
       const environment = new Map(runtimeEnvironment)
+      environment.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+      environment.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+      environment.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
       if (value === undefined) {
         environment.delete('BAYN_AUTHORITY_GENERATION_HASH')
       } else {
@@ -107,7 +120,7 @@ describe('Effect configuration', () => {
       expect(error).toMatchObject({
         _tag: 'OperationalError',
         component: 'config',
-        operation: 'load',
+        operation: value === undefined ? 'authority-generation' : 'load',
       })
     }
   })

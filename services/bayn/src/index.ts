@@ -140,6 +140,16 @@ const main = Effect.gen(function* () {
       )
       reconciliation = runContinuously(config.alpaca.reconciliationIntervalMs).pipe(Effect.provide(paperExecution))
     } else {
+      const authorityGenerationHash = config.authorityGenerationHash
+      if (authorityGenerationHash === undefined) {
+        return yield* Effect.fail(
+          operationalError(
+            'config',
+            'authority-generation',
+            'OBSERVE autonomous cycle composition requires an authority generation hash',
+          ),
+        )
+      }
       const cycleStoreContext = yield* Layer.build(
         CycleStoreLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore))),
       ).pipe(
@@ -154,7 +164,7 @@ const main = Effect.gen(function* () {
       )
       autonomousCycleStartup = makeObserveAutonomousCycleStartup({
         accountId: config.alpaca.accountId,
-        authorityGenerationHash: config.authorityGenerationHash,
+        authorityGenerationHash,
         brokerRead,
         cycleStore: Context.get(cycleStoreContext, CycleStore),
         marketData: marketDataService,
