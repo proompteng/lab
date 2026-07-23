@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 
 import type { MarketCalendarObservation } from './broker/alpaca'
+import { makeExecutionCalendarObservation, type AutonomousCycle } from './cycle'
 import { canonicalHashV1 } from './hash'
 import type { ExecutionModel } from './protocol'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions as StrictParseOptions } from './schemas'
@@ -155,6 +156,10 @@ export interface BindExecutionSessionInput {
   readonly executionModel: ExecutionModel
 }
 
+export interface BindCycleExecutionSessionInput extends BindExecutionSessionInput {
+  readonly cycle: AutonomousCycle
+}
+
 const decodeBinding = Schema.decodeUnknownSync(ExecutionSessionBindingSchema, StrictParseOptions)
 
 const observationMaterial = (observation: MarketCalendarObservation) => ({
@@ -214,4 +219,40 @@ export const bindExecutionSession = (input: BindExecutionSessionInput): Executio
     submissionCutoffLeadMinutes: cutoffLeadMinutes,
   } as const
   return decodeBinding({ ...material, bindingHash: canonicalHashV1(material) })
+}
+
+export const bindCycleExecutionSession = (input: BindCycleExecutionSessionInput): ExecutionSessionBinding => {
+  const binding = bindExecutionSession(input)
+  const cycle = input.cycle
+  const selectedObservation = makeExecutionCalendarObservation({
+    schemaVersion: binding.calendar.schemaVersion,
+    source: binding.calendar.source,
+    ...binding.executionSession,
+  })
+  if (
+    binding.signal.sessionDate !== cycle.identity.signalSessionDate ||
+    binding.executionSession.date !== cycle.identity.executionSessionDate ||
+    binding.executionSession.date !== cycle.window.executionSessionDate ||
+    binding.executionSession.openAt !== cycle.window.executionOpenAt ||
+    binding.executionSession.closeAt !== cycle.window.executionCloseAt ||
+    selectedObservation.executionCalendarSchemaVersion !== cycle.identity.executionCalendarSchemaVersion ||
+    selectedObservation.executionCalendarSchemaVersion !== cycle.window.executionCalendarSchemaVersion ||
+    selectedObservation.executionCalendarSource !== cycle.identity.executionCalendarSource ||
+    selectedObservation.executionCalendarSource !== cycle.window.executionCalendarSource ||
+    selectedObservation.executionCalendarHash !== cycle.identity.executionCalendarHash ||
+    selectedObservation.executionCalendarHash !== cycle.window.executionCalendarHash
+  ) {
+    throw new TypeError('execution-session binding does not match the durable cycle calendar')
+  }
+  if (
+    canonicalHashV1(input.executionModel) !== cycle.identity.executionPolicy.strategyExecutionModelHash ||
+    binding.submissionCutoffLeadMinutes * 60_000 !== cycle.identity.executionPolicy.submissionCutoffBeforeOpenMs ||
+    binding.submissionCutoffAt !== cycle.window.submissionCutoffAt
+  ) {
+    throw new TypeError('execution-session binding does not match the durable cycle execution policy')
+  }
+  if (binding.submissionOpenAt < cycle.window.submissionOpenAt) {
+    throw new TypeError('execution-session binding cannot widen the durable cycle submission window')
+  }
+  return binding
 }

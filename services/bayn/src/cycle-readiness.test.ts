@@ -157,6 +157,7 @@ const marketDataService = (
     inspectCyclePublications: unused,
     inspectPublication,
     inspectSnapshotPublication,
+    loadSnapshotPublication: () => unused,
     load: unused,
   }
 }

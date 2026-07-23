@@ -86,6 +86,7 @@ const marketDataService = (load: MarketDataService['load']): MarketDataService =
   inspectPublication: () => Effect.die(new Error('resource lifecycle must not inspect cycle publications')),
   inspectSnapshotPublication: () =>
     Effect.die(new Error('resource lifecycle must not inspect bound cycle publications')),
+  loadSnapshotPublication: () => load,
   load,
 })
 

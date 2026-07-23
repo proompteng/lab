@@ -192,6 +192,9 @@ export interface MarketDataService {
   readonly inspectSnapshotPublication: (
     request: SnapshotPublicationRequest,
   ) => Effect.Effect<FinalizedPublicationInspection, OperationalError>
+  readonly loadSnapshotPublication: (
+    request: SnapshotPublicationRequest,
+  ) => Effect.Effect<MarketDataSnapshot, OperationalError>
   readonly load: Effect.Effect<MarketDataSnapshot, OperationalError>
 }
 
@@ -771,6 +774,28 @@ const makeMarketData = (
         ORDER BY session_date
       `.pipe(sql.withQueryId(`bayn-cycle-sessions-${snapshotId.slice(-32)}`))
 
+    const loadSnapshotPublicationBars = (snapshotId: string) =>
+      sql`
+        SELECT
+          snapshot_id,
+          symbol,
+          toString(session_date) AS session_date,
+          toDecimalString(adjusted_open, 8) AS adjusted_open,
+          toDecimalString(adjusted_high, 8) AS adjusted_high,
+          toDecimalString(adjusted_low, 8) AS adjusted_low,
+          toDecimalString(adjusted_close, 8) AS adjusted_close,
+          toDecimalString(adjusted_volume, 8) AS adjusted_volume,
+          toString(trade_count) AS trade_count,
+          if(isNull(vwap), NULL, toDecimalString(vwap, 8)) AS vwap,
+          provider,
+          source_feed,
+          adjustment,
+          toString(publication_asof) AS publication_asof
+        FROM signal.adjusted_daily_bars_v2
+        WHERE snapshot_id = ${sql.param('String', snapshotId)}
+        ORDER BY session_date, symbol
+      `.pipe(sql.withQueryId(`bayn-bound-bars-${snapshotId.slice(-32)}`))
+
     const loadCyclePublicationSessions = (snapshotIds: readonly string[]) =>
       sql`
         SELECT
@@ -803,6 +828,25 @@ const makeMarketData = (
         evaluationStart: contract.evaluationStart,
       }
     }
+    const snapshotPublicationRequest = (input: SnapshotPublicationRequest, observedAt: string): SnapshotRequest => ({
+      snapshotId: input.snapshotId,
+      publicationAsOf: input.signalSessionDate,
+      calendarVersion: input.signalCalendarVersion,
+      universe: contract.universe,
+      bounds: {
+        schemaVersion: 'bayn.evaluation-bounds.v1',
+        dataStart: contract.historyStart,
+        dataEnd: input.signalSessionDate,
+        lookbackStart: contract.historyStart,
+        evaluationStart: contract.evaluationStart,
+        evaluationEnd: input.signalSessionDate,
+      },
+      observedAt,
+      universeId: contract.universeId,
+      universeSymbolHash: contract.universeSymbolHash,
+      historyStart: contract.historyStart,
+      evaluationStart: contract.evaluationStart,
+    })
     const verify = <A>(operation: string, body: () => A): Effect.Effect<A, OperationalError> =>
       Effect.try({
         try: body,
@@ -970,6 +1014,32 @@ const makeMarketData = (
             marketDataOperationError(
               'inspect-publication',
               `failed to inspect bound finalized Signal publication ${input.snapshotId}`,
+              cause,
+            ),
+          ),
+        ),
+      loadSnapshotPublication: (input) =>
+        Effect.gen(function* () {
+          const [manifests, sessions, bars] = yield* Effect.all(
+            [
+              loadSnapshotPublicationManifest(input),
+              loadPublicationSessions(input.snapshotId),
+              loadSnapshotPublicationBars(input.snapshotId),
+            ],
+            { concurrency: 3 },
+          )
+          const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+          return yield* verify('verify', () =>
+            verifyFinalizedSnapshot(
+              decodeSnapshotRows(bars, sessions, manifests),
+              snapshotPublicationRequest(input, observedAt),
+            ),
+          )
+        }).pipe(
+          Effect.mapError((cause) =>
+            marketDataOperationError(
+              'load',
+              `failed to load bound finalized Signal snapshot ${input.snapshotId}`,
               cause,
             ),
           ),
