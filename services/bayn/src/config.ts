@@ -18,10 +18,16 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
   readonly verification: 'embedded' | 'development-configured'
 }
 
+export interface PaperProofRuntimeCommand {
+  readonly command: 'PREPARE'
+  readonly phase: 'DISCOVER'
+}
+
 export interface RuntimeConfig {
   readonly host: string
   readonly port: number
   readonly qualificationRunId?: string
+  readonly paperProofCommand?: PaperProofRuntimeCommand
   readonly maximumAuthority: Authority
   readonly build: RuntimeBuildMetadata
   readonly healthIntervalMs: number
@@ -102,6 +108,8 @@ const runtimeConfig = Config.all({
   strategyParameterHash: Config.schema(Sha256Schema, 'BAYN_STRATEGY_PARAMETER_HASH'),
   provenanceMode: Config.schema(ProvenanceMode, 'BAYN_PROVENANCE_MODE').pipe(Config.withDefault('production')),
   qualificationRunId: Config.option(Config.schema(Sha256Schema, 'BAYN_QUALIFICATION_RUN_ID')),
+  paperProofCommand: Config.option(Config.schema(Schema.Literal('PREPARE'), 'BAYN_PAPER_COMMAND')),
+  paperProofPhase: Config.option(Config.schema(Schema.Literal('DISCOVER'), 'BAYN_PAPER_PREPARE_PHASE')),
   maximumAuthority: Config.schema(Schema.Enum(Authority), 'BAYN_MAXIMUM_AUTHORITY').pipe(
     Config.withDefault(Authority.Observe),
   ),
@@ -144,6 +152,8 @@ const runtimeConfig = Config.all({
     host: config.host,
     port: config.port,
     qualificationRunId: Option.getOrUndefined(config.qualificationRunId),
+    configuredPaperProofCommand: config.paperProofCommand,
+    configuredPaperProofPhase: config.paperProofPhase,
     maximumAuthority: config.maximumAuthority,
     configuredBuild: {
       sourceRevision: config.sourceRevision,
@@ -266,12 +276,57 @@ export const loadConfig = (
           operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
         )
       }
+      const commandConfigured = Option.isSome(config.configuredPaperProofCommand)
+      const phaseConfigured = Option.isSome(config.configuredPaperProofPhase)
+      if (commandConfigured !== phaseConfigured) {
+        return Effect.fail(
+          operationalError(
+            'config',
+            'paper-command',
+            'BAYN_PAPER_COMMAND and BAYN_PAPER_PREPARE_PHASE must be configured together',
+          ),
+        )
+      }
+      if (commandConfigured) {
+        if (config.maximumAuthority !== Authority.Observe) {
+          return Effect.fail(
+            operationalError('config', 'paper-command', 'PREPARE DISCOVER requires OBSERVE maximum authority'),
+          )
+        }
+        if (config.qualificationRunId === undefined) {
+          return Effect.fail(
+            operationalError(
+              'config',
+              'paper-command',
+              'PREPARE DISCOVER requires a pinned terminal qualification run',
+            ),
+          )
+        }
+        if (Option.isNone(alpaca)) {
+          return Effect.fail(
+            operationalError('config', 'paper-command', 'PREPARE DISCOVER requires a complete Alpaca read binding'),
+          )
+        }
+      }
+      const paperProofCommand =
+        Option.isSome(config.configuredPaperProofCommand) && Option.isSome(config.configuredPaperProofPhase)
+          ? {
+              command: config.configuredPaperProofCommand.value,
+              phase: config.configuredPaperProofPhase.value,
+            }
+          : undefined
       const {
         configuredAlpaca: _configuredAlpaca,
         authorityGenerationHash: _authorityGenerationHash,
+        configuredPaperProofCommand: _configuredPaperProofCommand,
+        configuredPaperProofPhase: _configuredPaperProofPhase,
         ...runtime
       } = config
-      return Effect.succeed({ ...runtime, ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}) })
+      return Effect.succeed({
+        ...runtime,
+        ...(paperProofCommand === undefined ? {} : { paperProofCommand }),
+        ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}),
+      })
     }),
     Effect.flatMap((config) =>
       Effect.try({
