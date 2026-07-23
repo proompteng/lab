@@ -17,7 +17,6 @@ import {
 import {
   compileCurrentRiskBalancedTrendDecision,
   evaluateRiskBalancedTrend,
-  makeCurrentDecisionCycleBinding,
   prepareRiskBalancedTrendQualification,
   type CurrentDecisionCycleBinding,
   type CurrentRiskBalancedTrendDecision,
@@ -27,7 +26,6 @@ import type { DailyBar, EvaluationResult, InputManifest, IsoDate, Protocol } fro
 
 export type CurrentStrategyDecision = CurrentRiskBalancedTrendDecision
 export type CurrentStrategyDecisionCycleBinding = CurrentDecisionCycleBinding
-export const makeCurrentStrategyDecisionCycleBinding = makeCurrentDecisionCycleBinding
 
 export interface Strategy {
   readonly name: string
