@@ -14,6 +14,7 @@ import {
   IsoDateSchema,
   Sha256Schema as HashSchema,
   SignalRowSymbolSchema as SymbolSchema,
+  UniverseIdSchema,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import {
@@ -91,7 +92,7 @@ const SignalManifestFields = {
 } as const
 const SignalManifestRowSchema = Schema.Struct({
   schema_version: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV2),
-  universe_id: Schema.Literal('equity-infrastructure-v1'),
+  universe_id: UniverseIdSchema,
   universe_symbol_hash: HashSchema,
   ...SignalManifestFields,
 })
@@ -120,7 +121,7 @@ export interface SnapshotRequest {
   readonly universe: readonly string[]
   readonly bounds: EvaluationBounds
   readonly observedAt: string
-  readonly universeId: 'equity-infrastructure-v1'
+  readonly universeId: FinalizedSnapshotProvenance['universeId']
   readonly universeSymbolHash: string
   readonly historyStart: IsoDate
   readonly evaluationStart: IsoDate

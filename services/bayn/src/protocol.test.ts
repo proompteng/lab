@@ -11,11 +11,11 @@ describe('strategy protocol', () => {
 
     expect(protocol).toMatchObject({
       schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
-      universeId: 'equity-infrastructure-v1',
-      universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
-      universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
-      historyStart: '2022-01-27',
-      evaluationStart: '2023-01-30',
+      universeId: 'cross-asset-taa-v1',
+      universeSymbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
+      universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+      historyStart: '2016-01-04',
+      evaluationStart: '2017-01-03',
       horizons: [21, 63, 126, 252],
       volatilityWindow: 63,
       maximumSymbolWeight: 0.35,
@@ -53,6 +53,7 @@ describe('strategy protocol', () => {
       { ...defaultProtocolDocument, maximumSymbolWeight: 0 },
       { ...defaultProtocolDocument, maximumPortfolioVolatility: 1.1 },
       { ...defaultProtocolDocument, universeSymbolHash: '0'.repeat(64) },
+      { ...defaultProtocolDocument, universeId: 'equity-infrastructure-v1' },
       { ...defaultProtocolDocument, evaluationStart: defaultProtocolDocument.historyStart },
       { ...defaultProtocolDocument, futureField: true },
     ]

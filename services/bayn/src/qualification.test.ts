@@ -27,10 +27,10 @@ const material: QualificationLockMaterial = {
     repository: 'registry.example.test/lab/bayn',
     digest: `sha256:${'3'.repeat(64)}`,
   },
-  universeId: 'equity-infrastructure-v1',
-  universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
-  universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
-  universeRationale: 'Exact source-controlled Signal universe.',
+  universeId: 'cross-asset-taa-v1',
+  universeSymbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
+  universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+  universeRationale: 'Precommitted five-sleeve cross-asset universe selected without inspecting candidate returns.',
   data: {
     snapshotId: '4'.repeat(64),
     publicationId: '5'.repeat(64),
@@ -41,17 +41,17 @@ const material: QualificationLockMaterial = {
     sourceFeed: 'sip',
     adjustment: 'all',
     calendarVersion: 'alpaca-us-equity-calendar-v1',
-    firstSession: '2007-01-03',
-    lastSession: '2016-12-30',
+    firstSession: '2016-01-04',
+    lastSession: '2026-07-21',
     selectedSessionCount: 2266,
     selectedRebalanceCount: 108,
     bounds: {
       schemaVersion: 'bayn.evaluation-bounds.v1' as const,
-      dataStart: '2007-01-03',
-      dataEnd: '2016-12-30',
-      lookbackStart: '2007-01-03',
-      evaluationStart: '2008-01-03',
-      evaluationEnd: '2016-12-30',
+      dataStart: '2016-01-04',
+      dataEnd: '2026-07-21',
+      lookbackStart: '2016-01-04',
+      evaluationStart: '2017-01-03',
+      evaluationEnd: '2026-07-21',
     },
   },
   policies: {
@@ -125,6 +125,9 @@ describe('qualification lock', () => {
     ).toThrow()
 
     const lock = makeQualificationLock(material)
+    expect(() =>
+      Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, universeId: 'equity-infrastructure-v1' }),
+    ).toThrow()
     expect(() => Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, lockId: '0'.repeat(64) })).toThrow()
   })
 })

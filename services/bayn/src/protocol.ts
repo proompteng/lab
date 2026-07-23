@@ -11,6 +11,7 @@ import {
   PositiveMicrosSchema as PositiveMicros,
   Sha256Schema,
   SymbolSchema as SymbolName,
+  UniverseIdSchema,
   UnitIntervalSchema as UnitInterval,
   UnsignedMicrosSchema as UnsignedMicros,
   strictParseOptions as StrictParseOptions,
@@ -100,9 +101,17 @@ const defaultEconomicThresholds = {
   requirePositiveDoubleCostReturn: true,
 } as const
 
+const universeContract = {
+  id: 'cross-asset-taa-v1',
+  symbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
+  symbols: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+  historyStart: '2016-01-04',
+  evaluationStart: '2017-01-03',
+} as const
+
 const ProtocolBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
-  universeId: Schema.Literal('equity-infrastructure-v1'),
+  universeId: UniverseIdSchema,
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
   historyStart: IsoDateSchema,
@@ -131,6 +140,14 @@ export const ProtocolSchema = ProtocolBase.check(
     if (parameters.universeSymbolHash !== sha256(parameters.universe.join(','))) {
       issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
     }
+    if (
+      parameters.universeSymbolHash !== universeContract.symbolHash ||
+      parameters.universe.join(',') !== universeContract.symbols.join(',') ||
+      parameters.historyStart !== universeContract.historyStart ||
+      parameters.evaluationStart !== universeContract.evaluationStart
+    ) {
+      issues.push({ path: ['universeId'], issue: 'must identify its exact source-controlled universe contract' })
+    }
     if (parameters.evaluationStart <= parameters.historyStart) {
       issues.push({ path: ['evaluationStart'], issue: 'must follow historyStart' })
     }
@@ -156,11 +173,11 @@ export type Protocol = typeof ProtocolSchema.Type
 
 export const defaultProtocolDocument = {
   schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
-  universeId: 'equity-infrastructure-v1',
-  universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
-  universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
-  historyStart: '2022-01-27',
-  evaluationStart: '2023-01-30',
+  universeId: universeContract.id,
+  universeSymbolHash: universeContract.symbolHash,
+  universe: universeContract.symbols,
+  historyStart: universeContract.historyStart,
+  evaluationStart: universeContract.evaluationStart,
   horizons: [21, 63, 126, 252],
   volatilityWindow: 63,
   rebalance: 'month-end',

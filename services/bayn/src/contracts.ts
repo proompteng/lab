@@ -9,12 +9,12 @@ import {
   SourceRevisionSchema as SourceRevision,
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
+  UniverseIdSchema,
   UtcInstantSchema as UtcInstant,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import { ContractVersion, DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 
-const UniverseId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/))
 const CanonicalJson = Schema.Unknown.check(Schema.makeFilter(Schema.is(Schema.Json), { expected: 'a JSON value' }))
 
 const FinalizedSnapshotFields = {
@@ -44,7 +44,7 @@ const FinalizedSnapshotFields = {
 const FinalizedSnapshotBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.finalized-snapshot.v3'),
   publicationSchemaVersion: Schema.Literal(PublicationSchema.AdjustedDailySnapshotV2),
-  universeId: UniverseId,
+  universeId: UniverseIdSchema,
   universeSymbolHash: Sha256Schema,
   ...FinalizedSnapshotFields,
 })

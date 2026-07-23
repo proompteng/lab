@@ -198,6 +198,27 @@ describe('risk-balanced trend candidate', () => {
     expect(changed.signalDecisions[0]).toEqual(baseline.signalDecisions[0])
   })
 
+  test('rejects a Signal manifest for a different universe before qualification', () => {
+    const snapshot = makeSnapshot()
+    const { hash: _, ...manifestMaterial } = snapshot.manifest
+    const mismatchedMaterial = {
+      ...manifestMaterial,
+      finalizedSnapshot: {
+        ...manifestMaterial.finalizedSnapshot,
+        universeSymbolHash: '0'.repeat(64),
+      },
+    }
+    const mismatchedManifest = {
+      ...mismatchedMaterial,
+      hash: canonicalHashV1(mismatchedMaterial),
+    }
+    const strategy = makeStrategy(fixtureProtocol, makeTestProvenance())
+
+    expect(() => strategy.prepareLock(mismatchedManifest, [], [])).toThrow(
+      'Signal snapshot universe does not match the compiled strategy universe',
+    )
+  })
+
   test('evaluates deterministically with complete evidence and a calendar-only precommit', () => {
     const snapshot = makeSnapshot()
     const provenance = makeTestProvenance()
@@ -267,11 +288,14 @@ describe('risk-balanced trend candidate', () => {
       universeSymbolHash: fixtureProtocol.universeSymbolHash,
       data: { inputManifestHash: snapshot.manifest.hash },
     })
+    expect(lock.universeRationale).toBe(
+      'The precommitted five-sleeve cross-asset universe uses broad commodities (DBC), developed ex-US equities (EFA), intermediate US Treasuries (IEF), US equities (SPY), and US real estate (VNQ); symbols were fixed without inspecting candidate prices or returns.',
+    )
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('879ed10bfcd266f7521a08931f33387b646d9acc40234752c67ec35bb56d9d16')
+    expect(canonicalHashV1(first)).toBe('22d3431616d263dbc4c4f31ef3fb14966453938e7db8ebf7a9bc37b93b99f93f')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
-      'dcced90996d5be9bb75153bdefec3d06f72f198f8de1b7028a3e13e8a6956d10',
+      '3aa21296a6fd28dd03971af9b8fa8e0420d7c0e6aed18e7faf9e0a3554bc3e2d',
     )
   })
 })
