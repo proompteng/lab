@@ -143,10 +143,13 @@ const cycleLoopHealth = (
   checkedAt: string,
   checkedAtMs: number,
   stallThresholdMs: number,
+  required: boolean,
 ): DependencyHealth => {
   const available = (): DependencyHealth => ({ status: 'AVAILABLE', checkedAt, error: null })
   const unavailable = (error: string): DependencyHealth => ({ status: 'UNAVAILABLE', checkedAt, error })
-  if (!loop.configured) return available()
+  if (!loop.configured) {
+    return required ? unavailable('broker-configured Bayn runtime has no autonomous cycle loop') : available()
+  }
   if (fiber === undefined) return unavailable('configured autonomous cycle loop has no scoped fiber')
   if (Option.isSome(exit)) {
     if (Exit.isSuccess(exit.value)) return unavailable('autonomous cycle loop exited unexpectedly')
@@ -258,6 +261,7 @@ export const probe = (
         checkedAt,
         checkedAtMs,
         config.cycleStallThresholdMs,
+        broker !== undefined,
       )
       const cycle =
         cycleResult.error === null && cycleResult.value !== null

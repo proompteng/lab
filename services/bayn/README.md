@@ -82,9 +82,10 @@ paper mutation capability, execution entry point, and capital-promotion path rem
 - The current-only migration chain owns the unprefixed evidence, qualification, intent, and mutation schema. Startup
   rejects a legacy migration tracker or retired migration history after the hard cut; it never reads, converts, or
   falls back to legacy records.
-- The Alpaca read adapter may be acquired while maximum authority is `OBSERVE`, but it performs GET-only preflight and
-  does not build the paper store, reserve the writer fence, start reconciliation, or change PostgreSQL or TigerBeetle.
-  The mutation adapter and recovery coordinator remain dormant source foundations.
+- Credentials provide GET-only Alpaca access under `OBSERVE`. The canonical non-dispatchable autonomous shadow loop
+  composes `PaperStore` and `WriterFence` and performs one same-pass reconciliation when it builds a decision.
+  `BrokerMutation`, `IntentStore`, `MutationStore`, and the coordinator remain absent; `PAPER` startup fails closed until
+  the PROOMPT-375 Phase B authority generation and dispatch transition exists.
 - The bounded Alpaca calendar observation is content-hashed with its request range, source/version, and normalized UTC
   sessions. A causal execution-session binding retains and revalidates that complete observation, selects its first
   post-signal session, and binds the session's exact open, close, pre-open cutoff, finalized Signal identity, and

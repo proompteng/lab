@@ -94,11 +94,18 @@ describe('Bayn continuous health', () => {
       executionEligible: false,
       executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
     }
-    const initial = {
+    const startedAt = new Date().toISOString()
+    const initial: RuntimeState = {
       ...readyState(),
-      broker: initialState(broker).broker,
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt,
+        lastPass: { result: 'SUCCESS' as const, observedAt: startedAt, outcome: 'NO_PUBLICATION' as const },
+      },
+      broker: initialState(broker, true).broker,
     }
     const state = await Effect.runPromise(Ref.make(initial))
+    const cycleFiber = Effect.runFork(Effect.never)
     const dependencies = (
       effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability>,
     ) =>
@@ -120,32 +127,70 @@ describe('Bayn continuous health', () => {
         Effect.provideService(CycleObservability, cycleObservability()),
       )
 
-    await Effect.runPromise(dependencies(probe(config, state, broker)))
-    expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
-      status: 'READY',
-      broker: {
-        configured: true,
-        expectedAccountId: brokerAccountId,
-        accountId: brokerAccountId,
-        accountBound: true,
-        readAvailable: true,
-        executionEligible: false,
-        executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
-        error: null,
-      },
-    })
+    try {
+      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'READY',
+        broker: {
+          configured: true,
+          expectedAccountId: brokerAccountId,
+          accountId: brokerAccountId,
+          accountBound: true,
+          readAvailable: true,
+          executionEligible: false,
+          executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+          error: null,
+        },
+      })
 
-    observedAccountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-    await Effect.runPromise(dependencies(probe(config, state, broker)))
+      observedAccountId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'DEGRADED',
+        broker: {
+          accountId: observedAccountId,
+          accountBound: false,
+          readAvailable: true,
+          error: `Alpaca account probe resolved ${observedAccountId}, expected ${brokerAccountId}`,
+        },
+        error: expect.stringContaining('broker: Alpaca account probe resolved'),
+      })
+    } finally {
+      await Effect.runPromise(Fiber.interrupt(cycleFiber))
+    }
+  })
+
+  test('degrades when Alpaca is configured without the autonomous cycle runner', async () => {
+    const broker: BrokerProbe = {
+      read: brokerRead(Effect.succeed(accountResult())),
+      expectedAccountId: brokerAccountId,
+      executionEligible: false,
+      executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+    }
+    const initial: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: false,
+        startedAt: null,
+        lastPass: null,
+      },
+      broker: initialState(broker).broker,
+    }
+    const state = await Effect.runPromise(Ref.make(initial))
+
+    await Effect.runPromise(provideHealthyDependencies(initial, probe(config, state, broker)))
+
     expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
       status: 'DEGRADED',
-      broker: {
-        accountId: observedAccountId,
-        accountBound: false,
-        readAvailable: true,
-        error: `Alpaca account probe resolved ${observedAccountId}, expected ${brokerAccountId}`,
+      health: {
+        dependencies: {
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            error: 'broker-configured Bayn runtime has no autonomous cycle loop',
+          },
+        },
       },
-      error: expect.stringContaining('broker: Alpaca account probe resolved'),
+      error: expect.stringContaining('cycleRunner: broker-configured Bayn runtime has no autonomous cycle loop'),
     })
   })
 

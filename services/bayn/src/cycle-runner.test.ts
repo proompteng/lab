@@ -992,7 +992,7 @@ describe('autonomous cycle runner', () => {
     expect(control.binds).toBe(1)
   })
 
-  test('finishes an exact pre-cutoff decision after cutoff and a runtime protocol change', async () => {
+  test('finishes an exact pre-cutoff decision at the post-read Clock time after cutoff and a protocol change', async () => {
     const control: StoreControl = { acquisitions: [], binds: 0 }
     const store = cycleStore(control)
     let calendarReads = 0
@@ -1004,6 +1004,7 @@ describe('autonomous cycle runner', () => {
     const marketData = marketDataService(Effect.succeed(finalizedPublication()), inspection)
     const decisionAt = '2026-02-02T14:20:00.000Z'
     const afterCutoff = '2026-02-02T14:29:00.000Z'
+    const afterDelayedRead = '2026-02-02T14:30:00.000Z'
 
     const results = await Effect.runPromise(
       Effect.gen(function* () {
@@ -1023,7 +1024,12 @@ describe('autonomous cycle runner', () => {
           ...context(),
           strategyProtocolHash: 'f'.repeat(64),
         }
-        const recovered = yield* provide(runAutonomousCyclePass(changedProtocol), read, store, marketData)
+        const delayedReadStore: CycleStoreShape = {
+          ...store,
+          readDecisionDocument: (cycleId) =>
+            TestClock.adjust(60_000).pipe(Effect.andThen(store.readDecisionDocument(cycleId))),
+        }
+        const recovered = yield* provide(runAutonomousCyclePass(changedProtocol), read, delayedReadStore, marketData)
         return { acquired, activated, decisionBound, recovered }
       }).pipe(Effect.provide(TestClock.layer())),
     )
@@ -1041,10 +1047,10 @@ describe('autonomous cycle runner', () => {
     expect(results.recovered).toMatchObject({
       outcome: 'RECOVERED',
       action: 'NO_TRADE',
-      observedAt: afterCutoff,
+      observedAt: afterDelayedRead,
       cycle: {
         state: CycleState.NoTrade,
-        terminalAt: afterCutoff,
+        terminalAt: afterDelayedRead,
       },
     })
     if (results.recovered.outcome !== 'RECOVERED') throw new Error('recovery fixture must finish the bound decision')
@@ -1115,8 +1121,10 @@ describe('autonomous cycle runner', () => {
       calendarReads += 1
       return Effect.succeed({ value: monthEndCalendar, evidence })
     })
-    const inspection = finalizedPublicationInspection()
-    const marketData = marketDataService(Effect.succeed(finalizedPublication()), inspection)
+    const correctionSnapshotId = 'e'.repeat(64)
+    const original = finalizedPublicationInspection()
+    const correction = finalizedPublicationInspection('2026-01-30', '2026-01-30T21:16:00.000Z', correctionSnapshotId)
+    const marketData = marketDataService(Effect.succeed(finalizedPublications([original])), correction)
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -1134,7 +1142,7 @@ describe('autonomous cycle runner', () => {
     expect(result.resumed).toMatchObject({
       outcome: 'RECOVERED',
       action: 'BOUND_SNAPSHOT',
-      cycle: { state: CycleState.Pending, bindings: { snapshotId } },
+      cycle: { state: CycleState.Pending, bindings: { snapshotId: correctionSnapshotId } },
     })
     expect(calendarReads).toBe(1)
     expect(control.acquisitions).toHaveLength(1)

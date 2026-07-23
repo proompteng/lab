@@ -4,8 +4,7 @@ import { Context, Effect, Layer, Logger, Redacted } from 'effect'
 
 import { run } from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
-import { BrokerRead, alpacaHttpLayer, live as AlpacaReadLive } from './broker/alpaca'
-import { BrokerMutation, makeMutation } from './broker/alpaca-mutations'
+import { BrokerRead, live as AlpacaReadLive } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
@@ -13,8 +12,6 @@ import { CycleObservabilityLive } from './db/cycle-observability'
 import { CycleStore, CycleStoreLive } from './db/cycle-store'
 import { EvidenceStoreLive } from './db/evidence-store'
 import { PaperStore, PaperStoreLive } from './db/paper-store'
-import { IntentStoreLive } from './execution/intents'
-import { MutationStoreLive } from './execution/mutations'
 import { WriterFence, WriterFenceLive } from './execution/writer-fence'
 import { operationalError } from './errors'
 import type { BrokerProbe } from './health'
@@ -24,7 +21,7 @@ import { makeObserveAutonomousCycleStartup } from './observe-composition'
 import { acquireSqlLayer } from './operations'
 import { Authority } from './paper'
 import { hashParameters, loadDefaultProtocol } from './protocol'
-import { runContinuously, runOnce } from './reconciler'
+import { runOnce } from './reconciler'
 import { makeStrategy } from './strategy'
 
 const main = Effect.gen(function* () {
@@ -68,7 +65,6 @@ const main = Effect.gen(function* () {
   const evidenceStore = yield* acquireSqlLayer(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
   const cycleObservability = CycleObservabilityLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore)))
   const journal = yield* acquireSqlLayer(JournalLive(config))
-  let reconciliation = Effect.void
   let broker: BrokerProbe | undefined
   let autonomousCycleStartup: Parameters<typeof run>[4]
   if (config.alpaca !== undefined) {
@@ -109,61 +105,30 @@ const main = Effect.gen(function* () {
       ),
     )
     const writerFence = Context.get(writerFenceContext, WriterFence)
-    if (config.maximumAuthority === Authority.Paper) {
-      const brokerMutation = yield* Layer.build(
-        Layer.effect(
-          BrokerMutation,
-          makeMutation({
-            expectedAccountId: config.alpaca.accountId,
-            maximumAuthority: config.maximumAuthority,
-            key: config.alpaca.key,
-            secret: config.alpaca.secret,
-            proxyUrl: config.alpaca.proxyUrl,
-            operationTimeoutMs: config.operationTimeoutMs,
-          }),
-        ).pipe(Layer.provide(alpacaHttpLayer(config.alpaca.proxyUrl))),
-      ).pipe(
-        Effect.mapError((cause) =>
-          operationalError('config', 'alpaca-mutation', 'Alpaca paper mutation binding failed', cause),
-        ),
-      )
-      const persistence = Layer.mergeAll(Layer.succeedContext(evidenceStore), Layer.succeed(WriterFence, writerFence))
-      const intentStore = yield* Layer.build(IntentStoreLive.pipe(Layer.provide(persistence)))
-      const mutationStore = yield* Layer.build(MutationStoreLive.pipe(Layer.provide(persistence)))
-      const paperExecution = Layer.mergeAll(
-        Layer.succeedContext(brokerReadContext),
-        Layer.succeedContext(brokerMutation),
-        Layer.succeedContext(paperStoreContext),
-        Layer.succeedContext(writerFenceContext),
-        Layer.succeedContext(intentStore),
-        Layer.succeedContext(mutationStore),
-      )
-      reconciliation = runContinuously(config.alpaca.reconciliationIntervalMs).pipe(Effect.provide(paperExecution))
-    } else {
-      const cycleStoreContext = yield* Layer.build(
-        CycleStoreLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore))),
-      ).pipe(
-        Effect.mapError((cause) =>
-          operationalError('database', 'cycle-store', 'cycle persistence composition failed', cause),
-        ),
-      )
-      const reconcile = runOnce.pipe(
-        Effect.provideService(BrokerRead, brokerRead),
-        Effect.provideService(PaperStore, paperStore),
-        Effect.provideService(WriterFence, writerFence),
-      )
-      autonomousCycleStartup = makeObserveAutonomousCycleStartup({
-        accountId: config.alpaca.accountId,
-        authorityGenerationHash: config.alpaca.authorityGenerationHash,
-        brokerRead,
-        cycleStore: Context.get(cycleStoreContext, CycleStore),
-        marketData: marketDataService,
-        paperStore,
-        pollIntervalMs: config.cyclePollIntervalMs,
-        reconcile,
-        strategy,
-      })
-    }
+    const cycleStoreContext = yield* Layer.build(
+      CycleStoreLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore))),
+    ).pipe(
+      Effect.mapError((cause) =>
+        operationalError('database', 'cycle-store', 'cycle persistence composition failed', cause),
+      ),
+    )
+    const reconcile = runOnce.pipe(
+      Effect.provideService(BrokerRead, brokerRead),
+      Effect.provideService(PaperStore, paperStore),
+      Effect.provideService(WriterFence, writerFence),
+    )
+    autonomousCycleStartup = makeObserveAutonomousCycleStartup({
+      accountId: config.alpaca.accountId,
+      authorityGenerationHash: config.alpaca.authorityGenerationHash,
+      brokerRead,
+      cycleStore: Context.get(cycleStoreContext, CycleStore),
+      marketData: marketDataService,
+      maximumAuthority: config.maximumAuthority,
+      paperStore,
+      pollIntervalMs: config.cyclePollIntervalMs,
+      reconcile,
+      strategy,
+    })
   }
   const dependencies = Layer.mergeAll(
     Layer.succeedContext(marketDataContext),
@@ -171,7 +136,7 @@ const main = Effect.gen(function* () {
     Layer.succeedContext(journal),
     Layer.succeedContext(evidenceStore),
   )
-  return yield* run(config, strategy, reconciliation, broker, autonomousCycleStartup).pipe(Effect.provide(dependencies))
+  return yield* run(config, strategy, Effect.void, broker, autonomousCycleStartup).pipe(Effect.provide(dependencies))
 }).pipe(Effect.scoped)
 
 const program = main.pipe(Effect.annotateLogs({ service: 'bayn' }), Effect.provide(Logger.layer([Logger.consoleJson])))
