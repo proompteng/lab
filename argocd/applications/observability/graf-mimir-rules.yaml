@@ -2719,6 +2719,88 @@ data:
                 Batch runs are reporting market-closed skips during expected market-open windows.
                 Validate Torghut trading status probe semantics and pre-open probe contracts.
               runbook_url: docs/runbooks/torghut-market-context-ingest.md
+      - name: bayn-cycle-operations.rules
+        rules:
+          - alert: BaynMetricsUnavailable
+            expr: |
+              (
+                up{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } != 1
+              )
+              or
+              absent(
+                up{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                }
+              )
+            for: 2m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn metrics are unavailable
+              description: The existing Bayn service cannot be scraped for two minutes.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynCycleObservationUnavailable
+            expr: |
+              bayn_cycle_observation_available{
+                job="bayn",
+                namespace="bayn",
+                service="bayn"
+              } == 0
+            for: 2m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn cycle projection is unavailable
+              description: The bounded autonomous-cycle PostgreSQL projection has failed for two minutes.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynCycleStalled
+            expr: |
+              bayn_cycle_condition{
+                job="bayn",
+                namespace="bayn",
+                service="bayn",
+                condition="stalled"
+              } == 1
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn autonomous cycle is stalled
+              description: A persisted cycle missed a pending publication/submission deadline, exceeded the pending attempt age, or remained ACTIVE through execution close.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynCycleFailed
+            expr: |
+              bayn_cycle_condition{
+                job="bayn",
+                namespace="bayn",
+                service="bayn",
+                condition="failed"
+              } == 1
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn autonomous cycle is failed
+              description: A durable blocked cycle or fail-closed authority, reconciliation, or mutation condition remains current.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
       - name: kafka-critical-service.rules
         rules:
           - alert: KafkaBrokerUnavailable

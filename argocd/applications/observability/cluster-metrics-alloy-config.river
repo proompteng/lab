@@ -90,6 +90,30 @@ prometheus.scrape "ceph_storage" {
   forward_to      = [prometheus.relabel.ceph_storage_metrics.receiver]
 }
 
+prometheus.relabel "bayn_metrics" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    action        = "keep"
+    source_labels = ["__name__"]
+    regex         = "up|bayn_.*"
+  }
+}
+
+prometheus.scrape "bayn" {
+  job_name = "bayn"
+  targets = [
+    {
+      "__address__" = "bayn.bayn.svc.cluster.local:80",
+      "namespace"   = "bayn",
+      "service"     = "bayn",
+    },
+  ]
+  scrape_interval = "30s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.relabel.bayn_metrics.receiver]
+}
+
 prometheus.relabel "arc_resource_metrics" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 
