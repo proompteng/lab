@@ -67,6 +67,7 @@ class MarketDataFeedTest {
             tradeUpdates = null,
             tradeUpdatesV2 = null,
           ),
+        symbols = listOf("SPY"),
         core = feed == EquityFeed.Iex,
       )
 

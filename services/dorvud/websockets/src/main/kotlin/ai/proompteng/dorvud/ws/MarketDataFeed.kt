@@ -52,6 +52,7 @@ data class FeedRuntimeConfig(
   val equityFeed: EquityFeed?,
   val channels: List<String>,
   val topics: TopicConfig,
+  val symbols: List<String>,
   val core: Boolean,
 )
 
@@ -117,6 +118,7 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
       equityFeed = coreEquityFeed,
       channels = alpacaMarketDataChannels,
       topics = topics,
+      symbols = staticSymbols,
       core = true,
     )
   return listOf(core) +
@@ -126,6 +128,7 @@ internal fun ForwarderConfig.marketDataFeedConfigs(): List<FeedRuntimeConfig> {
         equityFeed = observation.feed,
         channels = defaultAlpacaMarketDataChannels(AlpacaMarketType.EQUITY),
         topics = observation.topics,
+        symbols = observationSymbols,
         core = false,
       )
     }

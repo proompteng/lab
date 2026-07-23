@@ -344,22 +344,21 @@ class ForwarderApp(
             null
           }
 
-        val symbolsTracker =
-          SymbolsTracker(
-            normalizeSymbols(config.staticSymbols),
-            config.jangarSymbolsUrl?.let { url ->
-              suspend {
-                runCatching { fetchDesiredSymbols(url) }
-                  .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
-                  .let(::normalizeSymbols)
-              }
-            },
-          )
-
         val jobs =
           marketDataFeeds
             .map { feed ->
               launch {
+                val symbolsTracker =
+                  SymbolsTracker(
+                    normalizeSymbols(feed.config.symbols),
+                    config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let { url ->
+                      suspend {
+                        runCatching { fetchDesiredSymbols(url) }
+                          .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
+                          .let(::normalizeSymbols)
+                      }
+                    },
+                  )
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
@@ -733,7 +732,7 @@ class ForwarderApp(
       }
 
       val poller =
-        config.jangarSymbolsUrl?.let {
+        config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let {
           launch {
             while (isActive) {
               delay(config.symbolsPollIntervalMs)

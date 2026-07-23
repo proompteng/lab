@@ -77,6 +77,31 @@ class ForwarderConfigTest {
   }
 
   @Test
+  fun `keeps core trading symbols separate from the observation universe`() {
+    val coreSymbols = listOf("AMD", "AVGO", "COHR", "CRDO", "LITE", "MRVL", "MU", "NVDA", "WDC")
+    val observationSymbols = listOf("DBC", "EFA", "IEF", "SPY", "VNQ")
+    val cfg =
+      ForwarderConfig.fromEnv(
+        mapOf(
+          "ALPACA_KEY_ID" to "key",
+          "ALPACA_SECRET_KEY" to "secret",
+          "ALPACA_FEED" to "iex",
+          "ALPACA_OBSERVATION_FEEDS" to "delayed_sip",
+          "SYMBOLS" to coreSymbols.joinToString(","),
+          "SYMBOLS_ALLOWLIST" to coreSymbols.joinToString(","),
+          "ALPACA_OBSERVATION_SYMBOLS" to observationSymbols.joinToString(","),
+          "MARKET_DATA_UNIVERSE_ID" to "cross-asset-taa-v1",
+          "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(observationSymbols),
+        ) + observationTopics,
+      )
+
+    assertEquals(coreSymbols, cfg.staticSymbols)
+    assertEquals(observationSymbols, cfg.observationSymbols)
+    assertEquals(observationSymbols, cfg.universeContract?.symbols)
+    assertEquals(listOf(coreSymbols, observationSymbols), cfg.marketDataFeedConfigs().map { it.symbols })
+  }
+
+  @Test
   fun `rejects unsafe or incomplete observation-feed configuration`() {
     val base =
       mapOf(
@@ -158,6 +183,7 @@ class ForwarderConfigTest {
     assertEquals("http://jangar.test/api/torghut/symbols", cfg.jangarSymbolsUrl)
     assertEquals(emptyList(), cfg.staticSymbols)
     assertEquals(emptySet(), cfg.symbolAllowlist)
+    assertEquals(emptyList(), cfg.observationSymbols)
     assertEquals(30_000, cfg.symbolsPollIntervalMs)
     assertEquals(200, cfg.subscribeBatchSize)
     assertEquals(1, cfg.shardCount)
@@ -256,6 +282,39 @@ class ForwarderConfigTest {
       "a versioned market-data universe cannot use JANGAR_SYMBOLS_URL",
       assertFailsWith<IllegalStateException> {
         ForwarderConfig.fromEnv(base + ("JANGAR_SYMBOLS_URL" to "http://jangar.test/symbols"))
+      }.message,
+    )
+  }
+
+  @Test
+  fun `rejects drift in an explicit observation universe`() {
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "AMD,NVDA",
+        "SYMBOLS_ALLOWLIST" to "AMD,NVDA",
+        "ALPACA_OBSERVATION_SYMBOLS" to "DBC,SPY",
+        "MARKET_DATA_UNIVERSE_ID" to "cross-asset-taa-v1",
+        "MARKET_DATA_UNIVERSE_SYMBOL_HASH" to canonicalSymbolHash(listOf("DBC", "SPY")),
+      )
+
+    assertEquals(
+      "ALPACA_OBSERVATION_SYMBOLS must be unique and canonically sorted for a versioned market-data universe",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("ALPACA_OBSERVATION_SYMBOLS" to "SPY,DBC"))
+      }.message,
+    )
+    assertEquals(
+      "MARKET_DATA_UNIVERSE_SYMBOL_HASH does not match canonical ALPACA_OBSERVATION_SYMBOLS",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base + ("MARKET_DATA_UNIVERSE_SYMBOL_HASH" to "0".repeat(64)))
+      }.message,
+    )
+    assertEquals(
+      "ALPACA_OBSERVATION_SYMBOLS requires a versioned market-data universe",
+      assertFailsWith<IllegalStateException> {
+        ForwarderConfig.fromEnv(base - "MARKET_DATA_UNIVERSE_ID" - "MARKET_DATA_UNIVERSE_SYMBOL_HASH")
       }.message,
     )
   }
