@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit, Option } from 'effect'
+import { Cause, Clock, Effect, Exit, Option } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -131,6 +131,7 @@ interface HarnessOptions {
   readonly submitError?: BrokerMutationError
   readonly submittedOrder?: Order
   readonly lookupOrder?: Order
+  readonly lookupOrders?: readonly Order[]
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -382,29 +383,33 @@ const makeHarness = (options: HarnessOptions = {}) => {
     positions: Effect.die(new Error('unexpected positions read')),
     orders: () => Effect.die(new Error('unexpected orders read')),
     orderById: () => Effect.die(new Error('unexpected order-by-id read')),
-    orderByClientId: () => {
-      lookupCalls += 1
-      if (options.notFoundOnce && lookupCalls === 1) {
-        return Effect.fail(
-          new BrokerReadError({
-            operation: 'order-by-client-id',
-            kind: BrokerReadErrorKind.NotFound,
-            message: 'injected delayed visibility',
-            retryable: false,
-            status: 404,
-            requestId: 'lookup-not-found',
-            contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
-            observedAt: '1970-01-01T00:00:01.000Z',
-          }),
-        )
-      }
-      const value =
-        options.lookupOrder ??
-        (latest.get(MutationOperation.Cancel) === undefined
-          ? brokerOrder(OrderStatus.Accepted)
-          : brokerOrder(OrderStatus.Canceled))
-      return Effect.succeed({ value, evidence: evidence(200, '1970-01-01T00:00:02.000Z') })
-    },
+    orderByClientId: () =>
+      Effect.gen(function* () {
+        lookupCalls += 1
+        const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        if (options.notFoundOnce && lookupCalls === 1) {
+          return yield* Effect.fail(
+            new BrokerReadError({
+              operation: 'order-by-client-id',
+              kind: BrokerReadErrorKind.NotFound,
+              message: 'injected delayed visibility',
+              retryable: false,
+              status: 404,
+              requestId: 'lookup-not-found',
+              contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
+              observedAt,
+            }),
+          )
+        }
+        const selected =
+          options.lookupOrders?.[Math.min(lookupCalls - 1, options.lookupOrders.length - 1)] ??
+          options.lookupOrder ??
+          (latest.get(MutationOperation.Cancel) === undefined
+            ? brokerOrder(OrderStatus.Accepted)
+            : brokerOrder(OrderStatus.Canceled))
+        const value = { ...selected, observedAt }
+        return { value, evidence: evidence(200, observedAt) }
+      }),
     fillActivities: () => Effect.die(new Error('unexpected fill read')),
     marketCalendar: unusedMarketCalendar,
   }
@@ -442,6 +447,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     provide,
     provideIntentRead,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
+    intent: () => stored.intent,
     state: () => stored.intent.state,
   }
 }
@@ -530,6 +536,125 @@ describe('paper execution coordinator', () => {
     expect(result.replay.eventId).toBe(result.accepted.eventId)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('recovers an accepted order to terminal at the exact delay without another POST', async () => {
+    const harness = makeHarness({ lookupOrder: brokerOrder(OrderStatus.Filled) })
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          const accepted = yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(1_099)
+          const tooEarly = yield* Effect.flip(recover(intentId, MutationOperation.Submit))
+          yield* TestClock.adjust(1)
+          const terminal = yield* recover(intentId, MutationOperation.Submit)
+          const replay = yield* recover(intentId, MutationOperation.Submit)
+          return { accepted, replay, terminal, tooEarly }
+        }),
+      ),
+    )
+
+    expect(result.accepted.eventType).toBe(MutationEventType.SubmitAccepted)
+    expect(result.tooEarly).toMatchObject({
+      failure: ExecutionFailure.RecoveryTooEarly,
+      eligibleAt: '1970-01-01T00:00:01.100Z',
+    })
+    expect(result.terminal.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(result.replay.eventId).toBe(result.terminal.eventId)
+    expect(harness.intent()).toMatchObject({
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Filled,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 1 })
+  })
+
+  test('retains an accepted open order and allows a later terminal recovery after the next delay', async () => {
+    const harness = makeHarness({
+      lookupOrders: [brokerOrder(OrderStatus.Accepted), brokerOrder(OrderStatus.Filled)],
+    })
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(1_100)
+          const open = yield* recover(intentId, MutationOperation.Submit)
+          const tooEarly = yield* Effect.flip(recover(intentId, MutationOperation.Submit))
+          yield* TestClock.adjust(1_000)
+          const terminal = yield* recover(intentId, MutationOperation.Submit)
+          return { open, terminal, tooEarly }
+        }),
+      ),
+    )
+
+    expect(result.open.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(result.tooEarly).toMatchObject({
+      failure: ExecutionFailure.RecoveryTooEarly,
+      eligibleAt: '1970-01-01T00:00:02.100Z',
+    })
+    expect(result.terminal.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(harness.intent()).toMatchObject({
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Filled,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 2 })
+  })
+
+  test('retains an accepted broker order identity after a 404 and allows later terminal recovery', async () => {
+    const harness = makeHarness({
+      notFoundOnce: true,
+      lookupOrder: brokerOrder(OrderStatus.Filled),
+    })
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(1_100)
+          const notFound = yield* recover(intentId, MutationOperation.Submit)
+          const afterNotFound = harness.intent()
+          yield* TestClock.adjust(1_000)
+          const terminal = yield* recover(intentId, MutationOperation.Submit)
+          return { afterNotFound, notFound, terminal }
+        }),
+      ),
+    )
+
+    expect(result.notFound).toMatchObject({
+      eventType: MutationEventType.RecoveryNotFound,
+      brokerOrderId: orderId,
+    })
+    expect(result.afterNotFound).toMatchObject({ state: IntentState.Acknowledged })
+    expect(result.terminal).toMatchObject({
+      eventType: MutationEventType.RecoveryFound,
+      brokerOrderId: orderId,
+    })
+    expect(harness.intent()).toMatchObject({
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Filled,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 2 })
+  })
+
+  test('keeps an accepted intent acknowledged when lookup returns a different broker order', async () => {
+    const otherOrderId = 'f93d3f58-0e70-4cd2-a9e1-2fcb89d76f74'
+    const harness = makeHarness({
+      lookupOrder: { ...brokerOrder(OrderStatus.Filled), brokerOrderId: otherOrderId },
+    })
+    const observed = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(1_100)
+          return yield* recover(intentId, MutationOperation.Submit)
+        }),
+      ),
+    )
+
+    expect(observed).toMatchObject({
+      eventType: MutationEventType.RecoveryUnknown,
+      brokerOrderId: orderId,
+    })
+    expect(harness.intent()).toMatchObject({ state: IntentState.Acknowledged })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 1 })
   })
 
   test('rejects a submit replay whose committed consistency delay changes', async () => {

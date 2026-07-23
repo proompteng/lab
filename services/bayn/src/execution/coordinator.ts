@@ -127,10 +127,11 @@ const readErrorEvidence = (error: BrokerReadError): MutationEvidence | undefined
   return isCompleteEvidence(candidate) ? candidate : undefined
 }
 
-const isSubmitResolved = (event: MutationEvent): boolean =>
-  event.eventType === MutationEventType.SubmitAccepted ||
-  event.eventType === MutationEventType.SubmitRejected ||
-  event.eventType === MutationEventType.RecoveryFound
+const isSubmitResolved = (intent: Intent, event: MutationEvent): boolean =>
+  intent.state === IntentState.Terminal &&
+  (event.eventType === MutationEventType.SubmitAccepted ||
+    event.eventType === MutationEventType.SubmitRejected ||
+    event.eventType === MutationEventType.RecoveryFound)
 
 const requireActiveSubmitRiskDecision = (stored: StoredIntent, operationLabel = 'submission') =>
   Effect.gen(function* () {
@@ -201,7 +202,9 @@ const validateRecovery = (stored: Intent, event: MutationEvent) =>
           : cancelRequestHash(event.brokerOrderId)
     const validState =
       event.operation === MutationOperation.Submit
-        ? stored.state === IntentState.IoStarted || stored.state === IntentState.Unknown
+        ? stored.state === IntentState.IoStarted ||
+          stored.state === IntentState.Unknown ||
+          stored.state === IntentState.Acknowledged
         : stored.state === IntentState.Acknowledged ||
           (stored.state === IntentState.Unknown && event.brokerOrderId !== undefined)
     if (expectedHash === event.requestHash && validState) return
@@ -369,7 +372,7 @@ export const recover = (intentId: string, operation: MutationOperation) =>
         }),
       )
     }
-    if (operation === MutationOperation.Submit && isSubmitResolved(latest)) return latest
+    if (operation === MutationOperation.Submit && isSubmitResolved(stored.intent, latest)) return latest
     if (
       operation === MutationOperation.Cancel &&
       stored.intent.state === IntentState.Terminal &&
@@ -402,7 +405,9 @@ export const recover = (intentId: string, operation: MutationOperation) =>
             result.value.filledQuantityMicros === '0' &&
             outcome !== undefined &&
             outcome !== TerminalOutcome.Filled
-          if (!exactOrder(stored.intent, result.value) && !neutralizedMismatchedOrder) {
+          const exactBrokerOrderId =
+            interrupted.brokerOrderId === undefined || interrupted.brokerOrderId === result.value.brokerOrderId
+          if ((!exactBrokerOrderId || !exactOrder(stored.intent, result.value)) && !neutralizedMismatchedOrder) {
             return mutations.recoveryUnknown(
               intentId,
               operation,
