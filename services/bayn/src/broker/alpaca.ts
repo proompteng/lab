@@ -953,16 +953,16 @@ export const normalizeOrder = (raw: typeof OrderResponseSchema.Type, accountId: 
   if (quantityMicros !== undefined && BigInt(filledQuantityMicros) > BigInt(quantityMicros)) {
     throw new Error('filled quantity exceeds order quantity')
   }
-  if (raw.order_type === OrderType.Limit && raw.limit_price === null) {
+  if (raw.type === OrderType.Limit && raw.limit_price === null) {
     throw new Error('limit order is missing limit_price')
   }
-  if (raw.order_type === OrderType.Stop && raw.stop_price === null) {
+  if (raw.type === OrderType.Stop && raw.stop_price === null) {
     throw new Error('stop order is missing stop_price')
   }
-  if (raw.order_type === OrderType.StopLimit && (raw.limit_price === null || raw.stop_price === null)) {
+  if (raw.type === OrderType.StopLimit && (raw.limit_price === null || raw.stop_price === null)) {
     throw new Error('stop-limit order is missing limit_price or stop_price')
   }
-  if (raw.order_type === OrderType.TrailingStop && (raw.trail_price === null) === (raw.trail_percent === null)) {
+  if (raw.type === OrderType.TrailingStop && (raw.trail_price === null) === (raw.trail_percent === null)) {
     throw new Error('trailing-stop order must contain exactly one trailing offset')
   }
 

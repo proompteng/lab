@@ -918,6 +918,34 @@ describe('Alpaca paper reads', () => {
     ])
   })
 
+  test('validates every non-market order shape from canonical type when the deprecated alias is absent', async () => {
+    const malformed = [
+      { label: 'limit', response: { ...orderResponse, type: 'limit', limit_price: null } },
+      { label: 'stop', response: { ...orderResponse, type: 'stop', stop_price: null } },
+      {
+        label: 'stop-limit',
+        response: { ...orderResponse, type: 'stop_limit', limit_price: null, stop_price: null },
+      },
+      {
+        label: 'trailing-stop',
+        response: { ...orderResponse, type: 'trailing_stop', trail_percent: null, trail_price: null },
+      },
+    ] as const
+
+    for (const { label, response } of malformed) {
+      const { order_type: _orderType, ...responseWithoutAlias } = response
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, responseWithoutAlias)))
+
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+
+      expect(failure, label).toMatchObject({
+        operation: 'order-by-id',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    }
+  })
+
   test('retains causal read evidence when pending order timestamps are null or absent', async () => {
     const { updated_at: _updatedAt, submitted_at: _submittedAt, ...responseWithoutPendingTimestamps } = orderResponse
     const client = HttpClient.make((request, url) => {
