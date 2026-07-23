@@ -31,7 +31,7 @@ interface FixtureOptions {
   readonly tigerBeetleAddresses?: string
   readonly behaviorHash?: string
   readonly parameterHash?: string
-  readonly qualificationRunId?: string | undefined
+  readonly qualificationRunId?: string | null
   readonly qualificationDossierRunId?: string
 }
 
@@ -65,7 +65,7 @@ const makeFixture = (options: FixtureOptions = {}): FixturePaths => {
     BAYN_TIGERBEETLE_CLUSTER_ID: options.tigerBeetleClusterId ?? currentBindings.BAYN_TIGERBEETLE_CLUSTER_ID,
     BAYN_TIGERBEETLE_ADDRESSES: options.tigerBeetleAddresses ?? currentBindings.BAYN_TIGERBEETLE_ADDRESSES,
   }
-  const pin = options.qualificationRunId === undefined ? qualificationRunId : options.qualificationRunId
+  const pin = options.qualificationRunId === null ? undefined : (options.qualificationRunId ?? qualificationRunId)
   const dossierGenerator =
     pin === undefined
       ? ''
@@ -103,6 +103,7 @@ const promote = (
   paths: FixturePaths,
   overrides: Partial<Pick<UpdateBaynManifestOptions, 'strategyBehaviorHash' | 'strategyParameterHash'>> = {},
   sourceSha = 'a'.repeat(40),
+  qualificationIntent: UpdateBaynManifestOptions['qualificationIntent'] = 'preserve',
 ) => {
   return updateBaynManifests({
     sourceSha,
@@ -110,6 +111,7 @@ const promote = (
     digest: `sha256:${'b'.repeat(64)}`,
     strategyBehaviorHash: overrides.strategyBehaviorHash ?? strategyBehaviorHash,
     strategyParameterHash: overrides.strategyParameterHash ?? strategyParameterHash,
+    qualificationIntent,
     rolloutTimestamp: '2026-07-22T10:00:00Z',
     ...paths,
   })
@@ -144,7 +146,7 @@ describe('Bayn manifest promotion', () => {
 
     expect(promote(paths, { strategyParameterHash: '3'.repeat(64) })).toMatchObject({
       promotionAction: 'hold',
-      promotionReason: 'strategy-identity-change-requires-fresh-snapshot',
+      promotionReason: 'qualification-change-requires-explicit-fresh-mode',
       qualificationMode: 'replace',
       hadQualificationPin: true,
       qualificationBindingsMatch: true,
@@ -164,7 +166,12 @@ describe('Bayn manifest promotion', () => {
   test('rejects changed runtime bindings against an already-qualified snapshot', () => {
     const paths = makeFixture({ publicationAsOf: '2026-07-19' })
 
-    expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+    expect(promote(paths)).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'qualification-change-requires-explicit-fresh-mode',
+      qualificationIntent: 'preserve',
+      qualificationMode: 'replace',
+    })
   })
 
   test('preserves qualification while restoring replica-index-ordered TigerBeetle transport addresses', () => {
@@ -187,20 +194,38 @@ describe('Bayn manifest promotion', () => {
     )
   })
 
-  test('rejects a TigerBeetle cluster identity change against an already-qualified snapshot', () => {
+  test('holds a TigerBeetle cluster identity change against an already-qualified snapshot', () => {
     const paths = makeFixture({ tigerBeetleClusterId: '2001' })
 
-    expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+    expect(promote(paths)).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'qualification-change-requires-explicit-fresh-mode',
+      qualificationIntent: 'preserve',
+      qualificationMode: 'replace',
+    })
   })
 
-  test('replaces a pin for a fresh snapshot and rejects a second unpinned source release', () => {
+  test('requires explicit fresh intent before replacing a pin for a new snapshot', () => {
     const paths = makeFixture({ snapshotId: '4'.repeat(64), publicationAsOf: '2026-07-19' })
     const changedParameterHash = '3'.repeat(64)
-    const first = promote(paths, { strategyParameterHash: changedParameterHash })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(promote(paths, { strategyParameterHash: changedParameterHash })).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'qualification-change-requires-explicit-fresh-mode',
+      qualificationIntent: 'preserve',
+      qualificationMode: 'replace',
+      hadQualificationPin: true,
+      snapshotChanged: true,
+    })
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+
+    const first = promote(paths, { strategyParameterHash: changedParameterHash }, 'a'.repeat(40), 'fresh')
 
     expect(first).toMatchObject({
       promotionAction: 'promote',
       promotionReason: 'eligible',
+      qualificationIntent: 'fresh',
       qualificationMode: 'replace',
       hadQualificationPin: true,
       qualificationBindingsMatch: false,
@@ -214,10 +239,33 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).toContain(
       environmentBlock('BAYN_SIGNAL_SNAPSHOT_ID', currentSnapshotId).trim(),
     )
+  })
+
+  test('rejects fresh qualification without a new snapshot or existing terminal pin', () => {
+    const sameSnapshot = makeFixture()
+    expect(() => promote(sameSnapshot, {}, 'a'.repeat(40), 'fresh')).toThrow(
+      'fresh qualification requires a new BAYN_SIGNAL_SNAPSHOT_ID',
+    )
+
+    const unpinned = makeFixture({
+      snapshotId: '4'.repeat(64),
+      publicationAsOf: '2026-07-19',
+      qualificationRunId: null,
+    })
+    expect(() => promote(unpinned, {}, 'a'.repeat(40), 'fresh')).toThrow(
+      'fresh qualification requires an existing terminal qualification pin',
+    )
+  })
+
+  test('rejects a second source release while a qualification is unpinned', () => {
+    const paths = makeFixture({ snapshotId: '4'.repeat(64), publicationAsOf: '2026-07-19' })
+    const changedParameterHash = '3'.repeat(64)
+    promote(paths, { strategyParameterHash: changedParameterHash }, 'a'.repeat(40), 'fresh')
 
     expect(promote(paths, { strategyParameterHash: changedParameterHash })).toMatchObject({
       promotionAction: 'promote',
       promotionReason: 'eligible',
+      qualificationIntent: 'preserve',
       qualificationMode: 'replace',
       hadQualificationPin: false,
       snapshotChanged: false,
@@ -240,9 +288,23 @@ describe('Bayn manifest promotion', () => {
         digest: 'sha256:bad',
         strategyBehaviorHash,
         strategyParameterHash,
+        qualificationIntent: 'preserve',
         rolloutTimestamp: 'now',
         applicationSetPath: 'unused',
       }),
     ).toThrow('invalid source SHA')
+
+    expect(() =>
+      updateBaynManifests({
+        sourceSha: 'a'.repeat(40),
+        tag: 'sha-main',
+        digest: `sha256:${'b'.repeat(64)}`,
+        strategyBehaviorHash,
+        strategyParameterHash,
+        qualificationIntent: 'invalid' as UpdateBaynManifestOptions['qualificationIntent'],
+        rolloutTimestamp: '2026-07-22T10:00:00Z',
+        applicationSetPath: 'unused',
+      }),
+    ).toThrow('invalid qualification intent')
   })
 })

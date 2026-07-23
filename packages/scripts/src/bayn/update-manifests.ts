@@ -36,6 +36,7 @@ export interface UpdateBaynManifestOptions {
   readonly digest: string
   readonly strategyBehaviorHash: string
   readonly strategyParameterHash: string
+  readonly qualificationIntent: 'preserve' | 'fresh'
   readonly rolloutTimestamp: string
   readonly kustomizationPath?: string
   readonly deploymentPath?: string
@@ -44,7 +45,8 @@ export interface UpdateBaynManifestOptions {
 
 export interface BaynManifestUpdate {
   readonly promotionAction: 'promote' | 'hold'
-  readonly promotionReason: 'eligible' | 'strategy-identity-change-requires-fresh-snapshot'
+  readonly promotionReason: 'eligible' | 'qualification-change-requires-explicit-fresh-mode'
+  readonly qualificationIntent: 'preserve' | 'fresh'
   readonly qualificationMode: 'preserve' | 'replace'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
@@ -106,6 +108,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (!hashPattern.test(options.strategyParameterHash)) {
     throw new Error(`invalid strategy parameter hash: ${options.strategyParameterHash}`)
   }
+  if (options.qualificationIntent !== 'preserve' && options.qualificationIntent !== 'fresh') {
+    throw new Error(`invalid qualification intent: ${String(options.qualificationIntent)}`)
+  }
   if (Number.isNaN(Date.parse(options.rolloutTimestamp))) throw new Error('rollout timestamp must be ISO-8601')
 
   const kustomizationPath = options.kustomizationPath ?? 'argocd/applications/bayn/kustomization.yaml'
@@ -147,6 +152,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const qualificationMode =
     hadQualificationPin && strategyIdentityMatches && qualificationBindingsMatch ? 'preserve' : 'replace'
   const updateDetails = {
+    qualificationIntent: options.qualificationIntent,
     qualificationMode,
     hadQualificationPin,
     qualificationBindingsMatch,
@@ -159,15 +165,18 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     candidateBehaviorHash: options.strategyBehaviorHash,
     candidateParameterHash: options.strategyParameterHash,
   } as const
-  if (hadQualificationPin && !strategyIdentityMatches && qualificationBindingsMatch && !snapshotChanged) {
+  if (options.qualificationIntent === 'fresh') {
+    if (!hadQualificationPin) throw new Error('fresh qualification requires an existing terminal qualification pin')
+    if (!snapshotChanged) throw new Error('fresh qualification requires a new BAYN_SIGNAL_SNAPSHOT_ID')
+    if (qualificationMode !== 'replace') {
+      throw new Error('fresh qualification requires changed qualification identity')
+    }
+  } else if (qualificationMode === 'replace' && hadQualificationPin) {
     return {
       promotionAction: 'hold',
-      promotionReason: 'strategy-identity-change-requires-fresh-snapshot',
+      promotionReason: 'qualification-change-requires-explicit-fresh-mode',
       ...updateDetails,
     }
-  }
-  if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
-    throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
   if (!hadQualificationPin && !snapshotChanged && deployedSourceSha !== options.sourceSha) {
     throw new Error('an unpinned qualification snapshot cannot accept a second source release')
@@ -264,6 +273,7 @@ const parseArguments = (argumentsToParse: readonly string[]): UpdateBaynManifest
     digest: required('--digest'),
     strategyBehaviorHash: required('--strategy-behavior-hash'),
     strategyParameterHash: required('--strategy-parameter-hash'),
+    qualificationIntent: required('--qualification-intent') as UpdateBaynManifestOptions['qualificationIntent'],
     rolloutTimestamp: required('--rollout-timestamp'),
   }
 }
