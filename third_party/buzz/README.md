@@ -28,6 +28,7 @@ from unrelated `409` errors.
 
 The build workflow checks out the exact upstream revision, verifies and applies
 the patch, runs the focused relay tests, builds on native amd64 and arm64
-runners, and publishes one multi-architecture image. The deployment consumes
-that image by digest. Remove this derivative after upstream ships equivalent
-Ceph RGW compatibility.
+runners, pins each build to the matching upstream platform-manifest digest, and
+publishes one multi-architecture image. The deployment consumes that image by
+digest. Remove this derivative after upstream ships equivalent Ceph RGW
+compatibility.

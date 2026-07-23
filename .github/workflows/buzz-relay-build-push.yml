@@ -69,8 +69,10 @@ jobs:
         include:
           - architecture: amd64
             runner: arc-amd64
+            upstream_image: ghcr.io/block/buzz@sha256:0c015d0942b2b302b7264362a103165093960aaacc87d3c0f7bbcf68116950f5
           - architecture: arm64
             runner: arc-arm64
+            upstream_image: ghcr.io/block/buzz@sha256:5a091bb6b91572dbc34743cb36d6e56fd170408243b263c825ff764017c524f5
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout deployment repository
@@ -106,7 +108,7 @@ jobs:
           tags: ${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           build-args: |
             LAB_GIT_SHA=${{ github.sha }}
-            UPSTREAM_IMAGE=${{ env.UPSTREAM_IMAGE }}
+            UPSTREAM_IMAGE=${{ matrix.upstream_image }}
           cache-from: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }}
           cache-to: type=registry,ref=${{ env.IMAGE_REPOSITORY }}:cache-${{ matrix.architecture }},mode=max
 

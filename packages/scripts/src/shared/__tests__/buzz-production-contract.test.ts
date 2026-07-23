@@ -44,6 +44,13 @@ describe('Buzz production GitOps contract', () => {
 
     expect(workflow).toContain('runner: arc-amd64')
     expect(workflow).toContain('runner: arc-arm64')
+    expect(workflow).toContain(
+      'upstream_image: ghcr.io/block/buzz@sha256:0c015d0942b2b302b7264362a103165093960aaacc87d3c0f7bbcf68116950f5',
+    )
+    expect(workflow).toContain(
+      'upstream_image: ghcr.io/block/buzz@sha256:5a091bb6b91572dbc34743cb36d6e56fd170408243b263c825ff764017c524f5',
+    )
+    expect(workflow).toContain('UPSTREAM_IMAGE=${{ matrix.upstream_image }}')
     expect(workflow).toContain('git -C upstream apply --check')
     expect(workflow).toContain('any(.manifests[]?; .platform.os == "linux"')
     expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib')
