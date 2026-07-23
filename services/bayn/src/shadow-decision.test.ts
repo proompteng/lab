@@ -433,6 +433,7 @@ describe('OBSERVE shadow decision', () => {
     expect(first.deltaRisk[1]?.evaluation.input.positionsHash).not.toBe(
       first.deltaRisk[0]?.evaluation.input.positionsHash,
     )
+    expect(first.deltaRisk[1]?.evaluation.input.inputHash).not.toBe(first.deltaRisk[0]?.evaluation.input.inputHash)
     expect(
       first.deltaRisk.every(
         ({ evaluation }) =>

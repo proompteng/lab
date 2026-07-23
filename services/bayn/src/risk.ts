@@ -671,7 +671,7 @@ export const evaluate = (
     executionSession: state.executionSession,
   })
   const inputMaterial = {
-    schemaVersion: 'bayn.paper-risk-evaluation-input.v1',
+    schemaVersion: 'bayn.paper-risk-evaluation-input.v2',
     intent,
     policy,
     state,
