@@ -24,12 +24,15 @@ describe('Buzz production GitOps contract', () => {
 
     expect(kustomization).toContain('version: 0.1.6')
     expect(kustomization).toContain('sha256:88b96378cabd6b64c9bb8da9824a608daac3b0965d2aa17019e70248c07d517c')
-    expect(kustomization).toContain('newTag: sha-acfbb1b')
-    expect(kustomization).toContain('sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428')
+    expect(kustomization).toContain('newName: registry.ide-newton.ts.net/lab/buzz')
+    expect(kustomization).toContain('newTag: sha-dba56ff36e19307d93a738c9005aaa3cbfa718df')
+    expect(kustomization).toContain('sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb')
 
     for (const manifest of [kustomization, postgres, redis, alloy]) {
       expect(manifest).toContain('sha256:')
     }
+
+    expect(alloy).toContain('--server.http.listen-addr=0.0.0.0:12345')
   })
 
   test('builds the Ceph compatibility relay from pinned upstream inputs for both cluster architectures', () => {
@@ -73,6 +76,8 @@ describe('Buzz production GitOps contract', () => {
       'replicaCount: 2',
       'requireAuthToken: true',
       'requireRelayMembership: true',
+      'BUZZ_GIT_S3_COMPATIBILITY',
+      'value: ceph-rgw',
       'huddleAudioAvailable: false',
       'pairingRelay:\n  enabled: false',
       'persistence:\n  git:\n    enabled: false',

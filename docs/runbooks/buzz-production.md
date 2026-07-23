@@ -7,9 +7,17 @@ Buzz is deployed to the `buzz` namespace by the `buzz` Argo CD application. It i
 
 - Helm chart: `oci://ghcr.io/block/buzz/charts/buzz:0.1.6`
   (`sha256:88b96378cabd6b64c9bb8da9824a608daac3b0965d2aa17019e70248c07d517c`).
-- Relay image: `ghcr.io/block/buzz:sha-acfbb1b`
-  (`sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428`, source revision
-  `acfbb1bb6af54cb29cb152496ff43b8285dcb8cf`).
+- Relay image:
+  `registry.ide-newton.ts.net/lab/buzz:sha-dba56ff36e19307d93a738c9005aaa3cbfa718df`
+  (`sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb`, lab revision
+  `dba56ff36e19307d93a738c9005aaa3cbfa718df`).
+- The derivative image preserves upstream runtime index
+  `ghcr.io/block/buzz@sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428`
+  and replaces only `buzz-relay`, built from upstream revision
+  `acfbb1bb6af54cb29cb152496ff43b8285dcb8cf` with the bounded Ceph RGW patch.
+- `BUZZ_GIT_S3_COMPATIBILITY=ceph-rgw` enables the compatibility boundary. Remove the derivative and this setting
+  after upstream ships equivalent quoted-ETag and conditional-conflict handling and the production A3 conformance
+  test passes on the upstream image.
 - `RELAY_OWNER_PUBKEY` is public and committed in `argocd/applications/buzz/values.yaml`.
 - The owner's `nsec` is stored only in the human-owned `buzz-owner` item in the 1Password `Private` vault.
 - `buzz-runtime` in the 1Password `infra` vault contains the stable relay private key, Git hook HMAC secret, and

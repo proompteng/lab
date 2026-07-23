@@ -27,6 +27,9 @@ relay:
   allowNipOaAuth: true
   pubkeyAllowlist: false
   huddleAudioAvailable: false
+  extraEnv:
+    - name: BUZZ_GIT_S3_COMPATIBILITY
+      value: ceph-rgw
   topologySpreadConstraints:
     - maxSkew: 1
       topologyKey: kubernetes.io/hostname

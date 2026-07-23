@@ -128,6 +128,10 @@ const manifestOnlyRepoImageApps = new Map<string, string>([
   ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
   ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
   [
+    'buzz',
+    'relay source lives in the upstream block/buzz repository; lab builds a bounded Ceph RGW compatibility derivative and pins its image digest',
+  ],
+  [
     'hermes',
     'agent source lives in the upstream NousResearch/hermes-agent repository; lab mirrors a reviewed release and pins its image digest',
   ],

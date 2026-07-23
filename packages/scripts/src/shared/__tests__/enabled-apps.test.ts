@@ -258,7 +258,7 @@ describe('enabled app inventory', () => {
   })
 
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
-    for (const name of ['analysis', 'bilig', 'hermes', 'tigresse']) {
+    for (const name of ['analysis', 'bilig', 'buzz', 'hermes', 'tigresse']) {
       expect(entry(name).class).toBe('vendor-manifest')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
       expect(entry(name).buildScriptPath).toBeUndefined()
@@ -266,6 +266,18 @@ describe('enabled app inventory', () => {
       expect(entry(name).nixImageAttr).toBeUndefined()
       expect(entry(name).deferredReason).toBeTruthy()
     }
+  })
+
+  it('tracks Buzz as a reviewed upstream derivative, not an in-repo Nix image gap', () => {
+    expect(entry('buzz')).toMatchObject({
+      class: 'vendor-manifest',
+      hasHelmChart: true,
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/buzz@sha256:16d08bf8e2772a93924de1a49746a034d3410387d6095b214ed2e798aa7d6cfb',
+      ],
+      workflowPaths: ['.github/workflows/buzz-relay-build-push.yml'],
+    })
+    expect(entry('buzz').deferredReason).toContain('block/buzz')
   })
 
   it('tracks Hermes as a reviewed upstream mirror, not an in-repo image build gap', () => {
