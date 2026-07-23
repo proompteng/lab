@@ -387,6 +387,12 @@ const makeActivation = (
     ...overrides,
   })
 
+const proofBinding = (activation: PaperAuthorityGeneration) => ({
+  schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
+  riskPolicyHash: activation.riskPolicyHash,
+  proofPlanHash: activation.proofPlanHash,
+})
+
 const paperRuntimeConfig = (
   activation: PaperAuthorityGeneration,
   overrides: Partial<RuntimeConfig> = {},
@@ -410,6 +416,22 @@ const paperRuntimeConfig = (
   },
   ...overrides,
 })
+
+const prepareRuntimeConfig = (activation: PaperAuthorityGeneration): RuntimeConfig => {
+  const runtimeConfig = paperRuntimeConfig(activation)
+  const alpaca = runtimeConfig.alpaca
+  if (alpaca === undefined) {
+    throw new Error('PAPER PREPARE fixture requires an Alpaca binding')
+  }
+  return {
+    ...runtimeConfig,
+    maximumAuthority: Authority.Observe,
+    alpaca: {
+      ...alpaca,
+      authorityGenerationHash: activation.previousGenerationHash,
+    },
+  }
+}
 
 const makeActivationRuntime = (
   control: JournalControl,
@@ -830,7 +852,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: observeGenerationHash,
             maximum: Authority.Observe,
           })
-          yield* store.activatePaperGeneration(activation)
+          yield* store.activatePaperGeneration(proofBinding(activation))
           const [beforeConflict] = yield* sql<{ tuple_id: string; version: number }>`
             SELECT xmin::text AS tuple_id, version::integer FROM authority_state
           `
@@ -865,6 +887,254 @@ describePostgres('paper accounting persistence', () => {
       expect(result.afterConflict).toEqual(result.beforeConflict)
     } finally {
       await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('prepares one deterministic PAPER receipt without writes and activates it from unchanged durable inputs', async () => {
+    const initialGenerationHash = hash('prepared-paper-observe-generation')
+    const reconciliation = exactReconciliation('prepared-paper')
+    const expected = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const prepareRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, prepareRuntimeConfig(expected))
+    const preparation = await (async () => {
+      try {
+        return await prepareRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            const sql = yield* PgClient.PgClient
+            yield* seedQualificationEvidence(qualifiedEvidence)
+            yield* seedExactReconciliation(reconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+              SELECT
+                (
+                  SELECT jsonb_agg(
+                    jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+                  )
+                  FROM authority_state AS authority
+                ) AS authority,
+                (
+                  SELECT jsonb_agg(
+                    jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+                    ORDER BY history.authority_version
+                  )
+                  FROM authority_generations AS history
+                ) AS history
+            `
+            const [before] = yield* readAuthorityEvidence
+            const first = yield* store.preparePaperGeneration(proofBinding(expected))
+            const second = yield* store.preparePaperGeneration(proofBinding(expected))
+            const [after] = yield* readAuthorityEvidence
+            return { after, before, first, second }
+          }),
+        )
+      } finally {
+        await prepareRuntime.dispose()
+      }
+    })()
+
+    expect(preparation.first).toEqual(expected)
+    expect(preparation.second).toEqual(preparation.first)
+    expect(preparation.after).toEqual(preparation.before)
+
+    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, preparation.first)
+    try {
+      const activated = await activationRuntime.runPromise(
+        Effect.flatMap(PaperStore, (store) => store.activatePaperGeneration(proofBinding(preparation.first))),
+      )
+      expect(activated).toMatchObject({
+        generationHash: preparation.first.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        version: 2,
+      })
+    } finally {
+      await activationRuntime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects PREPARE when configured OBSERVE generation is not current without writing', async () => {
+    const initialGenerationHash = hash('prepare-config-mismatch-observe')
+    const reconciliation = exactReconciliation('prepare-config-mismatch')
+    const expected = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const setupRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, prepareRuntimeConfig(expected))
+    try {
+      await setupRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+        }),
+      )
+    } finally {
+      await setupRuntime.dispose()
+    }
+
+    const validConfig = prepareRuntimeConfig(expected)
+    const validAlpaca = validConfig.alpaca
+    if (validAlpaca === undefined) {
+      throw new Error('PAPER PREPARE fixture requires an Alpaca binding')
+    }
+    const runtime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      {
+        ...validConfig,
+        alpaca: {
+          ...validAlpaca,
+          authorityGenerationHash: hash('wrong-current-observe-generation'),
+        },
+      },
+    )
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const [before] = yield* readAuthorityEvidence
+          const failure = yield* Effect.flip(store.preparePaperGeneration(proofBinding(expected)))
+          const [after] = yield* readAuthorityEvidence
+          return { after, before, failure }
+        }),
+      )
+      expect(result.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'PAPER PREPARE current authority differs from the configured OBSERVE generation',
+      })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects reconciliation drift between PREPARE and activation without authority writes', async () => {
+    const initialGenerationHash = hash('prepare-reconciliation-drift-observe')
+    const reconciliation = exactReconciliation('prepare-reconciliation-drift')
+    const expected = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const prepareRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, prepareRuntimeConfig(expected))
+    const prepared = await (async () => {
+      try {
+        return await prepareRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            yield* seedQualificationEvidence(qualifiedEvidence)
+            yield* seedExactReconciliation(reconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const receipt = yield* store.preparePaperGeneration(proofBinding(expected))
+            yield* seedExactReconciliation(exactReconciliation('post-prepare-reconciliation'))
+            return receipt
+          }),
+        )
+      } finally {
+        await prepareRuntime.dispose()
+      }
+    })()
+
+    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, prepared)
+    try {
+      const result = await activationRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const [before] = yield* readAuthorityEvidence
+          const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(prepared)))
+          const [after] = yield* readAuthorityEvidence
+          return { after, before, failure }
+        }),
+      )
+      expect(result.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'derived PAPER generation differs from the configured generation',
+      })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await activationRuntime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects current-generation drift between PREPARE and activation without further writes', async () => {
+    const initialGenerationHash = hash('prepare-generation-drift-observe')
+    const reconciliation = exactReconciliation('prepare-generation-drift')
+    const expected = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const prepareRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, prepareRuntimeConfig(expected))
+    const prepared = await (async () => {
+      try {
+        return await prepareRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            yield* seedQualificationEvidence(qualifiedEvidence)
+            yield* seedExactReconciliation(reconciliation)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            const receipt = yield* store.preparePaperGeneration(proofBinding(expected))
+            yield* store.ensureAuthorityGeneration({
+              generationHash: hash('post-prepare-observe-generation'),
+              maximum: Authority.Observe,
+            })
+            return receipt
+          }),
+        )
+      } finally {
+        await prepareRuntime.dispose()
+      }
+    })()
+
+    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, prepared)
+    try {
+      const result = await activationRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
+              (
+                SELECT jsonb_agg(to_jsonb(history) ORDER BY history.authority_version)
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const [before] = yield* readAuthorityEvidence
+          const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(prepared)))
+          const [after] = yield* readAuthorityEvidence
+          return { after, before, failure }
+        }),
+      )
+      expect(result.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'derived PAPER generation differs from the configured generation',
+      })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await activationRuntime.dispose()
     }
   }, 15_000)
 
@@ -942,7 +1212,7 @@ describePostgres('paper accounting persistence', () => {
       try {
         failures.push(
           await runtime.runPromise(
-            Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(activation))),
+            Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(proofBinding(activation)))),
           ),
         )
       } finally {
@@ -956,7 +1226,9 @@ describePostgres('paper accounting persistence', () => {
     const wrongBuildFailure = await (async () => {
       try {
         return await wrongBuildRuntime.runPromise(
-          Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(wrongBuildActivation))),
+          Effect.flatMap(PaperStore, (store) =>
+            Effect.flip(store.activatePaperGeneration(proofBinding(wrongBuildActivation))),
+          ),
         )
       } finally {
         await wrongBuildRuntime.dispose()
@@ -972,7 +1244,7 @@ describePostgres('paper accounting persistence', () => {
     const wrongStrategyFailure = await (async () => {
       try {
         return await wrongStrategyRuntime.runPromise(
-          Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(activation))),
+          Effect.flatMap(PaperStore, (store) => Effect.flip(store.activatePaperGeneration(proofBinding(activation)))),
         )
       } finally {
         await wrongStrategyRuntime.dispose()
@@ -989,7 +1261,7 @@ describePostgres('paper accounting persistence', () => {
     const correctRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
     try {
       const activated = await correctRuntime.runPromise(
-        Effect.flatMap(PaperStore, (store) => store.activatePaperGeneration(activation)),
+        Effect.flatMap(PaperStore, (store) => store.activatePaperGeneration(proofBinding(activation))),
       )
       expect(activated).toMatchObject({
         generationHash: activation.generationHash,
@@ -1006,19 +1278,17 @@ describePostgres('paper accounting persistence', () => {
       expect(failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message:
-          'PAPER activation differs from the configured authority, account, generation, or qualification binding',
       })
     }
     expect(wrongBuildFailure).toMatchObject({
       operation: 'authority',
       failure: 'invariant',
-      message: 'PAPER activation provenance differs from the current embedded build',
+      message: 'derived PAPER generation differs from the configured generation',
     })
     expect(wrongStrategyFailure).toMatchObject({
       operation: 'authority',
       failure: 'invariant',
-      message: 'PAPER activation strategy identity differs from the current embedded build',
+      message: 'PAPER generation differs from terminal qualification evidence or current strategy build',
     })
     expect(afterRejected).toEqual(before)
   }, 15_000)
@@ -1039,7 +1309,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: initialGenerationHash,
             maximum: Authority.Observe,
           })
-          const activated = yield* store.activatePaperGeneration(activation)
+          const activated = yield* store.activatePaperGeneration(proofBinding(activation))
           const [beforeReplay] = yield* sql<{
             authority_tuple: string
             history_count: number
@@ -1053,7 +1323,14 @@ describePostgres('paper accounting persistence', () => {
             JOIN authority_generations AS paper
               ON paper.generation_hash = authority.generation_hash
           `
-          const replay = yield* store.activatePaperGeneration(activation)
+          yield* seedExactReconciliation(exactReconciliation('paper-replay-later-reconciliation'))
+          const replay = yield* store.activatePaperGeneration(proofBinding(activation))
+          const changedProof = yield* Effect.flip(
+            store.activatePaperGeneration({
+              ...proofBinding(activation),
+              proofPlanHash: hash('paper-replay-changed-proof'),
+            }),
+          )
           const [afterReplay] = yield* sql<{
             authority_tuple: string
             history_count: number
@@ -1107,6 +1384,7 @@ describePostgres('paper accounting persistence', () => {
             activation,
             afterReplay,
             beforeReplay,
+            changedProof,
             deleteHistory,
             history,
             mutateHistory,
@@ -1126,6 +1404,7 @@ describePostgres('paper accounting persistence', () => {
         updatedAt: expect.any(String),
       })
       expect(result.replay).toEqual(result.activated)
+      expect(result.changedProof).toMatchObject({ operation: 'authority', failure: 'conflict' })
       expect(result.afterReplay).toEqual(result.beforeReplay)
       expect(Exit.isFailure(result.mutateHistory)).toBe(true)
       expect(Exit.isFailure(result.deleteHistory)).toBe(true)
@@ -1172,6 +1451,77 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
+  test('rejects changed configured replay identity byte-identically', async () => {
+    const initialGenerationHash = hash('paper-replay-config-observe-generation')
+    const reconciliation = exactReconciliation('paper-replay-config')
+    const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, activation)
+    try {
+      await activationRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* seedQualificationEvidence(qualifiedEvidence)
+          yield* seedExactReconciliation(reconciliation)
+          yield* store.ensureAuthorityGeneration({
+            generationHash: initialGenerationHash,
+            maximum: Authority.Observe,
+          })
+          yield* store.activatePaperGeneration(proofBinding(activation))
+        }),
+      )
+    } finally {
+      await activationRuntime.dispose()
+    }
+
+    const validConfig = paperRuntimeConfig(activation)
+    const validAlpaca = validConfig.alpaca
+    if (validAlpaca === undefined) {
+      throw new Error('PAPER replay fixture requires an Alpaca binding')
+    }
+    const replayRuntime = makeStoreRuntime(
+      { fail: false, planHashes: [] },
+      {
+        ...validConfig,
+        alpaca: {
+          ...validAlpaca,
+          accountId: 'changed-replay-account',
+        },
+      },
+    )
+    try {
+      const result = await replayRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const readAuthorityEvidence = sql<{ authority: unknown; history: unknown }>`
+            SELECT
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+                )
+                FROM authority_state AS authority
+              ) AS authority,
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+                  ORDER BY history.authority_version
+                )
+                FROM authority_generations AS history
+              ) AS history
+          `
+          const [before] = yield* readAuthorityEvidence
+          const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(activation)))
+          const [after] = yield* readAuthorityEvidence
+          return { after, before, failure }
+        }),
+      )
+      expect(result.failure).toMatchObject({ operation: 'authority', failure: 'conflict' })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await replayRuntime.dispose()
+    }
+  }, 15_000)
+
   test('rejects the exact reconciliation staleness boundary and future database time without writing', async () => {
     const initialGenerationHash = hash('reconciliation-time-observe-generation')
     const staleReconciliation = exactReconciliation('stale-reconciliation-time', config.reconciliationStaleThresholdMs)
@@ -1201,7 +1551,7 @@ describePostgres('paper accounting persistence', () => {
             })
             const before = yield* readAuthorityEvidence
             yield* seedExactReconciliation(staleReconciliation)
-            const failure = yield* Effect.flip(store.activatePaperGeneration(staleActivation))
+            const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(staleActivation)))
             const after = yield* readAuthorityEvidence
             return { after, before, failure }
           }),
@@ -1218,7 +1568,7 @@ describePostgres('paper accounting persistence', () => {
         Effect.gen(function* () {
           const store = yield* PaperStore
           yield* seedExactReconciliation(futureReconciliation)
-          const failure = yield* Effect.flip(store.activatePaperGeneration(futureActivation))
+          const failure = yield* Effect.flip(store.activatePaperGeneration(proofBinding(futureActivation)))
           const after = yield* readAuthorityEvidence
           return { after, failure }
         }),
@@ -1227,12 +1577,12 @@ describePostgres('paper accounting persistence', () => {
       expect(staleResult.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER activation requires the latest fresh exact account reconciliation',
+        message: 'PAPER generation requires the latest fresh exact account reconciliation',
       })
       expect(futureResult.failure).toMatchObject({
         operation: 'authority',
         failure: 'invariant',
-        message: 'PAPER activation requires the latest fresh exact account reconciliation',
+        message: 'PAPER generation requires the latest fresh exact account reconciliation',
       })
       expect(staleResult.after).toEqual(staleResult.before)
       expect(futureResult.after).toEqual(staleResult.before)
@@ -1291,7 +1641,7 @@ describePostgres('paper accounting persistence', () => {
           yield* Deferred.await(lockHeld)
           return yield* Effect.gen(function* () {
             const activationFiber = yield* Effect.forkChild(
-              Effect.exit(store.activatePaperGeneration(paperActivation)),
+              Effect.exit(store.activatePaperGeneration(proofBinding(paperActivation))),
               { startImmediately: true },
             )
             let waiting = false
@@ -1326,7 +1676,7 @@ describePostgres('paper accounting persistence', () => {
       expect(Exit.isFailure(result.activationExit)).toBe(true)
       if (Exit.isFailure(result.activationExit)) {
         expect(Cause.pretty(result.activationExit.cause)).toContain(
-          'PAPER activation requires the latest fresh exact account reconciliation',
+          'PAPER generation requires the latest fresh exact account reconciliation',
         )
       }
       expect(result.after).toEqual(result.before)
@@ -1352,7 +1702,7 @@ describePostgres('paper accounting persistence', () => {
             maximum: Authority.Observe,
           })
           const states = yield* Effect.all(
-            Array.from({ length: 12 }, () => store.activatePaperGeneration(activation)),
+            Array.from({ length: 12 }, () => store.activatePaperGeneration(proofBinding(activation))),
             { concurrency: 'unbounded' },
           )
           const sql = yield* PgClient.PgClient
@@ -1413,7 +1763,7 @@ describePostgres('paper accounting persistence', () => {
             SELECT kill_state, reason, updated_at, version::integer
             FROM authority_state
           `
-          const activated = yield* store.activatePaperGeneration(activation)
+          const activated = yield* store.activatePaperGeneration(proofBinding(activation))
           return { activated, before }
         }),
       )
@@ -1431,7 +1781,7 @@ describePostgres('paper accounting persistence', () => {
     }
   }, 15_000)
 
-  test('rejects reused generations and every qualification or reconciliation mismatch without writing', async () => {
+  test('rejects changed proof material and reconciliation drift without writing', async () => {
     const initialGenerationHash = hash('mismatch-paper-observe-generation')
     const reconciliation = exactReconciliation('mismatch-paper-activation')
     const activation = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
@@ -1455,23 +1805,11 @@ describePostgres('paper accounting persistence', () => {
                 FROM authority_generations AS history
               ) AS history
           `
-          const mismatches = [
-            { qualificationSourceRevision: 'f'.repeat(40) },
-            { qualificationImageDigest: `sha256:${'e'.repeat(64)}` as const },
-            { activationSourceRevision: 'f'.repeat(40) },
-            { strategyBehaviorHash: hash('wrong-strategy-behavior') },
-            { strategyParameterHash: hash('wrong-strategy-parameters') },
-            { qualificationResultHash: hash('wrong-qualification-result') },
-            { qualificationExecutionPolicyHash: hash('wrong-execution-policy') },
-            { accountId: 'another-paper-account' },
-            { reconciliationContentHash: hash('wrong-reconciliation-content') },
-          ] as const
-          const failures = yield* Effect.forEach(mismatches, (overrides) =>
-            Effect.flip(
-              store.activatePaperGeneration(
-                makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation, overrides),
-              ),
-            ),
+          const changedProof = yield* Effect.flip(
+            store.activatePaperGeneration({
+              ...proofBinding(activation),
+              proofPlanHash: hash('changed-paper-proof-plan'),
+            }),
           )
           yield* sql`
             INSERT INTO reconciliations (
@@ -1484,7 +1822,7 @@ describePostgres('paper accounting persistence', () => {
               clock_timestamp()
             )
           `
-          const stale = yield* Effect.flip(store.activatePaperGeneration(activation))
+          const stale = yield* Effect.flip(store.activatePaperGeneration(proofBinding(activation)))
           const [after] = yield* sql<{ authority: unknown; history: unknown }>`
             SELECT
               (SELECT jsonb_agg(to_jsonb(authority)) FROM authority_state AS authority) AS authority,
@@ -1493,12 +1831,11 @@ describePostgres('paper accounting persistence', () => {
                 FROM authority_generations AS history
               ) AS history
           `
-          return { after, before, failures, stale }
+          return { after, before, changedProof, stale }
         }),
       )
 
-      expect(result.failures).toHaveLength(9)
-      expect(result.failures.every((failure) => failure.operation === 'authority')).toBe(true)
+      expect(result.changedProof).toMatchObject({ operation: 'authority', failure: 'invariant' })
       expect(result.stale).toMatchObject({ operation: 'authority', failure: 'invariant' })
       expect(result.after).toEqual(result.before)
     } finally {
@@ -1523,7 +1860,7 @@ describePostgres('paper accounting persistence', () => {
               generationHash: initialGenerationHash,
               maximum: Authority.Observe,
             })
-            return yield* Effect.flip(store.activatePaperGeneration(rejectedActivation))
+            return yield* Effect.flip(store.activatePaperGeneration(proofBinding(rejectedActivation)))
           }),
         )
       } finally {
@@ -1562,7 +1899,7 @@ describePostgres('paper accounting persistence', () => {
             )
           `
           yield* seedQualificationEvidence(qualifiedEvidence)
-          const unresolved = yield* Effect.flip(store.activatePaperGeneration(qualifiedActivation))
+          const unresolved = yield* Effect.flip(store.activatePaperGeneration(proofBinding(qualifiedActivation)))
           const [stored] = yield* sql<{ generation_hash: string; history_count: number; version: number }>`
             SELECT
               generation_hash,
@@ -1602,7 +1939,7 @@ describePostgres('paper accounting persistence', () => {
             generationHash: firstObserveHash,
             maximum: Authority.Observe,
           })
-          yield* store.activatePaperGeneration(activation)
+          yield* store.activatePaperGeneration(proofBinding(activation))
           const returned = yield* store.ensureAuthorityGeneration({
             generationHash: returnObserveHash,
             maximum: Authority.Observe,
@@ -2306,7 +2643,7 @@ describePostgres('paper accounting persistence', () => {
         Effect.gen(function* () {
           const store = yield* PaperStore
           const sql = yield* PgClient.PgClient
-          const activated = yield* store.activatePaperGeneration(activation)
+          const activated = yield* store.activatePaperGeneration(proofBinding(activation))
           yield* sql`
             INSERT INTO valuations (
               valuation_id, schema_version, account_id, source_hash, cash_micros,

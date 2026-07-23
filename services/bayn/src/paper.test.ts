@@ -25,6 +25,7 @@ import {
   decodeIntent,
   decodeOrder,
   decodePosition,
+  decodePaperAuthorityProofBinding,
   decodePaperAuthorityGeneration,
   decodeRateLimit,
   decodeReconciliation,
@@ -415,6 +416,11 @@ describe('paper contracts', () => {
   })
 
   test('binds a PAPER authority generation to exact qualification, runtime, account, policy, and proof evidence', async () => {
+    const proof = {
+      schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
+      riskPolicyHash: hash('c'),
+      proofPlanHash: hash('d'),
+    }
     const material = {
       schemaVersion: 'bayn.paper-authority-generation.v1' as const,
       maximum: Authority.Paper as const,
@@ -435,13 +441,26 @@ describe('paper contracts', () => {
       strategyParameterHash: hash('b'),
       strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3' as const,
       accountId: 'paper-account-1',
-      riskPolicyHash: hash('c'),
-      proofPlanHash: hash('d'),
+      riskPolicyHash: proof.riskPolicyHash,
+      proofPlanHash: proof.proofPlanHash,
       reconciliationId: hash('e'),
       reconciliationContentHash: hash('f'),
     }
     const generation = makePaperAuthorityGeneration(material)
 
+    expect(await Effect.runPromise(decodePaperAuthorityProofBinding(proof))).toEqual(proof)
+    await expectFailure(
+      decodePaperAuthorityProofBinding({
+        ...proof,
+        previousGenerationHash: material.previousGenerationHash,
+      }),
+    )
+    await expectFailure(
+      decodePaperAuthorityProofBinding({
+        ...proof,
+        reconciliationId: material.reconciliationId,
+      }),
+    )
     expect(await Effect.runPromise(decodePaperAuthorityGeneration(generation))).toEqual(generation)
     expect(generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
     expect(makePaperAuthorityGeneration(structuredClone(material))).toEqual(generation)

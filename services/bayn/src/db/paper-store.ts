@@ -32,10 +32,13 @@ import {
   ReconciliationStatus,
   ValuationSchema,
   decodeAuthorityState,
+  decodePaperAuthorityProofBinding,
   decodePaperAuthorityGeneration,
+  makePaperAuthorityGeneration,
   type AccountingReceipt,
   type AuthorityState,
   type PaperAuthorityGeneration,
+  type PaperAuthorityProofBinding,
   type Valuation,
 } from '../paper'
 import { QualificationLockSchema, QualificationResultSchema } from '../qualification'
@@ -106,11 +109,21 @@ export interface PaperStoreShape {
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, PaperStoreError>
   /**
-   * Sole supported cross-generation PAPER writer. Application code and operators must not issue direct DML against
+   * PREPARE operation: under configured OBSERVE, transactionally derives the complete canonical PAPER generation
+   * receipt from durable qualification, reconciliation, authority, and current-build evidence without writing
+   * authority state or history. Commit only its generationHash to the later PAPER configuration.
+   */
+  readonly preparePaperGeneration: (
+    proof: PaperAuthorityProofBinding,
+  ) => Effect.Effect<PaperAuthorityGeneration, PaperStoreError, WriterFence>
+  /**
+   * SUBMIT activation operation: under configured PAPER, transactionally re-derives the complete generation from the
+   * same proof binding and activates it only when its hash equals the configured generationHash. This is the sole
+   * supported cross-generation PAPER writer; application code and operators must not issue direct DML against
    * authority_state or authority_generations.
    */
   readonly activatePaperGeneration: (
-    input: PaperAuthorityGeneration,
+    proof: PaperAuthorityProofBinding,
   ) => Effect.Effect<AuthorityState, PaperStoreError, WriterFence>
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, PaperStoreError>
 }
@@ -1285,387 +1298,451 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
         ),
       )
 
-    const activatePaperGeneration = (candidate: PaperAuthorityGeneration) =>
+    interface PaperGenerationRuntimeBinding {
+      readonly accountId: string
+      readonly configuredGenerationHash: string
+      readonly qualificationRunId: string
+    }
+
+    interface DerivedPaperGeneration {
+      readonly current: AuthorityState
+      readonly generation: PaperAuthorityGeneration
+      readonly reconciliation: typeof ActivationReconciliationRow.Type
+    }
+
+    const requirePaperGenerationRuntime = (
+      expectedMaximum: Authority,
+      operation: 'PREPARE' | 'activation',
+    ): Effect.Effect<PaperGenerationRuntimeBinding, PaperStoreError> => {
+      if (
+        config.maximumAuthority !== expectedMaximum ||
+        config.alpaca === undefined ||
+        config.qualificationRunId === undefined
+      ) {
+        return fail(
+          'authority',
+          'invariant',
+          `PAPER ${operation} requires the exact configured authority, account, generation, and qualification binding`,
+        )
+      }
+      return Effect.succeed({
+        accountId: config.alpaca.accountId,
+        configuredGenerationHash: config.alpaca.authorityGenerationHash,
+        qualificationRunId: config.qualificationRunId,
+      })
+    }
+
+    const lockPaperAuthority = (accountId: string) =>
+      Effect.gen(function* () {
+        yield* sql`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${`ALPACA:${accountId}`}, 0)
+          )
+        `
+        yield* lockAuthorityGenerations
+        const currentRows = yield* sql<Record<string, unknown>>`
+          SELECT
+            schema_version, generation_hash, maximum, effective, kill_state, reason,
+            version::text AS version, updated_at, clock_timestamp() AS observed_at
+          FROM authority_state
+          WHERE singleton
+          FOR UPDATE
+        `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
+        const currentRow = currentRows[0]
+        if (currentRow === undefined) {
+          return yield* fail('authority', 'invariant', 'PAPER generation requires initialized authority')
+        }
+        const current = yield* authorityStateFromRow(currentRow)
+        if (currentRow.updated_at.getTime() > currentRow.observed_at.getTime()) {
+          return yield* fail('authority', 'invariant', 'durable authority update follows its database observation time')
+        }
+        const history = (yield* readGeneration(current.generationHash))[0]
+        yield* verifyCurrentGenerationHistory(current, history)
+        if (history === undefined) {
+          return yield* fail('authority', 'invariant', 'current authority generation lacks immutable history')
+        }
+        return { current, history }
+      })
+
+    const derivePaperGeneration = (
+      proof: PaperAuthorityProofBinding,
+      binding: PaperGenerationRuntimeBinding,
+      current: AuthorityState,
+    ) =>
+      Effect.gen(function* () {
+        if (current.maximum !== Authority.Observe || current.effective !== Authority.Observe) {
+          return yield* fail('authority', 'invariant', 'PAPER generation requires current OBSERVE authority')
+        }
+
+        yield* sql`
+          LOCK TABLE
+            evaluation_artifacts,
+            evaluation_events,
+            gate_outcomes,
+            status_history
+          IN SHARE MODE
+        `
+        const evidenceRows = yield* sql<Record<string, unknown>>`
+          SELECT
+            lock.payload AS lock_payload,
+            result.payload AS result_payload,
+            run.status AS run_status,
+            run.expected_artifact_count,
+            run.expected_event_count,
+            run.expected_gate_count,
+            (
+              SELECT count(*)::integer
+              FROM evaluation_artifacts
+              WHERE run_id = run.run_id
+            ) AS artifact_count,
+            (
+              SELECT count(*)::integer
+              FROM evaluation_events
+              WHERE run_id = run.run_id
+            ) AS event_count,
+            (
+              SELECT count(*)::integer
+              FROM gate_outcomes
+              WHERE run_id = run.run_id
+            ) AS gate_count,
+            (
+              SELECT count(*)::integer
+              FROM status_history
+              WHERE run_id = run.run_id
+            ) AS status_count,
+            (
+              SELECT count(*)::integer
+              FROM status_history
+              WHERE run_id = run.run_id AND status = 'WRITING'
+            ) AS writing_status_count,
+            (
+              SELECT count(*)::integer
+              FROM status_history
+              WHERE run_id = run.run_id AND status = 'COMPLETE'
+            ) AS complete_status_count,
+            (
+              SELECT detail
+              FROM status_history
+              WHERE run_id = run.run_id AND status = 'WRITING'
+            ) AS writing_detail,
+            (
+              SELECT detail
+              FROM status_history
+              WHERE run_id = run.run_id AND status = 'COMPLETE'
+            ) AS complete_detail,
+            protocol.schema_version AS protocol_schema_version,
+            protocol.strategy_name,
+            protocol.behavior_hash,
+            protocol.parameter_hash,
+            protocol.parameters
+          FROM qualification_results AS result
+          JOIN qualification_locks AS lock
+            ON lock.lock_id = result.lock_id
+            AND lock.candidate_run_id = result.run_id
+          JOIN evaluation_runs AS run
+            ON run.run_id = result.run_id
+            AND run.protocol_hash = lock.protocol_hash
+            AND run.snapshot_id = lock.snapshot_id
+            AND run.source_revision = lock.source_revision
+            AND run.image_repository = lock.image_repository
+            AND run.image_digest = lock.image_digest
+          JOIN protocol_locks AS protocol
+            ON protocol.protocol_hash = run.protocol_hash
+            AND protocol.strategy_name = run.strategy_name
+          WHERE result.run_id = ${binding.qualificationRunId}
+          FOR SHARE OF result, lock, run, protocol
+        `.pipe(Effect.flatMap(decodeActivationEvidenceRows))
+        const evidence = evidenceRows[0]
+        if (evidence === undefined) {
+          return yield* fail('authority', 'invariant', 'exact terminal qualification evidence is unavailable')
+        }
+        const lock = evidence.lock_payload
+        const result = evidence.result_payload
+        const strategyProtocolHash = makeStrategyProtocolHash({
+          name: evidence.strategy_name,
+          behaviorHash: evidence.behavior_hash,
+          parameterHash: evidence.parameter_hash,
+          parameterSchemaVersion: evidence.protocol_schema_version,
+        })
+        if (
+          result.verdict !== 'QUALIFIED' ||
+          evidence.run_status !== 'COMPLETE' ||
+          evidence.expected_artifact_count !== evidence.artifact_count ||
+          evidence.expected_event_count !== evidence.event_count ||
+          evidence.expected_gate_count !== evidence.gate_count ||
+          evidence.status_count !== 2 ||
+          evidence.writing_status_count !== 1 ||
+          evidence.complete_status_count !== 1 ||
+          canonicalHashV1(evidence.writing_detail) !==
+            canonicalHashV1({
+              artifactCount: evidence.expected_artifact_count,
+              eventCount: evidence.expected_event_count,
+              gateCount: evidence.expected_gate_count,
+            }) ||
+          canonicalHashV1(evidence.complete_detail) !==
+            canonicalHashV1({
+              reconciliationExact: true,
+              verdict: result.evaluationVerdict.status,
+            }) ||
+          result.runId !== binding.qualificationRunId ||
+          result.lockId !== lock.lockId ||
+          lock.candidateRunId !== binding.qualificationRunId ||
+          evidence.protocol_schema_version !== 'bayn.risk-balanced-trend.protocol.v3' ||
+          evidence.strategy_name !== 'risk-balanced-trend' ||
+          evidence.behavior_hash !== config.build.strategyBehaviorHash ||
+          evidence.parameter_hash !== config.build.strategyParameterHash ||
+          canonicalHashV1(evidence.parameters) !== evidence.parameter_hash ||
+          strategyProtocolHash !== lock.protocolHash
+        ) {
+          return yield* fail(
+            'authority',
+            'invariant',
+            'PAPER generation differs from terminal qualification evidence or current strategy build',
+          )
+        }
+
+        const reconciliationRows = yield* sql<Record<string, unknown>>`
+          SELECT
+            reconciliation_id, account_id, content_hash, status, reconciled_at
+          FROM reconciliations
+          WHERE account_id = ${binding.accountId}
+          ORDER BY reconciled_at DESC, reconciliation_id DESC
+          LIMIT 1
+          FOR SHARE
+        `.pipe(Effect.flatMap(decodeActivationReconciliationRows))
+        const exactReconciliation = reconciliationRows[0]
+        if (
+          exactReconciliation === undefined ||
+          exactReconciliation.account_id !== binding.accountId ||
+          exactReconciliation.status !== ReconciliationStatus.Exact
+        ) {
+          return yield* fail(
+            'authority',
+            'invariant',
+            'PAPER generation requires the latest fresh exact account reconciliation',
+          )
+        }
+
+        const [mutationBaseline] = yield* sql<Record<string, unknown>>`
+          WITH latest AS (
+            SELECT DISTINCT ON (event.mutation_id)
+              event.operation,
+              event.event_type,
+              event.occurred_at,
+              intent.state
+            FROM mutation_events AS event
+            JOIN intents AS intent ON intent.intent_id = event.intent_id
+            WHERE intent.account_id = ${binding.accountId}
+            ORDER BY event.mutation_id, event.sequence DESC
+          )
+          SELECT
+            count(*) FILTER (
+              WHERE latest.event_type IN (
+                'SUBMIT_STARTED',
+                'SUBMIT_UNKNOWN',
+                'RECOVERY_NOT_FOUND',
+                'RECOVERY_UNKNOWN',
+                'CANCEL_STARTED',
+                'CANCEL_ACCEPTED',
+                'CANCEL_UNKNOWN'
+              )
+              OR (
+                latest.operation = 'CANCEL'
+                AND latest.event_type = 'RECOVERY_FOUND'
+                AND latest.state <> 'TERMINAL'
+              )
+            )::integer AS unresolved_count,
+            max(latest.occurred_at) AS latest_mutation_at
+          FROM latest
+        `.pipe(Effect.flatMap(decodeMutationBaseline))
+        if (
+          mutationBaseline.unresolved_count !== 0 ||
+          (mutationBaseline.latest_mutation_at !== null &&
+            mutationBaseline.latest_mutation_at.getTime() > exactReconciliation.reconciled_at.getTime())
+        ) {
+          return yield* fail(
+            'authority',
+            'invariant',
+            'PAPER generation requires zero unresolved mutations covered by reconciliation',
+          )
+        }
+
+        const generation = yield* Effect.try({
+          try: () =>
+            makePaperAuthorityGeneration({
+              schemaVersion: 'bayn.paper-authority-generation.v1',
+              maximum: Authority.Paper,
+              previousGenerationHash: current.generationHash,
+              qualificationRunId: result.runId,
+              qualificationLockId: result.lockId,
+              qualificationResultHash: result.resultHash,
+              protocolHash: lock.protocolHash,
+              qualificationExecutionPolicyHash: lock.policies.execution.contentHash,
+              qualificationSourceRevision: lock.sourceRevision,
+              qualificationImageRepository: lock.image.repository,
+              qualificationImageDigest: lock.image.digest,
+              activationSourceRevision: config.build.sourceRevision,
+              activationImageRepository: config.build.imageRepository,
+              activationImageDigest: config.build.imageDigest,
+              strategyName: evidence.strategy_name,
+              strategyBehaviorHash: evidence.behavior_hash,
+              strategyParameterHash: evidence.parameter_hash,
+              strategyParameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
+              accountId: binding.accountId,
+              riskPolicyHash: proof.riskPolicyHash,
+              proofPlanHash: proof.proofPlanHash,
+              reconciliationId: exactReconciliation.reconciliation_id,
+              reconciliationContentHash: exactReconciliation.content_hash,
+            }),
+          catch: (cause) => error('authority', 'decode', 'derived PAPER generation is invalid', cause),
+        })
+        return { current, generation, reconciliation: exactReconciliation } satisfies DerivedPaperGeneration
+      })
+
+    const validatePaperGenerationFreshness = (derived: DerivedPaperGeneration) =>
+      Effect.gen(function* () {
+        const observedAt = yield* nextAuthorityInstant
+        if (
+          derived.reconciliation.reconciled_at.getTime() > observedAt.getTime() ||
+          observedAt.getTime() - derived.reconciliation.reconciled_at.getTime() >= config.reconciliationStaleThresholdMs
+        ) {
+          return yield* fail(
+            'authority',
+            'invariant',
+            'PAPER generation requires the latest fresh exact account reconciliation',
+          )
+        }
+        return observedAt
+      })
+
+    const preparePaperGeneration = (candidate: PaperAuthorityProofBinding) =>
       run(
         'authority',
-        decodePaperAuthorityGeneration(candidate).pipe(
-          Effect.flatMap((input) => {
-            if (
-              config.maximumAuthority !== Authority.Paper ||
-              config.alpaca === undefined ||
-              input.generationHash !== config.alpaca.authorityGenerationHash ||
-              input.accountId !== config.alpaca.accountId ||
-              input.qualificationRunId !== config.qualificationRunId
-            ) {
-              return fail(
-                'authority',
-                'invariant',
-                'PAPER activation differs from the configured authority, account, generation, or qualification binding',
-              )
-            }
-            if (
-              input.activationSourceRevision !== config.build.sourceRevision ||
-              input.activationImageRepository !== config.build.imageRepository ||
-              input.activationImageDigest !== config.build.imageDigest
-            ) {
-              return fail(
-                'authority',
-                'invariant',
-                'PAPER activation provenance differs from the current embedded build',
-              )
-            }
-            if (
-              input.strategyBehaviorHash !== config.build.strategyBehaviorHash ||
-              input.strategyParameterHash !== config.build.strategyParameterHash
-            ) {
-              return fail(
-                'authority',
-                'invariant',
-                'PAPER activation strategy identity differs from the current embedded build',
-              )
-            }
-            return Effect.succeed(input)
-          }),
-          Effect.flatMap((input) =>
-            Effect.flatMap(WriterFence, (fence) =>
-              fence.transaction(
-                Effect.gen(function* () {
-                  yield* sql`
-                  SELECT pg_advisory_xact_lock(
-                    hashtextextended(${`ALPACA:${input.accountId}`}, 0)
+        Effect.gen(function* () {
+          const proof = yield* decodePaperAuthorityProofBinding(candidate)
+          const binding = yield* requirePaperGenerationRuntime(Authority.Observe, 'PREPARE')
+          const fence = yield* WriterFence
+          return yield* fence.transaction(
+            Effect.gen(function* () {
+              const locked = yield* lockPaperAuthority(binding.accountId)
+              if (locked.current.generationHash !== binding.configuredGenerationHash) {
+                return yield* fail(
+                  'authority',
+                  'invariant',
+                  'PAPER PREPARE current authority differs from the configured OBSERVE generation',
+                )
+              }
+              const derived = yield* derivePaperGeneration(proof, binding, locked.current)
+              yield* validatePaperGenerationFreshness(derived)
+              return derived.generation
+            }),
+          )
+        }),
+      )
+
+    const activatePaperGeneration = (candidate: PaperAuthorityProofBinding) =>
+      run(
+        'authority',
+        Effect.gen(function* () {
+          const proof = yield* decodePaperAuthorityProofBinding(candidate)
+          const binding = yield* requirePaperGenerationRuntime(Authority.Paper, 'activation')
+          const fence = yield* WriterFence
+          return yield* fence.transaction(
+            Effect.gen(function* () {
+              const locked = yield* lockPaperAuthority(binding.accountId)
+              if (locked.current.maximum === Authority.Paper) {
+                if (locked.current.generationHash !== binding.configuredGenerationHash) {
+                  return yield* fail(
+                    'authority',
+                    'conflict',
+                    'durable PAPER generation differs from the configured generation',
                   )
-                `
-                  yield* lockAuthorityGenerations
-                  const currentRows = yield* sql<Record<string, unknown>>`
-                  SELECT
-                    schema_version, generation_hash, maximum, effective, kill_state, reason,
-                    version::text AS version, updated_at, clock_timestamp() AS observed_at
-                  FROM authority_state
-                  WHERE singleton
-                  FOR UPDATE
-                `.pipe(Effect.flatMap(decodeAuthorityStateObservationRows))
-                  const currentRow = currentRows[0]
-                  if (currentRow === undefined) {
-                    return yield* fail(
-                      'authority',
-                      'invariant',
-                      'PAPER activation requires an initialized OBSERVE authority',
-                    )
-                  }
-                  const current = yield* authorityStateFromRow(currentRow)
-                  if (currentRow.updated_at.getTime() > currentRow.observed_at.getTime()) {
-                    return yield* fail(
-                      'authority',
-                      'invariant',
-                      'durable authority update follows its database observation time',
-                    )
-                  }
-
-                  const currentHistory = (yield* readGeneration(current.generationHash))[0]
-                  yield* verifyCurrentGenerationHistory(current, currentHistory)
-                  if (current.generationHash === input.generationHash) {
-                    if (current.maximum !== Authority.Paper) {
-                      return yield* fail(
-                        'authority',
-                        'conflict',
-                        'PAPER generation conflicts with durable maximum authority',
-                      )
-                    }
-                    if (currentHistory === undefined) {
-                      return yield* fail('authority', 'invariant', 'PAPER authority history is missing')
-                    }
-                    const stored = yield* paperGenerationFromRow(currentHistory)
-                    if (canonicalHashV1(stored) !== canonicalHashV1(input)) {
-                      return yield* fail(
-                        'authority',
-                        'conflict',
-                        'PAPER generation history differs from deterministic replay',
-                      )
-                    }
-                    return current
-                  }
-
-                  if (current.maximum !== Authority.Observe || current.effective !== Authority.Observe) {
-                    return yield* fail('authority', 'invariant', 'PAPER activation requires current OBSERVE authority')
-                  }
-                  if (input.previousGenerationHash !== current.generationHash) {
-                    return yield* fail(
-                      'authority',
-                      'conflict',
-                      'PAPER generation does not extend the current authority generation',
-                    )
-                  }
-                  if ((yield* readGeneration(input.generationHash))[0] !== undefined) {
-                    return yield* fail('authority', 'conflict', 'authority generation hash was already used')
-                  }
-
-                  yield* sql`
-                  LOCK TABLE
-                    evaluation_artifacts,
-                    evaluation_events,
-                    gate_outcomes,
-                    status_history
-                  IN SHARE MODE
-                `
-                  const evidenceRows = yield* sql<Record<string, unknown>>`
-                  SELECT
-                    lock.payload AS lock_payload,
-                    result.payload AS result_payload,
-                    run.status AS run_status,
-                    run.expected_artifact_count,
-                    run.expected_event_count,
-                    run.expected_gate_count,
-                    (
-                      SELECT count(*)::integer
-                      FROM evaluation_artifacts
-                      WHERE run_id = run.run_id
-                    ) AS artifact_count,
-                    (
-                      SELECT count(*)::integer
-                      FROM evaluation_events
-                      WHERE run_id = run.run_id
-                    ) AS event_count,
-                    (
-                      SELECT count(*)::integer
-                      FROM gate_outcomes
-                      WHERE run_id = run.run_id
-                    ) AS gate_count,
-                    (
-                      SELECT count(*)::integer
-                      FROM status_history
-                      WHERE run_id = run.run_id
-                    ) AS status_count,
-                    (
-                      SELECT count(*)::integer
-                      FROM status_history
-                      WHERE run_id = run.run_id AND status = 'WRITING'
-                    ) AS writing_status_count,
-                    (
-                      SELECT count(*)::integer
-                      FROM status_history
-                      WHERE run_id = run.run_id AND status = 'COMPLETE'
-                    ) AS complete_status_count,
-                    (
-                      SELECT detail
-                      FROM status_history
-                      WHERE run_id = run.run_id AND status = 'WRITING'
-                    ) AS writing_detail,
-                    (
-                      SELECT detail
-                      FROM status_history
-                      WHERE run_id = run.run_id AND status = 'COMPLETE'
-                    ) AS complete_detail,
-                    protocol.schema_version AS protocol_schema_version,
-                    protocol.strategy_name,
-                    protocol.behavior_hash,
-                    protocol.parameter_hash,
-                    protocol.parameters
-                  FROM qualification_results AS result
-                  JOIN qualification_locks AS lock
-                    ON lock.lock_id = result.lock_id
-                    AND lock.candidate_run_id = result.run_id
-                  JOIN evaluation_runs AS run
-                    ON run.run_id = result.run_id
-                    AND run.protocol_hash = lock.protocol_hash
-                    AND run.snapshot_id = lock.snapshot_id
-                    AND run.source_revision = lock.source_revision
-                    AND run.image_repository = lock.image_repository
-                    AND run.image_digest = lock.image_digest
-                  JOIN protocol_locks AS protocol
-                    ON protocol.protocol_hash = run.protocol_hash
-                    AND protocol.strategy_name = run.strategy_name
-                  WHERE result.run_id = ${input.qualificationRunId}
-                  FOR SHARE OF result, lock, run, protocol
-                `.pipe(Effect.flatMap(decodeActivationEvidenceRows))
-                  const evidence = evidenceRows[0]
-                  if (evidence === undefined) {
-                    return yield* fail('authority', 'invariant', 'exact terminal qualification evidence is unavailable')
-                  }
-                  const lock = evidence.lock_payload
-                  const result = evidence.result_payload
-                  const strategyProtocolHash = makeStrategyProtocolHash({
-                    name: evidence.strategy_name,
-                    behaviorHash: evidence.behavior_hash,
-                    parameterHash: evidence.parameter_hash,
-                    parameterSchemaVersion: evidence.protocol_schema_version,
-                  })
-                  if (
-                    result.verdict !== 'QUALIFIED' ||
-                    evidence.run_status !== 'COMPLETE' ||
-                    evidence.expected_artifact_count !== evidence.artifact_count ||
-                    evidence.expected_event_count !== evidence.event_count ||
-                    evidence.expected_gate_count !== evidence.gate_count ||
-                    evidence.status_count !== 2 ||
-                    evidence.writing_status_count !== 1 ||
-                    evidence.complete_status_count !== 1 ||
-                    canonicalHashV1(evidence.writing_detail) !==
-                      canonicalHashV1({
-                        artifactCount: evidence.expected_artifact_count,
-                        eventCount: evidence.expected_event_count,
-                        gateCount: evidence.expected_gate_count,
-                      }) ||
-                    canonicalHashV1(evidence.complete_detail) !==
-                      canonicalHashV1({
-                        reconciliationExact: true,
-                        verdict: result.evaluationVerdict.status,
-                      }) ||
-                    result.runId !== input.qualificationRunId ||
-                    result.lockId !== input.qualificationLockId ||
-                    result.resultHash !== input.qualificationResultHash ||
-                    lock.lockId !== input.qualificationLockId ||
-                    lock.candidateRunId !== input.qualificationRunId ||
-                    lock.protocolHash !== input.protocolHash ||
-                    lock.policies.execution.contentHash !== input.qualificationExecutionPolicyHash ||
-                    lock.sourceRevision !== input.qualificationSourceRevision ||
-                    lock.image.repository !== input.qualificationImageRepository ||
-                    lock.image.digest !== input.qualificationImageDigest ||
-                    evidence.protocol_schema_version !== input.strategyParameterSchemaVersion ||
-                    evidence.strategy_name !== input.strategyName ||
-                    evidence.behavior_hash !== input.strategyBehaviorHash ||
-                    evidence.parameter_hash !== input.strategyParameterHash ||
-                    canonicalHashV1(evidence.parameters) !== input.strategyParameterHash ||
-                    strategyProtocolHash !== input.protocolHash
-                  ) {
-                    return yield* fail(
-                      'authority',
-                      'invariant',
-                      'PAPER generation differs from terminal qualification evidence',
-                    )
-                  }
-
-                  const reconciliationRows = yield* sql<Record<string, unknown>>`
-                  SELECT
-                    reconciliation_id, account_id, content_hash, status, reconciled_at
-                  FROM reconciliations
-                  WHERE account_id = ${input.accountId}
-                  ORDER BY reconciled_at DESC, reconciliation_id DESC
-                  LIMIT 1
-                  FOR SHARE
-                `.pipe(Effect.flatMap(decodeActivationReconciliationRows))
-                  const exactReconciliation = reconciliationRows[0]
-                  if (
-                    exactReconciliation === undefined ||
-                    exactReconciliation.reconciliation_id !== input.reconciliationId ||
-                    exactReconciliation.account_id !== input.accountId ||
-                    exactReconciliation.content_hash !== input.reconciliationContentHash ||
-                    exactReconciliation.status !== ReconciliationStatus.Exact
-                  ) {
-                    return yield* fail(
-                      'authority',
-                      'invariant',
-                      'PAPER activation requires the latest fresh exact account reconciliation',
-                    )
-                  }
-
-                  const [mutationBaseline] = yield* sql<Record<string, unknown>>`
-                  WITH latest AS (
-                    SELECT DISTINCT ON (event.mutation_id)
-                      event.operation,
-                      event.event_type,
-                      event.occurred_at,
-                      intent.state
-                    FROM mutation_events AS event
-                    JOIN intents AS intent ON intent.intent_id = event.intent_id
-                    WHERE intent.account_id = ${input.accountId}
-                    ORDER BY event.mutation_id, event.sequence DESC
+                }
+                const stored = yield* paperGenerationFromRow(locked.history)
+                if (
+                  stored.accountId !== binding.accountId ||
+                  stored.qualificationRunId !== binding.qualificationRunId ||
+                  stored.activationSourceRevision !== config.build.sourceRevision ||
+                  stored.activationImageRepository !== config.build.imageRepository ||
+                  stored.activationImageDigest !== config.build.imageDigest ||
+                  stored.strategyBehaviorHash !== config.build.strategyBehaviorHash ||
+                  stored.strategyParameterHash !== config.build.strategyParameterHash ||
+                  stored.riskPolicyHash !== proof.riskPolicyHash ||
+                  stored.proofPlanHash !== proof.proofPlanHash
+                ) {
+                  return yield* fail(
+                    'authority',
+                    'conflict',
+                    'PAPER generation history differs from deterministic replay',
                   )
-                  SELECT
-                    count(*) FILTER (
-                      WHERE latest.event_type IN (
-                        'SUBMIT_STARTED',
-                        'SUBMIT_UNKNOWN',
-                        'RECOVERY_NOT_FOUND',
-                        'RECOVERY_UNKNOWN',
-                        'CANCEL_STARTED',
-                        'CANCEL_ACCEPTED',
-                        'CANCEL_UNKNOWN'
-                      )
-                      OR (
-                        latest.operation = 'CANCEL'
-                        AND latest.event_type = 'RECOVERY_FOUND'
-                        AND latest.state <> 'TERMINAL'
-                      )
-                    )::integer AS unresolved_count,
-                    max(latest.occurred_at) AS latest_mutation_at
-                  FROM latest
-                `.pipe(Effect.flatMap(decodeMutationBaseline))
-                  if (
-                    mutationBaseline.unresolved_count !== 0 ||
-                    (mutationBaseline.latest_mutation_at !== null &&
-                      mutationBaseline.latest_mutation_at.getTime() > exactReconciliation.reconciled_at.getTime())
-                  ) {
-                    return yield* fail(
-                      'authority',
-                      'invariant',
-                      'PAPER activation requires zero unresolved mutations covered by reconciliation',
-                    )
-                  }
+                }
+                return locked.current
+              }
 
-                  const activatedAt = yield* nextAuthorityInstant
-                  if (
-                    exactReconciliation.reconciled_at.getTime() > activatedAt.getTime() ||
-                    activatedAt.getTime() - exactReconciliation.reconciled_at.getTime() >=
-                      config.reconciliationStaleThresholdMs
-                  ) {
-                    return yield* fail(
-                      'authority',
-                      'invariant',
-                      'PAPER activation requires the latest fresh exact account reconciliation',
-                    )
-                  }
-                  const nextVersion = current.version + 1
-                  yield* sql`
-                  INSERT INTO authority_generations (
-                    generation_hash, schema_version, activation_schema_version,
-                    previous_generation_hash, maximum, authority_version,
-                    qualification_run_id, qualification_lock_id, qualification_result_hash,
-                    protocol_hash, qualification_execution_policy_hash,
-                    qualification_source_revision, qualification_image_repository,
-                    qualification_image_digest, activation_source_revision,
-                    activation_image_repository, activation_image_digest,
-                    strategy_name, strategy_behavior_hash,
-                    strategy_parameter_hash, strategy_parameter_schema_version, account_id,
-                    risk_policy_hash, proof_plan_hash, reconciliation_id,
-                    reconciliation_content_hash, activated_at
-                  ) VALUES (
-                    ${input.generationHash}, 'bayn.authority-generation-history.v1',
-                    ${input.schemaVersion}, ${input.previousGenerationHash}, 'PAPER', ${nextVersion},
-                    ${input.qualificationRunId}, ${input.qualificationLockId},
-                    ${input.qualificationResultHash}, ${input.protocolHash},
-                    ${input.qualificationExecutionPolicyHash}, ${input.qualificationSourceRevision},
-                    ${input.qualificationImageRepository}, ${input.qualificationImageDigest},
-                    ${input.activationSourceRevision}, ${input.activationImageRepository},
-                    ${input.activationImageDigest}, ${input.strategyName},
-                    ${input.strategyBehaviorHash}, ${input.strategyParameterHash},
-                    ${input.strategyParameterSchemaVersion}, ${input.accountId},
-                    ${input.riskPolicyHash}, ${input.proofPlanHash}, ${input.reconciliationId},
-                    ${input.reconciliationContentHash}, ${activatedAt}
-                  )
-                `
-                  const effective = current.kill === KillState.Active ? Authority.Observe : Authority.Paper
-                  const activatedRows = yield* sql<Record<string, unknown>>`
-                  UPDATE authority_state
-                  SET
-                    generation_hash = ${input.generationHash},
-                    maximum = 'PAPER',
-                    effective = ${effective},
-                    version = version + 1,
-                    updated_at = ${activatedAt}
-                  WHERE singleton
-                  RETURNING
-                    schema_version, generation_hash, maximum, effective, kill_state, reason,
-                    version::text AS version, updated_at
-                `.pipe(Effect.flatMap(decodeAuthorityStateRows))
-                  const activatedRow = activatedRows[0]
-                  if (activatedRow === undefined) {
-                    return yield* fail('authority', 'invariant', 'PAPER authority was not activated')
-                  }
-                  return yield* authorityStateFromRow(activatedRow)
-                }),
-              ),
-            ),
-          ),
-        ),
+              const derived = yield* derivePaperGeneration(proof, binding, locked.current)
+              if (derived.generation.generationHash !== binding.configuredGenerationHash) {
+                return yield* fail(
+                  'authority',
+                  'invariant',
+                  'derived PAPER generation differs from the configured generation',
+                )
+              }
+              if ((yield* readGeneration(derived.generation.generationHash))[0] !== undefined) {
+                return yield* fail('authority', 'conflict', 'authority generation hash was already used')
+              }
+              const activatedAt = yield* validatePaperGenerationFreshness(derived)
+              const input = derived.generation
+              const nextVersion = derived.current.version + 1
+              yield* sql`
+                INSERT INTO authority_generations (
+                  generation_hash, schema_version, activation_schema_version,
+                  previous_generation_hash, maximum, authority_version,
+                  qualification_run_id, qualification_lock_id, qualification_result_hash,
+                  protocol_hash, qualification_execution_policy_hash,
+                  qualification_source_revision, qualification_image_repository,
+                  qualification_image_digest, activation_source_revision,
+                  activation_image_repository, activation_image_digest,
+                  strategy_name, strategy_behavior_hash,
+                  strategy_parameter_hash, strategy_parameter_schema_version, account_id,
+                  risk_policy_hash, proof_plan_hash, reconciliation_id,
+                  reconciliation_content_hash, activated_at
+                ) VALUES (
+                  ${input.generationHash}, 'bayn.authority-generation-history.v1',
+                  ${input.schemaVersion}, ${input.previousGenerationHash}, 'PAPER', ${nextVersion},
+                  ${input.qualificationRunId}, ${input.qualificationLockId},
+                  ${input.qualificationResultHash}, ${input.protocolHash},
+                  ${input.qualificationExecutionPolicyHash}, ${input.qualificationSourceRevision},
+                  ${input.qualificationImageRepository}, ${input.qualificationImageDigest},
+                  ${input.activationSourceRevision}, ${input.activationImageRepository},
+                  ${input.activationImageDigest}, ${input.strategyName},
+                  ${input.strategyBehaviorHash}, ${input.strategyParameterHash},
+                  ${input.strategyParameterSchemaVersion}, ${input.accountId},
+                  ${input.riskPolicyHash}, ${input.proofPlanHash}, ${input.reconciliationId},
+                  ${input.reconciliationContentHash}, ${activatedAt}
+                )
+              `
+              const effective = derived.current.kill === KillState.Active ? Authority.Observe : Authority.Paper
+              const activatedRows = yield* sql<Record<string, unknown>>`
+                UPDATE authority_state
+                SET
+                  generation_hash = ${input.generationHash},
+                  maximum = 'PAPER',
+                  effective = ${effective},
+                  version = version + 1,
+                  updated_at = ${activatedAt}
+                WHERE singleton
+                RETURNING
+                  schema_version, generation_hash, maximum, effective, kill_state, reason,
+                  version::text AS version, updated_at
+              `.pipe(Effect.flatMap(decodeAuthorityStateRows))
+              const activatedRow = activatedRows[0]
+              if (activatedRow === undefined) {
+                return yield* fail('authority', 'invariant', 'PAPER authority was not activated')
+              }
+              return yield* authorityStateFromRow(activatedRow)
+            }),
+          )
+        }),
       )
 
     const lowerAuthority = (reason: string, updatedAt: string) =>
@@ -1685,6 +1762,7 @@ const makeStore = (config: PaperStoreRuntimeConfig) =>
       bindings,
       reconcile,
       ensureAuthorityGeneration,
+      preparePaperGeneration,
       activatePaperGeneration,
       restrictAuthority: lowerAuthority,
     } satisfies PaperStoreShape

@@ -397,6 +397,7 @@ describe('OBSERVE runtime composition', () => {
           authorityInitializations += 1
           throw new Error('PAPER startup must not initialize synthetic OBSERVE authority')
         }),
+      preparePaperGeneration: () => unused,
       activatePaperGeneration: () => unused,
       restrictAuthority: () => unused,
     }
