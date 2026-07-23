@@ -163,6 +163,35 @@ read-only identity. Any recorded bars-table access takes fail-closed precedence 
 cannot relabel a read. The log cannot retroactively prove that an operator query returned only bounded count/hash
 evidence, so any Signal-table read by a principal other than the candidate or declared publisher makes the audit fail.
 
+Before the one-shot qualification release, `candidate:qualification` verifies one exact natural Signal publication
+without opening a qualification lock or changing any system. It requires two direct physical ClickHouse endpoints and
+uses the declared Signal publisher principal to select the latest correction for the compiled Bayn universe on each
+replica with ClickHouse `readonly=1`. It then fully loads and cryptographically verifies the manifest, sessions, bars,
+duplicate keys, cardinalities, and content hashes on both replicas; requires identical canonical snapshot bytes and
+complete topology coverage; and checks in a PostgreSQL `REPEATABLE READ, READ ONLY` transaction that the snapshot has no
+qualification lock.
+
+The publisher principal is deliberate: this command reads candidate bars before Bayn opens the lock, so the later
+qualification audit must receive the same value as `BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME`. Using the ordinary Bayn
+principal for this pre-lock full read contaminates the candidate chronology. The command emits deterministic
+`bayn.qualification-candidate.v1` JSON containing the complete `BaynCandidateRuntime` expected by the release writer,
+with Signal bounds derived only from the compiled protocol and the supplied TigerBeetle identity. It does not publish
+Signal data, invoke a backfill, acquire a lock, run Bayn, or write PostgreSQL.
+
+```sh
+BAYN_CANDIDATE_SIGNAL_PUBLICATION_DATE=<YYYY-MM-DD> \
+BAYN_CANDIDATE_CLICKHOUSE_URLS=<direct-replica-0-url>,<direct-replica-1-url> \
+BAYN_CANDIDATE_SIGNAL_PUBLISHER_USERNAME=<signal-publisher-user> \
+BAYN_CANDIDATE_SIGNAL_PUBLISHER_PASSWORD=<signal-publisher-password> \
+BAYN_CANDIDATE_POSTGRES_URL=<authenticated-postgres-uri> \
+BAYN_CANDIDATE_POSTGRES_TLS=true \
+BAYN_CANDIDATE_POSTGRES_CA_PATH=<postgres-ca-path> \
+BAYN_CANDIDATE_TIGERBEETLE_CLUSTER_ID=<cluster-id> \
+BAYN_CANDIDATE_TIGERBEETLE_ADDRESSES=<replica-0-address>,<replica-1-address>,<replica-2-address> \
+BAYN_CANDIDATE_TIGERBEETLE_LEDGER=<ledger> \
+  bun run --filter @proompteng/bayn candidate:qualification
+```
+
 Set `BAYN_AUDIT_OUTPUT=dossier` on the same command to emit `bayn.qualification-dossier.v2`. The deterministic dossier
 binds the full audited subject, evidence-set hashes, immutable lock/result, prior trials, contamination records,
 verdict, and observe-only authority. It is ephemeral operator/CI evidence, not runtime configuration. Runtime recovery
