@@ -249,6 +249,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       'accounting_receipts',
       'accounting_transactions',
       'authority_state',
+      'autonomous_cycle_shadow_decisions',
       'autonomous_cycles',
       'broker_errors',
       'broker_events',
@@ -286,6 +287,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 9, name: 'fill_source_timestamp' },
       { migration_id: 10, name: 'autonomous_cycles' },
       { migration_id: 11, name: 'causal_protocol' },
+      { migration_id: 12, name: 'observe_shadow_decisions' },
     ])
   })
 

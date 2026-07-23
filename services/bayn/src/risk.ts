@@ -24,8 +24,6 @@ import {
   TimeInForce,
   UnsignedMicrosSchema,
   type Intent,
-  type RiskDecision,
-  type RiskInput,
 } from './paper'
 import { reconciledStateHash } from './reconciliation'
 import {
@@ -280,32 +278,79 @@ export const StateSchema = StateBase.check(
 )
 export type State = typeof StateSchema.Type
 
-export type GateResult = {
-  readonly name: Gate
-  readonly passed: boolean
-  readonly reason: Reason
-  readonly actual: string
-  readonly required: string
-}
+const GateResultSchema = Schema.Struct({
+  name: Schema.Enum(Gate),
+  passed: Schema.Boolean,
+  reason: Schema.Enum(Reason),
+  actual: NonEmptyString,
+  required: NonEmptyString,
+})
+export type GateResult = typeof GateResultSchema.Type
 
-export type Evaluation = {
-  readonly policyHash: string
-  readonly input: RiskInput
-  readonly decision: RiskDecision
-  readonly gates: readonly GateResult[]
-  readonly metrics: {
-    readonly orderNotionalMicros: string
-    readonly postTradeSymbolExposureMicros: string
-    readonly postTradeGrossExposureMicros: string
-    readonly postTradeNetExposureMicros: string
-    readonly dailyTradedNotionalMicros: string
-    readonly dailyLossMicros: string
-    readonly drawdownMicros: string
-    readonly adverseSlippageBps: string
-    readonly aggregateBuyingPowerMicros: string
-    readonly unresolvedOrderCount: number
-  }
-}
+const EvaluationMetricsSchema = Schema.Struct({
+  orderNotionalMicros: UnsignedMicrosSchema,
+  postTradeSymbolExposureMicros: SignedMicrosSchema,
+  postTradeGrossExposureMicros: UnsignedMicrosSchema,
+  postTradeNetExposureMicros: SignedMicrosSchema,
+  dailyTradedNotionalMicros: UnsignedMicrosSchema,
+  dailyLossMicros: UnsignedMicrosSchema,
+  drawdownMicros: UnsignedMicrosSchema,
+  adverseSlippageBps: UnsignedMicrosSchema,
+  aggregateBuyingPowerMicros: UnsignedMicrosSchema,
+  unresolvedOrderCount: MutationCount,
+})
+
+const EvaluationBase = Schema.Struct({
+  policyHash: Sha256,
+  input: RiskInputSchema,
+  decision: RiskDecisionSchema,
+  gates: Schema.Array(GateResultSchema),
+  metrics: EvaluationMetricsSchema,
+})
+
+export const EvaluationSchema = EvaluationBase.check(
+  Schema.makeFilter((evaluation: typeof EvaluationBase.Type): readonly Schema.FilterIssue[] => {
+    const issues: Schema.FilterIssue[] = []
+    if (
+      evaluation.policyHash !== evaluation.input.policyHash ||
+      evaluation.policyHash !== evaluation.decision.policyHash ||
+      evaluation.input.inputHash !== evaluation.decision.inputHash ||
+      evaluation.input.intentId !== evaluation.decision.intentId
+    ) {
+      issues.push({ path: ['decision'], issue: 'must bind the exact risk input, intent, and policy' })
+    }
+    if (
+      evaluation.input.evaluatedAt !== evaluation.decision.decidedAt ||
+      evaluation.input.freshUntil !== evaluation.decision.expiresAt
+    ) {
+      issues.push({ path: ['decision'], issue: 'must retain the risk input evaluation and expiry times' })
+    }
+    const { decisionId, ...decisionMaterial } = evaluation.decision
+    if (decisionId !== canonicalHashV1(decisionMaterial)) {
+      issues.push({ path: ['decision', 'decisionId'], issue: 'must match the canonical risk decision material' })
+    }
+    const gateNames = Object.values(Gate)
+    if (
+      evaluation.gates.length !== gateNames.length ||
+      evaluation.gates.some((gate, index) => gate.name !== gateNames[index])
+    ) {
+      issues.push({ path: ['gates'], issue: 'must contain every risk gate in canonical order' })
+    }
+    const failedReasons = evaluation.gates.filter((gate) => !gate.passed).map((gate) => gate.reason)
+    if (
+      failedReasons.length !== evaluation.decision.reasonCodes.length ||
+      failedReasons.some((reason, index) => reason !== evaluation.decision.reasonCodes[index])
+    ) {
+      issues.push({ path: ['decision', 'reasonCodes'], issue: 'must match the failed risk gates in order' })
+    }
+    const expectedOutcome = failedReasons.length === 0 ? RiskOutcome.Approved : RiskOutcome.Blocked
+    if (evaluation.decision.outcome !== expectedOutcome) {
+      issues.push({ path: ['decision', 'outcome'], issue: 'must agree with the complete risk gate set' })
+    }
+    return issues
+  }),
+)
+export type Evaluation = typeof EvaluationSchema.Type
 
 const decodeInput = Schema.decodeUnknownSync(RiskInputSchema, StrictParseOptions)
 const decodeDecision = Schema.decodeUnknownSync(RiskDecisionSchema, StrictParseOptions)

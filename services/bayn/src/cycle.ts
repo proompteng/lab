@@ -11,6 +11,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from './schemas'
+import { ObserveShadowDecisionDocumentSchema } from './shadow-decision-contract'
 
 const cycleTimeZone = 'America/New_York' as const
 const SubmissionWindowMsSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(86_400_000))
@@ -287,6 +288,7 @@ export type CycleDraft = typeof CycleDraftSchema.Type
 const CycleBindingsSchema = Schema.Struct({
   snapshotId: Schema.optionalKey(Sha256Schema),
   decisionHash: Schema.optionalKey(Sha256Schema),
+  shadowDecision: Schema.optionalKey(ObserveShadowDecisionDocumentSchema),
 })
 export type CycleBindings = typeof CycleBindingsSchema.Type
 
@@ -309,6 +311,22 @@ export const AutonomousCycleSchema = AutonomousCycleBase.check(
     }
     if (cycle.bindings.decisionHash !== undefined && cycle.bindings.snapshotId === undefined) {
       issues.push({ path: ['bindings', 'decisionHash'], issue: 'requires a bound snapshot' })
+    }
+    if ((cycle.bindings.decisionHash === undefined) !== (cycle.bindings.shadowDecision === undefined)) {
+      issues.push({ path: ['bindings', 'shadowDecision'], issue: 'must be bound atomically with the decision hash' })
+    }
+    const shadowDecision = cycle.bindings.shadowDecision
+    if (
+      shadowDecision !== undefined &&
+      (shadowDecision.bindings.cycleId !== cycle.identity.cycleId ||
+        shadowDecision.bindings.strategyName !== cycle.identity.strategyName ||
+        shadowDecision.bindings.strategyProtocolHash !== cycle.identity.strategyProtocolHash ||
+        shadowDecision.bindings.snapshotId !== cycle.bindings.snapshotId ||
+        shadowDecision.contentHash !== cycle.bindings.decisionHash ||
+        shadowDecision.bindings.accountId !== cycle.identity.accountId ||
+        shadowDecision.submissionCutoffAt !== cycle.window.submissionCutoffAt)
+    ) {
+      issues.push({ path: ['bindings', 'shadowDecision'], issue: 'must match the autonomous cycle bindings' })
     }
 
     switch (cycle.state) {

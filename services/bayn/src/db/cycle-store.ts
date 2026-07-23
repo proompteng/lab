@@ -22,6 +22,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
+import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument } from '../shadow-decision-contract'
 import type { InputManifest, IsoDate } from '../types'
 import { ensureSnapshotReference } from './snapshot-reference'
 
@@ -69,7 +70,7 @@ export interface CycleStoreShape {
   readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly bindDecision: (
     cycleId: string,
-    decisionHash: string,
+    document: ObserveShadowDecisionDocument,
     observedAt: string,
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly block: (
@@ -110,6 +111,7 @@ const StoredCycleRowSchema = Schema.Struct({
   state: Schema.Enum(CycleState),
   snapshot_id: Schema.NullOr(Sha256Schema),
   decision_hash: Schema.NullOr(Sha256Schema),
+  shadow_decision: Schema.NullOr(ObserveShadowDecisionDocumentSchema),
   terminal_reason: Schema.NullOr(Schema.Enum(CycleTerminalReason)),
   state_version: PositiveIntegerSchema,
   created_at: Schema.DateValid,
@@ -130,7 +132,7 @@ const SnapshotInputSchema = Schema.Struct({
 })
 const DecisionInputSchema = Schema.Struct({
   cycleId: Sha256Schema,
-  decisionHash: Sha256Schema,
+  document: ObserveShadowDecisionDocumentSchema,
   observedAt: UtcInstantSchema,
 })
 const BlockInputSchema = Schema.Struct({
@@ -139,6 +141,7 @@ const BlockInputSchema = Schema.Struct({
   observedAt: UtcInstantSchema,
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
+const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
 
 const decodeStoredCycleRows = Schema.decodeUnknownEffect(Schema.Array(StoredCycleRowSchema), strictParseOptions)
 const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
@@ -148,6 +151,8 @@ const decodeDecisionInput = Schema.decodeUnknownEffect(DecisionInputSchema, stri
 const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
 const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
 const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
+const decodeDecisionEvidenceMatch = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
+const shadowDecisionEquivalent = Schema.toEquivalence(ObserveShadowDecisionDocumentSchema)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -232,6 +237,7 @@ const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.
     bindings: {
       ...(row.snapshot_id === null ? {} : { snapshotId: row.snapshot_id }),
       ...(row.decision_hash === null ? {} : { decisionHash: row.decision_hash }),
+      ...(row.shadow_decision === null ? {} : { shadowDecision: row.shadow_decision }),
     },
     ...(row.terminal_reason === null ? {} : { terminalReason: row.terminal_reason }),
     stateVersion: row.state_version,
@@ -261,7 +267,13 @@ const selectCycle = (
           execution_session_date::text AS execution_session_date,
           signal_close_at, publication_deadline_at, submission_open_at,
           execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-          decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+          decision_hash,
+          (
+            SELECT document
+            FROM autonomous_cycle_shadow_decisions
+            WHERE cycle_id = autonomous_cycles.cycle_id
+          ) AS shadow_decision,
+          terminal_reason, state_version, created_at, updated_at, terminal_at
         FROM autonomous_cycles
         WHERE cycle_id = ${cycleId}
         FOR UPDATE
@@ -278,7 +290,13 @@ const selectCycle = (
           execution_session_date::text AS execution_session_date,
           signal_close_at, publication_deadline_at, submission_open_at,
           execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-          decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+          decision_hash,
+          (
+            SELECT document
+            FROM autonomous_cycle_shadow_decisions
+            WHERE cycle_id = autonomous_cycles.cycle_id
+          ) AS shadow_decision,
+          terminal_reason, state_version, created_at, updated_at, terminal_at
         FROM autonomous_cycles
         WHERE cycle_id = ${cycleId}
       `
@@ -301,7 +319,13 @@ const selectCycleByAuthoritySlot = (
       execution_session_date::text AS execution_session_date,
       signal_close_at, publication_deadline_at, submission_open_at,
       execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-      decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+      decision_hash,
+      (
+        SELECT document
+        FROM autonomous_cycle_shadow_decisions
+        WHERE cycle_id = autonomous_cycles.cycle_id
+      ) AS shadow_decision,
+      terminal_reason, state_version, created_at, updated_at, terminal_at
     FROM autonomous_cycles
     WHERE qualification_run_id = ${slot.qualificationRunId}
       AND account_id = ${slot.accountId}
@@ -348,6 +372,28 @@ const makeCycleStore = Effect.gen(function* () {
           ? Effect.void
           : fail(operation, 'conflict', 'cycle changed concurrently before the conditional update'),
       ),
+    )
+
+  const decisionEvidenceMatches = (document: ObserveShadowDecisionDocument): Effect.Effect<boolean, unknown> =>
+    sql<Record<string, unknown>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM snapshot_references AS snapshot
+        CROSS JOIN reconciliations AS reconciliation
+        WHERE snapshot.snapshot_id = ${document.bindings.snapshotId}
+          AND snapshot.content_hash = ${document.bindings.snapshotContentHash}
+          AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
+          AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
+          AND reconciliation.account_id = ${document.bindings.accountId}
+          AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}
+          AND reconciliation.observed_hash = ${document.bindings.planningBrokerStateHash}
+          AND reconciliation.content_hash = ${document.bindings.reconciliationHash}
+          AND reconciliation.status = 'EXACT'
+          AND reconciliation.reconciled_at <= ${document.createdAt}
+      ) AS matches
+    `.pipe(
+      Effect.flatMap(decodeDecisionEvidenceMatch),
+      Effect.map(([match]) => match.matches),
     )
 
   const blockCycle = (
@@ -633,18 +679,22 @@ const makeCycleStore = Effect.gen(function* () {
 
   const bindDecision = (
     cycleId: string,
-    decisionHash: string,
+    document: ObserveShadowDecisionDocument,
     observedAt: string,
   ): Effect.Effect<CycleMutationReceipt, CycleStoreError> =>
     run(
       'bind-decision',
-      decodeDecisionInput({ cycleId, decisionHash, observedAt }).pipe(
+      decodeDecisionInput({ cycleId, document, observedAt }).pipe(
         Effect.flatMap((input) =>
           sql.withTransaction(
             Effect.gen(function* () {
               const cycle = yield* readLocked('bind-decision', input.cycleId)
               if (cycle.bindings.decisionHash !== undefined) {
-                if (cycle.bindings.decisionHash !== input.decisionHash) {
+                if (
+                  cycle.bindings.decisionHash !== input.document.contentHash ||
+                  cycle.bindings.shadowDecision === undefined ||
+                  !shadowDecisionEquivalent(cycle.bindings.shadowDecision, input.document)
+                ) {
                   return yield* fail('bind-decision', 'conflict', 'cycle decision binding cannot be replaced')
                 }
                 return { cycle, changed: false }
@@ -655,13 +705,50 @@ const makeCycleStore = Effect.gen(function* () {
               if (input.observedAt >= cycle.window.submissionCutoffAt) {
                 return yield* blockCycle('bind-decision', cycle, CycleTerminalReason.MissedSubmission, input.observedAt)
               }
+              if (
+                input.document.bindings.cycleId !== cycle.identity.cycleId ||
+                input.document.bindings.strategyName !== cycle.identity.strategyName ||
+                input.document.bindings.strategyProtocolHash !== cycle.identity.strategyProtocolHash ||
+                input.document.bindings.snapshotId !== cycle.bindings.snapshotId ||
+                input.document.bindings.accountId !== cycle.identity.accountId ||
+                input.document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
+                input.document.createdAt !== input.observedAt
+              ) {
+                return yield* fail(
+                  'bind-decision',
+                  'invariant',
+                  'shadow decision does not match the active autonomous cycle',
+                )
+              }
               if (input.observedAt < cycle.updatedAt) {
                 return yield* fail('bind-decision', 'conflict', 'cycle update time cannot move backward')
               }
+              if (!(yield* decisionEvidenceMatches(input.document))) {
+                return yield* fail(
+                  'bind-decision',
+                  'invariant',
+                  'shadow decision does not match the durable snapshot and exact reconciliation evidence',
+                )
+              }
+              yield* sql`
+                INSERT INTO autonomous_cycle_shadow_decisions (
+                  cycle_id,
+                  decision_hash,
+                  schema_version,
+                  document,
+                  created_at
+                ) VALUES (
+                  ${input.cycleId},
+                  ${input.document.contentHash},
+                  ${input.document.schemaVersion},
+                  ${sql.json(input.document)},
+                  ${input.document.createdAt}
+                )
+              `
               const updatedRows = yield* sql<Record<string, unknown>>`
                 UPDATE autonomous_cycles
                 SET
-                  decision_hash = ${input.decisionHash},
+                  decision_hash = ${input.document.contentHash},
                   state_version = ${cycle.stateVersion + 1},
                   updated_at = ${input.observedAt}
                 WHERE cycle_id = ${input.cycleId}

@@ -64,12 +64,14 @@ const identityMaterial = (input: IntentPlan) => ({
   notionalLimitMicros: input.notionalLimitMicros,
 })
 
+export const intentIdForPlan = (input: IntentPlan): string => canonicalHashV1(identityMaterial(input))
+
 const clientOrderId = (intentId: string): string => `b1_${Buffer.from(intentId, 'hex').toString('base64url')}`
 
 export const plan = (input: unknown) =>
   decodePlan(input).pipe(
     Effect.flatMap((decoded) => {
-      const intentId = canonicalHashV1(identityMaterial(decoded))
+      const intentId = intentIdForPlan(decoded)
       return decodeIntent({
         schemaVersion: 'bayn.paper-intent.v2',
         intentId,

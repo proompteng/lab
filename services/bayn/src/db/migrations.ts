@@ -11,6 +11,7 @@ import identifiedSubmitUnknown from '../../migrations/0008_identified_submit_unk
 import fillSourceTimestamp from '../../migrations/0009_fill_source_timestamp'
 import autonomousCycles from '../../migrations/0010_autonomous_cycles'
 import causalProtocol from '../../migrations/0011_causal_protocol'
+import observeShadowDecisions from '../../migrations/0012_observe_shadow_decisions'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '1_initial_schema': initialSchema,
@@ -24,4 +25,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '9_fill_source_timestamp': fillSourceTimestamp,
   '10_autonomous_cycles': autonomousCycles,
   '11_causal_protocol': causalProtocol,
+  '12_observe_shadow_decisions': observeShadowDecisions,
 })

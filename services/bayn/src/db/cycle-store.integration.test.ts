@@ -30,6 +30,9 @@ import {
   type MarketDataService,
   type SignalSessionRow,
 } from '../market-data'
+import { ReconciliationStatus } from '../paper'
+import { makeObserveShadowDecisionDocument } from '../shadow-decision-contract'
+import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
 import { CycleStore, CycleStoreLive } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
@@ -45,7 +48,7 @@ const staleSnapshot = '6'.repeat(64)
 const wrongCalendarSnapshot = '7'.repeat(64)
 const wrongAsOfSnapshot = '8'.repeat(64)
 const missingSnapshot = '9'.repeat(64)
-const decisionHash = 'f'.repeat(64)
+const strategyDecisionHash = 'f'.repeat(64)
 
 const databaseConfig = {
   operationTimeoutMs: 5_000,
@@ -201,6 +204,110 @@ const snapshotAt = '2026-03-06T21:02:00.000Z'
 const activeAt = '2026-03-06T21:03:00.000Z'
 const decisionAt = '2026-03-06T21:04:00.000Z'
 const terminalAt = '2026-03-06T21:05:00.000Z'
+
+const shadowReconciliation = (draft: CycleDraft) => {
+  const planningBrokerStateHash = '4'.repeat(64)
+  const material = {
+    schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+    accountId: draft.identity.accountId,
+    expectedHash: planningBrokerStateHash,
+    observedHash: planningBrokerStateHash,
+    status: ReconciliationStatus.Exact,
+    discrepancies: [],
+    reconciledAt: snapshotAt,
+  }
+  const reconciliationId = canonicalHashV1({
+    schemaVersion: 'bayn.paper-reconciliation-id.v1',
+    material,
+  })
+  return {
+    ...material,
+    reconciliationId,
+    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+  }
+}
+
+const makeShadowDecision = (
+  draft: CycleDraft,
+  boundSnapshotId: string,
+  options: {
+    readonly accountSnapshotHash?: string
+    readonly createdAt?: string
+    readonly snapshotContentHash?: string
+    readonly strategyDecisionHash?: string
+  } = {},
+) => {
+  const reconciliation = shadowReconciliation(draft)
+  const targetPlanMaterial = {
+    schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
+    inputHash: '1'.repeat(64),
+    status: TargetPlanStatus.NoTrade,
+    reason: TargetPlanReason.TargetsSatisfied,
+    targets: [],
+    intentTargets: [],
+    requiredReferenceBuyNotionalMicros: '0',
+    availableBuyingPowerMicros: '0',
+    residualBuyingPowerMicros: '0',
+  }
+  const targetPlan = {
+    ...targetPlanMaterial,
+    outputHash: canonicalHashV1(targetPlanMaterial),
+  }
+  return makeObserveShadowDecisionDocument({
+    schemaVersion: 'bayn.observe-shadow-decision.v1',
+    mode: 'OBSERVE',
+    dispatchable: false,
+    bindings: {
+      strategyName: draft.identity.strategyName,
+      cycleId: draft.identity.cycleId,
+      strategyProtocolHash: draft.identity.strategyProtocolHash,
+      snapshotId: boundSnapshotId,
+      snapshotContentHash: options.snapshotContentHash ?? boundSnapshotId,
+      snapshotFinalizedAt: acquireAt,
+      strategyDecisionHash: options.strategyDecisionHash ?? strategyDecisionHash,
+      policyHash: '2'.repeat(64),
+      accountId: draft.identity.accountId,
+      accountSnapshotHash: options.accountSnapshotHash ?? '3'.repeat(64),
+      planningBrokerStateHash: reconciliation.observedHash,
+      reconciliationId: reconciliation.reconciliationId,
+      reconciliationHash: reconciliation.contentHash,
+    },
+    targetPlan,
+    deltaRisk: [],
+    createdAt: options.createdAt ?? decisionAt,
+    submissionCutoffAt: draft.window.submissionCutoffAt,
+    expiresAt: draft.window.submissionCutoffAt,
+  })
+}
+
+const insertShadowReconciliation = (draft: CycleDraft) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const reconciliation = shadowReconciliation(draft)
+    yield* sql`
+      INSERT INTO reconciliations (
+        reconciliation_id,
+        schema_version,
+        account_id,
+        expected_hash,
+        observed_hash,
+        content_hash,
+        status,
+        discrepancies,
+        reconciled_at
+      ) VALUES (
+        ${reconciliation.reconciliationId},
+        ${reconciliation.schemaVersion},
+        ${reconciliation.accountId},
+        ${reconciliation.expectedHash},
+        ${reconciliation.observedHash},
+        ${reconciliation.contentHash},
+        ${reconciliation.status},
+        '[]'::jsonb,
+        ${reconciliation.reconciledAt}
+      )
+    `
+  })
 
 const runnerContext = (accountId: string): CycleRunContext => ({
   qualificationRunId: 'a'.repeat(64),
@@ -696,15 +803,168 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     })
   })
 
-  test('keeps completion unreachable and preserves blocked terminal history across runtimes', async () => {
-    const draft = makeDraft()
+  test('atomically binds one content-hashed shadow decision with replay and zero dispatch state', async () => {
+    const draft = makeDraft('paper-account-shadow-binding')
+    const document = makeShadowDecision(draft, snapshotA)
+    const divergent = makeShadowDecision(draft, snapshotA, { accountSnapshotHash: '7'.repeat(64) })
+    const wrongSnapshot = makeShadowDecision(draft, snapshotA, { snapshotContentHash: '7'.repeat(64) })
+    const missingDocumentDraft = makeDraft('paper-account-shadow-missing-document')
+    const orphanDocumentDraft = makeDraft('paper-account-shadow-orphan-document')
+    const orphanDocument = makeShadowDecision(orphanDocumentDraft, snapshotB)
+
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
         yield* store.acquire(draft, acquireAt)
         yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
         yield* store.activate(draft.identity.cycleId, activeAt)
-        yield* store.bindDecision(draft.identity.cycleId, decisionHash, decisionAt)
+
+        const missingEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, document, decisionAt))
+        yield* insertShadowReconciliation(draft)
+        const wrongEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, wrongSnapshot, decisionAt))
+        const bound = yield* store.bindDecision(draft.identity.cycleId, document, decisionAt)
+        const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), decisionAt)
+        const authoritySlot = yield* store.readAuthoritySlot({
+          qualificationRunId: draft.identity.qualificationRunId,
+          accountId: draft.identity.accountId,
+          signalSessionDate: draft.identity.signalSessionDate,
+        })
+        const conflict = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, divergent, decisionAt))
+
+        yield* store.acquire(missingDocumentDraft, acquireAt)
+        yield* store.bindSnapshot(missingDocumentDraft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        yield* store.activate(missingDocumentDraft.identity.cycleId, activeAt)
+
+        yield* store.acquire(orphanDocumentDraft, acquireAt)
+        yield* store.bindSnapshot(orphanDocumentDraft.identity.cycleId, makeInputManifest(snapshotB), snapshotAt)
+        yield* store.activate(orphanDocumentDraft.identity.cycleId, activeAt)
+
+        const sql = yield* PgClient.PgClient
+        const missingDocument = yield* Effect.exit(
+          sql.withTransaction(sql`
+            UPDATE autonomous_cycles
+            SET
+              decision_hash = ${'8'.repeat(64)},
+              state_version = state_version + 1,
+              updated_at = ${decisionAt}
+            WHERE cycle_id = ${missingDocumentDraft.identity.cycleId}
+          `),
+        )
+        const orphanDocumentInsert = yield* Effect.exit(
+          sql.withTransaction(sql`
+            INSERT INTO autonomous_cycle_shadow_decisions (
+              cycle_id,
+              decision_hash,
+              schema_version,
+              document,
+              created_at
+            ) VALUES (
+              ${orphanDocumentDraft.identity.cycleId},
+              ${orphanDocument.contentHash},
+              ${orphanDocument.schemaVersion},
+              ${sql.json(orphanDocument)},
+              ${orphanDocument.createdAt}
+            )
+          `),
+        )
+        const directUpdate = yield* Effect.exit(sql`
+          UPDATE autonomous_cycle_shadow_decisions
+          SET document = ${sql.json(document)}
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const directDelete = yield* Effect.exit(sql`
+          DELETE FROM autonomous_cycle_shadow_decisions
+          WHERE cycle_id = ${draft.identity.cycleId}
+        `)
+        const directTruncate = yield* Effect.exit(sql`TRUNCATE autonomous_cycle_shadow_decisions`)
+        const rows = yield* sql<{
+          cycle_decision_hash: string
+          document_decision_hash: string
+          document: unknown
+        }>`
+          SELECT
+            cycle.decision_hash AS cycle_decision_hash,
+            shadow.decision_hash AS document_decision_hash,
+            shadow.document
+          FROM autonomous_cycles AS cycle
+          JOIN autonomous_cycle_shadow_decisions AS shadow USING (cycle_id)
+          WHERE cycle.cycle_id = ${draft.identity.cycleId}
+        `
+        const [counts] = yield* sql<{
+          intents: number
+          mutation_events: number
+          risk_decisions: number
+          shadow_decisions: number
+        }>`
+          SELECT
+            (SELECT count(*)::integer FROM autonomous_cycle_shadow_decisions) AS shadow_decisions,
+            (SELECT count(*)::integer FROM intents) AS intents,
+            (SELECT count(*)::integer FROM risk_decisions) AS risk_decisions,
+            (SELECT count(*)::integer FROM mutation_events) AS mutation_events
+        `
+        return {
+          authoritySlot,
+          bound,
+          conflict,
+          counts,
+          directDelete,
+          directTruncate,
+          directUpdate,
+          missingDocument,
+          missingEvidence,
+          orphanDocumentInsert,
+          replay,
+          rows,
+          wrongEvidence,
+        }
+      }),
+    )
+
+    expect(result.bound.changed).toBe(true)
+    expect(result.bound.cycle.bindings).toEqual({
+      snapshotId: snapshotA,
+      decisionHash: document.contentHash,
+      shadowDecision: document,
+    })
+    expect(result.replay.changed).toBe(false)
+    expect(result.replay.cycle).toEqual(result.bound.cycle)
+    expect(Option.isSome(result.authoritySlot)).toBe(true)
+    if (Option.isNone(result.authoritySlot)) throw new Error('bound authority slot must remain readable')
+    expect(result.authoritySlot.value).toEqual(result.bound.cycle)
+    expect(Exit.isFailure(result.conflict)).toBe(true)
+    expect(Exit.isFailure(result.missingEvidence)).toBe(true)
+    expect(Exit.isFailure(result.wrongEvidence)).toBe(true)
+    expect(Exit.isFailure(result.missingDocument)).toBe(true)
+    expect(Exit.isFailure(result.orphanDocumentInsert)).toBe(true)
+    expect(Exit.isFailure(result.directUpdate)).toBe(true)
+    expect(Exit.isFailure(result.directDelete)).toBe(true)
+    expect(Exit.isFailure(result.directTruncate)).toBe(true)
+    expect(result.rows).toEqual([
+      {
+        cycle_decision_hash: document.contentHash,
+        document_decision_hash: document.contentHash,
+        document,
+      },
+    ])
+    expect(result.counts).toEqual({
+      shadow_decisions: 1,
+      intents: 0,
+      risk_decisions: 0,
+      mutation_events: 0,
+    })
+  })
+
+  test('keeps completion unreachable and preserves blocked terminal history across runtimes', async () => {
+    const draft = makeDraft()
+    const shadowDecision = makeShadowDecision(draft, snapshotA)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft, acquireAt)
+        yield* store.bindSnapshot(draft.identity.cycleId, makeInputManifest(snapshotA), snapshotAt)
+        yield* store.activate(draft.identity.cycleId, activeAt)
+        yield* insertShadowReconciliation(draft)
+        yield* store.bindDecision(draft.identity.cycleId, shadowDecision, decisionAt)
 
         const sql = yield* PgClient.PgClient
         const directCompleted = yield* Effect.exit(sql`
@@ -755,7 +1015,11 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(Exit.isFailure(result.directNoTrade)).toBe(true)
     expect(result.blocked.cycle).toMatchObject({
       state: CycleState.Blocked,
-      bindings: { snapshotId: snapshotA, decisionHash },
+      bindings: {
+        snapshotId: snapshotA,
+        decisionHash: shadowDecision.contentHash,
+        shadowDecision,
+      },
       terminalReason: CycleTerminalReason.DataStale,
       terminalAt,
     })
@@ -854,7 +1118,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         yield* store.activate(decisionDraft.identity.cycleId, activeAt)
         const decisionAtCutoff = yield* store.bindDecision(
           decisionDraft.identity.cycleId,
-          decisionHash,
+          makeShadowDecision(decisionDraft, snapshotB),
           decisionDraft.window.submissionCutoffAt,
         )
 
