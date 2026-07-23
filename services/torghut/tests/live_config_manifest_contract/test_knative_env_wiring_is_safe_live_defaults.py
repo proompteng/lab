@@ -266,7 +266,9 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                     f"enabled paper strategy {name} has unexpected type {strategy.get('strategy_type')}"
                 )
 
-    def test_runtime_symbol_sources_use_live_signal_universe(self) -> None:
+    def test_runtime_symbol_sources_preserve_trading_and_observation_universes(
+        self,
+    ) -> None:
         live_env = _load_torghut_knative_env()
         sim_env = _load_knative_env(
             "argocd/applications/torghut/knative-service-sim.yaml"
@@ -276,7 +278,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "argocd/applications/torghut/ws/deployment.yaml"
         )
         universe_config = _load_yaml_mapping(
-            "argocd/applications/torghut/clickhouse/bayn-universe-v1-configmap.yaml"
+            "argocd/applications/torghut/clickhouse/bayn-universe-v2-configmap.yaml"
         )
         ws_data = ws_config.get("data")
         self.assertIsInstance(ws_data, Mapping)
@@ -314,27 +316,32 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             _csv_symbols(sim_env.get("TRADING_UNIVERSE_SYMBOL_ALLOWLIST")),
             context="sim runtime universe allowlist",
         )
-        ws_symbols = _csv_symbols(
-            cast(Mapping[str, object], universe_data).get("UNIVERSE_SYMBOLS")
-        )
-        _assert_chip_universe(
+        ws_symbols = _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS"))
+        _assert_exact_quote_covered_paper_strategy_universe(
             self,
             ws_symbols,
-            context="authoritative websocket subscription universe",
+            context="websocket core subscription universe",
         )
-        self.assertEqual(ws_symbols, sorted(ws_symbols))
+        self.assertEqual(
+            _csv_symbols(cast(Mapping[str, object], ws_data).get("SYMBOLS_ALLOWLIST")),
+            ws_symbols,
+        )
+        observation_symbols = _csv_symbols(
+            cast(Mapping[str, object], universe_data).get("UNIVERSE_SYMBOLS")
+        )
+        self.assertEqual(observation_symbols, ["DBC", "EFA", "IEF", "SPY", "VNQ"])
+        self.assertEqual(observation_symbols, sorted(observation_symbols))
         self.assertEqual(
             cast(Mapping[str, object], universe_data).get("UNIVERSE_ID"),
-            "equity-infrastructure-v1",
+            "cross-asset-taa-v1",
         )
         self.assertEqual(
             cast(Mapping[str, object], universe_data).get("UNIVERSE_SYMBOL_HASH"),
-            sha256(",".join(ws_symbols).encode()).hexdigest(),
+            sha256(",".join(observation_symbols).encode()).hexdigest(),
         )
 
         expected_universe_refs = {
-            "SYMBOLS": "UNIVERSE_SYMBOLS",
-            "SYMBOLS_ALLOWLIST": "UNIVERSE_SYMBOLS",
+            "ALPACA_OBSERVATION_SYMBOLS": "UNIVERSE_SYMBOLS",
             "MARKET_DATA_UNIVERSE_ID": "UNIVERSE_ID",
             "MARKET_DATA_UNIVERSE_SYMBOL_HASH": "UNIVERSE_SYMBOL_HASH",
         }
@@ -346,12 +353,12 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             )
             self.assertEqual(
                 config_map_ref,
-                {"name": "bayn-universe-v1", "key": key},
+                {"name": "bayn-universe-v2", "key": key},
                 f"{env_name} must come from the authoritative Bayn universe ConfigMap",
             )
 
-        self.assertNotIn("SYMBOLS", ws_data)
-        self.assertNotIn("SYMBOLS_ALLOWLIST", ws_data)
+        self.assertNotIn("SYMBOLS", env_by_name)
+        self.assertNotIn("SYMBOLS_ALLOWLIST", env_by_name)
         self.assertNotIn("JANGAR_SYMBOLS_URL", ws_data)
         self.assertEqual(
             cast(Mapping[str, object], ws_annotations).get(

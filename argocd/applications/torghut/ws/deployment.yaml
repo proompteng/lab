@@ -21,7 +21,7 @@ spec:
         app: torghut-ws
       annotations:
         kubectl.kubernetes.io/restartedAt: 2026-05-01T01:25:51.190Z
-        torghut.proompteng.ai/ws-config-generation: bayn-delayed-sip-v1
+        torghut.proompteng.ai/ws-config-generation: bayn-cross-asset-v2
     spec:
       serviceAccountName: torghut-runtime
       securityContext:
@@ -39,25 +39,20 @@ spec:
             - configMapRef:
                 name: torghut-ws-config
           env:
-            - name: SYMBOLS
+            - name: ALPACA_OBSERVATION_SYMBOLS
               valueFrom:
                 configMapKeyRef:
-                  name: bayn-universe-v1
-                  key: UNIVERSE_SYMBOLS
-            - name: SYMBOLS_ALLOWLIST
-              valueFrom:
-                configMapKeyRef:
-                  name: bayn-universe-v1
+                  name: bayn-universe-v2
                   key: UNIVERSE_SYMBOLS
             - name: MARKET_DATA_UNIVERSE_ID
               valueFrom:
                 configMapKeyRef:
-                  name: bayn-universe-v1
+                  name: bayn-universe-v2
                   key: UNIVERSE_ID
             - name: MARKET_DATA_UNIVERSE_SYMBOL_HASH
               valueFrom:
                 configMapKeyRef:
-                  name: bayn-universe-v1
+                  name: bayn-universe-v2
                   key: UNIVERSE_SYMBOL_HASH
             - name: ALPACA_KEY_ID
               valueFrom:
