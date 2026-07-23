@@ -36,7 +36,6 @@ const ReplicaIdentityRow = Schema.Struct({
   replica: TrimmedNonEmptyStringSchema,
   principal: TrimmedNonEmptyStringSchema,
 })
-const ReplicaTopologyRow = Schema.Struct({ replica: TrimmedNonEmptyStringSchema })
 const ReadOnlyRow = Schema.Struct({ read_only: Schema.Boolean })
 const LockCountRow = Schema.Struct({
   lock_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -44,7 +43,6 @@ const LockCountRow = Schema.Struct({
 
 const decodeCandidateRow = Schema.decodeUnknownEffect(Schema.Tuple([CandidateRow]), strictParseOptions)
 const decodeReplicaIdentity = Schema.decodeUnknownEffect(Schema.Tuple([ReplicaIdentityRow]), strictParseOptions)
-const decodeReplicaTopology = Schema.decodeUnknownEffect(Schema.Array(ReplicaTopologyRow), strictParseOptions)
 const decodeReadOnlyRow = Schema.decodeUnknownEffect(Schema.Tuple([ReadOnlyRow]), strictParseOptions)
 const decodeLockCountRow = Schema.decodeUnknownEffect(Schema.Tuple([LockCountRow]), strictParseOptions)
 
@@ -88,7 +86,6 @@ const preserveCandidateError = (
 export interface CandidateReplicaObservation {
   readonly endpointHost: string
   readonly replica: string
-  readonly topology: readonly string[]
   readonly principal: string
   readonly snapshot: MarketDataSnapshot
 }
@@ -236,20 +233,6 @@ const compareReplicaObservations = (
   if (new Set(observedReplicas).size !== observedReplicas.length) {
     throw new TypeError('ClickHouse endpoints resolved to the same physical replica')
   }
-  const expectedTopology = [...(observations[0]?.topology ?? [])].sort()
-  if (expectedTopology.length !== 2 || new Set(expectedTopology).size !== expectedTopology.length) {
-    throw new TypeError('ClickHouse topology must contain exactly two distinct physical replicas')
-  }
-  if (
-    observations.some(
-      (observation) => canonicalJsonV1([...observation.topology].sort()) !== canonicalJsonV1(expectedTopology),
-    )
-  ) {
-    throw new TypeError('ClickHouse replica endpoints reported divergent topology')
-  }
-  if (canonicalJsonV1(observedReplicas) !== canonicalJsonV1(expectedTopology)) {
-    throw new TypeError('ClickHouse endpoints do not cover the complete two-replica topology')
-  }
   const canonicalSnapshots = observations.map((observation) => canonicalJsonV1(observation.snapshot))
   const canonicalSnapshot = canonicalSnapshots[0]
   if (canonicalSnapshot === undefined || canonicalSnapshots.some((value) => value !== canonicalSnapshot)) {
@@ -287,7 +270,7 @@ export const verifyQualificationCandidate = (
       try: () => validateCandidateEndpoints(input.clickhouseUrls),
       catch: (cause) => candidateError('config', 'invalid candidate replica endpoints', cause),
     })
-    const observations = yield* Effect.all(endpoints.map(readers.readReplica), { concurrency: 2 })
+    const observations = [yield* readers.readReplica(endpoints[0]), yield* readers.readReplica(endpoints[1])] as const
     const consensus = yield* Effect.try({
       try: () => compareReplicaObservations(input, observations),
       catch: (cause) => candidateError('replica', 'Signal replica candidate verification failed', cause),
@@ -333,38 +316,22 @@ const readReplica = (
   }).pipe(Layer.provide(NodeHttpClient.layerNodeHttp))
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
-    const [identityRows, topology, candidateRows] = yield* Effect.all(
-      [
-        decodeReplicaIdentity(
-          yield* sql`
-            SELECT host_name AS replica, currentUser() AS principal
-            FROM system.clusters
-            WHERE cluster = 'default' AND is_local
-            ORDER BY host_name
-          `.pipe(sql.withQueryId('bayn-candidate-replica-identity')),
-        ),
-        decodeReplicaTopology(
-          yield* sql`
-            SELECT host_name AS replica
-            FROM system.clusters
-            WHERE cluster = 'default'
-            ORDER BY shard_num, replica_num
-          `.pipe(sql.withQueryId('bayn-candidate-replica-topology')),
-        ),
-        decodeCandidateRow(
-          yield* sql`
-            SELECT snapshot_id, calendar_version
-            FROM signal.snapshot_manifests_v2
-            WHERE universe_id = ${sql.param('String', input.protocol.universeId)}
-              AND universe_symbol_hash = ${sql.param('String', input.protocol.universeSymbolHash)}
-              AND requested_start = toDate(${sql.param('String', input.protocol.historyStart)})
-              AND publication_asof = toDate(${sql.param('String', input.publicationDate)})
-            ORDER BY finalized_at DESC, snapshot_id DESC
-            LIMIT 1
-          `.pipe(sql.withQueryId(`bayn-candidate-select-${input.publicationDate}`)),
-        ),
-      ],
-      { concurrency: 3 },
+    const identityRows = yield* decodeReplicaIdentity(
+      yield* sql`
+        SELECT hostName() AS replica, currentUser() AS principal
+      `.pipe(sql.withQueryId('bayn-candidate-replica-identity')),
+    )
+    const candidateRows = yield* decodeCandidateRow(
+      yield* sql`
+        SELECT snapshot_id, calendar_version
+        FROM signal.snapshot_manifests_v2
+        WHERE universe_id = ${sql.param('String', input.protocol.universeId)}
+          AND universe_symbol_hash = ${sql.param('String', input.protocol.universeSymbolHash)}
+          AND requested_start = toDate(${sql.param('String', input.protocol.historyStart)})
+          AND publication_asof = toDate(${sql.param('String', input.publicationDate)})
+        ORDER BY finalized_at DESC, snapshot_id DESC
+        LIMIT 1
+      `.pipe(sql.withQueryId(`bayn-candidate-select-${input.publicationDate}`)),
     )
     const [identity] = identityRows
     const [candidate] = candidateRows
@@ -395,7 +362,6 @@ const readReplica = (
     return {
       endpointHost: endpoint.hostname,
       replica: identity.replica,
-      topology: topology.map((row) => row.replica),
       principal: identity.principal,
       snapshot,
     }

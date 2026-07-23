@@ -35,16 +35,14 @@ const observations = (
 ): readonly CandidateReplicaObservation[] => [
   {
     endpointHost: endpoints[0].hostname,
-    replica: 'signal-0',
-    topology: ['signal-0', 'signal-1'],
+    replica: 'signal-clickhouse-0',
     principal: publisherPrincipal,
     snapshot,
     ...overrides[0],
   },
   {
     endpointHost: endpoints[1].hostname,
-    replica: 'signal-1',
-    topology: ['signal-0', 'signal-1'],
+    replica: 'signal-clickhouse-1',
     principal: publisherPrincipal,
     snapshot,
     ...overrides[1],
@@ -80,7 +78,7 @@ const failure = async (
   Effect.runPromise(Effect.flip(verifyQualificationCandidate(candidateInput, candidateReaders)))
 
 describe('qualification candidate command', () => {
-  test('emits one deterministic complete runtime after two-replica consensus and an unconsumed check', async () => {
+  test('emits one deterministic complete runtime from direct physical hosts without topology metadata', async () => {
     let checkedSnapshotId: string | undefined
     const candidateReaders = readers()
     const report = await Effect.runPromise(
@@ -116,7 +114,7 @@ describe('qualification candidate command', () => {
         BAYN_TIGERBEETLE_LEDGER: input().tigerBeetleLedger,
       },
     })
-    expect(report.replicas.map((replica) => replica.replica)).toEqual(['signal-0', 'signal-1'])
+    expect(report.replicas.map((replica) => replica.replica)).toEqual(['signal-clickhouse-0', 'signal-clickhouse-1'])
     expect(new Set(report.replicas.map((replica) => replica.snapshotCanonicalHash)).size).toBe(1)
   })
 
@@ -154,11 +152,11 @@ describe('qualification candidate command', () => {
     expect(reads).toBe(0)
   })
 
-  test('rejects divergent physical-replica topology', async () => {
-    const error = await failure(input(), readers(observations([{}, { topology: ['signal-0', 'signal-2'] }])))
+  test('rejects duplicate observed physical hostnames', async () => {
+    const error = await failure(input(), readers(observations([{}, { replica: 'signal-clickhouse-0' }])))
 
     expect(error.message).toBe('Signal replica candidate verification failed')
-    expect(String(error.cause)).toContain('reported divergent topology')
+    expect(String(error.cause)).toContain('same physical replica')
   })
 
   test('rejects canonical snapshot divergence across replicas', async () => {
@@ -179,6 +177,25 @@ describe('qualification candidate command', () => {
 
     expect(error.message).toBe('Signal replica candidate verification failed')
     expect(String(error.cause)).toContain('declared Signal publisher principal')
+  })
+
+  test('does not start a sibling replica read after a normal replica failure', async () => {
+    const reads: string[] = []
+    const error = await failure(input(), {
+      readReplica: (endpoint) => {
+        reads.push(endpoint.hostname)
+        return Effect.fail(
+          new QualificationCandidateError({
+            operation: 'replica',
+            message: `failed ${endpoint.hostname}`,
+          }),
+        )
+      },
+      readQualificationLocks: () => Effect.die(new Error('failed replica must stop before PostgreSQL')),
+    })
+
+    expect(error.message).toBe(`failed ${endpoints[0].hostname}`)
+    expect(reads).toEqual([endpoints[0].hostname])
   })
 
   test.each([
