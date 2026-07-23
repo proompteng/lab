@@ -86,6 +86,9 @@ describe('Bayn continuous health', () => {
         Effect.provideService(MarketData, {
           check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
           inspect: Effect.die(new Error('health probes must not inspect sessions')),
+          inspectCyclePublications: Effect.die(
+            new Error('health probes must not inspect cycle publication candidates'),
+          ),
           inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
           inspectSnapshotPublication: () =>
             Effect.die(new Error('health probes must not inspect bound cycle publications')),
@@ -140,6 +143,7 @@ describe('Bayn continuous health', () => {
           : Effect.die(new Error('Signal connection defect')),
       ),
       inspect: Effect.die(new Error('health probes must not inspect sessions')),
+      inspectCyclePublications: Effect.die(new Error('health probes must not inspect cycle publication candidates')),
       inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
       inspectSnapshotPublication: () =>
         Effect.die(new Error('health probes must not inspect bound cycle publications')),
@@ -224,6 +228,7 @@ describe('Bayn continuous health', () => {
         return makeSnapshot().manifest.finalizedSnapshot
       }),
       inspect: Effect.die(new Error('health monitor must not inspect sessions')),
+      inspectCyclePublications: Effect.die(new Error('health monitor must not inspect cycle publication candidates')),
       inspectPublication: () => Effect.die(new Error('health monitor must not inspect cycle publications')),
       inspectSnapshotPublication: () =>
         Effect.die(new Error('health monitor must not inspect bound cycle publications')),
@@ -263,6 +268,7 @@ describe('Bayn continuous health', () => {
         Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
       ),
       inspect: Effect.die(new Error('health monitor must not inspect sessions')),
+      inspectCyclePublications: Effect.die(new Error('health monitor must not inspect cycle publication candidates')),
       inspectPublication: () => Effect.die(new Error('health monitor must not inspect cycle publications')),
       inspectSnapshotPublication: () =>
         Effect.die(new Error('health monitor must not inspect bound cycle publications')),
@@ -313,6 +319,9 @@ describe('Bayn continuous health', () => {
         Effect.provideService(MarketData, {
           check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
           inspect: Effect.die(new Error('health probes must not inspect sessions')),
+          inspectCyclePublications: Effect.die(
+            new Error('health probes must not inspect cycle publication candidates'),
+          ),
           inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
           inspectSnapshotPublication: () =>
             Effect.die(new Error('health probes must not inspect bound cycle publications')),

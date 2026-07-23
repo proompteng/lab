@@ -22,7 +22,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import type { InputManifest } from '../types'
+import type { InputManifest, IsoDate } from '../types'
 import { ensureSnapshotReference } from './snapshot-reference'
 
 export interface CycleAcquireReceipt {
@@ -35,8 +35,21 @@ export interface CycleMutationReceipt {
   readonly changed: boolean
 }
 
+export interface CycleAuthoritySlot {
+  readonly qualificationRunId: string
+  readonly accountId: string
+  readonly signalSessionDate: IsoDate
+}
+
 export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
-  readonly operation: 'acquire' | 'activate' | 'bind-decision' | 'bind-snapshot' | 'block' | 'read'
+  readonly operation:
+    | 'acquire'
+    | 'activate'
+    | 'bind-decision'
+    | 'bind-snapshot'
+    | 'block'
+    | 'read'
+    | 'read-authority-slot'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'not-found' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -45,6 +58,9 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
 export interface CycleStoreShape {
   readonly acquire: (draft: CycleDraft, observedAt: string) => Effect.Effect<CycleAcquireReceipt, CycleStoreError>
   readonly read: (cycleId: string) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
+  readonly readAuthoritySlot: (
+    slot: CycleAuthoritySlot,
+  ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
   readonly bindSnapshot: (
     cycleId: string,
     inputManifest: InputManifest,
@@ -103,6 +119,11 @@ const StoredCycleRowSchema = Schema.Struct({
 type StoredCycleRow = typeof StoredCycleRowSchema.Type
 
 const CycleIdInputSchema = Schema.Struct({ cycleId: Sha256Schema, observedAt: UtcInstantSchema })
+const CycleAuthoritySlotSchema = Schema.Struct({
+  qualificationRunId: Sha256Schema,
+  accountId: StrictNonEmptyStringSchema,
+  signalSessionDate: IsoDateSchema,
+})
 const SnapshotInputSchema = Schema.Struct({
   cycleId: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -121,6 +142,7 @@ const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema }
 
 const decodeStoredCycleRows = Schema.decodeUnknownEffect(Schema.Array(StoredCycleRowSchema), strictParseOptions)
 const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
+const decodeCycleAuthoritySlot = Schema.decodeUnknownEffect(CycleAuthoritySlotSchema, strictParseOptions)
 const decodeSnapshotInput = Schema.decodeUnknownEffect(SnapshotInputSchema, strictParseOptions)
 const decodeDecisionInput = Schema.decodeUnknownEffect(DecisionInputSchema, strictParseOptions)
 const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
@@ -262,6 +284,29 @@ const selectCycle = (
       `
   return rows.pipe(Effect.flatMap(decodeRows))
 }
+
+const selectCycleByAuthoritySlot = (
+  sql: PgClient.PgClient,
+  slot: CycleAuthoritySlot,
+): Effect.Effect<readonly AutonomousCycle[], unknown> =>
+  sql<Record<string, unknown>>`
+    SELECT
+      cycle_id, schema_version, identity_schema_version, strategy_name,
+      qualification_run_id, strategy_protocol_hash, account_id,
+      signal_session_date::text AS signal_session_date, signal_calendar_version,
+      execution_policy_schema_version, execution_policy_hash,
+      strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+      window_schema_version, execution_calendar_schema_version,
+      execution_calendar_source, execution_calendar_hash,
+      execution_session_date::text AS execution_session_date,
+      signal_close_at, publication_deadline_at, submission_open_at,
+      execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
+      decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+    FROM autonomous_cycles
+    WHERE qualification_run_id = ${slot.qualificationRunId}
+      AND account_id = ${slot.accountId}
+      AND signal_session_date = ${slot.signalSessionDate}
+  `.pipe(Effect.flatMap(decodeRows))
 
 const exactlyOne = (
   operation: CycleStoreError['operation'],
@@ -435,6 +480,22 @@ const makeCycleStore = Effect.gen(function* () {
         Effect.flatMap((decodedId) => selectCycle(sql, decodedId, false)),
         Effect.flatMap((rows) => {
           if (rows.length > 1) return fail('read', 'invariant', 'cycle identity returned multiple rows')
+          return Effect.succeed(rows[0] === undefined ? Option.none() : Option.some(rows[0]))
+        }),
+      ),
+    )
+
+  const readAuthoritySlot = (
+    slot: CycleAuthoritySlot,
+  ): Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError> =>
+    run(
+      'read-authority-slot',
+      decodeCycleAuthoritySlot(slot).pipe(
+        Effect.flatMap((decoded) => selectCycleByAuthoritySlot(sql, decoded)),
+        Effect.flatMap((rows) => {
+          if (rows.length > 1) {
+            return fail('read-authority-slot', 'invariant', 'cycle authority slot returned multiple rows')
+          }
           return Effect.succeed(rows[0] === undefined ? Option.none() : Option.some(rows[0]))
         }),
       ),
@@ -636,7 +697,7 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
-  return { acquire, read, bindSnapshot, activate, bindDecision, block } satisfies CycleStoreShape
+  return { acquire, read, readAuthoritySlot, bindSnapshot, activate, bindDecision, block } satisfies CycleStoreShape
 })
 
 export const CycleStoreLive = Layer.effect(CycleStore, makeCycleStore)

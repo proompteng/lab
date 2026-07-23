@@ -36,6 +36,9 @@ const tables = {
   manifests: 'snapshot_manifests_v2',
 } as const
 const calendarTimeZone = 'America/New_York' as const
+// A 21-calendar-day catch-up interval contains at most 15 weekday publications. One extra bounded row keeps the
+// MarketData seam complete while the runner clamps by calendar date before its single broker-calendar read.
+const cyclePublicationCandidateLimit = 16
 const SnapshotIdSchema = HashSchema
 const FixedDecimalSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)\.\d{8}$/))
 const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:0\d|1\d|2[0-3]):[0-5]\d$/))
@@ -168,9 +171,21 @@ export type FinalizedPublicationInspection =
       readonly inspection: MarketDataInspection
     }
 
+export type FinalizedPublicationDiscovery =
+  | {
+      readonly outcome: 'MISSING'
+      readonly observedAt: string
+    }
+  | {
+      readonly outcome: 'FINALIZED'
+      readonly observedAt: string
+      readonly publications: readonly MarketDataInspection[]
+    }
+
 export interface MarketDataService {
   readonly check: Effect.Effect<FinalizedSnapshotProvenance, OperationalError>
   readonly inspect: Effect.Effect<MarketDataInspection, OperationalError>
+  readonly inspectCyclePublications: Effect.Effect<FinalizedPublicationDiscovery, OperationalError>
   readonly inspectPublication: (
     request: FinalizedPublicationRequest,
   ) => Effect.Effect<FinalizedPublicationInspection, OperationalError>
@@ -678,6 +693,39 @@ const makeMarketData = (
         ORDER BY snapshot_id, finalized_at
       `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
 
+    const loadCyclePublicationManifests = sql`
+      SELECT
+        snapshot_id,
+        schema_version,
+        publisher_source_revision,
+        publisher_image_repository,
+        publisher_image_digest,
+        universe_id,
+        universe_symbol_hash,
+        provider,
+        source_feed,
+        adjustment,
+        calendar_version,
+        toString(requested_start) AS requested_start,
+        toString(publication_asof) AS publication_asof,
+        toString(first_session) AS first_session,
+        toString(last_session) AS last_session,
+        symbol_count,
+        session_count,
+        bar_count,
+        bars_content_hash,
+        sessions_content_hash,
+        manifest_content_hash,
+        toString(finalized_at) AS finalized_at
+      FROM signal.snapshot_manifests_v2
+      WHERE universe_id = ${sql.param('String', contract.universeId)}
+        AND universe_symbol_hash = ${sql.param('String', contract.universeSymbolHash)}
+        AND requested_start = toDate(${sql.param('String', contract.historyStart)})
+      ORDER BY publication_asof DESC, finalized_at DESC, snapshot_id DESC
+      LIMIT 1 BY publication_asof
+      LIMIT ${sql.param('UInt8', cyclePublicationCandidateLimit)}
+    `.pipe(sql.withQueryId('bayn-cycle-publication-candidates'))
+
     const loadSnapshotPublicationManifest = (request: SnapshotPublicationRequest) =>
       sql`
         SELECT
@@ -722,6 +770,21 @@ const makeMarketData = (
         WHERE snapshot_id = ${sql.param('String', snapshotId)}
         ORDER BY session_date
       `.pipe(sql.withQueryId(`bayn-cycle-sessions-${snapshotId.slice(-32)}`))
+
+    const loadCyclePublicationSessions = (snapshotIds: readonly string[]) =>
+      sql`
+        SELECT
+          snapshot_id,
+          calendar_version,
+          toString(session_date) AS session_date,
+          open_time,
+          close_time,
+          timezone,
+          provider
+        FROM signal.exchange_sessions_v1
+        WHERE has(${sql.param('Array(String)', snapshotIds)}, snapshot_id)
+        ORDER BY snapshot_id, session_date
+      `.pipe(sql.withQueryId('bayn-cycle-publication-candidate-sessions'))
 
     const request = (observedAt: string): SnapshotRequest => {
       const common = {
@@ -792,6 +855,71 @@ const makeMarketData = (
         return { outcome: 'FINALIZED', observedAt: inspectedAt, inspection } as const
       })
 
+    const inspectCyclePublicationRows = (manifestRows: readonly unknown[]) =>
+      Effect.gen(function* () {
+        const manifests = yield* verify('inspect-publication', () => decodeSnapshotRows([], [], manifestRows).manifests)
+        if (manifests.length === 0) {
+          const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+          return { outcome: 'MISSING', observedAt } as const
+        }
+        if (manifests.length > cyclePublicationCandidateLimit) {
+          return yield* verify('inspect-publication', () => {
+            throw new Error(
+              `cycle publication discovery returned ${manifests.length} manifests; expected at most ${cyclePublicationCandidateLimit}`,
+            )
+          })
+        }
+        const ordered = [...manifests].sort((left, right) => {
+          if (left.publication_asof !== right.publication_asof) {
+            return right.publication_asof.localeCompare(left.publication_asof)
+          }
+          if (left.finalized_at !== right.finalized_at) return right.finalized_at.localeCompare(left.finalized_at)
+          return right.snapshot_id.localeCompare(left.snapshot_id)
+        })
+        const publicationDates = new Set<string>()
+        for (const manifest of ordered) {
+          if (publicationDates.has(manifest.publication_asof)) {
+            return yield* verify('inspect-publication', () => {
+              throw new Error(`cycle publication discovery returned duplicate date ${manifest.publication_asof}`)
+            })
+          }
+          publicationDates.add(manifest.publication_asof)
+        }
+        const snapshotIds = ordered.map((manifest) => manifest.snapshot_id)
+        const sessionRows = yield* loadCyclePublicationSessions(snapshotIds)
+        const inspectedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+        const publications = yield* verify('inspect-publication', () => {
+          const sessions = decodeSnapshotRows([], sessionRows, []).sessions
+          const expectedSnapshotIds = new Set(snapshotIds)
+          if (sessions.some((session) => !expectedSnapshotIds.has(session.snapshot_id))) {
+            throw new Error('cycle publication session query returned an unexpected snapshot ID')
+          }
+          return ordered.map((manifest) => {
+            const inspection = verifyFinalizedPublication(
+              {
+                manifests: [manifest],
+                sessions: sessions.filter((session) => session.snapshot_id === manifest.snapshot_id),
+              },
+              {
+                signalSessionDate: manifest.publication_asof,
+                signalCalendarVersion: manifest.calendar_version,
+              },
+              contract,
+              inspectedAt,
+            )
+            if (inspection === undefined) {
+              throw new Error(`cycle publication ${manifest.snapshot_id} disappeared before verification`)
+            }
+            return inspection
+          })
+        })
+        return {
+          outcome: 'FINALIZED',
+          observedAt: inspectedAt,
+          publications,
+        } as const
+      })
+
     return {
       check: Effect.gen(function* () {
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
@@ -812,6 +940,16 @@ const makeMarketData = (
       }).pipe(
         Effect.mapError((cause) =>
           marketDataOperationError('inspect', 'failed to inspect finalized Signal calendar', cause),
+        ),
+      ),
+      inspectCyclePublications: loadCyclePublicationManifests.pipe(
+        Effect.flatMap(inspectCyclePublicationRows),
+        Effect.mapError((cause) =>
+          marketDataOperationError(
+            'inspect-publication',
+            'failed to inspect bounded finalized Signal publication candidates',
+            cause,
+          ),
         ),
       ),
       inspectPublication: (input) =>
