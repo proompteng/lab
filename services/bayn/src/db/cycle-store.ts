@@ -6,11 +6,13 @@ import {
   CycleDraftSchema,
   CycleState,
   CycleTerminalReason,
+  cycleTerminalReasonForTargetPlanBlock,
   cycleDraftMatches,
   cycleDraftOf,
   decodeAutonomousCycle,
   isCycleStateTransitionAllowed,
   type AutonomousCycle,
+  type CycleCompletionState,
   type CycleDraft,
 } from '../cycle'
 import { decodeInputManifestArtifact } from '../evidence-contracts'
@@ -23,6 +25,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { ObserveShadowDecisionDocumentSchema, type ObserveShadowDecisionDocument } from '../shadow-decision-contract'
+import { TargetPlanStatus } from '../target-planner'
 import type { InputManifest, IsoDate } from '../types'
 import { ensureSnapshotReference } from './snapshot-reference'
 
@@ -42,6 +45,11 @@ export interface CycleAuthoritySlot {
   readonly signalSessionDate: IsoDate
 }
 
+export interface CycleRecoveryScope {
+  readonly qualificationRunId: string
+  readonly accountId: string
+}
+
 export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
   readonly operation:
     | 'acquire'
@@ -49,9 +57,11 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'bind-decision'
     | 'bind-snapshot'
     | 'block'
+    | 'finish'
     | 'read'
     | 'read-authority-slot'
     | 'read-decision-document'
+    | 'read-oldest-unfinished'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'not-found' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -66,6 +76,9 @@ export interface CycleStoreShape {
   readonly readDecisionDocument: (
     cycleId: string,
   ) => Effect.Effect<Option.Option<ObserveShadowDecisionDocument>, CycleStoreError>
+  readonly readOldestUnfinished: (
+    scope: CycleRecoveryScope,
+  ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
   readonly bindSnapshot: (
     cycleId: string,
     inputManifest: InputManifest,
@@ -75,6 +88,11 @@ export interface CycleStoreShape {
   readonly bindDecision: (
     cycleId: string,
     document: ObserveShadowDecisionDocument,
+    observedAt: string,
+  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
+  readonly finish: (
+    cycleId: string,
+    state: CycleCompletionState,
     observedAt: string,
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly block: (
@@ -129,6 +147,10 @@ const CycleAuthoritySlotSchema = Schema.Struct({
   accountId: StrictNonEmptyStringSchema,
   signalSessionDate: IsoDateSchema,
 })
+const CycleRecoveryScopeSchema = Schema.Struct({
+  qualificationRunId: Sha256Schema,
+  accountId: StrictNonEmptyStringSchema,
+})
 const SnapshotInputSchema = Schema.Struct({
   cycleId: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -143,6 +165,11 @@ const BlockInputSchema = Schema.Struct({
   reason: Schema.Enum(CycleTerminalReason),
   observedAt: UtcInstantSchema,
 })
+const FinishInputSchema = Schema.Struct({
+  cycleId: Sha256Schema,
+  state: Schema.Literals([CycleState.Completed, CycleState.NoTrade]),
+  observedAt: UtcInstantSchema,
+})
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
 const StoredDecisionDocumentRowsSchema = Schema.Array(Schema.Struct({ document: ObserveShadowDecisionDocumentSchema }))
@@ -150,9 +177,11 @@ const StoredDecisionDocumentRowsSchema = Schema.Array(Schema.Struct({ document: 
 const decodeStoredCycleRows = Schema.decodeUnknownEffect(Schema.Array(StoredCycleRowSchema), strictParseOptions)
 const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
 const decodeCycleAuthoritySlot = Schema.decodeUnknownEffect(CycleAuthoritySlotSchema, strictParseOptions)
+const decodeCycleRecoveryScope = Schema.decodeUnknownEffect(CycleRecoveryScopeSchema, strictParseOptions)
 const decodeSnapshotInput = Schema.decodeUnknownEffect(SnapshotInputSchema, strictParseOptions)
 const decodeDecisionInput = Schema.decodeUnknownEffect(DecisionInputSchema, strictParseOptions)
 const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
+const decodeFinishInput = Schema.decodeUnknownEffect(FinishInputSchema, strictParseOptions)
 const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
 const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
 const decodeDecisionEvidenceMatch = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
@@ -331,6 +360,31 @@ const selectDecisionDocument = (
     WHERE cycle_id = ${cycleId}
   `.pipe(Effect.flatMap(decodeStoredDecisionDocumentRows))
 
+const selectOldestUnfinishedCycle = (
+  sql: PgClient.PgClient,
+  scope: CycleRecoveryScope,
+): Effect.Effect<readonly AutonomousCycle[], unknown> =>
+  sql<Record<string, unknown>>`
+    SELECT
+      cycle_id, schema_version, identity_schema_version, strategy_name,
+      qualification_run_id, strategy_protocol_hash, account_id,
+      signal_session_date::text AS signal_session_date, signal_calendar_version,
+      execution_policy_schema_version, execution_policy_hash,
+      strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
+      window_schema_version, execution_calendar_schema_version,
+      execution_calendar_source, execution_calendar_hash,
+      execution_session_date::text AS execution_session_date,
+      signal_close_at, publication_deadline_at, submission_open_at,
+      execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
+      decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
+    FROM autonomous_cycles
+    WHERE qualification_run_id = ${scope.qualificationRunId}
+      AND account_id = ${scope.accountId}
+      AND state IN (${CycleState.Pending}, ${CycleState.Active})
+    ORDER BY signal_session_date ASC, cycle_id ASC
+    LIMIT 1
+  `.pipe(Effect.flatMap(decodeRows))
+
 const exactlyOne = (
   operation: CycleStoreError['operation'],
   rows: readonly AutonomousCycle[],
@@ -395,6 +449,38 @@ const makeCycleStore = Effect.gen(function* () {
       Effect.map(([match]) => match.matches),
     )
 
+  const verifyDecisionBoundBlock = (
+    cycle: AutonomousCycle,
+    reason: CycleTerminalReason,
+  ): Effect.Effect<void, unknown> =>
+    Effect.gen(function* () {
+      const storedRows = yield* selectDecisionDocument(sql, cycle.identity.cycleId)
+      const storedDocument = storedRows[0]?.document
+      const targetReason = storedDocument?.targetPlan.reason
+      if (
+        storedRows.length !== 1 ||
+        storedDocument === undefined ||
+        storedDocument.contentHash !== cycle.bindings.decisionHash ||
+        storedDocument.targetPlan.status !== TargetPlanStatus.Blocked ||
+        targetReason === null ||
+        targetReason === undefined
+      ) {
+        return yield* fail(
+          'block',
+          'invariant',
+          'decision-bound cycle may block only from its exact blocked shadow decision',
+        )
+      }
+      const expectedReason = yield* Effect.try({
+        try: () => cycleTerminalReasonForTargetPlanBlock(targetReason),
+        catch: () =>
+          storeError('block', 'invariant', 'decision-bound cycle shadow decision has an invalid blocked reason'),
+      })
+      if (reason !== expectedReason) {
+        return yield* fail('block', 'invariant', 'cycle blocked reason must match its exact durable shadow decision')
+      }
+    })
+
   const blockCycle = (
     operation: CycleStoreError['operation'],
     cycle: AutonomousCycle,
@@ -425,19 +511,24 @@ const makeCycleStore = Effect.gen(function* () {
     if (observedAt < cycle.updatedAt) {
       return fail(operation, 'conflict', 'cycle update time cannot move backward')
     }
-    return sql<Record<string, unknown>>`
-      UPDATE autonomous_cycles
-      SET
-        state = ${CycleState.Blocked},
-        terminal_reason = ${reason},
-        state_version = ${cycle.stateVersion + 1},
-        updated_at = ${observedAt},
-        terminal_at = ${observedAt}
-      WHERE cycle_id = ${cycle.identity.cycleId}
-        AND state = ${cycle.state}
-        AND state_version = ${cycle.stateVersion}
-      RETURNING cycle_id
-    `.pipe(
+    const verifyDecision =
+      cycle.state === CycleState.Active && cycle.bindings.decisionHash !== undefined
+        ? verifyDecisionBoundBlock(cycle, reason)
+        : Effect.void
+    return verifyDecision.pipe(
+      Effect.andThen(sql<Record<string, unknown>>`
+        UPDATE autonomous_cycles
+        SET
+          state = ${CycleState.Blocked},
+          terminal_reason = ${reason},
+          state_version = ${cycle.stateVersion + 1},
+          updated_at = ${observedAt},
+          terminal_at = ${observedAt}
+        WHERE cycle_id = ${cycle.identity.cycleId}
+          AND state = ${cycle.state}
+          AND state_version = ${cycle.stateVersion}
+        RETURNING cycle_id
+      `),
       Effect.flatMap((rows) => requireApplied(operation, rows)),
       Effect.flatMap(() => readLocked(operation, cycle.identity.cycleId)),
       Effect.map((updated) => ({ cycle: updated, changed: true })),
@@ -562,6 +653,17 @@ const makeCycleStore = Effect.gen(function* () {
           }
           return Effect.succeed(rows[0] === undefined ? Option.none() : Option.some(rows[0].document))
         }),
+      ),
+    )
+
+  const readOldestUnfinished = (
+    scope: CycleRecoveryScope,
+  ): Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError> =>
+    run(
+      'read-oldest-unfinished',
+      decodeCycleRecoveryScope(scope).pipe(
+        Effect.flatMap((decoded) => selectOldestUnfinishedCycle(sql, decoded)),
+        Effect.map((rows) => (rows[0] === undefined ? Option.none() : Option.some(rows[0]))),
       ),
     )
 
@@ -733,7 +835,8 @@ const makeCycleStore = Effect.gen(function* () {
                 input.document.bindings.snapshotId !== cycle.bindings.snapshotId ||
                 input.document.bindings.accountId !== cycle.identity.accountId ||
                 input.document.submissionCutoffAt !== cycle.window.submissionCutoffAt ||
-                input.document.createdAt !== input.observedAt
+                input.document.createdAt > input.observedAt ||
+                input.document.createdAt < cycle.updatedAt
               ) {
                 return yield* fail(
                   'bind-decision',
@@ -785,6 +888,67 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
+  const finish = (
+    cycleId: string,
+    state: CycleCompletionState,
+    observedAt: string,
+  ): Effect.Effect<CycleMutationReceipt, CycleStoreError> =>
+    run(
+      'finish',
+      decodeFinishInput({ cycleId, state, observedAt }).pipe(
+        Effect.flatMap((input) =>
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const cycle = yield* readLocked('finish', input.cycleId)
+              if (cycle.state === input.state) return { cycle, changed: false }
+              if (!isCycleStateTransitionAllowed(cycle.state, input.state)) {
+                return yield* fail('finish', 'conflict', 'only an active cycle may finish from its bound decision')
+              }
+              if (input.observedAt < cycle.updatedAt) {
+                return yield* fail('finish', 'conflict', 'cycle update time cannot move backward')
+              }
+              const decisionHash = cycle.bindings.decisionHash
+              if (decisionHash === undefined) {
+                return yield* fail('finish', 'invariant', 'cycle completion requires a bound shadow decision')
+              }
+              const storedRows = yield* selectDecisionDocument(sql, input.cycleId)
+              const storedDocument = storedRows[0]?.document
+              const expectedStatus =
+                input.state === CycleState.Completed ? TargetPlanStatus.Planned : TargetPlanStatus.NoTrade
+              if (
+                storedRows.length !== 1 ||
+                storedDocument === undefined ||
+                storedDocument.contentHash !== decisionHash ||
+                storedDocument.targetPlan.status !== expectedStatus
+              ) {
+                return yield* fail(
+                  'finish',
+                  'invariant',
+                  'cycle terminal state must match its exact durable shadow decision',
+                )
+              }
+              const updatedRows = yield* sql<Record<string, unknown>>`
+                UPDATE autonomous_cycles
+                SET
+                  state = ${input.state},
+                  state_version = ${cycle.stateVersion + 1},
+                  updated_at = ${input.observedAt},
+                  terminal_at = ${input.observedAt}
+                WHERE cycle_id = ${input.cycleId}
+                  AND state = ${CycleState.Active}
+                  AND state_version = ${cycle.stateVersion}
+                  AND decision_hash = ${decisionHash}
+                RETURNING cycle_id
+              `
+              yield* requireApplied('finish', updatedRows)
+              const updated = yield* readLocked('finish', input.cycleId)
+              return { cycle: updated, changed: true }
+            }),
+          ),
+        ),
+      ),
+    )
+
   const block = (
     cycleId: string,
     reason: CycleTerminalReason,
@@ -808,9 +972,11 @@ const makeCycleStore = Effect.gen(function* () {
     read,
     readAuthoritySlot,
     readDecisionDocument,
+    readOldestUnfinished,
     bindSnapshot,
     activate,
     bindDecision,
+    finish,
     block,
   } satisfies CycleStoreShape
 })

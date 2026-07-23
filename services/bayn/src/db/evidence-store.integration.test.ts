@@ -296,6 +296,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 10, name: 'autonomous_cycles' },
       { migration_id: 11, name: 'causal_protocol' },
       { migration_id: 12, name: 'observe_shadow_decisions' },
+      { migration_id: 13, name: 'autonomous_cycle_terminal_transitions' },
     ])
   })
 
