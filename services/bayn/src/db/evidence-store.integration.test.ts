@@ -877,13 +877,20 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.state.state).toBe('TERMINAL')
   })
 
-  test('allows kill-mode cancellation of an identified order and resolves the cancel race', async () => {
+  test('allows expired identified cancellation under an active kill while blocking new submission', async () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
-    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const blockedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'b'.repeat(64) })))
+    const expiresAtMillis = Date.now() + 10_000
+    const decision = await Effect.runPromise(
+      riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
+    )
+    const blockedDecision = await Effect.runPromise(riskDecision(blockedIntent, RiskOutcome.Approved))
     await execution.runPromise(
       Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const store = yield* IntentStore
+        yield* store.commit(intent, decision)
+        yield* store.commit(blockedIntent, blockedDecision)
         const sql = yield* PgClient.PgClient
         yield* sql`
           INSERT INTO authority_state (
@@ -918,13 +925,23 @@ describePostgres('PostgreSQL evaluation evidence', () => {
               updated_at = ${new Date(base + 2).toISOString()}
           WHERE singleton
         `
-        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(base + 3).toISOString())
-        yield* store.cancelUnknown(intent.intentId, cancelHash, orderId, new Date(base + 4).toISOString())
+        yield* sql`SELECT pg_sleep_until(${new Date(expiresAtMillis + 10).toISOString()}::timestamptz)`
+        const blockedSubmit = yield* Effect.exit(
+          store.beginSubmit(
+            blockedIntent.intentId,
+            '4'.repeat(64),
+            1_000,
+            new Date(Math.max(Date.now(), base + 3)).toISOString(),
+          ),
+        )
+        const cancelBase = Math.max(Date.now(), base + 4)
+        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(cancelBase).toISOString())
+        yield* store.cancelUnknown(intent.intentId, cancelHash, orderId, new Date(cancelBase + 1).toISOString())
         const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Cancel, cancelHash, {
           requestId: 'cancel-lookup-not-found',
           status: 404,
           contentHash: 'f'.repeat(64),
-          observedAt: new Date(base + 5).toISOString(),
+          observedAt: new Date(cancelBase + 2).toISOString(),
         })
         yield* store.recoveryFound(
           intent.intentId,
@@ -935,20 +952,90 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             requestId: 'cancel-lookup',
             status: 200,
             contentHash: '0'.repeat(64),
-            observedAt: new Date(base + 6).toISOString(),
+            observedAt: new Date(cancelBase + 3).toISOString(),
           },
           TerminalOutcome.Canceled,
         )
-        return { notFound, state: yield* sqlIntentState(intent.intentId) }
+        return { blockedSubmit, notFound, state: yield* sqlIntentState(intent.intentId) }
       }),
     )
     await mutation.dispose()
 
+    expect(Exit.isFailure(observed.blockedSubmit)).toBe(true)
+    if (Exit.isFailure(observed.blockedSubmit)) {
+      expect(Cause.pretty(observed.blockedSubmit.cause)).toContain('effective authority is not PAPER and clear')
+    }
     expect(observed.notFound).toMatchObject({
       eventType: MutationEventType.RecoveryNotFound,
       brokerOrderId: orderId,
     })
     expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
+  }, 20_000)
+
+  test('rejects non-submitted and mismatched broker order identities before cancellation starts', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: 'e'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const sql = yield* PgClient.PgClient
+        yield* sql`
+          INSERT INTO authority_state (
+            schema_version, generation_hash, maximum, effective, kill_state, version, updated_at
+          ) VALUES (
+            'bayn.paper-authority.v1', ${'9'.repeat(64)}, 'PAPER', 'PAPER', 'CLEAR', 1,
+            ${new Date(Date.now() + 1).toISOString()}
+          )
+        `
+      }),
+    )
+    await execution.dispose()
+
+    const mutation = makeMutationRuntime()
+    const submitHash = 'a'.repeat(64)
+    const otherOrderId = 'f93d3f58-0e70-4cd2-a9e1-2fcb89d76f74'
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        const nonSubmitted = yield* Effect.exit(
+          store.beginCancel(intent.intentId, cancelRequestHash(orderId), orderId, 1_000, new Date(base).toISOString()),
+        )
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base + 1).toISOString())
+        yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
+          requestId: 'submit-request',
+          status: 200,
+          contentHash: '1'.repeat(64),
+          observedAt: new Date(base + 2).toISOString(),
+        })
+        const mismatched = yield* Effect.exit(
+          store.beginCancel(
+            intent.intentId,
+            cancelRequestHash(otherOrderId),
+            otherOrderId,
+            1_000,
+            new Date(base + 3).toISOString(),
+          ),
+        )
+        return {
+          latest: yield* store.latest(intent.intentId, MutationOperation.Cancel),
+          mismatched,
+          nonSubmitted,
+        }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.nonSubmitted)).toBe(true)
+    if (Exit.isFailure(observed.nonSubmitted)) {
+      expect(Cause.pretty(observed.nonSubmitted.cause)).toContain('exact durable submitted order identity')
+    }
+    expect(Exit.isFailure(observed.mismatched)).toBe(true)
+    if (Exit.isFailure(observed.mismatched)) {
+      expect(Cause.pretty(observed.mismatched.cause)).toContain('exact durable submitted order identity')
+    }
+    expect(observed.latest).toBeUndefined()
   })
 
   test('blocks later exposure only while an earlier mutation outcome remains unresolved', async () => {

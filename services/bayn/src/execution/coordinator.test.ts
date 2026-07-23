@@ -125,6 +125,7 @@ const completeEvidence = (response: Partial<MutationEvidence> | undefined): Muta
 interface HarnessOptions {
   readonly crashAfterSubmit?: boolean
   readonly lostFence?: boolean
+  readonly lostFenceAfterSubmit?: boolean
   readonly notFoundOnce?: boolean
   readonly unknownSubmit?: boolean
   readonly submitError?: BrokerMutationError
@@ -407,6 +408,19 @@ const makeHarness = (options: HarnessOptions = {}) => {
     marketCalendar: unusedMarketCalendar,
   }
 
+  const fenceCheck = Effect.suspend(() => {
+    if (!options.lostFence && !(options.lostFenceAfterSubmit && latest.has(MutationOperation.Submit))) {
+      return Effect.void
+    }
+    return Effect.fail(
+      new WriterFenceError({
+        failure: 'unavailable',
+        operation: 'check',
+        message: 'injected writer-fence loss',
+      }),
+    )
+  })
+
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(IntentStore, intentStore),
@@ -415,15 +429,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(BrokerRead, read),
       Effect.provideService(WriterFence, {
         backendPid: 1,
-        check: options.lostFence
-          ? Effect.fail(
-              new WriterFenceError({
-                failure: 'unavailable',
-                operation: 'check',
-                message: 'injected writer-fence loss',
-              }),
-            )
-          : Effect.void,
+        check: fenceCheck,
         transaction: (effect) => effect,
       }),
       Effect.provide(TestClock.layer()),
@@ -704,24 +710,72 @@ describe('paper execution coordinator', () => {
     expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 0 })
   })
 
-  test('makes zero DELETE calls when the risk decision expires exactly at cancellation', async () => {
+  test('cancels the exact identified order after its new-exposure risk decision expires', async () => {
     const harness = makeHarness()
-    const failure = await Effect.runPromise(
+    const result = await Effect.runPromise(
       harness.provide(
         Effect.gen(function* () {
           yield* submit(intentId, 1_000)
           yield* TestClock.adjust(600_000)
+          return yield* cancel(intentId, 1_000)
+        }),
+      ),
+    )
+
+    expect(result).toMatchObject({
+      eventType: MutationEventType.CancelAccepted,
+      brokerOrderId: orderId,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('makes no DELETE call when the writer fence is lost after the durable submit', async () => {
+    const harness = makeHarness({ lostFenceAfterSubmit: true })
+    const failure = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
           return yield* Effect.flip(cancel(intentId, 1_000))
+        }),
+      ),
+    )
+
+    expect(failure).toBeInstanceOf(WriterFenceError)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Acknowledged)
+  })
+
+  test('rejects cancellation when no durable submitted order exists', async () => {
+    const harness = makeHarness()
+    const failure = await Effect.runPromise(harness.provide(Effect.flip(cancel(intentId, 1_000))))
+
+    expect(failure).toBeInstanceOf(ExecutionError)
+    expect(failure).toMatchObject({
+      failure: ExecutionFailure.InvalidState,
+      message: 'cancellation requires a positively identified broker order',
+    })
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Approved)
+  })
+
+  test('rejects cancellation when the durable submit belongs to a different intent identity', async () => {
+    const harness = makeHarness()
+    const otherIntentId = '0'.repeat(64)
+    const failure = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          return yield* Effect.flip(cancel(otherIntentId, 1_000))
         }),
       ),
     )
 
     expect(failure).toBeInstanceOf(ExecutionError)
     expect(failure).toMatchObject({
-      failure: ExecutionFailure.InvalidState,
-      message: `cancellation risk decision expired at ${riskDecision.expiresAt}`,
+      failure: ExecutionFailure.IntentNotFound,
+      message: `intent ${otherIntentId} does not exist`,
     })
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
-    expect(harness.state()).toBe(IntentState.Acknowledged)
   })
 })
