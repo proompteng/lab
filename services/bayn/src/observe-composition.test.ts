@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { MarketCalendarObservation, ReadResult } from './broker/alpaca'
+import type { BrokerReadShape, MarketCalendarObservation, ReadResult } from './broker/alpaca'
 import {
   CycleState,
   decodeAutonomousCycle,
@@ -13,9 +13,15 @@ import {
   makeCycleWindow,
   makeExecutionCalendarObservation,
 } from './cycle'
+import type { CycleStoreShape } from './db/cycle-store'
+import type { PaperStoreShape } from './db/paper-store'
 import { canonicalHashV1 } from './hash'
 import type { MarketDataService, MarketDataSnapshot } from './market-data'
-import { buildObserveCycleDecision, loadObserveRiskPolicy } from './observe-composition'
+import {
+  buildObserveCycleDecision,
+  loadObserveRiskPolicy,
+  makeObserveAutonomousCycleStartup,
+} from './observe-composition'
 import {
   AccountStatus,
   Authority,
@@ -373,5 +379,78 @@ describe('OBSERVE runtime composition', () => {
 
     expect(exit.toString()).toContain('same-pass reconciliation did not return the configured OBSERVE authority')
     expect(strategyCalls).toBe(0)
+  })
+
+  test('fails PAPER startup before authority initialization or autonomous work can begin', async () => {
+    const unused = Effect.die(new Error('PAPER startup must fail before using runtime capabilities'))
+    let authorityInitializations = 0
+    const paperStore: PaperStoreShape = {
+      ingest: () => unused,
+      ingestPositions: () => unused,
+      account: () => unused,
+      value: () => unused,
+      hasAccountBaseline: () => unused,
+      bindings: () => unused,
+      reconcile: () => unused,
+      ensureAuthorityGeneration: () =>
+        Effect.sync(() => {
+          authorityInitializations += 1
+          throw new Error('PAPER startup must not initialize synthetic OBSERVE authority')
+        }),
+      restrictAuthority: () => unused,
+    }
+    const cycleStore: CycleStoreShape = {
+      acquire: () => unused,
+      read: () => unused,
+      readAuthoritySlot: () => unused,
+      readDecisionDocument: () => unused,
+      readOldestUnfinished: () => unused,
+      bindSnapshot: () => unused,
+      activate: () => unused,
+      bindDecision: () => unused,
+      finish: () => unused,
+      block: () => unused,
+    }
+    const brokerRead: BrokerReadShape = {
+      account: unused,
+      positions: unused,
+      orders: () => unused,
+      orderById: () => unused,
+      orderByClientId: () => unused,
+      fillActivities: () => unused,
+      marketCalendar: () => unused,
+    }
+    const startup = makeObserveAutonomousCycleStartup({
+      accountId,
+      authorityGenerationHash: generationHash,
+      brokerRead,
+      cycleStore,
+      marketData: marketData([]),
+      maximumAuthority: Authority.Paper,
+      paperStore,
+      pollIntervalMs: 30_000,
+      reconcile: unused,
+      strategy: {
+        currentDecision: () => {
+          throw new Error('PAPER startup must not compile a shadow decision')
+        },
+        parameters: fixtureProtocol,
+      },
+    })
+
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        startup({
+          qualificationRunId: 'c'.repeat(64),
+          strategyProtocolHash: 'd'.repeat(64),
+          recordPass: () => unused,
+        }),
+      ),
+    )
+
+    expect(exit.toString()).toContain(
+      'PAPER autonomous startup requires the gated Phase B authority generation and dispatch transition',
+    )
+    expect(authorityInitializations).toBe(0)
   })
 })

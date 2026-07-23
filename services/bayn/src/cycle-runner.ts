@@ -546,18 +546,19 @@ const recoverCycle = (
               runnerError('recover-cycle', 'store', 'durable shadow decision read failed', cause),
             ),
           )
+        const decisionObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const next = yield* chooseRecovery({
           qualificationRunId: context.qualificationRunId,
           accountId: context.accountId,
           strategyProtocolHash: context.strategyProtocolHash,
-          observedAt,
+          observedAt: decisionObservedAt,
           cycle: selection.cycle,
           decisionDocument: Option.match(document, {
             onNone: () => null,
             onSome: (value) => value,
           }),
         })
-        return yield* recoverCycle(next, context, observedAt)
+        return yield* recoverCycle(next, context, decisionObservedAt)
       })
     case 'FINISH':
       return Effect.gen(function* () {

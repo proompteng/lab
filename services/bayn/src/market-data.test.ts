@@ -312,6 +312,14 @@ const makeClickhouseFixture = (
         const matching = text.includes('AND calendar_version =')
           ? manifests.filter((manifest) => manifest.calendar_version === calendarVersion)
           : manifests
+        if (text.includes('ORDER BY finalized_at DESC, snapshot_id DESC')) {
+          return [...matching]
+            .sort((left, right) => {
+              if (left.finalized_at !== right.finalized_at) return right.finalized_at.localeCompare(left.finalized_at)
+              return right.snapshot_id.localeCompare(left.snapshot_id)
+            })
+            .slice(0, 1)
+        }
         if (!text.includes('ORDER BY publication_asof DESC')) return matching
         const ordered = [...matching].sort((left, right) => {
           if (left.publication_asof !== right.publication_asof) {
@@ -627,6 +635,82 @@ describe('finalized Signal snapshot reader', () => {
       expect(query.text).toContain('AND calendar_version =')
       expect(query.parameters).toContain(fixture.request.calendarVersion)
     }
+  })
+
+  test('deterministically selects the latest correction for an exact finalized publication', async () => {
+    const fixture = makeFixture()
+    const corrections = [
+      makePublicationRevision(fixture, {
+        barsContentHash: '4'.repeat(64),
+        finalizedAt: '2025-01-04 01:30:00.000',
+      }),
+      makePublicationRevision(fixture, {
+        barsContentHash: '5'.repeat(64),
+        finalizedAt: '2025-01-04 01:30:00.000',
+      }),
+    ]
+    const expected = [...corrections].sort((left, right) =>
+      right.manifest.snapshot_id.localeCompare(left.manifest.snapshot_id),
+    )[0]
+    if (expected === undefined) throw new Error('correction fixture must select one latest snapshot')
+    const queries: CapturedQuery[] = []
+    const client = makeClickhouseFixture(
+      [...fixture.rows.manifests, ...corrections.map((correction) => correction.manifest)],
+      [...fixture.rows.sessions, ...corrections.flatMap((correction) => correction.sessions)],
+      queries,
+    )
+    const layer = MarketDataLive(
+      {
+        operationTimeoutMs: 5_000,
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
+          snapshotId,
+          publicationAsOf: fixture.request.publicationAsOf,
+          calendarVersion: fixture.request.calendarVersion,
+          bounds: fixture.request.bounds,
+        },
+      },
+      {
+        universeId: fixture.request.universeId,
+        universeSymbolHash: fixture.request.universeSymbolHash,
+        universe: fixture.request.universe,
+        historyStart: fixture.request.historyStart,
+        evaluationStart: fixture.request.evaluationStart,
+      },
+    ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const marketData = yield* MarketData
+        return yield* marketData.inspectPublication({
+          signalSessionDate: '2025-01-03',
+          signalCalendarVersion: fixture.request.calendarVersion,
+        })
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'FINALIZED',
+      inspection: {
+        manifest: {
+          finalizedSnapshot: {
+            snapshotId: expected.manifest.snapshot_id,
+            finalizedAt: '2025-01-04T01:30:00.000Z',
+          },
+        },
+      },
+    })
+    const manifestQueries = queries.filter((query) => query.kind === 'manifest')
+    expect(manifestQueries).toHaveLength(1)
+    expect(queries.filter((query) => query.kind === 'sessions')).toHaveLength(1)
+    expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
+    expect(manifestQueries[0]?.text).toContain('AND universe_symbol_hash =')
+    expect(manifestQueries[0]?.text).toContain('ORDER BY finalized_at DESC, snapshot_id DESC')
+    expect(manifestQueries[0]?.text).toContain('LIMIT 1')
+    expect(manifestQueries[0]?.parameters).toContain(fixture.request.universeSymbolHash)
+    expect(queries.find((query) => query.kind === 'sessions')?.parameters).toEqual([expected.manifest.snapshot_id])
   })
 
   test('discovers bounded exact finalized publications without using pinned snapshot or publication dates', async () => {

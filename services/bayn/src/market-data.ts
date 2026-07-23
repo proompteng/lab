@@ -690,10 +690,12 @@ const makeMarketData = (
           toString(finalized_at) AS finalized_at
         FROM signal.snapshot_manifests_v2
         WHERE universe_id = ${sql.param('String', contract.universeId)}
+          AND universe_symbol_hash = ${sql.param('String', contract.universeSymbolHash)}
           AND requested_start = toDate(${sql.param('String', contract.historyStart)})
           AND publication_asof = toDate(${sql.param('String', request.signalSessionDate)})
           AND calendar_version = ${sql.param('String', request.signalCalendarVersion)}
-        ORDER BY snapshot_id, finalized_at
+        ORDER BY finalized_at DESC, snapshot_id DESC
+        LIMIT 1
       `.pipe(sql.withQueryId(`bayn-cycle-manifest-${request.signalSessionDate}`))
 
     const loadCyclePublicationManifests = sql`

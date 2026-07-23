@@ -250,6 +250,7 @@ export interface ObserveAutonomousCycleInput {
   readonly brokerRead: BrokerReadShape
   readonly cycleStore: CycleStoreShape
   readonly marketData: MarketDataService
+  readonly maximumAuthority: Authority
   readonly paperStore: PaperStoreShape
   readonly pollIntervalMs: number
   readonly reconcile: Effect.Effect<ReconciliationPassResult, unknown>
@@ -260,6 +261,15 @@ export const makeObserveAutonomousCycleStartup = (input: ObserveAutonomousCycleI
   const executionModel = input.strategy.parameters.executionModel
   return (startup) =>
     Effect.gen(function* () {
+      if (input.maximumAuthority !== Authority.Observe) {
+        return yield* Effect.fail(
+          operationalError(
+            'config',
+            'cycle-loop',
+            'PAPER autonomous startup requires the gated Phase B authority generation and dispatch transition',
+          ),
+        )
+      }
       if (executionModel.schemaVersion !== 'bayn.execution-model.v2') {
         return yield* Effect.fail(
           operationalError('strategy', 'cycle-loop', 'autonomous cycles require the causal v2 execution model'),
