@@ -31,6 +31,7 @@ export interface RuntimeConfig {
   readonly unknownMutationThresholdMs: number
   readonly alpaca?: {
     readonly accountId: string
+    readonly authorityGenerationHash: string
     readonly key: Redacted.Redacted<string>
     readonly secret: Redacted.Redacted<string>
     readonly proxyUrl: string
@@ -62,11 +63,7 @@ export interface AutonomousCycleRuntimeConfig {
   readonly cyclePollIntervalMs: number
 }
 
-export interface AuthorityGenerationRuntimeConfig {
-  readonly authorityGenerationHash?: string
-}
-
-export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig & AuthorityGenerationRuntimeConfig
+export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
@@ -162,7 +159,7 @@ const runtimeConfig = Config.all({
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
     unknownMutationThresholdMs: config.unknownMutationThresholdMs,
     cyclePollIntervalMs: config.cyclePollIntervalMs,
-    authorityGenerationHash: Option.getOrUndefined(config.authorityGenerationHash),
+    authorityGenerationHash: config.authorityGenerationHash,
     configuredAlpaca: {
       accountId: config.alpacaAccountId,
       key: config.alpacaKey,
@@ -245,31 +242,35 @@ export const loadConfig = (
           operationalError('config', 'alpaca', 'Alpaca account ID, key ID, and secret key must be configured together'),
         )
       }
-      const alpaca = Option.map(credentials, (value) => ({
-        ...value,
-        proxyUrl: config.configuredAlpaca.proxyUrl,
-        retryAttempts: config.configuredAlpaca.retryAttempts,
-        reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
-      }))
+      if (Option.isSome(credentials) && Option.isNone(config.authorityGenerationHash)) {
+        return Effect.fail(
+          operationalError(
+            'config',
+            'authority-generation',
+            'Alpaca account binding requires an authority generation hash',
+          ),
+        )
+      }
+      const alpaca = Option.map(
+        Option.all({ credentials, authorityGenerationHash: config.authorityGenerationHash }),
+        ({ credentials: value, authorityGenerationHash }) => ({
+          ...value,
+          authorityGenerationHash,
+          proxyUrl: config.configuredAlpaca.proxyUrl,
+          retryAttempts: config.configuredAlpaca.retryAttempts,
+          reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
+        }),
+      )
       if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
         return Effect.fail(
           operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
         )
       }
-      if (
-        config.maximumAuthority === Authority.Observe &&
-        Option.isSome(alpaca) &&
-        config.authorityGenerationHash === undefined
-      ) {
-        return Effect.fail(
-          operationalError(
-            'config',
-            'authority-generation',
-            'OBSERVE autonomous cycle composition requires an authority generation hash',
-          ),
-        )
-      }
-      const { configuredAlpaca: _configuredAlpaca, ...runtime } = config
+      const {
+        configuredAlpaca: _configuredAlpaca,
+        authorityGenerationHash: _authorityGenerationHash,
+        ...runtime
+      } = config
       return Effect.succeed({ ...runtime, ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}) })
     }),
     Effect.flatMap((config) =>

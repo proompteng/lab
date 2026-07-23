@@ -58,7 +58,6 @@ describe('Effect configuration', () => {
     expect(config.reconciliationStaleThresholdMs).toBe(120_000)
     expect(config.unknownMutationThresholdMs).toBe(300_000)
     expect(config.cyclePollIntervalMs).toBe(30_000)
-    expect(config.authorityGenerationHash).toBe(authorityGenerationHash)
     expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -99,11 +98,10 @@ describe('Effect configuration', () => {
 
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
 
-    expect(config.authorityGenerationHash).toBeUndefined()
     expect(config.alpaca).toBeUndefined()
   })
 
-  test('requires an explicit valid authority generation for OBSERVE broker composition', async () => {
+  test('requires an explicit valid authority generation to resolve an Alpaca binding', async () => {
     for (const value of [undefined, 'not-a-generation-hash']) {
       const environment = new Map(runtimeEnvironment)
       environment.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
@@ -135,6 +133,7 @@ describe('Effect configuration', () => {
 
     expect(config.alpaca).toMatchObject({
       accountId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
+      authorityGenerationHash,
       proxyUrl: 'http://bayn-egress-proxy:3128',
       retryAttempts: 2,
       reconciliationIntervalMs: 30_000,
