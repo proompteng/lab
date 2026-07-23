@@ -18,7 +18,7 @@ import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import { makeHttpLayer, renderPrometheusMetrics } from './http'
 import { Authority } from './paper'
-import { initialState } from './runtime-state'
+import { initialState, type RuntimeState } from './runtime-state'
 
 describe('Bayn HTTP probes', () => {
   test('serves every route from the current runtime state and closes its socket', async () => {
@@ -75,6 +75,11 @@ describe('Bayn HTTP probes', () => {
                 zeroMutation: true,
                 mutations: { eventCount: 0, unresolvedCount: 0 },
               },
+              autonomousCycleLoop: {
+                configured: false,
+                startedAt: null,
+                lastPass: null,
+              },
               authority: { maximum: 'observe', brokerOrders: false, capitalPromotion: false },
               broker: {
                 configured: false,
@@ -104,6 +109,9 @@ describe('Bayn HTTP probes', () => {
           expect(metricsResponse.status).toBe(200)
           expect(metricsResponse.headers.get('content-type')).toContain('text/plain')
           expect(metrics).toContain('bayn_cycle_condition{condition="waiting"} 1')
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_configured 0')
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_health_available 1')
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="unknown"} 1')
           expect(metrics).toContain('bayn_mutation_events_total 0')
           expect(metrics).toContain('bayn_broker_orders_enabled 0')
           expect(metrics).toContain('bayn_capital_promotion_enabled 0')
@@ -165,6 +173,98 @@ describe('Bayn HTTP probes', () => {
       rejected = true
     }
     expect(rejected).toBe(true)
+  })
+
+  test('keeps a typed latest loop failure visible and makes readiness and metrics fail closed', async () => {
+    const failedAt = '2026-07-20T00:00:00.000Z'
+    const failedState: RuntimeState = {
+      ...readyState(),
+      status: 'DEGRADED',
+      health: {
+        ...readyState().health,
+        dependencies: {
+          ...readyState().health.dependencies,
+          cycleRunner: {
+            status: 'UNAVAILABLE',
+            checkedAt: failedAt,
+            error: 'market-calendar/calendar-read: authoritative calendar unavailable',
+          },
+        },
+      },
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: failedAt,
+        lastPass: {
+          result: 'FAILURE',
+          observedAt: failedAt,
+          operation: 'market-calendar',
+          failure: 'calendar-read',
+          message: 'authoritative calendar unavailable',
+        },
+      },
+      error: 'cycleRunner: market-calendar/calendar-read: authoritative calendar unavailable',
+    }
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* Ref.make(failedState)
+          const context = yield* Layer.build(
+            makeHttpLayer(
+              {
+                cycleStallThresholdMs: config.cycleStallThresholdMs,
+                host: '127.0.0.1',
+                maximumAuthority: Authority.Observe,
+                operationTimeoutMs: 250,
+                port: 0,
+                reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+                unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+              },
+              state,
+              provenance,
+              'embedded',
+              successfulEvidenceStore.read,
+            ),
+          )
+          const address = Context.get(context, HttpServer.HttpServer).address
+          if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
+
+          expect(yield* Effect.promise(() => fetchJson(address.port, '/readyz'))).toMatchObject({
+            status: 503,
+            body: {
+              ready: false,
+              status: 'DEGRADED',
+              failedDependencies: expect.arrayContaining(['cycleRunner']),
+            },
+          })
+          expect(yield* Effect.promise(() => fetchJson(address.port, '/v1/status'))).toMatchObject({
+            status: 200,
+            body: {
+              autonomousCycleLoop: {
+                configured: true,
+                startedAt: failedAt,
+                lastPass: {
+                  result: 'FAILURE',
+                  observedAt: failedAt,
+                  operation: 'market-calendar',
+                  failure: 'calendar-read',
+                  message: 'authoritative calendar unavailable',
+                },
+              },
+            },
+          })
+          const metrics = yield* Effect.promise(() =>
+            fetch(`http://127.0.0.1:${address.port}/metrics`).then((response) => response.text()),
+          )
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_configured 1')
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_health_available 0')
+          expect(metrics).toContain('bayn_autonomous_cycle_loop_last_pass{result="failure"} 1')
+          expect(metrics).toContain(
+            `bayn_autonomous_cycle_loop_last_pass_timestamp_seconds ${Date.parse(failedAt) / 1_000}`,
+          )
+        }),
+      ),
+    )
   })
 
   test('returns service unavailable when durable evidence cannot be read', async () => {

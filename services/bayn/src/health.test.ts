@@ -14,7 +14,7 @@ import { EvidenceStore } from './db/evidence-store'
 import type { BrokerProbe } from './health'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
-import { initialState } from './runtime-state'
+import { initialState, type RuntimeState } from './runtime-state'
 import { makeSnapshot } from './test-fixtures'
 
 const brokerAccountId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -64,6 +64,25 @@ const emptyCycleProjection = (): CycleOperationsProjection => ({
 const cycleObservability = (
   read: CycleObservabilityShape['read'] = () => Effect.succeed(emptyCycleProjection()),
 ): CycleObservabilityShape => ({ read })
+
+const provideHealthyDependencies = (
+  initial: RuntimeState,
+  effect: Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability>,
+) =>
+  effect.pipe(
+    Effect.provideService(MarketData, {
+      check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
+      inspect: Effect.die(new Error('health probes must not inspect sessions')),
+      inspectCyclePublications: Effect.die(new Error('health probes must not inspect cycle publication candidates')),
+      inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+      inspectSnapshotPublication: () =>
+        Effect.die(new Error('health probes must not inspect bound cycle publications')),
+      load: Effect.die(new Error('health probes must not load bars')),
+    }),
+    Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
+    Effect.provideService(EvidenceStore, recoveringStore(initial)),
+    Effect.provideService(CycleObservability, cycleObservability()),
+  )
 
 describe('Bayn continuous health', () => {
   test('requires the configured broker account GET while keeping execution disabled under OBSERVE', async () => {
@@ -289,6 +308,212 @@ describe('Bayn continuous health', () => {
     await Effect.runPromise(Deferred.await(started))
     await Effect.runPromise(Fiber.interrupt(fiber))
     expect(interrupted).toBe(true)
+  })
+
+  test('degrades on the latest cycle pass failure and requires a later success before the stall boundary', async () => {
+    const startedAt = '2026-07-20T00:00:00.000Z'
+    const initial: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt,
+        lastPass: {
+          result: 'FAILURE',
+          observedAt: '2026-07-20T00:00:59.000Z',
+          operation: 'market-calendar',
+          failure: 'calendar-read',
+          message: 'authoritative calendar unavailable',
+        },
+      },
+    }
+    const state = await Effect.runPromise(Ref.make(initial))
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-07-20T00:01:00.000Z'))
+        const cycleFiber = yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
+
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, cycleFiber))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          health: {
+            dependencies: {
+              cycleRunner: {
+                status: 'UNAVAILABLE',
+                error: 'market-calendar/calendar-read: authoritative calendar unavailable',
+              },
+            },
+          },
+          error: expect.stringContaining(
+            'cycleRunner: market-calendar/calendar-read: authoritative calendar unavailable',
+          ),
+        })
+
+        yield* Ref.update(
+          state,
+          (current): RuntimeState => ({
+            ...current,
+            autonomousCycleLoop: {
+              ...current.autonomousCycleLoop,
+              lastPass: {
+                result: 'SUCCESS',
+                observedAt: '2026-07-20T00:01:00.000Z',
+                outcome: 'NO_PUBLICATION',
+              },
+            },
+          }),
+        )
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, cycleFiber))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'READY',
+          health: { dependencies: { cycleRunner: { status: 'AVAILABLE', error: null } } },
+          error: null,
+        })
+
+        yield* TestClock.adjust(config.cycleStallThresholdMs - 1)
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, cycleFiber))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'READY',
+          health: { dependencies: { cycleRunner: { status: 'AVAILABLE' } } },
+        })
+
+        yield* TestClock.adjust(1)
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, cycleFiber))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          health: {
+            dependencies: {
+              cycleRunner: {
+                status: 'UNAVAILABLE',
+                error: `autonomous cycle loop has not completed a successful pass for ${config.cycleStallThresholdMs}ms`,
+              },
+            },
+          },
+        })
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
+  test('surfaces an unexpected autonomous cycle fiber exit through existing health', async () => {
+    const initial: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: '2026-07-20T00:00:00.000Z',
+        lastPass: {
+          result: 'SUCCESS',
+          observedAt: '2026-07-20T00:00:00.000Z',
+          outcome: 'NO_PUBLICATION',
+        },
+      },
+    }
+    const state = await Effect.runPromise(Ref.make(initial))
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-07-20T00:00:01.000Z'))
+        const failedFiber = yield* Effect.die(new Error('injected autonomous cycle defect')).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        )
+        yield* Effect.yieldNow
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, failedFiber))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          health: {
+            dependencies: {
+              cycleRunner: {
+                status: 'UNAVAILABLE',
+                error: expect.stringContaining('injected autonomous cycle defect'),
+              },
+            },
+          },
+        })
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
+  test('does not erase a loop failure recorded while a health probe is in flight', async () => {
+    const initial: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: '2026-07-20T00:00:00.000Z',
+        lastPass: {
+          result: 'SUCCESS',
+          observedAt: '2026-07-20T00:00:00.000Z',
+          outcome: 'NO_PUBLICATION',
+        },
+      },
+    }
+    const state = await Effect.runPromise(Ref.make(initial))
+    const started = await Effect.runPromise(Deferred.make<void>())
+    const release = await Effect.runPromise(Deferred.make<void>())
+    const marketData: MarketDataService = {
+      check: Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.as(makeSnapshot().manifest.finalizedSnapshot),
+      ),
+      inspect: Effect.die(new Error('health probes must not inspect sessions')),
+      inspectCyclePublications: Effect.die(new Error('health probes must not inspect cycle publication candidates')),
+      inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+      inspectSnapshotPublication: () =>
+        Effect.die(new Error('health probes must not inspect bound cycle publications')),
+      load: Effect.die(new Error('health probes must not load bars')),
+    }
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-07-20T00:01:00.000Z'))
+        const cycleFiber = yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
+        const healthFiber = yield* probe(config, state, undefined, cycleFiber).pipe(
+          Effect.provideService(MarketData, marketData),
+          Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
+          Effect.provideService(EvidenceStore, recoveringStore(initial)),
+          Effect.provideService(CycleObservability, cycleObservability()),
+          Effect.forkScoped({ startImmediately: true }),
+        )
+        yield* Deferred.await(started)
+        yield* Ref.update(
+          state,
+          (current): RuntimeState => ({
+            ...current,
+            autonomousCycleLoop: {
+              ...current.autonomousCycleLoop,
+              lastPass: {
+                result: 'FAILURE',
+                observedAt: '2026-07-20T00:01:00.000Z',
+                operation: 'market-calendar',
+                failure: 'calendar-read',
+                message: 'failure recorded during health I/O',
+              },
+            },
+          }),
+        )
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(healthFiber)
+
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          autonomousCycleLoop: {
+            lastPass: {
+              result: 'FAILURE',
+              message: 'failure recorded during health I/O',
+            },
+          },
+          health: {
+            dependencies: {
+              cycleRunner: {
+                status: 'UNAVAILABLE',
+                error: 'market-calendar/calendar-read: failure recorded during health I/O',
+              },
+            },
+          },
+        })
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
   })
 
   test('treats the stall threshold as exclusive and clears only after a later terminal success', async () => {

@@ -1,4 +1,4 @@
-import { Cause, Clock, Duration, Effect, Exit, Option, Ref, Schedule } from 'effect'
+import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Ref, Schedule } from 'effect'
 
 import type { BrokerReadShape } from './broker/alpaca'
 import type { RuntimeConfig } from './config'
@@ -16,6 +16,7 @@ import { Journal } from './ledger'
 import { MarketData } from './market-data'
 import { databaseOperation, withinDeadline } from './operations'
 import type {
+  AutonomousCycleLoopStatus,
   BrokerConfiguration,
   BrokerStatus,
   DependencyHealth,
@@ -130,10 +131,46 @@ const dependencyHealth = (result: ProbeResult, checkedAt: string): DependencyHea
   error: result.error,
 })
 
+const cycleLoopAge = (instant: string, checkedAtMs: number): number | undefined => {
+  const age = checkedAtMs - Date.parse(instant)
+  return Number.isFinite(age) && age >= 0 ? age : undefined
+}
+
+const cycleLoopHealth = (
+  loop: AutonomousCycleLoopStatus,
+  fiber: Fiber.Fiber<void, never> | undefined,
+  exit: Option.Option<Exit.Exit<void, never>>,
+  checkedAt: string,
+  checkedAtMs: number,
+  stallThresholdMs: number,
+): DependencyHealth => {
+  const available = (): DependencyHealth => ({ status: 'AVAILABLE', checkedAt, error: null })
+  const unavailable = (error: string): DependencyHealth => ({ status: 'UNAVAILABLE', checkedAt, error })
+  if (!loop.configured) return available()
+  if (fiber === undefined) return unavailable('configured autonomous cycle loop has no scoped fiber')
+  if (Option.isSome(exit)) {
+    if (Exit.isSuccess(exit.value)) return unavailable('autonomous cycle loop exited unexpectedly')
+    const errors = Cause.prettyErrors(exit.value.cause).map((error) => error.message)
+    return unavailable(`autonomous cycle loop failed: ${errors.join('; ') || Cause.pretty(exit.value.cause)}`)
+  }
+  if (loop.lastPass?.result === 'FAILURE') {
+    return unavailable(`${loop.lastPass.operation}/${loop.lastPass.failure}: ${loop.lastPass.message}`)
+  }
+  const progressAt = loop.lastPass?.observedAt ?? loop.startedAt
+  if (progressAt === null) return unavailable('autonomous cycle loop start time is unavailable')
+  const ageMs = cycleLoopAge(progressAt, checkedAtMs)
+  if (ageMs === undefined) return unavailable('autonomous cycle loop progress time is invalid or in the future')
+  if (ageMs >= stallThresholdMs) {
+    return unavailable(`autonomous cycle loop has not completed a successful pass for ${ageMs}ms`)
+  }
+  return available()
+}
+
 export const probe = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
+  autonomousCycleFiber?: Fiber.Fiber<void, never>,
 ): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
@@ -210,94 +247,114 @@ export const probe = (
       ],
       { concurrency: 'unbounded' },
     )
-    const checkedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
-    const cycle =
-      cycleResult.error === null && cycleResult.value !== null
-        ? deriveCycleOperationsStatus(cycleResult.value, Date.parse(checkedAt), config.maximumAuthority, config)
-        : {
-            ...unknownCycleOperationsStatus(cycleResult.error ?? 'cycle observability probe did not run'),
-            checkedAt,
-          }
-    let brokerStatus: BrokerStatus | null = current.broker
-    if (broker !== undefined) {
-      const result = brokerResult ?? { accountId: null, error: 'broker probe did not run' }
-      const accountBound = result.error === null && result.accountId === broker.expectedAccountId
-      const bindingError =
-        result.error ??
-        (accountBound
-          ? null
-          : `Alpaca account probe resolved ${result.accountId ?? 'no account'}, expected ${broker.expectedAccountId}`)
-      brokerStatus = {
-        configured: true,
-        expectedAccountId: broker.expectedAccountId,
-        accountId: result.accountId,
-        accountBound,
-        readAvailable: result.error === null,
+    const checkedAtMs = yield* Clock.currentTimeMillis
+    const checkedAt = new Date(checkedAtMs).toISOString()
+    const autonomousCycleExit = Option.fromNullishOr(autonomousCycleFiber?.pollUnsafe())
+    const transition = yield* Ref.modify(state, (latest) => {
+      const autonomousCycle = cycleLoopHealth(
+        latest.autonomousCycleLoop,
+        autonomousCycleFiber,
+        autonomousCycleExit,
         checkedAt,
-        error: bindingError,
-        executionEligible: broker.executionEligible,
-        executionDisabledReason: broker.executionDisabledReason,
+        checkedAtMs,
+        config.cycleStallThresholdMs,
+      )
+      const cycle =
+        cycleResult.error === null && cycleResult.value !== null
+          ? deriveCycleOperationsStatus(cycleResult.value, Date.parse(checkedAt), config.maximumAuthority, config)
+          : {
+              ...unknownCycleOperationsStatus(cycleResult.error ?? 'cycle observability probe did not run'),
+              checkedAt,
+            }
+      let brokerStatus: BrokerStatus | null = latest.broker
+      if (broker !== undefined) {
+        const result = brokerResult ?? { accountId: null, error: 'broker probe did not run' }
+        const accountBound = result.error === null && result.accountId === broker.expectedAccountId
+        const bindingError =
+          result.error ??
+          (accountBound
+            ? null
+            : `Alpaca account probe resolved ${result.accountId ?? 'no account'}, expected ${broker.expectedAccountId}`)
+        brokerStatus = {
+          configured: true,
+          expectedAccountId: broker.expectedAccountId,
+          accountId: result.accountId,
+          accountBound,
+          readAvailable: result.error === null,
+          checkedAt,
+          error: bindingError,
+          executionEligible: broker.executionEligible,
+          executionDisabledReason: broker.executionDisabledReason,
+        }
       }
-    }
-    const health: RuntimeHealth = {
-      sequence: current.health.sequence + 1,
-      checkedAt,
-      dependencies: {
-        postgresql: dependencyHealth(postgresql, checkedAt),
-        signal: dependencyHealth(signal, checkedAt),
-        tigerBeetle: dependencyHealth(tigerBeetle, checkedAt),
-        evidence: dependencyHealth(durableEvidence, checkedAt),
-        cycle: dependencyHealth(cycleResult, checkedAt),
-      },
-    }
-    const dependencyFailures = Object.entries(health.dependencies).filter(([, dependency]) => dependency.error !== null)
-    const failedDependencies = dependencyFailures.map(([name]) => name)
-    const failureMessages = dependencyFailures.map(([name, dependency]) => `${name}: ${dependency.error}`)
-    if (
-      brokerStatus !== null &&
-      (brokerStatus.error !== null || brokerStatus.accountBound !== true || brokerStatus.readAvailable !== true)
-    ) {
-      failedDependencies.push('broker')
-      failureMessages.push(`broker: ${brokerStatus.error ?? 'account binding unavailable'}`)
-    }
-    if (cycle.condition === CycleOperationsCondition.Stalled || cycle.condition === CycleOperationsCondition.Failed) {
-      if (!failedDependencies.includes('cycle')) failedDependencies.push('cycle')
-      failureMessages.push(`cycle: ${cycle.reason}`)
-    }
-    let next: RuntimeState = { ...current, health, cycle, broker: brokerStatus }
-    if (evidence !== null && failureMessages.length === 0) {
-      next = {
-        ...current,
-        status: 'READY',
-        health,
-        cycle,
-        broker: brokerStatus,
-        error: null,
+      const health: RuntimeHealth = {
+        sequence: latest.health.sequence + 1,
+        checkedAt,
+        dependencies: {
+          postgresql: dependencyHealth(postgresql, checkedAt),
+          signal: dependencyHealth(signal, checkedAt),
+          tigerBeetle: dependencyHealth(tigerBeetle, checkedAt),
+          evidence: dependencyHealth(durableEvidence, checkedAt),
+          cycle: dependencyHealth(cycleResult, checkedAt),
+          cycleRunner: autonomousCycle,
+        },
       }
-    } else if (evidence !== null) {
-      next = {
-        ...current,
-        status: 'DEGRADED',
-        health,
-        cycle,
-        broker: brokerStatus,
-        error: failureMessages.join('; '),
+      const dependencyFailures = Object.entries(health.dependencies).filter(
+        ([, dependency]) => dependency.error !== null,
+      )
+      const failedDependencies = dependencyFailures.map(([name]) => name)
+      const failureMessages = dependencyFailures.map(([name, dependency]) => `${name}: ${dependency.error}`)
+      if (
+        brokerStatus !== null &&
+        (brokerStatus.error !== null || brokerStatus.accountBound !== true || brokerStatus.readAvailable !== true)
+      ) {
+        failedDependencies.push('broker')
+        failureMessages.push(`broker: ${brokerStatus.error ?? 'account binding unavailable'}`)
       }
-    }
-    yield* Ref.set(state, next)
+      if (cycle.condition === CycleOperationsCondition.Stalled || cycle.condition === CycleOperationsCondition.Failed) {
+        if (!failedDependencies.includes('cycle')) failedDependencies.push('cycle')
+        failureMessages.push(`cycle: ${cycle.reason}`)
+      }
+      let next: RuntimeState = { ...latest, health, cycle, broker: brokerStatus }
+      if (evidence !== null && failureMessages.length === 0) {
+        next = {
+          ...latest,
+          status: 'READY',
+          health,
+          cycle,
+          broker: brokerStatus,
+          error: null,
+        }
+      } else if (evidence !== null) {
+        next = {
+          ...latest,
+          status: 'DEGRADED',
+          health,
+          cycle,
+          broker: brokerStatus,
+          error: failureMessages.join('; '),
+        }
+      }
+      return [{ current: latest, next, health, failedDependencies }, next] as const
+    })
 
-    if (next.status !== current.status) {
+    if (transition.next.status !== transition.current.status) {
+      const next = transition.next
       const log = next.status === 'READY' ? Effect.logInfo : Effect.logWarning
       yield* log(`Bayn health changed to ${next.status}`).pipe(
         Effect.annotateLogs({
           service: 'bayn',
           checkedAt,
-          probeSequence: health.sequence,
-          failedDependencies: failedDependencies.join(','),
+          probeSequence: transition.health.sequence,
+          failedDependencies: transition.failedDependencies.join(','),
         }),
       )
     }
-    if (next.cycle.condition !== current.cycle.condition || next.cycle.reason !== current.cycle.reason) {
+    if (
+      transition.next.cycle.condition !== transition.current.cycle.condition ||
+      transition.next.cycle.reason !== transition.current.cycle.reason
+    ) {
+      const next = transition.next
       const cycleObservationAvailable = next.cycle.condition !== CycleOperationsCondition.Unknown
       const log =
         next.cycle.condition === CycleOperationsCondition.Stalled ||
@@ -327,8 +384,9 @@ export const monitor = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
+  autonomousCycleFiber?: Fiber.Fiber<void, never>,
 ): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
-  probe(config, state, broker).pipe(
+  probe(config, state, broker, autonomousCycleFiber).pipe(
     Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
     Effect.asVoid,
   )

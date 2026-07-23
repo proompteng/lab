@@ -97,6 +97,7 @@ const publicState = (
       reconciliation: state.evidence?.reconciliation ?? null,
     },
     cycle: publicCycleState(state),
+    autonomousCycleLoop: state.autonomousCycleLoop,
     broker: publicBrokerState(state),
     authority: {
       maximum: maximumAuthority === Authority.Paper ? 'paper' : 'observe',
@@ -164,6 +165,15 @@ export const renderPrometheusMetrics = (
   const conditions = Object.values(CycleOperationsCondition)
   const reasons = Object.values(CycleOperationsReason)
   const phases = ['unknown', 'none', ...Object.values(CycleState).map((phase) => phase.toLowerCase())]
+  const loopResults = ['unknown', 'success', 'failure'] as const
+  const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
+  const loopHealthy =
+    state.health.dependencies.cycleRunner.status === 'AVAILABLE' &&
+    state.autonomousCycleLoop.lastPass?.result !== 'FAILURE'
+  const loopLastPassAgeMs =
+    state.autonomousCycleLoop.lastPass === null || state.health.checkedAt === null
+      ? undefined
+      : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
   const effectiveAuthority =
     state.cycle.authority === null
       ? 'unknown'
@@ -210,6 +220,27 @@ export const renderPrometheusMetrics = (
     '# HELP bayn_cycle_stall_threshold_seconds Configured attempt-stall threshold.',
     '# TYPE bayn_cycle_stall_threshold_seconds gauge',
     `bayn_cycle_stall_threshold_seconds ${prometheusNumber(config.cycleStallThresholdMs / 1_000)}`,
+    '# HELP bayn_autonomous_cycle_loop_configured Whether the in-process autonomous cycle loop is configured.',
+    '# TYPE bayn_autonomous_cycle_loop_configured gauge',
+    `bayn_autonomous_cycle_loop_configured ${state.autonomousCycleLoop.configured ? 1 : 0}`,
+    '# HELP bayn_autonomous_cycle_loop_health_available Whether the scoped loop is live and its latest pass succeeded.',
+    '# TYPE bayn_autonomous_cycle_loop_health_available gauge',
+    `bayn_autonomous_cycle_loop_health_available ${loopHealthy ? 1 : 0}`,
+    '# HELP bayn_autonomous_cycle_loop_last_pass Latest bounded autonomous cycle pass result.',
+    '# TYPE bayn_autonomous_cycle_loop_last_pass gauge',
+    ...loopResults.map(
+      (result) => `bayn_autonomous_cycle_loop_last_pass{result="${result}"} ${loopResult === result ? 1 : 0}`,
+    ),
+    ...(state.autonomousCycleLoop.lastPass === null
+      ? []
+      : [
+          '# HELP bayn_autonomous_cycle_loop_last_pass_timestamp_seconds Observation time of the latest cycle pass.',
+          '# TYPE bayn_autonomous_cycle_loop_last_pass_timestamp_seconds gauge',
+          `bayn_autonomous_cycle_loop_last_pass_timestamp_seconds ${prometheusNumber(epochSeconds(state.autonomousCycleLoop.lastPass.observedAt))}`,
+          '# HELP bayn_autonomous_cycle_loop_last_pass_age_seconds Age of the latest cycle pass at the last health probe.',
+          '# TYPE bayn_autonomous_cycle_loop_last_pass_age_seconds gauge',
+          `bayn_autonomous_cycle_loop_last_pass_age_seconds ${prometheusNumber((loopLastPassAgeMs ?? 0) / 1_000)}`,
+        ]),
     ...(cycleObservationAvailable
       ? [
           '# HELP bayn_mutation_events_total Durable broker mutation event count.',
@@ -324,6 +355,9 @@ export const makeHttpLayer = (
         current.cycle.condition === CycleOperationsCondition.Failed
       ) {
         if (!failedDependencies.includes('cycle')) failedDependencies.push('cycle')
+      }
+      if (current.autonomousCycleLoop.lastPass?.result === 'FAILURE' && !failedDependencies.includes('cycleRunner')) {
+        failedDependencies.push('cycleRunner')
       }
       return jsonResponse(
         {

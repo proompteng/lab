@@ -213,6 +213,17 @@ export const loadConfig = (
         catch: (cause) => operationalError('config', 'load', 'invalid Signal evaluation bounds', cause),
       }),
     ),
+    Effect.flatMap((config) =>
+      config.cyclePollIntervalMs < config.cycleStallThresholdMs
+        ? Effect.succeed(config)
+        : Effect.fail(
+            operationalError(
+              'config',
+              'cycle-loop',
+              'cycle poll interval must be shorter than the cycle stall threshold',
+            ),
+          ),
+    ),
     Effect.flatMap((config) => {
       const credentials = Option.all({
         accountId: config.configuredAlpaca.accountId,

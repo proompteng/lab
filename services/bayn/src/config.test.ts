@@ -209,6 +209,16 @@ describe('Effect configuration', () => {
     expect(
       (await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))).cyclePollIntervalMs,
     ).toBe(15_000)
+
+    const incoherent = new Map(runtimeEnvironment)
+    incoherent.set('BAYN_CYCLE_POLL_INTERVAL_MS', '300000')
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), incoherent)))
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'cycle-loop',
+      message: 'cycle poll interval must be shorter than the cycle stall threshold',
+    })
   })
 
   test('rejects an invalid pinned qualification run ID', async () => {

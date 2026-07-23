@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Effect, Exit } from 'effect'
+import { Cause, Clock, Effect, Exit } from 'effect'
 
 import {
   config,
@@ -9,7 +9,7 @@ import {
   successfulEvidenceStore,
   successfulJournal,
 } from './app-test-support'
-import { run } from './app'
+import { run, type RecordAutonomousCyclePass } from './app'
 import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import { operationalError } from './errors'
@@ -39,15 +39,21 @@ describe('Bayn application composition', () => {
         return makeSnapshot()
       }),
     )
-    const autonomousCycleStartup = Effect.gen(function* () {
-      calls.push('autonomous-cycle')
-      const fiber = yield* Effect.never.pipe(
-        Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))),
-        Effect.forkScoped({ startImmediately: true }),
-      )
-      yield* Effect.yieldNow
-      return fiber
-    })
+    const autonomousCycleStartup = (recordPass: RecordAutonomousCyclePass) =>
+      Effect.gen(function* () {
+        calls.push('autonomous-cycle')
+        yield* recordPass({
+          result: 'SUCCESS',
+          observedAt: new Date(yield* Clock.currentTimeMillis).toISOString(),
+          outcome: 'NO_PUBLICATION',
+        })
+        const fiber = yield* Effect.never.pipe(
+          Effect.onInterrupt(() => Effect.sync(() => void (backgroundInterrupted = true))),
+          Effect.forkScoped({ startImmediately: true }),
+        )
+        yield* Effect.yieldNow
+        return fiber
+      })
     const reconciliation = Effect.sync(() => {
       calls.push('reconciliation')
       throw new Error('stop after composition proof')
