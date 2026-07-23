@@ -636,9 +636,10 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     marketFreshUntil,
     submissionCutoff,
   )
-  const expiresAt = utc(
-    outcome === RiskOutcome.Approved ? approvalExpiry : evaluatedAt + Math.min(1_000, policy.decisionTtlMs),
-  )
+  const ordinaryBlockedExpiry = evaluatedAt + Math.min(1_000, policy.decisionTtlMs)
+  const blockedExpiry =
+    evaluatedAt < submissionCutoff ? Math.min(ordinaryBlockedExpiry, submissionCutoff) : ordinaryBlockedExpiry
+  const expiresAt = utc(outcome === RiskOutcome.Approved ? approvalExpiry : blockedExpiry)
   const accountSnapshotHash = canonicalHashV1({
     account: state.account,
     authority: state.authority,

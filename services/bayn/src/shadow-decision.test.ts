@@ -414,6 +414,14 @@ describe('OBSERVE shadow decision', () => {
       '300000000',
       '800000000',
     ])
+    expect(first.deltaRisk.map(({ evaluation }) => evaluation.metrics.postTradeGrossExposureMicros)).toEqual([
+      '500000000',
+      '1000000000',
+    ])
+    expect(first.deltaRisk.map(({ evaluation }) => evaluation.metrics.postTradeNetExposureMicros)).toEqual([
+      '500000000',
+      '1000000000',
+    ])
     expect(
       first.deltaRisk.every(
         ({ evaluation }) =>
@@ -434,12 +442,17 @@ describe('OBSERVE shadow decision', () => {
       bindings: {
         snapshotId,
         decisionHash: first.contentHash,
-        shadowDecision: first,
       },
       stateVersion: input.cycle.stateVersion + 1,
       updatedAt: first.createdAt,
     })
     expect(boundCycle.bindings.decisionHash).toBe(first.contentHash)
+    expect(() =>
+      decodeCycle({
+        ...boundCycle,
+        bindings: { ...boundCycle.bindings, shadowDecision: first },
+      }),
+    ).toThrow()
   })
 
   test('persists deterministic NO_TRADE and pre-cutoff blocked planner results without ignored risk input', async () => {
@@ -466,6 +479,25 @@ describe('OBSERVE shadow decision', () => {
     expect(stale.deltaRisk).toEqual([])
     expect(noTrade.expiresAt).toBe(noTrade.submissionCutoffAt)
     expect(stale.expiresAt).toBe(stale.submissionCutoffAt)
+  })
+
+  test('clamps blocked risk evidence at the last instant before the exclusive cycle cutoff', async () => {
+    const input = makeInput()
+    const createdAt = new Date(Date.parse(input.cycle.window.submissionCutoffAt) - 1).toISOString()
+    const document = await build({
+      ...input,
+      plannerInput: { ...input.plannerInput, observedAt: createdAt },
+      riskInputs: input.riskInputs.map((riskInput) => ({
+        ...riskInput,
+        state: { ...riskInput.state, evaluatedAt: createdAt },
+      })),
+    })
+
+    expect(document.createdAt).toBe(createdAt)
+    expect(document.deltaRisk).toHaveLength(2)
+    expect(document.deltaRisk.every(({ evaluation }) => evaluation.decision.expiresAt === document.expiresAt)).toBe(
+      true,
+    )
   })
 
   test('fails closed on drift in cycle, snapshot, compiled decision, risk state, or OBSERVE authority', async () => {

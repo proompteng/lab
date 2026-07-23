@@ -240,10 +240,18 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const migrations = yield* sql<{ migration_id: number; name: string }>`
           SELECT migration_id, name FROM schema_migrations ORDER BY migration_id
         `
-        return { tables, migrations }
+        const [decisionHashColumn] = yield* sql<{ is_generated: string }>`
+          SELECT is_generated
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'autonomous_cycle_shadow_decisions'
+            AND column_name = 'decision_hash'
+        `
+        return { decisionHashColumn, tables, migrations }
       }),
     )
 
+    expect(schema.decisionHashColumn).toEqual({ is_generated: 'ALWAYS' })
     expect(schema.tables.map((row) => row.table_name)).toEqual([
       'account_snapshots',
       'accounting_receipts',

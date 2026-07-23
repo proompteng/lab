@@ -19,16 +19,16 @@ export default Effect.gen(function* () {
     CREATE TABLE autonomous_cycle_shadow_decisions (
       cycle_id text PRIMARY KEY REFERENCES autonomous_cycles(cycle_id) ON DELETE RESTRICT
         CHECK (cycle_id ~ '^[0-9a-f]{64}$'),
-      decision_hash text NOT NULL CHECK (decision_hash ~ '^[0-9a-f]{64}$'),
       schema_version text NOT NULL CHECK (schema_version = 'bayn.observe-shadow-decision.v1'),
       document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
+      decision_hash text GENERATED ALWAYS AS (document ->> 'contentHash') STORED NOT NULL
+        CHECK (decision_hash ~ '^[0-9a-f]{64}$'),
       created_at timestamptz NOT NULL,
       UNIQUE (cycle_id, decision_hash),
       CHECK (
         document ->> 'schemaVersion' = schema_version
         AND document ->> 'mode' = 'OBSERVE'
         AND document ->> 'dispatchable' = 'false'
-        AND document ->> 'contentHash' = decision_hash
         AND document #>> '{bindings,cycleId}' = cycle_id
         AND (document ->> 'createdAt')::timestamptz = created_at
       )

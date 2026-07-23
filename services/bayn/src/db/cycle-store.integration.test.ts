@@ -824,6 +824,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
         const wrongEvidence = yield* Effect.exit(store.bindDecision(draft.identity.cycleId, wrongSnapshot, decisionAt))
         const bound = yield* store.bindDecision(draft.identity.cycleId, document, decisionAt)
         const replay = yield* store.bindDecision(draft.identity.cycleId, structuredClone(document), decisionAt)
+        const storedDocument = yield* store.readDecisionDocument(draft.identity.cycleId)
         const authoritySlot = yield* store.readAuthoritySlot({
           qualificationRunId: draft.identity.qualificationRunId,
           accountId: draft.identity.accountId,
@@ -854,13 +855,11 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           sql.withTransaction(sql`
             INSERT INTO autonomous_cycle_shadow_decisions (
               cycle_id,
-              decision_hash,
               schema_version,
               document,
               created_at
             ) VALUES (
               ${orphanDocumentDraft.identity.cycleId},
-              ${orphanDocument.contentHash},
               ${orphanDocument.schemaVersion},
               ${sql.json(orphanDocument)},
               ${orphanDocument.createdAt}
@@ -915,6 +914,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           orphanDocumentInsert,
           replay,
           rows,
+          storedDocument,
           wrongEvidence,
         }
       }),
@@ -924,10 +924,12 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
     expect(result.bound.cycle.bindings).toEqual({
       snapshotId: snapshotA,
       decisionHash: document.contentHash,
-      shadowDecision: document,
     })
     expect(result.replay.changed).toBe(false)
     expect(result.replay.cycle).toEqual(result.bound.cycle)
+    expect(Option.isSome(result.storedDocument)).toBe(true)
+    if (Option.isNone(result.storedDocument)) throw new Error('bound decision document must remain readable')
+    expect(result.storedDocument.value).toEqual(document)
     expect(Option.isSome(result.authoritySlot)).toBe(true)
     if (Option.isNone(result.authoritySlot)) throw new Error('bound authority slot must remain readable')
     expect(result.authoritySlot.value).toEqual(result.bound.cycle)
@@ -1018,7 +1020,6 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
       bindings: {
         snapshotId: snapshotA,
         decisionHash: shadowDecision.contentHash,
-        shadowDecision,
       },
       terminalReason: CycleTerminalReason.DataStale,
       terminalAt,
@@ -1030,11 +1031,19 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
 
     const secondRuntime = makeRuntime()
     const durable = await secondRuntime.runPromise(
-      Effect.flatMap(CycleStore, (store) => store.read(draft.identity.cycleId)),
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        return {
+          cycle: yield* store.read(draft.identity.cycleId),
+          document: yield* store.readDecisionDocument(draft.identity.cycleId),
+        }
+      }),
     )
     await secondRuntime.dispose()
-    expect(Option.isSome(durable)).toBe(true)
-    if (Option.isSome(durable)) expect(durable.value).toEqual(result.blocked.cycle)
+    expect(Option.isSome(durable.cycle)).toBe(true)
+    if (Option.isSome(durable.cycle)) expect(durable.cycle.value).toEqual(result.blocked.cycle)
+    expect(Option.isSome(durable.document)).toBe(true)
+    if (Option.isSome(durable.document)) expect(durable.document.value).toEqual(shadowDecision)
   })
 
   test('enforces initial lifecycle state and distinct publication and submission deadlines', async () => {

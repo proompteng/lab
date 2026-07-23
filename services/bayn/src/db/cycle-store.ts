@@ -51,6 +51,7 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'block'
     | 'read'
     | 'read-authority-slot'
+    | 'read-decision-document'
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'not-found' | 'query'
   readonly message: string
   readonly cause?: unknown
@@ -62,6 +63,9 @@ export interface CycleStoreShape {
   readonly readAuthoritySlot: (
     slot: CycleAuthoritySlot,
   ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
+  readonly readDecisionDocument: (
+    cycleId: string,
+  ) => Effect.Effect<Option.Option<ObserveShadowDecisionDocument>, CycleStoreError>
   readonly bindSnapshot: (
     cycleId: string,
     inputManifest: InputManifest,
@@ -111,7 +115,6 @@ const StoredCycleRowSchema = Schema.Struct({
   state: Schema.Enum(CycleState),
   snapshot_id: Schema.NullOr(Sha256Schema),
   decision_hash: Schema.NullOr(Sha256Schema),
-  shadow_decision: Schema.NullOr(ObserveShadowDecisionDocumentSchema),
   terminal_reason: Schema.NullOr(Schema.Enum(CycleTerminalReason)),
   state_version: PositiveIntegerSchema,
   created_at: Schema.DateValid,
@@ -142,6 +145,7 @@ const BlockInputSchema = Schema.Struct({
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
+const StoredDecisionDocumentRowsSchema = Schema.Array(Schema.Struct({ document: ObserveShadowDecisionDocumentSchema }))
 
 const decodeStoredCycleRows = Schema.decodeUnknownEffect(Schema.Array(StoredCycleRowSchema), strictParseOptions)
 const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
@@ -152,6 +156,10 @@ const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictPars
 const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
 const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
 const decodeDecisionEvidenceMatch = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
+const decodeStoredDecisionDocumentRows = Schema.decodeUnknownEffect(
+  StoredDecisionDocumentRowsSchema,
+  strictParseOptions,
+)
 const shadowDecisionEquivalent = Schema.toEquivalence(ObserveShadowDecisionDocumentSchema)
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
@@ -237,7 +245,6 @@ const rowToCycle = (row: StoredCycleRow): Effect.Effect<AutonomousCycle, Schema.
     bindings: {
       ...(row.snapshot_id === null ? {} : { snapshotId: row.snapshot_id }),
       ...(row.decision_hash === null ? {} : { decisionHash: row.decision_hash }),
-      ...(row.shadow_decision === null ? {} : { shadowDecision: row.shadow_decision }),
     },
     ...(row.terminal_reason === null ? {} : { terminalReason: row.terminal_reason }),
     stateVersion: row.state_version,
@@ -267,13 +274,7 @@ const selectCycle = (
           execution_session_date::text AS execution_session_date,
           signal_close_at, publication_deadline_at, submission_open_at,
           execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-          decision_hash,
-          (
-            SELECT document
-            FROM autonomous_cycle_shadow_decisions
-            WHERE cycle_id = autonomous_cycles.cycle_id
-          ) AS shadow_decision,
-          terminal_reason, state_version, created_at, updated_at, terminal_at
+          decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
         FROM autonomous_cycles
         WHERE cycle_id = ${cycleId}
         FOR UPDATE
@@ -290,13 +291,7 @@ const selectCycle = (
           execution_session_date::text AS execution_session_date,
           signal_close_at, publication_deadline_at, submission_open_at,
           execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-          decision_hash,
-          (
-            SELECT document
-            FROM autonomous_cycle_shadow_decisions
-            WHERE cycle_id = autonomous_cycles.cycle_id
-          ) AS shadow_decision,
-          terminal_reason, state_version, created_at, updated_at, terminal_at
+          decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
         FROM autonomous_cycles
         WHERE cycle_id = ${cycleId}
       `
@@ -319,18 +314,22 @@ const selectCycleByAuthoritySlot = (
       execution_session_date::text AS execution_session_date,
       signal_close_at, publication_deadline_at, submission_open_at,
       execution_open_at, execution_close_at, submission_cutoff_at, state, snapshot_id,
-      decision_hash,
-      (
-        SELECT document
-        FROM autonomous_cycle_shadow_decisions
-        WHERE cycle_id = autonomous_cycles.cycle_id
-      ) AS shadow_decision,
-      terminal_reason, state_version, created_at, updated_at, terminal_at
+      decision_hash, terminal_reason, state_version, created_at, updated_at, terminal_at
     FROM autonomous_cycles
     WHERE qualification_run_id = ${slot.qualificationRunId}
       AND account_id = ${slot.accountId}
       AND signal_session_date = ${slot.signalSessionDate}
   `.pipe(Effect.flatMap(decodeRows))
+
+const selectDecisionDocument = (
+  sql: PgClient.PgClient,
+  cycleId: string,
+): Effect.Effect<readonly { readonly document: ObserveShadowDecisionDocument }[], unknown> =>
+  sql<Record<string, unknown>>`
+    SELECT document
+    FROM autonomous_cycle_shadow_decisions
+    WHERE cycle_id = ${cycleId}
+  `.pipe(Effect.flatMap(decodeStoredDecisionDocumentRows))
 
 const exactlyOne = (
   operation: CycleStoreError['operation'],
@@ -547,6 +546,25 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
+  const readDecisionDocument = (
+    cycleId: string,
+  ): Effect.Effect<Option.Option<ObserveShadowDecisionDocument>, CycleStoreError> =>
+    run(
+      'read-decision-document',
+      Schema.decodeUnknownEffect(
+        Sha256Schema,
+        strictParseOptions,
+      )(cycleId).pipe(
+        Effect.flatMap((decodedId) => selectDecisionDocument(sql, decodedId)),
+        Effect.flatMap((rows) => {
+          if (rows.length > 1) {
+            return fail('read-decision-document', 'invariant', 'cycle decision document returned multiple rows')
+          }
+          return Effect.succeed(rows[0] === undefined ? Option.none() : Option.some(rows[0].document))
+        }),
+      ),
+    )
+
   const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, unknown> =>
     ensureSnapshotReference(sql, inputManifest).pipe(
       Effect.flatMap((matches) =>
@@ -690,10 +708,13 @@ const makeCycleStore = Effect.gen(function* () {
             Effect.gen(function* () {
               const cycle = yield* readLocked('bind-decision', input.cycleId)
               if (cycle.bindings.decisionHash !== undefined) {
+                const storedRows = yield* selectDecisionDocument(sql, input.cycleId)
+                const storedDocument = storedRows[0]?.document
                 if (
                   cycle.bindings.decisionHash !== input.document.contentHash ||
-                  cycle.bindings.shadowDecision === undefined ||
-                  !shadowDecisionEquivalent(cycle.bindings.shadowDecision, input.document)
+                  storedRows.length !== 1 ||
+                  storedDocument === undefined ||
+                  !shadowDecisionEquivalent(storedDocument, input.document)
                 ) {
                   return yield* fail('bind-decision', 'conflict', 'cycle decision binding cannot be replaced')
                 }
@@ -733,13 +754,11 @@ const makeCycleStore = Effect.gen(function* () {
               yield* sql`
                 INSERT INTO autonomous_cycle_shadow_decisions (
                   cycle_id,
-                  decision_hash,
                   schema_version,
                   document,
                   created_at
                 ) VALUES (
                   ${input.cycleId},
-                  ${input.document.contentHash},
                   ${input.document.schemaVersion},
                   ${sql.json(input.document)},
                   ${input.document.createdAt}
@@ -784,7 +803,16 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
-  return { acquire, read, readAuthoritySlot, bindSnapshot, activate, bindDecision, block } satisfies CycleStoreShape
+  return {
+    acquire,
+    read,
+    readAuthoritySlot,
+    readDecisionDocument,
+    bindSnapshot,
+    activate,
+    bindDecision,
+    block,
+  } satisfies CycleStoreShape
 })
 
 export const CycleStoreLive = Layer.effect(CycleStore, makeCycleStore)

@@ -4,7 +4,7 @@ import type { AutonomousCycle } from './cycle'
 import { CycleState } from './cycle'
 import { plan, type IntentPlan } from './execution/intents'
 import { canonicalHashV1 } from './hash'
-import { Authority, OrderSide, RiskOutcome } from './paper'
+import { Authority, OrderSide, RiskOutcome, type Position } from './paper'
 import { reconciledStateHash } from './reconciliation'
 import { decodeState, evaluate, Reason, type Policy, type State } from './risk'
 import {
@@ -12,7 +12,7 @@ import {
   type DeltaRiskEvaluation,
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
-import { TargetPlanStatus, planTargets, type TargetPlannerInput } from './target-planner'
+import { TargetPlanStatus, planTargets, type PlannedTargetQuantity, type TargetPlannerInput } from './target-planner'
 import type { DecisionPlan } from './types'
 
 export interface ShadowSnapshotBinding {
@@ -67,6 +67,46 @@ const riskBrokerStateMaterial = (state: State) => ({
   ordersObservedAt: state.ordersObservedAt,
   accountingHash: state.accountingHash,
 })
+
+const QUANTITY_SCALE = 1_000_000n
+const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
+const divideAwayFromZero = (numerator: bigint): bigint => {
+  const magnitude = absolute(numerator)
+  const rounded = magnitude === 0n ? 0n : (magnitude + QUANTITY_SCALE - 1n) / QUANTITY_SCALE
+  return numerator < 0n ? -rounded : rounded
+}
+const compareSymbols = (left: Position, right: Position): number => {
+  if (left.symbol < right.symbol) return -1
+  if (left.symbol > right.symbol) return 1
+  return 0
+}
+
+const projectTargetPosition = (
+  positions: readonly Position[],
+  target: PlannedTargetQuantity,
+  accountId: string,
+  observedAt: string,
+): readonly Position[] => {
+  const retained = positions.filter((position) => position.symbol !== target.symbol)
+  const quantity = BigInt(target.targetQuantityMicros)
+  if (quantity === 0n) return retained
+
+  const previous = positions.find((position) => position.symbol === target.symbol)
+  const referencePrice = BigInt(target.referencePriceMicros)
+  const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
+  const projected: Position = {
+    schemaVersion: 'bayn.paper-position.v1',
+    accountId: previous?.accountId ?? accountId,
+    symbol: target.symbol,
+    quantityMicros: target.targetQuantityMicros,
+    averageEntryPriceMicros: averageEntryPrice.toString(),
+    marketPriceMicros: target.referencePriceMicros,
+    marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
+    unrealizedPnlMicros: divideAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
+    observedAt: previous?.observedAt ?? observedAt,
+  }
+  return [...retained, projected].sort(compareSymbols)
+}
 
 const validateBindings = (
   input: ObserveShadowDecisionInput,
@@ -190,6 +230,8 @@ export const buildObserveShadowDecision = (
 
     let reservedBuyingPower = BigInt(baseReservedBuyingPower)
     let dailyTradedNotional = BigInt(baseDailyTradedNotional)
+    let projectedPositions = firstRiskInput?.state.positions ?? []
+    const targetsBySymbol = new Map(planner.targets.map((target) => [target.symbol, target]))
     const deltaRisk: DeltaRiskEvaluation[] = []
 
     for (const targetIntent of planner.intentTargets) {
@@ -205,6 +247,7 @@ export const buildObserveShadowDecision = (
       )
       const state = yield* decodeState({
         ...provided.state,
+        positions: projectedPositions,
         reservedBuyingPowerMicros: reservedBuyingPower.toString(),
         dailyTradedNotionalMicros: dailyTradedNotional.toString(),
       }).pipe(Effect.mapError((cause) => error('contract', 'cumulative shadow risk state is invalid', cause)))
@@ -223,6 +266,14 @@ export const buildObserveShadowDecision = (
       const orderNotional = BigInt(evaluation.metrics.orderNotionalMicros)
       dailyTradedNotional += orderNotional
       if (targetIntent.side === OrderSide.Buy) reservedBuyingPower += orderNotional
+      const target = targetsBySymbol.get(targetIntent.symbol)
+      if (target === undefined) return yield* fail('contract', 'planned target delta is missing its final quantity')
+      projectedPositions = projectTargetPosition(
+        projectedPositions,
+        target,
+        input.plannerInput.accountId,
+        provided.state.positionsObservedAt,
+      )
       deltaRisk.push({
         notionalLimitMicros: provided.notionalLimitMicros,
         evaluation,

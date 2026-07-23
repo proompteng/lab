@@ -394,12 +394,21 @@ describe('bounded paper risk', () => {
     const atCutoff = makeState({
       executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: evaluatedAt }),
     })
+    const nearCutoffAt = '2026-07-21T21:00:00.500Z'
+    const observeNearCutoff = makeState({
+      authority: { ...state.authority, effective: Authority.Observe },
+      executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: nearCutoffAt }),
+    })
 
     expect(evaluate(makeIntent({ createdAt: evaluatedAt }), atOpen, makePolicy()).decision.outcome).toBe(
       RiskOutcome.Approved,
     )
     expectBlocked(Reason.OutsideSession, makeIntent(), beforeOpen, makePolicy())
     expectBlocked(Reason.OutsideSession, makeIntent(), atCutoff, makePolicy())
+    const nearCutoff = evaluate(makeIntent(), observeNearCutoff, makePolicy())
+    expect(nearCutoff.decision.reasonCodes).toContain(Reason.AuthorityNotPaper)
+    expect(nearCutoff.decision.expiresAt).toBe(nearCutoffAt)
+    expect(nearCutoff.input.freshUntil).toBe(nearCutoffAt)
   })
 
   test('blocks one micro beyond every money and exposure limit', () => {
