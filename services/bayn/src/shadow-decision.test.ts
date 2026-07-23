@@ -37,7 +37,7 @@ import {
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
-import { TargetPlanReason, TargetPlanStatus, type TargetPlannerInput } from './target-planner'
+import { TargetPlanReason, TargetPlanStatus, planTargets, type TargetPlannerInput } from './target-planner'
 import type { DecisionPlan } from './types'
 
 const hash = (character: string): string => character.repeat(64)
@@ -348,6 +348,7 @@ const makeInput = (
     },
     compiledDecision,
     plannerInput,
+    targetPlan: planTargets(plannerInput),
     policy,
     riskInputs,
   }
@@ -470,12 +471,14 @@ describe('OBSERVE shadow decision', () => {
   test('persists deterministic NO_TRADE and pre-cutoff blocked planner results without ignored risk input', async () => {
     const noTrade = await build(makeInput({ AMD: 0.1, NVDA: 0.1 }))
     const staleInput = makeInput()
+    const stalePlannerInput = {
+      ...staleInput.plannerInput,
+      maximumInputAgeMs: 1,
+    }
     const stale = await build({
       ...staleInput,
-      plannerInput: {
-        ...staleInput.plannerInput,
-        maximumInputAgeMs: 1,
-      },
+      plannerInput: stalePlannerInput,
+      targetPlan: planTargets(stalePlannerInput),
       riskInputs: [],
     })
 
@@ -496,9 +499,11 @@ describe('OBSERVE shadow decision', () => {
   test('clamps blocked risk evidence at the last instant before the exclusive cycle cutoff', async () => {
     const input = makeInput()
     const createdAt = new Date(Date.parse(input.cycle.window.submissionCutoffAt) - 1).toISOString()
+    const plannerInput = { ...input.plannerInput, observedAt: createdAt }
     const document = await build({
       ...input,
-      plannerInput: { ...input.plannerInput, observedAt: createdAt },
+      plannerInput,
+      targetPlan: planTargets(plannerInput),
       riskInputs: input.riskInputs.map((riskInput) => ({
         ...riskInput,
         state: { ...riskInput.state, evaluatedAt: createdAt },
@@ -512,12 +517,19 @@ describe('OBSERVE shadow decision', () => {
     )
   })
 
-  test('fails closed on drift in cycle, snapshot, compiled decision, risk state, or OBSERVE authority', async () => {
+  test('fails closed on drift in cycle, snapshot, target plan, compiled decision, risk state, or authority', async () => {
     const input = makeInput()
     const variants: ObserveShadowDecisionInput[] = [
       {
         ...input,
         snapshot: { ...input.snapshot, snapshotId: hash('f') },
+      },
+      {
+        ...input,
+        targetPlan: planTargets({
+          ...input.plannerInput,
+          maximumInputAgeMs: input.plannerInput.maximumInputAgeMs + 1,
+        }),
       },
       {
         ...input,

@@ -4,6 +4,7 @@ import {
   type CycleOperationsStatus,
   unknownCycleOperationsStatus,
 } from './cycle-observability'
+import type { CycleRunnerError, CycleRunResult } from './cycle-runner'
 import type { QualificationResult } from './qualification'
 import type { EvaluationSummary, ReconciliationResult } from './types'
 
@@ -39,6 +40,7 @@ export interface RuntimeHealth {
     readonly tigerBeetle: DependencyHealth
     readonly evidence: DependencyHealth
     readonly cycle: DependencyHealth
+    readonly cycleRunner: DependencyHealth
   }
 }
 
@@ -57,18 +59,39 @@ export interface BrokerStatus extends BrokerConfiguration {
   readonly error: string | null
 }
 
+export type AutonomousCyclePassObservation =
+  | {
+      readonly result: 'SUCCESS'
+      readonly observedAt: string
+      readonly outcome: CycleRunResult['outcome']
+    }
+  | {
+      readonly result: 'FAILURE'
+      readonly observedAt: string
+      readonly operation: CycleRunnerError['operation']
+      readonly failure: CycleRunnerError['failure']
+      readonly message: string
+    }
+
+export interface AutonomousCycleLoopStatus {
+  readonly configured: boolean
+  readonly startedAt: string | null
+  readonly lastPass: AutonomousCyclePassObservation | null
+}
+
 export interface RuntimeState {
   readonly status: 'STARTING' | 'READY' | 'DEGRADED' | 'FAILED'
   readonly evidence: RuntimeEvidence | null
   readonly health: RuntimeHealth
   readonly cycle: CycleOperationsStatus
+  readonly autonomousCycleLoop: AutonomousCycleLoopStatus
   readonly broker: BrokerStatus | null
   readonly error: string | null
 }
 
 const unknownDependency = (): DependencyHealth => ({ status: 'UNKNOWN', checkedAt: null, error: null })
 
-export const initialState = (broker?: BrokerConfiguration): RuntimeState => ({
+export const initialState = (broker?: BrokerConfiguration, autonomousCycleLoopConfigured = false): RuntimeState => ({
   status: 'STARTING',
   evidence: null,
   health: {
@@ -80,9 +103,15 @@ export const initialState = (broker?: BrokerConfiguration): RuntimeState => ({
       tigerBeetle: unknownDependency(),
       evidence: unknownDependency(),
       cycle: unknownDependency(),
+      cycleRunner: unknownDependency(),
     },
   },
   cycle: unknownCycleOperationsStatus(),
+  autonomousCycleLoop: {
+    configured: autonomousCycleLoopConfigured,
+    startedAt: null,
+    lastPass: null,
+  },
   broker:
     broker === undefined
       ? null
@@ -106,5 +135,6 @@ export const isReady = (state: RuntimeState): boolean =>
   state.cycle.condition !== CycleOperationsCondition.Unknown &&
   state.cycle.condition !== CycleOperationsCondition.Stalled &&
   state.cycle.condition !== CycleOperationsCondition.Failed &&
+  state.autonomousCycleLoop.lastPass?.result !== 'FAILURE' &&
   (state.broker === null || (state.broker.accountBound === true && state.broker.readAvailable === true)) &&
   Object.values(state.health.dependencies).every((dependency) => dependency.status === 'AVAILABLE')

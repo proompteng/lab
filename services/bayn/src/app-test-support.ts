@@ -286,6 +286,7 @@ export const readyState = (): RuntimeState => {
         tigerBeetle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
         evidence: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
         cycle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
+        cycleRunner: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
       },
     },
     cycle: deriveCycleOperationsStatus(
@@ -301,6 +302,11 @@ export const readyState = (): RuntimeState => {
       Authority.Observe,
       config,
     ),
+    autonomousCycleLoop: {
+      configured: false,
+      startedAt: null,
+      lastPass: null,
+    },
     broker: null,
     error: null,
   }

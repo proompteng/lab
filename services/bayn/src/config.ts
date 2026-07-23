@@ -31,6 +31,7 @@ export interface RuntimeConfig {
   readonly unknownMutationThresholdMs: number
   readonly alpaca?: {
     readonly accountId: string
+    readonly authorityGenerationHash: string
     readonly key: Redacted.Redacted<string>
     readonly secret: Redacted.Redacted<string>
     readonly proxyUrl: string
@@ -57,6 +58,12 @@ export interface RuntimeConfig {
     readonly ledger: number
   }
 }
+
+export interface AutonomousCycleRuntimeConfig {
+  readonly cyclePollIntervalMs: number
+}
+
+export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
@@ -103,6 +110,8 @@ const runtimeConfig = Config.all({
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
+  cyclePollIntervalMs: operationalThreshold('BAYN_CYCLE_POLL_INTERVAL_MS', 30_000),
+  authorityGenerationHash: Config.option(Config.schema(Sha256Schema, 'BAYN_AUTHORITY_GENERATION_HASH')),
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
@@ -149,6 +158,8 @@ const runtimeConfig = Config.all({
     cycleStallThresholdMs: config.cycleStallThresholdMs,
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
     unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+    cyclePollIntervalMs: config.cyclePollIntervalMs,
+    authorityGenerationHash: config.authorityGenerationHash,
     configuredAlpaca: {
       accountId: config.alpacaAccountId,
       key: config.alpacaKey,
@@ -190,7 +201,7 @@ const decodeEmbeddedBuildMetadata = Schema.decodeUnknownSync(EmbeddedBuildMetada
 
 export const loadConfig = (
   embedded: EmbeddedBuildMetadata | undefined = embeddedBuildMetadata,
-): Effect.Effect<RuntimeConfig, OperationalError> =>
+): Effect.Effect<LoadedRuntimeConfig, OperationalError> =>
   runtimeConfig.pipe(
     Effect.mapError((cause) => operationalError('config', 'load', 'invalid runtime configuration', cause)),
     Effect.flatMap((config) =>
@@ -204,6 +215,17 @@ export const loadConfig = (
         }),
         catch: (cause) => operationalError('config', 'load', 'invalid Signal evaluation bounds', cause),
       }),
+    ),
+    Effect.flatMap((config) =>
+      config.cyclePollIntervalMs < config.cycleStallThresholdMs
+        ? Effect.succeed(config)
+        : Effect.fail(
+            operationalError(
+              'config',
+              'cycle-loop',
+              'cycle poll interval must be shorter than the cycle stall threshold',
+            ),
+          ),
     ),
     Effect.flatMap((config) => {
       const credentials = Option.all({
@@ -220,23 +242,40 @@ export const loadConfig = (
           operationalError('config', 'alpaca', 'Alpaca account ID, key ID, and secret key must be configured together'),
         )
       }
-      const alpaca = Option.map(credentials, (value) => ({
-        ...value,
-        proxyUrl: config.configuredAlpaca.proxyUrl,
-        retryAttempts: config.configuredAlpaca.retryAttempts,
-        reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
-      }))
+      if (Option.isSome(credentials) && Option.isNone(config.authorityGenerationHash)) {
+        return Effect.fail(
+          operationalError(
+            'config',
+            'authority-generation',
+            'Alpaca account binding requires an authority generation hash',
+          ),
+        )
+      }
+      const alpaca = Option.map(
+        Option.all({ credentials, authorityGenerationHash: config.authorityGenerationHash }),
+        ({ credentials: value, authorityGenerationHash }) => ({
+          ...value,
+          authorityGenerationHash,
+          proxyUrl: config.configuredAlpaca.proxyUrl,
+          retryAttempts: config.configuredAlpaca.retryAttempts,
+          reconciliationIntervalMs: config.configuredAlpaca.reconciliationIntervalMs,
+        }),
+      )
       if (config.maximumAuthority === Authority.Paper && Option.isNone(alpaca)) {
         return Effect.fail(
           operationalError('config', 'alpaca', 'PAPER maximum authority requires a complete Alpaca account binding'),
         )
       }
-      const { configuredAlpaca: _configuredAlpaca, ...runtime } = config
+      const {
+        configuredAlpaca: _configuredAlpaca,
+        authorityGenerationHash: _authorityGenerationHash,
+        ...runtime
+      } = config
       return Effect.succeed({ ...runtime, ...(Option.isSome(alpaca) ? { alpaca: alpaca.value } : {}) })
     }),
     Effect.flatMap((config) =>
       Effect.try({
-        try: (): RuntimeConfig => {
+        try: (): LoadedRuntimeConfig => {
           if (embedded === undefined && config.provenanceMode !== 'development') {
             throw new Error('production provenance requires compile-time build metadata')
           }

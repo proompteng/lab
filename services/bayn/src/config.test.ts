@@ -9,6 +9,7 @@ import { Authority } from './paper'
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
 const imageDigest = `sha256:${'b'.repeat(64)}`
+const authorityGenerationHash = '1'.repeat(64)
 const buildMetadata: EmbeddedBuildMetadata = {
   sourceRevision,
   imageRepository,
@@ -22,6 +23,7 @@ const runtimeEnvironment = new Map([
   ['BAYN_IMAGE_DIGEST', imageDigest],
   ['BAYN_STRATEGY_BEHAVIOR_HASH', buildMetadata.strategyBehaviorHash],
   ['BAYN_STRATEGY_PARAMETER_HASH', buildMetadata.strategyParameterHash],
+  ['BAYN_AUTHORITY_GENERATION_HASH', authorityGenerationHash],
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
@@ -55,6 +57,7 @@ describe('Effect configuration', () => {
     expect(config.cycleStallThresholdMs).toBe(300_000)
     expect(config.reconciliationStaleThresholdMs).toBe(120_000)
     expect(config.unknownMutationThresholdMs).toBe(300_000)
+    expect(config.cyclePollIntervalMs).toBe(30_000)
     expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -89,6 +92,37 @@ describe('Effect configuration', () => {
     expect(config.qualificationRunId).toBe('e'.repeat(64))
   })
 
+  test('allows no authority generation while autonomous cycle composition is disabled', async () => {
+    const environment = new Map(runtimeEnvironment)
+    environment.delete('BAYN_AUTHORITY_GENERATION_HASH')
+
+    const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+
+    expect(config.alpaca).toBeUndefined()
+  })
+
+  test('requires an explicit valid authority generation to resolve an Alpaca binding', async () => {
+    for (const value of [undefined, 'not-a-generation-hash']) {
+      const environment = new Map(runtimeEnvironment)
+      environment.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+      environment.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+      environment.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
+      if (value === undefined) {
+        environment.delete('BAYN_AUTHORITY_GENERATION_HASH')
+      } else {
+        environment.set('BAYN_AUTHORITY_GENERATION_HASH', value)
+      }
+
+      const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), environment)))
+
+      expect(error).toMatchObject({
+        _tag: 'OperationalError',
+        component: 'config',
+        operation: value === undefined ? 'authority-generation' : 'load',
+      })
+    }
+  })
+
   test('loads one complete redacted Alpaca read binding', async () => {
     const configured = new Map(runtimeEnvironment)
     configured.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
@@ -99,6 +133,7 @@ describe('Effect configuration', () => {
 
     expect(config.alpaca).toMatchObject({
       accountId: '61e69015-8549-4bfd-b9c3-01e75843f47d',
+      authorityGenerationHash,
       proxyUrl: 'http://bayn-egress-proxy:3128',
       retryAttempts: 2,
       reconciliationIntervalMs: 30_000,
@@ -184,11 +219,13 @@ describe('Effect configuration', () => {
     })
   })
 
-  test('keeps operational alert thresholds positive and bounded to one day', async () => {
+  test('keeps operational thresholds and the cycle poll interval bounded to one day', async () => {
     for (const [name, value] of [
       ['BAYN_CYCLE_STALL_THRESHOLD_MS', '999'],
       ['BAYN_RECONCILIATION_STALE_THRESHOLD_MS', '86400001'],
       ['BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', '0'],
+      ['BAYN_CYCLE_POLL_INTERVAL_MS', '999'],
+      ['BAYN_CYCLE_POLL_INTERVAL_MS', '86400001'],
     ] as const) {
       const invalid = new Map(runtimeEnvironment)
       invalid.set(name, value)
@@ -200,6 +237,22 @@ describe('Effect configuration', () => {
         operation: 'load',
       })
     }
+
+    const configured = new Map(runtimeEnvironment)
+    configured.set('BAYN_CYCLE_POLL_INTERVAL_MS', '15000')
+    expect(
+      (await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))).cyclePollIntervalMs,
+    ).toBe(15_000)
+
+    const incoherent = new Map(runtimeEnvironment)
+    incoherent.set('BAYN_CYCLE_POLL_INTERVAL_MS', '300000')
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), incoherent)))
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'cycle-loop',
+      message: 'cycle poll interval must be shorter than the cycle stall threshold',
+    })
   })
 
   test('rejects an invalid pinned qualification run ID', async () => {

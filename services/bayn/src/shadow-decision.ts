@@ -12,7 +12,12 @@ import {
   type DeltaRiskEvaluation,
   type ObserveShadowDecisionDocument,
 } from './shadow-decision-contract'
-import { TargetPlanStatus, planTargets, type PlannedTargetQuantity, type TargetPlannerInput } from './target-planner'
+import {
+  TargetPlanStatus,
+  type PlannedTargetQuantity,
+  type TargetPlannerInput,
+  type TargetPlanResult,
+} from './target-planner'
 import type { DecisionPlan } from './types'
 
 export interface ShadowSnapshotBinding {
@@ -32,6 +37,7 @@ export interface ObserveShadowDecisionInput {
   readonly snapshot: ShadowSnapshotBinding
   readonly compiledDecision: DecisionPlan
   readonly plannerInput: TargetPlannerInput
+  readonly targetPlan: TargetPlanResult
   readonly policy: Policy
   readonly riskInputs: readonly ShadowDeltaRiskInput[]
 }
@@ -195,10 +201,10 @@ export const buildObserveShadowDecision = (
     const bindingFailure = validateBindings(input, strategyDecisionHash, policyHash)
     if (bindingFailure !== null) return yield* fail('binding', bindingFailure)
 
-    const planner = yield* Effect.try({
-      try: () => planTargets(input.plannerInput),
-      catch: (cause) => error('contract', 'target planning failed', cause),
-    })
+    const planner = input.targetPlan
+    if (planner.inputHash !== canonicalHashV1(input.plannerInput)) {
+      return yield* fail('binding', 'target plan must match the exact planner input')
+    }
     if (planner.status !== TargetPlanStatus.Planned && input.riskInputs.length !== 0) {
       return yield* fail('binding', 'NO_TRADE and BLOCKED target plans cannot retain ignored risk inputs')
     }
