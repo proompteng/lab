@@ -212,6 +212,7 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const candidateRuntime = options.candidateRuntime ?? runtimeFromDeployment(deployment)
   validateCandidateRuntime(candidateRuntime)
   const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
+  const deployedImageDigest = environmentValue(deployment, 'BAYN_IMAGE_DIGEST')
   const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
   const deployedParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')
   const deployedSnapshotId = environmentValue(deployment, 'BAYN_SIGNAL_SNAPSHOT_ID')
@@ -231,21 +232,18 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   if (acceptedRunAlreadyPinned && (!strategyIdentityMatches || !qualificationBindingsMatch)) {
     throw new Error('an accepted qualification pin cannot be rebound to different strategy or runtime identity')
   }
-  if (
-    acceptedQualificationRunId !== undefined &&
-    !acceptedRunAlreadyPinned &&
-    hadQualificationPin &&
-    !snapshotChanged
-  ) {
-    throw new Error('qualification run replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
-  }
-  if (
-    acceptedQualificationRunId !== undefined &&
-    !acceptedRunAlreadyPinned &&
-    !qualificationBindingsMatch &&
-    !snapshotChanged
-  ) {
-    throw new Error('qualification installation requires identical bindings or a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+  if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {
+    if (hadQualificationPin) {
+      throw new Error('qualification installation requires an already-deployed unpinned runtime')
+    }
+    if (
+      deployedSourceSha !== options.sourceSha ||
+      deployedImageDigest !== options.digest ||
+      !strategyIdentityMatches ||
+      !qualificationBindingsMatch
+    ) {
+      throw new Error('qualification installation must pin the exact deployed source, image, strategy, and runtime')
+    }
   }
   let qualificationMode: BaynManifestUpdate['qualificationMode']
   if (acceptedQualificationRunId !== undefined && !acceptedRunAlreadyPinned) {

@@ -223,9 +223,9 @@ jobs:
             evidence. `replace` removes an existing incompatible pin only for a fresh Signal snapshot. `install` is
             available only to a controlled invocation that supplies the complete reviewed candidate runtime and exact
             independently accepted terminal run ID; automatic image promotion supplies neither and therefore never
-            creates a pin. Installation can pin only the source already deployed for that unpinned snapshot. A
-            different source revision remains rejected until the terminal run is installed in a separate change or
-            the snapshot advances.
+            creates a pin. Installation can pin only the exact source, image digest, compiled strategy, and runtime
+            already deployed without a pin. It cannot replace an old pin and advance to a fresh candidate in the same
+            change.
 
             ## Checklist
 

@@ -100,7 +100,7 @@ const promote = (
   overrides: Partial<
     Pick<
       UpdateBaynManifestOptions,
-      'strategyBehaviorHash' | 'strategyParameterHash' | 'candidateRuntime' | 'acceptedQualificationRunId'
+      'digest' | 'strategyBehaviorHash' | 'strategyParameterHash' | 'candidateRuntime' | 'acceptedQualificationRunId'
     >
   > & { readonly useDeployedRuntime?: boolean } = {},
   sourceSha = 'a'.repeat(40),
@@ -108,7 +108,7 @@ const promote = (
   return updateBaynManifests({
     sourceSha,
     tag: `sha-${sourceSha}`,
-    digest: `sha256:${'b'.repeat(64)}`,
+    digest: overrides.digest ?? `sha256:${'b'.repeat(64)}`,
     strategyBehaviorHash: overrides.strategyBehaviorHash ?? strategyBehaviorHash,
     strategyParameterHash: overrides.strategyParameterHash ?? strategyParameterHash,
     rolloutTimestamp: '2026-07-22T10:00:00Z',
@@ -265,7 +265,7 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 
-  test('atomically installs an accepted run with its explicit fresh runtime', () => {
+  test('rejects installing an accepted run while replacing a pinned runtime', () => {
     const paths = makeFixture()
     const freshRunId = '8'.repeat(64)
     const freshRuntime = {
@@ -275,36 +275,32 @@ describe('Bayn manifest promotion', () => {
       BAYN_SIGNAL_DATA_END: '2026-07-23',
       BAYN_SIGNAL_EVALUATION_END: '2026-07-23',
     } satisfies BaynCandidateRuntime
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
-    expect(
+    expect(() =>
       promote(paths, {
         strategyParameterHash: '3'.repeat(64),
         candidateRuntime: freshRuntime,
         acceptedQualificationRunId: freshRunId,
       }),
-    ).toMatchObject({
-      promotionAction: 'promote',
-      qualificationMode: 'install',
-      hadQualificationPin: true,
-      deployedQualificationRunId: qualificationRunId,
-      candidateQualificationRunId: freshRunId,
-      qualificationBindingsMatch: false,
-      snapshotChanged: true,
-      candidateSnapshotId: freshRuntime.BAYN_SIGNAL_SNAPSHOT_ID,
-    })
-    const deployment = readFileSync(paths.deploymentPath, 'utf8')
-    expect(deployment).toContain(environmentBlock('BAYN_QUALIFICATION_RUN_ID', freshRunId).trim())
-    expect(deployment).not.toContain(environmentBlock('BAYN_QUALIFICATION_RUN_ID', qualificationRunId).trim())
-    for (const [name, value] of Object.entries(freshRuntime)) {
-      expect(deployment).toContain(environmentBlock(name, value).trim())
-    }
+    ).toThrow('qualification installation requires an already-deployed unpinned runtime')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
   test('installs the terminal result of the one allowed unpinned release', () => {
     const paths = makeFixture({ qualificationRunId: null })
     const acceptedRunId = '8'.repeat(64)
 
-    expect(promote(paths, { acceptedQualificationRunId: acceptedRunId }, '0'.repeat(40))).toMatchObject({
+    expect(
+      promote(
+        paths,
+        {
+          acceptedQualificationRunId: acceptedRunId,
+          digest: `sha256:${'0'.repeat(64)}`,
+        },
+        '0'.repeat(40),
+      ),
+    ).toMatchObject({
       promotionAction: 'promote',
       qualificationMode: 'install',
       hadQualificationPin: false,
@@ -329,7 +325,23 @@ describe('Bayn manifest promotion', () => {
         },
         'c'.repeat(40),
       ),
-    ).toThrow('an unpinned qualification snapshot cannot accept a second source release')
+    ).toThrow('qualification installation must pin the exact deployed source, image, strategy, and runtime')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
+  test('rejects using an accepted run to change an unpinned image', () => {
+    const paths = makeFixture({ qualificationRunId: null })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() =>
+      promote(
+        paths,
+        {
+          acceptedQualificationRunId: '8'.repeat(64),
+        },
+        '0'.repeat(40),
+      ),
+    ).toThrow('qualification installation must pin the exact deployed source, image, strategy, and runtime')
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
@@ -354,7 +366,7 @@ describe('Bayn manifest promotion', () => {
       promote(paths, {
         acceptedQualificationRunId: '8'.repeat(64),
       }),
-    ).toThrow('qualification run replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
+    ).toThrow('qualification installation requires an already-deployed unpinned runtime')
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 

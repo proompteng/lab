@@ -52,7 +52,8 @@ paper mutation capability, execution entry point, and capital-promotion path rem
   evaluating, journaling, or persisting.
 - Production GitOps carries that pin outside an explicit one-shot qualification release. The release writer refuses a
   second source revision on the same unpinned snapshot. A controlled invocation may pin the exact independently
-  accepted terminal run only for that already deployed source and complete reviewed runtime; automatic image promotion
+  accepted terminal run only for the already deployed unpinned source, image digest, compiled strategy, and complete
+  reviewed runtime; it cannot combine fresh-candidate deployment with pin installation. Automatic image promotion
   supplies neither. Once pinned, a later operational release may change source only while preserving compiled strategy
   and qualification identity. This prevents extra trials or rebinding evidence to implicit inputs.
 - The compiled risk-balanced trend decision function records every normalized trend horizon, volatility estimate,

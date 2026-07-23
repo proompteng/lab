@@ -201,5 +201,6 @@ ledger change still requires a fresh Signal snapshot. The writer has no source-c
 promotion reads the deployed runtime, while a qualification transition must supply the complete candidate runtime.
 After a fresh snapshot removes the pin for its one allowed source revision, promotion rejects a different source
 revision. A controlled invocation may install the exact independently accepted terminal run only for that already
-deployed source and complete runtime. A later pinned operational release may change source while preserving identical
-compiled strategy and qualification identity. Automatic image promotion never creates a qualification pin.
+deployed unpinned source, image digest, compiled strategy, and complete runtime. It cannot replace an old pin and
+advance to a fresh candidate in the same change. A later pinned operational release may change source while preserving
+identical compiled strategy and qualification identity. Automatic image promotion never creates a qualification pin.
