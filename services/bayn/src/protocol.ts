@@ -100,9 +100,24 @@ const defaultEconomicThresholds = {
   requirePositiveDoubleCostReturn: true,
 } as const
 
+const universeContracts = {
+  'equity-infrastructure-v1': {
+    symbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
+    symbols: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
+    historyStart: '2022-01-27',
+    evaluationStart: '2023-01-30',
+  },
+  'cross-asset-taa-v1': {
+    symbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
+    symbols: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+    historyStart: '2016-01-04',
+    evaluationStart: '2017-01-03',
+  },
+} as const
+
 const ProtocolBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
-  universeId: Schema.Literal('equity-infrastructure-v1'),
+  universeId: Schema.Literals(['equity-infrastructure-v1', 'cross-asset-taa-v1']),
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
   historyStart: IsoDateSchema,
@@ -122,6 +137,7 @@ const ProtocolBase = Schema.Struct({
 export const ProtocolSchema = ProtocolBase.check(
   Schema.makeFilter((parameters: typeof ProtocolBase.Type) => {
     const issues: Schema.FilterIssue[] = []
+    const expectedUniverse = universeContracts[parameters.universeId]
     const sortedUniverse = [...new Set(parameters.universe)].sort()
     if (sortedUniverse.length !== parameters.universe.length) {
       issues.push({ path: ['universe'], issue: 'must not contain duplicate symbols' })
@@ -130,6 +146,14 @@ export const ProtocolSchema = ProtocolBase.check(
     }
     if (parameters.universeSymbolHash !== sha256(parameters.universe.join(','))) {
       issues.push({ path: ['universeSymbolHash'], issue: 'must match the canonical universe' })
+    }
+    if (
+      parameters.universeSymbolHash !== expectedUniverse.symbolHash ||
+      parameters.universe.join(',') !== expectedUniverse.symbols.join(',') ||
+      parameters.historyStart !== expectedUniverse.historyStart ||
+      parameters.evaluationStart !== expectedUniverse.evaluationStart
+    ) {
+      issues.push({ path: ['universeId'], issue: 'must identify its exact source-controlled universe contract' })
     }
     if (parameters.evaluationStart <= parameters.historyStart) {
       issues.push({ path: ['evaluationStart'], issue: 'must follow historyStart' })
@@ -156,11 +180,11 @@ export type Protocol = typeof ProtocolSchema.Type
 
 export const defaultProtocolDocument = {
   schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
-  universeId: 'equity-infrastructure-v1',
-  universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
-  universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
-  historyStart: '2022-01-27',
-  evaluationStart: '2023-01-30',
+  universeId: 'cross-asset-taa-v1',
+  universeSymbolHash: 'c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8',
+  universe: ['DBC', 'EFA', 'IEF', 'SPY', 'VNQ'],
+  historyStart: '2016-01-04',
+  evaluationStart: '2017-01-03',
   horizons: [21, 63, 126, 252],
   volatilityWindow: 63,
   rebalance: 'month-end',

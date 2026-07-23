@@ -35,7 +35,7 @@ describe('current contracts', () => {
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, symbols: [...snapshot.symbols].reverse() }))
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, rowCount: snapshot.rowCount - 1 }))
     await expectFailure(decodeFinalizedSnapshot({ ...snapshot, futureField: true }))
-    await expectFailure(decodeEvaluationBounds({ ...bounds, evaluationStart: '2020-01-01' }))
+    await expectFailure(decodeEvaluationBounds({ ...bounds, evaluationStart: '2016-01-01' }))
   })
 
   test('makes a deterministic identity bound to every material input', async () => {

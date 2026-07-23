@@ -39,6 +39,11 @@ const requireMatchingUniverse = (manifest: InputManifest, protocol: Protocol): I
   return manifest
 }
 
+const universeRationale = (protocol: Protocol): string =>
+  protocol.universeId === 'cross-asset-taa-v1'
+    ? 'The precommitted five-sleeve cross-asset universe uses broad commodities (DBC), developed ex-US equities (EFA), intermediate US Treasuries (IEF), US equities (SPY), and US real estate (VNQ); symbols were fixed without inspecting candidate prices or returns.'
+    : 'The historical infrastructure-equity universe uses the exact source-controlled Signal symbol set identified by its universe ID and symbol hash.'
+
 export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance): Strategy => {
   const benchmarkPolicy = makeQualificationPolicyDocument('bayn.risk-balanced-trend-benchmark-policy.v1', {
     schemaVersion: 'bayn.risk-balanced-trend-benchmark-policy.v1',
@@ -75,8 +80,7 @@ export const makeStrategy = (protocol: Protocol, provenance: RuntimeProvenance):
         universeId: protocol.universeId,
         universeSymbolHash: protocol.universeSymbolHash,
         universe: protocol.universe,
-        universeRationale:
-          'Bayn uses the exact source-controlled Signal universe identified by universe ID and symbol hash; it does not select or optimize symbols during evaluation.',
+        universeRationale: universeRationale(protocol),
         data: {
           snapshotId: snapshot.snapshotId,
           publicationId: snapshot.publicationId,

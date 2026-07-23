@@ -42,6 +42,7 @@ export const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[
 export const ImageRepositorySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))
 export const SourceRevisionSchema = Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/))
 export const GitSourceRevisionSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/))
+export const UniverseIdSchema = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/))
 export const SymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,15}$/))
 // The upstream Signal row contract historically accepts one fewer trailing character than Bayn's domain contract.
 export const SignalRowSymbolSchema = Schema.String.check(Schema.isPattern(/^[A-Z][A-Z0-9.-]{0,14}$/))
