@@ -227,8 +227,12 @@ describe('Signal publisher GitOps authority contract', () => {
       },
       taskManager: { replicas: 2 },
     })
+    const coreArchiveSymbols = csv(config.data.ARCHIVE_CORE_UNIVERSE_SYMBOLS)
+    const expectedCoreArchiveHash = createHash('sha256').update(coreArchiveSymbols.join(',')).digest('hex')
     expect(config.data).toMatchObject({
       ARCHIVE_IEX_BARS_TOPIC: 'torghut.bars.1m.v1',
+      ARCHIVE_CORE_UNIVERSE_ID: 'torghut-core-equity-v1',
+      ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH: expectedCoreArchiveHash,
       ARCHIVE_DELAYED_SIP_BARS_TOPIC: 'bayn.market-data.delayed-sip.bars.1m.v1',
       ARCHIVE_OVERNIGHT_BARS_TOPIC: 'bayn.market-data.overnight.bars.1m.v1',
       ARCHIVE_PARALLELISM: '3',
@@ -236,6 +240,7 @@ describe('Signal publisher GitOps authority contract', () => {
         'jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/signal?clickhouse_setting_insert_quorum_parallel=1',
       ARCHIVE_CLICKHOUSE_USERNAME: 'signal_publisher',
     })
+    expect(coreArchiveSymbols).toEqual([...new Set(csv(websocket.data.SYMBOLS))].sort())
     const archiveEnvironment = environment(archive.spec.podTemplate.spec.containers[0])
     expect(archive.spec.podTemplate.spec.containers[0].envFrom).toEqual(
       expect.arrayContaining([

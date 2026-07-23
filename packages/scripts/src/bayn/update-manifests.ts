@@ -43,6 +43,8 @@ export interface UpdateBaynManifestOptions {
 }
 
 export interface BaynManifestUpdate {
+  readonly promotionAction: 'promote' | 'hold'
+  readonly promotionReason: 'eligible' | 'strategy-identity-change-requires-fresh-snapshot'
   readonly qualificationMode: 'preserve' | 'replace'
   readonly hadQualificationPin: boolean
   readonly qualificationBindingsMatch: boolean
@@ -144,6 +146,26 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
     deployedBehaviorHash === options.strategyBehaviorHash && deployedParameterHash === options.strategyParameterHash
   const qualificationMode =
     hadQualificationPin && strategyIdentityMatches && qualificationBindingsMatch ? 'preserve' : 'replace'
+  const updateDetails = {
+    qualificationMode,
+    hadQualificationPin,
+    qualificationBindingsMatch,
+    snapshotChanged,
+    deployedSnapshotId,
+    candidateSnapshotId,
+    deployedSourceSha,
+    deployedBehaviorHash,
+    deployedParameterHash,
+    candidateBehaviorHash: options.strategyBehaviorHash,
+    candidateParameterHash: options.strategyParameterHash,
+  } as const
+  if (hadQualificationPin && !strategyIdentityMatches && qualificationBindingsMatch && !snapshotChanged) {
+    return {
+      promotionAction: 'hold',
+      promotionReason: 'strategy-identity-change-requires-fresh-snapshot',
+      ...updateDetails,
+    }
+  }
   if (qualificationMode === 'replace' && hadQualificationPin && !snapshotChanged) {
     throw new Error('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   }
@@ -217,17 +239,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   writeFileSync(deploymentPath, updatedDeployment)
   writeFileSync(applicationSetPath, updatedApplicationSet)
   return {
-    qualificationMode,
-    hadQualificationPin,
-    qualificationBindingsMatch,
-    snapshotChanged,
-    deployedSnapshotId,
-    candidateSnapshotId,
-    deployedSourceSha,
-    deployedBehaviorHash,
-    deployedParameterHash,
-    candidateBehaviorHash: options.strategyBehaviorHash,
-    candidateParameterHash: options.strategyParameterHash,
+    promotionAction: 'promote',
+    promotionReason: 'eligible',
+    ...updateDetails,
   }
 }
 

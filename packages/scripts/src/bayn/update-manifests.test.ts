@@ -121,6 +121,8 @@ describe('Bayn manifest promotion', () => {
     const result = promote(paths)
 
     expect(result).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
       qualificationMode: 'preserve',
       hadQualificationPin: true,
       qualificationBindingsMatch: true,
@@ -136,13 +138,18 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.applicationSetPath, 'utf8')).toContain('enabled: "true"')
   })
 
-  test('rejects an incompatible strategy against an already-qualified snapshot without writing files', () => {
+  test('holds an incompatible strategy against an already-qualified snapshot without writing files', () => {
     const paths = makeFixture()
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
 
-    expect(() => promote(paths, { strategyParameterHash: '3'.repeat(64) })).toThrow(
-      'qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID',
-    )
+    expect(promote(paths, { strategyParameterHash: '3'.repeat(64) })).toMatchObject({
+      promotionAction: 'hold',
+      promotionReason: 'strategy-identity-change-requires-fresh-snapshot',
+      qualificationMode: 'replace',
+      hadQualificationPin: true,
+      qualificationBindingsMatch: true,
+      snapshotChanged: false,
+    })
     expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
@@ -166,6 +173,8 @@ describe('Bayn manifest promotion', () => {
     })
 
     expect(promote(paths)).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
       qualificationMode: 'preserve',
       qualificationBindingsMatch: true,
       snapshotChanged: false,
@@ -190,6 +199,8 @@ describe('Bayn manifest promotion', () => {
     const first = promote(paths, { strategyParameterHash: changedParameterHash })
 
     expect(first).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
       qualificationMode: 'replace',
       hadQualificationPin: true,
       qualificationBindingsMatch: false,
@@ -205,6 +216,8 @@ describe('Bayn manifest promotion', () => {
     )
 
     expect(promote(paths, { strategyParameterHash: changedParameterHash })).toMatchObject({
+      promotionAction: 'promote',
+      promotionReason: 'eligible',
       qualificationMode: 'replace',
       hadQualificationPin: false,
       snapshotChanged: false,

@@ -37,10 +37,14 @@ data class ArchiveUniverse(
   val symbols: Set<String>,
 ) : Serializable
 
+data class ArchiveRoute(
+  val feed: String,
+  val universe: ArchiveUniverse,
+) : Serializable
+
 data class MarketDataArchiveConfig(
   val bootstrapServers: String,
-  val topics: Map<String, String>,
-  val universe: ArchiveUniverse,
+  val routes: Map<String, ArchiveRoute>,
   val groupId: String,
   val clientId: String,
   val securityProtocol: String,
@@ -64,30 +68,37 @@ data class MarketDataArchiveConfig(
         env[key]?.trim()?.takeIf { it.isNotEmpty() }
           ?: error("$key must be set")
 
-      val topics =
+      fun universe(
+        idKey: String,
+        symbolsKey: String,
+        hashKey: String,
+      ): ArchiveUniverse {
+        val symbols =
+          required(symbolsKey)
+            .split(",")
+            .map { it.trim().uppercase() }
+            .filter { it.isNotEmpty() }
+        require(symbols.isNotEmpty()) { "$symbolsKey must contain at least one symbol" }
+        require(symbols == symbols.distinct().sorted()) { "$symbolsKey must be unique and canonically sorted" }
+        val id = required(idKey)
+        require(id.matches(Regex("^[a-z0-9]+(?:[.-][a-z0-9]+)*$"))) {
+          "$idKey must be a versioned lowercase identifier"
+        }
+        val symbolHash = required(hashKey)
+        require(symbolHash == canonicalSymbolHash(symbols)) { "$hashKey does not match canonical $symbolsKey" }
+        return ArchiveUniverse(id, symbolHash, symbols.toSet())
+      }
+
+      val coreUniverse =
+        universe("ARCHIVE_CORE_UNIVERSE_ID", "ARCHIVE_CORE_UNIVERSE_SYMBOLS", "ARCHIVE_CORE_UNIVERSE_SYMBOL_HASH")
+      val observationUniverse = universe("UNIVERSE_ID", "UNIVERSE_SYMBOLS", "UNIVERSE_SYMBOL_HASH")
+      val routes =
         linkedMapOf(
-          required("ARCHIVE_IEX_BARS_TOPIC") to "iex",
-          required("ARCHIVE_DELAYED_SIP_BARS_TOPIC") to "delayed_sip",
-          required("ARCHIVE_OVERNIGHT_BARS_TOPIC") to "overnight",
+          required("ARCHIVE_IEX_BARS_TOPIC") to ArchiveRoute("iex", coreUniverse),
+          required("ARCHIVE_DELAYED_SIP_BARS_TOPIC") to ArchiveRoute("delayed_sip", observationUniverse),
+          required("ARCHIVE_OVERNIGHT_BARS_TOPIC") to ArchiveRoute("overnight", observationUniverse),
         )
-      if (topics.size != 3) error("archive bar topics must be unique")
-      val universeSymbols =
-        required("UNIVERSE_SYMBOLS")
-          .split(",")
-          .map { it.trim().uppercase() }
-          .filter { it.isNotEmpty() }
-      require(universeSymbols.isNotEmpty()) { "UNIVERSE_SYMBOLS must contain at least one symbol" }
-      require(universeSymbols == universeSymbols.distinct().sorted()) {
-        "UNIVERSE_SYMBOLS must be unique and canonically sorted"
-      }
-      val universeId = required("UNIVERSE_ID")
-      require(universeId.matches(Regex("^[a-z0-9]+(?:[.-][a-z0-9]+)*$"))) {
-        "UNIVERSE_ID must be a versioned lowercase identifier"
-      }
-      val universeSymbolHash = required("UNIVERSE_SYMBOL_HASH")
-      require(universeSymbolHash == canonicalSymbolHash(universeSymbols)) {
-        "UNIVERSE_SYMBOL_HASH does not match canonical UNIVERSE_SYMBOLS"
-      }
+      if (routes.size != 3) error("archive bar topics must be unique")
 
       val checkpointIntervalMs = env["ARCHIVE_CHECKPOINT_INTERVAL_MS"]?.toLongOrNull() ?: 60_000
       val parallelism = env["ARCHIVE_PARALLELISM"]?.toIntOrNull() ?: 3
@@ -107,8 +118,7 @@ data class MarketDataArchiveConfig(
 
       return MarketDataArchiveConfig(
         bootstrapServers = env["ARCHIVE_KAFKA_BOOTSTRAP"] ?: "kafka-kafka-bootstrap.kafka:9092",
-        topics = topics,
-        universe = ArchiveUniverse(universeId, universeSymbolHash, universeSymbols.toSet()),
+        routes = routes,
         groupId = env["ARCHIVE_GROUP_ID"] ?: "bayn-market-data-archive-v1",
         clientId = env["ARCHIVE_CLIENT_ID"] ?: "bayn-market-data-archive",
         securityProtocol = securityProtocol,
@@ -168,7 +178,7 @@ fun main() {
 
   environment
     .fromSource(archiveKafkaSource(config), WatermarkStrategy.noWatermarks(), "market-data-bars-source")
-    .flatMap(ParseArchiveBar(config.topics, config.universe))
+    .flatMap(ParseArchiveBar(config.routes))
     .returns(TypeInformation.of(IntradayBarRecord::class.java))
     .sinkTo(archiveClickhouseSink(config))
     .name("signal-intraday-bars-archive")
@@ -197,8 +207,7 @@ internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema
 }
 
 internal class ParseArchiveBar(
-  private val expectedFeedByTopic: Map<String, String>,
-  private val universe: ArchiveUniverse,
+  private val routeByTopic: Map<String, ArchiveRoute>,
 ) : RichFlatMapFunction<ArchiveKafkaRecord, IntradayBarRecord>(),
   Serializable {
   companion object {
@@ -220,7 +229,7 @@ internal class ParseArchiveBar(
     value: ArchiveKafkaRecord,
     out: Collector<IntradayBarRecord>,
   ) {
-    runCatching { decodeArchiveBar(value, expectedFeedByTopic, universe, json) }
+    runCatching { decodeArchiveBar(value, routeByTopic, json) }
       .onSuccess(out::collect)
       .onFailure { cause ->
         rejected.inc()
@@ -237,11 +246,12 @@ internal class ParseArchiveBar(
 
 internal fun decodeArchiveBar(
   record: ArchiveKafkaRecord,
-  expectedFeedByTopic: Map<String, String>,
-  universe: ArchiveUniverse,
+  routeByTopic: Map<String, ArchiveRoute>,
   json: Json = Json { ignoreUnknownKeys = true },
 ): IntradayBarRecord {
-  val expectedFeed = expectedFeedByTopic[record.topic] ?: error("unexpected archive topic: ${record.topic}")
+  val route = routeByTopic[record.topic] ?: error("unexpected archive topic: ${record.topic}")
+  val expectedFeed = route.feed
+  val universe = route.universe
   require(record.partition >= 0) { "archive source partition must be non-negative" }
   require(record.offset >= 0) { "archive source offset must be non-negative" }
   val envelope = json.decodeFromString(Envelope.serializer(AlpacaBarPayload.serializer()), record.value)
@@ -318,7 +328,7 @@ private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<Arc
     KafkaSource
       .builder<ArchiveKafkaRecord>()
       .setBootstrapServers(config.bootstrapServers)
-      .setTopics(config.topics.keys.toList())
+      .setTopics(config.routes.keys.toList())
       .setClientIdPrefix(config.clientId)
       .setGroupId(config.groupId)
       .setDeserializer(ArchiveKafkaRecordDeserializer())
