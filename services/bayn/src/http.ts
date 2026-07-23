@@ -224,7 +224,7 @@ export const renderPrometheusMetrics = (
     '# HELP bayn_autonomous_cycle_loop_configured Whether the in-process autonomous cycle loop is configured.',
     '# TYPE bayn_autonomous_cycle_loop_configured gauge',
     `bayn_autonomous_cycle_loop_configured ${state.autonomousCycleLoop.configured ? 1 : 0}`,
-    '# HELP bayn_autonomous_cycle_loop_health_available Whether the configured scoped loop is live and its latest pass succeeded.',
+    '# HELP bayn_autonomous_cycle_loop_health_available Whether the configured scoped loop is live and has not failed or stalled.',
     '# TYPE bayn_autonomous_cycle_loop_health_available gauge',
     `bayn_autonomous_cycle_loop_health_available ${loopHealthy ? 1 : 0}`,
     '# HELP bayn_autonomous_cycle_loop_last_pass Latest bounded autonomous cycle pass result.',
