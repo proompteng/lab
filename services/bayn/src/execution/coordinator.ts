@@ -380,6 +380,18 @@ export const recover = (intentId: string, operation: MutationOperation) =>
     ) {
       return latest
     }
+    if (
+      operation === MutationOperation.Submit &&
+      (yield* mutations.latest(intentId, MutationOperation.Cancel)) !== undefined
+    ) {
+      return yield* Effect.fail(
+        new ExecutionError({
+          operation,
+          failure: ExecutionFailure.InvalidState,
+          message: 'submit recovery requires the durable cancellation to recover first',
+        }),
+      )
+    }
     yield* validateRecovery(stored.intent, latest)
 
     const currentMillis = yield* Clock.currentTimeMillis

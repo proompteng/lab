@@ -634,6 +634,39 @@ describe('paper execution coordinator', () => {
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 2 })
   })
 
+  test('recovers a durable cancellation before allowing submit history to resolve', async () => {
+    const harness = makeHarness()
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* cancel(intentId, 1_000)
+          yield* TestClock.adjust(1_100)
+          const blockedSubmit = yield* Effect.flip(recover(intentId, MutationOperation.Submit))
+          yield* TestClock.adjust(1_000)
+          const canceled = yield* recover(intentId, MutationOperation.Cancel)
+          const submitReplay = yield* recover(intentId, MutationOperation.Submit)
+          return { blockedSubmit, canceled, submitReplay }
+        }),
+      ),
+    )
+
+    expect(result.blockedSubmit).toMatchObject({
+      failure: ExecutionFailure.InvalidState,
+      message: 'submit recovery requires the durable cancellation to recover first',
+    })
+    expect(result.canceled).toMatchObject({
+      eventType: MutationEventType.RecoveryFound,
+      brokerOrderId: orderId,
+    })
+    expect(result.submitReplay.eventType).toBe(MutationEventType.SubmitAccepted)
+    expect(harness.intent()).toMatchObject({
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Canceled,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 1 })
+  })
+
   test('keeps an accepted intent acknowledged when lookup returns a different broker order', async () => {
     const otherOrderId = 'f93d3f58-0e70-4cd2-a9e1-2fcb89d76f74'
     const harness = makeHarness({

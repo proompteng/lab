@@ -1181,6 +1181,108 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     })
   })
 
+  test('does not let terminal submit recovery overtake a durable cancellation', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '9'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+      }),
+    )
+    await execution.dispose()
+    await activateAuditedPaperAuthority()
+
+    const mutation = makeMutationRuntime()
+    const submitHash = '7'.repeat(64)
+    const cancelHash = cancelRequestHash(orderId)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
+          requestId: 'accepted-before-cancel',
+          status: 200,
+          contentHash: '6'.repeat(64),
+          observedAt: new Date(base + 1).toISOString(),
+        })
+        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(base + 2).toISOString())
+        yield* store.cancelAccepted(intent.intentId, cancelHash, orderId, {
+          requestId: 'accepted-cancel',
+          status: 204,
+          contentHash: '5'.repeat(64),
+          observedAt: new Date(base + 3).toISOString(),
+        })
+        const submitRecovery = yield* Effect.exit(
+          store.recoveryFound(
+            intent.intentId,
+            MutationOperation.Submit,
+            submitHash,
+            orderId,
+            {
+              requestId: 'terminal-submit-during-cancel',
+              status: 200,
+              contentHash: '4'.repeat(64),
+              observedAt: new Date(base + 4).toISOString(),
+            },
+            TerminalOutcome.Filled,
+          ),
+        )
+        const afterSubmitRecovery = yield* sqlIntentState(intent.intentId)
+        const canceled = yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Cancel,
+          cancelHash,
+          orderId,
+          {
+            requestId: 'terminal-cancel-recovery',
+            status: 200,
+            contentHash: '3'.repeat(64),
+            observedAt: new Date(base + 5).toISOString(),
+          },
+          TerminalOutcome.Canceled,
+        )
+        const sql = yield* PgClient.PgClient
+        const [state] = yield* sql<{
+          events: number
+          state: string
+          state_version: number
+          terminal_outcome: string | null
+        }>`
+          SELECT
+            state,
+            state_version::integer,
+            terminal_outcome,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { afterSubmitRecovery, canceled, state, submitRecovery }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.submitRecovery)).toBe(true)
+    if (Exit.isFailure(observed.submitRecovery)) {
+      expect(Cause.pretty(observed.submitRecovery.cause)).toContain(
+        'terminal submit recovery cannot overtake a durable cancellation',
+      )
+    }
+    expect(observed.afterSubmitRecovery).toEqual({ state: 'ACKNOWLEDGED', state_version: 4 })
+    expect(observed.canceled).toMatchObject({
+      sequence: 3,
+      eventType: MutationEventType.RecoveryFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.state).toEqual({
+      state: 'TERMINAL',
+      state_version: 5,
+      terminal_outcome: 'CANCELED',
+      events: 5,
+    })
+  })
+
   test('retains acknowledged state for open recovery before a later exact terminal observation', async () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '7'.repeat(64) })))

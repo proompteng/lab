@@ -617,6 +617,20 @@ const makeStore = Effect.gen(function* () {
             ) {
               return previous
             }
+            if (
+              operation === MutationOperation.Submit &&
+              eventType === MutationEventType.RecoveryFound &&
+              fields.nextState === IntentState.Terminal &&
+              (yield* readLatest(input.intentId, MutationOperation.Cancel)) !== undefined
+            ) {
+              return yield* Effect.fail(
+                storeError(
+                  storeOperation,
+                  'conflict',
+                  'terminal submit recovery cannot overtake a durable cancellation',
+                ),
+              )
+            }
             yield* append(event)
 
             if (fields.recover === true) {
