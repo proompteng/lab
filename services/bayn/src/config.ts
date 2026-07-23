@@ -58,6 +58,12 @@ export interface RuntimeConfig {
   }
 }
 
+export interface AutonomousCycleRuntimeConfig {
+  readonly cyclePollIntervalMs: number
+}
+
+export type LoadedRuntimeConfig = RuntimeConfig & AutonomousCycleRuntimeConfig
+
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
 const OperationalThresholdMs = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 86_400_000 }))
@@ -103,6 +109,7 @@ const runtimeConfig = Config.all({
   cycleStallThresholdMs: operationalThreshold('BAYN_CYCLE_STALL_THRESHOLD_MS', 300_000),
   reconciliationStaleThresholdMs: operationalThreshold('BAYN_RECONCILIATION_STALE_THRESHOLD_MS', 120_000),
   unknownMutationThresholdMs: operationalThreshold('BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', 300_000),
+  cyclePollIntervalMs: operationalThreshold('BAYN_CYCLE_POLL_INTERVAL_MS', 30_000),
   alpacaAccountId: Config.option(nonEmptyString('BAYN_ALPACA_ACCOUNT_ID')),
   alpacaKey: Config.option(secretString('BAYN_ALPACA_KEY_ID')),
   alpacaSecret: Config.option(secretString('BAYN_ALPACA_SECRET_KEY')),
@@ -149,6 +156,7 @@ const runtimeConfig = Config.all({
     cycleStallThresholdMs: config.cycleStallThresholdMs,
     reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
     unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+    cyclePollIntervalMs: config.cyclePollIntervalMs,
     configuredAlpaca: {
       accountId: config.alpacaAccountId,
       key: config.alpacaKey,
@@ -190,7 +198,7 @@ const decodeEmbeddedBuildMetadata = Schema.decodeUnknownSync(EmbeddedBuildMetada
 
 export const loadConfig = (
   embedded: EmbeddedBuildMetadata | undefined = embeddedBuildMetadata,
-): Effect.Effect<RuntimeConfig, OperationalError> =>
+): Effect.Effect<LoadedRuntimeConfig, OperationalError> =>
   runtimeConfig.pipe(
     Effect.mapError((cause) => operationalError('config', 'load', 'invalid runtime configuration', cause)),
     Effect.flatMap((config) =>
@@ -236,7 +244,7 @@ export const loadConfig = (
     }),
     Effect.flatMap((config) =>
       Effect.try({
-        try: (): RuntimeConfig => {
+        try: (): LoadedRuntimeConfig => {
           if (embedded === undefined && config.provenanceMode !== 'development') {
             throw new Error('production provenance requires compile-time build metadata')
           }

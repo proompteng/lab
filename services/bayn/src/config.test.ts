@@ -55,6 +55,7 @@ describe('Effect configuration', () => {
     expect(config.cycleStallThresholdMs).toBe(300_000)
     expect(config.reconciliationStaleThresholdMs).toBe(120_000)
     expect(config.unknownMutationThresholdMs).toBe(300_000)
+    expect(config.cyclePollIntervalMs).toBe(30_000)
     expect(config.alpaca).toBeUndefined()
     expect(config.clickhouse).toMatchObject({
       snapshotId: 'd'.repeat(64),
@@ -184,11 +185,13 @@ describe('Effect configuration', () => {
     })
   })
 
-  test('keeps operational alert thresholds positive and bounded to one day', async () => {
+  test('keeps operational thresholds and the cycle poll interval bounded to one day', async () => {
     for (const [name, value] of [
       ['BAYN_CYCLE_STALL_THRESHOLD_MS', '999'],
       ['BAYN_RECONCILIATION_STALE_THRESHOLD_MS', '86400001'],
       ['BAYN_UNKNOWN_MUTATION_THRESHOLD_MS', '0'],
+      ['BAYN_CYCLE_POLL_INTERVAL_MS', '999'],
+      ['BAYN_CYCLE_POLL_INTERVAL_MS', '86400001'],
     ] as const) {
       const invalid = new Map(runtimeEnvironment)
       invalid.set(name, value)
@@ -200,6 +203,12 @@ describe('Effect configuration', () => {
         operation: 'load',
       })
     }
+
+    const configured = new Map(runtimeEnvironment)
+    configured.set('BAYN_CYCLE_POLL_INTERVAL_MS', '15000')
+    expect(
+      (await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), configured))).cyclePollIntervalMs,
+    ).toBe(15_000)
   })
 
   test('rejects an invalid pinned qualification run ID', async () => {
