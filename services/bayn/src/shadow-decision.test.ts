@@ -29,7 +29,7 @@ import {
   type Reconciliation,
 } from './paper'
 import { reconciledStateHash } from './reconciliation'
-import { BrokerMode, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
+import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
 import { strictParseOptions } from './schemas'
 import { decodeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import {
@@ -373,7 +373,6 @@ describe('OBSERVE shadow decision', () => {
         snapshotContentHash,
         strategyDecisionHash: canonicalHashV1(input.compiledDecision),
         policyHash: canonicalHashV1(input.policy),
-        accountSnapshotHash: canonicalHashV1(input.plannerInput.brokerState.account),
         planningBrokerStateHash: input.plannerInput.brokerState.reconciliation.observedHash,
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
@@ -422,6 +421,18 @@ describe('OBSERVE shadow decision', () => {
       '500000000',
       '1000000000',
     ])
+    expect(first.deltaRisk.map(({ evaluation }) => evaluation.decision.reasonCodes)).toEqual([
+      [Reason.AuthorityNotPaper],
+      [Reason.AuthorityNotPaper],
+    ])
+    expect(
+      first.deltaRisk.every(
+        ({ evaluation }) => evaluation.gates.find((gate) => gate.name === Gate.Reconciliation)?.passed === true,
+      ),
+    ).toBe(true)
+    expect(first.deltaRisk[1]?.evaluation.input.positionsHash).not.toBe(
+      first.deltaRisk[0]?.evaluation.input.positionsHash,
+    )
     expect(
       first.deltaRisk.every(
         ({ evaluation }) =>

@@ -375,24 +375,29 @@ const makeGate = (
 const isUnresolved = (status: OrderStatus): boolean =>
   status === OrderStatus.New || status === OrderStatus.PartiallyFilled || status === OrderStatus.Pending
 
-export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluation => {
+export const evaluate = (
+  intent: Intent,
+  state: State,
+  policy: Policy,
+  proposedPositions: State['positions'] = state.positions,
+): Evaluation => {
   const evaluatedAt = instant(state.evaluatedAt)
   const policyHash = canonicalHashV1(policy)
   const referencePrice = BigInt(state.referencePriceMicros)
   const expectedPrice = BigInt(state.expectedExecutionPriceMicros)
   const orderNotional = divideUp(BigInt(intent.quantityMicros) * expectedPrice, QUANTITY_SCALE)
   const direction = intent.side === OrderSide.Buy ? 1n : -1n
-  const currentSymbolQuantity = state.positions
+  const currentSymbolQuantity = proposedPositions
     .filter((position) => position.symbol === intent.symbol)
     .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
   const postTradeSymbolQuantity = currentSymbolQuantity + direction * BigInt(intent.quantityMicros)
   const postTradeSymbolExposureNumerator = postTradeSymbolQuantity * referencePrice
   const postTradeSymbolExposure = divideAwayFromZero(postTradeSymbolExposureNumerator, QUANTITY_SCALE)
   const postTradeSymbolExposureMagnitude = divideUp(absolute(postTradeSymbolExposureNumerator), QUANTITY_SCALE)
-  const otherGrossExposure = state.positions
+  const otherGrossExposure = proposedPositions
     .filter((position) => position.symbol !== intent.symbol)
     .reduce((total, position) => total + absolute(BigInt(position.marketValueMicros)), 0n)
-  const otherNetExposure = state.positions
+  const otherNetExposure = proposedPositions
     .filter((position) => position.symbol !== intent.symbol)
     .reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
   const postTradeGrossExposure = otherGrossExposure + postTradeSymbolExposureMagnitude
@@ -651,7 +656,7 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     dayStartEquityMicros: state.dayStartEquityMicros,
     peakEquityMicros: state.peakEquityMicros,
   })
-  const positionsHash = canonicalHashV1({ items: state.positions, observedAt: state.positionsObservedAt })
+  const positionsHash = canonicalHashV1({ items: proposedPositions, observedAt: state.positionsObservedAt })
   const ordersHash = canonicalHashV1({
     items: state.orders,
     observedAt: state.ordersObservedAt,
@@ -670,6 +675,7 @@ export const evaluate = (intent: Intent, state: State, policy: Policy): Evaluati
     intent,
     policy,
     state,
+    proposedPositions,
     componentHashes: { accountSnapshotHash, positionsHash, ordersHash, marketDataHash },
   } as const
   const inputHash = canonicalHashV1(inputMaterial)

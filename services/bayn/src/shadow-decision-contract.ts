@@ -17,7 +17,6 @@ const ShadowDecisionBindingsSchema = Schema.Struct({
   strategyDecisionHash: Sha256Schema,
   policyHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
-  accountSnapshotHash: Sha256Schema,
   planningBrokerStateHash: Sha256Schema,
   reconciliationId: Sha256Schema,
   reconciliationHash: Sha256Schema,

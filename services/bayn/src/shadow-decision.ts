@@ -247,12 +247,11 @@ export const buildObserveShadowDecision = (
       )
       const state = yield* decodeState({
         ...provided.state,
-        positions: projectedPositions,
         reservedBuyingPowerMicros: reservedBuyingPower.toString(),
         dailyTradedNotionalMicros: dailyTradedNotional.toString(),
       }).pipe(Effect.mapError((cause) => error('contract', 'cumulative shadow risk state is invalid', cause)))
       const evaluation = yield* Effect.try({
-        try: () => evaluate(intent, state, input.policy),
+        try: () => evaluate(intent, state, input.policy, projectedPositions),
         catch: (cause) => error('risk', 'shadow target risk evaluation failed', cause),
       })
       if (
@@ -296,7 +295,6 @@ export const buildObserveShadowDecision = (
             strategyDecisionHash,
             policyHash,
             accountId: input.plannerInput.accountId,
-            accountSnapshotHash: canonicalHashV1(input.plannerInput.brokerState.account),
             planningBrokerStateHash: reconciledStateHash(plannerBrokerStateMaterial(input.plannerInput)),
             reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
             reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,

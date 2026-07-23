@@ -231,7 +231,6 @@ const makeShadowDecision = (
   draft: CycleDraft,
   boundSnapshotId: string,
   options: {
-    readonly accountSnapshotHash?: string
     readonly createdAt?: string
     readonly snapshotContentHash?: string
     readonly strategyDecisionHash?: string
@@ -267,7 +266,6 @@ const makeShadowDecision = (
       strategyDecisionHash: options.strategyDecisionHash ?? strategyDecisionHash,
       policyHash: '2'.repeat(64),
       accountId: draft.identity.accountId,
-      accountSnapshotHash: options.accountSnapshotHash ?? '3'.repeat(64),
       planningBrokerStateHash: reconciliation.observedHash,
       reconciliationId: reconciliation.reconciliationId,
       reconciliationHash: reconciliation.contentHash,
@@ -806,7 +804,7 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
   test('atomically binds one content-hashed shadow decision with replay and zero dispatch state', async () => {
     const draft = makeDraft('paper-account-shadow-binding')
     const document = makeShadowDecision(draft, snapshotA)
-    const divergent = makeShadowDecision(draft, snapshotA, { accountSnapshotHash: '7'.repeat(64) })
+    const divergent = makeShadowDecision(draft, snapshotA, { strategyDecisionHash: '7'.repeat(64) })
     const wrongSnapshot = makeShadowDecision(draft, snapshotA, { snapshotContentHash: '7'.repeat(64) })
     const missingDocumentDraft = makeDraft('paper-account-shadow-missing-document')
     const orphanDocumentDraft = makeDraft('paper-account-shadow-orphan-document')
