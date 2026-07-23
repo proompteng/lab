@@ -107,6 +107,9 @@ export const updateBaynManifests = (options: UpdateBaynManifestOptions): BaynMan
   const qualificationPins = [...deployment.matchAll(new RegExp(qualificationPin.source, 'g'))]
   if (qualificationPins.length > 1) throw new Error('expected at most one BAYN_QUALIFICATION_RUN_ID block')
   const hadQualificationPin = qualificationPins.length === 1
+  if (hadQualificationPin && !hashPattern.test(environmentValue(deployment, 'BAYN_QUALIFICATION_RUN_ID'))) {
+    throw new Error('invalid deployed BAYN_QUALIFICATION_RUN_ID')
+  }
   const deployedSourceSha = environmentValue(deployment, 'BAYN_CODE_REVISION')
   const deployedBehaviorHash = environmentValue(deployment, 'BAYN_STRATEGY_BEHAVIOR_HASH')
   const deployedParameterHash = environmentValue(deployment, 'BAYN_STRATEGY_PARAMETER_HASH')

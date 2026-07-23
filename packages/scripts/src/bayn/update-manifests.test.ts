@@ -157,6 +157,14 @@ describe('Bayn manifest promotion', () => {
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('qualification-dossier')
   })
 
+  test('rejects a malformed qualification run ID before preservation', () => {
+    const paths = makeFixture({ qualificationRunId: 'not-a-run-id' })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+
+    expect(() => promote(paths)).toThrow('invalid deployed BAYN_QUALIFICATION_RUN_ID')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+  })
+
   test('holds an incompatible strategy against an already-qualified snapshot without writing files', () => {
     const paths = makeFixture()
     const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
