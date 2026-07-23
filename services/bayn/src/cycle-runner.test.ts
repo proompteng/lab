@@ -254,12 +254,16 @@ const cycleFrom = (draft: CycleDraft, observedAt: string): AutonomousCycle => {
   }
 }
 
-const makeNoTradeDecision = (cycle: AutonomousCycle, createdAt: string): ObserveShadowDecisionDocument => {
+const makeDecision = (
+  cycle: AutonomousCycle,
+  createdAt: string,
+  blockedReason?: Exclude<TargetPlanReason, TargetPlanReason.TargetsSatisfied>,
+): ObserveShadowDecisionDocument => {
   const targetPlanMaterial = {
     schemaVersion: 'bayn.paper-reference-target-plan.v1' as const,
     inputHash: '4'.repeat(64),
-    status: TargetPlanStatus.NoTrade,
-    reason: TargetPlanReason.TargetsSatisfied,
+    status: blockedReason === undefined ? TargetPlanStatus.NoTrade : TargetPlanStatus.Blocked,
+    reason: blockedReason ?? TargetPlanReason.TargetsSatisfied,
     targets: [],
     intentTargets: [],
     requiredReferenceBuyNotionalMicros: '0',
@@ -576,12 +580,12 @@ describe('autonomous cycle runner', () => {
       ),
     ).toThrow('terminal cycles must not enter autonomous recovery')
 
-    const decision = makeNoTradeDecision(active, '2026-01-30T21:24:00.000Z')
+    const decision = makeDecision(active, '2026-01-30T21:23:30.000Z')
     const decisionBound: AutonomousCycle = {
       ...active,
       bindings: { ...active.bindings, decisionHash: decision.contentHash },
       stateVersion: active.stateVersion + 1,
-      updatedAt: decision.createdAt,
+      updatedAt: '2026-01-30T21:24:00.000Z',
     }
     const afterCutoff = new Date(Date.parse(active.window.submissionCutoffAt) + 1).toISOString()
     expect(
@@ -605,6 +609,26 @@ describe('autonomous cycle runner', () => {
       cycleId: decisionBound.identity.cycleId,
       observedAt: afterCutoff,
       state: CycleState.NoTrade,
+    })
+
+    const blockedDecision = makeDecision(active, decision.createdAt, TargetPlanReason.InputStale)
+    const blockedDecisionBound: AutonomousCycle = {
+      ...decisionBound,
+      bindings: { ...active.bindings, decisionHash: blockedDecision.contentHash },
+    }
+    expect(
+      selectCycleRecovery(
+        recoveryState(blockedDecisionBound, {
+          strategyProtocolHash: 'f'.repeat(64),
+          observedAt: afterCutoff,
+          decisionDocument: blockedDecision,
+        }),
+      ),
+    ).toEqual({
+      action: 'BLOCK',
+      cycleId: blockedDecisionBound.identity.cycleId,
+      observedAt: afterCutoff,
+      reason: CycleTerminalReason.DataStale,
     })
   })
 
@@ -918,7 +942,7 @@ describe('autonomous cycle runner', () => {
         const activated = yield* provide(runAutonomousCyclePass(context()), read, store, marketData)
         yield* TestClock.setTime(Date.parse(decisionAt))
         const decisionBound = yield* provide(
-          runAutonomousCyclePass(context(undefined, (cycle) => Effect.succeed(makeNoTradeDecision(cycle, decisionAt)))),
+          runAutonomousCyclePass(context(undefined, (cycle) => Effect.succeed(makeDecision(cycle, decisionAt)))),
           read,
           store,
           marketData,
@@ -981,7 +1005,7 @@ describe('autonomous cycle runner', () => {
         return yield* provide(
           runAutonomousCyclePass(
             context(undefined, (cycle) =>
-              TestClock.adjust(9 * 60_000).pipe(Effect.as(makeNoTradeDecision(cycle, documentCreatedAt))),
+              TestClock.adjust(9 * 60_000).pipe(Effect.as(makeDecision(cycle, documentCreatedAt))),
             ),
           ),
           read,
