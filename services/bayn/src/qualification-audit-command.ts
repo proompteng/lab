@@ -10,7 +10,7 @@ import { ProtocolSchema } from './protocol'
 import { QualificationLockSchema, QualificationResultSchema } from './qualification'
 import {
   auditQualification,
-  classifySignalAccess,
+  classifySignalTableAccess,
   type AuditDatabaseSnapshot,
   type RepositoryAudit,
   type SignalAccessRecord,
@@ -29,7 +29,6 @@ const IsoInstant = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2
 const ReplicaName = NonEmptyString
 const GateScalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 const AuditClickhouseUrls = Config.Array(Schema.URLFromString).check(Schema.isMinLength(2), Schema.isUnique())
-const SignalIntegrityQueryIds = Config.Array(NonEmptyString).check(Schema.isUnique())
 
 const RunRow = Schema.Struct({
   run_id: Sha256,
@@ -105,7 +104,7 @@ const AccessRow = Schema.Struct({
   query_id: NonEmptyString,
   query_start_time: IsoInstant,
   user: NonEmptyString,
-  kind: Schema.Literals(['manifest', 'sessions', 'bars']),
+  tables: Schema.Array(NonEmptyString),
 })
 const ReplicaRow = Schema.Struct({ replica: ReplicaName })
 
@@ -131,9 +130,6 @@ const config = Config.all({
   signalUrl: Config.string('BAYN_AUDIT_SIGNAL_URL'),
   signalUsername: Config.string('BAYN_AUDIT_SIGNAL_USERNAME'),
   signalPublisherUsername: Config.string('BAYN_AUDIT_SIGNAL_PUBLISHER_USERNAME'),
-  signalIntegrityQueryIds: Config.schema(SignalIntegrityQueryIds, 'BAYN_AUDIT_SIGNAL_INTEGRITY_QUERY_IDS').pipe(
-    Config.withDefault([]),
-  ),
   signalPassword: Config.redacted('BAYN_AUDIT_SIGNAL_PASSWORD'),
   auditClickhouseUrls: Config.schema(AuditClickhouseUrls, 'BAYN_AUDIT_CLICKHOUSE_URLS'),
   auditClickhouseUsername: Config.string('BAYN_AUDIT_CLICKHOUSE_USERNAME'),
@@ -413,11 +409,7 @@ const readSignalReplicaAccess = (
         query_id,
         formatDateTime(toTimeZone(query_start_time_microseconds, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ') AS query_start_time,
         user,
-        multiIf(
-          has(tables, ${sql.param('String', barsTable)}), 'bars',
-          has(tables, ${sql.param('String', sessionsTable)}), 'sessions',
-          'manifest'
-        ) AS kind
+        tables
       FROM system.query_log
       WHERE type = 'QueryStart'
         AND query_start_time_microseconds >= parseDateTime64BestEffort(${sql.param('String', finalizedAt)}, 6)
@@ -436,21 +428,13 @@ const readSignalReplicaAccess = (
     return {
       replica,
       topology,
-      access: (yield* decodeAccessRows(rows)).map((row) =>
-        classifySignalAccess(
-          {
-            replica: row.replica,
-            queryId: row.query_id,
-            queryStartTime: row.query_start_time,
-            user: row.user,
-            kind: row.kind,
-          },
-          {
-            principal: input.auditClickhouseUsername,
-            queryIds: input.signalIntegrityQueryIds,
-          },
-        ),
-      ),
+      access: (yield* decodeAccessRows(rows)).map((row) => ({
+        replica: row.replica,
+        queryId: row.query_id,
+        queryStartTime: row.query_start_time,
+        user: row.user,
+        kind: classifySignalTableAccess(row.tables, signalTables),
+      })),
     }
   })
   return program.pipe(
@@ -564,14 +548,7 @@ const main = Effect.gen(function* () {
     database,
     signalReplicas: signalAccess.replicas,
     signalAccess: signalAccess.access,
-    signalPrincipals: {
-      candidate: input.signalUsername,
-      publishers: [input.signalPublisherUsername],
-      integrity: {
-        principal: input.auditClickhouseUsername,
-        queryIds: input.signalIntegrityQueryIds,
-      },
-    },
+    signalPrincipals: { candidate: input.signalUsername, publishers: [input.signalPublisherUsername] },
     repository,
   }
   const report = yield* Effect.try({

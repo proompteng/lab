@@ -130,6 +130,12 @@ The cross-asset Signal history is finalized and accepted. The explicit M2.2 rele
 audit output, and TigerBeetle journal unchanged. Runtime recovery reads the durable EvidenceStore graph by run ID; no
 dossier file is mounted.
 
+The released cross-asset run is terminal `REJECTED` but non-authorizing because its execution contract was not
+live-causal. Its retrospective audit also fails closed: ClickHouse records pre-lock Bayn/operator reads of the bars
+table, but cannot prove after the fact that the results contained only bounded publication count/hash evidence. The
+audit therefore fails candidate-bar chronology and principal checks. GitOps may pin that terminal run ID for immutable
+database recovery under `OBSERVE`; the pin clears no qualification or mutation gate.
+
 At each month-end close, the strategy computes volatility-normalized returns over 21, 63, 126, and 252 sessions,
 averages them into a composite score, and assigns weight only to positive scores. Weights are redistributed under a 35%
 per-symbol cap, quantized deterministically, and scaled down when estimated portfolio volatility exceeds 10%. Residual

@@ -5,7 +5,7 @@ import { canonicalHashV1 } from './hash'
 import { makeQualificationResult } from './qualification'
 import {
   auditQualification,
-  classifySignalAccess,
+  classifySignalTableAccess,
   type AuditDatabaseSnapshot,
   type QualificationAuditInput,
 } from './audit/audit'
@@ -270,11 +270,7 @@ const fixture = (priorTrialRunIds: readonly string[] = []): QualificationAuditIn
         kind: 'bars',
       },
     ],
-    signalPrincipals: {
-      candidate: 'bayn',
-      publishers: ['signal-publisher'],
-      integrity: { principal: 'publication-auditor', queryIds: [] },
-    },
+    signalPrincipals: { candidate: 'bayn', publishers: ['signal-publisher'] },
     repository: { sourceCommitExists: true, sourceCommitAncestorOfMain: true, preLockResultReferences: [] },
   }
 }
@@ -369,45 +365,15 @@ describe('qualification audit', () => {
     expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(false)
   })
 
-  test('permits pre-lock publication-integrity reads without treating them as candidate bar inspection', () => {
-    const input = fixture()
-    const report = auditQualification({
-      ...input,
-      signalPrincipals: {
-        ...input.signalPrincipals,
-        integrity: { principal: 'publication-auditor', queryIds: ['publication-integrity'] },
-      },
-      signalAccess: [
-        ...input.signalAccess,
-        {
-          replica: 'replica-0',
-          queryId: 'publication-integrity',
-          queryStartTime: '2026-07-20T11:59:58.500000Z',
-          user: 'publication-auditor',
-          kind: 'integrity',
-        },
-      ],
-    })
+  test('classifies Signal access from table metadata with bars taking fail-closed precedence', () => {
+    const tables = fixture().manifest.tables
 
-    expect(report.status).toBe('PASS')
-    expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(true)
-    expect(report.checks.find((check) => check.name === 'signal-read-principals')?.passed).toBe(true)
-  })
-
-  test('does not exempt a bars read unless its principal and exact query ID are allowlisted', () => {
-    const authority = { principal: 'publication-auditor', queryIds: ['bounded-proof'] }
-    const rawBarsRead = {
-      replica: 'replica-0',
-      queryId: 'raw-bars-with-spoofed-alias',
-      queryStartTime: '2026-07-20T11:59:58.500000Z',
-      user: 'publication-auditor',
-      kind: 'bars' as const,
-    }
-
-    expect(classifySignalAccess(rawBarsRead, authority).kind).toBe('bars')
-    expect(classifySignalAccess({ ...rawBarsRead, queryId: 'bounded-proof' }, authority).kind).toBe('integrity')
-    expect(classifySignalAccess({ ...rawBarsRead, queryId: 'bounded-proof', user: 'notebook' }, authority).kind).toBe(
-      'bars',
+    expect(classifySignalTableAccess([`signal.${tables.bars}`], tables)).toBe('bars')
+    expect(classifySignalTableAccess([`signal.${tables.manifests}`, `signal.${tables.bars}`], tables)).toBe('bars')
+    expect(classifySignalTableAccess([`signal.${tables.sessions}`], tables)).toBe('sessions')
+    expect(classifySignalTableAccess([`signal.${tables.manifests}`], tables)).toBe('manifest')
+    expect(() => classifySignalTableAccess(['system.query_log'], tables)).toThrow(
+      'query log record does not access a Signal evidence table',
     )
   })
 
