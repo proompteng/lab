@@ -256,6 +256,288 @@ describePostgres('paper accounting persistence', () => {
     await migrations.dispose()
   }, 15_000)
 
+  test('initializes, exactly replays, and rotates one OBSERVE authority generation', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const [databaseBefore] = yield* sql<{ observed_at: Date }>`
+            SELECT clock_timestamp() AS observed_at
+          `
+          const first = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('authority-generation-a'),
+            maximum: Authority.Observe,
+          })
+          const [databaseAfter] = yield* sql<{ observed_at: Date }>`
+            SELECT clock_timestamp() AS observed_at
+          `
+          const [beforeReplay] = yield* sql<{ tuple_id: string; version: number }>`
+            SELECT xmin::text AS tuple_id, version::integer
+            FROM authority_state
+          `
+          const replay = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('authority-generation-a'),
+            maximum: Authority.Observe,
+          })
+          const [afterReplay] = yield* sql<{ tuple_id: string; version: number }>`
+            SELECT xmin::text AS tuple_id, version::integer
+            FROM authority_state
+          `
+          const rotated = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('authority-generation-b'),
+            maximum: Authority.Observe,
+          })
+          const [afterRotation] = yield* sql<{ rows: number; tuple_id: string; version: number }>`
+            SELECT
+              count(*) OVER ()::integer AS rows,
+              xmin::text AS tuple_id,
+              version::integer
+            FROM authority_state
+          `
+          return {
+            first,
+            replay,
+            rotated,
+            databaseBefore: databaseBefore.observed_at,
+            databaseAfter: databaseAfter.observed_at,
+            beforeReplay,
+            afterReplay,
+            afterRotation,
+          }
+        }),
+      )
+
+      expect(result.first).toEqual({
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: hash('authority-generation-a'),
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 1,
+        updatedAt: expect.any(String),
+      })
+      expect(Date.parse(result.first.updatedAt)).toBeGreaterThanOrEqual(result.databaseBefore.getTime())
+      expect(Date.parse(result.first.updatedAt)).toBeLessThanOrEqual(result.databaseAfter.getTime())
+      expect(result.replay).toEqual(result.first)
+      expect(result.afterReplay).toEqual(result.beforeReplay)
+      expect(result.rotated).toEqual({
+        ...result.first,
+        generationHash: hash('authority-generation-b'),
+        version: 2,
+        updatedAt: expect.any(String),
+      })
+      expect(Date.parse(result.rotated.updatedAt)).toBeGreaterThan(Date.parse(result.first.updatedAt))
+      expect(result.afterRotation).toMatchObject({ rows: 1, version: 2 })
+      expect(result.afterRotation.tuple_id).not.toBe(result.afterReplay.tuple_id)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('serializes concurrent absent-row authority initialization', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const states = yield* Effect.all(
+            Array.from({ length: 12 }, () =>
+              store.ensureAuthorityGeneration({
+                generationHash: hash('concurrent-authority-generation'),
+                maximum: Authority.Observe,
+              }),
+            ),
+            { concurrency: 'unbounded' },
+          )
+          const sql = yield* PgClient.PgClient
+          const [stored] = yield* sql<{ rows: number; version: number }>`
+            SELECT count(*) OVER ()::integer AS rows, version::integer
+            FROM authority_state
+          `
+          return { states, stored }
+        }),
+      )
+
+      expect(result.states).toHaveLength(12)
+      expect(result.states.every((state) => state.version === 1)).toBe(true)
+      expect(new Set(result.states.map((state) => JSON.stringify(state))).size).toBe(1)
+      expect(result.stored).toEqual({ rows: 1, version: 1 })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rotates monotonically while preserving an active kill exactly', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* store.ensureAuthorityGeneration({
+            generationHash: hash('killed-authority-generation'),
+            maximum: Authority.Observe,
+          })
+          const sql = yield* PgClient.PgClient
+          const [killed] = yield* sql<{ updated_at: Date }>`
+            UPDATE authority_state
+            SET
+              kill_state = 'ACTIVE',
+              reason = 'operator kill',
+              version = version + 1,
+              updated_at = clock_timestamp()
+            WHERE singleton
+            RETURNING updated_at
+          `
+          const rotated = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('rotated-killed-authority-generation'),
+            maximum: Authority.Observe,
+          })
+          return { killedAt: killed.updated_at.toISOString(), rotated }
+        }),
+      )
+
+      expect(result.rotated).toEqual({
+        schemaVersion: 'bayn.paper-authority.v1',
+        generationHash: hash('rotated-killed-authority-generation'),
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Active,
+        reason: 'operator kill',
+        version: 3,
+        updatedAt: expect.any(String),
+      })
+      expect(Date.parse(result.rotated.updatedAt)).toBeGreaterThan(Date.parse(result.killedAt))
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects a future durable authority timestamp without rotating it', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          yield* store.ensureAuthorityGeneration({
+            generationHash: hash('future-authority-generation'),
+            maximum: Authority.Observe,
+          })
+          const sql = yield* PgClient.PgClient
+          yield* sql`
+            UPDATE authority_state
+            SET
+              version = version + 1,
+              updated_at = clock_timestamp() + interval '1 hour'
+            WHERE singleton
+          `
+          const [before] = yield* sql<{
+            generation_hash: string
+            tuple_id: string
+            updated_at: Date
+            version: number
+          }>`
+            SELECT generation_hash, xmin::text AS tuple_id, updated_at, version::integer
+            FROM authority_state
+          `
+          const failure = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: hash('rejected-future-authority-generation'),
+              maximum: Authority.Observe,
+            }),
+          )
+          const [after] = yield* sql<{
+            generation_hash: string
+            tuple_id: string
+            updated_at: Date
+            version: number
+          }>`
+            SELECT generation_hash, xmin::text AS tuple_id, updated_at, version::integer
+            FROM authority_state
+          `
+          return { before, failure, after }
+        }),
+      )
+
+      expect(result.failure).toMatchObject({
+        operation: 'authority',
+        failure: 'invariant',
+        message: 'durable authority update follows its database observation time',
+      })
+      expect(result.after).toEqual(result.before)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
+  test('rejects maximum conflicts, invalid input, and every PAPER request without writing', async () => {
+    const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const invalid = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: 'not-a-sha256',
+              maximum: Authority.Observe,
+            }),
+          )
+          const paper = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: hash('paper-authority-generation'),
+              maximum: Authority.Paper,
+            }),
+          )
+          const sql = yield* PgClient.PgClient
+          const [empty] = yield* sql<{ rows: number }>`
+            SELECT count(*)::integer AS rows FROM authority_state
+          `
+          yield* sql`
+            INSERT INTO authority_state (
+              schema_version, generation_hash, maximum, effective, kill_state, reason, version, updated_at
+            ) VALUES (
+              'bayn.paper-authority.v1', ${hash('conflicting-authority-generation')},
+              'PAPER', 'PAPER', 'CLEAR', NULL, 1, clock_timestamp()
+            )
+          `
+          const [beforeConflict] = yield* sql<{ tuple_id: string; version: number }>`
+            SELECT xmin::text AS tuple_id, version::integer FROM authority_state
+          `
+          const conflict = yield* Effect.flip(
+            store.ensureAuthorityGeneration({
+              generationHash: hash('conflicting-authority-generation'),
+              maximum: Authority.Observe,
+            }),
+          )
+          const [afterConflict] = yield* sql<{ tuple_id: string; version: number }>`
+            SELECT xmin::text AS tuple_id, version::integer FROM authority_state
+          `
+          const rotated = yield* store.ensureAuthorityGeneration({
+            generationHash: hash('observe-authority-generation'),
+            maximum: Authority.Observe,
+          })
+          return { invalid, paper, empty, conflict, beforeConflict, afterConflict, rotated }
+        }),
+      )
+
+      expect(result.invalid).toMatchObject({ operation: 'authority', failure: 'decode' })
+      expect(result.paper).toMatchObject({ operation: 'authority', failure: 'invariant' })
+      expect(result.empty).toEqual({ rows: 0 })
+      expect(result.conflict).toMatchObject({ operation: 'authority', failure: 'conflict' })
+      expect(result.afterConflict).toEqual(result.beforeConflict)
+      expect(result.rotated).toMatchObject({
+        generationHash: hash('observe-authority-generation'),
+        maximum: Authority.Observe,
+        effective: Authority.Observe,
+        kill: KillState.Clear,
+        version: 2,
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 15_000)
+
   test('appends typed broker events once and rejects conflicting source reuse', async () => {
     const runtime = makeStoreRuntime({ fail: false, planHashes: [] })
     try {
