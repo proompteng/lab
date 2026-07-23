@@ -27,8 +27,18 @@ import {
   type Order,
 } from '../broker/alpaca'
 import { canonicalHashV1 } from '../hash'
-import { IntentState, MutationOutcome, OrderSide, OrderType, TerminalOutcome, TimeInForce, type Intent } from '../paper'
-import { cancel, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
+import {
+  IntentState,
+  MutationOutcome,
+  OrderSide,
+  OrderType,
+  RiskOutcome,
+  TerminalOutcome,
+  TimeInForce,
+  type Intent,
+  type RiskDecision,
+} from '../paper'
+import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
 import { MutationEventType, MutationStore, mutationId, type MutationEvent, type MutationStoreShape } from './mutations'
 import { WriterFence, WriterFenceError } from './writer-fence'
@@ -56,6 +66,18 @@ const intent: Intent = {
   notionalLimitMicros: '200000000',
   state: IntentState.Approved,
   createdAt: initialTime,
+}
+
+const riskDecision: RiskDecision = {
+  schemaVersion: 'bayn.paper-risk-decision.v1',
+  decisionId: 'b'.repeat(64),
+  inputHash: 'f'.repeat(64),
+  intentId,
+  policyHash: intent.policyHash,
+  outcome: RiskOutcome.Approved,
+  reasonCodes: [],
+  decidedAt: initialTime,
+  expiresAt: '1970-01-01T00:10:00.000Z',
 }
 
 const brokerOrder = (status = OrderStatus.Accepted, observedAt = '1970-01-01T00:00:01.000Z'): Order => ({
@@ -110,7 +132,7 @@ interface HarnessOptions {
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
-  let stored: StoredIntent = { intent, stateVersion: 3, updatedAt: initialTime }
+  let stored: StoredIntent = { intent, decision: riskDecision, stateVersion: 3, updatedAt: initialTime }
   const latest = new Map<MutationOperation, MutationEvent>()
   let submitCalls = 0
   let cancelCalls = 0
@@ -390,9 +412,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
       }),
       Effect.provide(TestClock.layer()),
     )
+  const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
+    effect.pipe(Effect.provideService(IntentStore, intentStore))
 
   return {
     provide,
+    provideIntentRead,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
     state: () => stored.intent.state,
   }
@@ -410,6 +435,21 @@ const mismatchedSubmissionError = () =>
   })
 
 describe('paper execution coordinator', () => {
+  test('renders the exact committed request without touching the broker or mutation store', async () => {
+    const harness = makeHarness()
+    const result = await Effect.runPromise(harness.provideIntentRead(dryRunSubmit(intentId)))
+
+    expect(result).toEqual({
+      schemaVersion: 'bayn.paper-submit-dry-run.v1',
+      intentId,
+      clientOrderId: intent.clientOrderId,
+      requestHash: canonicalHashV1(orderRequestBody(intent)),
+      request: orderRequestBody(intent),
+    })
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Approved)
+  })
+
   test('records before submission and never calls the broker again for a replayed intent', async () => {
     const harness = makeHarness()
     const result = await Effect.runPromise(

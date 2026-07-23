@@ -11,7 +11,9 @@ import {
   fetchJson,
   readyState,
 } from './app-test-support'
+import type { BrokerReadShape } from './broker/alpaca'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
+import type { BrokerProbe } from './health'
 import { makeHttpLayer } from './http'
 import { Authority } from './paper'
 import { initialState } from './runtime-state'
@@ -63,6 +65,13 @@ describe('Bayn HTTP probes', () => {
               service: 'bayn',
               operational: { status: 'READY', ready: true, probeSequence: 1 },
               authority: { maximum: 'observe', brokerOrders: false, capitalPromotion: false },
+              broker: {
+                configured: false,
+                accountBound: false,
+                readAvailable: false,
+                executionEligible: false,
+                executionDisabledReason: 'ALPACA_NOT_CONFIGURED',
+              },
               build: { sourceRevision: provenance.sourceRevision, verification: 'embedded' },
               data: { status: 'CURRENT' },
               evidence: { status: 'CURRENT' },
@@ -185,6 +194,64 @@ describe('Bayn HTTP probes', () => {
             status: 200,
             body: { authority: { maximum: 'paper', brokerOrders: false, capitalPromotion: false } },
           })
+        }),
+      ),
+    )
+  })
+
+  test('keeps broker read capability out of runtime state and public status', async () => {
+    const unused = Effect.die(new Error('status must not invoke broker reads'))
+    const read: BrokerReadShape = {
+      account: unused,
+      positions: unused,
+      orders: () => unused,
+      orderById: () => unused,
+      orderByClientId: () => unused,
+      fillActivities: () => unused,
+    }
+    const broker: BrokerProbe = {
+      read,
+      expectedAccountId: 'paper-account-1',
+      executionEligible: false,
+      executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+    }
+    const runtimeState = initialState(broker)
+    expect(runtimeState.broker).not.toHaveProperty('read')
+    expect(Object.values(runtimeState.broker ?? {}).some((value) => typeof value === 'function')).toBe(false)
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* Ref.make(runtimeState)
+          const context = yield* Layer.build(
+            makeHttpLayer(
+              {
+                host: '127.0.0.1',
+                maximumAuthority: Authority.Observe,
+                operationTimeoutMs: 250,
+                port: 0,
+              },
+              state,
+              provenance,
+              'embedded',
+              successfulEvidenceStore.read,
+            ),
+          )
+          const address = Context.get(context, HttpServer.HttpServer).address
+          if (address._tag !== 'TcpAddress') throw new Error('test server did not bind a TCP port')
+
+          const response = yield* Effect.promise(() => fetchJson(address.port, '/v1/status'))
+          expect(response.body).toMatchObject({
+            broker: {
+              configured: true,
+              expectedAccountId: 'paper-account-1',
+              executionEligible: false,
+              executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+            },
+          })
+          const publicBroker = response.body.broker as Record<string, unknown>
+          expect(publicBroker).not.toHaveProperty('read')
+          expect(Object.values(publicBroker).some((value) => typeof value === 'function')).toBe(false)
         }),
       ),
     )

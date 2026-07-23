@@ -16,6 +16,21 @@ const verifiedState = (state: RuntimeState, dependency: DependencyHealth) => {
   return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
 }
 
+const publicBrokerState = (state: RuntimeState) =>
+  state.broker === null
+    ? {
+        configured: false,
+        expectedAccountId: null,
+        accountId: null,
+        accountBound: false,
+        readAvailable: false,
+        checkedAt: null,
+        executionEligible: false,
+        executionDisabledReason: 'ALPACA_NOT_CONFIGURED',
+        error: null,
+      }
+    : state.broker
+
 const publicState = (
   state: RuntimeState,
   maximumAuthority: Authority,
@@ -63,6 +78,7 @@ const publicState = (
       status: accounting,
       reconciliation: state.evidence?.reconciliation ?? null,
     },
+    broker: publicBrokerState(state),
     authority: {
       maximum: maximumAuthority === Authority.Paper ? 'paper' : 'observe',
       brokerOrders: false,
@@ -93,6 +109,9 @@ export const makeHttpLayer = (
       const failedDependencies = Object.entries(current.health.dependencies)
         .filter(([, dependency]) => dependency.status !== 'AVAILABLE')
         .map(([name]) => name)
+      if (current.broker !== null && (current.broker.accountBound !== true || current.broker.readAvailable !== true)) {
+        failedDependencies.push('broker')
+      }
       return jsonResponse(
         {
           ready,

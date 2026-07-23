@@ -18,8 +18,8 @@ import {
   type ReadEvidence,
 } from '../broker/alpaca'
 import { canonicalHashV1 } from '../hash'
-import { IntentState, TerminalOutcome, type Intent } from '../paper'
-import { IntentStore } from './intents'
+import { IntentState, RiskOutcome, TerminalOutcome, type Intent } from '../paper'
+import { IntentStore, type IntentStoreError } from './intents'
 import { MutationEventType, MutationStore, type MutationEvent } from './mutations'
 import { WriterFence } from './writer-fence'
 
@@ -36,6 +36,14 @@ export class ExecutionError extends Data.TaggedError('ExecutionError')<{
   readonly eligibleAt?: string
   readonly cause?: unknown
 }> {}
+
+export interface DryRunSubmit {
+  readonly schemaVersion: 'bayn.paper-submit-dry-run.v1'
+  readonly intentId: string
+  readonly clientOrderId: string
+  readonly requestHash: string
+  readonly request: ReturnType<typeof orderRequestBody>
+}
 
 const now = Clock.currentTimeMillis.pipe(Effect.map((millis) => new Date(millis).toISOString()))
 
@@ -123,6 +131,46 @@ const isSubmitResolved = (event: MutationEvent): boolean =>
   event.eventType === MutationEventType.SubmitAccepted ||
   event.eventType === MutationEventType.SubmitRejected ||
   event.eventType === MutationEventType.RecoveryFound
+
+export const dryRunSubmit = (
+  intentId: string,
+): Effect.Effect<DryRunSubmit, ExecutionError | IntentStoreError, IntentStore> =>
+  readIntent(MutationOperation.Submit, intentId).pipe(
+    Effect.flatMap((stored) => {
+      if (
+        stored.intent.state !== IntentState.Approved ||
+        stored.decision?.outcome !== RiskOutcome.Approved ||
+        stored.intent.riskDecisionId !== stored.decision.decisionId
+      ) {
+        return Effect.fail(
+          new ExecutionError({
+            operation: MutationOperation.Submit,
+            failure: ExecutionFailure.InvalidState,
+            message: 'dry-run submission requires one committed approved intent and matching risk decision',
+          }),
+        )
+      }
+      return Effect.try({
+        try: (): DryRunSubmit => {
+          const request = orderRequestBody(stored.intent)
+          return {
+            schemaVersion: 'bayn.paper-submit-dry-run.v1',
+            intentId: stored.intent.intentId,
+            clientOrderId: stored.intent.clientOrderId,
+            requestHash: canonicalHashV1(request),
+            request,
+          }
+        },
+        catch: (cause) =>
+          new ExecutionError({
+            operation: MutationOperation.Submit,
+            failure: ExecutionFailure.InvalidState,
+            message: 'approved intent cannot be represented as an Alpaca paper order',
+            cause,
+          }),
+      })
+    }),
+  )
 
 const validateRecovery = (stored: Intent, event: MutationEvent) =>
   Effect.gen(function* () {
