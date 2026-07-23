@@ -1,6 +1,6 @@
 # Bayn authoritative universe
 
-Status: **precommitted; Signal publication in progress**
+Status: **precommitted; finalized Signal snapshot accepted; qualification release ready**
 
 ## Current contract
 
@@ -10,15 +10,15 @@ Bayn's next qualification candidate uses one fixed, canonically ordered universe
 DBC,EFA,IEF,SPY,VNQ
 ```
 
-| Field | Value |
-| --- | --- |
-| Universe ID | `cross-asset-taa-v1` |
-| Symbol hash | `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
-| History start | `2016-01-04` |
-| Evaluation start | `2017-01-03` |
-| Historical feed | delayed consolidated `sip` |
-| Adjustment | `all` |
-| Calendar | `alpaca-us-equity-calendar-v1` |
+| Field            | Value                                                              |
+| ---------------- | ------------------------------------------------------------------ |
+| Universe ID      | `cross-asset-taa-v1`                                               |
+| Symbol hash      | `c15a52d125073a20c3addee154974ef32b4ef009c40a46b05b54743f075c0fe8` |
+| History start    | `2016-01-04`                                                       |
+| Evaluation start | `2017-01-03`                                                       |
+| Historical feed  | delayed consolidated `sip`                                         |
+| Adjustment       | `all`                                                              |
+| Calendar         | `alpaca-us-equity-calendar-v1`                                     |
 
 The hash is SHA-256 over the exact CSV string above. A reorder, addition, removal, feed change, adjustment change, or
 calendar change is a different contract and requires a new candidate.
@@ -56,18 +56,15 @@ the exact Bayn contract above. The archive and publisher remain the existing ser
 The Signal publisher alone writes the three publication tables and
 finalizes a snapshot only after exact readback. Bayn retains explicit `SELECT` grants only.
 
-The scheduled CronJob is removed from rendered GitOps during the universe switch. This prevents it from publishing the
-new full-history contract before the bounded backfill has been reviewed. It is restored only after the backfill Job is
-complete, its evidence is retained, and that Job has been removed through GitOps.
-
-The first historical publication is a separately reviewed, bounded GitOps Job using the same service account, secrets,
-immutable image, and least-privilege ClickHouse principal as the scheduled publisher. It is removed after evidence is
-retained. The scheduled publisher must then produce two additional complete snapshots before qualification begins.
+The universe switch used one separately reviewed, bounded GitOps backfill Job with the same service account, secrets,
+immutable image, and least-privilege ClickHouse principal as the scheduled publisher. The Job completed once, its
+evidence was retained, and it was removed through GitOps. The normal publisher CronJob is restored for unattended
+operations. Later scheduled publications are operational observations, not a qualification entry gate.
 
 ## Preserved M2.1 evidence
 
 The prior `equity-infrastructure-v1` contract remains immutable historical evidence even though it is no longer an
-active ConfigMap. Production Bayn stays pinned to:
+active ConfigMap. Before the explicit M2.2 release, production Bayn was pinned to:
 
 - run `87c0dac69efcfa7bdedb5bbcffe26f7ee9a14de8c05baea613f488eb869a305f`;
 - snapshot `0945e3331d67437a072d5eb33f65e469b9883a5e762e29e80f7acb389864c79f`;
@@ -75,8 +72,8 @@ active ConfigMap. Production Bayn stays pinned to:
 - maximum authority `OBSERVE`.
 
 The M2.1 economic gates passed, but its terminal qualification is `REJECTED` for insufficient power and walk-forward
-history. Replacing the active ingestion universe does not rewrite that snapshot, PostgreSQL graph, dossier, or
-TigerBeetle journal.
+history. The M2.2 one-shot release removes the runtime pin and mounted dossier together without rewriting that
+snapshot, PostgreSQL graph, source-controlled dossier, or TigerBeetle journal.
 
 ## Pre-change live baseline
 
@@ -95,21 +92,22 @@ Read-only verification at `2026-07-23T00:24Z`, before the v2 GitOps change, foun
 - Bayn ready with exact 15-account/578-transfer TigerBeetle reconciliation and zero broker events, orders, fills, or
   paper accounting transactions.
 
-## Publication acceptance
+## Accepted M2.2 snapshot
 
-For the bounded backfill and two scheduled snapshots, both physical ClickHouse replicas must independently report:
+Read-only verification of finalized snapshot
+`840c75885270b349d4a992e003918ce7e6fe39730f981a20b2e88ae2db45a2e2` found that both physical ClickHouse replicas
+independently report:
 
 - exactly one V2 manifest with the current universe ID and symbol hash;
-- exactly one adjusted daily bar for every symbol and exchange session;
-- `bar_count = session_count * 5`;
+- exactly 13,260 adjusted daily bars across 2,652 exchange sessions;
+- `bar_count = session_count * 5` with no missing symbol-session keys;
 - no duplicate bar or session keys;
 - identical requested bounds, source revision, image digest, ordered bar hash, ordered session hash, and manifest hash;
   and
 - publisher grants restricted to the documented `SELECT, INSERT` set while Bayn remains `SELECT`-only.
 
-No candidate returns, weights, metrics, or benchmark comparisons are calculated in this publication ticket. Bayn's
-deployment snapshot and qualification pin do not change.
+One accepted finalized snapshot with this both-replica integrity proof is sufficient for qualification. No candidate
+returns, weights, metrics, or benchmark comparisons were calculated for publication acceptance.
 
-Rollback is fail-closed: stop new publication through GitOps, preserve finalized and partially staged rows for
-diagnosis, and revert the shared contract only after no publisher Job is active. Never delete the M2.1 evidence or
-Signal publication tables.
+Publication rollback remains fail-closed: stop new publication through GitOps and preserve finalized or partially
+staged rows for diagnosis. Never delete M2.1 evidence or Signal publication tables.
