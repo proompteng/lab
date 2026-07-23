@@ -32,6 +32,26 @@ describe('Buzz production GitOps contract', () => {
     }
   })
 
+  test('builds the Ceph compatibility relay from pinned upstream inputs for both cluster architectures', () => {
+    const workflow = readRepoFile('.github/workflows/buzz-relay-build-push.yml')
+    const dockerfile = readRepoFile('third_party/buzz/Dockerfile')
+    const patch = readRepoFile('third_party/buzz/ceph-rgw.patch')
+
+    for (const source of [workflow, dockerfile]) {
+      expect(source).toContain('acfbb1bb6af54cb29cb152496ff43b8285dcb8cf')
+      expect(source).toContain('sha256:29fe13981a726fe43642fe03cbd6cc87142579a90bbf9897e3c1b370d1037428')
+    }
+
+    expect(workflow).toContain('runner: arc-amd64')
+    expect(workflow).toContain('runner: arc-arm64')
+    expect(workflow).toContain('git -C upstream apply --check')
+    expect(workflow).toContain('any(.manifests[]?; .platform.os == "linux"')
+    expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib')
+    expect(patch).toContain('BUZZ_GIT_S3_COMPATIBILITY')
+    expect(patch).toContain('<Code>ConcurrentModification</Code>')
+    expect(patch).toContain('<Code>ConditionalRequestConflict</Code>')
+  })
+
   test('uses external stateful dependencies and Ceph while keeping unsafe features off', () => {
     const values = buzzFile('values.yaml')
     const postgres = buzzFile('postgres-cluster.yaml')
