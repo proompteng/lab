@@ -118,6 +118,23 @@ describe('Effect configuration', () => {
     })
   })
 
+  test('requires a complete Alpaca binding for PAPER while allowing credential-free OBSERVE', async () => {
+    const observe = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
+    expect(observe.maximumAuthority).toBe(Authority.Observe)
+    expect(observe.alpaca).toBeUndefined()
+
+    const paper = new Map(runtimeEnvironment)
+    paper.set('BAYN_MAXIMUM_AUTHORITY', Authority.Paper)
+    const error = await Effect.runPromise(Effect.flip(provideEnvironment(loadConfig(buildMetadata), paper)))
+
+    expect(error).toMatchObject({
+      _tag: 'OperationalError',
+      component: 'config',
+      operation: 'alpaca',
+      message: 'PAPER maximum authority requires a complete Alpaca account binding',
+    })
+  })
+
   test('supports an explicit, visibly unverified development provenance path', async () => {
     const development = new Map(runtimeEnvironment)
     development.set('BAYN_PROVENANCE_MODE', 'development')
@@ -179,6 +196,9 @@ describe('Effect configuration', () => {
   test('accepts only the closed broker-authority vocabulary', async () => {
     const paper = new Map(runtimeEnvironment)
     paper.set('BAYN_MAXIMUM_AUTHORITY', Authority.Paper)
+    paper.set('BAYN_ALPACA_ACCOUNT_ID', '61e69015-8549-4bfd-b9c3-01e75843f47d')
+    paper.set('BAYN_ALPACA_KEY_ID', 'paper-key')
+    paper.set('BAYN_ALPACA_SECRET_KEY', 'paper-secret')
     expect((await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), paper))).maximumAuthority).toBe(
       Authority.Paper,
     )
