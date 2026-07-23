@@ -11,6 +11,7 @@ import {
   PositiveMicrosSchema as PositiveMicros,
   Sha256Schema,
   SymbolSchema as SymbolName,
+  UniverseIdSchema,
   UnitIntervalSchema as UnitInterval,
   UnsignedMicrosSchema as UnsignedMicros,
   strictParseOptions as StrictParseOptions,
@@ -110,7 +111,7 @@ const universeContract = {
 
 const ProtocolBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.risk-balanced-trend.protocol.v2'),
-  universeId: Schema.Literal(universeContract.id),
+  universeId: UniverseIdSchema,
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolName).check(Schema.isMinLength(1)),
   historyStart: IsoDateSchema,

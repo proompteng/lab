@@ -205,7 +205,7 @@ describe('risk-balanced trend candidate', () => {
       ...manifestMaterial,
       finalizedSnapshot: {
         ...manifestMaterial.finalizedSnapshot,
-        universeId: 'equity-infrastructure-v1',
+        universeSymbolHash: '0'.repeat(64),
       },
     }
     const mismatchedManifest = {
