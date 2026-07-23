@@ -23,10 +23,14 @@ import { canonicalHashV1 } from '../hash'
 import { Journal } from '../ledger'
 import {
   AccountingReceiptSchema,
+  Authority,
   Broker,
   BrokerEventSchema,
+  KillState,
   ValuationSchema,
+  decodeAuthorityState,
   type AccountingReceipt,
+  type AuthorityState,
   type Valuation,
 } from '../paper'
 import {
@@ -63,6 +67,11 @@ export interface PositionSnapshotReceipt {
   readonly deduplicated: boolean
 }
 
+export interface EnsureAuthorityGenerationInput {
+  readonly generationHash: string
+  readonly maximum: Authority
+}
+
 export class PaperStoreError extends Data.TaggedError('PaperStoreError')<{
   readonly operation:
     | 'ingest'
@@ -87,6 +96,9 @@ export interface PaperStoreShape {
   readonly hasAccountBaseline: (accountId: string) => Effect.Effect<boolean, PaperStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], PaperStoreError>
   readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationWriteResult, PaperStoreError>
+  readonly ensureAuthorityGeneration: (
+    input: EnsureAuthorityGenerationInput,
+  ) => Effect.Effect<AuthorityState, PaperStoreError>
   readonly restrictAuthority: (reason: string, updatedAt: string) => Effect.Effect<void, PaperStoreError>
 }
 
@@ -141,6 +153,21 @@ const ValuationRow = Schema.Struct({
   equity_micros: Schema.String,
   as_of: Schema.DateValid,
 })
+const EnsureAuthorityGenerationInputSchema = Schema.Struct({
+  generationHash: Sha256,
+  maximum: Schema.Enum(Authority),
+})
+const AuthorityStateRow = Schema.Struct({
+  schema_version: Schema.Literal('bayn.paper-authority.v1'),
+  generation_hash: Sha256,
+  maximum: Schema.Enum(Authority),
+  effective: Schema.Enum(Authority),
+  kill_state: Schema.Enum(KillState),
+  reason: Schema.NullOr(NonEmptyString),
+  version: Schema.String,
+  updated_at: Schema.DateValid,
+})
+const AuthorityStateRows = Schema.Array(AuthorityStateRow).check(Schema.isMaxLength(1))
 const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInput = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
@@ -164,6 +191,11 @@ const decodePositionSnapshotRows = Schema.decodeUnknownEffect(Schema.Array(Posit
 const decodeEventIdRows = Schema.decodeUnknownEffect(Schema.Array(EventIdRow), strictParseOptions)
 const decodeSnapshotIdRows = Schema.decodeUnknownEffect(Schema.Array(SnapshotIdRow), strictParseOptions)
 const decodeValuationRows = Schema.decodeUnknownEffect(Schema.Array(ValuationRow), strictParseOptions)
+const decodeEnsureAuthorityGenerationInput = Schema.decodeUnknownEffect(
+  EnsureAuthorityGenerationInputSchema,
+  strictParseOptions,
+)
+const decodeAuthorityStateRows = Schema.decodeUnknownEffect(AuthorityStateRows, strictParseOptions)
 const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, strictParseOptions)
 const decodeReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, strictParseOptions)
 const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, strictParseOptions)
@@ -202,6 +234,25 @@ const fail = (
   failure: PaperStoreError['failure'],
   message: string,
 ): Effect.Effect<never, PaperStoreError> => Effect.fail(error(operation, failure, message))
+
+const authorityStateFromRow = (
+  row: typeof AuthorityStateRow.Type,
+): Effect.Effect<AuthorityState, PaperStoreError | Schema.SchemaError> => {
+  const version = Number(row.version)
+  if (!Number.isSafeInteger(version) || version <= 0) {
+    return fail('authority', 'invariant', 'durable authority version is not a safe positive integer')
+  }
+  return decodeAuthorityState({
+    schemaVersion: row.schema_version,
+    generationHash: row.generation_hash,
+    maximum: row.maximum,
+    effective: row.effective,
+    kill: row.kill_state,
+    ...(row.reason === null ? {} : { reason: row.reason }),
+    version,
+    updatedAt: row.updated_at.toISOString(),
+  })
+}
 
 const kindOf = (input: BrokerEventInput): typeof EventKind.Type => {
   switch (input._tag) {
@@ -888,6 +939,87 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       )
     const bindings = (accountId: string) => run('bindings', reconciliation.bindings(accountId))
     const reconcile = (snapshot: BrokerSnapshot) => run('reconciliation', reconciliation.reconcile(snapshot))
+    const ensureAuthorityGeneration = (candidate: EnsureAuthorityGenerationInput) =>
+      run(
+        'authority',
+        decodeEnsureAuthorityGenerationInput(candidate).pipe(
+          Effect.flatMap((input) =>
+            input.maximum !== Authority.Observe
+              ? fail('authority', 'invariant', 'Phase A authority maximum must be OBSERVE')
+              : sql.withTransaction(
+                  Effect.gen(function* () {
+                    yield* sql`
+                      SELECT pg_advisory_xact_lock(
+                        hashtextextended('bayn.paper-authority-generation.v1', 0)
+                      )
+                    `
+                    const rows = yield* sql<Record<string, unknown>>`
+                      SELECT
+                        schema_version, generation_hash, maximum, effective, kill_state, reason,
+                        version::text AS version, updated_at
+                      FROM authority_state
+                      WHERE singleton
+                      FOR UPDATE
+                    `.pipe(Effect.flatMap(decodeAuthorityStateRows))
+                    const currentRow = rows[0]
+                    if (currentRow === undefined) {
+                      const inserted = yield* sql<Record<string, unknown>>`
+                        INSERT INTO authority_state (
+                          schema_version, generation_hash, maximum, effective, kill_state,
+                          reason, version, updated_at
+                        ) VALUES (
+                          'bayn.paper-authority.v1', ${input.generationHash}, ${input.maximum},
+                          'OBSERVE', 'CLEAR', NULL, 1, clock_timestamp()
+                        )
+                        RETURNING
+                          schema_version, generation_hash, maximum, effective, kill_state, reason,
+                          version::text AS version, updated_at
+                      `.pipe(Effect.flatMap(decodeAuthorityStateRows))
+                      const insertedRow = inserted[0]
+                      if (insertedRow === undefined) {
+                        return yield* fail('authority', 'invariant', 'authority generation was not initialized')
+                      }
+                      return yield* authorityStateFromRow(insertedRow)
+                    }
+
+                    const current = yield* authorityStateFromRow(currentRow)
+                    if (current.generationHash === input.generationHash) {
+                      if (current.maximum !== input.maximum) {
+                        return yield* fail(
+                          'authority',
+                          'conflict',
+                          'authority generation maximum conflicts with durable state',
+                        )
+                      }
+                      return current
+                    }
+
+                    const rotated = yield* sql<Record<string, unknown>>`
+                      UPDATE authority_state
+                      SET
+                        generation_hash = ${input.generationHash},
+                        maximum = ${input.maximum},
+                        effective = 'OBSERVE',
+                        version = version + 1,
+                        updated_at = greatest(
+                          clock_timestamp(),
+                          updated_at + interval '1 millisecond'
+                        )
+                      WHERE singleton
+                      RETURNING
+                        schema_version, generation_hash, maximum, effective, kill_state, reason,
+                        version::text AS version, updated_at
+                    `.pipe(Effect.flatMap(decodeAuthorityStateRows))
+                    const rotatedRow = rotated[0]
+                    if (rotatedRow === undefined) {
+                      return yield* fail('authority', 'invariant', 'authority generation was not rotated')
+                    }
+                    return yield* authorityStateFromRow(rotatedRow)
+                  }),
+                ),
+          ),
+        ),
+      )
     const lowerAuthority = (reason: string, updatedAt: string) =>
       run(
         'authority',
@@ -904,6 +1036,7 @@ const makeStore = (config: Pick<RuntimeConfig, 'tigerBeetle'>) =>
       hasAccountBaseline,
       bindings,
       reconcile,
+      ensureAuthorityGeneration,
       restrictAuthority: lowerAuthority,
     } satisfies PaperStoreShape
   })

@@ -196,6 +196,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): PaperStore
       control.reconciliations.push(snapshot)
       return report(snapshot)
     }),
+  ensureAuthorityGeneration: () => Effect.die(new Error('unexpected authority generation initialization')),
   restrictAuthority: (reason) =>
     Effect.sync(() => {
       control.restrictions.push(reason)
