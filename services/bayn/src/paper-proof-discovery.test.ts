@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted } from 'effect'
+import { Cause, Context, Effect, Exit, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 import { TestClock } from 'effect/testing'
+import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import {
   AccountStatus,
@@ -11,10 +12,12 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
+  make as makeAlpacaRead,
   type AccountConfigurationObservation,
   type AssetObservation,
   type BrokerReadShape,
   type ReadEvidence,
+  type ReadOptions,
   type ReadResult,
 } from './broker/alpaca'
 import { makeStrategyProtocolHash, type RuntimeProvenance } from './contracts'
@@ -483,6 +486,84 @@ describe('paper proof DISCOVER', () => {
     const serialized = JSON.stringify(receipt)
     expect(serialized).not.toContain('account_number')
     expect(serialized).not.toContain('paper-secret')
+  })
+
+  test('constructs the read adapter without preflight and receipts only bounded DISCOVER GETs', async () => {
+    const state = control()
+    const requests: Array<{ method: string; path: string }> = []
+    const readOptions: ReadOptions = {
+      expectedAccountId: accountId,
+      key: Redacted.make('paper-key'),
+      secret: Redacted.make('paper-secret'),
+      proxyUrl: 'http://bayn-egress-proxy:3128',
+      operationTimeoutMs: 1_000,
+      retryAttempts: 0,
+    }
+    const client = HttpClient.make((request, url) => {
+      requests.push({ method: request.method, path: url.pathname })
+      let body: unknown
+      if (url.pathname === '/v2/account') {
+        body = {
+          id: accountId,
+          account_number: 'REDACTED',
+          status: 'ACTIVE',
+          currency: 'USD',
+          cash: '500',
+          equity: '1000',
+          buying_power: '500',
+          account_blocked: false,
+          trading_blocked: false,
+          trade_suspended_by_user: false,
+        }
+      } else if (url.pathname === '/v2/account/configurations') {
+        body = { fractional_trading: true }
+      } else {
+        const symbol = decodeURIComponent(url.pathname.slice('/v2/assets/'.length))
+        body = {
+          id: symbol === 'VNQ' ? '6ecbbd80-1456-4ae5-a623-97c007054f86' : 'f21fcb6b-92f2-46ba-9979-d5f4c73570d1',
+          class: 'us_equity',
+          exchange: 'ARCA',
+          symbol,
+          status: 'active',
+          tradable: true,
+          fractionable: true,
+          attributes: [],
+        }
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { 'content-type': 'application/json', 'x-request-id': `request-${requests.length}` },
+          }),
+        ),
+      )
+    })
+
+    const receipt = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const brokerContext = yield* Layer.build(
+            Layer.effect(BrokerRead, makeAlpacaRead(readOptions)).pipe(
+              Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+            ),
+          )
+          expect(requests).toEqual([])
+          return yield* program(state, fixture(), Context.get(brokerContext, BrokerRead))
+        }),
+      ),
+    )
+
+    expect(receipt.candidateFacts.candidates).toHaveLength(symbols.length)
+    expect(requests.slice(0, 2)).toEqual([
+      { method: 'GET', path: '/v2/account' },
+      { method: 'GET', path: '/v2/account/configurations' },
+    ])
+    expect(requests.slice(2).sort((left, right) => left.path.localeCompare(right.path))).toEqual([
+      { method: 'GET', path: '/v2/assets/SPY' },
+      { method: 'GET', path: '/v2/assets/VNQ' },
+    ])
   })
 
   test('keeps immutable and semantic hashes stable while fresh GET evidence changes the receipt', async () => {

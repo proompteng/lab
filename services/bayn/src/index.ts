@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Logger, Redacted, Schema, Stdio, Stream } from 
 
 import { run } from './app'
 import { riskBalancedTrendBehaviorHash } from './behavior'
-import { BrokerRead, live as AlpacaReadLive } from './broker/alpaca'
+import { BrokerRead, live as AlpacaReadLive, scopedReadAdapterLayer } from './broker/alpaca'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig, type LoadedRuntimeConfig } from './config'
 import { makeRuntimeProvenance, makeStrategyProtocolHash } from './contracts'
@@ -170,7 +170,7 @@ const runPaperProofDiscovery = (config: LoadedRuntimeConfig, strategy: Strategy)
     const observabilityContext = yield* Layer.build(CycleObservabilityLive.pipe(Layer.provide(postgresLayer)))
     const cycleStoreContext = yield* Layer.build(CycleStoreLive.pipe(Layer.provide(postgresLayer)))
     const brokerReadContext = yield* Layer.build(
-      AlpacaReadLive({
+      scopedReadAdapterLayer({
         expectedAccountId: alpaca.accountId,
         key: alpaca.key,
         secret: alpaca.secret,

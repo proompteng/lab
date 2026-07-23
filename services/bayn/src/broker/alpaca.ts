@@ -1614,5 +1614,8 @@ export const verifyReadAccess = (read: BrokerReadShape): Effect.Effect<ReadPrefl
 export const layer = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError, HttpClient.HttpClient> =>
   Layer.effect(BrokerRead, make(options).pipe(Effect.tap(verifyReadAccess)))
 
+export const scopedReadAdapterLayer = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError> =>
+  Layer.effect(BrokerRead, make(options)).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))
+
 export const live = (options: ReadOptions): Layer.Layer<BrokerRead, BrokerReadError> =>
   layer(options).pipe(Layer.provide(alpacaHttpLayer(options.proxyUrl)))
