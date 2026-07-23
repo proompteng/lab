@@ -114,6 +114,11 @@ describe('Buzz production GitOps contract', () => {
     expect(networkPolicy).toContain('name: default-deny-ingress')
     expect(networkPolicy).toContain('app.kubernetes.io/name: observability-cluster-metrics-alloy')
     expect(networkPolicy).toContain('port: 9187')
+    expect(networkPolicy).toContain('name: allow-kubernetes-api-cnpg-status')
+    for (const controlPlaneAddress of ['100.100.244.141/32', '100.100.244.142/32', '100.100.244.190/32']) {
+      expect(networkPolicy).toContain(`cidr: ${controlPlaneAddress}`)
+    }
+    expect(networkPolicy).toContain('port: 8000')
   })
 
   test('keeps credentials out of Git and combines generated credentials through External Secrets', () => {
