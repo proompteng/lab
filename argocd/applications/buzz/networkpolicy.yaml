@@ -69,6 +69,30 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: allow-kubernetes-api-cnpg-status
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: buzz-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # kube-apiserver is host-networked, so cross-node pod proxy requests
+        # arrive from the three control-plane node addresses.
+        - ipBlock:
+            cidr: 100.100.244.141/32
+        - ipBlock:
+            cidr: 100.100.244.142/32
+        - ipBlock:
+            cidr: 100.100.244.190/32
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: allow-database-operators
 spec:
   podSelector: {}
