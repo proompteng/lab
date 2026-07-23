@@ -42,21 +42,6 @@ describe('strategy protocol', () => {
     if (Exit.isFailure(exit)) expect(exit.cause.toString()).toContain('compiled strategy parameters')
   })
 
-  test('continues to decode the immutable prior-universe protocol', async () => {
-    const historical = await Effect.runPromise(
-      loadProtocol({
-        ...defaultProtocolDocument,
-        universeId: 'equity-infrastructure-v1',
-        universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
-        universe: ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'],
-        historyStart: '2022-01-27',
-        evaluationStart: '2023-01-30',
-      }),
-    )
-
-    expect(historical.universeId).toBe('equity-infrastructure-v1')
-  })
-
   test('rejects legacy, malformed, and non-canonical documents', async () => {
     const invalidDocuments: readonly unknown[] = [
       { schemaVersion: 'bayn.tsmom.protocol.v2' },

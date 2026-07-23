@@ -82,18 +82,6 @@ describe('qualification lock', () => {
     expect(first.lockId).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  test('continues to decode immutable locks from the prior universe', () => {
-    const historicalUniverse = ['AMD', 'AVGO', 'COHR', 'CRDO', 'LITE', 'MRVL', 'MU', 'NVDA', 'WDC'] as const
-    const historical = makeQualificationLock({
-      ...material,
-      universeId: 'equity-infrastructure-v1',
-      universeSymbolHash: 'ddcc8adc04dc29822969cddf02b821ea8110856162cca20a7ff28c1c43263e18',
-      universe: historicalUniverse,
-    })
-
-    expect(Schema.decodeUnknownSync(QualificationLockSchema)(historical)).toEqual(historical)
-  })
-
   test('changes identity for every authority-bearing input group', () => {
     const baseline = makeQualificationLock(material).lockId
     const variants = [
@@ -137,6 +125,9 @@ describe('qualification lock', () => {
     ).toThrow()
 
     const lock = makeQualificationLock(material)
+    expect(() =>
+      Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, universeId: 'equity-infrastructure-v1' }),
+    ).toThrow()
     expect(() => Schema.decodeUnknownSync(QualificationLockSchema)({ ...lock, lockId: '0'.repeat(64) })).toThrow()
   })
 })

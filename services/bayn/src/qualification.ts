@@ -12,7 +12,6 @@ import {
   SourceRevisionSchema as SourceRevision,
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
-  UniverseIdSchema,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
 import type { EconomicVerdict } from './types'
@@ -92,7 +91,7 @@ const QualificationLockMaterialFields = {
 const QualificationLockMaterialBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.qualification-lock.v3'),
   ...QualificationLockMaterialFields,
-  universeId: UniverseIdSchema,
+  universeId: Schema.Literal('cross-asset-taa-v1'),
   universeSymbolHash: Sha256Schema,
   data: QualificationDataSchema,
 })
