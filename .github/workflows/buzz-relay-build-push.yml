@@ -58,6 +58,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
 
       - name: Build and test native image
         uses: docker/build-push-action@v6
@@ -107,6 +109,8 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
 
       - name: Build and push native image
         uses: docker/build-push-action@v6
