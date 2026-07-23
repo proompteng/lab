@@ -136,40 +136,53 @@ export const dryRunSubmit = (
   intentId: string,
 ): Effect.Effect<DryRunSubmit, ExecutionError | IntentStoreError, IntentStore> =>
   readIntent(MutationOperation.Submit, intentId).pipe(
-    Effect.flatMap((stored) => {
-      if (
-        stored.intent.state !== IntentState.Approved ||
-        stored.decision?.outcome !== RiskOutcome.Approved ||
-        stored.intent.riskDecisionId !== stored.decision.decisionId
-      ) {
-        return Effect.fail(
-          new ExecutionError({
-            operation: MutationOperation.Submit,
-            failure: ExecutionFailure.InvalidState,
-            message: 'dry-run submission requires one committed approved intent and matching risk decision',
-          }),
-        )
-      }
-      return Effect.try({
-        try: (): DryRunSubmit => {
-          const request = orderRequestBody(stored.intent)
-          return {
-            schemaVersion: 'bayn.paper-submit-dry-run.v1',
-            intentId: stored.intent.intentId,
-            clientOrderId: stored.intent.clientOrderId,
-            requestHash: canonicalHashV1(request),
-            request,
-          }
-        },
-        catch: (cause) =>
-          new ExecutionError({
-            operation: MutationOperation.Submit,
-            failure: ExecutionFailure.InvalidState,
-            message: 'approved intent cannot be represented as an Alpaca paper order',
-            cause,
-          }),
-      })
-    }),
+    Effect.flatMap((stored) =>
+      Effect.gen(function* () {
+        const decision = stored.decision
+        if (
+          stored.intent.state !== IntentState.Approved ||
+          decision?.outcome !== RiskOutcome.Approved ||
+          stored.intent.riskDecisionId !== decision.decisionId
+        ) {
+          return yield* Effect.fail(
+            new ExecutionError({
+              operation: MutationOperation.Submit,
+              failure: ExecutionFailure.InvalidState,
+              message: 'dry-run submission requires one committed approved intent and matching risk decision',
+            }),
+          )
+        }
+        const currentTime = yield* Clock.currentTimeMillis
+        if (currentTime >= Date.parse(decision.expiresAt)) {
+          return yield* Effect.fail(
+            new ExecutionError({
+              operation: MutationOperation.Submit,
+              failure: ExecutionFailure.InvalidState,
+              message: `dry-run submission risk decision expired at ${decision.expiresAt}`,
+            }),
+          )
+        }
+        return yield* Effect.try({
+          try: (): DryRunSubmit => {
+            const request = orderRequestBody(stored.intent)
+            return {
+              schemaVersion: 'bayn.paper-submit-dry-run.v1',
+              intentId: stored.intent.intentId,
+              clientOrderId: stored.intent.clientOrderId,
+              requestHash: canonicalHashV1(request),
+              request,
+            }
+          },
+          catch: (cause) =>
+            new ExecutionError({
+              operation: MutationOperation.Submit,
+              failure: ExecutionFailure.InvalidState,
+              message: 'approved intent cannot be represented as an Alpaca paper order',
+              cause,
+            }),
+        })
+      }),
+    ),
   )
 
 const validateRecovery = (stored: Intent, event: MutationEvent) =>

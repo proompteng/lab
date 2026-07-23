@@ -413,7 +413,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provide(TestClock.layer()),
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
-    effect.pipe(Effect.provideService(IntentStore, intentStore))
+    effect.pipe(Effect.provideService(IntentStore, intentStore), Effect.provide(TestClock.layer()))
 
   return {
     provide,
@@ -445,6 +445,26 @@ describe('paper execution coordinator', () => {
       clientOrderId: intent.clientOrderId,
       requestHash: canonicalHashV1(orderRequestBody(intent)),
       request: orderRequestBody(intent),
+    })
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Approved)
+  })
+
+  test('rejects a dry-run request when its approved risk decision has expired', async () => {
+    const harness = makeHarness()
+    const failure = await Effect.runPromise(
+      harness.provideIntentRead(
+        Effect.gen(function* () {
+          yield* TestClock.adjust(600_000)
+          return yield* Effect.flip(dryRunSubmit(intentId))
+        }),
+      ),
+    )
+
+    expect(failure).toBeInstanceOf(ExecutionError)
+    expect(failure).toMatchObject({
+      failure: ExecutionFailure.InvalidState,
+      message: `dry-run submission risk decision expired at ${riskDecision.expiresAt}`,
     })
     expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
     expect(harness.state()).toBe(IntentState.Approved)
