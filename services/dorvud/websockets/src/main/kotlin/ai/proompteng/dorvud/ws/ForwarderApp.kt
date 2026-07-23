@@ -344,22 +344,21 @@ class ForwarderApp(
             null
           }
 
-        val symbolsTracker =
-          SymbolsTracker(
-            normalizeSymbols(config.staticSymbols),
-            config.jangarSymbolsUrl?.let { url ->
-              suspend {
-                runCatching { fetchDesiredSymbols(url) }
-                  .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
-                  .let(::normalizeSymbols)
-              }
-            },
-          )
-
         val jobs =
           marketDataFeeds
             .map { feed ->
               launch {
+                val symbolsTracker =
+                  SymbolsTracker(
+                    normalizeSymbols(feed.config.symbols, feed.config.symbolAllowlist),
+                    config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let { url ->
+                      suspend {
+                        runCatching { fetchDesiredSymbols(url) }
+                          .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
+                          .let { symbols -> normalizeSymbols(symbols, feed.config.symbolAllowlist) }
+                      }
+                    },
+                  )
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
@@ -733,7 +732,7 @@ class ForwarderApp(
       }
 
       val poller =
-        config.jangarSymbolsUrl?.let {
+        config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let {
           launch {
             while (isActive) {
               delay(config.symbolsPollIntervalMs)
@@ -1066,11 +1065,14 @@ class ForwarderApp(
     }
   }
 
-  private fun normalizeSymbols(symbols: List<String>): List<String> =
+  private fun normalizeSymbols(
+    symbols: List<String>,
+    symbolAllowlist: Set<String>,
+  ): List<String> =
     symbols
       .map { it.trim().uppercase() }
       .filter { it.isNotEmpty() }
-      .filter { config.symbolAllowlist.isEmpty() || it in config.symbolAllowlist }
+      .filter { symbolAllowlist.isEmpty() || it in symbolAllowlist }
       .filter { ownsSymbol(it) }
       .distinct()
 

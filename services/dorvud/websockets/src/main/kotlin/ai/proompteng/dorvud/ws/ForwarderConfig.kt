@@ -58,6 +58,7 @@ data class ForwarderConfig(
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
   val symbolAllowlist: Set<String>,
+  val observationSymbols: List<String> = emptyList(),
   val universeContract: MarketDataUniverseContract? = null,
   val symbolsPollIntervalMs: Long,
   val subscribeBatchSize: Int,
@@ -118,6 +119,17 @@ data class ForwarderConfig(
         } else {
           configuredStaticSymbols.filter { it.trim().uppercase() in symbolAllowlist }
         }
+      val configuredObservationSymbols =
+        mergedEnv["ALPACA_OBSERVATION_SYMBOLS"]
+          ?.split(",")
+          ?.map { it.trim().uppercase() }
+          ?.filter { it.isNotEmpty() }
+      if (configuredObservationSymbols != null && configuredObservationSymbols.isEmpty()) {
+        error("ALPACA_OBSERVATION_SYMBOLS must include at least one symbol")
+      }
+      val observationSymbols =
+        configuredObservationSymbols
+          ?: configuredStaticSymbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }
       val alpacaMarketType =
         when (mergedEnv["ALPACA_MARKET_TYPE"]?.trim()?.lowercase() ?: "equity") {
           "equity" -> AlpacaMarketType.EQUITY
@@ -175,6 +187,9 @@ data class ForwarderConfig(
       if ((universeId == null) != (universeSymbolHash == null)) {
         error("MARKET_DATA_UNIVERSE_ID and MARKET_DATA_UNIVERSE_SYMBOL_HASH must be set together")
       }
+      if (configuredObservationSymbols != null && universeId == null) {
+        error("ALPACA_OBSERVATION_SYMBOLS requires a versioned market-data universe")
+      }
       val universeContract =
         universeId?.let { id ->
           val expectedHash = requireNotNull(universeSymbolHash)
@@ -187,19 +202,19 @@ data class ForwarderConfig(
           if (jangarSymbolsUrl != null) {
             error("a versioned market-data universe cannot use JANGAR_SYMBOLS_URL")
           }
-          val configuredSymbols =
-            configuredStaticSymbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }
+          val configuredSymbols = observationSymbols
           val canonicalSymbols =
             configuredSymbols.distinct().sorted()
+          val symbolSource = if (configuredObservationSymbols == null) "SYMBOLS" else "ALPACA_OBSERVATION_SYMBOLS"
           if (configuredSymbols != canonicalSymbols) {
-            error("SYMBOLS must be unique and canonically sorted for a versioned market-data universe")
+            error("$symbolSource must be unique and canonically sorted for a versioned market-data universe")
           }
-          if (configuredAllowlistSymbols != canonicalSymbols) {
+          if (configuredObservationSymbols == null && configuredAllowlistSymbols != canonicalSymbols) {
             error("SYMBOLS_ALLOWLIST must exactly match SYMBOLS for a versioned market-data universe")
           }
           val actualHash = canonicalSymbolHash(canonicalSymbols)
           if (expectedHash != actualHash) {
-            error("MARKET_DATA_UNIVERSE_SYMBOL_HASH does not match canonical SYMBOLS")
+            error("MARKET_DATA_UNIVERSE_SYMBOL_HASH does not match canonical $symbolSource")
           }
           MarketDataUniverseContract(id = id, symbolHash = actualHash, symbols = canonicalSymbols)
         }
@@ -222,7 +237,8 @@ data class ForwarderConfig(
           coreFeed = alpacaFeed,
           coreTopics = topics,
           mergedEnv = mergedEnv,
-          configuredSymbols = staticSymbols,
+          coreSymbols = staticSymbols,
+          observationSymbols = observationSymbols,
           hasVersionedUniverse = universeContract != null,
         )
       val enableBarsBackfill = mergedEnv["ENABLE_BARS_BACKFILL"]?.toBooleanStrictOrNull() ?: false
@@ -312,6 +328,7 @@ data class ForwarderConfig(
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
         symbolAllowlist = symbolAllowlist,
+        observationSymbols = observationSymbols,
         universeContract = universeContract,
         symbolsPollIntervalMs = symbolsPollIntervalMs,
         subscribeBatchSize = subscribeBatchSize,
@@ -369,7 +386,8 @@ data class ForwarderConfig(
       coreFeed: String,
       coreTopics: TopicConfig,
       mergedEnv: Map<String, String>,
-      configuredSymbols: List<String>,
+      coreSymbols: List<String>,
+      observationSymbols: List<String>,
       hasVersionedUniverse: Boolean,
     ): List<ObservationFeedConfig> {
       val requested =
@@ -388,7 +406,7 @@ data class ForwarderConfig(
       if (requested.distinct().size != requested.size) {
         error("ALPACA_OBSERVATION_FEEDS must not contain duplicates")
       }
-      if (!hasVersionedUniverse || configuredSymbols.isEmpty()) {
+      if (!hasVersionedUniverse || observationSymbols.isEmpty()) {
         error("ALPACA_OBSERVATION_FEEDS requires a versioned static market-data universe")
       }
 
@@ -433,7 +451,7 @@ data class ForwarderConfig(
       if (duplicateTopics.isNotEmpty()) {
         error("market-data feed topics must be unique: ${duplicateTopics.sorted().joinToString(",")}")
       }
-      val subscriptionCount = configuredSymbols.size * (feeds.size + 1)
+      val subscriptionCount = coreSymbols.size + observationSymbols.size * feeds.size
       if (subscriptionCount > 30) {
         error("configured market-data feeds require $subscriptionCount symbol subscriptions; Alpaca Basic allows 30")
       }
