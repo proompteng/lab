@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buzz-redis-config
+  annotations:
+    argocd.argoproj.io/sync-wave: "-8"
+data:
+  redis-additional.conf: |
+    appendonly yes
+    appendfsync everysec
+    maxmemory-policy allkeys-lru

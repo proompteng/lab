@@ -44,10 +44,7 @@ spec:
     readOnlyRootFilesystem: false
   redisConfig:
     maxMemoryPercentOfLimit: 75
-    additionalRedisConfig: |-
-      appendonly yes
-      appendfsync everysec
-      maxmemory-policy allkeys-lru
+    additionalRedisConfig: buzz-redis-config
   redisExporter:
     enabled: true
     image: quay.io/opstree/redis-exporter:v1.78.0@sha256:8edf2c77220a6e8fc290d13a4ec78bedcbdf08b8bf03a64119f448131f733d3f
