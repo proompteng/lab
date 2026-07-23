@@ -13,7 +13,7 @@ let
   # are locked in risk-balanced-trend.test.ts, so behavior-preserving refactors retain the same identity.
   strategyBehaviorHash = "43cece33d3db232ffb02ba78826727e50b5795319d09d27e1baa0c04709eb056";
   # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v2 document.
-  strategyParameterHash = "cf639d3692da65271b12423f9b7c6c9663e1fb13ae7290dc56fcfa3acf16eb69";
+  strategyParameterHash = "649148eeaaf1f3aa1f1dd6d129a93aeef6b07f63e1aa60b6ed79f91a9cf7bbf8";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
 in
 import ./bun-workspace-service.nix {
@@ -21,8 +21,8 @@ import ./bun-workspace-service.nix {
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
   depsHash = {
-    x86_64-linux = "sha256-+Pc9/PwLvC7t3hmN/owxwFoDoSKFg9h05VAIp/3C0DE=";
-    aarch64-linux = "sha256-7TTGoDjmxMi0zJ44u6oCW3ZqjAJByB6ehTuG6lCCzdM=";
+    x86_64-linux = "sha256-iEHxibMeE6M7b01kA8wLBKQ645HZYE7TYA52yHwGpgc=";
+    aarch64-linux = "sha256-GJ5DRytsoErGVEywZGsv4D3vq4jq/GXQVJB5eRMy8ok=";
   };
   installFilters = [
     "@proompteng/bayn"
