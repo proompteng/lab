@@ -103,7 +103,7 @@ const AccessRow = Schema.Struct({
   query_id: NonEmptyString,
   query_start_time: IsoInstant,
   user: NonEmptyString,
-  kind: Schema.Literals(['manifest', 'sessions', 'bars']),
+  kind: Schema.Literals(['manifest', 'sessions', 'bars', 'integrity']),
 })
 const ReplicaRow = Schema.Struct({ replica: ReplicaName })
 
@@ -379,8 +379,11 @@ const readSignalReplicaAccess = (
   url: URL,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
-  manifestTable: InputManifest['tables']['manifests'],
+  signalTables: InputManifest['tables'],
 ): Effect.Effect<SignalReplicaAccess, unknown> => {
+  const barsTable = `signal.${signalTables.bars}`
+  const sessionsTable = `signal.${signalTables.sessions}`
+  const manifestTable = `signal.${signalTables.manifests}`
   const program = Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
     const [replicaRow] = yield* decodeReplicaRow(
@@ -406,8 +409,15 @@ const readSignalReplicaAccess = (
         formatDateTime(toTimeZone(query_start_time_microseconds, 'UTC'), '%Y-%m-%dT%H:%i:%S.%fZ') AS query_start_time,
         user,
         multiIf(
-          positionCaseInsensitive(query, ${sql.param('String', manifestTable)}) > 0, 'manifest',
-          positionCaseInsensitive(query, 'exchange_sessions_v1') > 0, 'sessions',
+          positionCaseInsensitive(query, ${sql.param('String', "'manifest' AS evidence_type")}) > 0
+            OR positionCaseInsensitive(query, ${sql.param('String', "'bars' AS evidence_type")}) > 0
+            OR positionCaseInsensitive(query, ${sql.param('String', "'sessions' AS evidence_type")}) > 0
+            OR positionCaseInsensitive(query, ${sql.param('String', "'per_symbol' AS evidence_type")}) > 0
+            OR positionCaseInsensitive(query, ${sql.param('String', 'AS ordered_bars_fingerprint')}) > 0
+            OR positionCaseInsensitive(query, ${sql.param('String', 'AS ordered_sessions_fingerprint')}) > 0,
+          'integrity',
+          has(tables, ${sql.param('String', manifestTable)}), 'manifest',
+          has(tables, ${sql.param('String', sessionsTable)}), 'sessions',
           'bars'
         ) AS kind
       FROM system.query_log
@@ -419,9 +429,9 @@ const readSignalReplicaAccess = (
         )
         AND position(query, ${sql.param('String', database.run.snapshotId)}) > 0
         AND (
-          positionCaseInsensitive(query, ${sql.param('String', manifestTable)}) > 0
-          OR positionCaseInsensitive(query, 'exchange_sessions_v1') > 0
-          OR positionCaseInsensitive(query, 'adjusted_daily_bars_v2') > 0
+          has(tables, ${sql.param('String', manifestTable)})
+          OR has(tables, ${sql.param('String', sessionsTable)})
+          OR has(tables, ${sql.param('String', barsTable)})
         )
       ORDER BY query_start_time_microseconds, query_id
     `.pipe(sql.withQueryId(`bayn-audit-access-${database.run.runId.slice(-24)}`))
@@ -456,10 +466,10 @@ const readSignalAccess = (
   input: AuditConfig,
   database: AuditDatabaseSnapshot,
   finalizedAt: string,
-  manifestTable: InputManifest['tables']['manifests'],
+  signalTables: InputManifest['tables'],
 ): Effect.Effect<{ readonly replicas: readonly string[]; readonly access: readonly SignalAccessRecord[] }, unknown> =>
   Effect.all(
-    input.auditClickhouseUrls.map((url) => readSignalReplicaAccess(input, url, database, finalizedAt, manifestTable)),
+    input.auditClickhouseUrls.map((url) => readSignalReplicaAccess(input, url, database, finalizedAt, signalTables)),
     { concurrency: 'unbounded' },
   ).pipe(
     Effect.flatMap((sources) =>
@@ -533,12 +543,7 @@ const main = Effect.gen(function* () {
   const manifest = yield* decodeInputManifestArtifact(inputManifestArtifact.payload)
   const protocol = database.protocol.parameters
   const signal = yield* loadSignal(input, manifest, protocol)
-  const signalAccess = yield* readSignalAccess(
-    input,
-    database,
-    manifest.finalizedSnapshot.finalizedAt,
-    manifest.tables.manifests,
-  )
+  const signalAccess = yield* readSignalAccess(input, database, manifest.finalizedSnapshot.finalizedAt, manifest.tables)
   const result = database.qualification.result
   const repository = yield* repositoryAudit(
     input.repositoryPath,

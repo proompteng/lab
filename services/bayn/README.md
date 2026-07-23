@@ -116,8 +116,10 @@ For a terminal locked candidate, `audit:qualification` performs an operator-side
 evidence graph in one PostgreSQL `REPEATABLE READ, READ ONLY` transaction, reloads the finalized Signal snapshot,
 replays the candidate and all benchmarks without importing the production strategy, checks ClickHouse query-start
 chronology on every physical ClickHouse replica with a separately supplied audit principal, and checks authoritative
-`origin/main` history. It emits one `bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run
-it twice and require identical `auditHash` values.
+`origin/main` history. Query-log classification uses actual Signal table access and records the bounded publication
+count, coverage, and ordered-content-hash proofs as integrity reads rather than candidate bar inspection. It emits one
+`bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run it twice and require identical
+`auditHash` values.
 
 ```sh
 BAYN_AUDIT_RUN_ID=<run-id> \

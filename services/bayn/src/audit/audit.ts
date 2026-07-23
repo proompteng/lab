@@ -100,7 +100,7 @@ export interface SignalAccessRecord {
   readonly queryId: string
   readonly queryStartTime: string
   readonly user: string
-  readonly kind: 'manifest' | 'sessions' | 'bars'
+  readonly kind: 'manifest' | 'sessions' | 'bars' | 'integrity'
 }
 
 export interface SignalPrincipals {
@@ -664,9 +664,14 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
         input.signalPrincipals.publishers.length + 1 &&
       sortedAccess.every(
         (value) =>
-          value.user === input.signalPrincipals.candidate || input.signalPrincipals.publishers.includes(value.user),
+          value.kind === 'integrity' ||
+          value.user === input.signalPrincipals.candidate ||
+          input.signalPrincipals.publishers.includes(value.user),
       ),
-    [...new Set(sortedAccess.map((value) => value.user))].join(','),
+    `principals=${[...new Set(sortedAccess.map((value) => value.user))].join(',')} integrity=${sortedAccess
+      .filter((value) => value.kind === 'integrity')
+      .map((value) => value.queryId)
+      .join(',')}`,
   )
   check(
     'source-revision-in-repository',

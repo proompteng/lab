@@ -360,6 +360,27 @@ describe('qualification audit', () => {
     expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(false)
   })
 
+  test('permits pre-lock publication-integrity reads without treating them as candidate bar inspection', () => {
+    const input = fixture()
+    const report = auditQualification({
+      ...input,
+      signalAccess: [
+        ...input.signalAccess,
+        {
+          replica: 'replica-0',
+          queryId: 'publication-integrity',
+          queryStartTime: '2026-07-20T11:59:58.500000Z',
+          user: 'publication-auditor',
+          kind: 'integrity',
+        },
+      ],
+    })
+
+    expect(report.status).toBe('PASS')
+    expect(report.checks.find((check) => check.name === 'signal-lock-before-candidate-bars')?.passed).toBe(true)
+    expect(report.checks.find((check) => check.name === 'signal-read-principals')?.passed).toBe(true)
+  })
+
   test.each([
     ['strategy', 'reference-strategy', (payload: Readonly<Record<string, unknown>>) => ({ ...payload, sharpe: 99 })],
     [
