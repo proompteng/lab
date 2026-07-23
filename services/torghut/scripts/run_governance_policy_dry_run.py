@@ -274,7 +274,12 @@ def _int_field_or_default(
     default: int,
 ) -> int:
     value = payload.get(key)
-    return default if value is None else int(value)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        return int(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
 
 
 def main() -> int:

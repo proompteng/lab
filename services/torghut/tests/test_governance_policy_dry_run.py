@@ -336,10 +336,25 @@ class TestGovernancePolicyDryRun(TestCase):
         reasons = output["promotion_prerequisites"]["reasons"]
         self.assertIn("expert_router_registry_route_count_below_minimum", reasons)
 
+    def test_dry_run_defaults_blank_expert_router_route_count(self) -> None:
+        output = self._run_harness(expert_router_route_count="")
+
+        self.assertTrue(output["promotion_progression_allowed"])
+
+    def test_dry_run_defaults_invalid_expert_router_route_count(self) -> None:
+        output = self._run_harness(expert_router_route_count="not-an-integer")
+
+        self.assertTrue(output["promotion_progression_allowed"])
+
+    def test_dry_run_defaults_infinite_expert_router_route_count(self) -> None:
+        output = self._run_harness(expert_router_route_count=float("inf"))
+
+        self.assertTrue(output["promotion_progression_allowed"])
+
     def _run_harness(
         self,
         *extra_args: str,
-        expert_router_route_count: int | None = None,
+        expert_router_route_count: object | None = None,
     ) -> dict[str, object]:
         now = datetime.now(timezone.utc)
         repo_root = Path(__file__).resolve().parents[3]
