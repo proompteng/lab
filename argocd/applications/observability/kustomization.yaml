@@ -22,6 +22,7 @@ resources:
   - codex-pipeline-dashboard-configmap.yaml
   - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
+  - bayn-cycle-operations-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
 

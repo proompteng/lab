@@ -18,6 +18,16 @@ spec:
       ports:
         - port: http
           protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+      ports:
+        - port: http
+          protocol: TCP
   egress:
     - to:
         - namespaceSelector:
