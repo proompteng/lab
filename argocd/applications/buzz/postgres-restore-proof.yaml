@@ -8,6 +8,9 @@ metadata:
     app.kubernetes.io/component: restore-proof
   annotations:
     argocd.argoproj.io/sync-wave: "5"
+    # This is a disposable proof cluster. Recreate it when its recovery
+    # definition changes so a failed bootstrap Job or empty PVC is not reused.
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   description: Temporary restore proof for the Buzz production backup
   instances: 1
@@ -28,8 +31,16 @@ spec:
     resizeInUseVolumes: true
   bootstrap:
     recovery:
-      backup:
-        name: buzz-db-acceptance-20260723t091130z
+      source: buzz-db-backup
+      database: buzz
+      owner: buzz
+  externalClusters:
+    - name: buzz-db-backup
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: buzz-db
+          serverName: buzz-db-live
   postgresql:
     parameters:
       password_encryption: scram-sha-256
