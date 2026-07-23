@@ -3,6 +3,7 @@ import { expect } from 'bun:test'
 import { Effect, Option, Redacted } from 'effect'
 
 import type { RuntimeConfig } from './config'
+import { deriveCycleOperationsStatus } from './cycle-observability'
 import type { EvidenceStoreService, StoredEvaluationEvidence } from './db/evidence-store'
 import type { JournalService } from './ledger'
 import type { MarketDataService } from './market-data'
@@ -58,6 +59,9 @@ export const config: RuntimeConfig = {
   },
   healthIntervalMs: 100,
   operationTimeoutMs: 250,
+  cycleStallThresholdMs: 300_000,
+  reconciliationStaleThresholdMs: 120_000,
+  unknownMutationThresholdMs: 300_000,
   clickhouse: {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
@@ -277,8 +281,22 @@ export const readyState = (): RuntimeState => {
         signal: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
         tigerBeetle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
         evidence: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
+        cycle: { status: 'AVAILABLE', checkedAt: '2026-07-20T00:00:00.000Z', error: null },
       },
     },
+    cycle: deriveCycleOperationsStatus(
+      {
+        current: null,
+        last: null,
+        unfinishedCycleCount: 0,
+        authority: null,
+        reconciliation: null,
+        mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
+      },
+      Date.parse('2026-07-20T00:00:00.000Z'),
+      Authority.Observe,
+      config,
+    ),
     broker: null,
     error: null,
   }

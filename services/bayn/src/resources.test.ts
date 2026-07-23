@@ -31,6 +31,9 @@ const config: RuntimeConfig = {
   },
   healthIntervalMs: 100,
   operationTimeoutMs: 20,
+  cycleStallThresholdMs: 300_000,
+  reconciliationStaleThresholdMs: 120_000,
+  unknownMutationThresholdMs: 300_000,
   clickhouse: {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',

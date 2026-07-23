@@ -3,6 +3,12 @@ import { Cause, Clock, Duration, Effect, Exit, Option, Ref, Schedule } from 'eff
 import type { BrokerReadShape } from './broker/alpaca'
 import type { RuntimeConfig } from './config'
 import type { FinalizedSnapshotProvenance } from './contracts'
+import {
+  CycleOperationsCondition,
+  deriveCycleOperationsStatus,
+  unknownCycleOperationsStatus,
+} from './cycle-observability'
+import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore, type QualificationRecord, type RecoveredEvaluationEvidence } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'
@@ -24,6 +30,10 @@ interface ProbeResult {
 
 interface BrokerProbeResult extends ProbeResult {
   readonly accountId: string | null
+}
+
+interface ValueProbeResult<A> extends ProbeResult {
+  readonly value: A | null
 }
 
 export interface BrokerProbe extends BrokerConfiguration {
@@ -53,6 +63,15 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
     if (Cause.hasInterrupts(exit.cause)) return yield* Effect.interrupt
     const errors = Cause.prettyErrors(exit.cause).map((error) => error.message)
     return { accountId: null, error: errors.join('; ') || 'unknown broker probe failure' }
+  })
+
+const observeValue = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<ValueProbeResult<A>, never, R> =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect)
+    if (Exit.isSuccess(exit)) return { value: exit.value, error: null }
+    if (Cause.hasInterrupts(exit.cause)) return yield* Effect.interrupt
+    const errors = Cause.prettyErrors(exit.cause).map((error) => error.message)
+    return { value: null, error: errors.join('; ') || 'unknown probe failure' }
   })
 
 const ensureSignalIdentity = (
@@ -115,14 +134,15 @@ export const probe = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
   Effect.gen(function* () {
     const marketData = yield* MarketData
     const journal = yield* Journal
     const evidenceStore = yield* EvidenceStore
+    const cycleObservability = yield* CycleObservability
     const current = yield* Ref.get(state)
     const evidence = current.evidence
-    const [[postgresql, signal, tigerBeetle, durableEvidence], brokerResult] = yield* Effect.all(
+    const [[postgresql, signal, tigerBeetle, durableEvidence, cycleResult], brokerResult] = yield* Effect.all(
       [
         Effect.all(
           [
@@ -170,6 +190,19 @@ export const probe = (
                     ),
                   ),
             ),
+            observeValue(
+              evidence === null
+                ? Effect.fail(operationalError('database', 'cycle-observability', 'startup evidence is unavailable'))
+                : withinDeadline(
+                    databaseOperation(
+                      cycleObservability.read(evidence.evaluation.runId, broker?.expectedAccountId),
+                      'cycle-observability',
+                    ),
+                    config.operationTimeoutMs,
+                    'database',
+                    'cycle-observability',
+                  ),
+            ),
           ],
           { concurrency: 'unbounded' },
         ),
@@ -178,6 +211,13 @@ export const probe = (
       { concurrency: 'unbounded' },
     )
     const checkedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const cycle =
+      cycleResult.error === null && cycleResult.value !== null
+        ? deriveCycleOperationsStatus(cycleResult.value, Date.parse(checkedAt), config.maximumAuthority, config)
+        : {
+            ...unknownCycleOperationsStatus(cycleResult.error ?? 'cycle observability probe did not run'),
+            checkedAt,
+          }
     let brokerStatus: BrokerStatus | null = current.broker
     if (broker !== undefined) {
       const result = brokerResult ?? { accountId: null, error: 'broker probe did not run' }
@@ -207,6 +247,7 @@ export const probe = (
         signal: dependencyHealth(signal, checkedAt),
         tigerBeetle: dependencyHealth(tigerBeetle, checkedAt),
         evidence: dependencyHealth(durableEvidence, checkedAt),
+        cycle: dependencyHealth(cycleResult, checkedAt),
       },
     }
     const dependencyFailures = Object.entries(health.dependencies).filter(([, dependency]) => dependency.error !== null)
@@ -219,14 +260,26 @@ export const probe = (
       failedDependencies.push('broker')
       failureMessages.push(`broker: ${brokerStatus.error ?? 'account binding unavailable'}`)
     }
-    let next: RuntimeState = { ...current, health, broker: brokerStatus }
+    if (cycle.condition === CycleOperationsCondition.Stalled || cycle.condition === CycleOperationsCondition.Failed) {
+      if (!failedDependencies.includes('cycle')) failedDependencies.push('cycle')
+      failureMessages.push(`cycle: ${cycle.reason}`)
+    }
+    let next: RuntimeState = { ...current, health, cycle, broker: brokerStatus }
     if (evidence !== null && failureMessages.length === 0) {
-      next = { ...current, status: 'READY', health, broker: brokerStatus, error: null }
+      next = {
+        ...current,
+        status: 'READY',
+        health,
+        cycle,
+        broker: brokerStatus,
+        error: null,
+      }
     } else if (evidence !== null) {
       next = {
         ...current,
         status: 'DEGRADED',
         health,
+        cycle,
         broker: brokerStatus,
         error: failureMessages.join('; '),
       }
@@ -244,13 +297,37 @@ export const probe = (
         }),
       )
     }
+    if (next.cycle.condition !== current.cycle.condition || next.cycle.reason !== current.cycle.reason) {
+      const cycleObservationAvailable = next.cycle.condition !== CycleOperationsCondition.Unknown
+      const log =
+        next.cycle.condition === CycleOperationsCondition.Stalled ||
+        next.cycle.condition === CycleOperationsCondition.Failed
+          ? Effect.logWarning
+          : Effect.logInfo
+      yield* log(`Bayn cycle operations changed to ${next.cycle.condition}`).pipe(
+        Effect.annotateLogs({
+          service: 'bayn',
+          checkedAt,
+          cycleCondition: next.cycle.condition,
+          cycleReason: next.cycle.reason,
+          currentCycleId: next.cycle.current?.cycleId ?? '',
+          currentPhase: next.cycle.current?.phase ?? '',
+          signalSessionDate: next.cycle.current?.signalSessionDate ?? '',
+          submissionCutoffAt: next.cycle.current?.submissionCutoffAt ?? '',
+          attemptAgeMs: next.cycle.attemptAgeMs ?? -1,
+          unfinishedCycleCount: cycleObservationAvailable ? next.cycle.unfinishedCycleCount : 'unknown',
+          unresolvedMutationCount: cycleObservationAvailable ? next.cycle.mutations.unresolvedCount : 'unknown',
+          zeroMutation: cycleObservationAvailable ? next.cycle.zeroMutation : 'unknown',
+        }),
+      )
+    }
   }).pipe(Effect.withLogSpan('health'))
 
 export const monitor = (
   config: RuntimeConfig,
   state: Ref.Ref<RuntimeState>,
   broker?: BrokerProbe,
-): Effect.Effect<void, never, MarketData | Journal | EvidenceStore> =>
+): Effect.Effect<void, never, MarketData | Journal | EvidenceStore | CycleObservability> =>
   probe(config, state, broker).pipe(
     Effect.repeat(Schedule.spaced(Duration.millis(config.healthIntervalMs))),
     Effect.asVoid,

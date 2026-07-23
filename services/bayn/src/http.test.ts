@@ -4,6 +4,7 @@ import { Context, Effect, Layer, Ref } from 'effect'
 import { HttpServer } from 'effect/unstable/http'
 
 import {
+  config,
   provenance,
   historicalRunId,
   successfulEvidenceStore,
@@ -15,7 +16,7 @@ import type { BrokerReadShape } from './broker/alpaca'
 import { unusedMarketCalendar } from './broker/alpaca-test-support'
 import { DatabaseError, type EvidenceStoreService } from './db/evidence-store'
 import type { BrokerProbe } from './health'
-import { makeHttpLayer } from './http'
+import { makeHttpLayer, renderPrometheusMetrics } from './http'
 import { Authority } from './paper'
 import { initialState } from './runtime-state'
 
@@ -29,10 +30,13 @@ describe('Bayn HTTP probes', () => {
           const context = yield* Layer.build(
             makeHttpLayer(
               {
+                cycleStallThresholdMs: config.cycleStallThresholdMs,
                 host: '127.0.0.1',
                 maximumAuthority: Authority.Observe,
                 operationTimeoutMs: 250,
                 port: 0,
+                reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+                unknownMutationThresholdMs: config.unknownMutationThresholdMs,
               },
               state,
               provenance,
@@ -65,6 +69,12 @@ describe('Bayn HTTP probes', () => {
             body: {
               service: 'bayn',
               operational: { status: 'READY', ready: true, probeSequence: 1 },
+              cycle: {
+                condition: 'WAITING',
+                reason: 'NO_CYCLE_RECORDED',
+                zeroMutation: true,
+                mutations: { eventCount: 0, unresolvedCount: 0 },
+              },
               authority: { maximum: 'observe', brokerOrders: false, capitalPromotion: false },
               broker: {
                 configured: false,
@@ -89,6 +99,14 @@ describe('Bayn HTTP probes', () => {
           expect(statusResponse.body.economic).not.toHaveProperty('status')
           expect(statusResponse.body.qualification).not.toHaveProperty('status')
           expect(statusResponse.body.qualification).not.toHaveProperty('executable')
+          const metricsResponse = yield* Effect.promise(() => fetch(`http://127.0.0.1:${port}/metrics`))
+          const metrics = yield* Effect.promise(() => metricsResponse.text())
+          expect(metricsResponse.status).toBe(200)
+          expect(metricsResponse.headers.get('content-type')).toContain('text/plain')
+          expect(metrics).toContain('bayn_cycle_condition{condition="waiting"} 1')
+          expect(metrics).toContain('bayn_mutation_events_total 0')
+          expect(metrics).toContain('bayn_broker_orders_enabled 0')
+          expect(metrics).toContain('bayn_capital_promotion_enabled 0')
           expect(yield* Effect.promise(() => fetchJson(port, `/v1/evaluations/${historicalRunId}`))).toMatchObject({
             status: 200,
             body: { run: { runId: historicalRunId } },
@@ -106,10 +124,27 @@ describe('Bayn HTTP probes', () => {
             status: 503,
             body: { ready: false, status: 'FAILED' },
           })
-          expect(yield* Effect.promise(() => fetchJson(port, '/v1/status'))).toMatchObject({
+          const failedStatus = yield* Effect.promise(() => fetchJson(port, '/v1/status'))
+          expect(failedStatus).toMatchObject({
             status: 200,
-            body: { operational: { status: 'FAILED' }, error: 'test failure' },
+            body: {
+              operational: { status: 'FAILED' },
+              cycle: {
+                observationAvailable: false,
+                condition: 'UNKNOWN',
+                zeroMutation: null,
+              },
+              authority: { durable: { available: false } },
+              error: 'test failure',
+            },
           })
+          const failedBody = failedStatus.body as {
+            readonly authority: { readonly durable: Record<string, unknown> }
+            readonly cycle: Record<string, unknown>
+          }
+          expect(failedBody.cycle).not.toHaveProperty('unfinishedCycleCount')
+          expect(failedBody.cycle).not.toHaveProperty('mutations')
+          expect(failedBody.authority.durable).not.toHaveProperty('configured')
           expect(yield* Effect.promise(() => fetchJson(port, '/v1/evidence/latest'))).toMatchObject({
             status: 404,
             body: { error: 'not_found' },
@@ -152,10 +187,13 @@ describe('Bayn HTTP probes', () => {
           const context = yield* Layer.build(
             makeHttpLayer(
               {
+                cycleStallThresholdMs: config.cycleStallThresholdMs,
                 host: '127.0.0.1',
                 maximumAuthority: Authority.Observe,
                 operationTimeoutMs: 250,
                 port: 0,
+                reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+                unknownMutationThresholdMs: config.unknownMutationThresholdMs,
               },
               state,
               provenance,
@@ -181,7 +219,15 @@ describe('Bayn HTTP probes', () => {
           const state = yield* Ref.make(initialState())
           const context = yield* Layer.build(
             makeHttpLayer(
-              { host: '127.0.0.1', maximumAuthority: Authority.Paper, operationTimeoutMs: 250, port: 0 },
+              {
+                cycleStallThresholdMs: config.cycleStallThresholdMs,
+                host: '127.0.0.1',
+                maximumAuthority: Authority.Paper,
+                operationTimeoutMs: 250,
+                port: 0,
+                reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+                unknownMutationThresholdMs: config.unknownMutationThresholdMs,
+              },
               state,
               provenance,
               'embedded',
@@ -228,10 +274,13 @@ describe('Bayn HTTP probes', () => {
           const context = yield* Layer.build(
             makeHttpLayer(
               {
+                cycleStallThresholdMs: config.cycleStallThresholdMs,
                 host: '127.0.0.1',
                 maximumAuthority: Authority.Observe,
                 operationTimeoutMs: 250,
                 port: 0,
+                reconciliationStaleThresholdMs: config.reconciliationStaleThresholdMs,
+                unknownMutationThresholdMs: config.unknownMutationThresholdMs,
               },
               state,
               provenance,
@@ -257,5 +306,21 @@ describe('Bayn HTTP probes', () => {
         }),
       ),
     )
+  })
+
+  test('does not synthesize durable cycle, mutation, reconciliation, or authority observations', () => {
+    const metrics = renderPrometheusMetrics(initialState(), config, provenance, 'embedded')
+
+    expect(metrics).toContain('bayn_cycle_observation_available 0')
+    expect(metrics).toContain('bayn_cycle_condition{condition="unknown"} 1')
+    expect(metrics).toContain('bayn_cycle_reason{reason="observation_unavailable"} 1')
+    expect(metrics).toContain('bayn_cycle_phase{phase="unknown"} 1')
+    expect(metrics).toContain('bayn_zero_mutation_confirmed 0')
+    expect(metrics).not.toContain('bayn_cycle_unfinished_count ')
+    expect(metrics).not.toContain('bayn_mutation_events_total ')
+    expect(metrics).not.toContain('bayn_unresolved_mutations ')
+    expect(metrics).not.toContain('bayn_reconciliation_available ')
+    expect(metrics).not.toContain('bayn_authority_coherent ')
+    expect(metrics).not.toContain('bayn_authority_kill_active ')
   })
 })

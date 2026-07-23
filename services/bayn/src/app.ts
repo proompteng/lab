@@ -1,6 +1,7 @@
 import { Effect, Layer, Ref } from 'effect'
 
 import type { RuntimeConfig } from './config'
+import { CycleObservability } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
 import { operationalError, type OperationalError } from './errors'
 import { monitor, type BrokerProbe } from './health'
@@ -16,7 +17,7 @@ export const run = (
   strategy: Strategy,
   reconciliation: Effect.Effect<void> = Effect.void,
   broker?: BrokerProbe,
-): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore> =>
+): Effect.Effect<never, OperationalError, MarketData | Journal | EvidenceStore | CycleObservability> =>
   Effect.scoped(
     Effect.gen(function* () {
       const evidenceStore = yield* EvidenceStore

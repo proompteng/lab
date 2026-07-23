@@ -9,6 +9,7 @@ import { BrokerMutation, makeMutation } from './broker/alpaca-mutations'
 import { verifyBehaviorHash, verifyParameterHash } from './build'
 import { loadConfig } from './config'
 import { makeRuntimeProvenance } from './contracts'
+import { CycleObservabilityLive } from './db/cycle-observability'
 import { EvidenceStoreLive } from './db/evidence-store'
 import { PaperStoreLive } from './db/paper-store'
 import { IntentStoreLive } from './execution/intents'
@@ -61,6 +62,7 @@ const main = Effect.gen(function* () {
     Layer.provide(NodeHttpClient.layerNodeHttp),
   )
   const evidenceStore = yield* acquireSqlLayer(EvidenceStoreLive(config).pipe(Layer.provide(NodeServices.layer)))
+  const cycleObservability = CycleObservabilityLive.pipe(Layer.provide(Layer.succeedContext(evidenceStore)))
   const journal = yield* acquireSqlLayer(JournalLive(config))
   let reconciliation = Effect.void
   let broker: BrokerProbe | undefined
@@ -131,7 +133,12 @@ const main = Effect.gen(function* () {
       reconciliation = runContinuously(config.alpaca.reconciliationIntervalMs).pipe(Effect.provide(paperExecution))
     }
   }
-  const dependencies = Layer.mergeAll(marketData, Layer.succeedContext(journal), Layer.succeedContext(evidenceStore))
+  const dependencies = Layer.mergeAll(
+    marketData,
+    cycleObservability,
+    Layer.succeedContext(journal),
+    Layer.succeedContext(evidenceStore),
+  )
   return yield* run(config, strategy, reconciliation, broker).pipe(Effect.provide(dependencies))
 }).pipe(Effect.scoped)
 

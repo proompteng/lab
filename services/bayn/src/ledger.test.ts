@@ -334,6 +334,9 @@ describe('TigerBeetle simulation journal', () => {
       },
       healthIntervalMs: 30_000,
       operationTimeoutMs: 1_000,
+      cycleStallThresholdMs: 300_000,
+      reconciliationStaleThresholdMs: 120_000,
+      unknownMutationThresholdMs: 300_000,
       clickhouse: {
         url: 'http://clickhouse.test',
         username: 'bayn',
