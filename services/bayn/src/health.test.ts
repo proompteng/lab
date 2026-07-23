@@ -313,6 +313,9 @@ describe('Bayn continuous health', () => {
         Effect.provideService(MarketData, {
           check: Effect.succeed(makeSnapshot().manifest.finalizedSnapshot),
           inspect: Effect.die(new Error('health probes must not inspect sessions')),
+          inspectPublication: () => Effect.die(new Error('health probes must not inspect cycle publications')),
+          inspectSnapshotPublication: () =>
+            Effect.die(new Error('health probes must not inspect bound cycle publications')),
           load: Effect.die(new Error('health probes must not load bars')),
         }),
         Effect.provideService(Journal, { ...successfulJournal, checkRun: () => Effect.void }),
