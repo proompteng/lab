@@ -236,7 +236,7 @@ describe('Bayn manifest promotion', () => {
     expect(() => promote(paths)).toThrow('qualification replacement requires a fresh BAYN_SIGNAL_SNAPSHOT_ID')
   })
 
-  test('replaces a pin for a fresh snapshot and rejects a second unpinned source release', () => {
+  test('replaces a pin for a fresh snapshot and makes an exact unpinned replay a no-op', () => {
     const paths = makeFixture({ snapshotId: '4'.repeat(64), publicationAsOf: '2026-07-19' })
     const changedParameterHash = '3'.repeat(64)
     const first = promote(paths, { strategyParameterHash: changedParameterHash })
@@ -256,6 +256,7 @@ describe('Bayn manifest promotion', () => {
       environmentBlock('BAYN_SIGNAL_SNAPSHOT_ID', currentSnapshotId).trim(),
     )
 
+    const beforeReplay = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
     expect(promote(paths, { strategyParameterHash: changedParameterHash })).toMatchObject({
       promotionAction: 'promote',
       promotionReason: 'eligible',
@@ -264,12 +265,58 @@ describe('Bayn manifest promotion', () => {
       snapshotChanged: false,
       deployedSourceSha: 'a'.repeat(40),
     })
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(beforeReplay)
+  })
 
-    const beforeSecondRelease = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
-    expect(() => promote(paths, { strategyParameterHash: changedParameterHash }, 'c'.repeat(40))).toThrow(
-      'an unpinned qualification snapshot cannot accept a second source release',
+  test('freezes the complete unpinned candidate until its terminal run is pinned', () => {
+    const paths = makeFixture({ snapshotId: '4'.repeat(64), publicationAsOf: '2026-07-19' })
+    const changedParameterHash = '3'.repeat(64)
+    promote(paths, { strategyParameterHash: changedParameterHash })
+    const before = Object.values(paths).map((path) => readFileSync(path, 'utf8'))
+    const secondSnapshot = {
+      ...currentBindings,
+      BAYN_SIGNAL_SNAPSHOT_ID: '5'.repeat(64),
+      BAYN_SIGNAL_PUBLICATION_ASOF: '2026-07-23',
+      BAYN_SIGNAL_DATA_END: '2026-07-23',
+      BAYN_SIGNAL_EVALUATION_END: '2026-07-23',
+    } satisfies BaynCandidateRuntime
+
+    expect(() =>
+      promote(paths, {
+        strategyParameterHash: changedParameterHash,
+        candidateRuntime: secondSnapshot,
+      }),
+    ).toThrow('an unpinned qualification candidate is immutable until its terminal run is pinned')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+
+    expect(() => promote(paths, { strategyParameterHash: '6'.repeat(64) })).toThrow(
+      'an unpinned qualification candidate is immutable until its terminal run is pinned',
     )
-    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(beforeSecondRelease)
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+
+    expect(() =>
+      promote(paths, {
+        strategyParameterHash: changedParameterHash,
+        digest: `sha256:${'c'.repeat(64)}`,
+      }),
+    ).toThrow('an unpinned qualification candidate is immutable until its terminal run is pinned')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+
+    expect(() =>
+      promote(paths, {
+        strategyParameterHash: changedParameterHash,
+        candidateRuntime: {
+          ...currentBindings,
+          BAYN_TIGERBEETLE_ADDRESSES: 'different-ledger.bayn.svc.cluster.local:3000',
+        },
+      }),
+    ).toThrow('an unpinned qualification candidate is immutable until its terminal run is pinned')
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
+
+    expect(() => promote(paths, { strategyParameterHash: changedParameterHash }, 'c'.repeat(40))).toThrow(
+      'an unpinned qualification candidate is immutable until its terminal run is pinned',
+    )
+    expect(Object.values(paths).map((path) => readFileSync(path, 'utf8'))).toEqual(before)
     expect(readFileSync(paths.deploymentPath, 'utf8')).not.toContain('BAYN_QUALIFICATION_RUN_ID')
   })
 
