@@ -28,6 +28,7 @@ import ./bun-workspace-service.nix {
   ];
   sourcePaths = [
     "services/bayn"
+    "packages/scripts/src/bayn/update-manifests.ts"
   ];
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
