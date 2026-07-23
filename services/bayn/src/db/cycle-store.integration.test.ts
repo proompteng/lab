@@ -34,7 +34,7 @@ import { ReconciliationStatus } from '../paper'
 import { makeObserveShadowDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest, type IsoDate } from '../types'
-import { CycleStore, CycleStoreLive } from './cycle-store'
+import { CycleStore, CycleStoreLive, type CycleStoreShape } from './cycle-store'
 import { PostgresClientLive } from './evidence-store'
 import { migrationLoader } from './migrations'
 
@@ -683,6 +683,58 @@ describePostgres('PostgreSQL autonomous cycle store', () => {
           result.readiness.cycle.window.submissionCutoffAt < result.readiness.cycle.window.executionOpenAt,
       ),
     ).toBe(true)
+  })
+
+  test('samples a fresh Clock time after acquisition before binding a finalized publication', async () => {
+    const accountId = '10000000-0000-4000-8000-000000000005'
+    const beforeDeadline = '2026-02-02T13:57:59.999Z'
+    const deadline = '2026-02-02T13:58:00.000Z'
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const delayedStore: CycleStoreShape = {
+          ...store,
+          acquire: (draft, observedAt) => store.acquire(draft, observedAt).pipe(Effect.tap(() => TestClock.adjust(1))),
+        }
+        yield* TestClock.setTime(Date.parse(beforeDeadline))
+        const cycle = yield* runAutonomousCyclePass(runnerContext(accountId)).pipe(
+          Effect.provideService(BrokerRead, runnerBrokerRead([])),
+          Effect.provideService(CycleStore, delayedStore),
+        )
+        const sql = yield* PgClient.PgClient
+        const [counts] = yield* sql<{ cycles: number; references: number }>`
+          SELECT
+            (SELECT count(*)::integer FROM autonomous_cycles) AS cycles,
+            (SELECT count(*)::integer FROM snapshot_references) AS references
+        `
+        return { counts, cycle }
+      }).pipe(Effect.provideService(MarketData, runnerMarketData()), Effect.provide(TestClock.layer())),
+    )
+
+    expect(result.cycle).toMatchObject({
+      outcome: 'ACQUIRED',
+      observedAt: deadline,
+      receipt: {
+        cycle: {
+          state: CycleState.Pending,
+          bindings: {},
+          createdAt: beforeDeadline,
+          updatedAt: beforeDeadline,
+        },
+      },
+      readiness: {
+        outcome: 'BLOCKED',
+        observedAt: deadline,
+        cycle: {
+          state: CycleState.Blocked,
+          bindings: {},
+          terminalReason: CycleTerminalReason.MissedPublication,
+          terminalAt: deadline,
+          updatedAt: deadline,
+        },
+      },
+    })
+    expect(result.counts).toEqual({ cycles: 1, references: 0 })
   })
 
   test('reserves one capital-authority slot across changed calendar and policy inputs', async () => {

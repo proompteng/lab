@@ -360,7 +360,7 @@ export const discoverAutonomousCyclePass = (
           runnerError('market-calendar', 'calendar-read', 'authoritative broker calendar read failed', cause),
         ),
       )
-    const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+    const calendarObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
     let latestNotDue: Extract<CycleRunResult, { readonly outcome: 'NOT_DUE' }> | undefined
     for (const publication of unclaimed) {
       const candidate: CycleCandidate = {
@@ -384,7 +384,6 @@ export const discoverAutonomousCyclePass = (
       const common = {
         signalSessionDate,
         executionSessionDate: executionSession.date,
-        observedAt,
         calendarResponseHash: calendar.value.normalizedResponseHash,
         calendarReadContentHash: calendar.evidence.contentHash,
       } as const
@@ -394,20 +393,23 @@ export const discoverAutonomousCyclePass = (
       })
       if (draft === undefined) {
         if (latestNotDue === undefined) {
-          latestNotDue = { outcome: 'NOT_DUE', ...common }
+          latestNotDue = { outcome: 'NOT_DUE', observedAt: calendarObservedAt, ...common }
         }
         continue
       }
+      const acquiredAt = new Date(yield* Clock.currentTimeMillis).toISOString()
       const receipt = yield* store
-        .acquire(draft, observedAt)
+        .acquire(draft, acquiredAt)
         .pipe(
           Effect.mapError((cause) =>
             runnerError('acquire-cycle', 'store', 'durable autonomous cycle acquisition failed', cause),
           ),
         )
-      const readiness = yield* bindDiscoveredPublication(receipt.cycle, publication, observedAt)
+      const bindingObservedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
+      const readiness = yield* bindDiscoveredPublication(receipt.cycle, publication, bindingObservedAt)
       return {
         outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
+        observedAt: bindingObservedAt,
         ...common,
         receipt,
         readiness,
