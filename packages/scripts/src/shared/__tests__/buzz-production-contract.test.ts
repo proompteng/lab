@@ -52,6 +52,7 @@ describe('Buzz production GitOps contract', () => {
     )
     expect(workflow).toContain('UPSTREAM_IMAGE=${{ matrix.upstream_image }}')
     expect(workflow.match(/driver-opts: network=host/g)).toHaveLength(2)
+    expect(workflow).not.toContain('cache-to:')
     expect(workflow).toContain('git -C upstream apply --check')
     expect(workflow).toContain('any(.manifests[]?; .platform.os == "linux"')
     expect(dockerfile).toContain('cargo test --release --locked -p buzz-relay api::git::store::tests:: --lib')
