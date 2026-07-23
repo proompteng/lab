@@ -13,7 +13,6 @@ const readWsConfig = () => readFileSync(resolve(root, 'argocd/applications/torgh
 const readWsDeployment = () => readFileSync(resolve(root, 'argocd/applications/torghut/ws/deployment.yaml'), 'utf8')
 const readSchedulerDeployment = () =>
   readFileSync(resolve(root, 'argocd/applications/torghut/scheduler-deployment.yaml'), 'utf8')
-const backfillManifest = 'signal-cross-asset-backfill-20160104-20260722.yaml'
 
 const csv = (value: string): string[] => value.split(',').map((item) => item.trim())
 const environment = (container: { env: Array<{ name: string }> }) =>
@@ -102,7 +101,7 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(cronVariables.get('SIGNAL_START_DATE')).toMatchObject(universeRef('HISTORY_START_DATE'))
     expect(cronVariables.get('SIGNAL_ALPACA_FEED')).toMatchObject(universeRef('HISTORY_FEED'))
     expect(cronVariables.get('SIGNAL_OPERATION_TIMEOUT_MS')).toMatchObject({ value: '180000' })
-    expect(cronJob.spec.suspend).toBe(true)
+    expect(cronJob.spec.suspend).toBe(false)
   })
 
   test('always permits a fail-closed suspension', () => {
@@ -114,52 +113,19 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(() => assertActivationProvenance(cronJob, kustomization)).not.toThrow()
   })
 
-  test('runs one bounded immutable cross-asset backfill while the scheduled writer is absent', () => {
-    const backfill = parse(read(backfillManifest))
+  test('runs the immutable daily publisher with no one-shot backfill', () => {
     const cronJob = parse(read('signal-publisher-cronjob.yaml'))
     const kustomization = parse(read('kustomization.yaml'))
-    const container = backfill.spec.template.spec.containers[0]
-    const variables = environment(container)
-    const image = kustomization.images.find(
-      (entry: { name: string }) => entry.name === 'registry.ide-newton.ts.net/lab/signal-publisher',
-    )
     const managedBackfills = kustomization.resources.filter((path: string) => path.includes('backfill'))
 
-    expect(cronJob.spec.suspend).toBe(true)
-    expect(kustomization.resources).not.toContain('signal-publisher-cronjob.yaml')
-    expect(managedBackfills).toEqual([backfillManifest])
-    expect(backfill.metadata).toMatchObject({
-      name: 'signal-cross-asset-backfill-20160104-20260722',
-      annotations: { 'argocd.argoproj.io/sync-wave': '5' },
+    expect(cronJob.spec).toMatchObject({
+      suspend: false,
+      schedule: '30 18 * * 1-5',
+      timeZone: 'America/New_York',
+      concurrencyPolicy: 'Forbid',
     })
-    expect(backfill.spec).toMatchObject({
-      backoffLimit: 1,
-      activeDeadlineSeconds: 900,
-      template: {
-        spec: {
-          automountServiceAccountToken: false,
-          restartPolicy: 'Never',
-          serviceAccountName: 'torghut-runtime',
-        },
-      },
-    })
-    expect(backfill.spec.ttlSecondsAfterFinished).toBeUndefined()
-    expect(container.args).toEqual(['backfill', '--start', '2016-01-04', '--end', '2026-07-22'])
-    expect(image).toMatchObject({
-      newName: 'registry.ide-newton.ts.net/lab/signal-publisher',
-      newTag: 'sha-72006ac26afef02e42fc1af8d434e49835cc40d6',
-      digest: 'sha256:2561a79d2baaa998036344c121cc3986aedec365881911dd592d334163d82729',
-    })
-    expect(variables.get('SIGNAL_CODE_REVISION')).toMatchObject({ value: image.newTag.slice(4) })
-    expect(variables.get('SIGNAL_IMAGE_REPOSITORY')).toMatchObject({ value: image.newName })
-    expect(variables.get('SIGNAL_IMAGE_DIGEST')).toMatchObject({ value: image.digest })
-    expect(variables.get('SIGNAL_UNIVERSE_ID')).toMatchObject(universeRef('UNIVERSE_ID'))
-    expect(variables.get('SIGNAL_UNIVERSE_SYMBOL_HASH')).toMatchObject(universeRef('UNIVERSE_SYMBOL_HASH'))
-    expect(variables.get('SIGNAL_SYMBOLS')).toMatchObject(universeRef('UNIVERSE_SYMBOLS'))
-    expect(variables.get('SIGNAL_START_DATE')).toMatchObject(universeRef('HISTORY_START_DATE'))
-    expect(variables.get('SIGNAL_ALPACA_FEED')).toMatchObject(universeRef('HISTORY_FEED'))
-    expect(variables.get('SIGNAL_OPERATION_TIMEOUT_MS')).toMatchObject({ value: '180000' })
-    expect([...variables.keys()].filter((name) => /BROKER|TIGERBEETLE|CAPITAL/.test(name))).toEqual([])
+    expect(kustomization.resources).toContain('signal-publisher-cronjob.yaml')
+    expect(managedBackfills).toEqual([])
   })
 
   test('limits database authority to the versioned append-only publication tables', () => {
@@ -210,8 +176,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ]),
     )
     expect(kustomization.resources.includes('signal-publisher-cronjob.yaml')).toBe(!cronJob.spec.suspend)
-    expect(kustomization.resources).not.toContain('signal-publisher-bayn-v1-backfill-job.yaml')
-    expect(kustomization.resources).toContain(backfillManifest)
+    expect(kustomization.resources.filter((path: string) => path.includes('backfill'))).toEqual([])
   })
 
   test('creates a replicated bounded intraday archive schema for Bayn reads', () => {
@@ -254,7 +219,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'pdb.yaml',
     ])
     expect(archive.spec).toMatchObject({
-      restartNonce: 4,
+      restartNonce: 5,
       job: {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 3,
