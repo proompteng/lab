@@ -617,6 +617,20 @@ const makeStore = Effect.gen(function* () {
             ) {
               return previous
             }
+            if (
+              operation === MutationOperation.Submit &&
+              eventType === MutationEventType.RecoveryFound &&
+              fields.nextState === IntentState.Terminal &&
+              (yield* readLatest(input.intentId, MutationOperation.Cancel)) !== undefined
+            ) {
+              return yield* Effect.fail(
+                storeError(
+                  storeOperation,
+                  'conflict',
+                  'terminal submit recovery cannot overtake a durable cancellation',
+                ),
+              )
+            }
             yield* append(event)
 
             if (fields.recover === true) {
@@ -626,12 +640,7 @@ const makeStore = Effect.gen(function* () {
                 WHERE intent_id = ${input.intentId} AND state = ${IntentState.Unknown}
                 RETURNING intent_id
               `
-              if (recovered.length !== 1) {
-                return yield* Effect.fail(
-                  storeError(storeOperation, 'conflict', 'unknown intent recovery lost its race'),
-                )
-              }
-              if (fields.nextState !== undefined) {
+              if (recovered.length === 1 && fields.nextState !== undefined) {
                 const transitioned = yield* sql<{ intent_id: string }>`
                   UPDATE intents
                   SET
@@ -650,6 +659,42 @@ const makeStore = Effect.gen(function* () {
                     storeError(storeOperation, 'conflict', 'recovered intent outcome lost its race'),
                   )
                 }
+              } else if (recovered.length === 0 && fields.nextState === IntentState.Terminal) {
+                const transitioned = yield* sql<{ intent_id: string }>`
+                  UPDATE intents
+                  SET
+                    state = ${IntentState.Terminal},
+                    terminal_outcome = ${fields.terminalOutcome ?? null},
+                    state_version = state_version + 1,
+                    updated_at = GREATEST(
+                      ${input.occurredAt}::timestamptz,
+                      updated_at + interval '1 microsecond'
+                    )
+                  WHERE intent_id = ${input.intentId} AND state = ${IntentState.Acknowledged}
+                  RETURNING intent_id
+                `
+                if (transitioned.length !== 1) {
+                  return yield* Effect.fail(
+                    storeError(storeOperation, 'conflict', 'acknowledged intent terminal recovery lost its race'),
+                  )
+                }
+              } else if (recovered.length === 0 && fields.nextState === IntentState.Acknowledged) {
+                const acknowledged = yield* sql<{ acknowledged: boolean }>`
+                  SELECT EXISTS (
+                    SELECT 1
+                    FROM intents
+                    WHERE intent_id = ${input.intentId} AND state = ${IntentState.Acknowledged}
+                  ) AS acknowledged
+                `
+                if (acknowledged[0]?.acknowledged !== true) {
+                  return yield* Effect.fail(
+                    storeError(storeOperation, 'conflict', 'submit recovery requires an unresolved durable intent'),
+                  )
+                }
+              } else if (recovered.length !== 1) {
+                return yield* Effect.fail(
+                  storeError(storeOperation, 'conflict', 'unknown intent recovery lost its race'),
+                )
               }
             } else if (fields.nextState !== undefined) {
               let fromState = fields.fromState ?? IntentState.IoStarted

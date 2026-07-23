@@ -631,6 +631,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 12, name: 'observe_shadow_decisions' },
       { migration_id: 13, name: 'autonomous_cycle_terminal_transitions' },
       { migration_id: 14, name: 'authority_generation_history' },
+      { migration_id: 15, name: 'acknowledged_submit_recovery' },
     ])
   })
 
@@ -1007,6 +1008,377 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.accepted.consistencyDelayMs).toBe(1_000)
     expect(observed.replay.eventId).toBe(observed.accepted.eventId)
     expect(observed.state).toEqual({ state: 'ACKNOWLEDGED', state_version: 4, events: 2 })
+  })
+
+  test('linearizes accepted submit terminal recovery and replays without another durable write', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '6'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+      }),
+    )
+    await execution.dispose()
+    await activateAuditedPaperAuthority()
+
+    const mutation = makeMutationRuntime()
+    const requestHash = '5'.repeat(64)
+    const base = Date.now() + 100
+    const acceptedEvidence = {
+      requestId: 'accepted-submit',
+      status: 200,
+      contentHash: '4'.repeat(64),
+      observedAt: new Date(base + 1).toISOString(),
+    }
+    const terminalEvidence = {
+      requestId: 'terminal-submit-recovery',
+      status: 200,
+      contentHash: '3'.repeat(64),
+      observedAt: new Date(base + 2).toISOString(),
+    }
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.submitAccepted(intent.intentId, requestHash, orderId, acceptedEvidence)
+        const recovered = yield* Effect.all(
+          [
+            store.recoveryFound(
+              intent.intentId,
+              MutationOperation.Submit,
+              requestHash,
+              orderId,
+              terminalEvidence,
+              TerminalOutcome.Filled,
+            ),
+            store.recoveryFound(
+              intent.intentId,
+              MutationOperation.Submit,
+              requestHash,
+              orderId,
+              terminalEvidence,
+              TerminalOutcome.Filled,
+            ),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        const sql = yield* PgClient.PgClient
+        const [state] = yield* sql<{
+          events: number
+          state: string
+          state_version: number
+          terminal_outcome: string | null
+        }>`
+          SELECT
+            state,
+            state_version::integer,
+            terminal_outcome,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { recovered, state }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.recovered[0].eventId).toBe(observed.recovered[1].eventId)
+    expect(observed.recovered[0]).toMatchObject({
+      sequence: 3,
+      eventType: MutationEventType.RecoveryFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.state).toEqual({
+      state: 'TERMINAL',
+      state_version: 5,
+      terminal_outcome: 'FILLED',
+      events: 3,
+    })
+  })
+
+  test('keeps an accepted submit recoverable after a 404 with its exact broker order identity', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+      }),
+    )
+    await execution.dispose()
+    await activateAuditedPaperAuthority()
+
+    const mutation = makeMutationRuntime()
+    const requestHash = 'b'.repeat(64)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.submitAccepted(intent.intentId, requestHash, orderId, {
+          requestId: 'accepted-submit-before-404',
+          status: 200,
+          contentHash: 'a'.repeat(64),
+          observedAt: new Date(base + 1).toISOString(),
+        })
+        const notFound = yield* store.recoveryNotFound(intent.intentId, MutationOperation.Submit, requestHash, {
+          requestId: 'accepted-submit-not-found',
+          status: 404,
+          contentHash: '9'.repeat(64),
+          observedAt: new Date(base + 2).toISOString(),
+        })
+        const afterNotFound = yield* sqlIntentState(intent.intentId)
+        const terminal = yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Submit,
+          requestHash,
+          orderId,
+          {
+            requestId: 'accepted-submit-later-terminal',
+            status: 200,
+            contentHash: '8'.repeat(64),
+            observedAt: new Date(base + 3).toISOString(),
+          },
+          TerminalOutcome.Filled,
+        )
+        const sql = yield* PgClient.PgClient
+        const [state] = yield* sql<{
+          events: number
+          state: string
+          state_version: number
+          terminal_outcome: string | null
+        }>`
+          SELECT
+            state,
+            state_version::integer,
+            terminal_outcome,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { afterNotFound, notFound, state, terminal }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(observed.notFound).toMatchObject({
+      sequence: 3,
+      eventType: MutationEventType.RecoveryNotFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.afterNotFound).toEqual({ state: 'ACKNOWLEDGED', state_version: 4 })
+    expect(observed.terminal).toMatchObject({
+      sequence: 4,
+      eventType: MutationEventType.RecoveryFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.state).toEqual({
+      state: 'TERMINAL',
+      state_version: 5,
+      terminal_outcome: 'FILLED',
+      events: 4,
+    })
+  })
+
+  test('does not let terminal submit recovery overtake a durable cancellation', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '9'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+      }),
+    )
+    await execution.dispose()
+    await activateAuditedPaperAuthority()
+
+    const mutation = makeMutationRuntime()
+    const submitHash = '7'.repeat(64)
+    const cancelHash = cancelRequestHash(orderId)
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
+        yield* store.submitAccepted(intent.intentId, submitHash, orderId, {
+          requestId: 'accepted-before-cancel',
+          status: 200,
+          contentHash: '6'.repeat(64),
+          observedAt: new Date(base + 1).toISOString(),
+        })
+        yield* store.beginCancel(intent.intentId, cancelHash, orderId, 1_000, new Date(base + 2).toISOString())
+        yield* store.cancelAccepted(intent.intentId, cancelHash, orderId, {
+          requestId: 'accepted-cancel',
+          status: 204,
+          contentHash: '5'.repeat(64),
+          observedAt: new Date(base + 3).toISOString(),
+        })
+        const submitRecovery = yield* Effect.exit(
+          store.recoveryFound(
+            intent.intentId,
+            MutationOperation.Submit,
+            submitHash,
+            orderId,
+            {
+              requestId: 'terminal-submit-during-cancel',
+              status: 200,
+              contentHash: '4'.repeat(64),
+              observedAt: new Date(base + 4).toISOString(),
+            },
+            TerminalOutcome.Filled,
+          ),
+        )
+        const afterSubmitRecovery = yield* sqlIntentState(intent.intentId)
+        const canceled = yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Cancel,
+          cancelHash,
+          orderId,
+          {
+            requestId: 'terminal-cancel-recovery',
+            status: 200,
+            contentHash: '3'.repeat(64),
+            observedAt: new Date(base + 5).toISOString(),
+          },
+          TerminalOutcome.Canceled,
+        )
+        const sql = yield* PgClient.PgClient
+        const [state] = yield* sql<{
+          events: number
+          state: string
+          state_version: number
+          terminal_outcome: string | null
+        }>`
+          SELECT
+            state,
+            state_version::integer,
+            terminal_outcome,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { afterSubmitRecovery, canceled, state, submitRecovery }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.submitRecovery)).toBe(true)
+    if (Exit.isFailure(observed.submitRecovery)) {
+      expect(Cause.pretty(observed.submitRecovery.cause)).toContain(
+        'terminal submit recovery cannot overtake a durable cancellation',
+      )
+    }
+    expect(observed.afterSubmitRecovery).toEqual({ state: 'ACKNOWLEDGED', state_version: 4 })
+    expect(observed.canceled).toMatchObject({
+      sequence: 3,
+      eventType: MutationEventType.RecoveryFound,
+      brokerOrderId: orderId,
+    })
+    expect(observed.state).toEqual({
+      state: 'TERMINAL',
+      state_version: 5,
+      terminal_outcome: 'CANCELED',
+      events: 5,
+    })
+  })
+
+  test('retains acknowledged state for open recovery before a later exact terminal observation', async () => {
+    const execution = makeExecutionRuntime()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '7'.repeat(64) })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    await execution.runPromise(
+      Effect.gen(function* () {
+        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+      }),
+    )
+    await execution.dispose()
+    await activateAuditedPaperAuthority()
+
+    const mutation = makeMutationRuntime()
+    const requestHash = '2'.repeat(64)
+    const otherOrderId = 'f93d3f58-0e70-4cd2-a9e1-2fcb89d76f74'
+    const base = Date.now() + 100
+    const observed = await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        yield* store.beginSubmit(intent.intentId, requestHash, 1_000, new Date(base).toISOString())
+        yield* store.submitAccepted(intent.intentId, requestHash, orderId, {
+          requestId: 'accepted-submit',
+          status: 200,
+          contentHash: '1'.repeat(64),
+          observedAt: new Date(base + 1).toISOString(),
+        })
+        const wrongIdentity = yield* Effect.exit(
+          store.recoveryFound(
+            intent.intentId,
+            MutationOperation.Submit,
+            requestHash,
+            otherOrderId,
+            {
+              requestId: 'wrong-order',
+              status: 200,
+              contentHash: '0'.repeat(64),
+              observedAt: new Date(base + 2).toISOString(),
+            },
+            TerminalOutcome.Filled,
+          ),
+        )
+        const afterWrongIdentity = yield* sqlIntentState(intent.intentId)
+        const open = yield* store.recoveryFound(intent.intentId, MutationOperation.Submit, requestHash, orderId, {
+          requestId: 'still-open',
+          status: 200,
+          contentHash: 'f'.repeat(64),
+          observedAt: new Date(base + 3).toISOString(),
+        })
+        const afterOpen = yield* sqlIntentState(intent.intentId)
+        const terminal = yield* store.recoveryFound(
+          intent.intentId,
+          MutationOperation.Submit,
+          requestHash,
+          orderId,
+          {
+            requestId: 'later-terminal',
+            status: 200,
+            contentHash: 'e'.repeat(64),
+            observedAt: new Date(base + 4).toISOString(),
+          },
+          TerminalOutcome.Expired,
+        )
+        const sql = yield* PgClient.PgClient
+        const [state] = yield* sql<{
+          events: number
+          state: string
+          state_version: number
+          terminal_outcome: string | null
+        }>`
+          SELECT
+            state,
+            state_version::integer,
+            terminal_outcome,
+            (SELECT count(*)::integer FROM mutation_events WHERE intent_id = ${intent.intentId}) AS events
+          FROM intents
+          WHERE intent_id = ${intent.intentId}
+        `
+        return { afterOpen, afterWrongIdentity, open, state, terminal, wrongIdentity }
+      }),
+    )
+    await mutation.dispose()
+
+    expect(Exit.isFailure(observed.wrongIdentity)).toBe(true)
+    if (Exit.isFailure(observed.wrongIdentity)) {
+      expect(Cause.pretty(observed.wrongIdentity.cause)).toContain('broker order identity cannot change')
+    }
+    expect(observed.afterWrongIdentity).toEqual({ state: 'ACKNOWLEDGED', state_version: 4 })
+    expect(observed.open).toMatchObject({ sequence: 3, eventType: MutationEventType.RecoveryFound })
+    expect(observed.afterOpen).toEqual({ state: 'ACKNOWLEDGED', state_version: 4 })
+    expect(observed.terminal).toMatchObject({ sequence: 4, eventType: MutationEventType.RecoveryFound })
+    expect(observed.state).toEqual({
+      state: 'TERMINAL',
+      state_version: 5,
+      terminal_outcome: 'EXPIRED',
+      events: 4,
+    })
   })
 
   test('serializes PAPER activation behind a writer-fenced mutation outcome and rechecks the baseline', async () => {
