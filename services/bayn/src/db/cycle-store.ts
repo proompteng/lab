@@ -13,6 +13,7 @@ import {
   type AutonomousCycle,
   type CycleDraft,
 } from '../cycle'
+import { decodeInputManifestArtifact } from '../evidence-contracts'
 import {
   IsoDateSchema,
   PositiveIntegerSchema,
@@ -21,6 +22,8 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
+import type { InputManifest } from '../types'
+import { ensureSnapshotReference } from './snapshot-reference'
 
 export interface CycleAcquireReceipt {
   readonly cycle: AutonomousCycle
@@ -44,7 +47,7 @@ export interface CycleStoreShape {
   readonly read: (cycleId: string) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
   readonly bindSnapshot: (
     cycleId: string,
-    snapshotId: string,
+    inputManifest: InputManifest,
     observedAt: string,
   ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
@@ -102,7 +105,6 @@ type StoredCycleRow = typeof StoredCycleRowSchema.Type
 const CycleIdInputSchema = Schema.Struct({ cycleId: Sha256Schema, observedAt: UtcInstantSchema })
 const SnapshotInputSchema = Schema.Struct({
   cycleId: Sha256Schema,
-  snapshotId: Sha256Schema,
   observedAt: UtcInstantSchema,
 })
 const DecisionInputSchema = Schema.Struct({
@@ -438,18 +440,33 @@ const makeCycleStore = Effect.gen(function* () {
       ),
     )
 
+  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, unknown> =>
+    ensureSnapshotReference(sql, inputManifest).pipe(
+      Effect.flatMap((matches) =>
+        matches
+          ? Effect.void
+          : fail(
+              'bind-snapshot',
+              'conflict',
+              'stored snapshot reference diverged from the finalized Signal publication',
+            ),
+      ),
+    )
+
   const bindSnapshot = (
     cycleId: string,
-    snapshotId: string,
+    inputManifest: InputManifest,
     observedAt: string,
   ): Effect.Effect<CycleMutationReceipt, CycleStoreError> =>
     run(
       'bind-snapshot',
-      decodeSnapshotInput({ cycleId, snapshotId, observedAt }).pipe(
+      decodeSnapshotInput({ cycleId, observedAt }).pipe(
         Effect.flatMap((input) =>
           sql.withTransaction(
             Effect.gen(function* () {
+              const decodedManifest = yield* decodeInputManifestArtifact(inputManifest)
               const cycle = yield* readLocked('bind-snapshot', input.cycleId)
+              const snapshot = decodedManifest.finalizedSnapshot
               if (input.observedAt < cycle.window.signalCloseAt) {
                 return yield* fail(
                   'bind-snapshot',
@@ -457,10 +474,22 @@ const makeCycleStore = Effect.gen(function* () {
                   'snapshot binding cannot precede the Signal session close',
                 )
               }
+              if (
+                snapshot.asOfSession !== cycle.identity.signalSessionDate ||
+                snapshot.lastSession !== cycle.identity.signalSessionDate ||
+                snapshot.calendarVersion !== cycle.identity.signalCalendarVersion
+              ) {
+                return yield* fail(
+                  'bind-snapshot',
+                  'invariant',
+                  'finalized Signal publication does not match the cycle signal session and calendar',
+                )
+              }
               if (cycle.bindings.snapshotId !== undefined) {
-                if (cycle.bindings.snapshotId !== input.snapshotId) {
+                if (cycle.bindings.snapshotId !== snapshot.snapshotId) {
                   return yield* fail('bind-snapshot', 'conflict', 'cycle snapshot binding cannot be replaced')
                 }
+                yield* persistSnapshotReference(decodedManifest)
                 return { cycle, changed: false }
               }
               if (cycle.state !== CycleState.Pending) {
@@ -477,10 +506,11 @@ const makeCycleStore = Effect.gen(function* () {
               if (input.observedAt < cycle.updatedAt) {
                 return yield* fail('bind-snapshot', 'conflict', 'cycle update time cannot move backward')
               }
+              yield* persistSnapshotReference(decodedManifest)
               const updatedRows = yield* sql<Record<string, unknown>>`
                 UPDATE autonomous_cycles
                 SET
-                  snapshot_id = ${input.snapshotId},
+                  snapshot_id = ${snapshot.snapshotId},
                   state_version = ${cycle.stateVersion + 1},
                   updated_at = ${input.observedAt}
                 WHERE cycle_id = ${input.cycleId}

@@ -104,7 +104,16 @@ export const marketDataService = (
   inspect: Effect.sync(() => ({
     manifest: inspectedSnapshot.manifest,
     sessionDates: [...new Set(inspectedSnapshot.bars.map((bar) => bar.sessionDate))].sort(),
+    signalSession: {
+      calendar_version: inspectedSnapshot.manifest.finalizedSnapshot.calendarVersion,
+      session_date: inspectedSnapshot.manifest.lastSession,
+      close_time: '16:00',
+      timezone: 'America/New_York',
+    },
   })),
+  inspectPublication: () => Effect.die(new Error('startup test market data must not inspect cycle publications')),
+  inspectSnapshotPublication: () =>
+    Effect.die(new Error('startup test market data must not inspect bound cycle publications')),
   load,
 })
 
