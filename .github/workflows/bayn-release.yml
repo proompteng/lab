@@ -129,7 +129,7 @@ jobs:
               --strategy-parameter-hash "$strategy_parameter_hash" \
               --rollout-timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           )"
-          jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace")' <<< "$promotion"
+          jq -e '(.promotionAction == "promote" or .promotionAction == "hold") and (.qualificationMode == "preserve" or .qualificationMode == "replace" or .qualificationMode == "install")' <<< "$promotion"
           {
             echo "promotion_action=$(jq -r '.promotionAction' <<< "$promotion")"
             echo "promotion_reason=$(jq -r '.promotionReason' <<< "$promotion")"
@@ -219,10 +219,13 @@ jobs:
             This is a one-way current-contract runtime release. Databases with the old migration tracker are rejected;
             there is no schema fallback or automatic rename. `preserve` keeps the terminal run only when compiled
             behavior, protocol parameters, Signal inputs, TigerBeetle cluster ID, and TigerBeetle ledger all match.
-            Replica addresses are transport and are rewritten without relabeling qualification evidence. `replace`
-            removes an existing incompatible pin only for a fresh Signal snapshot. Once that one-shot release is
-            unpinned, a different source revision is rejected until the terminal run is pinned or the snapshot
-            advances. Promotion never creates a qualification pin.
+            Replica addresses are transport and an explicit candidate may change them without relabeling qualification
+            evidence. `replace` removes an existing incompatible pin only for a fresh Signal snapshot. `install` is
+            available only to a controlled invocation that supplies the complete reviewed candidate runtime and exact
+            independently accepted terminal run ID; automatic image promotion supplies neither and therefore never
+            creates a pin. Installation can pin only the exact source, image digest, compiled strategy, and runtime
+            already deployed without a pin. It cannot replace an old pin and advance to a fresh candidate in the same
+            change.
 
             ## Checklist
 
