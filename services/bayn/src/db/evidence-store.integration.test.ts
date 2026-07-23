@@ -881,7 +881,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
     const blockedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'b'.repeat(64) })))
-    const expiresAtMillis = Date.now() + 1_000
+    const expiresAtMillis = Date.now() + 10_000
     const decision = await Effect.runPromise(
       riskDecision(intent, RiskOutcome.Approved, { expiresAt: new Date(expiresAtMillis).toISOString() }),
     )
