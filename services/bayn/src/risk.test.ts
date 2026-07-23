@@ -23,13 +23,28 @@ import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, PolicySchema, Reason, StateSchema, evaluate, type Policy, type State } from './risk'
 import { strictParseOptions } from './schemas'
 
-const evaluatedAt = '2026-07-22T14:00:00.000Z'
-const observedAt = '2026-07-22T13:59:30.000Z'
+const evaluatedAt = '2026-07-21T21:00:00.000Z'
+const observedAt = '2026-07-21T20:59:30.000Z'
 const hash = (character: string): string => character.repeat(64)
 
 const decodePolicy = Schema.decodeUnknownSync(PolicySchema, strictParseOptions)
 const decodeState = Schema.decodeUnknownSync(StateSchema, strictParseOptions)
 const decodeIntent = Schema.decodeUnknownSync(IntentSchema, strictParseOptions)
+
+const rehashExecutionSession = (
+  binding: Omit<State['executionSession'], 'bindingHash'>,
+): State['executionSession'] => ({
+  ...binding,
+  bindingHash: canonicalHashV1(binding),
+})
+
+const changeExecutionWindow = (
+  binding: State['executionSession'],
+  overrides: Partial<Pick<State['executionSession'], 'submissionOpenAt' | 'submissionCutoffAt'>>,
+): State['executionSession'] => {
+  const { bindingHash: _, ...material } = binding
+  return rehashExecutionSession({ ...material, ...overrides })
+}
 
 const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
   decodePolicy({
@@ -100,8 +115,34 @@ const baseState = (): State => {
     ordersObservedAt: observedAt,
     accountingHash,
   })
+  const executionSession = rehashExecutionSession({
+    schemaVersion: 'bayn.execution-session-binding.v1',
+    signal: {
+      sessionDate: '2026-07-21',
+      finalizedAt: '2026-07-21T20:58:00.000Z',
+      contentHash: hash('5'),
+    },
+    planningBrokerState: {
+      observedAt,
+      contentHash: reconciledStateHashValue,
+    },
+    calendar: {
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      requestedRange: { start: '2026-07-22', end: '2026-07-31' },
+      normalizedResponseHash: hash('c'),
+    },
+    executionSession: {
+      date: '2026-07-22',
+      openAt: '2026-07-22T13:30:00.000Z',
+      closeAt: '2026-07-22T20:00:00.000Z',
+    },
+    submissionOpenAt: observedAt,
+    submissionCutoffAt: '2026-07-22T13:15:00.000Z',
+    submissionCutoffLeadMinutes: 15,
+  })
   return decodeState({
-    schemaVersion: 'bayn.paper-risk-state.v1',
+    schemaVersion: 'bayn.paper-risk-state.v2',
     brokerMode: BrokerMode.Paper,
     account,
     positions,
@@ -139,15 +180,14 @@ const baseState = (): State => {
     referencePriceMicros: '100000000',
     expectedExecutionPriceMicros: '100000000',
     marketDataObservedAt: observedAt,
-    sessionOpenAt: '2026-07-22T13:30:00.000Z',
-    submissionCutoffAt: '2026-07-22T20:00:00.000Z',
+    executionSession,
+    reservedBuyingPowerMicros: '0',
     evaluatedAt,
   })
 }
 
 const makeState = (overrides: Partial<State> = {}): State => {
   const merged = { ...baseState(), ...overrides }
-  if (overrides.reconciliation !== undefined) return decodeState(merged)
   const reconciledStateHashValue = reconciledStateHash({
     account: merged.account,
     positions: merged.positions,
@@ -156,13 +196,27 @@ const makeState = (overrides: Partial<State> = {}): State => {
     ordersObservedAt: merged.ordersObservedAt,
     accountingHash: merged.accountingHash,
   })
-  return decodeState({
-    ...merged,
-    reconciliation: {
+  const reconciliation =
+    overrides.reconciliation ??
+    ({
       ...merged.reconciliation,
       expectedHash: reconciledStateHashValue,
       observedHash: reconciledStateHashValue,
+    } satisfies State['reconciliation'])
+  const sourceExecutionSession = overrides.executionSession ?? merged.executionSession
+  const { bindingHash: _, ...bindingMaterial } = sourceExecutionSession
+  const executionSession = rehashExecutionSession({
+    ...bindingMaterial,
+    signal: { ...bindingMaterial.signal, contentHash: merged.marketDataHash },
+    planningBrokerState: {
+      observedAt: reconciliation.reconciledAt,
+      contentHash: reconciliation.observedHash,
     },
+  })
+  return decodeState({
+    ...merged,
+    reconciliation,
+    executionSession,
   })
 }
 
@@ -183,7 +237,7 @@ const makeIntent = (overrides: Partial<Intent> = {}): Intent =>
     quantityMicros: '1000000',
     notionalLimitMicros: '100000000',
     state: IntentState.Planned,
-    createdAt: '2026-07-22T13:59:45.000Z',
+    createdAt: '2026-07-21T20:59:45.000Z',
     ...overrides,
   })
 
@@ -211,7 +265,7 @@ const openOrder = (brokerOrderId: string) => ({
 describe('bounded paper risk', () => {
   test('strictly decodes complete policy and coherent state', () => {
     expect(makePolicy().schemaVersion).toBe('bayn.paper-risk-policy.v1')
-    expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v1')
+    expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')
 
     const rawPolicy = { ...makePolicy() }
     const missingPolicy: Record<string, unknown> = { ...rawPolicy }
@@ -242,16 +296,31 @@ describe('bounded paper risk', () => {
         positions: [{ ...state.positions[0], marketValueMicros: '-100000000' }, state.positions[1]],
       }),
     ).toThrow()
-    expect(() => decodeState({ ...state, marketDataObservedAt: '2026-07-22T14:00:00.001Z' })).toThrow()
+    expect(() => decodeState({ ...state, marketDataObservedAt: '2026-07-21T21:00:00.001Z' })).toThrow()
+    expect(() =>
+      decodeState({
+        ...state,
+        executionSession: { ...state.executionSession, bindingHash: hash('0') },
+      }),
+    ).toThrow()
 
-    const earlierOrderObservation = '2026-07-22T13:59:29.000Z'
+    const earlierOrderObservation = '2026-07-21T20:59:29.000Z'
     const paginated = makeState({
       orders: [{ ...openOrder('broker-1'), observedAt: earlierOrderObservation }, openOrder('broker-2')],
       ordersObservedAt: observedAt,
     })
     expect(paginated.orders.map((order) => order.observedAt)).toEqual([earlierOrderObservation, observedAt])
     expect(() => decodeState({ ...paginated, ordersObservedAt: earlierOrderObservation })).toThrow()
-    expect(() => decodeState({ ...state, submissionCutoffAt: state.sessionOpenAt })).toThrow()
+    const { bindingHash: _, ...binding } = state.executionSession
+    expect(() =>
+      decodeState({
+        ...state,
+        executionSession: rehashExecutionSession({
+          ...binding,
+          submissionOpenAt: binding.submissionCutoffAt,
+        }),
+      }),
+    ).toThrow()
   })
 
   test('approves the exact limit boundary and binds a deterministic decision', () => {
@@ -262,7 +331,7 @@ describe('bounded paper risk', () => {
     expect(first.decision.outcome).toBe(RiskOutcome.Approved)
     expect(first.decision.reasonCodes).toEqual([])
     expect(first.gates.every((gate) => gate.passed)).toBe(true)
-    expect(first.input.freshUntil).toBe('2026-07-22T14:00:30.000Z')
+    expect(first.input.freshUntil).toBe('2026-07-21T21:00:30.000Z')
     expect(first.metrics).toEqual({
       orderNotionalMicros: '100000000',
       postTradeSymbolExposureMicros: '200000000',
@@ -272,8 +341,28 @@ describe('bounded paper risk', () => {
       dailyLossMicros: '50000000',
       drawdownMicros: '100000000',
       adverseSlippageBps: '0',
+      aggregateBuyingPowerMicros: '100000000',
       unresolvedOrderCount: 0,
     })
+  })
+
+  test('approves at submission open and blocks immediately before it and exactly at cutoff', () => {
+    const state = makeState()
+    const atOpen = makeState({
+      executionSession: changeExecutionWindow(state.executionSession, { submissionOpenAt: evaluatedAt }),
+    })
+    const beforeOpen = makeState({
+      executionSession: changeExecutionWindow(state.executionSession, {
+        submissionOpenAt: '2026-07-21T21:00:00.001Z',
+      }),
+    })
+    const atCutoff = makeState({
+      executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: evaluatedAt }),
+    })
+
+    expect(evaluate(makeIntent(), atOpen, makePolicy()).decision.outcome).toBe(RiskOutcome.Approved)
+    expectBlocked(Reason.OutsideSession, makeIntent(), beforeOpen, makePolicy())
+    expectBlocked(Reason.OutsideSession, makeIntent(), atCutoff, makePolicy())
   })
 
   test('blocks one micro beyond every money and exposure limit', () => {
@@ -300,6 +389,7 @@ describe('bounded paper risk', () => {
     ]
 
     for (const [reason, intent, state, policy] of cases) expectBlocked(reason, intent, state, policy)
+    expectBlocked(Reason.BuyingPowerExceeded, makeIntent(), makeState({ reservedBuyingPowerMicros: '1' }), makePolicy())
   })
 
   test('blocks adverse slippage and any unresolved order', () => {
@@ -477,10 +567,10 @@ describe('bounded paper risk', () => {
         terminalOutcome: TerminalOutcome.Blocked,
       }),
     )
-    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-22T14:00:00.001Z' }))
+    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T21:00:00.001Z' }))
     expectBlocked(
       Reason.IntentStale,
-      makeIntent({ createdAt: '2026-07-22T13:59:00.000Z' }),
+      makeIntent({ createdAt: '2026-07-21T20:59:00.000Z' }),
       makeState(),
       makePolicy({ maxIntentAgeMs: 60_000 }),
     )
@@ -543,7 +633,15 @@ describe('bounded paper risk', () => {
     )
     expectBlocked(Reason.BrokerStateStale, makeIntent(), makeState(), makePolicy({ maxBrokerStateAgeMs: 30_000 }))
     expectBlocked(Reason.MarketDataStale, makeIntent(), makeState(), makePolicy({ maxMarketDataAgeMs: 30_000 }))
-    expectBlocked(Reason.OutsideSession, makeIntent(), makeState({ submissionCutoffAt: evaluatedAt }), makePolicy())
+    const state = makeState()
+    expectBlocked(
+      Reason.OutsideSession,
+      makeIntent(),
+      makeState({
+        executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: evaluatedAt }),
+      }),
+      makePolicy(),
+    )
     expectBlocked(Reason.UnknownMutation, makeIntent(), makeState({ unknownMutationCount: 1 }), makePolicy())
   })
 
@@ -570,7 +668,11 @@ describe('bounded paper risk', () => {
     )
     const cutoffCapped = evaluate(
       makeIntent(),
-      makeState({ submissionCutoffAt: '2026-07-22T14:00:00.001Z' }),
+      makeState({
+        executionSession: changeExecutionWindow(makeState().executionSession, {
+          submissionCutoffAt: '2026-07-21T21:00:00.001Z',
+        }),
+      }),
       makePolicy({ decisionTtlMs: 60_000 }),
     )
     const intentCapped = evaluate(
@@ -578,9 +680,9 @@ describe('bounded paper risk', () => {
       makeState(),
       makePolicy({ decisionTtlMs: 60_000, maxIntentAgeMs: 15_001 }),
     )
-    expect(ttlCapped.input.freshUntil).toBe('2026-07-22T14:00:01.000Z')
-    expect(freshnessCapped.input.freshUntil).toBe('2026-07-22T14:00:00.001Z')
-    expect(cutoffCapped.input.freshUntil).toBe('2026-07-22T14:00:00.001Z')
-    expect(intentCapped.input.freshUntil).toBe('2026-07-22T14:00:00.001Z')
+    expect(ttlCapped.input.freshUntil).toBe('2026-07-21T21:00:01.000Z')
+    expect(freshnessCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
+    expect(cutoffCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
+    expect(intentCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
   })
 })

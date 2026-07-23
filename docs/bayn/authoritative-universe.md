@@ -1,10 +1,10 @@
 # Bayn authoritative universe
 
-Status: **precommitted; finalized Signal snapshot accepted; qualification release ready**
+Status: **universe retained; released v2 candidate rejected; causal v3 precommit not qualified**
 
 ## Current contract
 
-Bayn's next qualification candidate uses one fixed, canonically ordered universe:
+Bayn's corrected causal precommit retains one fixed, canonically ordered universe:
 
 ```text
 DBC,EFA,IEF,SPY,VNQ
@@ -21,7 +21,8 @@ DBC,EFA,IEF,SPY,VNQ
 | Calendar         | `alpaca-us-equity-calendar-v1`                                     |
 
 The hash is SHA-256 over the exact CSV string above. A reorder, addition, removal, feed change, adjustment change, or
-calendar change is a different contract and requires a new candidate.
+calendar change is a different contract and requires a new candidate. The v3 causal repair changes neither this
+universe nor the strategy parameters or qualification thresholds.
 
 ## Selection rationale
 
@@ -118,6 +119,23 @@ non-authorizing under `OBSERVE`: the execution model was not live-causal, and th
 that pre-lock Bayn/operator reads of the bars table returned only bounded publication count/hash evidence. The two
 independent audits therefore fail both candidate-bar chronology and principal checks rather than exempting those reads.
 PROOMPT-406 owns the causal contract and corrected precommit; this record clears no M2.2 or paper-mutation gate.
+
+## Corrected causal precommit
+
+`bayn.risk-balanced-trend.protocol.v3` plans quantities from the finalized signal-session close and reconciled
+pre-plan broker state, then treats the selected next-session open only as a fill outcome. The bounded Alpaca calendar
+identity fixes the future session open, close, and a 15-minute pre-open cutoff. Planned buys reserve only pre-submit
+cash and cannot spend planned sell proceeds. The strategy horizons, weight cap, volatility target, universe, and
+qualification gates remain unchanged.
+
+The source-controlled identities are:
+
+- behavior `dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd`;
+- parameters `e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3`; and
+- deterministic fixture evaluation `8be4f2f76c69bd7eeb2984bc08cd1d49013d2b349c8c574683851d4052a4901f`.
+
+These hashes are a corrected precommit, not a qualification result. The pinned v2 run remains terminal `REJECTED`;
+no qualification rerun is part of PROOMPT-406.
 
 Publication rollback remains fail-closed: stop new publication through GitOps and preserve finalized or partially
 staged rows for diagnosis. Never delete M2.1 evidence or Signal publication tables.

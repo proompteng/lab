@@ -71,19 +71,32 @@ describe('current contracts', () => {
     await expectFailure(decodeRunIdentity({ ...baseline, runId: '9'.repeat(64) }))
   })
 
-  test('accepts only current runtime provenance', async () => {
+  test('accepts current and immutable historical runtime provenance', async () => {
     const provenance = makeTestProvenance()
     expect(await Effect.runPromise(decodeRuntimeProvenance(provenance))).toEqual(provenance)
     expect(provenance).toMatchObject({
       schemaVersion: 'bayn.runtime-provenance.v2',
       strategy: {
         name: 'risk-balanced-trend',
-        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+        parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
       },
       contractVersions: {
         inputManifest: 'bayn.input-manifest.v3',
         evaluation: 'bayn.evaluation.v6',
       },
+    })
+    expect(
+      await Effect.runPromise(
+        decodeRuntimeProvenance({
+          ...provenance,
+          strategy: {
+            ...provenance.strategy,
+            parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+          },
+        }),
+      ),
+    ).toMatchObject({
+      strategy: { parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v2' },
     })
     await expectFailure(decodeRuntimeProvenance({ ...provenance, futureField: true }))
     await expectFailure(

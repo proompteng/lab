@@ -251,12 +251,16 @@ export const auditQualification = (input: QualificationAuditInput): Qualificatio
   const { resultHash, ...resultMaterial } = result
   const analysis = result.analysis
   const { analysisHash, ...analysisMaterial } = analysis
-  if (
-    database.protocol.strategyName !== contract.name ||
-    database.run.strategyName !== contract.name ||
-    database.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2'
-  ) {
+  if (database.protocol.strategyName !== contract.name || database.run.strategyName !== contract.name) {
     throw new Error('stored qualification uses an unsupported strategy contract')
+  }
+  if (
+    database.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3' ||
+    input.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3'
+  ) {
+    throw new Error(
+      'current auditor requires causal protocol v3; audit immutable v2 evidence with its source-pinned image',
+    )
   }
   const provenance = makeRuntimeProvenance({
     sourceRevision: database.run.sourceRevision,

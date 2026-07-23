@@ -37,7 +37,8 @@ const failStartup = (state: Ref.Ref<RuntimeState>, error: OperationalError): Eff
 const provenanceFromStored = (stored: StoredEvaluationEvidence): RuntimeProvenance => {
   if (
     stored.protocol.strategyName !== 'risk-balanced-trend' ||
-    stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2'
+    (stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v2' &&
+      stored.protocol.schemaVersion !== 'bayn.risk-balanced-trend.protocol.v3')
   ) {
     throw new Error('stored evaluation uses an unsupported strategy contract')
   }

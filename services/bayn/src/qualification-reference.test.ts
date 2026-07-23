@@ -36,4 +36,37 @@ describe('independent qualification reference', () => {
 
     expect(canonicalHashV1(changed.strategy.decisions)).not.toBe(canonicalHashV1(original.strategy.decisions))
   })
+
+  test('independently keeps planned quantities invariant to the future execution open', () => {
+    const snapshot = makeSnapshot(900)
+    const provenance = makeTestProvenance()
+    const actual = evaluateRiskBalancedTrend(snapshot.bars, snapshot.manifest, fixtureProtocol, provenance)
+    const executionDate = actual.signalDecisions[0].executionDate
+    const changedBars = snapshot.bars.map((bar) =>
+      bar.sessionDate === executionDate
+        ? {
+            ...bar,
+            open: bar.open * 1.5,
+            high: Math.max(bar.high, bar.open * 1.5),
+          }
+        : bar,
+    )
+    const changedActual = evaluateRiskBalancedTrend(changedBars, snapshot.manifest, fixtureProtocol, provenance)
+    const changedReference = evaluateReference(changedBars, snapshot.manifest, fixtureProtocol, provenance)
+    const requests = (orders: typeof actual.simulation.orders) =>
+      orders
+        .filter((order) => order.sessionDate === executionDate)
+        .map(({ decisionId, sessionDate, symbol, side, requestedQuantityMicros }) => ({
+          decisionId,
+          sessionDate,
+          symbol,
+          side,
+          requestedQuantityMicros,
+        }))
+
+    expect(requests(changedActual.simulation.orders)).toEqual(requests(actual.simulation.orders))
+    expect(requests(changedReference.strategy.trace?.orders ?? [])).toEqual(requests(actual.simulation.orders))
+    expect(changedActual.strategy.endingEquityMicros).not.toBe(actual.strategy.endingEquityMicros)
+    expect(changedReference.strategy.trace).toEqual(changedActual.simulation)
+  })
 })

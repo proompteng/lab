@@ -1,10 +1,10 @@
 # Bayn
 
-Bayn is a single-writer, paper-only quantitative qualification runtime. Its next protocol precommits the frozen
-risk-balanced trend candidate on a five-sleeve cross-asset ETF universe. The explicit one-shot release omits
-`BAYN_QUALIFICATION_RUN_ID` so startup can open the exact candidate lock and conduct the single permitted evaluation.
-GitOps remains `OBSERVE` and carries no Alpaca credentials, so qualification has no broker dependency and makes zero
-broker calls. The paper mutation capability, execution entry point, and capital-promotion path remain dormant.
+Bayn is a single-writer, paper-only quantitative qualification runtime. The released cross-asset one-shot is terminal
+`REJECTED`, pinned by `BAYN_QUALIFICATION_RUN_ID`, and non-authorizing. The next source-controlled precommit is
+`bayn.risk-balanced-trend.protocol.v3`: the same strategy parameters and thresholds with a corrected live-causal
+execution contract. It is not qualified and this change does not rerun qualification. GitOps remains `OBSERVE`; the
+paper mutation capability, execution entry point, and capital-promotion path remain dormant.
 
 ## Runtime contract
 
@@ -27,12 +27,16 @@ broker calls. The paper mutation capability, execution entry point, and capital-
   I/O. Fill accounting persists Alpaca's full source timestamp and orders equal timestamps by fill ID, rejects late
   predecessors, and records a receipt only after the complete TigerBeetle transaction-tag transfer set matches.
 - The composition root builds one pure strategy value and passes it explicitly to the lifecycle. Effect services and
-  layers are reserved for I/O resources. The compiled `bayn.risk-balanced-trend.protocol.v2` owns its authoritative
-  universe and execution contract; the HTTP and startup lifecycle remain strategy-independent.
+  layers are reserved for I/O resources. The compiled `bayn.risk-balanced-trend.protocol.v3` owns its authoritative
+  universe and causal execution contract; the HTTP and startup lifecycle remain strategy-independent. Protocol v2
+  remains decodable only so immutable historical evidence can be recovered.
 - The typed protocol is compiled into the image and runtime-decoded with Effect Schema. Strategies remain reviewed
   TypeScript rather than JSON.
-- The executable embeds source, repository, and strategy-behavior identity. Startup verifies configured attribution,
-  and status exposes the promoted image digest, parameter hash, and contract versions.
+- The executable embeds source, repository, and strategy-behavior identity. Startup verifies the compiled behavior and
+  parameter hashes against those embedded facts, and status exposes the promoted image digest, parameter hash, and
+  contract versions. The v3 precommit uses behavior hash
+  `dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd` and parameter hash
+  `e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3`.
 - The package `dev` and `start` scripts use explicit `development-configured` provenance because their artifacts are
   not OCI production builds. That mode is visible in status and cannot override an executable with embedded metadata;
   it does not change lifecycle or authority. The Nix image starts in the default production mode and fails closed if
@@ -49,8 +53,11 @@ broker calls. The paper mutation capability, execution entry point, and capital-
 - Production GitOps carries that pin outside an explicit one-shot qualification release. The release writer refuses a
   second source revision on the same unpinned snapshot, preventing operational releases from creating new trials.
 - The compiled risk-balanced trend decision function records every normalized trend horizon, volatility estimate,
-  portfolio-volatility scale, and target weight at a month-end close. Decisions may execute only at the next exchange
-  session open.
+  portfolio-volatility scale, and target weight at a month-end close. Quantities are planned only after that Signal
+  session is finalized, using its close prices and reconciled broker state observed before planning. Ordinary
+  non-extended `DAY` market orders may be submitted only after the plan is committed and before the fixed 15-minute
+  pre-open cutoff. The next exchange-session open affects fills and performance, never planned quantities; planned
+  buys reserve only pre-submit cash and cannot spend proceeds from planned sells.
 - After exact TigerBeetle reconciliation, one PostgreSQL transaction records the immutable protocol lock, input
   snapshot reference, run identity, metrics, simulated orders, fills, cash changes, daily position marks, daily
   returns, turnover, fees, drawdown, aligned benchmark series, the full equity series, independent marked-equity
@@ -78,6 +85,12 @@ broker calls. The paper mutation capability, execution entry point, and capital-
 - The Alpaca read adapter may be acquired while maximum authority is `OBSERVE`, but it performs GET-only preflight and
   does not build the paper store, reserve the writer fence, start reconciliation, or change PostgreSQL or TigerBeetle.
   The mutation adapter and recovery coordinator remain dormant source foundations.
+- The bounded Alpaca calendar observation is content-hashed with its request range, source/version, and normalized UTC
+  sessions. A causal execution-session binding selects the first future session and binds its exact open, close,
+  pre-open cutoff, finalized Signal identity, and reconciled planning-state identity. Paper risk approves only in
+  `[submissionOpenAt, submissionCutoffAt)` and reserves aggregate buying power across planned buys. The coordinator
+  rechecks the committed risk-decision expiry with the Effect clock immediately before POST or DELETE; the cutoff
+  instant itself permits zero broker mutations.
 - The execution path and independent reducer use integer micros for cash, quantity, prices, spread, slippage, fees,
   cash yield, positions, and every marked-equity point. Full, partial, and rejected orders are durable. Evaluation and
   recovery require exact zero-difference cash, fee, position, and equity reconstruction.
@@ -119,6 +132,10 @@ chronology on every physical ClickHouse replica with a separately supplied audit
 `origin/main` history. Query-log classification uses ClickHouse's recorded table metadata rather than spoofable SQL
 text. It emits one `bayn.qualification-audit.v2` JSON report and exits nonzero on any failed check. Run it twice and
 require identical `auditHash` values.
+
+The current auditor independently replays only causal protocol v3 evidence. Protocol v2 remains recoverable by run ID,
+but its rejected qualification must be replayed with the source revision and immutable image recorded on that run; a
+current-source audit fails explicitly instead of applying v3 semantics to historical evidence.
 
 ```sh
 BAYN_AUDIT_RUN_ID=<run-id> \

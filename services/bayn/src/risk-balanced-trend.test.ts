@@ -8,9 +8,9 @@ import {
 } from './risk-balanced-trend'
 import { makeStrategy } from './strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from './test-fixtures'
-import type { IsoDate, Protocol } from './types'
+import type { CausalProtocol, IsoDate } from './types'
 
-const shortProtocol = (overrides: Partial<Protocol> = {}): Protocol => ({
+const shortProtocol = (overrides: Partial<CausalProtocol> = {}): CausalProtocol => ({
   ...fixtureProtocol,
   universe: ['DBC', 'EEM', 'EFA'],
   horizons: [1, 2],
@@ -293,9 +293,9 @@ describe('risk-balanced trend candidate', () => {
     )
     expect(analysis.priorTrialRunIds).toEqual(priorTrialRunIds)
     expect(analysis.candidateOrdinal).toBe(9)
-    expect(canonicalHashV1(first)).toBe('22d3431616d263dbc4c4f31ef3fb14966453938e7db8ebf7a9bc37b93b99f93f')
+    expect(canonicalHashV1(first)).toBe('8be4f2f76c69bd7eeb2984bc08cd1d49013d2b349c8c574683851d4052a4901f')
     expect(canonicalHashV1(first.signalDecisions)).toBe(
-      '3aa21296a6fd28dd03971af9b8fa8e0420d7c0e6aed18e7faf9e0a3554bc3e2d',
+      'e0803e7a3d0258f508b054262f6ba5a1760b4a35d78816c1c701c7d783061568',
     )
   })
 })

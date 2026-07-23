@@ -472,6 +472,26 @@ describe('paper execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Approved)
   })
 
+  test('makes zero POST calls when the risk decision expires exactly at submission', async () => {
+    const harness = makeHarness()
+    const failure = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* TestClock.adjust(600_000)
+          return yield* Effect.flip(submit(intentId, 1_000))
+        }),
+      ),
+    )
+
+    expect(failure).toBeInstanceOf(ExecutionError)
+    expect(failure).toMatchObject({
+      failure: ExecutionFailure.InvalidState,
+      message: `submission risk decision expired at ${riskDecision.expiresAt}`,
+    })
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Approved)
+  })
+
   test('records before submission and never calls the broker again for a replayed intent', async () => {
     const harness = makeHarness()
     const result = await Effect.runPromise(
@@ -630,5 +650,26 @@ describe('paper execution coordinator', () => {
     expect(result.found.eventType).toBe(MutationEventType.RecoveryFound)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 1 })
     expect(harness.state()).toBe(IntentState.Terminal)
+  })
+
+  test('makes zero DELETE calls when the risk decision expires exactly at cancellation', async () => {
+    const harness = makeHarness()
+    const failure = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(600_000)
+          return yield* Effect.flip(cancel(intentId, 1_000))
+        }),
+      ),
+    )
+
+    expect(failure).toBeInstanceOf(ExecutionError)
+    expect(failure).toMatchObject({
+      failure: ExecutionFailure.InvalidState,
+      message: `cancellation risk decision expired at ${riskDecision.expiresAt}`,
+    })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+    expect(harness.state()).toBe(IntentState.Acknowledged)
   })
 })

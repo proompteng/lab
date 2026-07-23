@@ -9,11 +9,10 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # Immutable identity for bayn.risk-balanced-trend.behavior.v1. The deterministic evaluator and decision fingerprints
-  # are locked in risk-balanced-trend.test.ts, so behavior-preserving refactors retain the same identity.
-  strategyBehaviorHash = "43cece33d3db232ffb02ba78826727e50b5795319d09d27e1baa0c04709eb056";
-  # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v2 document.
-  strategyParameterHash = "649148eeaaf1f3aa1f1dd6d129a93aeef6b07f63e1aa60b6ed79f91a9cf7bbf8";
+  # SHA-256 identity for bayn.risk-balanced-trend.behavior.v2, verified by the production executable.
+  strategyBehaviorHash = "dc614c54bbf43842d83cd88497e835f7bb25c413eb6e8bd7cbab0a925ec9b2dd";
+  # Canonical hash of the compiled bayn.risk-balanced-trend.protocol.v3 document.
+  strategyParameterHash = "e5e4cc5d22b84c4dc8fc65c306d097fda063b0058253da5b900fe1d462d437b3";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
 in
 import ./bun-workspace-service.nix {

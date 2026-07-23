@@ -41,7 +41,7 @@ export type {
   SymbolCoverage,
   SymbolSignal,
 } from './evidence-contracts'
-export type { EconomicThresholds, ExecutionModel, Protocol } from './protocol'
+export type { CausalProtocol, EconomicThresholds, ExecutionModel, Protocol } from './protocol'
 export { DIRECT_VOLATILITY_WINDOW } from './protocol'
 export type { IsoDate } from './schemas'
 

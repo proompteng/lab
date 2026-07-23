@@ -25,7 +25,7 @@ import { makeQualificationResult } from '../qualification'
 import { evaluateRiskBalancedTrend } from '../risk-balanced-trend'
 import { makeStrategy } from '../strategy'
 import { makeSnapshot, makeTestProvenance, fixtureProtocol } from '../test-fixtures'
-import type { Protocol } from '../types'
+import type { CausalProtocol, Protocol } from '../types'
 import {
   DatabaseError,
   EvidenceStore,
@@ -282,6 +282,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 8, name: 'identified_submit_unknown' },
       { migration_id: 9, name: 'fill_source_timestamp' },
       { migration_id: 10, name: 'autonomous_cycles' },
+      { migration_id: 11, name: 'causal_protocol' },
     ])
   })
 
@@ -1745,7 +1746,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('legacy migration history is unsupported')
   })
 
-  test('accepts only the current protocol contract', async () => {
+  test('accepts the current and immutable historical protocol contracts', async () => {
     const exits = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1761,7 +1762,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        const current = yield* Effect.exit(sql`
+        const historical = yield* Effect.exit(sql`
           INSERT INTO protocol_locks (
             protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
           ) VALUES (
@@ -1773,11 +1774,24 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             '{}'::jsonb
           )
         `)
-        return { current, unsupported }
+        const current = yield* Effect.exit(sql`
+          INSERT INTO protocol_locks (
+            protocol_hash, schema_version, strategy_name, behavior_hash, parameter_hash, parameters
+          ) VALUES (
+            ${'6'.repeat(64)},
+            'bayn.risk-balanced-trend.protocol.v3',
+            'risk-balanced-trend',
+            ${'7'.repeat(64)},
+            ${'8'.repeat(64)},
+            '{}'::jsonb
+          )
+        `)
+        return { current, historical, unsupported }
       }),
     )
 
     expect(Exit.isFailure(exits.unsupported)).toBe(true)
+    expect(Exit.isSuccess(exits.historical)).toBe(true)
     expect(Exit.isSuccess(exits.current)).toBe(true)
   })
 
@@ -2007,7 +2021,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('persists and recovers fee, partial-fill, and nonzero cash-yield evidence', async () => {
-    const protocol: Protocol = {
+    const protocol: CausalProtocol = {
       ...fixtureProtocol,
       executionModel: {
         ...fixtureProtocol.executionModel,
@@ -2245,7 +2259,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     if (Option.isSome(result.stored)) {
       expect(result.stored.value.protocol).toMatchObject({
         strategyName: 'risk-balanced-trend',
-        schemaVersion: 'bayn.risk-balanced-trend.protocol.v2',
+        schemaVersion: 'bayn.risk-balanced-trend.protocol.v3',
         parameters: fixtureProtocol,
       })
       expect(result.stored.value.run).toMatchObject({
