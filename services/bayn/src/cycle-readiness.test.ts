@@ -154,6 +154,7 @@ const marketDataService = (
   return {
     check: unused,
     inspect: unused,
+    inspectCyclePublications: unused,
     inspectPublication,
     inspectSnapshotPublication,
     load: unused,
@@ -171,6 +172,7 @@ const cycleStore = (control: StoreControl): CycleStoreShape => {
   return {
     acquire: unused,
     read: () => Effect.succeed(Option.some(control.current)),
+    readAuthoritySlot: unused,
     bindSnapshot: (_cycleId, inputManifest, observedAt) =>
       Effect.sync(() => {
         control.binds += 1

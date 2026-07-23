@@ -113,6 +113,80 @@ const blockMissedPublication = (
     ),
   )
 
+export const bindFinalizedCyclePublication = (
+  cycle: AutonomousCycle,
+  inspection: MarketDataInspection,
+  observedAt: string,
+): Effect.Effect<CyclePublicationReadiness, CycleReadinessError, CycleStore> =>
+  Effect.gen(function* () {
+    const store = yield* CycleStore
+    if (cycle.state === CycleState.Blocked) {
+      return { outcome: 'BLOCKED', observedAt, cycle }
+    }
+    const snapshotId = inspection.manifest.finalizedSnapshot.snapshotId
+    if (cycle.bindings.snapshotId !== undefined) {
+      if (cycle.bindings.snapshotId !== snapshotId) {
+        return yield* Effect.fail(
+          readinessError(
+            'bind-publication',
+            'contract',
+            'finalized Signal publication differs from the immutable cycle binding',
+          ),
+        )
+      }
+      const freshness = yield* Effect.try({
+        try: () => measurePublicationFreshness(cycle, inspection, observedAt),
+        catch: (cause) =>
+          readinessError('measure-freshness', 'contract', 'finalized Signal publication freshness is invalid', cause),
+      })
+      return { outcome: 'ALREADY_BOUND', observedAt, cycle, snapshotId, freshness }
+    }
+    if (cycle.state !== CycleState.Pending) {
+      return yield* Effect.fail(
+        readinessError('bind-publication', 'contract', `unbound cycle ${cycle.identity.cycleId} is not pending`),
+      )
+    }
+    if (observedAt >= cycle.window.publicationDeadlineAt) {
+      return yield* blockMissedPublication(store, cycle.identity.cycleId, observedAt)
+    }
+    if (observedAt < cycle.window.signalCloseAt) {
+      return yield* Effect.fail(
+        readinessError(
+          'bind-publication',
+          'contract',
+          'finalized Signal publication cannot bind before the cycle signal close',
+        ),
+      )
+    }
+    const freshness = yield* Effect.try({
+      try: () => measurePublicationFreshness(cycle, inspection, observedAt),
+      catch: (cause) =>
+        readinessError('measure-freshness', 'contract', 'finalized Signal publication freshness is invalid', cause),
+    })
+    const receipt = yield* store
+      .bindSnapshot(cycle.identity.cycleId, inspection.manifest, observedAt)
+      .pipe(
+        Effect.mapError((cause) =>
+          readinessError(
+            'bind-publication',
+            'store',
+            'failed to persist and bind the finalized Signal publication',
+            cause,
+          ),
+        ),
+      )
+    return yield* Effect.try({
+      try: () => boundResult(receipt.changed ? 'BOUND' : 'ALREADY_BOUND', receipt, observedAt, freshness),
+      catch: (cause) =>
+        readinessError(
+          'bind-publication',
+          'contract',
+          'finalized Signal publication binding returned an invalid cycle',
+          cause,
+        ),
+    })
+  })
+
 const inspectBoundPublication = (
   cycle: AutonomousCycle,
   marketData: MarketDataService,
@@ -245,38 +319,7 @@ export const runCyclePublicationReadiness = (
                 cycle,
               } as const
             }
-            const freshness = yield* Effect.try({
-              try: () => measurePublicationFreshness(cycle, publication.inspection, observedAt),
-              catch: (cause) =>
-                readinessError(
-                  'measure-freshness',
-                  'contract',
-                  'finalized Signal publication freshness is invalid',
-                  cause,
-                ),
-            })
-            const receipt = yield* store
-              .bindSnapshot(cycle.identity.cycleId, publication.inspection.manifest, observedAt)
-              .pipe(
-                Effect.mapError((cause) =>
-                  readinessError(
-                    'bind-publication',
-                    'store',
-                    'failed to persist and bind the finalized Signal publication',
-                    cause,
-                  ),
-                ),
-              )
-            return yield* Effect.try({
-              try: () => boundResult(receipt.changed ? 'BOUND' : 'ALREADY_BOUND', receipt, observedAt, freshness),
-              catch: (cause) =>
-                readinessError(
-                  'bind-publication',
-                  'contract',
-                  'finalized Signal publication binding returned an invalid cycle',
-                  cause,
-                ),
-            })
+            return yield* bindFinalizedCyclePublication(cycle, publication.inspection, observedAt)
           }),
       },
     )

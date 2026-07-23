@@ -221,7 +221,63 @@ const makePublicationRevision = (
   }
 }
 
+const makeLaterPublication = (
+  fixture: ReturnType<typeof makeFixture>,
+): {
+  readonly manifest: SignalManifestRow
+  readonly sessions: readonly SignalSessionRow[]
+} => {
+  const source = fixture.rows.manifests[0]
+  const sessionMaterial = [
+    ...fixture.rows.sessions.map(({ snapshot_id: _, ...session }) => session),
+    {
+      calendar_version: source.calendar_version,
+      session_date: '2025-01-31',
+      open_time: '09:30',
+      close_time: '16:00',
+      timezone: 'America/New_York',
+      provider: source.provider,
+    },
+  ] as const
+  const sessionsContentHash = canonicalHashV1(sessionMaterial)
+  const barsContentHash = '4'.repeat(64)
+  const snapshotId = canonicalHashV1({
+    schemaVersion: source.schema_version,
+    provider: source.provider,
+    feed: source.source_feed,
+    adjustment: source.adjustment,
+    calendarVersion: source.calendar_version,
+    requestedStart: source.requested_start,
+    publicationAsOf: '2025-01-31',
+    symbols,
+    barsContentHash,
+    sessionsContentHash,
+    universeId: source.universe_id,
+    universeSymbolHash: source.universe_symbol_hash,
+  })
+  const { manifest_content_hash: _, ...sourceWithoutManifestHash } = source
+  const manifestMaterial = {
+    ...sourceWithoutManifestHash,
+    snapshot_id: snapshotId,
+    publication_asof: '2025-01-31',
+    last_session: '2025-01-31',
+    session_count: sessionMaterial.length,
+    bar_count: sessionMaterial.length * symbols.length,
+    bars_content_hash: barsContentHash,
+    sessions_content_hash: sessionsContentHash,
+    finalized_at: '2025-02-01 01:00:00.000',
+  } as const
+  return {
+    manifest: {
+      ...manifestMaterial,
+      manifest_content_hash: canonicalHashV1(manifestMaterial),
+    },
+    sessions: sessionMaterial.map((session) => ({ snapshot_id: snapshotId, ...session })),
+  }
+}
+
 interface CapturedQuery {
+  readonly kind: 'bars' | 'manifest' | 'sessions'
   readonly text: string
   readonly parameters: readonly unknown[]
 }
@@ -243,20 +299,41 @@ const makeClickhouseFixture = (
       const text = strings.join('?')
       const parameters = fragments.map((fragment) => fragment.value)
       if (text.includes('FROM signal.snapshot_manifests_v2') && text.includes('WHERE universe_id')) {
-        queries.push({ text, parameters })
+        queries.push({ kind: 'manifest', text, parameters })
         const calendarVersion = parameters.at(-1)
-        return text.includes('AND calendar_version =')
+        const matching = text.includes('AND calendar_version =')
           ? manifests.filter((manifest) => manifest.calendar_version === calendarVersion)
           : manifests
+        if (!text.includes('ORDER BY publication_asof DESC')) return matching
+        const ordered = [...matching].sort((left, right) => {
+          if (left.publication_asof !== right.publication_asof) {
+            return right.publication_asof.localeCompare(left.publication_asof)
+          }
+          if (left.finalized_at !== right.finalized_at) return right.finalized_at.localeCompare(left.finalized_at)
+          return right.snapshot_id.localeCompare(left.snapshot_id)
+        })
+        const limit = Number(parameters.at(-1))
+        const publicationDates = new Set<string>()
+        return ordered.filter((manifest) => {
+          if (publicationDates.has(manifest.publication_asof) || publicationDates.size >= limit) return false
+          publicationDates.add(manifest.publication_asof)
+          return true
+        })
       }
       if (text.includes('FROM signal.snapshot_manifests_v2') && text.includes('WHERE snapshot_id')) {
-        queries.push({ text, parameters })
+        queries.push({ kind: 'manifest', text, parameters })
         const requestedSnapshotId = parameters[0]
         return manifests.filter((manifest) => manifest.snapshot_id === requestedSnapshotId)
       }
       if (text.includes('FROM signal.exchange_sessions_v1')) {
-        const requestedSnapshotId = parameters[0]
-        return sessions.filter((session) => session.snapshot_id === requestedSnapshotId)
+        queries.push({ kind: 'sessions', text, parameters })
+        const requestedSnapshotIds = parameters[0]
+        return Array.isArray(requestedSnapshotIds)
+          ? sessions.filter((session) => requestedSnapshotIds.includes(session.snapshot_id))
+          : sessions.filter((session) => session.snapshot_id === requestedSnapshotIds)
+      }
+      if (text.includes('FROM signal.adjusted_daily_bars_v2')) {
+        queries.push({ kind: 'bars', text, parameters })
       }
       return []
     })
@@ -531,11 +608,88 @@ describe('finalized Signal snapshot reader', () => {
       throw new Error('both exact-calendar publication reads must be finalized')
     }
     expect(results[1].inspection).toEqual(results[0].inspection)
-    expect(queries).toHaveLength(2)
-    for (const query of queries) {
+    const manifestQueries = queries.filter((query) => query.kind === 'manifest')
+    expect(manifestQueries).toHaveLength(2)
+    expect(queries.filter((query) => query.kind === 'sessions')).toHaveLength(2)
+    expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
+    for (const query of manifestQueries) {
       expect(query.text).toContain('AND calendar_version =')
       expect(query.parameters).toContain(fixture.request.calendarVersion)
     }
+  })
+
+  test('discovers bounded exact finalized publications without using pinned snapshot or publication dates', async () => {
+    const fixture = makeFixture()
+    const latest = makeLaterPublication(fixture)
+    const queries: CapturedQuery[] = []
+    const client = makeClickhouseFixture(
+      [...fixture.rows.manifests, latest.manifest],
+      [...fixture.rows.sessions, ...latest.sessions],
+      queries,
+    )
+    const layer = MarketDataLive(
+      {
+        operationTimeoutMs: 5_000,
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
+          snapshotId,
+          publicationAsOf: fixture.request.publicationAsOf,
+          calendarVersion: fixture.request.calendarVersion,
+          bounds: fixture.request.bounds,
+        },
+      },
+      {
+        universeId: fixture.request.universeId,
+        universeSymbolHash: fixture.request.universeSymbolHash,
+        universe: fixture.request.universe,
+        historyStart: fixture.request.historyStart,
+        evaluationStart: fixture.request.evaluationStart,
+      },
+    ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const marketData = yield* MarketData
+        return yield* marketData.inspectCyclePublications
+      }).pipe(Effect.provide(layer)),
+    )
+
+    expect(result.outcome).toBe('FINALIZED')
+    if (result.outcome !== 'FINALIZED') throw new Error('publication fixture must be finalized')
+    expect(result.publications[0]).toMatchObject({
+      manifest: {
+        finalizedSnapshot: {
+          snapshotId: latest.manifest.snapshot_id,
+          asOfSession: '2025-01-31',
+          calendarVersion: fixture.request.calendarVersion,
+        },
+      },
+      signalSession: {
+        session_date: '2025-01-31',
+        calendar_version: fixture.request.calendarVersion,
+        close_time: '16:00',
+        timezone: 'America/New_York',
+      },
+    })
+    expect(result.publications.map((publication) => publication.signalSession.session_date)).toEqual([
+      '2025-01-31',
+      '2025-01-03',
+    ])
+    const manifestQueries = queries.filter((query) => query.kind === 'manifest')
+    const sessionQueries = queries.filter((query) => query.kind === 'sessions')
+    expect(manifestQueries).toHaveLength(1)
+    expect(sessionQueries).toHaveLength(1)
+    expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
+    expect(manifestQueries[0]?.text).toContain('AND universe_symbol_hash =')
+    expect(manifestQueries[0]?.text).toContain('ORDER BY publication_asof DESC, finalized_at DESC, snapshot_id DESC')
+    expect(manifestQueries[0]?.text).toContain('LIMIT 1 BY publication_asof')
+    expect(manifestQueries[0]?.text).toContain('LIMIT ?')
+    expect(manifestQueries[0]?.parameters).not.toContain(snapshotId)
+    expect(manifestQueries[0]?.parameters).not.toContain(fixture.request.publicationAsOf)
+    expect(sessionQueries[0]?.text).toContain('WHERE has(')
+    expect(sessionQueries[0]?.parameters).toEqual([[latest.manifest.snapshot_id, snapshotId]])
   })
 
   test('re-reads an immutable bound snapshot after a corrected snapshot is finalized under the same keys', async () => {
@@ -598,13 +752,16 @@ describe('finalized Signal snapshot reader', () => {
       throw new Error('the immutable original snapshot must remain directly readable')
     }
     expect(results.originalReadback.inspection).toEqual(results.original.inspection)
-    expect(queries).toHaveLength(3)
-    expect(queries.map((query) => query.parameters[0])).toEqual([
+    const manifestQueries = queries.filter((query) => query.kind === 'manifest')
+    expect(manifestQueries).toHaveLength(3)
+    expect(queries.filter((query) => query.kind === 'sessions')).toHaveLength(3)
+    expect(queries.filter((query) => query.kind === 'bars')).toHaveLength(0)
+    expect(manifestQueries.map((query) => query.parameters[0])).toEqual([
       snapshotId,
       correction.manifest.snapshot_id,
       snapshotId,
     ])
-    expect(queries.every((query) => query.text.includes('WHERE snapshot_id ='))).toBe(true)
+    expect(manifestQueries.every((query) => query.text.includes('WHERE snapshot_id ='))).toBe(true)
   })
 
   test('rejects duplicate manifests, sessions, and bars', () => {
