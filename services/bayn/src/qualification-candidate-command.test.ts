@@ -35,14 +35,14 @@ const observations = (
 ): readonly CandidateReplicaObservation[] => [
   {
     endpointHost: endpoints[0].hostname,
-    replica: 'signal-clickhouse-0',
+    replica: 'chi-torghut-clickhouse-default-0-0-0',
     principal: publisherPrincipal,
     snapshot,
     ...overrides[0],
   },
   {
     endpointHost: endpoints[1].hostname,
-    replica: 'signal-clickhouse-1',
+    replica: 'chi-torghut-clickhouse-default-0-1-0',
     principal: publisherPrincipal,
     snapshot,
     ...overrides[1],
@@ -114,7 +114,10 @@ describe('qualification candidate command', () => {
         BAYN_TIGERBEETLE_LEDGER: input().tigerBeetleLedger,
       },
     })
-    expect(report.replicas.map((replica) => replica.replica)).toEqual(['signal-clickhouse-0', 'signal-clickhouse-1'])
+    expect(report.replicas.map((replica) => replica.replica)).toEqual([
+      'chi-torghut-clickhouse-default-0-0-0',
+      'chi-torghut-clickhouse-default-0-1-0',
+    ])
     expect(new Set(report.replicas.map((replica) => replica.snapshotCanonicalHash)).size).toBe(1)
   })
 
@@ -153,10 +156,23 @@ describe('qualification candidate command', () => {
   })
 
   test('rejects duplicate observed physical hostnames', async () => {
-    const error = await failure(input(), readers(observations([{}, { replica: 'signal-clickhouse-0' }])))
+    const error = await failure(
+      input(),
+      readers(observations([{}, { replica: 'chi-torghut-clickhouse-default-0-0-0' }])),
+    )
 
     expect(error.message).toBe('Signal replica candidate verification failed')
     expect(String(error.cause)).toContain('same physical replica')
+  })
+
+  test('rejects distinct physical hosts outside the source-controlled replica pair', async () => {
+    const error = await failure(
+      input(),
+      readers(observations([{}, { replica: 'chi-another-clickhouse-default-0-1-0' }])),
+    )
+
+    expect(error.message).toBe('Signal replica candidate verification failed')
+    expect(String(error.cause)).toContain('source-controlled physical replica identities')
   })
 
   test('rejects canonical snapshot divergence across replicas', async () => {

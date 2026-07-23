@@ -22,6 +22,10 @@ const maximumTigerBeetleClusterId = (1n << 128n) - 1n
 const maximumTigerBeetleLedger = 2 ** 32 - 1
 const canonicalDecimalPattern = /^(?:0|[1-9][0-9]*)$/
 const transportAddressesPattern = /^[A-Za-z0-9.[\]:_-]+(?:,[A-Za-z0-9.[\]:_-]+)*$/
+const signalReplicaIdentities = [
+  'chi-torghut-clickhouse-default-0-0-0',
+  'chi-torghut-clickhouse-default-0-1-0',
+] as const
 
 const ExactReplicaUrls = Config.Array(Schema.URLFromString).check(
   Schema.makeFilter((urls: readonly URL[]) => urls.length === 2, {
@@ -232,6 +236,9 @@ const compareReplicaObservations = (
   const observedReplicas = observations.map((observation) => observation.replica).sort()
   if (new Set(observedReplicas).size !== observedReplicas.length) {
     throw new TypeError('ClickHouse endpoints resolved to the same physical replica')
+  }
+  if (canonicalJsonV1(observedReplicas) !== canonicalJsonV1(signalReplicaIdentities)) {
+    throw new TypeError('ClickHouse endpoints do not cover the source-controlled physical replica identities')
   }
   const canonicalSnapshots = observations.map((observation) => canonicalJsonV1(observation.snapshot))
   const canonicalSnapshot = canonicalSnapshots[0]
