@@ -115,8 +115,8 @@ describe('Buzz production GitOps contract', () => {
     expect(networkPolicy).toContain('app.kubernetes.io/name: observability-cluster-metrics-alloy')
     expect(networkPolicy).toContain('port: 9187')
     expect(networkPolicy).toContain('name: allow-kubernetes-api-cnpg-status')
-    for (const controlPlaneAddress of ['100.100.244.141/32', '100.100.244.142/32', '100.100.244.190/32']) {
-      expect(networkPolicy).toContain(`cidr: ${controlPlaneAddress}`)
+    for (const nodeGatewayAddress of ['10.244.0.1/32', '10.244.3.1/32', '10.244.5.1/32']) {
+      expect(networkPolicy).toContain(`cidr: ${nodeGatewayAddress}`)
     }
     expect(networkPolicy).toContain('port: 8000')
   })

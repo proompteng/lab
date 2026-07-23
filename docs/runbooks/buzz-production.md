@@ -46,9 +46,10 @@ The two OBCs, CNPG cluster, Redis PVC, and generated runtime Secret have explici
 
 Run every Kubernetes command with the namespace explicitly set.
 
-The CNPG status endpoint is reachable only from the three host-networked kube-apiserver node addresses listed in
-`allow-kubernetes-api-cnpg-status`. Update those `/32` entries whenever a control-plane node address changes; otherwise
-cross-node `kubectl cnpg status` pod-proxy requests will fail while same-node requests can appear healthy.
+The CNPG status endpoint is reachable only from the three pod-CIDR gateway addresses listed in
+`allow-kubernetes-api-cnpg-status`. Kube-router SNATs host-networked kube-apiserver pod-proxy traffic to the destination
+node's gateway. Update those `/32` entries whenever a node pod CIDR changes; otherwise cross-node
+`kubectl cnpg status` requests will fail while same-node requests can appear healthy.
 
 ```sh
 kubectl -n buzz get externalsecret,secretstore
