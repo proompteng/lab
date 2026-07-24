@@ -405,7 +405,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
         ) VALUES (
           ${decisionId}, 'bayn.paper-risk-decision.v1', ${hash('terminal-canceled-risk-input')}, ${intentId},
           ${hash('terminal-canceled-policy')}, 'APPROVED', ARRAY[]::text[],
-          '2026-07-22T15:29:59.000Z', '2099-01-01T00:00:00.000Z'
+          '2026-07-22T15:30:00.001Z', '2099-01-01T00:00:00.000Z'
         )
       `
       yield* sql`
@@ -414,13 +414,37 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           risk_decision_id = ${decisionId},
           state = 'APPROVED',
           state_version = 2,
-          updated_at = '2026-07-22T15:30:00.001Z'
+          updated_at = '2026-07-22T15:30:00.002Z'
         WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-submit-started')}, 'bayn.paper-mutation-event.v1',
+          ${submitMutationId}, ${intentId}, 1, 'SUBMIT', 'SUBMIT_STARTED',
+          ${hash('terminal-canceled-submit-request')}, 1000, NULL,
+          NULL, NULL, NULL, '2026-07-22T15:30:01.000Z'
+        )
       `
       yield* sql`
         UPDATE intents
         SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-07-22T15:30:01.000Z'
         WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-submit-unknown')}, 'bayn.paper-mutation-event.v1',
+          ${submitMutationId}, ${intentId}, 2, 'SUBMIT', 'SUBMIT_UNKNOWN',
+          ${hash('terminal-canceled-submit-request')}, 1000, ${brokerOrderId},
+          'mismatched-submit', 200, ${hash('terminal-canceled-submit-response')}, '2026-07-22T15:30:02.000Z'
+        )
       `
       yield* sql`
         UPDATE intents
@@ -432,43 +456,48 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
           request_id, response_status, response_content_hash, occurred_at
-        ) VALUES
-          (
-            ${hash('terminal-canceled-submit-started')}, 'bayn.paper-mutation-event.v1',
-            ${submitMutationId}, ${intentId}, 1, 'SUBMIT', 'SUBMIT_STARTED',
-            ${hash('terminal-canceled-submit-request')}, 1000, NULL,
-            NULL, NULL, NULL, '2026-07-22T15:30:01.000Z'
-          ),
-          (
-            ${hash('terminal-canceled-submit-unknown')}, 'bayn.paper-mutation-event.v1',
-            ${submitMutationId}, ${intentId}, 2, 'SUBMIT', 'SUBMIT_UNKNOWN',
-            ${hash('terminal-canceled-submit-request')}, 1000, ${brokerOrderId},
-            'mismatched-submit', 200, ${hash('terminal-canceled-submit-response')}, '2026-07-22T15:30:02.000Z'
-          ),
-          (
-            ${hash('terminal-canceled-submit-not-found')}, 'bayn.paper-mutation-event.v1',
-            ${submitMutationId}, ${intentId}, 3, 'SUBMIT', 'RECOVERY_NOT_FOUND',
-            ${hash('terminal-canceled-submit-request')}, 1000, ${brokerOrderId},
-            'submit-not-found', 404, ${hash('terminal-canceled-submit-lookup')}, '2026-07-22T15:30:03.000Z'
-          ),
-          (
-            ${hash('terminal-canceled-cancel-started')}, 'bayn.paper-mutation-event.v1',
-            ${cancelMutationId}, ${intentId}, 1, 'CANCEL', 'CANCEL_STARTED',
-            ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
-            NULL, NULL, NULL, '2026-07-22T15:30:04.000Z'
-          ),
-          (
-            ${hash('terminal-canceled-cancel-accepted')}, 'bayn.paper-mutation-event.v1',
-            ${cancelMutationId}, ${intentId}, 2, 'CANCEL', 'CANCEL_ACCEPTED',
-            ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
-            'cancel-accepted', 204, ${hash('terminal-canceled-cancel-response')}, '2026-07-22T15:30:05.000Z'
-          ),
-          (
-            ${hash('terminal-canceled-cancel-found')}, 'bayn.paper-mutation-event.v1',
-            ${cancelMutationId}, ${intentId}, 3, 'CANCEL', 'RECOVERY_FOUND',
-            ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
-            'cancel-terminal', 200, ${hash('terminal-canceled-cancel-lookup')}, '2026-07-22T15:30:06.000Z'
-          )
+        ) VALUES (
+          ${hash('terminal-canceled-submit-not-found')}, 'bayn.paper-mutation-event.v1',
+          ${submitMutationId}, ${intentId}, 3, 'SUBMIT', 'RECOVERY_NOT_FOUND',
+          ${hash('terminal-canceled-submit-request')}, 1000, ${brokerOrderId},
+          'submit-not-found', 404, ${hash('terminal-canceled-submit-lookup')}, '2026-07-22T15:30:03.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-cancel-started')}, 'bayn.paper-mutation-event.v1',
+          ${cancelMutationId}, ${intentId}, 1, 'CANCEL', 'CANCEL_STARTED',
+          ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
+          NULL, NULL, NULL, '2026-07-22T15:30:04.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-cancel-accepted')}, 'bayn.paper-mutation-event.v1',
+          ${cancelMutationId}, ${intentId}, 2, 'CANCEL', 'CANCEL_ACCEPTED',
+          ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
+          'cancel-accepted', 204, ${hash('terminal-canceled-cancel-response')}, '2026-07-22T15:30:05.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-cancel-found')}, 'bayn.paper-mutation-event.v1',
+          ${cancelMutationId}, ${intentId}, 3, 'CANCEL', 'RECOVERY_FOUND',
+          ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
+          'cancel-terminal', 200, ${hash('terminal-canceled-cancel-lookup')}, '2026-07-22T15:30:06.000Z'
+        )
       `
       yield* sql`
         UPDATE intents
@@ -481,7 +510,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           state = 'TERMINAL',
           terminal_outcome = 'CANCELED',
           state_version = 6,
-          updated_at = '2026-07-22T15:30:06.001Z'
+          updated_at = '2026-07-22T15:30:06.000001Z'
         WHERE intent_id = ${intentId}
       `
     }),

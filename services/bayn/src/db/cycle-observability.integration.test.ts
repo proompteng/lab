@@ -213,7 +213,36 @@ const seedAcceptedMutation = (occurredAt = '2026-03-06T21:03:00.000Z') =>
 
 const seedTerminalCanceledMutation = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
-  yield* seedUnresolvedMutation()
+  const intentId = '2'.repeat(64)
+  yield* sql`
+    INSERT INTO intents (
+      intent_id, schema_version, risk_decision_id, strategy_name, cycle_id,
+      decision_hash, policy_hash, account_id, client_order_id,
+      symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
+      state, terminal_outcome, state_version, created_at, updated_at
+    ) VALUES (
+      ${intentId},
+      'bayn.paper-intent.v2',
+      NULL,
+      'risk-balanced-trend',
+      ${'8'.repeat(64)},
+      ${'9'.repeat(64)},
+      ${'a'.repeat(64)},
+      ${accountId},
+      'bayn-observability-test-order',
+      'SPY',
+      'BUY',
+      'MARKET',
+      'DAY',
+      1000000,
+      1000000,
+      'PLANNED',
+      NULL,
+      1,
+      '2026-03-06T21:02:00.000Z',
+      '2026-03-06T21:02:00.000Z'
+    )
+  `
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql`
@@ -221,9 +250,9 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           decision_id, schema_version, input_hash, intent_id, policy_hash,
           outcome, reason_codes, decided_at, expires_at
         ) VALUES (
-          ${'1'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'b'.repeat(64)}, ${'2'.repeat(64)},
+          ${'1'.repeat(64)}, 'bayn.paper-risk-decision.v1', ${'b'.repeat(64)}, ${intentId},
           ${'a'.repeat(64)}, 'APPROVED', ARRAY[]::text[],
-          '2026-03-06T21:01:00.000Z', '2099-01-01T00:00:00.000Z'
+          '2026-03-06T21:02:00.001Z', '2099-01-01T00:00:00.000Z'
         )
       `
       yield* sql`
@@ -232,55 +261,89 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           risk_decision_id = ${'1'.repeat(64)},
           state = 'APPROVED',
           state_version = 2,
-          updated_at = '2026-03-06T21:02:00.001Z'
-        WHERE intent_id = ${'2'.repeat(64)}
-      `
-      yield* sql`
-        UPDATE intents
-        SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-03-06T21:02:00.002Z'
-        WHERE intent_id = ${'2'.repeat(64)}
-      `
-      yield* sql`
-        UPDATE intents
-        SET state = 'UNKNOWN', state_version = 4, updated_at = '2026-03-06T21:03:00.000Z'
-        WHERE intent_id = ${'2'.repeat(64)}
+          updated_at = '2026-03-06T21:02:00.002Z'
+        WHERE intent_id = ${intentId}
       `
       yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
           request_id, response_status, response_content_hash, occurred_at
-        ) VALUES
-          (
-            ${'b'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 2,
-            'SUBMIT', 'SUBMIT_UNKNOWN', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
-            'mismatched-submit', 200, ${'c'.repeat(64)}, '2026-03-06T21:03:00.000Z'
-          ),
-          (
-            ${'c'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${'2'.repeat(64)}, 3,
-            'SUBMIT', 'RECOVERY_NOT_FOUND', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
-            'submit-not-found', 404, ${'d'.repeat(64)}, '2026-03-06T21:04:00.000Z'
-          ),
-          (
-            ${'e'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${'2'.repeat(64)}, 1,
-            'CANCEL', 'CANCEL_STARTED', ${'7'.repeat(64)}, 1000, 'broker-order-observability',
-            NULL, NULL, NULL, '2026-03-06T21:05:00.000Z'
-          ),
-          (
-            ${'f'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${'2'.repeat(64)}, 2,
-            'CANCEL', 'CANCEL_ACCEPTED', ${'7'.repeat(64)}, 1000, 'broker-order-observability',
-            'cancel-accepted', 204, ${'8'.repeat(64)}, '2026-03-06T21:06:00.000Z'
-          ),
-          (
-            ${'0'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${'2'.repeat(64)}, 3,
-            'CANCEL', 'RECOVERY_FOUND', ${'7'.repeat(64)}, 1000, 'broker-order-observability',
-            'cancel-terminal', 200, ${'9'.repeat(64)}, '2026-03-06T21:07:00.000Z'
-          )
+        ) VALUES (
+          ${'3'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${intentId}, 1,
+          'SUBMIT', 'SUBMIT_STARTED', ${'5'.repeat(64)}, 1000, NULL,
+          NULL, NULL, NULL, '2026-03-06T21:02:00.003Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-03-06T21:02:00.003Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'b'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${intentId}, 2,
+          'SUBMIT', 'SUBMIT_UNKNOWN', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
+          'mismatched-submit', 200, ${'c'.repeat(64)}, '2026-03-06T21:03:00.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'UNKNOWN', state_version = 4, updated_at = '2026-03-06T21:03:00.000Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'c'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'4'.repeat(64)}, ${intentId}, 3,
+          'SUBMIT', 'RECOVERY_NOT_FOUND', ${'5'.repeat(64)}, 1000, 'broker-order-observability',
+          'submit-not-found', 404, ${'d'.repeat(64)}, '2026-03-06T21:04:00.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'e'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${intentId}, 1,
+          'CANCEL', 'CANCEL_STARTED', ${'7'.repeat(64)}, 1000, 'broker-order-observability',
+          NULL, NULL, NULL, '2026-03-06T21:05:00.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'f'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${intentId}, 2,
+          'CANCEL', 'CANCEL_ACCEPTED', ${'7'.repeat(64)}, 1000, 'broker-order-observability',
+          'cancel-accepted', 204, ${'8'.repeat(64)}, '2026-03-06T21:06:00.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${'0'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'6'.repeat(64)}, ${intentId}, 3,
+          'CANCEL', 'RECOVERY_FOUND', ${'7'.repeat(64)}, 1000, 'broker-order-observability',
+          'cancel-terminal', 200, ${'9'.repeat(64)}, '2026-03-06T21:07:00.000Z'
+        )
       `
       yield* sql`
         UPDATE intents
         SET state = 'RECOVERED', state_version = 5, updated_at = '2026-03-06T21:07:00.000Z'
-        WHERE intent_id = ${'2'.repeat(64)}
+        WHERE intent_id = ${intentId}
       `
       yield* sql`
         UPDATE intents
@@ -288,8 +351,8 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           state = 'TERMINAL',
           terminal_outcome = 'CANCELED',
           state_version = 6,
-          updated_at = '2026-03-06T21:07:00.001Z'
-        WHERE intent_id = ${'2'.repeat(64)}
+          updated_at = '2026-03-06T21:07:00.000001Z'
+        WHERE intent_id = ${intentId}
       `
     }),
   )
