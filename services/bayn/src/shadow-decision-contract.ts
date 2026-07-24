@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Data, Result, Schema } from 'effect'
 
 import { intentIdForPlan } from './execution/intents'
 import { canonicalHashV1 } from './hash'
@@ -115,25 +115,87 @@ const ObserveShadowDecisionDocumentBase = Schema.Struct({
   contentHash: Sha256Schema,
 })
 
-export const ObserveShadowDecisionDocumentSchema = ObserveShadowDecisionDocumentBase.check(
-  Schema.makeFilter((document: typeof ObserveShadowDecisionDocumentBase.Type): readonly Schema.FilterIssue[] => {
-    const { contentHash, ...material } = document
-    const issues = [...materialIssues(material)]
-    if (contentHash !== canonicalHashV1(material)) {
-      issues.push({ path: ['contentHash'], issue: 'must match the canonical shadow decision material' })
-    }
-    return issues
-  }),
+const ObserveShadowDecisionDocumentSemanticSchema = ObserveShadowDecisionDocumentBase.check(
+  Schema.makeFilter((document) => materialIssues(document)),
+)
+
+const documentHashIssues = (
+  document: typeof ObserveShadowDecisionDocumentSemanticSchema.Type,
+): readonly Schema.FilterIssue[] => {
+  const { contentHash, ...material } = document
+  return contentHash === canonicalHashV1(material)
+    ? []
+    : [{ path: ['contentHash'], issue: 'must match the canonical shadow decision material' }]
+}
+
+export const ObserveShadowDecisionDocumentSchema = ObserveShadowDecisionDocumentSemanticSchema.check(
+  Schema.makeFilter(documentHashIssues),
 )
 export type ObserveShadowDecisionDocument = typeof ObserveShadowDecisionDocumentSchema.Type
 
-const decodeDocumentSync = Schema.decodeUnknownSync(ObserveShadowDecisionDocumentSchema, strictParseOptions)
+interface MakeShadowDecisionDocumentIssue {
+  readonly operation: 'make'
+  readonly reason: 'canonicalization' | 'contract'
+}
+
+interface DecodeShadowDecisionDocumentIssue {
+  readonly operation: 'decode'
+  readonly reason: 'contract'
+}
+
+type ShadowDecisionContractIssue = MakeShadowDecisionDocumentIssue | DecodeShadowDecisionDocumentIssue
+
+interface ShadowDecisionContractFailureDetails {
+  readonly message: string
+  readonly cause?: unknown
+}
+
+export const ShadowDecisionContractFailure = Data.TaggedError('ShadowDecisionContractFailure')<
+  ShadowDecisionContractIssue & ShadowDecisionContractFailureDetails
+>
+export type ShadowDecisionContractFailure = InstanceType<typeof ShadowDecisionContractFailure>
+
+type ShadowDecisionContractReason<Operation extends ShadowDecisionContractIssue['operation']> = Extract<
+  ShadowDecisionContractIssue,
+  { readonly operation: Operation }
+>['reason']
+
+const makeDocumentFailure = (
+  reason: ShadowDecisionContractReason<'make'>,
+  message: string,
+  cause?: unknown,
+): ShadowDecisionContractFailure => new ShadowDecisionContractFailure({ operation: 'make', reason, message, cause })
+
+const decodeDocumentFailure = (
+  reason: ShadowDecisionContractReason<'decode'>,
+  message: string,
+  cause?: unknown,
+): ShadowDecisionContractFailure => new ShadowDecisionContractFailure({ operation: 'decode', reason, message, cause })
+
+const decodeDocumentResult = Schema.decodeUnknownResult(ObserveShadowDecisionDocumentSchema, strictParseOptions)
 
 export const makeObserveShadowDecisionDocument = (
-  material: ObserveShadowDecisionMaterial,
-): ObserveShadowDecisionDocument => decodeDocumentSync({ ...material, contentHash: canonicalHashV1(material) })
+  material: unknown,
+): Result.Result<ObserveShadowDecisionDocument, ShadowDecisionContractFailure> => {
+  if (typeof material !== 'object' || material === null || Array.isArray(material)) {
+    return Result.fail(makeDocumentFailure('contract', 'shadow decision material must be an object'))
+  }
+  return Result.flatMap(
+    Result.try({
+      try: () => ({ ...material, contentHash: canonicalHashV1(material) }),
+      catch: (cause) =>
+        makeDocumentFailure('canonicalization', 'shadow decision material is not canonicalizable', cause),
+    }),
+    (candidate) =>
+      Result.mapError(decodeDocumentResult(candidate), (cause) =>
+        makeDocumentFailure('contract', 'shadow decision material failed its durable contract', cause),
+      ),
+  )
+}
 
-export const decodeObserveShadowDecisionDocument = Schema.decodeUnknownEffect(
-  ObserveShadowDecisionDocumentSchema,
-  strictParseOptions,
-)
+export const decodeObserveShadowDecisionDocument = (
+  input: unknown,
+): Result.Result<ObserveShadowDecisionDocument, ShadowDecisionContractFailure> =>
+  Result.mapError(decodeDocumentResult(input), (cause) =>
+    decodeDocumentFailure('contract', 'shadow decision document failed its durable contract', cause),
+  )

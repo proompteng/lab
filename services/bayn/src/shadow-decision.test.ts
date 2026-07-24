@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit, Schema } from 'effect'
+import { Effect, Exit, Result, Schema } from 'effect'
 
 import {
   AutonomousCycleSchema,
@@ -13,7 +13,7 @@ import {
   type AutonomousCycle,
 } from './cycle'
 import { defaultExecutionModel } from './execution-model'
-import { bindExecutionSession } from './execution-session'
+import { bindExecutionSession, type BindExecutionSessionInput } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import {
   AccountStatus,
@@ -31,7 +31,12 @@ import {
 import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, Gate, PolicySchema, Reason, StateSchema, type Policy, type State } from './risk'
 import { strictParseOptions } from './schemas'
-import { decodeObserveShadowDecisionDocument, type ObserveShadowDecisionDocument } from './shadow-decision-contract'
+import {
+  decodeObserveShadowDecisionDocument,
+  makeObserveShadowDecisionDocument,
+  ShadowDecisionContractFailure,
+  type ObserveShadowDecisionDocument,
+} from './shadow-decision-contract'
 import {
   buildObserveShadowDecision,
   type ObserveShadowDecisionInput,
@@ -51,25 +56,63 @@ const snapshotId = hash('2')
 const snapshotContentHash = hash('3')
 const accountingHash = hash('a')
 
+type ShadowContractOperationReason<Input> = Input extends {
+  readonly operation: infer Operation
+  readonly reason: infer FailureReason
+}
+  ? { readonly operation: Operation; readonly reason: FailureReason }
+  : never
+type ShadowContractFailurePair = ShadowContractOperationReason<
+  ConstructorParameters<typeof ShadowDecisionContractFailure>[0]
+>
+const shadowContractFailurePairs = [
+  { operation: 'make', reason: 'canonicalization' },
+  { operation: 'make', reason: 'contract' },
+  { operation: 'decode', reason: 'contract' },
+] as const satisfies readonly ShadowContractFailurePair[]
+type MissingShadowContractFailurePair = Exclude<ShadowContractFailurePair, (typeof shadowContractFailurePairs)[number]>
+type InvalidShadowContractFailurePair = Exclude<(typeof shadowContractFailurePairs)[number], ShadowContractFailurePair>
+const shadowContractFailurePairCoverage: [MissingShadowContractFailurePair, InvalidShadowContractFailurePair] extends [
+  never,
+  never,
+]
+  ? true
+  : never = true
+
+const resultValue = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const makeCycleDraftSuccess = (...args: Parameters<typeof makeCycleDraft>) => resultValue(makeCycleDraft(...args))
+const makeCycleExecutionPolicySuccess = (...args: Parameters<typeof makeCycleExecutionPolicy>) =>
+  resultValue(makeCycleExecutionPolicy(...args))
+const makeCycleIdentitySuccess = (...args: Parameters<typeof makeCycleIdentity>) =>
+  resultValue(makeCycleIdentity(...args))
+const makeCycleWindowSuccess = (...args: Parameters<typeof makeCycleWindow>) => resultValue(makeCycleWindow(...args))
+const makeExecutionCalendarObservationSuccess = (...args: Parameters<typeof makeExecutionCalendarObservation>) =>
+  resultValue(makeExecutionCalendarObservation(...args))
+const bindExecutionSessionSuccess = (input: BindExecutionSessionInput) => resultValue(bindExecutionSession(input))
+const planTargetsSuccess = (input: TargetPlannerInput) => resultValue(planTargets(input))
+
 const decodeCycle = Schema.decodeUnknownSync(AutonomousCycleSchema, strictParseOptions)
 const decodePolicy = Schema.decodeUnknownSync(PolicySchema, strictParseOptions)
 const decodeState = Schema.decodeUnknownSync(StateSchema, strictParseOptions)
 
 const makeCycle = (): AutonomousCycle => {
-  const executionPolicy = makeCycleExecutionPolicy({
+  const executionPolicy = makeCycleExecutionPolicySuccess({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: canonicalHashV1(defaultExecutionModel),
     submissionWindowMs: 3_600_000,
     submissionCutoffBeforeOpenMs: 900_000,
   })
-  const executionCalendar = makeExecutionCalendarObservation({
+  const executionCalendar = makeExecutionCalendarObservationSuccess({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     source: 'alpaca-v2-calendar',
     date: executionDate,
     openAt: '2026-07-22T13:30:00.000Z',
     closeAt: '2026-07-22T20:00:00.000Z',
   })
-  const identity = makeCycleIdentity({
+  const identity = makeCycleIdentitySuccess({
     schemaVersion: 'bayn.autonomous-cycle-identity.v1',
     strategyName: 'risk-balanced-trend',
     qualificationRunId: hash('1'),
@@ -83,7 +126,7 @@ const makeCycle = (): AutonomousCycle => {
     executionCalendarHash: executionCalendar.executionCalendarHash,
     executionPolicy,
   })
-  const window = makeCycleWindow(
+  const window = makeCycleWindowSuccess(
     {
       calendar_version: 'XNYS-v1',
       session_date: signalDate,
@@ -93,7 +136,7 @@ const makeCycle = (): AutonomousCycle => {
     executionCalendar,
     executionPolicy,
   )
-  const draft = makeCycleDraft(identity, window)
+  const draft = makeCycleDraftSuccess(identity, window)
   return decodeCycle({
     ...draft,
     state: CycleState.Active,
@@ -266,7 +309,7 @@ const makeRiskState = (cycle: AutonomousCycle, symbol: string): State => {
       },
     ],
   }
-  const executionSession = bindExecutionSession({
+  const executionSession = bindExecutionSessionSuccess({
     signal: {
       sessionDate: signalDate,
       finalizedAt: snapshotFinalizedAt,
@@ -348,7 +391,7 @@ const makeInput = (
     },
     compiledDecision,
     plannerInput,
-    targetPlan: planTargets(plannerInput),
+    targetPlan: planTargetsSuccess(plannerInput),
     policy,
     riskInputs,
   }
@@ -364,6 +407,7 @@ describe('OBSERVE shadow decision', () => {
     const replay = await build(makeInput())
 
     expect(replay).toEqual(first)
+    expect(first.contentHash).toBe('9690389d06537db6d479ef7c1c690d6f5edb21dcd8b4e483baba1e9d372998b3')
     expect(first).toMatchObject({
       schemaVersion: 'bayn.observe-shadow-decision.v1',
       mode: 'OBSERVE',
@@ -478,7 +522,7 @@ describe('OBSERVE shadow decision', () => {
     const stale = await build({
       ...staleInput,
       plannerInput: stalePlannerInput,
-      targetPlan: planTargets(stalePlannerInput),
+      targetPlan: planTargetsSuccess(stalePlannerInput),
       riskInputs: [],
     })
 
@@ -503,7 +547,7 @@ describe('OBSERVE shadow decision', () => {
     const document = await build({
       ...input,
       plannerInput,
-      targetPlan: planTargets(plannerInput),
+      targetPlan: planTargetsSuccess(plannerInput),
       riskInputs: input.riskInputs.map((riskInput) => ({
         ...riskInput,
         state: { ...riskInput.state, evaluatedAt: createdAt },
@@ -526,7 +570,7 @@ describe('OBSERVE shadow decision', () => {
       },
       {
         ...input,
-        targetPlan: planTargets({
+        targetPlan: planTargetsSuccess({
           ...input.plannerInput,
           maximumInputAgeMs: input.plannerInput.maximumInputAgeMs + 1,
         }),
@@ -569,6 +613,39 @@ describe('OBSERVE shadow decision', () => {
       const exit = await Effect.runPromiseExit(buildObserveShadowDecision(variant))
       expect(Exit.isFailure(exit)).toBe(true)
     }
+  })
+
+  test('rejects incomplete, malformed covariance and signal evidence, and excess compiled-decision fields', async () => {
+    const input = makeInput()
+    const { estimatedAnnualizedPortfolioVolatility: _missingVolatility, ...missingField } = input.compiledDecision
+    const malformedDecisions = [
+      missingField,
+      {
+        ...input.compiledDecision,
+        covarianceWindow: {
+          ...input.compiledDecision.covarianceWindow,
+          returnCount: 0,
+        },
+      },
+      {
+        ...input.compiledDecision,
+        signals: input.compiledDecision.signals.map((signal, index) =>
+          index === 0 ? { ...signal, horizons: [] } : signal,
+        ),
+      },
+      {
+        ...input.compiledDecision,
+        unexpectedFutureEvidence: true,
+      },
+    ]
+
+    const failures = await Promise.all(
+      malformedDecisions.map((compiledDecision) =>
+        Effect.runPromise(Effect.flip(buildObserveShadowDecision({ ...input, compiledDecision }))),
+      ),
+    )
+    expect(failures.map(({ failure }) => failure)).toEqual(['contract', 'contract', 'contract', 'contract'])
+    expect(failures.every(({ cause }) => cause !== undefined)).toBe(true)
   })
 
   test('durable schema rejects approval, coordinator fields, and content-hash rewrites', async () => {
@@ -616,8 +693,81 @@ describe('OBSERVE shadow decision', () => {
     const swappedRisk = { ...swappedWithoutHash, contentHash: canonicalHashV1(swappedWithoutHash) }
 
     for (const candidate of [approved, coordinatorMaterial, rewritten, exactCutoff, swappedRisk]) {
-      const exit = await Effect.runPromiseExit(decodeObserveShadowDecisionDocument(candidate))
-      expect(Exit.isFailure(exit)).toBe(true)
+      expect(Result.isFailure(decodeObserveShadowDecisionDocument(candidate))).toBe(true)
     }
+  })
+
+  test('rejects ill-formed Unicode at the exact shadow binding path without a hash defect', async () => {
+    const document = await build(makeInput({ AMD: 0.1, NVDA: 0.1 }))
+    const result = decodeObserveShadowDecisionDocument({
+      ...document,
+      bindings: { ...document.bindings, strategyName: '\ud800' },
+    })
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        _tag: 'ShadowDecisionContractFailure',
+        operation: 'decode',
+        reason: 'contract',
+      })
+      expect(String(result.failure.cause)).toContain('["bindings"]["strategyName"]')
+      expect(String(result.failure.cause)).toContain('well-formed Unicode')
+    }
+  })
+
+  test('returns each closed shadow failure category and contract-constructor failure', async () => {
+    const input = makeInput()
+    const bindingFailure = {
+      ...input,
+      snapshot: { ...input.snapshot, snapshotId: hash('f') },
+    }
+    const riskFailure = {
+      ...input,
+      riskInputs: input.riskInputs.map((riskInput) => ({
+        ...riskInput,
+        state: {
+          ...riskInput.state,
+          authority: {
+            ...riskInput.state.authority,
+            maximum: Authority.Paper,
+          },
+        },
+      })),
+    }
+    const failures = await Promise.all(
+      [{}, bindingFailure, riskFailure].map((candidate) =>
+        Effect.runPromise(Effect.flip(buildObserveShadowDecision(candidate))),
+      ),
+    )
+    expect(failures.map((failure) => failure.failure)).toEqual(['contract', 'binding', 'risk'])
+    expect(failures.every((failure) => failure._tag === 'ShadowDecisionError')).toBe(true)
+
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+    const constructorFailures = [
+      makeObserveShadowDecisionDocument(null),
+      makeObserveShadowDecisionDocument({}),
+      makeObserveShadowDecisionDocument(cyclic),
+      decodeObserveShadowDecisionDocument({}),
+    ]
+    expect(
+      constructorFailures.map((result) =>
+        Result.isFailure(result) ? [result.failure.operation, result.failure.reason] : null,
+      ),
+    ).toEqual([
+      ['make', 'contract'],
+      ['make', 'contract'],
+      ['make', 'canonicalization'],
+      ['decode', 'contract'],
+    ])
+
+    const contractFailures = shadowContractFailurePairs.map(
+      (pair) => new ShadowDecisionContractFailure({ ...pair, message: 'failure-pair coverage' }),
+    )
+    expect(shadowContractFailurePairCoverage).toBe(true)
+    expect(contractFailures.map(({ operation, reason }) => ({ operation, reason }))).toEqual([
+      ...shadowContractFailurePairs,
+    ])
   })
 })

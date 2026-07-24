@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1 } from './hash'
 import {
@@ -22,7 +22,20 @@ import {
   type ReferenceIntent,
 } from './paper'
 import { reconciledStateHash } from './reconciliation'
-import { BrokerMode, PolicySchema, Reason, StateSchema, evaluate, type Policy, type State } from './risk'
+import {
+  BrokerMode,
+  EvaluationSchema,
+  Gate,
+  orderedRiskGateDefinitions,
+  PolicySchema,
+  Reason,
+  RiskEvaluationFailure,
+  StateSchema,
+  evaluate,
+  type Evaluation,
+  type Policy,
+  type State,
+} from './risk'
 import { strictParseOptions } from './schemas'
 
 const evaluatedAt = '2026-07-21T21:00:00.000Z'
@@ -33,6 +46,33 @@ const decodePolicy = Schema.decodeUnknownSync(PolicySchema, strictParseOptions)
 const decodeState = Schema.decodeUnknownSync(StateSchema, strictParseOptions)
 const decodeIntent = Schema.decodeUnknownSync(IntentSchema, strictParseOptions)
 const decodeReferenceIntent = Schema.decodeUnknownSync(ReferenceIntentSchema, strictParseOptions)
+const decodeEvaluationResult = Schema.decodeUnknownResult(EvaluationSchema, strictParseOptions)
+
+type OperationReason<Input> = Input extends {
+  readonly operation: infer Operation
+  readonly reason: infer FailureReason
+}
+  ? { readonly operation: Operation; readonly reason: FailureReason }
+  : never
+type RiskFailurePair = OperationReason<ConstructorParameters<typeof RiskEvaluationFailure>[0]>
+const riskFailurePairs = [
+  { operation: 'bind-authority', reason: 'authority-contract' },
+  { operation: 'bind-authority', reason: 'authority-generation' },
+  { operation: 'bind-authority', reason: 'authority-maximum' },
+  { operation: 'canonicalize-input', reason: 'evidence' },
+  { operation: 'canonicalize-input', reason: 'reconciliation' },
+  { operation: 'decode-input', reason: 'intent' },
+  { operation: 'decode-input', reason: 'policy' },
+  { operation: 'decode-input', reason: 'positions' },
+  { operation: 'decode-input', reason: 'state' },
+  { operation: 'decode-output', reason: 'decision' },
+  { operation: 'decode-output', reason: 'evaluation' },
+  { operation: 'decode-output', reason: 'input' },
+] as const satisfies readonly RiskFailurePair[]
+type MissingRiskFailurePair = Exclude<RiskFailurePair, (typeof riskFailurePairs)[number]>
+type InvalidRiskFailurePair = Exclude<(typeof riskFailurePairs)[number], RiskFailurePair>
+const riskFailurePairCoverage: [MissingRiskFailurePair, InvalidRiskFailurePair] extends [never, never] ? true : never =
+  true
 
 const rehashExecutionSession = (
   binding: Omit<State['executionSession'], 'bindingHash'>,
@@ -47,7 +87,13 @@ const changeExecutionWindow = (
 ): State['executionSession'] => {
   const { bindingHash: _, ...material } = binding
   if (overrides.submissionCutoffAt === undefined) {
-    return rehashExecutionSession({ ...material, ...overrides })
+    return rehashExecutionSession({
+      ...material,
+      ...overrides,
+      ...(overrides.submissionOpenAt === undefined
+        ? {}
+        : { signal: { ...material.signal, finalizedAt: overrides.submissionOpenAt } }),
+    })
   }
   const executionOpenAt = new Date(
     Date.parse(overrides.submissionCutoffAt) + material.submissionCutoffLeadMinutes * 60_000,
@@ -285,13 +331,24 @@ const makeReferenceIntent = (): ReferenceIntent => {
   return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.paper-intent.v2' })
 }
 
+const evaluateSuccess = (
+  intent: Intent | ReferenceIntent,
+  state: State,
+  policy: Policy,
+  proposedPositions?: State['positions'],
+): Evaluation => {
+  const result = evaluate(intent, state, policy, proposedPositions)
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+
 const expectBlocked = (
   reason: Reason,
   intent: Intent | ReferenceIntent = makeIntent(),
   state = makeState(),
   policy = makePolicy(),
 ): void => {
-  const result = evaluate(intent, state, policy)
+  const result = evaluateSuccess(intent, state, policy)
   expect(result.decision.outcome).toBe(RiskOutcome.Blocked)
   expect(result.decision.reasonCodes).toContain(reason)
 }
@@ -373,13 +430,23 @@ describe('bounded paper risk', () => {
   })
 
   test('approves the exact limit boundary and binds a deterministic decision', () => {
-    const first = evaluate(makeIntent(), makeState(), makePolicy())
-    const second = evaluate(makeIntent(), makeState(), makePolicy())
+    const first = evaluateSuccess(makeIntent(), makeState(), makePolicy())
+    const second = evaluateSuccess(makeIntent(), makeState(), makePolicy())
 
     expect(first).toEqual(second)
     expect(first.decision.outcome).toBe(RiskOutcome.Approved)
     expect(first.decision.reasonCodes).toEqual([])
     expect(first.gates.every((gate) => gate.passed)).toBe(true)
+    expect(first.gates.map(({ name, reason }) => ({ name, reason }))).toEqual(
+      orderedRiskGateDefinitions.map(({ name, reason }) => ({ name, reason })),
+    )
+    expect({
+      inputHash: first.input.inputHash,
+      decisionId: first.decision.decisionId,
+    }).toEqual({
+      inputHash: 'e5579076394f86be2dbd61b7a4e6d65133f52568c2af1642a7a04e9726fe0c61',
+      decisionId: 'c7b20a3346071c31182bc7799709676e6e33d4418a51bde1f880465d0d09e8d0',
+    })
     expect(first.input.freshUntil).toBe('2026-07-21T21:00:30.000Z')
     expect(first.metrics).toEqual({
       orderNotionalMicros: '100000000',
@@ -414,12 +481,12 @@ describe('bounded paper risk', () => {
       executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: nearCutoffAt }),
     })
 
-    expect(evaluate(makeIntent({ createdAt: evaluatedAt }), atOpen, makePolicy()).decision.outcome).toBe(
+    expect(evaluateSuccess(makeIntent({ createdAt: evaluatedAt }), atOpen, makePolicy()).decision.outcome).toBe(
       RiskOutcome.Approved,
     )
     expectBlocked(Reason.OutsideSession, makeIntent(), beforeOpen, makePolicy())
     expectBlocked(Reason.OutsideSession, makeIntent(), atCutoff, makePolicy())
-    const nearCutoff = evaluate(makeIntent(), observeNearCutoff, makePolicy())
+    const nearCutoff = evaluateSuccess(makeIntent(), observeNearCutoff, makePolicy())
     expect(nearCutoff.decision.reasonCodes).toContain(Reason.AuthorityNotPaper)
     expect(nearCutoff.decision.expiresAt).toBe(nearCutoffAt)
     expect(nearCutoff.input.freshUntil).toBe(nearCutoffAt)
@@ -466,7 +533,7 @@ describe('bounded paper risk', () => {
       maxDailyTradedNotionalMicros: '201000000',
       maxAdverseSlippageBps: 100,
     })
-    expect(evaluate(slippageIntent, slippageState, slippagePolicy).decision.outcome).toBe(RiskOutcome.Approved)
+    expect(evaluateSuccess(slippageIntent, slippageState, slippagePolicy).decision.outcome).toBe(RiskOutcome.Approved)
     expectBlocked(
       Reason.AdverseSlippageExceeded,
       slippageIntent,
@@ -479,7 +546,7 @@ describe('bounded paper risk', () => {
   })
 
   test('does not require buying power for a position-reducing sell', () => {
-    const result = evaluate(
+    const result = evaluateSuccess(
       makeIntent({ side: OrderSide.Sell }),
       makeState({ account: { ...baseState().account, buyingPowerMicros: '0' } }),
       makePolicy(),
@@ -512,7 +579,7 @@ describe('bounded paper risk', () => {
       maxNetExposureMicros: '500000000',
       maxDailyTradedNotionalMicros: '300000000',
     })
-    const result = evaluate(intent, state, policy)
+    const result = evaluateSuccess(intent, state, policy)
 
     expect(result.decision.outcome).toBe(RiskOutcome.Approved)
     expect(result.metrics.postTradeSymbolExposureMicros).toBe('400000000')
@@ -552,7 +619,7 @@ describe('bounded paper risk', () => {
       maxNetExposureMicros: '300000000',
       maxDailyTradedNotionalMicros: '298000000',
     })
-    const result = evaluate(intent, state, policy)
+    const result = evaluateSuccess(intent, state, policy)
 
     expect(result.decision.outcome).toBe(RiskOutcome.Blocked)
     expect(result.decision.reasonCodes).toContain(Reason.ShortPositionNotAllowed)
@@ -591,7 +658,7 @@ describe('bounded paper risk', () => {
       expectedExecutionPriceMicros: '49100000',
     })
     const intent = makeIntent({ side: OrderSide.Sell, quantityMicros: '1', notionalLimitMicros: '50' })
-    const result = evaluate(intent, state, makePolicy())
+    const result = evaluateSuccess(intent, state, makePolicy())
 
     expect(result.metrics.postTradeSymbolExposureMicros).toBe('-99')
     expect(result.metrics.postTradeNetExposureMicros).toBe('2')
@@ -707,11 +774,15 @@ describe('bounded paper risk', () => {
   })
 
   test('binds every intent, policy, and evidence change and caps approval lifetime', () => {
-    const baseline = evaluate(makeIntent(), makeState(), makePolicy())
-    const changedIntent = evaluate(makeIntent({ clientOrderId: 'risk-test-order-2' }), makeState(), makePolicy())
-    const changedPolicy = evaluate(makeIntent(), makeState(), makePolicy({ allowedSymbols: ['AMD', 'NVDA', 'WDC'] }))
-    const changedState = evaluate(makeIntent(), makeState({ marketDataHash: hash('9') }), makePolicy())
-    const changedAccounting = evaluate(makeIntent(), makeState({ accountingHash: hash('b') }), makePolicy())
+    const baseline = evaluateSuccess(makeIntent(), makeState(), makePolicy())
+    const changedIntent = evaluateSuccess(makeIntent({ clientOrderId: 'risk-test-order-2' }), makeState(), makePolicy())
+    const changedPolicy = evaluateSuccess(
+      makeIntent(),
+      makeState(),
+      makePolicy({ allowedSymbols: ['AMD', 'NVDA', 'WDC'] }),
+    )
+    const changedState = evaluateSuccess(makeIntent(), makeState({ marketDataHash: hash('9') }), makePolicy())
+    const changedAccounting = evaluateSuccess(makeIntent(), makeState({ accountingHash: hash('b') }), makePolicy())
 
     expect(changedIntent.input.intentId).toBe(baseline.input.intentId)
     expect(changedIntent.input.inputHash).not.toBe(baseline.input.inputHash)
@@ -721,13 +792,13 @@ describe('bounded paper risk', () => {
     expect(changedState.input.inputHash).not.toBe(baseline.input.inputHash)
     expect(changedAccounting.input.inputHash).not.toBe(baseline.input.inputHash)
 
-    const ttlCapped = evaluate(makeIntent(), makeState(), makePolicy({ decisionTtlMs: 1_000 }))
-    const freshnessCapped = evaluate(
+    const ttlCapped = evaluateSuccess(makeIntent(), makeState(), makePolicy({ decisionTtlMs: 1_000 }))
+    const freshnessCapped = evaluateSuccess(
       makeIntent(),
       makeState(),
       makePolicy({ decisionTtlMs: 60_000, maxBrokerStateAgeMs: 30_001, maxMarketDataAgeMs: 30_001 }),
     )
-    const cutoffCapped = evaluate(
+    const cutoffCapped = evaluateSuccess(
       makeIntent(),
       makeState({
         executionSession: changeExecutionWindow(makeState().executionSession, {
@@ -736,7 +807,7 @@ describe('bounded paper risk', () => {
       }),
       makePolicy({ decisionTtlMs: 60_000 }),
     )
-    const intentCapped = evaluate(
+    const intentCapped = evaluateSuccess(
       makeIntent(),
       makeState(),
       makePolicy({ decisionTtlMs: 60_000, maxIntentAgeMs: 15_001 }),
@@ -749,20 +820,16 @@ describe('bounded paper risk', () => {
 
   test('requires the exact authority generation for PAPER evaluation and hashes that binding', () => {
     const baselineState = makeState()
-    const baseline = evaluate(makeIntent(), baselineState, makePolicy())
+    const baseline = evaluateSuccess(makeIntent(), baselineState, makePolicy())
     const rotatedAuthority = { ...baselineState.authority, generationHash: hash('9') }
     const rotatedState = makeState({ authority: rotatedAuthority })
-    const rotated = evaluate(makeIntent({ authorityGenerationHash: hash('9') }), rotatedState, makePolicy())
+    const rotated = evaluateSuccess(makeIntent({ authorityGenerationHash: hash('9') }), rotatedState, makePolicy())
 
     expect(rotated.input.inputHash).not.toBe(baseline.input.inputHash)
     expect(rotated.gates.find((gate) => gate.name === 'reconciliation')?.passed).toBe(true)
-    expect(() => evaluate(makeIntent(), rotatedState, makePolicy())).toThrow(
-      'PAPER risk intent must bind the exact PAPER authority generation from risk state',
-    )
-    expect(() => evaluate(makeReferenceIntent(), baselineState, makePolicy())).toThrow(
-      'PAPER risk evaluation requires an authority-generation-bound intent',
-    )
-    expect(() =>
+    const failures = [
+      evaluate(makeIntent(), rotatedState, makePolicy()),
+      evaluate(makeReferenceIntent(), baselineState, makePolicy()),
       evaluate(
         makeReferenceIntent(),
         makeState({
@@ -775,8 +842,6 @@ describe('bounded paper risk', () => {
         }),
         makePolicy(),
       ),
-    ).toThrow('PAPER risk evaluation requires an authority-generation-bound intent')
-    expect(() =>
       evaluate(
         makeIntent(),
         makeState({
@@ -788,6 +853,117 @@ describe('bounded paper risk', () => {
         }),
         makePolicy(),
       ),
-    ).toThrow('authority-generation-bound risk intent requires PAPER maximum authority')
+    ] as const
+    expect(failures.map((result) => (Result.isFailure(result) ? result.failure.reason : null))).toEqual([
+      'authority-generation',
+      'authority-contract',
+      'authority-contract',
+      'authority-maximum',
+    ])
+    for (const result of failures) {
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: 'RiskEvaluationFailure',
+          operation: 'bind-authority',
+        })
+      }
+    }
+  })
+
+  test('returns closed tagged failures for malformed exported inputs', () => {
+    const cases = [
+      ['intent', evaluate({}, makeState(), makePolicy())],
+      ['state', evaluate(makeIntent(), {}, makePolicy())],
+      ['policy', evaluate(makeIntent(), makeState(), {})],
+      ['positions', evaluate(makeIntent(), makeState(), makePolicy(), [{}])],
+    ] as const
+
+    for (const [reason, result] of cases) {
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: 'RiskEvaluationFailure',
+          operation: 'decode-input',
+          reason,
+        })
+        expect(result.failure.cause).toBeDefined()
+      }
+    }
+  })
+
+  test('exposes exactly the correlated risk failure operation and reason table', () => {
+    const failures = riskFailurePairs.map(
+      (pair) => new RiskEvaluationFailure({ ...pair, message: 'failure-pair coverage', facts: {} }),
+    )
+    expect(riskFailurePairCoverage).toBe(true)
+    expect(failures.map(({ operation, reason }) => ({ operation, reason }))).toEqual([...riskFailurePairs])
+    expect(failures.every((failure) => failure._tag === 'RiskEvaluationFailure')).toBe(true)
+  })
+
+  test('rejects projected position books that diverge from the authoritative account snapshot context', () => {
+    const state = makeState()
+    const first = state.positions[0]
+    const second = state.positions[1]
+    if (first === undefined || second === undefined) throw new Error('risk fixture requires two positions')
+    const cases: readonly State['positions'][] = [
+      [second, first],
+      [first, { ...second, symbol: first.symbol }],
+      [{ ...first, accountId: 'another-account' }, second],
+      [{ ...first, observedAt: '2026-07-21T20:59:29.999Z' }, second],
+      [{ ...first, marketValueMicros: '0' }, second],
+    ]
+
+    for (const proposedPositions of cases) {
+      const result = evaluate(makeIntent(), state, makePolicy(), proposedPositions)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: 'RiskEvaluationFailure',
+          operation: 'decode-input',
+          reason: 'positions',
+        })
+        expect(result.failure.facts.issues).toBeArray()
+      }
+    }
+  })
+
+  test('fails before gates when malformed projected positions could undercount exact-state gross exposure', () => {
+    const state = makeState()
+    expect(state.reconciliation.status).toBe(ReconciliationStatus.Exact)
+    expect(state.reconciliation.expectedHash).toBe(state.reconciliation.observedHash)
+    const proposedPositions = state.positions.map((position) =>
+      position.symbol === 'AMD' ? { ...position, marketValueMicros: '0' } : position,
+    )
+    const result = evaluate(makeIntent(), state, makePolicy({ maxGrossExposureMicros: '250000000' }), proposedPositions)
+
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        _tag: 'RiskEvaluationFailure',
+        operation: 'decode-input',
+        reason: 'positions',
+      })
+      expect(result.failure.facts.issues).toContainEqual({
+        path: ['positions', 0, 'marketValueMicros'],
+        issue: 'must have the quantity sign',
+      })
+    }
+  })
+
+  test('rejects a rehashed evaluation with a gate assigned another gate reason', () => {
+    const valid = evaluateSuccess(makeIntent(), makeState(), makePolicy())
+    const gates = valid.gates.map((gate) => ({ ...gate }))
+    const firstReason = gates[0]?.reason
+    const secondReason = gates[1]?.reason
+    if (firstReason === undefined || secondReason === undefined) {
+      throw new Error('risk fixture requires the first two authoritative gates')
+    }
+    gates[0] = { ...gates[0]!, reason: secondReason }
+    gates[1] = { ...gates[1]!, reason: firstReason }
+
+    const decoded = decodeEvaluationResult({ ...valid, gates })
+    expect(Result.isFailure(decoded)).toBe(true)
+    expect(gates[0]?.name).toBe(Gate.IntentState)
   })
 })
