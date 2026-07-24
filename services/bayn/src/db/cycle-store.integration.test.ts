@@ -388,6 +388,7 @@ const runnerBrokerRead = (queries: Array<{ readonly start: string; readonly end:
   const unused = Effect.die(new Error('autonomous cycle runner must use only marketCalendar'))
   return {
     account: unused,
+    accountConfiguration: unused,
     assetBySymbol: unusedAssetBySymbol,
     positions: unused,
     orders: () => unused,

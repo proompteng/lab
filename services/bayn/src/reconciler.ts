@@ -92,13 +92,16 @@ const readOrders = (
       if (page.value.length === 0) return { rows, observedAt }
 
       for (const order of page.value) {
-        if (
-          previousSubmittedAt !== undefined &&
-          sourceTimestamp(order.submittedAt) < sourceTimestamp(previousSubmittedAt)
-        ) {
+        const submittedAt = order.submittedAt
+        if (submittedAt === undefined) {
+          return yield* Effect.fail(
+            failure('pagination', `Alpaca order ${order.brokerOrderId} is missing submitted_at`),
+          )
+        }
+        if (previousSubmittedAt !== undefined && sourceTimestamp(submittedAt) < sourceTimestamp(previousSubmittedAt)) {
           return yield* Effect.fail(failure('pagination', 'Alpaca order history is not ascending'))
         }
-        if (cursor !== undefined && sourceTimestamp(order.submittedAt) <= sourceTimestamp(cursor)) {
+        if (cursor !== undefined && sourceTimestamp(submittedAt) <= sourceTimestamp(cursor)) {
           return yield* Effect.fail(failure('pagination', 'Alpaca order timestamp cursor did not advance'))
         }
         if (ids.has(order.brokerOrderId)) {
@@ -106,7 +109,7 @@ const readOrders = (
         }
         ids.add(order.brokerOrderId)
         rows.push({ value: order, evidence: page.evidence })
-        previousSubmittedAt = order.submittedAt
+        previousSubmittedAt = submittedAt
         if (rows.length > maximumRows) {
           return yield* Effect.fail(failure('pagination', `Alpaca order history exceeds ${maximumRows} rows`))
         }

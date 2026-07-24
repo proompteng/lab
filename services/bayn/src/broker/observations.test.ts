@@ -165,6 +165,9 @@ describe('paper broker observations', () => {
     expect(() => orderObservation({ ...order, extendedHours: true }, evidence)).toThrow(
       'paper execution requires extended hours to be disabled',
     )
+    expect(() => orderObservation({ ...order, updatedAt: undefined }, evidence)).toThrow(
+      'paper order event requires Alpaca updated_at',
+    )
   })
 
   test('binds a fill to its order and defaults paper fees to zero', () => {

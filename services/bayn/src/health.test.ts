@@ -43,6 +43,7 @@ const brokerRead = (account: BrokerReadShape['account']): BrokerReadShape => {
   const unused = Effect.die(new Error('continuous broker health must only read the account'))
   return {
     account,
+    accountConfiguration: unused,
     assetBySymbol: unusedAssetBySymbol,
     positions: unused,
     orders: () => unused,

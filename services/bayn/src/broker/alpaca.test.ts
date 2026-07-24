@@ -58,6 +58,12 @@ const accountResponse = {
   options_buying_power: '0',
 }
 
+const accountConfigurationResponse = {
+  fractional_trading: true,
+  no_shorting: true,
+  suspend_trade: false,
+}
+
 const positionResponse = {
   asset_id: assetId,
   symbol: 'AAPL',
@@ -199,6 +205,7 @@ describe('Alpaca paper reads', () => {
     expect(inspected).not.toContain('paper-secret')
     expect(surface).toEqual([
       'account',
+      'accountConfiguration',
       'assetBySymbol',
       'fillActivities',
       'marketCalendar',
@@ -226,6 +233,102 @@ describe('Alpaca paper reads', () => {
         reset: '1784664000',
         retryAfter: undefined,
       },
+    })
+  })
+
+  test('reads and hashes the current fractional-trading account configuration with GET only', async () => {
+    const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
+    let releaseBody: (() => void) | undefined
+    const client = HttpClient.make((request, url) => {
+      requests.push({
+        method: request.method,
+        url,
+        key: request.headers['apca-api-key-id'] ?? '',
+        secret: request.headers['apca-api-secret-key'] ?? '',
+      })
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          releaseBody = () => {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify(accountConfigurationResponse)))
+            controller.close()
+          }
+        },
+      })
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, {
+            status: 200,
+            headers: responseHeaders,
+          }),
+        ),
+      )
+    })
+
+    const program = withClient(
+      client,
+      (read) =>
+        Effect.gen(function* () {
+          const fiber = yield* read.accountConfiguration.pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(1_000)
+          releaseBody?.()
+          return yield* Fiber.join(fiber)
+        }),
+      { ...options, operationTimeoutMs: 5_000 },
+    ).pipe(Effect.provide(TestClock.layer()))
+    const result = await Effect.runPromise(program)
+
+    expect(requests).toEqual([
+      {
+        method: 'GET',
+        url: new URL('https://paper-api.alpaca.markets/v2/account/configurations'),
+        key: 'paper-key',
+        secret: 'paper-secret',
+      },
+    ])
+    const requestHash = canonicalHashV1({
+      schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+      source: 'alpaca-v2-account-configurations',
+      method: 'GET',
+      path: '/v2/account/configurations',
+    })
+    const normalized = {
+      schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+      source: 'alpaca-v2-account-configurations',
+      requestHash,
+      fractionalTrading: true,
+    } as const
+    expect(result.value).toEqual({
+      ...normalized,
+      observedAt: '1970-01-01T00:00:01.000Z',
+      normalizedResponseHash: canonicalHashV1(normalized),
+    })
+    expect(result.evidence).toMatchObject({
+      requestId: 'req-123',
+      status: 200,
+      contentHash: canonicalHashV1(accountConfigurationResponse),
+      observedAt: '1970-01-01T00:00:01.000Z',
+    })
+    expect(requests.some(({ method }) => method === 'PATCH' || method === 'POST' || method === 'DELETE')).toBe(false)
+  })
+
+  test('rejects a malformed fractional-trading account configuration with typed response evidence', async () => {
+    const response = { ...accountConfigurationResponse, fractional_trading: 'true' }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+
+    const failure = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => read.accountConfiguration)).pipe(Effect.provide(TestClock.layer())),
+    )
+
+    expect(failure).toMatchObject({
+      operation: 'account-configuration',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+      status: 200,
+      requestId: 'req-123',
+      contentHash: canonicalHashV1(response),
+      observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
 
@@ -772,6 +875,152 @@ describe('Alpaca paper reads', () => {
     }
   })
 
+  test('uses canonical order type when the deprecated alias is absent across every order read', async () => {
+    const { order_type: _orderType, ...responseWithoutAlias } = orderResponse
+    const client = HttpClient.make((request, url) =>
+      Effect.succeed(
+        jsonResponse(request, url.pathname === '/v2/orders' ? [responseWithoutAlias] : responseWithoutAlias),
+      ),
+    )
+
+    const reads = await Effect.runPromise(
+      withClient(client, (read) =>
+        Effect.all([read.orders(), read.orderById(orderId), read.orderByClientId(clientOrderId)]),
+      ),
+    )
+
+    for (const read of reads) {
+      const order = Array.isArray(read.value) ? read.value[0] : read.value
+      expect(order?.orderType).toBe(OrderType.Market)
+    }
+  })
+
+  test('rejects a present deprecated order type alias that disagrees with canonical type', async () => {
+    const response = { ...orderResponse, order_type: 'limit' }
+    const client = HttpClient.make((request, url) =>
+      Effect.succeed(jsonResponse(request, url.pathname === '/v2/orders' ? [response] : response)),
+    )
+
+    const failures = await Effect.runPromise(
+      withClient(client, (read) =>
+        Effect.all([
+          Effect.flip(read.orders()),
+          Effect.flip(read.orderById(orderId)),
+          Effect.flip(read.orderByClientId(clientOrderId)),
+        ]),
+      ),
+    )
+
+    expect(failures).toMatchObject([
+      { operation: 'orders', kind: BrokerReadErrorKind.InvalidResponse, retryable: false },
+      { operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse, retryable: false },
+      { operation: 'order-by-client-id', kind: BrokerReadErrorKind.InvalidResponse, retryable: false },
+    ])
+  })
+
+  test('validates every non-market order shape from canonical type when the deprecated alias is absent', async () => {
+    const malformed = [
+      { label: 'limit', response: { ...orderResponse, type: 'limit', limit_price: null } },
+      { label: 'stop', response: { ...orderResponse, type: 'stop', stop_price: null } },
+      {
+        label: 'stop-limit',
+        response: { ...orderResponse, type: 'stop_limit', limit_price: null, stop_price: null },
+      },
+      {
+        label: 'trailing-stop',
+        response: { ...orderResponse, type: 'trailing_stop', trail_percent: null, trail_price: null },
+      },
+    ] as const
+
+    for (const { label, response } of malformed) {
+      const { order_type: _orderType, ...responseWithoutAlias } = response
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, responseWithoutAlias)))
+
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.orderById(orderId))))
+
+      expect(failure, label).toMatchObject({
+        operation: 'order-by-id',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    }
+  })
+
+  test('retains causal read evidence when pending order timestamps are null or absent', async () => {
+    const { updated_at: _updatedAt, submitted_at: _submittedAt, ...responseWithoutPendingTimestamps } = orderResponse
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/orders') {
+        return Effect.succeed(jsonResponse(request, [{ ...orderResponse, updated_at: null, submitted_at: null }]))
+      }
+      if (url.pathname === `/v2/orders/${orderId}`) {
+        return Effect.succeed(jsonResponse(request, responseWithoutPendingTimestamps))
+      }
+      return Effect.succeed(jsonResponse(request, { ...responseWithoutPendingTimestamps, updated_at: null }))
+    })
+
+    const reads = await Effect.runPromise(
+      withClient(client, (read) =>
+        Effect.all([read.orders(), read.orderById(orderId), read.orderByClientId(clientOrderId)]),
+      ),
+    )
+
+    for (const read of reads) {
+      const order = Array.isArray(read.value) ? read.value[0] : read.value
+      expect(order).toMatchObject({
+        createdAt: orderResponse.created_at,
+        observedAt: read.evidence.observedAt,
+      })
+      expect(order?.updatedAt).toBeUndefined()
+      expect(order?.submittedAt).toBeUndefined()
+      expect(read.evidence.observedAt).toMatch(/Z$/)
+    }
+  })
+
+  test('accepts external client order IDs through 128 characters and rejects longer values', async () => {
+    let calls = 0
+    let responseClientOrderId = 'e'.repeat(49)
+    let requestedClientOrderId = ''
+    const client = HttpClient.make((request, url) => {
+      calls += 1
+      requestedClientOrderId = url.searchParams.get('client_order_id') ?? ''
+      const body =
+        url.pathname === '/v2/orders'
+          ? [{ ...orderResponse, client_order_id: responseClientOrderId }]
+          : { ...orderResponse, client_order_id: responseClientOrderId }
+      return Effect.succeed(jsonResponse(request, body))
+    })
+
+    const external49 = await Effect.runPromise(withClient(client, (read) => read.orders()))
+    expect(external49.value[0]?.clientOrderId).toBe('e'.repeat(49))
+
+    responseClientOrderId = 'f'.repeat(128)
+    const external128 = await Effect.runPromise(
+      withClient(client, (read) => Effect.all([read.orderById(orderId), read.orderByClientId(responseClientOrderId)])),
+    )
+    expect(external128.map((read) => read.value.clientOrderId)).toEqual([responseClientOrderId, responseClientOrderId])
+    expect(requestedClientOrderId).toBe(responseClientOrderId)
+
+    responseClientOrderId = 'g'.repeat(129)
+    const responseFailures = await Effect.runPromise(
+      withClient(client, (read) => Effect.all([Effect.flip(read.orders()), Effect.flip(read.orderById(orderId))])),
+    )
+    expect(responseFailures).toMatchObject([
+      { operation: 'orders', kind: BrokerReadErrorKind.InvalidResponse, retryable: false },
+      { operation: 'order-by-id', kind: BrokerReadErrorKind.InvalidResponse, retryable: false },
+    ])
+
+    const callsBeforeInvalidLookup = calls
+    const lookupFailure = await Effect.runPromise(
+      Effect.flip(withClient(client, (read) => read.orderByClientId('h'.repeat(129)))),
+    )
+    expect(lookupFailure).toMatchObject({
+      operation: 'order-by-client-id',
+      kind: BrokerReadErrorKind.InvalidRequest,
+      retryable: false,
+    })
+    expect(calls).toBe(callsBeforeInvalidLookup)
+  })
+
   test('reads a bounded fill page and derives the documented page token', async () => {
     let requestedUrl: URL | undefined
     const client = HttpClient.make((request, url) => {
@@ -1022,16 +1271,21 @@ describe('Alpaca paper reads', () => {
 })
 
 describe('Alpaca proxy lifecycle', () => {
-  test('owns and releases its Undici proxy dispatcher exactly once', async () => {
+  test('keeps its Undici proxy dispatcher alive until the owning scope exits and releases it exactly once', async () => {
     let releases = 0
     await Effect.runPromise(
       Effect.scoped(
-        makeProxyDispatcher('http://proxy.test:3128', {
-          create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-          destroy: () => {
-            releases += 1
-            return Promise.resolve()
-          },
+        Effect.gen(function* () {
+          yield* makeProxyDispatcher('http://proxy.test:3128', {
+            create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+            destroy: () => {
+              releases += 1
+              return Promise.resolve()
+            },
+          })
+          expect(releases).toBe(0)
+          yield* Effect.yieldNow
+          expect(releases).toBe(0)
         }),
       ),
     )

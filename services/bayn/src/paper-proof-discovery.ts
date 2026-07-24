@@ -8,6 +8,7 @@ import {
   AssetStatus,
   BrokerRead,
   type Account,
+  type AccountConfigurationObservation,
   type AssetObservation,
   type AssetObservationExchange,
   type ReadEvidence,
@@ -40,10 +41,10 @@ import {
 import type { ObserveShadowDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanStatus } from './target-planner'
 
-const discoverySchemaVersion = 'bayn.paper-proof-discovery.v1' as const
+const discoverySchemaVersion = 'bayn.paper-proof-discovery.v2' as const
 const bindingSchemaVersion = 'bayn.paper-proof-discovery-binding.v1' as const
-const candidateFactsSchemaVersion = 'bayn.paper-proof-candidate-facts.v1' as const
-const observationReceiptSchemaVersion = 'bayn.paper-proof-observation-receipt.v1' as const
+const candidateFactsSchemaVersion = 'bayn.paper-proof-candidate-facts.v2' as const
+const observationReceiptSchemaVersion = 'bayn.paper-proof-observation-receipt.v2' as const
 const assetReadConcurrency = 3
 const AssetObservationExchangeSchema = Schema.Enum(AssetExchange).pipe(
   Schema.refine((exchange): exchange is AssetObservationExchange => exchange !== AssetExchange.Empty, {
@@ -77,6 +78,15 @@ const AccountObservationSchema = Schema.Struct({
   tradingBlocked: Schema.Boolean,
   tradeSuspendedByUser: Schema.Boolean,
   observedAt: UtcInstantSchema,
+})
+
+const AccountConfigurationObservationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.alpaca-account-configuration-observation.v1'),
+  source: Schema.Literal('alpaca-v2-account-configurations'),
+  requestHash: Sha256Schema,
+  fractionalTrading: Schema.Boolean,
+  observedAt: UtcInstantSchema,
+  normalizedResponseHash: Sha256Schema,
 })
 
 const AssetObservationSchema = Schema.Struct({
@@ -164,6 +174,14 @@ const AccountFactsSchema = Schema.Struct({
   tradeSuspendedByUser: Schema.Boolean,
 })
 
+const AccountConfigurationFactsSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.alpaca-account-configuration-observation.v1'),
+  source: Schema.Literal('alpaca-v2-account-configurations'),
+  requestHash: Sha256Schema,
+  fractionalTrading: Schema.Boolean,
+  normalizedResponseHash: Sha256Schema,
+})
+
 const AssetFactsSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.alpaca-asset-observation.v1'),
   source: Schema.Literal('alpaca-v2-asset'),
@@ -201,12 +219,14 @@ const CandidateFactsSchema = Schema.Struct({
     eligible: Schema.Boolean,
     reasons: Schema.Array(CandidateIneligibilitySchema),
   }),
+  fractionalTradingEligible: Schema.Boolean,
 })
 
 const CandidateFactsMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal(candidateFactsSchemaVersion),
   immutableBindingHash: Sha256Schema,
   account: AccountFactsSchema,
+  accountConfiguration: AccountConfigurationFactsSchema,
   candidates: Schema.Array(CandidateFactsSchema),
   consistencyDelayMs: Schema.Struct({
     status: Schema.Literal('REQUIRED_UNBOUND'),
@@ -217,6 +237,10 @@ export type PaperProofCandidateFactsMaterial = typeof CandidateFactsMaterialSche
 const BrokerObservationsSchema = Schema.Struct({
   account: Schema.Struct({
     value: AccountObservationSchema,
+    evidence: ReadEvidenceSchema,
+  }),
+  accountConfiguration: Schema.Struct({
+    value: AccountConfigurationObservationSchema,
     evidence: ReadEvidenceSchema,
   }),
   assets: Schema.Array(
@@ -531,6 +555,16 @@ const accountFacts = (account: Account): typeof AccountFactsSchema.Type => ({
   tradeSuspendedByUser: account.tradeSuspendedByUser,
 })
 
+const accountConfigurationFacts = (
+  configuration: AccountConfigurationObservation,
+): typeof AccountConfigurationFactsSchema.Type => ({
+  schemaVersion: configuration.schemaVersion,
+  source: configuration.source,
+  requestHash: configuration.requestHash,
+  fractionalTrading: configuration.fractionalTrading,
+  normalizedResponseHash: configuration.normalizedResponseHash,
+})
+
 const assetFacts = (asset: AssetObservation): typeof AssetFactsSchema.Type => ({
   schemaVersion: asset.schemaVersion,
   source: asset.source,
@@ -594,11 +628,18 @@ const makeReceipt = (
   snapshot: DiscoverySnapshot,
   binding: PaperProofDiscoveryBinding,
   account: ReadResult<Account>,
+  accountConfiguration: ReadResult<AccountConfigurationObservation>,
   assets: readonly ReadResult<AssetObservation>[],
   capturedAt: string,
 ): PaperProofDiscoveryReceipt => {
   requireInvariant(account.value.id === identity.accountId, 'account-mismatch', 'Alpaca account identity mismatch')
   validateReadEvidence(account, 'account')
+  validateReadEvidence(accountConfiguration, 'account configuration')
+  requireInvariant(
+    Date.parse(accountConfiguration.value.observedAt) >= Date.parse(account.value.observedAt),
+    'broker',
+    'Alpaca account configuration observation precedes the bound account observation',
+  )
   const candidates = snapshot.document.targetPlan.intentTargets.map((intent, ordinal) => {
     const target = snapshot.document.targetPlan.targets.find((candidate) => candidate.symbol === intent.symbol)
     const risk = snapshot.document.deltaRisk[ordinal]
@@ -612,6 +653,12 @@ const makeReceipt = (
       'broker',
       `asset observation does not match planned symbol ${intent.symbol}`,
     )
+    requireInvariant(
+      Date.parse(asset.value.observedAt) >= Date.parse(accountConfiguration.value.observedAt),
+      'broker',
+      `asset observation precedes the account configuration observation for ${intent.symbol}`,
+    )
+    const eligibility = assetEligibility(asset.value)
     return {
       ordinal,
       observedPlanIntentId: risk.evaluation.input.intentId,
@@ -629,7 +676,8 @@ const makeReceipt = (
       observedRiskDecisionId: risk.evaluation.decision.decisionId,
       observedRiskInputHash: risk.evaluation.input.inputHash,
       asset: assetFacts(asset.value),
-      assetEligibility: assetEligibility(asset.value),
+      assetEligibility: eligibility,
+      fractionalTradingEligible: accountConfiguration.value.fractionalTrading && eligibility.eligible,
     }
   })
   const immutableBindingHash = canonicalHashV1(binding)
@@ -637,6 +685,7 @@ const makeReceipt = (
     schemaVersion: candidateFactsSchemaVersion,
     immutableBindingHash,
     account: accountFacts(account.value),
+    accountConfiguration: accountConfigurationFacts(accountConfiguration.value),
     candidates,
     consistencyDelayMs: { status: 'REQUIRED_UNBOUND' as const },
   }
@@ -653,6 +702,10 @@ const makeReceipt = (
     candidateFactsHash,
     observations: {
       account: { value: account.value, evidence: normalizedReadEvidence(account.evidence) },
+      accountConfiguration: {
+        value: accountConfiguration.value,
+        evidence: normalizedReadEvidence(accountConfiguration.evidence),
+      },
       assets: assets.map((asset, ordinal) => ({
         ordinal,
         value: asset.value,
@@ -712,6 +765,25 @@ export const discoverPaperProofCandidates = (
           ? cause
           : fail('validate', 'account-mismatch', 'Alpaca account observation is invalid', cause),
     })
+    const accountConfiguration = yield* broker.accountConfiguration.pipe(
+      Effect.mapError((cause) =>
+        fail('broker-read', 'broker', 'Alpaca account configuration discovery read failed', cause),
+      ),
+    )
+    yield* Effect.try({
+      try: () => {
+        validateReadEvidence(accountConfiguration, 'account configuration')
+        requireInvariant(
+          Date.parse(accountConfiguration.value.observedAt) >= Date.parse(account.value.observedAt),
+          'broker',
+          'Alpaca account configuration observation precedes the bound account observation',
+        )
+      },
+      catch: (cause) =>
+        cause instanceof PaperProofDiscoveryError
+          ? cause
+          : fail('validate', 'broker', 'Alpaca account configuration observation is invalid', cause),
+    })
     const assets = yield* Effect.forEach(
       snapshot.document.targetPlan.intentTargets,
       (intent) => broker.assetBySymbol(intent.symbol),
@@ -725,7 +797,7 @@ export const discoverPaperProofCandidates = (
       'shadow document reached its exclusive submission cutoff during broker observation',
     )
     return yield* Effect.try({
-      try: () => makeReceipt(identity, snapshot, binding, account, assets, capturedAt),
+      try: () => makeReceipt(identity, snapshot, binding, account, accountConfiguration, assets, capturedAt),
       catch: (cause) =>
         cause instanceof PaperProofDiscoveryError
           ? cause
