@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Deferred, Effect, Fiber, Ref } from 'effect'
+import { Deferred, Effect, Fiber, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { config, successfulJournal, readyState, recoveringStore } from './app-test-support'
+import { config, fixtureLock, successfulJournal, readyState, recoveringStore } from './app-test-support'
 import { monitor, probe } from './app'
 import { AccountStatus, type BrokerReadShape, type ReadResult, type Account } from './broker/alpaca'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
@@ -11,7 +11,17 @@ import { CycleOperationsCondition, CycleOperationsReason, type CycleOperationsPr
 import { CycleState } from './cycle'
 import { CycleObservability, type CycleObservabilityShape } from './db/cycle-observability'
 import { EvidenceStore } from './db/evidence-store'
-import type { BrokerProbe } from './health'
+import {
+  deriveHealthLogDecisions,
+  deriveHealthTransition,
+  type BrokerProbe,
+  ensureDurableEvidence,
+  ensureSignalIdentity,
+  renderDurableEvidenceFailure,
+  renderSignalIdentityFailure,
+  validateDurableEvidence,
+  validateSignalIdentity,
+} from './health'
 import { Journal, type JournalService } from './ledger'
 import { MarketData, type MarketDataService } from './market-data'
 import { initialState, type RuntimeState } from './runtime-state'
@@ -63,6 +73,25 @@ const emptyCycleProjection = (): CycleOperationsProjection => ({
   mutations: { eventCount: 0, unresolvedCount: 0, oldestUnresolvedAt: null, latestOccurredAt: null },
 })
 
+const pendingCycle = (updatedAt: string) =>
+  ({
+    cycleId: '1'.repeat(64),
+    accountId: 'paper-account-1',
+    signalSessionDate: '2026-07-17',
+    executionSessionDate: '2026-07-20',
+    phase: CycleState.Pending,
+    snapshotId: '2'.repeat(64),
+    decisionHash: null,
+    terminalReason: null,
+    submissionOpenAt: '2026-07-20T00:00:00.000Z',
+    submissionCutoffAt: '2026-07-20T01:00:00.000Z',
+    executionOpenAt: '2026-07-20T01:02:00.000Z',
+    executionCloseAt: '2026-07-20T20:00:00.000Z',
+    createdAt: updatedAt,
+    updatedAt,
+    terminalAt: null,
+  }) as const
+
 const cycleObservability = (
   read: CycleObservabilityShape['read'] = () => Effect.succeed(emptyCycleProjection()),
 ): CycleObservabilityShape => ({ read })
@@ -88,6 +117,322 @@ const provideHealthyDependencies = (
   )
 
 describe('Bayn continuous health', () => {
+  test('returns structured signal and durable evidence invariant failures', () => {
+    const current = readyState()
+    const evidence = current.evidence
+    expect(evidence).not.toBeNull()
+    if (evidence === null) return
+    const snapshot = makeSnapshot().manifest.finalizedSnapshot
+    const observedSnapshotId = 'f'.repeat(64)
+    const observedPublicationId = 'e'.repeat(64)
+
+    expect(validateSignalIdentity(snapshot, null)).toEqual(Result.fail({ _tag: 'EvidenceUnavailable' }))
+    expect(renderSignalIdentityFailure({ _tag: 'EvidenceUnavailable' })).toBe('startup evidence is unavailable')
+    expect(validateSignalIdentity({ ...snapshot, snapshotId: observedSnapshotId }, evidence)).toEqual(
+      Result.fail({
+        _tag: 'SnapshotMismatch',
+        observedSnapshotId,
+        expectedSnapshotId: evidence.evaluation.input.snapshotId,
+      }),
+    )
+    expect(
+      renderSignalIdentityFailure({
+        _tag: 'SnapshotMismatch',
+        observedSnapshotId,
+        expectedSnapshotId: evidence.evaluation.input.snapshotId,
+      }),
+    ).toBe(
+      `configured Signal snapshot ${observedSnapshotId} differs from active run snapshot ${evidence.evaluation.input.snapshotId}`,
+    )
+    expect(validateSignalIdentity({ ...snapshot, publicationId: observedPublicationId }, evidence)).toEqual(
+      Result.fail({
+        _tag: 'PublicationMismatch',
+        observedPublicationId,
+        expectedPublicationId: evidence.evaluation.input.publicationId,
+      }),
+    )
+    expect(
+      renderSignalIdentityFailure({
+        _tag: 'PublicationMismatch',
+        observedPublicationId,
+        expectedPublicationId: evidence.evaluation.input.publicationId,
+      }),
+    ).toBe(
+      `configured Signal publication ${observedPublicationId} differs from active run publication ${evidence.evaluation.input.publicationId}`,
+    )
+    expect(validateSignalIdentity(snapshot, evidence)).toEqual(Result.succeed(undefined))
+
+    const recovered = {
+      evaluation: evidence.evaluation,
+      reconciliation: evidence.reconciliation,
+      persistence: { ...evidence.persistence, deduplicated: true },
+    }
+    const qualification = {
+      state: 'TERMINAL' as const,
+      lock: fixtureLock,
+      result: evidence.qualification,
+    }
+    expect(validateDurableEvidence(null, null, null)).toEqual(Result.fail({ _tag: 'EvidenceUnavailable' }))
+    expect(renderDurableEvidenceFailure({ _tag: 'EvidenceUnavailable' })).toBe('startup evidence is unavailable')
+    expect(validateDurableEvidence(null, qualification, evidence)).toEqual(
+      Result.fail({
+        _tag: 'RunMissing',
+        runId: evidence.evaluation.runId,
+      }),
+    )
+    expect(renderDurableEvidenceFailure({ _tag: 'RunMissing', runId: evidence.evaluation.runId })).toBe(
+      `durable run ${evidence.evaluation.runId} is missing`,
+    )
+    expect(validateDurableEvidence(recovered, null, evidence)).toEqual(
+      Result.fail({
+        _tag: 'TerminalQualificationMissing',
+        runId: evidence.evaluation.runId,
+        observedState: null,
+      }),
+    )
+    expect(
+      renderDurableEvidenceFailure({
+        _tag: 'TerminalQualificationMissing',
+        runId: evidence.evaluation.runId,
+        observedState: null,
+      }),
+    ).toBe(`terminal qualification ${evidence.evaluation.runId} is missing`)
+    const incompleteQualification = { state: 'OPENED_INCOMPLETE' as const, lock: fixtureLock }
+    expect(validateDurableEvidence(recovered, incompleteQualification, evidence)).toEqual(
+      Result.fail({
+        _tag: 'TerminalQualificationMissing',
+        runId: evidence.evaluation.runId,
+        observedState: 'OPENED_INCOMPLETE',
+      }),
+    )
+    expect(
+      renderDurableEvidenceFailure({
+        _tag: 'TerminalQualificationMissing',
+        runId: evidence.evaluation.runId,
+        observedState: 'OPENED_INCOMPLETE',
+      }),
+    ).toBe(`qualification ${evidence.evaluation.runId} is OPENED_INCOMPLETE, expected TERMINAL`)
+    const mismatch = validateDurableEvidence(
+      {
+        ...recovered,
+        persistence: { ...recovered.persistence, eventCount: recovered.persistence.eventCount + 1 },
+      },
+      qualification,
+      evidence,
+    )
+    expect(Result.isFailure(mismatch)).toBe(true)
+    expect(Result.isFailure(mismatch) ? mismatch.failure._tag : null).toBe('RunMismatch')
+    if (Result.isFailure(mismatch) && mismatch.failure._tag === 'RunMismatch') {
+      expect(mismatch.failure).toMatchObject({
+        runId: evidence.evaluation.runId,
+        observedDurableHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        expectedDurableHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      })
+      expect(mismatch.failure.observedDurableHash).not.toBe(mismatch.failure.expectedDurableHash)
+      expect(renderDurableEvidenceFailure(mismatch.failure)).toBe(
+        `durable run ${evidence.evaluation.runId} hash ${mismatch.failure.observedDurableHash} differs from active proof hash ${mismatch.failure.expectedDurableHash}`,
+      )
+    }
+
+    const qualificationMismatch = validateDurableEvidence(
+      recovered,
+      {
+        ...qualification,
+        result: { ...qualification.result, resultHash: '0'.repeat(64) },
+      },
+      evidence,
+    )
+    expect(Result.isFailure(qualificationMismatch)).toBe(true)
+    expect(Result.isFailure(qualificationMismatch) ? qualificationMismatch.failure._tag : null).toBe(
+      'TerminalQualificationMismatch',
+    )
+    if (
+      Result.isFailure(qualificationMismatch) &&
+      qualificationMismatch.failure._tag === 'TerminalQualificationMismatch'
+    ) {
+      expect(qualificationMismatch.failure).toMatchObject({
+        runId: evidence.evaluation.runId,
+        observedQualificationHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        expectedQualificationHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      })
+      expect(qualificationMismatch.failure.observedQualificationHash).not.toBe(
+        qualificationMismatch.failure.expectedQualificationHash,
+      )
+      expect(renderDurableEvidenceFailure(qualificationMismatch.failure)).toBe(
+        `terminal qualification ${evidence.evaluation.runId} hash ${qualificationMismatch.failure.observedQualificationHash} differs from active proof hash ${qualificationMismatch.failure.expectedQualificationHash}`,
+      )
+    }
+
+    const malformedEvidence = {
+      ...evidence,
+      persistence: { ...evidence.persistence, runId: '\ud800' },
+    }
+    const totality = Result.try(() => validateDurableEvidence(recovered, qualification, malformedEvidence))
+    expect(Result.isSuccess(totality)).toBe(true)
+    if (Result.isSuccess(totality)) {
+      const canonicalization = totality.success
+      expect(Result.isFailure(canonicalization) ? canonicalization.failure._tag : null).toBe('CanonicalizationFailed')
+      if (Result.isFailure(canonicalization) && canonicalization.failure._tag === 'CanonicalizationFailed') {
+        expect(canonicalization.failure.runId).toBe(evidence.evaluation.runId)
+        expect(canonicalization.failure.material).toBe('EXPECTED_DURABLE_EVIDENCE')
+        expect(canonicalization.failure.cause).toBeInstanceOf(TypeError)
+        expect(String(canonicalization.failure.cause)).toBe(
+          'TypeError: $.persistence.runId contains an invalid Unicode surrogate',
+        )
+        expect(renderDurableEvidenceFailure(canonicalization.failure)).toBe(
+          `canonicalization of EXPECTED_DURABLE_EVIDENCE for run ${evidence.evaluation.runId} failed: TypeError: $.persistence.runId contains an invalid Unicode surrogate`,
+        )
+      }
+    }
+    expect(validateDurableEvidence(recovered, qualification, evidence)).toEqual(Result.succeed(undefined))
+  })
+
+  test('retains structured invariant failures as OperationalError causes', async () => {
+    const current = readyState()
+    const evidence = current.evidence
+    expect(evidence).not.toBeNull()
+    if (evidence === null) return
+    const snapshot = makeSnapshot().manifest.finalizedSnapshot
+    const observedSnapshotId = 'f'.repeat(64)
+    const signalFailure = {
+      _tag: 'SnapshotMismatch' as const,
+      observedSnapshotId,
+      expectedSnapshotId: evidence.evaluation.input.snapshotId,
+    }
+
+    const signalError = await Effect.runPromise(
+      Effect.flip(ensureSignalIdentity({ ...snapshot, snapshotId: observedSnapshotId }, evidence)),
+    )
+    expect(signalError).toMatchObject({
+      component: 'market-data',
+      operation: 'check-identity',
+      message: `Signal identity check failed: ${renderSignalIdentityFailure(signalFailure)}`,
+      retryable: false,
+      cause: signalFailure,
+    })
+
+    const recovered = {
+      evaluation: evidence.evaluation,
+      reconciliation: evidence.reconciliation,
+      persistence: { ...evidence.persistence, deduplicated: true },
+    }
+    const qualification = {
+      state: 'TERMINAL' as const,
+      lock: fixtureLock,
+      result: evidence.qualification,
+    }
+    const malformedEvidence = {
+      ...evidence,
+      persistence: { ...evidence.persistence, runId: '\ud800' },
+    }
+    const durableError = await Effect.runPromise(
+      Effect.flip(ensureDurableEvidence(recovered, qualification, malformedEvidence)),
+    )
+    expect(durableError).toMatchObject({
+      component: 'database',
+      operation: 'verify-evidence',
+      retryable: false,
+      cause: {
+        _tag: 'CanonicalizationFailed',
+        runId: evidence.evaluation.runId,
+        material: 'EXPECTED_DURABLE_EVIDENCE',
+      },
+    })
+    const durableCause = durableError.cause
+    if (
+      durableCause !== null &&
+      typeof durableCause === 'object' &&
+      '_tag' in durableCause &&
+      durableCause._tag === 'CanonicalizationFailed' &&
+      'cause' in durableCause
+    ) {
+      expect(durableCause.cause).toBeInstanceOf(TypeError)
+    }
+    expect(durableError.message).toBe(
+      `durable evidence verification failed: canonicalization of EXPECTED_DURABLE_EVIDENCE for run ${evidence.evaluation.runId} failed: TypeError: $.persistence.runId contains an invalid Unicode surrogate`,
+    )
+  })
+
+  test('derives immutable runtime transitions and exact log decisions from probe data', () => {
+    const current = readyState()
+    const original = structuredClone(current)
+    const checkedAt = '2026-07-20T00:04:00.000Z'
+    const checkedAtMs = Date.parse(checkedAt)
+    const pending = pendingCycle('2026-07-20T00:03:30.000Z')
+    const transition = deriveHealthTransition(current, {
+      config,
+      evidenceAvailable: true,
+      results: {
+        postgresql: { _tag: 'Available', value: undefined },
+        signal: { _tag: 'Unavailable', error: 'Signal identity mismatch' },
+        tigerBeetle: { _tag: 'Available', value: undefined },
+        durableEvidence: { _tag: 'Available', value: undefined },
+        cycle: {
+          _tag: 'Available',
+          value: {
+            ...emptyCycleProjection(),
+            current: pending,
+            unfinishedCycleCount: 1,
+          },
+        },
+        broker: null,
+      },
+      broker: undefined,
+      cycleFiber: { _tag: 'NotProvided' },
+      checkedAt,
+      checkedAtMs,
+    })
+
+    expect(current).toEqual(original)
+    expect(transition).toMatchObject({
+      current,
+      next: {
+        status: 'DEGRADED',
+        error: 'signal: Signal identity mismatch',
+        health: { sequence: 2 },
+        cycle: {
+          condition: CycleOperationsCondition.Running,
+          reason: CycleOperationsReason.AwaitingActivation,
+          attemptAgeMs: 30_000,
+        },
+      },
+      failedDependencies: ['signal'],
+      checkedAt,
+    })
+    expect(deriveHealthLogDecisions(transition)).toEqual([
+      {
+        _tag: 'RuntimeStatusChanged',
+        level: 'WARNING',
+        message: 'Bayn health changed to DEGRADED',
+        annotations: {
+          service: 'bayn',
+          checkedAt,
+          probeSequence: 2,
+          failedDependencies: 'signal',
+        },
+      },
+      {
+        _tag: 'CycleOperationsChanged',
+        level: 'INFO',
+        message: 'Bayn cycle operations changed to RUNNING',
+        annotations: {
+          service: 'bayn',
+          checkedAt,
+          cycleCondition: CycleOperationsCondition.Running,
+          cycleReason: CycleOperationsReason.AwaitingActivation,
+          currentCycleId: pending.cycleId,
+          currentPhase: CycleState.Pending,
+          signalSessionDate: pending.signalSessionDate,
+          submissionCutoffAt: pending.submissionCutoffAt,
+          attemptAgeMs: 30_000,
+          unfinishedCycleCount: 1,
+          unresolvedMutationCount: 0,
+          zeroMutation: true,
+        },
+      },
+    ])
+  })
+
   test('requires the configured broker account GET while keeping execution disabled under OBSERVE', async () => {
     let observedAccountId = brokerAccountId
     let brokerAvailable = true
@@ -206,6 +551,63 @@ describe('Bayn continuous health', () => {
     } finally {
       await Effect.runPromise(Fiber.interrupt(cycleFiber))
     }
+  })
+
+  test('times out and interrupts the broker account probe exactly once', async () => {
+    const startedAt = '2026-07-20T00:00:00.000Z'
+    let finalizations = 0
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(startedAt))
+        const accountStarted = yield* Deferred.make<void>()
+        const broker: BrokerProbe = {
+          read: brokerRead(
+            Deferred.succeed(accountStarted, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Effect.sync(() => void (finalizations += 1))),
+            ),
+          ),
+          expectedAccountId: brokerAccountId,
+          executionEligible: false,
+          executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
+        }
+        const initial: RuntimeState = {
+          ...readyState(),
+          autonomousCycleLoop: {
+            configured: true,
+            startedAt,
+            lastPass: { result: 'SUCCESS', observedAt: startedAt, outcome: 'NO_PUBLICATION' },
+          },
+          broker: initialState(broker, true).broker,
+        }
+        const state = yield* Ref.make(initial)
+        const cycleFiber = yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
+        const healthFiber = yield* provideHealthyDependencies(initial, probe(config, state, broker, cycleFiber)).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        )
+
+        yield* Deferred.await(accountStarted)
+        yield* TestClock.adjust(config.operationTimeoutMs - 1)
+        expect(finalizations).toBe(0)
+        yield* TestClock.adjust(1)
+        yield* Fiber.join(healthFiber)
+
+        expect(finalizations).toBe(1)
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          broker: {
+            accountId: null,
+            accountBound: false,
+            readAvailable: false,
+            error: `Alpaca account probe timed out after ${config.operationTimeoutMs}ms`,
+          },
+          error: `broker: Alpaca account probe timed out after ${config.operationTimeoutMs}ms`,
+        })
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+    expect(finalizations).toBe(1)
   })
 
   test('degrades when Alpaca is configured without the autonomous cycle runner', async () => {
@@ -549,6 +951,45 @@ describe('Bayn continuous health', () => {
     await Effect.runPromise(program)
   })
 
+  test('surfaces an interrupted autonomous cycle fiber as a runner failure', async () => {
+    const initial: RuntimeState = {
+      ...readyState(),
+      autonomousCycleLoop: {
+        configured: true,
+        startedAt: '2026-07-20T00:00:00.000Z',
+        lastPass: {
+          result: 'SUCCESS',
+          observedAt: '2026-07-20T00:00:00.000Z',
+          outcome: 'NO_PUBLICATION',
+        },
+      },
+    }
+    const state = await Effect.runPromise(Ref.make(initial))
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-07-20T00:00:01.000Z'))
+        const interruptedFiber = yield* Effect.never.pipe(Effect.forkScoped({ startImmediately: true }))
+        yield* Fiber.interrupt(interruptedFiber)
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, interruptedFiber))
+
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'DEGRADED',
+          health: {
+            dependencies: {
+              cycleRunner: {
+                status: 'UNAVAILABLE',
+                error: 'autonomous cycle loop failed: All fibers interrupted without error',
+              },
+            },
+          },
+          error: 'cycleRunner: autonomous cycle loop failed: All fibers interrupted without error',
+        })
+      }),
+    ).pipe(Effect.provide(TestClock.layer()))
+
+    await Effect.runPromise(program)
+  })
+
   test('does not erase a loop failure recorded while a health probe is in flight', async () => {
     const initial: RuntimeState = {
       ...readyState(),
@@ -635,23 +1076,7 @@ describe('Bayn continuous health', () => {
   test('treats the stall threshold as exclusive and clears only after a later terminal success', async () => {
     const initial = readyState()
     const state = await Effect.runPromise(Ref.make(initial))
-    const pending = {
-      cycleId: '1'.repeat(64),
-      accountId: 'paper-account-1',
-      signalSessionDate: '2026-07-17',
-      executionSessionDate: '2026-07-20',
-      phase: CycleState.Pending,
-      snapshotId: '2'.repeat(64),
-      decisionHash: null,
-      terminalReason: null,
-      submissionOpenAt: '2026-07-20T00:00:00.000Z',
-      submissionCutoffAt: '2026-07-20T01:00:00.000Z',
-      executionOpenAt: '2026-07-20T01:02:00.000Z',
-      executionCloseAt: '2026-07-20T20:00:00.000Z',
-      createdAt: '2026-07-20T00:00:00.000Z',
-      updatedAt: '2026-07-20T00:00:00.000Z',
-      terminalAt: null,
-    } as const
+    const pending = pendingCycle('2026-07-20T00:00:00.000Z')
     let projection: CycleOperationsProjection = {
       ...emptyCycleProjection(),
       current: pending,
