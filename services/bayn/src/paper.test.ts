@@ -133,8 +133,9 @@ const source = {
 }
 
 const intent = {
-  schemaVersion: 'bayn.paper-intent.v2' as const,
+  schemaVersion: 'bayn.paper-intent.v3' as const,
   intentId: hash('4'),
+  authorityGenerationHash: hash('8'),
   strategyName: 'risk-balanced-trend',
   cycleId: hash('5'),
   decisionHash: hash('6'),

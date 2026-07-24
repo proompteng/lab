@@ -4,10 +4,11 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted } from 'effect'
 
+import authorityBoundIntents from '../../migrations/0016_authority_bound_intents'
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash } from '../contracts'
-import { IntentStore, IntentStoreLive, plan, type IntentPlan } from '../execution/intents'
-import { MutationEventType, MutationStore, MutationStoreLive, mutationId } from '../execution/mutations'
+import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
+import { MutationEventType, MutationStore, MutationStoreLive } from '../execution/mutations'
 import {
   BrokerMutation,
   MutationOperation,
@@ -21,6 +22,8 @@ import { buildLedgerPlan, Journal, type JournalService } from '../ledger'
 import {
   Authority,
   decodeRiskDecision,
+  IntentState,
+  KillState,
   makePaperAuthorityGeneration,
   OrderSide,
   OrderType,
@@ -200,6 +203,47 @@ const sqlIntentState = (intentId: string) =>
     return rows[0]
   })
 
+const paperIntentEvidence = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const rows = yield* sql<{
+    authority: unknown
+    history: unknown
+    intents: unknown
+    risk_decisions: unknown
+  }>`
+    SELECT
+      (
+        SELECT jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+        FROM authority_state AS authority
+        WHERE authority.singleton
+      ) AS authority,
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+          ORDER BY history.authority_version
+        )
+        FROM authority_generations AS history
+      ) AS history,
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object('row', to_jsonb(intent), 'tupleId', intent.xmin::text)
+          ORDER BY intent.intent_id
+        )
+        FROM intents AS intent
+      ) AS intents,
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object('row', to_jsonb(decision), 'tupleId', decision.xmin::text)
+          ORDER BY decision.decision_id
+        )
+        FROM risk_decisions AS decision
+      ) AS risk_decisions
+  `
+  const evidence = rows[0]
+  if (evidence === undefined) return yield* Effect.die(new Error('paper intent evidence query returned no row'))
+  return evidence
+})
+
 const riskBalancedTrendSnapshot = makeSnapshot(800)
 
 const makeInput = (
@@ -349,6 +393,7 @@ const makeMutationPaperAuthorityGeneration = (
   previousGenerationHash: string,
   reconciliationId: string,
   reconciliationContentHash: string,
+  accountId = 'paper-account-1',
 ) => {
   if (mutationQualificationResult.verdict !== 'QUALIFIED') {
     throw new Error('audited mutation fixture requires QUALIFIED evidence')
@@ -379,13 +424,37 @@ const makeMutationPaperAuthorityGeneration = (
     strategyBehaviorHash: strategy.behaviorHash,
     strategyParameterHash: strategy.parameterHash,
     strategyParameterSchemaVersion,
-    accountId: 'paper-account-1',
+    accountId,
     riskPolicyHash: fixtureHash('mutation-risk-policy'),
     proofPlanHash: fixtureHash('mutation-proof-plan'),
     reconciliationId,
     reconciliationContentHash,
   })
 }
+
+const mutationObserveGenerationHash = fixtureHash('mutation-observe-authority-generation')
+const mutationReconciliationId = fixtureHash('mutation-authority-reconciliation')
+const mutationReconciliationContentHash = fixtureHash('mutation-authority-reconciliation-content')
+const mutationPaperActivation = () =>
+  makeMutationPaperAuthorityGeneration(
+    mutationObserveGenerationHash,
+    mutationReconciliationId,
+    mutationReconciliationContentHash,
+  )
+const planForGeneration = (input: IntentPlan, generationHash: string) => {
+  return planPaperIntent(input, {
+    authority: {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash,
+      maximum: Authority.Paper,
+      effective: Authority.Paper,
+      kill: KillState.Clear,
+      version: 2,
+      updatedAt: '2026-07-22T10:00:00.000Z',
+    },
+  })
+}
+const plan = (input: IntentPlan) => planForGeneration(input, mutationPaperActivation().generationHash)
 
 const proofBinding = (activation: PaperAuthorityGeneration) => ({
   schemaVersion: 'bayn.paper-authority-proof-binding.v1' as const,
@@ -417,14 +486,7 @@ const makePaperActivationConfig = (activation: PaperAuthorityGeneration): Runtim
 }
 
 const activateAuditedPaperAuthority = async () => {
-  const observeGenerationHash = fixtureHash('mutation-observe-authority-generation')
-  const reconciliationId = fixtureHash('mutation-authority-reconciliation')
-  const reconciliationContentHash = fixtureHash('mutation-authority-reconciliation-content')
-  const activation = makeMutationPaperAuthorityGeneration(
-    observeGenerationHash,
-    reconciliationId,
-    reconciliationContentHash,
-  )
+  const activation = mutationPaperActivation()
   const config = makePaperActivationConfig(activation)
   const strategy = mutationQualificationProvenance.strategy
   const paperRuntime = makePaperStoreRuntime(config)
@@ -528,13 +590,13 @@ const activateAuditedPaperAuthority = async () => {
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
             content_hash, status, discrepancies, reconciled_at
           ) VALUES (
-            ${reconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
-            ${accountStateHash}, ${accountStateHash}, ${reconciliationContentHash},
+            ${mutationReconciliationId}, 'bayn.paper-reconciliation.v1', 'paper-account-1',
+            ${accountStateHash}, ${accountStateHash}, ${mutationReconciliationContentHash},
             'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
           )
         `
         yield* store.ensureAuthorityGeneration({
-          generationHash: observeGenerationHash,
+          generationHash: mutationObserveGenerationHash,
           maximum: Authority.Observe,
         })
         yield* store.activatePaperGeneration(proofBinding(activation))
@@ -543,6 +605,77 @@ const activateAuditedPaperAuthority = async () => {
   } finally {
     await paperRuntime.dispose()
   }
+  return activation
+}
+
+const rotateAuditedPaperAuthority = (
+  accountId: string,
+  options: { readonly activateKill?: boolean; readonly reason?: string } = {},
+) => {
+  const previousGeneration = mutationPaperActivation()
+  const observeGenerationHash = fixtureHash(
+    `canonical-rotation-observe-${previousGeneration.generationHash}-${accountId}-${options.activateKill === true}`,
+  )
+  const reconciliationId = fixtureHash(`canonical-rotation-reconciliation-${observeGenerationHash}-${accountId}`)
+  const reconciliationContentHash = fixtureHash(
+    `canonical-rotation-reconciliation-content-${observeGenerationHash}-${accountId}`,
+  )
+  const reconciliationStateHash = fixtureHash(
+    `canonical-rotation-reconciliation-state-${observeGenerationHash}-${accountId}`,
+  )
+  const paperGeneration = makeMutationPaperAuthorityGeneration(
+    observeGenerationHash,
+    reconciliationId,
+    reconciliationContentHash,
+    accountId,
+  )
+  const paperRuntime = makePaperStoreRuntime(makePaperActivationConfig(paperGeneration))
+  return paperRuntime
+    .runPromise(
+      Effect.gen(function* () {
+        const store = yield* PaperStore
+        const sql = yield* PgClient.PgClient
+        if (options.activateKill === true) {
+          const [databaseTime] = yield* sql<{ updated_at: Date }>`
+            SELECT greatest(
+              clock_timestamp(),
+              updated_at + interval '1 millisecond'
+            ) AS updated_at
+            FROM authority_state
+            WHERE singleton
+          `
+          if (databaseTime === undefined) {
+            return yield* Effect.die(new Error('rotation fixture requires initialized authority'))
+          }
+          yield* store.restrictAuthority(
+            options.reason ?? 'authority rotation fixture kill',
+            databaseTime.updated_at.toISOString(),
+          )
+        }
+        yield* store.ensureAuthorityGeneration({
+          generationHash: observeGenerationHash,
+          maximum: Authority.Observe,
+        })
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId},
+            ${reconciliationStateHash}, ${reconciliationStateHash}, ${reconciliationContentHash},
+            'EXACT', ${sql.json(JSON.stringify([]))}, clock_timestamp()
+          )
+        `
+        const activated = yield* store.activatePaperGeneration(proofBinding(paperGeneration))
+        return {
+          generationHash: activated.generationHash,
+          accountId,
+          kill: activated.kill,
+          version: activated.version,
+        }
+      }),
+    )
+    .finally(() => paperRuntime.dispose())
 }
 
 describePostgres('PostgreSQL evaluation evidence', () => {
@@ -647,10 +780,99 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       { migration_id: 13, name: 'autonomous_cycle_terminal_transitions' },
       { migration_id: 14, name: 'authority_generation_history' },
       { migration_id: 15, name: 'acknowledged_submit_recovery' },
+      { migration_id: 16, name: 'authority_bound_intents' },
     ])
   })
 
+  test('hard-fails the authority-bound intent migration before touching nonempty intent history', async () => {
+    const observed = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const authorityGenerationHash = fixtureHash('hard-cut-authority-generation')
+        const intentId = fixtureHash('hard-cut-intent')
+        const decisionId = fixtureHash('hard-cut-decision')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            'OBSERVE', 1, '2026-07-22T06:00:00.000Z'
+          )
+        `
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO intents (
+                intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type,
+                time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+              ) VALUES (
+                ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, 'risk-balanced-trend',
+                ${fixtureHash('hard-cut-cycle')}, ${fixtureHash('hard-cut-strategy-decision')},
+                ${fixtureHash('hard-cut-policy')}, 'paper-account-1', 'hard-cut-order',
+                'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
+                '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
+              )
+            `
+            yield* sql`
+              INSERT INTO risk_decisions (
+                decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+                reason_codes, decided_at, expires_at
+              ) VALUES (
+                ${decisionId}, 'bayn.paper-risk-decision.v1', ${fixtureHash('hard-cut-risk-input')},
+                ${intentId}, ${fixtureHash('hard-cut-policy')}, 'BLOCKED', ARRAY['KILL_ACTIVE'],
+                '2026-07-22T06:00:00.001Z', '2099-01-01T00:00:00.000Z'
+              )
+            `
+            yield* sql`
+              UPDATE intents
+              SET
+                risk_decision_id = ${decisionId},
+                state = 'TERMINAL',
+                terminal_outcome = 'BLOCKED',
+                state_version = 2,
+                updated_at = '2026-07-22T06:00:00.002Z'
+              WHERE intent_id = ${intentId}
+            `
+          }),
+        )
+        const readEvidence = () =>
+          sql<{ intents: unknown; risk_decisions: unknown }>`
+            SELECT
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object('row', to_jsonb(intent), 'tupleId', intent.xmin::text)
+                  ORDER BY intent.intent_id
+                )
+                FROM intents AS intent
+              ) AS intents,
+              (
+                SELECT jsonb_agg(
+                  jsonb_build_object('row', to_jsonb(decision), 'tupleId', decision.xmin::text)
+                  ORDER BY decision.decision_id
+                )
+                FROM risk_decisions AS decision
+              ) AS risk_decisions
+          `
+        const before = yield* readEvidence()
+        const migration = yield* Effect.exit(authorityBoundIntents)
+        const after = yield* readEvidence()
+        return { after, before, migration }
+      }),
+    )
+
+    expect(Exit.isFailure(observed.migration)).toBe(true)
+    if (Exit.isFailure(observed.migration)) {
+      expect(Cause.pretty(observed.migration.cause)).toContain(
+        'authority-bound intent hard cut requires empty intents and risk_decisions',
+      )
+    }
+    expect(observed.after).toEqual(observed.before)
+  })
+
   test('atomically commits one deterministic approved intent under one writer fence', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const secondOwner = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan()))
@@ -746,6 +968,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('atomically blocks rejected risk and rejects divergent deterministic reuse', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const input = intentPlan({ cycleId: 'e'.repeat(64) })
     const intent = await Effect.runPromise(plan(input))
@@ -803,7 +1026,147 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.counts).toEqual({ decisions: 1, intents: 1 })
   })
 
+  test('rejects a stale generation before its first commit and accepts the same target on the current generation', async () => {
+    const originalGeneration = await activateAuditedPaperAuthority()
+    const input = intentPlan({ cycleId: fixtureHash('generation-race-cycle') })
+    const staleIntent = await Effect.runPromise(planForGeneration(input, originalGeneration.generationHash))
+    const staleDecision = await Effect.runPromise(riskDecision(staleIntent, RiskOutcome.Approved))
+
+    const rotated = await rotateAuditedPaperAuthority(staleIntent.accountId)
+    const currentIntent = await Effect.runPromise(planForGeneration(input, rotated.generationHash))
+    const currentDecision = await Effect.runPromise(riskDecision(currentIntent, RiskOutcome.Approved))
+    const execution = makeExecutionRuntime()
+    try {
+      const observed = await execution.runPromise(
+        Effect.gen(function* () {
+          const before = yield* paperIntentEvidence
+          const staleCommit = yield* Effect.exit(
+            Effect.flatMap(IntentStore, (store) => store.commit(staleIntent, staleDecision)),
+          )
+          const afterFailure = yield* paperIntentEvidence
+          const currentCommit = yield* Effect.flatMap(IntentStore, (store) =>
+            store.commit(currentIntent, currentDecision),
+          )
+          const afterCurrentCommit = yield* paperIntentEvidence
+          return { afterCurrentCommit, afterFailure, before, currentCommit, staleCommit }
+        }),
+      )
+
+      expect(rotated.generationHash).not.toBe(originalGeneration.generationHash)
+      expect(currentIntent.intentId).not.toBe(staleIntent.intentId)
+      expect(currentIntent).toMatchObject({
+        authorityGenerationHash: rotated.generationHash,
+        accountId: staleIntent.accountId,
+        cycleId: staleIntent.cycleId,
+        decisionHash: staleIntent.decisionHash,
+        symbol: staleIntent.symbol,
+      })
+      expect(Exit.isFailure(observed.staleCommit)).toBe(true)
+      if (Exit.isFailure(observed.staleCommit)) {
+        expect(Cause.pretty(observed.staleCommit.cause)).toContain(
+          'PAPER intent does not match the current immutable authority-generation account binding',
+        )
+      }
+      expect(observed.afterFailure).toEqual(observed.before)
+      expect(observed.currentCommit).toMatchObject({
+        deduplicated: false,
+        record: {
+          intent: {
+            authorityGenerationHash: rotated.generationHash,
+            intentId: currentIntent.intentId,
+            state: IntentState.Approved,
+          },
+        },
+      })
+      expect(observed.afterCurrentCommit.intents).not.toEqual(observed.before.intents)
+      expect(observed.afterCurrentCommit.risk_decisions).not.toEqual(observed.before.risk_decisions)
+      expect(observed.afterCurrentCommit.authority).toEqual(observed.before.authority)
+      expect(observed.afterCurrentCommit.history).toEqual(observed.before.history)
+    } finally {
+      await execution.dispose()
+    }
+  })
+
+  test('exactly replays an already committed intent without writes after authority rotates', async () => {
+    const originalGeneration = await activateAuditedPaperAuthority()
+    const input = intentPlan({ cycleId: fixtureHash('generation-replay-cycle') })
+    const intent = await Effect.runPromise(planForGeneration(input, originalGeneration.generationHash))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const initialRuntime = makeExecutionRuntime()
+    await initialRuntime.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+    await initialRuntime.dispose()
+
+    const rotated = await rotateAuditedPaperAuthority(intent.accountId)
+    const replayRuntime = makeExecutionRuntime()
+    try {
+      const observed = await replayRuntime.runPromise(
+        Effect.gen(function* () {
+          const before = yield* paperIntentEvidence
+          const replay = yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+          const after = yield* paperIntentEvidence
+          return { after, before, replay }
+        }),
+      )
+
+      expect(rotated.generationHash).not.toBe(originalGeneration.generationHash)
+      expect(intent.authorityGenerationHash).toBe(originalGeneration.generationHash)
+      expect(observed.replay).toMatchObject({
+        deduplicated: true,
+        record: {
+          intent: {
+            authorityGenerationHash: originalGeneration.generationHash,
+            intentId: intent.intentId,
+          },
+          decision: { decisionId: decision.decisionId },
+        },
+      })
+      expect(observed.after).toEqual(observed.before)
+    } finally {
+      await replayRuntime.dispose()
+    }
+  })
+
+  test('rejects an intent whose generation history binds a different account without writing', async () => {
+    await activateAuditedPaperAuthority()
+    const intent = await Effect.runPromise(
+      plan(intentPlan({ accountId: 'paper-account-2', cycleId: fixtureHash('wrong-generation-account-cycle') })),
+    )
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const execution = makeExecutionRuntime()
+    try {
+      const observed = await execution.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const before = yield* sql<{ decisions: number; intents: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM intents) AS intents,
+              (SELECT count(*)::integer FROM risk_decisions) AS decisions
+          `
+          const commit = yield* Effect.exit(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+          const after = yield* sql<{ decisions: number; intents: number }>`
+            SELECT
+              (SELECT count(*)::integer FROM intents) AS intents,
+              (SELECT count(*)::integer FROM risk_decisions) AS decisions
+          `
+          return { after: after[0], before: before[0], commit }
+        }),
+      )
+
+      expect(Exit.isFailure(observed.commit)).toBe(true)
+      if (Exit.isFailure(observed.commit)) {
+        expect(Cause.pretty(observed.commit.cause)).toContain(
+          'PAPER intent does not match the current immutable authority-generation account binding',
+        )
+      }
+      expect(observed.after).toEqual(observed.before)
+      expect(observed.after).toEqual({ decisions: 0, intents: 0 })
+    } finally {
+      await execution.dispose()
+    }
+  })
+
   test('rolls back both records when an approval is stale at commit', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const now = Date.now()
     const intent = await Effect.runPromise(
@@ -847,6 +1210,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('runs mutations on the lease session and rolls back when that session dies', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const nextOwner = makeExecutionRuntime()
     const blocker = makeClientRuntime()
@@ -896,10 +1260,9 @@ describePostgres('PostgreSQL evaluation evidence', () => {
                     return yield* sql<WaitingMutation>`
                       SELECT pid::integer, query
                       FROM pg_stat_activity
-                      WHERE pid <> pg_backend_pid()
+                      WHERE pid = ${backendPid}
                         AND datname = current_database()
                         AND wait_event_type = 'Lock'
-                        AND query ILIKE '%INSERT INTO intents%'
                     `
                   }),
                 ),
@@ -969,6 +1332,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('linearizes one submit and records its exact acknowledged outcome', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '1'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -978,8 +1342,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
-
     const mutation = makeMutationRuntime()
     const startedAt = new Date(Date.now() + 100).toISOString()
     const requestHash = '8'.repeat(64)
@@ -1026,6 +1388,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('linearizes accepted submit terminal recovery and replays without another durable write', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '6'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1035,8 +1398,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
-
     const mutation = makeMutationRuntime()
     const requestHash = '5'.repeat(64)
     const base = Date.now() + 100
@@ -1113,6 +1474,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('keeps an accepted submit recoverable after a 404 with its exact broker order identity', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1122,8 +1484,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
-
     const mutation = makeMutationRuntime()
     const requestHash = 'b'.repeat(64)
     const base = Date.now() + 100
@@ -1197,6 +1557,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('does not let terminal submit recovery overtake a durable cancellation', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '9'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1206,7 +1567,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = '7'.repeat(64)
@@ -1299,6 +1659,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('retains acknowledged state for open recovery before a later exact terminal observation', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '7'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1308,7 +1669,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const requestHash = '2'.repeat(64)
@@ -1551,6 +1911,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   }, 20_000)
 
   test('does not append a mutation start after its approved risk decision expires', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '0'.repeat(64) })))
     const expiresAtMillis = Date.now() + 1_000
@@ -1563,7 +1924,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
     await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 50))
 
     const mutation = makeMutationRuntime()
@@ -1594,6 +1954,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('keeps an ambiguous submit UNKNOWN until lookup recovers the exact broker order', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '2'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -1603,7 +1964,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const requestHash = '6'.repeat(64)
@@ -1639,6 +1999,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('cancels an identified mismatched order while its submit remains UNKNOWN', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
     const laterIntent = await Effect.runPromise(
@@ -1654,7 +2015,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = '6'.repeat(64)
@@ -1755,6 +2115,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('allows expired identified cancellation under an active kill while blocking new submission', async () => {
+    const originalGeneration = await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '3'.repeat(64) })))
     const blockedIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'b'.repeat(64) })))
@@ -1771,13 +2132,12 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = '3'.repeat(64)
     const cancelHash = '2'.repeat(64)
-    const base = Date.now() + 100
-    const observed = await mutation.runPromise(
+    const base = Date.now()
+    await mutation.runPromise(
       Effect.gen(function* () {
         const store = yield* MutationStore
         yield* store.beginSubmit(intent.intentId, submitHash, 1_000, new Date(base).toISOString())
@@ -1787,14 +2147,21 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           contentHash: '1'.repeat(64),
           observedAt: new Date(base + 1).toISOString(),
         })
-        const sql = yield* PgClient.PgClient
-        yield* sql`
-          UPDATE authority_state
-          SET effective = 'OBSERVE', kill_state = 'ACTIVE', reason = 'operator kill', version = 3,
-              updated_at = ${new Date(base + 2).toISOString()}
-          WHERE singleton
-        `
-        yield* sql`SELECT pg_sleep_until(${new Date(expiresAtMillis + 10).toISOString()}::timestamptz)`
+      }),
+    )
+    await mutation.dispose()
+    await Bun.sleep(5)
+
+    const rotated = await rotateAuditedPaperAuthority('paper-account-1', {
+      activateKill: true,
+      reason: 'operator kill',
+    })
+    await Bun.sleep(Math.max(0, expiresAtMillis - Date.now() + 10))
+
+    const cancellation = makeMutationRuntime()
+    const observed = await cancellation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
         const blockedSubmit = yield* Effect.exit(
           store.beginSubmit(
             blockedIntent.intentId,
@@ -1828,7 +2195,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         return { blockedSubmit, notFound, state: yield* sqlIntentState(intent.intentId) }
       }),
     )
-    await mutation.dispose()
+    await cancellation.dispose()
 
     expect(Exit.isFailure(observed.blockedSubmit)).toBe(true)
     if (Exit.isFailure(observed.blockedSubmit)) {
@@ -1838,17 +2205,101 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       eventType: MutationEventType.RecoveryNotFound,
       brokerOrderId: orderId,
     })
+    expect(rotated).toMatchObject({
+      accountId: intent.accountId,
+      kill: KillState.Active,
+    })
+    expect(rotated.generationHash).not.toBe(originalGeneration.generationHash)
+    expect(intent.authorityGenerationHash).toBe(originalGeneration.generationHash)
     expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
   }, 20_000)
 
-  test('rejects mismatched-account submit and identified cancel without durable or broker writes', async () => {
-    const mismatchedAccountId = 'paper-account-2'
-    const submitIntent = await Effect.runPromise(
-      plan(intentPlan({ accountId: mismatchedAccountId, cycleId: 'c'.repeat(64) })),
-    )
-    const cancelIntent = await Effect.runPromise(
-      plan(intentPlan({ accountId: mismatchedAccountId, cycleId: 'd'.repeat(64) })),
-    )
+  test('rejects a same-account historical generation before submit or broker writes', async () => {
+    const originalGeneration = await activateAuditedPaperAuthority()
+    const intent = await Effect.runPromise(plan(intentPlan({ cycleId: fixtureHash('stale-generation-cycle') })))
+    const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const execution = makeExecutionRuntime()
+    await execution.runPromise(Effect.flatMap(IntentStore, (store) => store.commit(intent, decision)))
+    await execution.dispose()
+
+    const rotated = await rotateAuditedPaperAuthority(intent.accountId)
+
+    let brokerCalls = 0
+    const coordinator = makeCoordinatorRuntime({
+      submit: () => {
+        brokerCalls += 1
+        return Effect.die(new Error('historical-generation submit must not reach the broker'))
+      },
+      cancel: () => Effect.die(new Error('unexpected cancel')),
+    })
+    try {
+      const observed = await coordinator.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const readEvidence = () =>
+            sql<{ evidence: unknown }>`
+              SELECT jsonb_build_object(
+                'intent',
+                (
+                  SELECT jsonb_build_object('row', to_jsonb(stored), 'tupleId', stored.xmin::text)
+                  FROM intents AS stored
+                  WHERE stored.intent_id = ${intent.intentId}
+                ),
+                'events',
+                (
+                  SELECT coalesce(
+                    jsonb_agg(
+                      jsonb_build_object('row', to_jsonb(event), 'tupleId', event.xmin::text)
+                      ORDER BY event.operation, event.sequence
+                    ),
+                    '[]'::jsonb
+                  )
+                  FROM mutation_events AS event
+                  WHERE event.intent_id = ${intent.intentId}
+                ),
+                'authority',
+                (
+                  SELECT jsonb_build_object('row', to_jsonb(authority), 'tupleId', authority.xmin::text)
+                  FROM authority_state AS authority
+                  WHERE authority.singleton
+                ),
+                'history',
+                (
+                  SELECT jsonb_agg(
+                    jsonb_build_object('row', to_jsonb(history), 'tupleId', history.xmin::text)
+                    ORDER BY history.authority_version
+                  )
+                  FROM authority_generations AS history
+                )
+              ) AS evidence
+            `
+          const before = yield* readEvidence()
+          const submitExit = yield* Effect.exit(submit(intent.intentId, 1_000))
+          const after = yield* readEvidence()
+          return { after, before, submitExit }
+        }),
+      )
+
+      expect(rotated.accountId).toBe(intent.accountId)
+      expect(rotated.generationHash).not.toBe(originalGeneration.generationHash)
+      expect(intent.authorityGenerationHash).toBe(originalGeneration.generationHash)
+      expect(Exit.isFailure(observed.submitExit)).toBe(true)
+      if (Exit.isFailure(observed.submitExit)) {
+        expect(Cause.pretty(observed.submitExit.cause)).toContain(
+          'intent authority generation is not the active PAPER generation',
+        )
+      }
+      expect(observed.after).toEqual(observed.before)
+      expect(brokerCalls).toBe(0)
+    } finally {
+      await coordinator.dispose()
+    }
+  })
+
+  test('rejects cross-account rotation before submit or identified cancel writes', async () => {
+    const originalGeneration = await activateAuditedPaperAuthority()
+    const submitIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'c'.repeat(64) })))
+    const cancelIntent = await Effect.runPromise(plan(intentPlan({ cycleId: 'd'.repeat(64) })))
     const submitDecision = await Effect.runPromise(riskDecision(submitIntent, RiskOutcome.Approved))
     const cancelDecision = await Effect.runPromise(riskDecision(cancelIntent, RiskOutcome.Approved))
     const execution = makeExecutionRuntime()
@@ -1860,7 +2311,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
+
+    const acceptedAt = Date.now() + 100
+    const mutation = makeMutationRuntime()
+    await mutation.runPromise(
+      Effect.gen(function* () {
+        const store = yield* MutationStore
+        const requestHash = fixtureHash('cross-account-identified-submit')
+        yield* store.beginSubmit(cancelIntent.intentId, requestHash, 1_000, new Date(acceptedAt).toISOString())
+        yield* store.submitAccepted(cancelIntent.intentId, requestHash, orderId, {
+          requestId: 'cross-account-submit',
+          status: 200,
+          contentHash: fixtureHash('cross-account-submit-response'),
+          observedAt: new Date(acceptedAt + 1).toISOString(),
+        })
+      }),
+    )
+    await mutation.dispose()
+
+    const rotated = await rotateAuditedPaperAuthority('paper-account-2')
 
     const brokerCalls = { cancel: 0, submit: 0 }
     const broker: BrokerMutationShape = {
@@ -1874,7 +2343,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       },
     }
     const coordinator = makeCoordinatorRuntime(broker)
-    const acceptedAt = Date.now() + 100
 
     try {
       const observed = await coordinator.runPromise(
@@ -1917,55 +2385,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           const submitExit = yield* Effect.exit(submit(submitIntent.intentId, 1_000))
           const [submitAfter] = yield* readEvidence(submitIntent.intentId)
 
-          const cancelMutationId = mutationId(cancelIntent.intentId, MutationOperation.Submit)
-          const cancelSubmitHash = fixtureHash('mismatched-account-identified-submit')
-          const startedAt = new Date(acceptedAt).toISOString()
-          const completedAt = new Date(acceptedAt + 1).toISOString()
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql`
-                UPDATE intents
-                SET state = 'IO_STARTED', state_version = state_version + 1, updated_at = ${startedAt}
-                WHERE intent_id = ${cancelIntent.intentId} AND state = 'APPROVED'
-              `
-              yield* sql`
-                UPDATE intents
-                SET state = 'ACKNOWLEDGED', state_version = state_version + 1, updated_at = ${completedAt}
-                WHERE intent_id = ${cancelIntent.intentId} AND state = 'IO_STARTED'
-              `
-              yield* sql`
-                INSERT INTO mutation_events (
-                  event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
-                  request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
-                  response_content_hash, occurred_at
-                ) VALUES
-                  (
-                    ${fixtureHash('mismatched-account-submit-started')},
-                    'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${cancelIntent.intentId}, 1,
-                    'SUBMIT', 'SUBMIT_STARTED', ${cancelSubmitHash}, 1000, NULL, NULL, NULL, NULL,
-                    ${startedAt}
-                  ),
-                  (
-                    ${fixtureHash('mismatched-account-submit-accepted')},
-                    'bayn.paper-mutation-event.v1', ${cancelMutationId}, ${cancelIntent.intentId}, 2,
-                    'SUBMIT', 'SUBMIT_ACCEPTED', ${cancelSubmitHash}, 1000, ${orderId},
-                    'mismatched-account-submit', 200,
-                    ${fixtureHash('mismatched-account-submit-response')}, ${completedAt}
-                  )
-              `
-              yield* sql`
-                UPDATE authority_state
-                SET
-                  effective = 'OBSERVE',
-                  kill_state = 'ACTIVE',
-                  reason = 'account-binding cancellation regression',
-                  version = version + 1,
-                  updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
-                WHERE singleton
-              `
-            }),
-          )
-
           const [cancelBefore] = yield* readEvidence(cancelIntent.intentId)
           const cancelExit = yield* Effect.exit(cancel(cancelIntent.intentId, 1_000))
           const [cancelAfter] = yield* readEvidence(cancelIntent.intentId)
@@ -1973,6 +2392,8 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         }),
       )
 
+      expect(rotated.accountId).toBe('paper-account-2')
+      expect(rotated.generationHash).not.toBe(originalGeneration.generationHash)
       expect(Exit.isFailure(observed.submitExit)).toBe(true)
       expect(Exit.isFailure(observed.cancelExit)).toBe(true)
       if (Exit.isFailure(observed.submitExit)) {
@@ -1994,6 +2415,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('rejects non-submitted and mismatched broker order identities before cancellation starts', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: 'e'.repeat(64) })))
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
@@ -2003,7 +2425,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const submitHash = 'a'.repeat(64)
@@ -2052,6 +2473,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   })
 
   test('blocks later exposure only while an earlier mutation outcome remains unresolved', async () => {
+    await activateAuditedPaperAuthority()
     const execution = makeExecutionRuntime()
     const first = await Effect.runPromise(plan(intentPlan({ cycleId: '4'.repeat(64) })))
     const second = await Effect.runPromise(plan(intentPlan({ cycleId: '5'.repeat(64) })))
@@ -2065,7 +2487,6 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       }),
     )
     await execution.dispose()
-    await activateAuditedPaperAuthority()
 
     const mutation = makeMutationRuntime()
     const firstSubmitHash = 'a'.repeat(64)
@@ -2244,13 +2665,25 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         const intentId = '1'.repeat(64)
         const decisionId = '2'.repeat(64)
+        const authorityGenerationHash = fixtureHash('intent-contract-authority-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            'OBSERVE', 1, '2026-07-22T06:00:00.000Z'
+          )
+        `
         yield* sql`
           INSERT INTO intents (
-            intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+            intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+            decision_hash, policy_hash,
             account_id, client_order_id, symbol, side, order_type,
             time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
           ) VALUES (
-            ${intentId}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${intentId}, ${'5'.repeat(64)},
+            ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+            'risk-balanced-trend', ${intentId}, ${'5'.repeat(64)},
             ${'6'.repeat(64)}, 'paper-account-1', 'client-order-1', 'NVDA', 'BUY',
             'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
             '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
@@ -2258,12 +2691,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
         `
         const invalidInitial = yield* Effect.exit(sql`
           INSERT INTO intents (
-            intent_id, schema_version, risk_decision_id, strategy_name, cycle_id, decision_hash,
+            intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name,
+            cycle_id, decision_hash,
             policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
             quantity_micros, notional_limit_micros, state,
             created_at, updated_at
           ) VALUES (
-            ${'3'.repeat(64)}, 'bayn.paper-intent.v2', ${'4'.repeat(64)}, 'risk-balanced-trend',
+            ${'3'.repeat(64)}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+            ${'4'.repeat(64)}, 'risk-balanced-trend',
             ${'3'.repeat(64)}, ${'4'.repeat(64)}, ${'5'.repeat(64)}, 'paper-account-1',
             'client-order-2', 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'APPROVED',
             '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
@@ -2311,11 +2746,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           Effect.gen(function* () {
             yield* sql`
               INSERT INTO intents (
-                intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                decision_hash, policy_hash,
                 account_id, client_order_id, symbol, side, order_type,
                 time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
               ) VALUES (
-                ${staleIntentId}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${staleIntentId},
+                ${staleIntentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+                'risk-balanced-trend', ${staleIntentId},
                 ${'4'.repeat(64)}, ${'3'.repeat(64)}, 'paper-account-1', 'client-order-stale',
                 'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                 statement_timestamp() - interval '1 minute', statement_timestamp() - interval '1 minute'
@@ -2426,11 +2863,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                  decision_hash, policy_hash,
                   account_id, client_order_id, symbol, side, order_type,
                   time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'b'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'b'.repeat(64)},
+                  ${'b'.repeat(64)}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+                  'risk-balanced-trend', ${'b'.repeat(64)},
                   ${'d'.repeat(64)}, ${'e'.repeat(64)}, 'paper-account-1', 'client-order-4',
                   'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
@@ -2460,11 +2899,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                  decision_hash, policy_hash,
                   account_id, client_order_id, symbol, side, order_type,
                   time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'f'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'f'.repeat(64)},
+                  ${'f'.repeat(64)}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+                  'risk-balanced-trend', ${'f'.repeat(64)},
                   ${'1'.repeat(64)}, ${'2'.repeat(64)}, 'paper-account-1', 'client-order-5',
                   'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
@@ -2493,11 +2934,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           Effect.gen(function* () {
             yield* sql`
               INSERT INTO intents (
-                intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                decision_hash, policy_hash,
                 account_id, client_order_id, symbol, side, order_type,
                 time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
               ) VALUES (
-                ${'a'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'a'.repeat(64)},
+                ${'a'.repeat(64)}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+                'risk-balanced-trend', ${'a'.repeat(64)},
                 ${'8'.repeat(64)}, ${'7'.repeat(64)}, 'paper-account-1', 'client-order-6',
                 'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                 '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
@@ -2526,11 +2969,13 @@ describePostgres('PostgreSQL evaluation evidence', () => {
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                  decision_hash, policy_hash,
                   account_id, client_order_id, symbol, side, order_type,
                   time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'7'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'7'.repeat(64)},
+                  ${'7'.repeat(64)}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+                  'risk-balanced-trend', ${'7'.repeat(64)},
                   ${'9'.repeat(64)}, ${'a'.repeat(64)}, 'paper-account-1', 'client-order-3',
                   'AMD', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   '2026-07-22T06:00:00.000Z', '2026-07-22T06:00:00.000Z'
@@ -3707,17 +4152,29 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     const observed = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        const authorityGenerationHash = fixtureHash('interrupted-intent-authority-generation')
+        yield* sql`
+          INSERT INTO authority_generations (
+            generation_hash, schema_version, previous_generation_hash, maximum,
+            authority_version, activated_at
+          ) VALUES (
+            ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+            'OBSERVE', 1, statement_timestamp()
+          )
+        `
         const inserted = yield* Deferred.make<void>()
         const sleeper = yield* Effect.forkChild(
           sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`
                 INSERT INTO intents (
-                  intent_id, schema_version, strategy_name, cycle_id, decision_hash, policy_hash,
+                  intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+                  decision_hash, policy_hash,
                   account_id, client_order_id, symbol, side, order_type, time_in_force,
                   quantity_micros, notional_limit_micros, state, created_at, updated_at
                 ) VALUES (
-                  ${'6'.repeat(64)}, 'bayn.paper-intent.v2', 'risk-balanced-trend', ${'7'.repeat(64)},
+                  ${'6'.repeat(64)}, 'bayn.paper-intent.v3', ${authorityGenerationHash},
+                  'risk-balanced-trend', ${'7'.repeat(64)},
                   ${'8'.repeat(64)}, ${'9'.repeat(64)}, 'paper-account-1', 'interrupted-order',
                   'NVDA', 'BUY', 'MARKET', 'DAY', 1000000, 200000000, 'PLANNED',
                   statement_timestamp(), statement_timestamp()

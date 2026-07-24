@@ -133,13 +133,14 @@ const seedUnresolvedMutation = (mutationAccountId = accountId) =>
     const intentId = '2'.repeat(64)
     yield* sql`
     INSERT INTO intents (
-      intent_id, schema_version, risk_decision_id, strategy_name, cycle_id,
+      intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
       decision_hash, policy_hash, account_id, client_order_id,
       symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
       state, terminal_outcome, state_version, created_at, updated_at
     ) VALUES (
       ${intentId},
-      'bayn.paper-intent.v2',
+      'bayn.paper-intent.v3',
+      ${'f'.repeat(64)},
       NULL,
       'risk-balanced-trend',
       ${'8'.repeat(64)},
@@ -216,13 +217,14 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
   const intentId = '2'.repeat(64)
   yield* sql`
     INSERT INTO intents (
-      intent_id, schema_version, risk_decision_id, strategy_name, cycle_id,
+      intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
       decision_hash, policy_hash, account_id, client_order_id,
       symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros,
       state, terminal_outcome, state_version, created_at, updated_at
     ) VALUES (
       ${intentId},
-      'bayn.paper-intent.v2',
+      'bayn.paper-intent.v3',
+      ${'f'.repeat(64)},
       NULL,
       'risk-balanced-trend',
       ${'8'.repeat(64)},

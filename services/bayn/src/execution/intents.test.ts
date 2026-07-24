@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit } from 'effect'
 
-import { IntentState, OrderSide, OrderType, TimeInForce } from '../paper'
-import { plan, type IntentPlan } from './intents'
+import { Authority, IntentState, KillState, OrderSide, OrderType, TimeInForce } from '../paper'
+import { plan, planPaperIntent, type IntentPlan } from './intents'
 
 const hash = (digit: string): string => digit.repeat(64)
 
@@ -23,6 +23,18 @@ const input: IntentPlan = {
   createdAt: '2026-07-22T10:00:00.000Z',
 }
 
+const riskState = (generationHash = hash('a'), maximum = Authority.Paper) => ({
+  authority: {
+    schemaVersion: 'bayn.paper-authority.v1' as const,
+    generationHash,
+    maximum,
+    effective: maximum,
+    kill: KillState.Clear,
+    version: 1,
+    updatedAt: '2026-07-22T09:59:00.000Z',
+  },
+})
+
 describe('deterministic paper intents', () => {
   test('derives one stable full intent identity and Alpaca-bounded client order ID', async () => {
     const [first, second] = await Effect.runPromise(Effect.all([plan(input), plan({ ...input })]))
@@ -33,6 +45,7 @@ describe('deterministic paper intents', () => {
     expect(first.clientOrderId).toHaveLength(46)
     expect(first.state).toBe(IntentState.Planned)
     expect(first.riskDecisionId).toBeUndefined()
+    expect(first.schemaVersion).toBe('bayn.paper-intent.v2')
   })
 
   test('binds account, strategy, cycle, decision, and target material', async () => {
@@ -75,6 +88,32 @@ describe('deterministic paper intents', () => {
     const result = await Effect.runPromiseExit(
       plan({ ...input, cycleId: 'not-a-hash', quantityMicros: '0', extra: true }),
     )
+
+    expect(Exit.isFailure(result)).toBe(true)
+  })
+
+  test('binds a durable PAPER identity to the exact risk-state authority generation', async () => {
+    const [first, replay, rotated] = await Effect.runPromise(
+      Effect.all([
+        planPaperIntent(input, riskState()),
+        planPaperIntent({ ...input }, riskState()),
+        planPaperIntent(input, riskState(hash('b'))),
+      ]),
+    )
+
+    expect(first).toEqual(replay)
+    expect(first).toMatchObject({
+      schemaVersion: 'bayn.paper-intent.v3',
+      authorityGenerationHash: hash('a'),
+      state: IntentState.Planned,
+    })
+    expect(rotated.authorityGenerationHash).toBe(hash('b'))
+    expect(rotated.intentId).not.toBe(first.intentId)
+    expect(rotated.clientOrderId).not.toBe(first.clientOrderId)
+  })
+
+  test('refuses to create a durable intent from OBSERVE authority', async () => {
+    const result = await Effect.runPromiseExit(planPaperIntent(input, riskState(hash('c'), Authority.Observe)))
 
     expect(Exit.isFailure(result)).toBe(true)
   })

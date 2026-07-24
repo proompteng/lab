@@ -375,30 +375,31 @@ const seedExactReconciliation = (fixture: ReconciliationFixture, reconciliationA
     `
   })
 
-const seedTerminalCanceledMutation = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const intentId = hash('terminal-canceled-intent')
-  const decisionId = hash('terminal-canceled-risk-decision')
-  const submitMutationId = hash('terminal-canceled-submit')
-  const cancelMutationId = hash('terminal-canceled-cancel')
-  const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
-  yield* sql`
+const seedTerminalCanceledMutation = (authorityGenerationHash: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const intentId = hash('terminal-canceled-intent')
+    const decisionId = hash('terminal-canceled-risk-decision')
+    const submitMutationId = hash('terminal-canceled-submit')
+    const cancelMutationId = hash('terminal-canceled-cancel')
+    const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+    yield* sql`
     INSERT INTO intents (
-      intent_id, schema_version, account_id, client_order_id, symbol, side,
+      intent_id, schema_version, authority_generation_hash, account_id, client_order_id, symbol, side,
       order_type, time_in_force, quantity_micros, notional_limit_micros,
       state, terminal_outcome, state_version, created_at, updated_at,
       strategy_name, cycle_id, decision_hash, policy_hash
     ) VALUES (
-      ${intentId}, 'bayn.paper-intent.v2', ${accountId},
+      ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, ${accountId},
       'terminal-canceled-client-order', 'SPY', 'BUY', 'MARKET', 'DAY', 1000000, 100000000,
       'PLANNED', NULL, 1, '2026-07-22T15:30:00.000Z', '2026-07-22T15:30:00.000Z',
       'risk-balanced-trend', ${hash('terminal-canceled-cycle')},
       ${hash('terminal-canceled-decision')}, ${hash('terminal-canceled-policy')}
     )
-  `
-  yield* sql.withTransaction(
-    Effect.gen(function* () {
-      yield* sql`
+    `
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
         INSERT INTO risk_decisions (
           decision_id, schema_version, input_hash, intent_id, policy_hash,
           outcome, reason_codes, decided_at, expires_at
@@ -408,7 +409,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           '2026-07-22T15:30:00.001Z', '2099-01-01T00:00:00.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         UPDATE intents
         SET
           risk_decision_id = ${decisionId},
@@ -417,7 +418,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           updated_at = '2026-07-22T15:30:00.002Z'
         WHERE intent_id = ${intentId}
       `
-      yield* sql`
+        yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -429,12 +430,12 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           NULL, NULL, NULL, '2026-07-22T15:30:01.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         UPDATE intents
         SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-07-22T15:30:01.000Z'
         WHERE intent_id = ${intentId}
       `
-      yield* sql`
+        yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -446,12 +447,12 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           'mismatched-submit', 200, ${hash('terminal-canceled-submit-response')}, '2026-07-22T15:30:02.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         UPDATE intents
         SET state = 'UNKNOWN', state_version = 4, updated_at = '2026-07-22T15:30:02.000Z'
         WHERE intent_id = ${intentId}
       `
-      yield* sql`
+        yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -463,7 +464,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           'submit-not-found', 404, ${hash('terminal-canceled-submit-lookup')}, '2026-07-22T15:30:03.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -475,7 +476,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           NULL, NULL, NULL, '2026-07-22T15:30:04.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -487,7 +488,7 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           'cancel-accepted', 204, ${hash('terminal-canceled-cancel-response')}, '2026-07-22T15:30:05.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation,
           event_type, request_hash, consistency_delay_ms, broker_order_id,
@@ -499,12 +500,12 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           'cancel-terminal', 200, ${hash('terminal-canceled-cancel-lookup')}, '2026-07-22T15:30:06.000Z'
         )
       `
-      yield* sql`
+        yield* sql`
         UPDATE intents
         SET state = 'RECOVERED', state_version = 5, updated_at = '2026-07-22T15:30:06.000Z'
         WHERE intent_id = ${intentId}
       `
-      yield* sql`
+        yield* sql`
         UPDATE intents
         SET
           state = 'TERMINAL',
@@ -513,9 +514,9 @@ const seedTerminalCanceledMutation = Effect.gen(function* () {
           updated_at = '2026-07-22T15:30:06.000001Z'
         WHERE intent_id = ${intentId}
       `
-    }),
-  )
-})
+      }),
+    )
+  })
 
 const makeActivation = (
   previousGenerationHash: string,
@@ -1117,7 +1118,7 @@ describePostgres('paper accounting persistence', () => {
               generationHash: initialGenerationHash,
               maximum: Authority.Observe,
             })
-            yield* seedTerminalCanceledMutation
+            yield* seedTerminalCanceledMutation(initialGenerationHash)
             yield* seedExactReconciliation(reconciliation)
             const prepared = yield* store.preparePaperGeneration(proofBinding(expected))
             const [history] = yield* sql<{ event_count: number; latest_mutation_at: Date }>`
@@ -2029,12 +2030,12 @@ describePostgres('paper accounting persistence', () => {
           const sql = yield* PgClient.PgClient
           yield* sql`
             INSERT INTO intents (
-              intent_id, schema_version, account_id, client_order_id, symbol, side,
+              intent_id, schema_version, authority_generation_hash, account_id, client_order_id, symbol, side,
               order_type, time_in_force, quantity_micros, notional_limit_micros,
               state, state_version, created_at, updated_at,
               strategy_name, cycle_id, decision_hash, policy_hash
             ) VALUES (
-              ${hash('unresolved-intent')}, 'bayn.paper-intent.v2', ${accountId},
+              ${hash('unresolved-intent')}, 'bayn.paper-intent.v3', ${initialGenerationHash}, ${accountId},
               'unresolved-client-order', 'SPY', 'BUY', 'MARKET', 'DAY', 1000000, 100000000,
               'PLANNED', 1, '2026-07-22T15:30:03.000Z', '2026-07-22T15:30:03.000Z',
               'risk-balanced-trend', ${hash('unresolved-cycle')},
@@ -2185,15 +2186,26 @@ describePostgres('paper accounting persistence', () => {
             accountEventId: accountReceipt.eventId,
             positionSnapshotId: positionsReceipt.snapshotId,
           })
+          const authorityGenerationHash = hash('mutation-ordering-authority')
           const sql = yield* PgClient.PgClient
           yield* sql`
+            INSERT INTO authority_generations (
+              generation_hash, schema_version, previous_generation_hash, maximum,
+              authority_version, activated_at
+            ) VALUES (
+              ${authorityGenerationHash}, 'bayn.authority-generation-history.v1', NULL,
+              'OBSERVE', 1, ${occurredAt}
+            )
+          `
+          yield* sql`
             INSERT INTO intents (
-              intent_id, schema_version, account_id, client_order_id, symbol, side,
+              intent_id, schema_version, authority_generation_hash, account_id, client_order_id, symbol, side,
               order_type, time_in_force, quantity_micros, notional_limit_micros,
               state, state_version, created_at, updated_at,
               strategy_name, cycle_id, decision_hash, policy_hash
             ) VALUES (
-              ${intentId}, 'bayn.paper-intent.v2', ${accountId}, ${orderEvent().order.clientOrderId},
+              ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, ${accountId},
+              ${orderEvent().order.clientOrderId},
               ${orderEvent().order.symbol}, 'BUY', 'MARKET', 'DAY', 3000000, 300000000,
               'PLANNED', 1, ${occurredAt}, ${occurredAt},
               'tsmom-v1', ${'9'.repeat(64)}, ${'b'.repeat(64)}, ${'c'.repeat(64)}

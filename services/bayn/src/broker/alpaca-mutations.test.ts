@@ -43,8 +43,9 @@ const options: MutationOptions = {
 }
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v2',
+  schemaVersion: 'bayn.paper-intent.v3',
   intentId: 'a'.repeat(64),
+  authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
   strategyName: 'risk-balanced-trend',
   cycleId: 'c'.repeat(64),
