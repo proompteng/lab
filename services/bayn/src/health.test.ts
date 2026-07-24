@@ -90,8 +90,15 @@ const provideHealthyDependencies = (
 describe('Bayn continuous health', () => {
   test('requires the configured broker account GET while keeping execution disabled under OBSERVE', async () => {
     let observedAccountId = brokerAccountId
+    let brokerAvailable = true
     const broker: BrokerProbe = {
-      read: brokerRead(Effect.sync(() => accountResult(observedAccountId))),
+      read: brokerRead(
+        Effect.suspend(() =>
+          brokerAvailable
+            ? Effect.succeed(accountResult(observedAccountId))
+            : Effect.die(new Error('injected Alpaca GET failure')),
+        ),
+      ),
       expectedAccountId: brokerAccountId,
       executionEligible: false,
       executionDisabledReason: 'MAXIMUM_AUTHORITY_OBSERVE',
@@ -156,6 +163,45 @@ describe('Bayn continuous health', () => {
           error: `Alpaca account probe resolved ${observedAccountId}, expected ${brokerAccountId}`,
         },
         error: expect.stringContaining('broker: Alpaca account probe resolved'),
+      })
+
+      observedAccountId = brokerAccountId
+      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'READY',
+        broker: {
+          accountId: brokerAccountId,
+          accountBound: true,
+          readAvailable: true,
+          error: null,
+        },
+        error: null,
+      })
+
+      brokerAvailable = false
+      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'DEGRADED',
+        broker: {
+          accountId: null,
+          accountBound: false,
+          readAvailable: false,
+          error: 'injected Alpaca GET failure',
+        },
+        error: expect.stringContaining('broker: injected Alpaca GET failure'),
+      })
+
+      brokerAvailable = true
+      await Effect.runPromise(dependencies(probe(config, state, broker, cycleFiber)))
+      expect(await Effect.runPromise(Ref.get(state))).toMatchObject({
+        status: 'READY',
+        broker: {
+          accountId: brokerAccountId,
+          accountBound: true,
+          readAvailable: true,
+          error: null,
+        },
+        error: null,
       })
     } finally {
       await Effect.runPromise(Fiber.interrupt(cycleFiber))
@@ -436,6 +482,27 @@ describe('Bayn continuous health', () => {
               },
             },
           },
+        })
+
+        yield* Ref.update(
+          state,
+          (current): RuntimeState => ({
+            ...current,
+            autonomousCycleLoop: {
+              ...current.autonomousCycleLoop,
+              lastPass: {
+                result: 'SUCCESS',
+                observedAt: '2026-07-20T00:06:00.000Z',
+                outcome: 'NO_PUBLICATION',
+              },
+            },
+          }),
+        )
+        yield* provideHealthyDependencies(initial, probe(config, state, undefined, cycleFiber))
+        expect(yield* Ref.get(state)).toMatchObject({
+          status: 'READY',
+          health: { dependencies: { cycleRunner: { status: 'AVAILABLE', error: null } } },
+          error: null,
         })
       }),
     ).pipe(Effect.provide(TestClock.layer()))

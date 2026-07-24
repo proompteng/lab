@@ -160,6 +160,42 @@ describe('autonomous cycle operations classification', () => {
     })
   })
 
+  test('raises missed-submission at the exact cutoff and clears only on a later terminal cycle', () => {
+    const pending = snapshot(CycleState.Pending, {
+      snapshotId: '2'.repeat(64),
+      submissionOpenAt: '2026-07-20T11:30:00.000Z',
+      submissionCutoffAt: now,
+    })
+    const missed = deriveCycleOperationsStatus(
+      projection({ current: pending, unfinishedCycleCount: 1 }),
+      Date.parse(now),
+      Authority.Observe,
+      thresholds,
+    )
+    const recovered = deriveCycleOperationsStatus(
+      projection({
+        last: snapshot(CycleState.Completed, {
+          updatedAt: '2026-07-20T12:00:01.000Z',
+          terminalAt: '2026-07-20T12:00:01.000Z',
+        }),
+      }),
+      Date.parse('2026-07-20T12:00:01.000Z'),
+      Authority.Observe,
+      thresholds,
+    )
+
+    expect(missed).toMatchObject({
+      condition: CycleOperationsCondition.Stalled,
+      reason: CycleOperationsReason.MissedSubmissionCutoff,
+      alerts: { cycleStalled: true },
+    })
+    expect(recovered).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.LastCycleCompleted,
+      alerts: { cycleStalled: false, cycleFailed: false },
+    })
+  })
+
   test('keeps a blocked terminal result failed through a later attempt and clears on confirmed terminal success', () => {
     const blocked = snapshot(CycleState.Blocked)
     const recovering = deriveCycleOperationsStatus(
@@ -278,6 +314,96 @@ describe('autonomous cycle operations classification', () => {
       oldestUnresolvedMutationAgeMs: 300_000,
       alerts: { unknownMutationStale: true },
     })
+
+    const cleared = deriveCycleOperationsStatus(projection(), Date.parse(now), Authority.Observe, thresholds)
+    expect(cleared).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.NoCycleRecorded,
+      alerts: { cycleFailed: false, unknownMutationStale: false },
+    })
+  })
+
+  test('injects and clears kill, discrepancy, stale-data, and provenance failures through canonical state', () => {
+    const observeAuthority = {
+      generationHash: '4'.repeat(64),
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+      reason: null,
+      updatedAt: now,
+    } as const
+    const paperAuthority = {
+      ...observeAuthority,
+      maximum: Authority.Paper,
+      effective: Authority.Paper,
+    } as const
+    const exactReconciliation = {
+      accountId: 'paper-account-1',
+      reconciliationId: '5'.repeat(64),
+      status: ReconciliationStatus.Exact,
+      discrepancyCount: 0,
+      reconciledAt: now,
+      coversLatestMutation: true,
+    } as const
+    const observeClear = projection({ authority: observeAuthority })
+    const paperClear = projection({ authority: paperAuthority, reconciliation: exactReconciliation })
+    const scenarios = [
+      {
+        name: 'kill',
+        maximum: Authority.Observe,
+        injected: projection({ authority: { ...observeAuthority, kill: KillState.Active, reason: 'operator kill' } }),
+        cleared: observeClear,
+        reason: CycleOperationsReason.KillActive,
+        terminalReason: null,
+      },
+      {
+        name: 'reconciliation discrepancy',
+        maximum: Authority.Paper,
+        injected: projection({
+          authority: paperAuthority,
+          reconciliation: {
+            ...exactReconciliation,
+            status: ReconciliationStatus.Discrepancy,
+            discrepancyCount: 1,
+          },
+        }),
+        cleared: paperClear,
+        reason: CycleOperationsReason.ReconciliationDiscrepancy,
+        terminalReason: null,
+      },
+      {
+        name: 'stale data',
+        maximum: Authority.Observe,
+        injected: projection({
+          last: snapshot(CycleState.Blocked, { terminalReason: CycleTerminalReason.DataStale }),
+        }),
+        cleared: projection({ last: snapshot(CycleState.Completed) }),
+        reason: CycleOperationsReason.LastCycleBlocked,
+        terminalReason: CycleTerminalReason.DataStale,
+      },
+      {
+        name: 'provenance mismatch',
+        maximum: Authority.Observe,
+        injected: projection({
+          last: snapshot(CycleState.Blocked, { terminalReason: CycleTerminalReason.ProvenanceMismatch }),
+        }),
+        cleared: projection({ last: snapshot(CycleState.Completed) }),
+        reason: CycleOperationsReason.LastCycleBlocked,
+        terminalReason: CycleTerminalReason.ProvenanceMismatch,
+      },
+    ] as const
+
+    for (const scenario of scenarios) {
+      const injected = deriveCycleOperationsStatus(scenario.injected, Date.parse(now), scenario.maximum, thresholds)
+      const cleared = deriveCycleOperationsStatus(scenario.cleared, Date.parse(now), scenario.maximum, thresholds)
+
+      expect(injected.condition, scenario.name).toBe(CycleOperationsCondition.Failed)
+      expect(injected.reason, scenario.name).toBe(scenario.reason)
+      expect(injected.alerts.cycleFailed, scenario.name).toBe(true)
+      expect(injected.last?.terminalReason ?? null, scenario.name).toBe(scenario.terminalReason)
+      expect(cleared.condition, scenario.name).toBe(CycleOperationsCondition.Waiting)
+      expect(cleared.alerts.cycleFailed, scenario.name).toBe(false)
+    }
   })
 
   test('requires PAPER reconciliation to cover the latest selected-account mutation', () => {
@@ -377,6 +503,28 @@ describe('autonomous cycle operations classification', () => {
       reason: CycleOperationsReason.ReconciliationStale,
       reconciliationAgeMs: 120_000,
       alerts: { reconciliationBlocked: true },
+    })
+
+    const cleared = deriveCycleOperationsStatus(
+      projection({
+        authority,
+        reconciliation: {
+          accountId: 'paper-account-1',
+          reconciliationId: '8'.repeat(64),
+          status: ReconciliationStatus.Exact,
+          discrepancyCount: 0,
+          reconciledAt: now,
+          coversLatestMutation: true,
+        },
+      }),
+      Date.parse(now),
+      Authority.Paper,
+      thresholds,
+    )
+    expect(cleared).toMatchObject({
+      condition: CycleOperationsCondition.Waiting,
+      reason: CycleOperationsReason.NoCycleRecorded,
+      alerts: { cycleFailed: false, reconciliationBlocked: false },
     })
   })
 })

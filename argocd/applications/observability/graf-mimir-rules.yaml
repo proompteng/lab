@@ -2765,6 +2765,53 @@ data:
               summary: Bayn cycle projection is unavailable
               description: The bounded autonomous-cycle PostgreSQL projection has failed for two minutes.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynRuntimeDegraded
+            expr: |
+              (
+                bayn_runtime_ready{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } == 0
+              )
+              and on(job, namespace, service, instance)
+              (
+                bayn_cycle_observation_available{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn"
+                } == 1
+              )
+              and on(job, namespace, service, instance)
+              (
+                bayn_cycle_condition{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn",
+                  condition="stalled"
+                } == 0
+              )
+              and on(job, namespace, service, instance)
+              (
+                bayn_cycle_condition{
+                  job="bayn",
+                  namespace="bayn",
+                  service="bayn",
+                  condition="failed"
+                } == 0
+              )
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn runtime is degraded
+              description: |
+                Bayn readiness is blocked by a required dependency, autonomous-loop,
+                or broker-read/account-binding failure.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleStalled
             expr: |
               bayn_cycle_condition{
