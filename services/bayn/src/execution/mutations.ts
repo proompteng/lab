@@ -508,15 +508,23 @@ const makeStore = Effect.gen(function* () {
               authority_generation_hash: string
               generation_account_id: string | null
               generation_maximum: string | null
+              generation_risk_policy_hash: string | null
+              generation_strategy_name: string | null
+              policy_hash: string
               state: string
+              strategy_name: string
               updated_at: string
             }>`
               SELECT
                 intent.account_id,
                 intent.authority_generation_hash,
+                intent.policy_hash,
                 intent.state,
+                intent.strategy_name,
                 generation.account_id AS generation_account_id,
                 generation.maximum AS generation_maximum,
+                generation.risk_policy_hash AS generation_risk_policy_hash,
+                generation.strategy_name AS generation_strategy_name,
                 to_char(intent.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
               FROM intents AS intent
               LEFT JOIN authority_generations AS generation
@@ -531,13 +539,15 @@ const makeStore = Effect.gen(function* () {
             if (
               intent.generation_maximum !== Authority.Paper ||
               intent.generation_account_id === null ||
-              intent.generation_account_id !== intent.account_id
+              intent.generation_account_id !== intent.account_id ||
+              intent.generation_risk_policy_hash !== intent.policy_hash ||
+              intent.generation_strategy_name !== intent.strategy_name
             ) {
               return yield* Effect.fail(
                 storeError(
                   storeOperation,
                   'authority',
-                  'intent lacks an immutable PAPER authority-generation account binding',
+                  'intent does not match its immutable PAPER authority-generation bindings',
                 ),
               )
             }

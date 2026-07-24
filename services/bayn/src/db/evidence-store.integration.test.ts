@@ -8,7 +8,7 @@ import authorityBoundIntents from '../../migrations/0016_authority_bound_intents
 import type { RuntimeConfig } from '../config'
 import { makeStrategyProtocolHash } from '../contracts'
 import { IntentStore, IntentStoreLive, planPaperIntent, type IntentPlan } from '../execution/intents'
-import { MutationEventType, MutationStore, MutationStoreLive } from '../execution/mutations'
+import { MutationEventType, MutationStore, MutationStoreLive, mutationId } from '../execution/mutations'
 import {
   BrokerMutation,
   MutationOperation,
@@ -32,6 +32,7 @@ import {
   TimeInForce,
   type Intent,
   type PaperAuthorityGeneration,
+  type RiskDecision,
 } from '../paper'
 import { makeQualificationLock, makeQualificationPolicyDocument, makeQualificationResult } from '../qualification'
 import {
@@ -160,7 +161,7 @@ const intentPlan = (overrides: Partial<IntentPlan> = {}): IntentPlan => ({
   strategyName: 'risk-balanced-trend',
   cycleId: 'a'.repeat(64),
   decisionHash: 'b'.repeat(64),
-  policyHash: 'c'.repeat(64),
+  policyHash: fixtureHash('mutation-risk-policy'),
   accountId: 'paper-account-1',
   symbol: 'NVDA',
   side: OrderSide.Buy,
@@ -209,6 +210,7 @@ const paperIntentEvidence = Effect.gen(function* () {
     authority: unknown
     history: unknown
     intents: unknown
+    mutation_events: unknown
     risk_decisions: unknown
   }>`
     SELECT
@@ -233,6 +235,13 @@ const paperIntentEvidence = Effect.gen(function* () {
       ) AS intents,
       (
         SELECT jsonb_agg(
+          jsonb_build_object('row', to_jsonb(event), 'tupleId', event.xmin::text)
+          ORDER BY event.event_id
+        )
+        FROM mutation_events AS event
+      ) AS mutation_events,
+      (
+        SELECT jsonb_agg(
           jsonb_build_object('row', to_jsonb(decision), 'tupleId', decision.xmin::text)
           ORDER BY decision.decision_id
         )
@@ -243,6 +252,93 @@ const paperIntentEvidence = Effect.gen(function* () {
   if (evidence === undefined) return yield* Effect.die(new Error('paper intent evidence query returned no row'))
   return evidence
 })
+
+const seedApprovedIntent = (intent: Intent, decision: RiskDecision) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO intents (
+            intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id,
+            decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type,
+            time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at
+          ) VALUES (
+            ${intent.intentId}, ${intent.schemaVersion}, ${intent.authorityGenerationHash},
+            ${intent.strategyName}, ${intent.cycleId}, ${intent.decisionHash}, ${intent.policyHash},
+            ${intent.accountId}, ${intent.clientOrderId}, ${intent.symbol}, ${intent.side},
+            ${intent.orderType}, ${intent.timeInForce}, ${intent.quantityMicros},
+            ${intent.notionalLimitMicros}, ${intent.state}, ${intent.createdAt}, ${intent.createdAt}
+          )
+        `
+        yield* sql`
+          INSERT INTO risk_decisions (
+            decision_id, schema_version, input_hash, intent_id, policy_hash, outcome,
+            reason_codes, decided_at, expires_at
+          ) VALUES (
+            ${decision.decisionId}, ${decision.schemaVersion}, ${decision.inputHash},
+            ${decision.intentId}, ${decision.policyHash}, ${decision.outcome},
+            ${decision.reasonCodes}, ${decision.decidedAt}, ${decision.expiresAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET
+            risk_decision_id = ${decision.decisionId},
+            state = ${IntentState.Approved},
+            state_version = 2,
+            updated_at = ${decision.decidedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+      }),
+    )
+  })
+
+const seedAcceptedSubmit = (intent: Intent, decision: RiskDecision, fixture: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const requestHash = fixtureHash(`${fixture}-request`)
+    const startedAt = new Date(Date.parse(decision.decidedAt) + 1).toISOString()
+    const acceptedAt = new Date(Date.parse(decision.decidedAt) + 2).toISOString()
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation,
+            event_type, request_hash, consistency_delay_ms, broker_order_id,
+            request_id, response_status, response_content_hash, occurred_at
+          ) VALUES (
+            ${fixtureHash(`${fixture}-started`)}, 'bayn.paper-mutation-event.v1',
+            ${mutationId(intent.intentId, MutationOperation.Submit)}, ${intent.intentId},
+            1, 'SUBMIT', 'SUBMIT_STARTED', ${requestHash}, 1000, NULL,
+            NULL, NULL, NULL, ${startedAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET state = 'IO_STARTED', state_version = 3, updated_at = ${startedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+        yield* sql`
+          INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation,
+            event_type, request_hash, consistency_delay_ms, broker_order_id,
+            request_id, response_status, response_content_hash, occurred_at
+          ) VALUES (
+            ${fixtureHash(`${fixture}-accepted`)}, 'bayn.paper-mutation-event.v1',
+            ${mutationId(intent.intentId, MutationOperation.Submit)}, ${intent.intentId},
+            2, 'SUBMIT', 'SUBMIT_ACCEPTED', ${requestHash}, 1000, ${orderId},
+            ${`${fixture}-request-id`}, 200, ${fixtureHash(`${fixture}-response`)}, ${acceptedAt}
+          )
+        `
+        yield* sql`
+          UPDATE intents
+          SET state = 'ACKNOWLEDGED', state_version = 4, updated_at = ${acceptedAt}
+          WHERE intent_id = ${intent.intentId}
+        `
+      }),
+    )
+  })
 
 const riskBalancedTrendSnapshot = makeSnapshot(800)
 
@@ -1064,7 +1160,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(Exit.isFailure(observed.staleCommit)).toBe(true)
       if (Exit.isFailure(observed.staleCommit)) {
         expect(Cause.pretty(observed.staleCommit.cause)).toContain(
-          'PAPER intent does not match the current immutable authority-generation account binding',
+          'PAPER intent does not match the current immutable authority-generation bindings',
         )
       }
       expect(observed.afterFailure).toEqual(observed.before)
@@ -1126,6 +1222,55 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     }
   })
 
+  test('rejects first-commit policy or strategy drift from the current authority generation without writes', async () => {
+    const generation = await activateAuditedPaperAuthority()
+    const variants = await Effect.runPromise(
+      Effect.forEach(
+        [
+          intentPlan({
+            cycleId: fixtureHash('generation-policy-drift-cycle'),
+            policyHash: fixtureHash('unbound-risk-policy'),
+          }),
+          intentPlan({
+            cycleId: fixtureHash('generation-strategy-drift-cycle'),
+            strategyName: 'unbound-strategy',
+          }),
+        ],
+        (input) =>
+          planForGeneration(input, generation.generationHash).pipe(
+            Effect.flatMap((intent) =>
+              riskDecision(intent, RiskOutcome.Approved).pipe(Effect.map((decision) => ({ decision, intent }))),
+            ),
+          ),
+      ),
+    )
+    const execution = makeExecutionRuntime()
+    try {
+      for (const variant of variants) {
+        const observed = await execution.runPromise(
+          Effect.gen(function* () {
+            const before = yield* paperIntentEvidence
+            const commit = yield* Effect.exit(
+              Effect.flatMap(IntentStore, (store) => store.commit(variant.intent, variant.decision)),
+            )
+            const after = yield* paperIntentEvidence
+            return { after, before, commit }
+          }),
+        )
+
+        expect(Exit.isFailure(observed.commit)).toBe(true)
+        if (Exit.isFailure(observed.commit)) {
+          expect(Cause.pretty(observed.commit.cause)).toContain(
+            'PAPER intent does not match the current immutable authority-generation bindings',
+          )
+        }
+        expect(observed.after).toEqual(observed.before)
+      }
+    } finally {
+      await execution.dispose()
+    }
+  })
+
   test('rejects an intent whose generation history binds a different account without writing', async () => {
     await activateAuditedPaperAuthority()
     const intent = await Effect.runPromise(
@@ -1155,7 +1300,7 @@ describePostgres('PostgreSQL evaluation evidence', () => {
       expect(Exit.isFailure(observed.commit)).toBe(true)
       if (Exit.isFailure(observed.commit)) {
         expect(Cause.pretty(observed.commit.cause)).toContain(
-          'PAPER intent does not match the current immutable authority-generation account binding',
+          'PAPER intent does not match the current immutable authority-generation bindings',
         )
       }
       expect(observed.after).toEqual(observed.before)
@@ -2213,6 +2358,100 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(intent.authorityGenerationHash).toBe(originalGeneration.generationHash)
     expect(observed.state).toEqual({ state: 'TERMINAL', state_version: 5 })
   }, 20_000)
+
+  test('rejects intent policy or strategy drift before submit, identified cancel, or broker writes', async () => {
+    const generation = await activateAuditedPaperAuthority()
+    const now = Date.now()
+    const createdAt = new Date(now - 2_000).toISOString()
+    const decidedAt = new Date(now - 1_000).toISOString()
+    const expiresAt = new Date(now + 60_000).toISOString()
+    const variants = await Effect.runPromise(
+      Effect.forEach(
+        [
+          intentPlan({
+            createdAt,
+            cycleId: fixtureHash('mutation-generation-policy-drift-cycle'),
+            policyHash: fixtureHash('mutation-unbound-risk-policy'),
+          }),
+          intentPlan({
+            createdAt,
+            cycleId: fixtureHash('mutation-generation-strategy-drift-cycle'),
+            strategyName: 'mutation-unbound-strategy',
+          }),
+        ],
+        (input) =>
+          planForGeneration(input, generation.generationHash).pipe(
+            Effect.flatMap((intent) =>
+              riskDecision(intent, RiskOutcome.Approved, { decidedAt, expiresAt }).pipe(
+                Effect.map((decision) => ({ decision, intent })),
+              ),
+            ),
+          ),
+      ),
+    )
+    await runtime.runPromise(Effect.forEach(variants, ({ decision, intent }) => seedApprovedIntent(intent, decision)))
+
+    const brokerCalls = { cancel: 0, submit: 0 }
+    const coordinator = makeCoordinatorRuntime({
+      submit: () => {
+        brokerCalls.submit += 1
+        return Effect.die(new Error('generation-binding failure must not reach the broker'))
+      },
+      cancel: () => {
+        brokerCalls.cancel += 1
+        return Effect.die(new Error('generation-binding failure must not reach the broker'))
+      },
+    })
+    try {
+      for (const variant of variants) {
+        const observed = await coordinator.runPromise(
+          Effect.gen(function* () {
+            const before = yield* paperIntentEvidence
+            const submission = yield* Effect.exit(submit(variant.intent.intentId, 1_000))
+            const after = yield* paperIntentEvidence
+            return { after, before, submission }
+          }),
+        )
+
+        expect(Exit.isFailure(observed.submission)).toBe(true)
+        if (Exit.isFailure(observed.submission)) {
+          expect(Cause.pretty(observed.submission.cause)).toContain(
+            'intent does not match its immutable PAPER authority-generation bindings',
+          )
+        }
+        expect(observed.after).toEqual(observed.before)
+      }
+
+      const cancelVariant = variants[0]
+      if (cancelVariant === undefined) throw new Error('policy-drift cancel fixture is missing')
+      await runtime.runPromise(
+        seedAcceptedSubmit(
+          cancelVariant.intent,
+          cancelVariant.decision,
+          'mutation-generation-policy-drift-identified-submit',
+        ),
+      )
+      const cancelObserved = await coordinator.runPromise(
+        Effect.gen(function* () {
+          const before = yield* paperIntentEvidence
+          const cancellation = yield* Effect.exit(cancel(cancelVariant.intent.intentId, 1_000))
+          const after = yield* paperIntentEvidence
+          return { after, before, cancellation }
+        }),
+      )
+
+      expect(Exit.isFailure(cancelObserved.cancellation)).toBe(true)
+      if (Exit.isFailure(cancelObserved.cancellation)) {
+        expect(Cause.pretty(cancelObserved.cancellation.cause)).toContain(
+          'intent does not match its immutable PAPER authority-generation bindings',
+        )
+      }
+      expect(cancelObserved.after).toEqual(cancelObserved.before)
+      expect(brokerCalls).toEqual({ cancel: 0, submit: 0 })
+    } finally {
+      await coordinator.dispose()
+    }
+  })
 
   test('rejects a same-account historical generation before submit or broker writes', async () => {
     const originalGeneration = await activateAuditedPaperAuthority()

@@ -483,13 +483,17 @@ const makeStore = Effect.gen(function* () {
               generation_account_id: string | null
               generation_hash: string
               generation_maximum: string | null
+              generation_risk_policy_hash: string | null
+              generation_strategy_name: string | null
               maximum: string
             }>`
               SELECT
                 authority.maximum,
                 authority.generation_hash,
                 generation.maximum AS generation_maximum,
-                generation.account_id AS generation_account_id
+                generation.account_id AS generation_account_id,
+                generation.risk_policy_hash AS generation_risk_policy_hash,
+                generation.strategy_name AS generation_strategy_name
               FROM authority_state AS authority
               LEFT JOIN authority_generations AS generation
                 ON generation.generation_hash = authority.generation_hash
@@ -502,13 +506,15 @@ const makeStore = Effect.gen(function* () {
               authority.maximum !== Authority.Paper ||
               authority.generation_hash !== inputIntent.authorityGenerationHash ||
               authority.generation_maximum !== Authority.Paper ||
-              authority.generation_account_id !== inputIntent.accountId
+              authority.generation_account_id !== inputIntent.accountId ||
+              authority.generation_risk_policy_hash !== inputIntent.policyHash ||
+              authority.generation_strategy_name !== inputIntent.strategyName
             ) {
               return yield* Effect.fail(
                 storeError(
                   'invariant',
                   'commit',
-                  'PAPER intent does not match the current immutable authority-generation account binding',
+                  'PAPER intent does not match the current immutable authority-generation bindings',
                 ),
               )
             }
