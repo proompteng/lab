@@ -375,6 +375,148 @@ const seedExactReconciliation = (fixture: ReconciliationFixture, reconciliationA
     `
   })
 
+const seedTerminalCanceledMutation = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient
+  const intentId = hash('terminal-canceled-intent')
+  const decisionId = hash('terminal-canceled-risk-decision')
+  const submitMutationId = hash('terminal-canceled-submit')
+  const cancelMutationId = hash('terminal-canceled-cancel')
+  const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
+  yield* sql`
+    INSERT INTO intents (
+      intent_id, schema_version, account_id, client_order_id, symbol, side,
+      order_type, time_in_force, quantity_micros, notional_limit_micros,
+      state, terminal_outcome, state_version, created_at, updated_at,
+      strategy_name, cycle_id, decision_hash, policy_hash
+    ) VALUES (
+      ${intentId}, 'bayn.paper-intent.v2', ${accountId},
+      'terminal-canceled-client-order', 'SPY', 'BUY', 'MARKET', 'DAY', 1000000, 100000000,
+      'PLANNED', NULL, 1, '2026-07-22T15:30:00.000Z', '2026-07-22T15:30:00.000Z',
+      'risk-balanced-trend', ${hash('terminal-canceled-cycle')},
+      ${hash('terminal-canceled-decision')}, ${hash('terminal-canceled-policy')}
+    )
+  `
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`
+        INSERT INTO risk_decisions (
+          decision_id, schema_version, input_hash, intent_id, policy_hash,
+          outcome, reason_codes, decided_at, expires_at
+        ) VALUES (
+          ${decisionId}, 'bayn.paper-risk-decision.v1', ${hash('terminal-canceled-risk-input')}, ${intentId},
+          ${hash('terminal-canceled-policy')}, 'APPROVED', ARRAY[]::text[],
+          '2026-07-22T15:30:00.001Z', '2099-01-01T00:00:00.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET
+          risk_decision_id = ${decisionId},
+          state = 'APPROVED',
+          state_version = 2,
+          updated_at = '2026-07-22T15:30:00.002Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-submit-started')}, 'bayn.paper-mutation-event.v1',
+          ${submitMutationId}, ${intentId}, 1, 'SUBMIT', 'SUBMIT_STARTED',
+          ${hash('terminal-canceled-submit-request')}, 1000, NULL,
+          NULL, NULL, NULL, '2026-07-22T15:30:01.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'IO_STARTED', state_version = 3, updated_at = '2026-07-22T15:30:01.000Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-submit-unknown')}, 'bayn.paper-mutation-event.v1',
+          ${submitMutationId}, ${intentId}, 2, 'SUBMIT', 'SUBMIT_UNKNOWN',
+          ${hash('terminal-canceled-submit-request')}, 1000, ${brokerOrderId},
+          'mismatched-submit', 200, ${hash('terminal-canceled-submit-response')}, '2026-07-22T15:30:02.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'UNKNOWN', state_version = 4, updated_at = '2026-07-22T15:30:02.000Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-submit-not-found')}, 'bayn.paper-mutation-event.v1',
+          ${submitMutationId}, ${intentId}, 3, 'SUBMIT', 'RECOVERY_NOT_FOUND',
+          ${hash('terminal-canceled-submit-request')}, 1000, ${brokerOrderId},
+          'submit-not-found', 404, ${hash('terminal-canceled-submit-lookup')}, '2026-07-22T15:30:03.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-cancel-started')}, 'bayn.paper-mutation-event.v1',
+          ${cancelMutationId}, ${intentId}, 1, 'CANCEL', 'CANCEL_STARTED',
+          ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
+          NULL, NULL, NULL, '2026-07-22T15:30:04.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-cancel-accepted')}, 'bayn.paper-mutation-event.v1',
+          ${cancelMutationId}, ${intentId}, 2, 'CANCEL', 'CANCEL_ACCEPTED',
+          ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
+          'cancel-accepted', 204, ${hash('terminal-canceled-cancel-response')}, '2026-07-22T15:30:05.000Z'
+        )
+      `
+      yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation,
+          event_type, request_hash, consistency_delay_ms, broker_order_id,
+          request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${hash('terminal-canceled-cancel-found')}, 'bayn.paper-mutation-event.v1',
+          ${cancelMutationId}, ${intentId}, 3, 'CANCEL', 'RECOVERY_FOUND',
+          ${hash('terminal-canceled-cancel-request')}, 1000, ${brokerOrderId},
+          'cancel-terminal', 200, ${hash('terminal-canceled-cancel-lookup')}, '2026-07-22T15:30:06.000Z'
+        )
+      `
+      yield* sql`
+        UPDATE intents
+        SET state = 'RECOVERED', state_version = 5, updated_at = '2026-07-22T15:30:06.000Z'
+        WHERE intent_id = ${intentId}
+      `
+      yield* sql`
+        UPDATE intents
+        SET
+          state = 'TERMINAL',
+          terminal_outcome = 'CANCELED',
+          state_version = 6,
+          updated_at = '2026-07-22T15:30:06.000001Z'
+        WHERE intent_id = ${intentId}
+      `
+    }),
+  )
+})
+
 const makeActivation = (
   previousGenerationHash: string,
   qualification: QualificationFixture,
@@ -950,6 +1092,72 @@ describePostgres('paper accounting persistence', () => {
       )
       expect(activated).toMatchObject({
         generationHash: preparation.first.generationHash,
+        maximum: Authority.Paper,
+        effective: Authority.Paper,
+        version: 2,
+      })
+    } finally {
+      await activationRuntime.dispose()
+    }
+  }, 15_000)
+
+  test('activates PAPER after fresh exact reconciliation covers terminal cancel mutation history', async () => {
+    const initialGenerationHash = hash('terminal-canceled-observe-generation')
+    const reconciliation = exactReconciliation('terminal-canceled-paper')
+    const expected = makeActivation(initialGenerationHash, qualifiedEvidence, reconciliation)
+    const prepareRuntime = makeStoreRuntime({ fail: false, planHashes: [] }, prepareRuntimeConfig(expected))
+    const preparation = await (async () => {
+      try {
+        return await prepareRuntime.runPromise(
+          Effect.gen(function* () {
+            const store = yield* PaperStore
+            const sql = yield* PgClient.PgClient
+            yield* seedQualificationEvidence(qualifiedEvidence)
+            yield* store.ensureAuthorityGeneration({
+              generationHash: initialGenerationHash,
+              maximum: Authority.Observe,
+            })
+            yield* seedTerminalCanceledMutation
+            yield* seedExactReconciliation(reconciliation)
+            const prepared = yield* store.preparePaperGeneration(proofBinding(expected))
+            const [history] = yield* sql<{ event_count: number; latest_mutation_at: Date }>`
+              SELECT
+                count(*)::integer AS event_count,
+                max(occurred_at) AS latest_mutation_at
+              FROM mutation_events
+            `
+            return { history, prepared }
+          }),
+        )
+      } finally {
+        await prepareRuntime.dispose()
+      }
+    })()
+
+    expect(preparation.prepared).toEqual(expected)
+    expect(preparation.history.event_count).toBe(6)
+
+    const activationRuntime = makeActivationRuntime({ fail: false, planHashes: [] }, preparation.prepared)
+    try {
+      const result = await activationRuntime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* PaperStore
+          const sql = yield* PgClient.PgClient
+          const [reconciliationRow] = yield* sql<{ reconciled_at: Date }>`
+            SELECT reconciled_at
+            FROM reconciliations
+            WHERE reconciliation_id = ${reconciliation.reconciliationId}
+          `
+          const activated = yield* store.activatePaperGeneration(proofBinding(preparation.prepared))
+          return { activated, reconciliationRow }
+        }),
+      )
+
+      expect(result.reconciliationRow.reconciled_at.getTime()).toBeGreaterThanOrEqual(
+        preparation.history.latest_mutation_at.getTime(),
+      )
+      expect(result.activated).toMatchObject({
+        generationHash: preparation.prepared.generationHash,
         maximum: Authority.Paper,
         effective: Authority.Paper,
         version: 2,

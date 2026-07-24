@@ -1641,10 +1641,16 @@ describePostgres('PostgreSQL evaluation evidence', () => {
   test('cancels an identified mismatched order while its submit remains UNKNOWN', async () => {
     const execution = makeExecutionRuntime()
     const intent = await Effect.runPromise(plan(intentPlan({ cycleId: '8'.repeat(64) })))
+    const laterIntent = await Effect.runPromise(
+      plan(intentPlan({ cycleId: '7'.repeat(64), decisionHash: 'f'.repeat(64) })),
+    )
     const decision = await Effect.runPromise(riskDecision(intent, RiskOutcome.Approved))
+    const laterDecision = await Effect.runPromise(riskDecision(laterIntent, RiskOutcome.Approved))
     await execution.runPromise(
       Effect.gen(function* () {
-        yield* Effect.flatMap(IntentStore, (store) => store.commit(intent, decision))
+        const store = yield* IntentStore
+        yield* store.commit(intent, decision)
+        yield* store.commit(laterIntent, laterDecision)
       }),
     )
     await execution.dispose()
@@ -1702,7 +1708,27 @@ describePostgres('PostgreSQL evaluation evidence', () => {
           },
           TerminalOutcome.Canceled,
         )
-        return { cancelStarted, canceled, notFound, state: yield* sqlIntentState(intent.intentId), unknown }
+        const laterStarted = yield* store.beginSubmit(
+          laterIntent.intentId,
+          '1'.repeat(64),
+          1_000,
+          new Date(base + 6).toISOString(),
+        )
+        const sql = yield* PgClient.PgClient
+        const [history] = yield* sql<{ event_count: number }>`
+          SELECT count(*)::integer AS event_count
+          FROM mutation_events
+          WHERE intent_id = ${intent.intentId}
+        `
+        return {
+          cancelStarted,
+          canceled,
+          history,
+          laterStarted,
+          notFound,
+          state: yield* sqlIntentState(intent.intentId),
+          unknown,
+        }
       }),
     )
     await mutation.dispose()
@@ -1718,6 +1744,14 @@ describePostgres('PostgreSQL evaluation evidence', () => {
     expect(observed.cancelStarted.started).toBe(true)
     expect(observed.canceled.eventType).toBe(MutationEventType.RecoveryFound)
     expect(observed.state.state).toBe('TERMINAL')
+    expect(observed.history.event_count).toBe(6)
+    expect(observed.laterStarted).toMatchObject({
+      started: true,
+      event: {
+        eventType: MutationEventType.SubmitStarted,
+        intentId: laterIntent.intentId,
+      },
+    })
   })
 
   test('allows expired identified cancellation under an active kill while blocking new submission', async () => {
