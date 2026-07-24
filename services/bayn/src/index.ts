@@ -179,7 +179,9 @@ const runPaperProofDiscovery = (config: LoadedRuntimeConfig, strategy: Strategy)
         retryAttempts: alpaca.retryAttempts,
       }),
     ).pipe(
-      Effect.mapError((cause) => operationalError('config', 'alpaca', 'Alpaca paper account binding failed', cause)),
+      Effect.mapError((cause) =>
+        operationalError('config', 'alpaca', 'Alpaca scoped read adapter construction failed', cause),
+      ),
     )
     const brokerRead = Context.get(brokerReadContext, BrokerRead)
     const receipt = yield* discoverPaperProofCandidates({

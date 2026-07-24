@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Clock, Effect, Exit, Option } from 'effect'
+import { Cause, Clock, Duration, Effect, Exit, Fiber, Option } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -126,6 +126,7 @@ interface HarnessOptions {
   readonly crashAfterSubmit?: boolean
   readonly lostFence?: boolean
   readonly lostFenceAfterSubmit?: boolean
+  readonly lookupFailureOnceAfterMs?: number
   readonly notFoundOnce?: boolean
   readonly unknownSubmit?: boolean
   readonly submitError?: BrokerMutationError
@@ -387,6 +388,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
     orderByClientId: () =>
       Effect.gen(function* () {
         lookupCalls += 1
+        if (options.lookupFailureOnceAfterMs !== undefined && lookupCalls === 1) {
+          yield* Effect.sleep(Duration.millis(options.lookupFailureOnceAfterMs))
+          return yield* Effect.fail(
+            new BrokerReadError({
+              operation: 'order-by-client-id',
+              kind: BrokerReadErrorKind.Timeout,
+              message: 'injected delayed lookup timeout',
+              retryable: false,
+            }),
+          )
+        }
         const observedAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         if (options.notFoundOnce && lookupCalls === 1) {
           return yield* Effect.fail(
@@ -598,6 +610,47 @@ describe('paper execution coordinator', () => {
       terminalOutcome: TerminalOutcome.Filled,
     })
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 2 })
+  })
+
+  test('timestamps evidence-less recovery failure after lookup I/O and enforces the next full delay', async () => {
+    const harness = makeHarness({
+      lookupFailureOnceAfterMs: 400,
+      lookupOrder: brokerOrder(OrderStatus.Filled),
+    })
+    const result = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* submit(intentId, 1_000)
+          yield* TestClock.adjust(1_100)
+          const recovery = yield* recover(intentId, MutationOperation.Submit).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          yield* TestClock.adjust(400)
+          const unknown = yield* Fiber.join(recovery)
+          yield* TestClock.adjust(999)
+          const tooEarly = yield* Effect.flip(recover(intentId, MutationOperation.Submit))
+          const callsBeforeFullDelay = harness.calls()
+          yield* TestClock.adjust(1)
+          const terminal = yield* recover(intentId, MutationOperation.Submit)
+          return { callsBeforeFullDelay, terminal, tooEarly, unknown }
+        }),
+      ),
+    )
+
+    expect(result.unknown).toMatchObject({
+      eventType: MutationEventType.RecoveryUnknown,
+      occurredAt: '1970-01-01T00:00:01.500Z',
+    })
+    expect(result.tooEarly).toMatchObject({
+      failure: ExecutionFailure.RecoveryTooEarly,
+      eligibleAt: '1970-01-01T00:00:02.500Z',
+    })
+    expect(result.callsBeforeFullDelay).toEqual({ submit: 1, cancel: 0, lookup: 1 })
+    expect(result.terminal.eventType).toBe(MutationEventType.RecoveryFound)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 2 })
+    expect(harness.intent()).toMatchObject({
+      state: IntentState.Terminal,
+      terminalOutcome: TerminalOutcome.Filled,
+    })
   })
 
   test('retains an accepted broker order identity after a 404 and allows later terminal recovery', async () => {
