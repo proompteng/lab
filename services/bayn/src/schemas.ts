@@ -25,6 +25,9 @@ export const StrictNonEmptyStringSchema = Schema.String.check(
   Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value, {
     expected: 'a non-empty string without surrounding whitespace',
   }),
+  Schema.makeFilter((value: string) => value.isWellFormed(), {
+    expected: 'a well-formed Unicode string',
+  }),
 )
 export const TrimmedNonEmptyStringSchema = Schema.Trim.check(Schema.isMinLength(1))
 export const IsoDateSchema = Schema.String.pipe(Schema.refine(isIsoDate, { expected: 'a valid ISO date (YYYY-MM-DD)' }))

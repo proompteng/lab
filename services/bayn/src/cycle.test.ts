@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit } from 'effect'
+import { Effect, Exit, Result, Schema } from 'effect'
 
 import type { MarketCalendarObservation, MarketCalendarSession } from './broker/alpaca'
 import {
   CycleState,
-  CycleTerminalReason,
-  cycleTerminalReasonForTargetPlanBlock,
+  CycleIdentitySchema,
+  cycleDraftMatches,
   decodeCycleDraft,
   decodeCycleIdentity,
   decodeCycleWindow,
@@ -18,6 +18,8 @@ import {
   makeCycleIdentity,
   makeCycleWindow,
   makeExecutionCalendarObservation,
+  signalSessionCloseAt,
+  type CycleConstructionFailure,
   type CycleExecutionPolicy,
   type CycleIdentityMaterial,
   type ExecutionCalendarObservation,
@@ -25,7 +27,7 @@ import {
 import { defaultExecutionModel } from './execution-model'
 import { canonicalHashV1 } from './hash'
 import type { SignalSessionRow } from './market-data'
-import { TargetPlanReason } from './target-planner'
+import { strictParseOptions } from './schemas'
 import type { IsoDate } from './types'
 
 const signalCalendarVersion = 'signal-XNYS-2026-v1'
@@ -40,6 +42,21 @@ const springDstSession: MarketCalendarSession = {
   closeAt: '2026-03-09T20:00:00.000Z',
 }
 
+const resultValue = <A, E>(result: Result.Result<A, E>): A => {
+  if (Result.isFailure(result)) throw result.failure
+  return result.success
+}
+const makeCycleDraftSuccess = (...args: Parameters<typeof makeCycleDraft>) => resultValue(makeCycleDraft(...args))
+const makeCycleExecutionPolicySuccess = (...args: Parameters<typeof makeCycleExecutionPolicy>) =>
+  resultValue(makeCycleExecutionPolicy(...args))
+const makeCycleExecutionPolicyFromModelSuccess = (...args: Parameters<typeof makeCycleExecutionPolicyFromModel>) =>
+  resultValue(makeCycleExecutionPolicyFromModel(...args))
+const makeCycleIdentitySuccess = (...args: Parameters<typeof makeCycleIdentity>) =>
+  resultValue(makeCycleIdentity(...args))
+const makeCycleWindowSuccess = (...args: Parameters<typeof makeCycleWindow>) => resultValue(makeCycleWindow(...args))
+const makeExecutionCalendarObservationSuccess = (...args: Parameters<typeof makeExecutionCalendarObservation>) =>
+  resultValue(makeExecutionCalendarObservation(...args))
+
 const signalSession = (
   sessionDate: IsoDate,
   closeTime = '16:00',
@@ -52,7 +69,7 @@ const signalSession = (
 })
 
 const executionCalendar = (session: MarketCalendarSession = springDstSession): ExecutionCalendarObservation =>
-  makeExecutionCalendarObservation({
+  makeExecutionCalendarObservationSuccess({
     schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     source: 'alpaca-v2-calendar',
     ...session,
@@ -76,7 +93,7 @@ const makeExecutionPolicy = (
   submissionCutoffBeforeOpenMs = defaultSubmissionCutoffBeforeOpenMs,
   modelHash = strategyExecutionModelHash,
 ): CycleExecutionPolicy =>
-  makeCycleExecutionPolicy({
+  makeCycleExecutionPolicySuccess({
     schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
     strategyExecutionModelHash: modelHash,
     submissionWindowMs,
@@ -107,7 +124,7 @@ describe('autonomous cycle identity and calendar', () => {
     if (defaultExecutionModel.schemaVersion !== 'bayn.execution-model.v2') {
       throw new Error('default execution model must be the causal v2 contract')
     }
-    const policy = makeCycleExecutionPolicyFromModel(defaultExecutionModel)
+    const policy = makeCycleExecutionPolicyFromModelSuccess(defaultExecutionModel)
 
     expect(policy).toMatchObject({
       schemaVersion: 'bayn.autonomous-cycle-execution-policy.v1',
@@ -125,45 +142,12 @@ describe('autonomous cycle identity and calendar', () => {
     )
   })
 
-  test('maps every blocked target-plan reason to its exact cycle terminal reason', () => {
-    expect([
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.SubmissionCutoffReached),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.IdentityMismatch),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.InputMismatch),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.InputStale),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.ReconciliationNotExact),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.AccountNotActive),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.UnknownOrder),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.UnresolvedOrder),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.BelowMinimumBuyNotional),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.InsufficientBuyingPower),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.NonPositiveEquity),
-      cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.ShortPositionNotAllowed),
-    ]).toEqual([
-      CycleTerminalReason.MissedSubmission,
-      CycleTerminalReason.ProvenanceMismatch,
-      CycleTerminalReason.DataInvalid,
-      CycleTerminalReason.DataStale,
-      CycleTerminalReason.Reconciliation,
-      CycleTerminalReason.BrokerDisabled,
-      CycleTerminalReason.UnresolvedMutation,
-      CycleTerminalReason.UnresolvedMutation,
-      CycleTerminalReason.Risk,
-      CycleTerminalReason.Risk,
-      CycleTerminalReason.Risk,
-      CycleTerminalReason.Risk,
-    ])
-    expect(() => cycleTerminalReasonForTargetPlanBlock(TargetPlanReason.TargetsSatisfied)).toThrow(
-      'blocked target plan cannot use the no-trade reason',
-    )
-  })
-
   test('derives stable identities from all Signal, execution-calendar, account, and policy inputs', () => {
     const material = makeIdentityMaterial('2026-03-06')
-    const first = makeCycleIdentity(material)
-    const replay = makeCycleIdentity(structuredClone(material))
-    const otherAccount = makeCycleIdentity({ ...material, accountId: 'paper-account-2' })
-    const otherModel = makeCycleIdentity({
+    const first = makeCycleIdentitySuccess(material)
+    const replay = makeCycleIdentitySuccess(structuredClone(material))
+    const otherAccount = makeCycleIdentitySuccess({ ...material, accountId: 'paper-account-2' })
+    const otherModel = makeCycleIdentitySuccess({
       ...material,
       executionPolicy: makeExecutionPolicy(
         defaultSubmissionWindowMs,
@@ -175,13 +159,45 @@ describe('autonomous cycle identity and calendar', () => {
       ...springDstSession,
       closeAt: '2026-03-09T17:00:00.000Z',
     })
-    const otherExecutionCalendar = makeCycleIdentity(makeIdentityMaterial('2026-03-06', changedExecutionCalendar))
+    const otherExecutionCalendar = makeCycleIdentitySuccess(
+      makeIdentityMaterial('2026-03-06', changedExecutionCalendar),
+    )
 
     expect(replay).toEqual(first)
+    expect(first.cycleId).toBe('0abeb0fa91334072af88e44f66e88974c33c3b5261adb327c26719bd9110e0d9')
     expect(otherAccount.cycleId).not.toBe(first.cycleId)
     expect(otherModel.cycleId).not.toBe(first.cycleId)
     expect(otherModel.executionPolicy.executionPolicyHash).not.toBe(first.executionPolicy.executionPolicyHash)
     expect(otherExecutionCalendar.cycleId).not.toBe(first.cycleId)
+  })
+
+  test('rejects ill-formed Unicode at the cycle identity field before canonical hashing', () => {
+    const material = makeIdentityMaterial('2026-03-06')
+    const constructed = makeCycleIdentity({ ...material, accountId: '\ud800' })
+    expect(Result.isFailure(constructed)).toBe(true)
+    if (Result.isFailure(constructed)) {
+      expect(constructed.failure).toMatchObject({
+        _tag: 'CycleConstructionFailure',
+        operation: 'cycle-identity',
+        reason: 'decode',
+      })
+      expect(String(constructed.failure.cause)).toContain('["accountId"]')
+      expect(String(constructed.failure.cause)).toContain('well-formed Unicode')
+    }
+
+    const identity = makeCycleIdentitySuccess(material)
+    const decoded = Schema.decodeUnknownResult(
+      CycleIdentitySchema,
+      strictParseOptions,
+    )({
+      ...identity,
+      accountId: '\ud800',
+    })
+    expect(Result.isFailure(decoded)).toBe(true)
+    if (Result.isFailure(decoded)) {
+      expect(String(decoded.failure)).toContain('["accountId"]')
+      expect(String(decoded.failure)).toContain('well-formed Unicode')
+    }
   })
 
   test('binds only the selected #13136 session across different response ranges and evidence hashes', () => {
@@ -207,12 +223,12 @@ describe('autonomous cycle identity and calendar', () => {
       ],
       '2'.repeat(64),
     )
-    const narrowSelected = makeExecutionCalendarObservation({
+    const narrowSelected = makeExecutionCalendarObservationSuccess({
       schemaVersion: narrowResponse.schemaVersion,
       source: narrowResponse.source,
       ...narrowResponse.sessions[0]!,
     })
-    const broadSelected = makeExecutionCalendarObservation({
+    const broadSelected = makeExecutionCalendarObservationSuccess({
       schemaVersion: broadResponse.schemaVersion,
       source: broadResponse.source,
       ...broadResponse.sessions.find((session) => session.date === springDstSession.date)!,
@@ -220,14 +236,14 @@ describe('autonomous cycle identity and calendar', () => {
 
     expect(narrowResponse.normalizedResponseHash).not.toBe(broadResponse.normalizedResponseHash)
     expect(narrowSelected).toEqual(broadSelected)
-    expect(makeCycleIdentity(makeIdentityMaterial('2026-03-06', narrowSelected)).cycleId).toBe(
-      makeCycleIdentity(makeIdentityMaterial('2026-03-06', broadSelected)).cycleId,
+    expect(makeCycleIdentitySuccess(makeIdentityMaterial('2026-03-06', narrowSelected)).cycleId).toBe(
+      makeCycleIdentitySuccess(makeIdentityMaterial('2026-03-06', broadSelected)).cycleId,
     )
   })
 
   test('binds a decoded future broker-calendar observation across the spring DST boundary', () => {
     const observedExecutionCalendar = executionCalendar()
-    const window = makeCycleWindow(signalSession('2026-03-06'), observedExecutionCalendar, makeExecutionPolicy())
+    const window = makeCycleWindowSuccess(signalSession('2026-03-06'), observedExecutionCalendar, makeExecutionPolicy())
 
     expect(window).toEqual({
       schemaVersion: 'bayn.autonomous-cycle-window.v1',
@@ -244,7 +260,7 @@ describe('autonomous cycle identity and calendar', () => {
   })
 
   test('accepts observed holiday gaps and early closes without deriving the next session from Signal rows', () => {
-    const holidayWindow = makeCycleWindow(
+    const holidayWindow = makeCycleWindowSuccess(
       signalSession('2026-07-02'),
       executionCalendar({
         date: '2026-07-06',
@@ -256,7 +272,7 @@ describe('autonomous cycle identity and calendar', () => {
     expect(holidayWindow.executionSessionDate).toBe('2026-07-06')
     expect(holidayWindow.executionOpenAt).toBe('2026-07-06T13:30:00.000Z')
 
-    const earlyCloseWindow = makeCycleWindow(
+    const earlyCloseWindow = makeCycleWindowSuccess(
       signalSession('2026-11-25'),
       executionCalendar({
         date: '2026-11-27',
@@ -273,7 +289,7 @@ describe('autonomous cycle identity and calendar', () => {
     })
 
     expect(() =>
-      makeCycleWindow(
+      makeCycleWindowSuccess(
         signalSession('2026-03-09'),
         executionCalendar({
           date: '2026-03-10',
@@ -286,24 +302,36 @@ describe('autonomous cycle identity and calendar', () => {
   })
 
   test('enforces the one-day duration cap in the pure window factory', () => {
-    expect(() =>
-      makeCycleWindow(signalSession('2026-03-06'), executionCalendar(), makeExecutionPolicy(86_400_001)),
-    ).toThrow('submission window must be between one millisecond and one day')
-    expect(() =>
-      makeCycleWindow(
-        signalSession('2026-03-06'),
-        executionCalendar(),
-        makeExecutionPolicy(defaultSubmissionWindowMs, 86_400_001),
-      ),
-    ).toThrow('broker cutoff lead must be between one millisecond and one day')
+    const excessiveWindow = makeCycleWindow(signalSession('2026-03-06'), executionCalendar(), {
+      submissionWindowMs: 86_400_001,
+      submissionCutoffBeforeOpenMs: defaultSubmissionCutoffBeforeOpenMs,
+    })
+    const excessiveLead = makeCycleWindow(signalSession('2026-03-06'), executionCalendar(), {
+      submissionWindowMs: defaultSubmissionWindowMs,
+      submissionCutoffBeforeOpenMs: 86_400_001,
+    })
+    expect(Result.isFailure(excessiveWindow)).toBe(true)
+    expect(Result.isFailure(excessiveWindow) ? excessiveWindow.failure : null).toMatchObject({
+      _tag: 'CycleConstructionFailure',
+      operation: 'cycle-window',
+      reason: 'duration',
+      message: 'submission window must be between one millisecond and one day',
+    })
+    expect(Result.isFailure(excessiveLead)).toBe(true)
+    expect(Result.isFailure(excessiveLead) ? excessiveLead.failure : null).toMatchObject({
+      _tag: 'CycleConstructionFailure',
+      operation: 'cycle-window',
+      reason: 'duration',
+      message: 'broker cutoff lead must be between one millisecond and one day',
+    })
   })
 
   test('rejects forged execution observations, UTC drift, and identity provenance mismatches', async () => {
     const observedExecutionCalendar = executionCalendar()
     const executionPolicy = makeExecutionPolicy()
     const material = makeIdentityMaterial('2026-03-06', observedExecutionCalendar, executionPolicy)
-    const identity = makeCycleIdentity(material)
-    const window = makeCycleWindow(signalSession('2026-03-06'), observedExecutionCalendar, executionPolicy)
+    const identity = makeCycleIdentitySuccess(material)
+    const window = makeCycleWindowSuccess(signalSession('2026-03-06'), observedExecutionCalendar, executionPolicy)
 
     const forgedObservation = await Effect.runPromiseExit(
       decodeExecutionCalendarObservation({
@@ -322,7 +350,7 @@ describe('autonomous cycle identity and calendar', () => {
     const forgedDraft = await Effect.runPromiseExit(
       decodeCycleDraft({
         schemaVersion: 'bayn.autonomous-cycle.v1',
-        identity: makeCycleIdentity({ ...material, executionCalendarHash: forgedHash }),
+        identity: makeCycleIdentitySuccess({ ...material, executionCalendarHash: forgedHash }),
         window: { ...window, executionCalendarHash: forgedHash },
       }),
     )
@@ -331,16 +359,16 @@ describe('autonomous cycle identity and calendar', () => {
     const forgedIdentity = await Effect.runPromiseExit(decodeCycleIdentity({ ...identity, cycleId: 'f'.repeat(64) }))
     expect(Exit.isFailure(forgedIdentity)).toBe(true)
 
-    const otherSignalCalendarWindow = makeCycleWindow(
+    const otherSignalCalendarWindow = makeCycleWindowSuccess(
       signalSession('2026-03-06', '16:00', 'signal-XNYS-2026-other'),
       observedExecutionCalendar,
       executionPolicy,
     )
-    expect(() => makeCycleDraft(identity, otherSignalCalendarWindow)).toThrow(
-      'cycle identity and window must bind the same Signal calendar',
+    expect(() => makeCycleDraftSuccess(identity, otherSignalCalendarWindow)).toThrow(
+      'cycle identity and window bindings are incoherent',
     )
 
-    const otherExecutionCalendarWindow = makeCycleWindow(
+    const otherExecutionCalendarWindow = makeCycleWindowSuccess(
       signalSession('2026-03-06'),
       executionCalendar({
         ...springDstSession,
@@ -348,21 +376,21 @@ describe('autonomous cycle identity and calendar', () => {
       }),
       executionPolicy,
     )
-    expect(() => makeCycleDraft(identity, otherExecutionCalendarWindow)).toThrow(
-      'cycle identity and window must bind the same execution calendar observation',
+    expect(() => makeCycleDraftSuccess(identity, otherExecutionCalendarWindow)).toThrow(
+      'cycle identity and window bindings are incoherent',
     )
 
     expect(() =>
-      makeCycleDraft(
-        makeCycleIdentity(
+      makeCycleDraftSuccess(
+        makeCycleIdentitySuccess(
           makeIdentityMaterial('2026-03-06', observedExecutionCalendar, makeExecutionPolicy(15 * 60 * 1_000)),
         ),
         window,
       ),
-    ).toThrow('cycle window must match the bound execution policy')
+    ).toThrow('cycle identity and window bindings are incoherent')
     expect(() =>
-      makeCycleDraft(
-        makeCycleIdentity(
+      makeCycleDraftSuccess(
+        makeCycleIdentitySuccess(
           makeIdentityMaterial(
             '2026-03-06',
             observedExecutionCalendar,
@@ -371,12 +399,96 @@ describe('autonomous cycle identity and calendar', () => {
         ),
         window,
       ),
-    ).toThrow('cycle broker cutoff must match the bound execution policy')
+    ).toThrow('cycle identity and window bindings are incoherent')
 
     expect(isCycleStateTransitionAllowed(CycleState.Pending, CycleState.Active)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.Blocked)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.NoTrade)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Active, CycleState.Completed)).toBe(true)
     expect(isCycleStateTransitionAllowed(CycleState.Blocked, CycleState.Blocked)).toBe(false)
+  })
+
+  test('treats non-canonicalizable typed draft material as a non-match without throwing', () => {
+    const observedExecutionCalendar = executionCalendar()
+    const executionPolicy = makeExecutionPolicy()
+    const identity = makeCycleIdentitySuccess(
+      makeIdentityMaterial('2026-03-06', observedExecutionCalendar, executionPolicy),
+    )
+    const window = makeCycleWindowSuccess(signalSession('2026-03-06'), observedExecutionCalendar, executionPolicy)
+    const valid = makeCycleDraftSuccess(identity, window)
+    const cyclic = Object.assign({ ...valid }, { self: undefined as unknown })
+    cyclic.self = cyclic
+
+    expect(cycleDraftMatches(valid, cyclic)).toBe(false)
+  })
+
+  test('returns closed tagged failures for every reachable constructor invariant', () => {
+    const observedExecutionCalendar = executionCalendar()
+    const executionPolicy = makeExecutionPolicy()
+    const identity = makeCycleIdentitySuccess(
+      makeIdentityMaterial('2026-03-06', observedExecutionCalendar, executionPolicy),
+    )
+    const window = makeCycleWindowSuccess(signalSession('2026-03-06'), observedExecutionCalendar, executionPolicy)
+    const otherSignalWindow = makeCycleWindowSuccess(
+      signalSession('2026-03-06', '16:00', 'signal-calendar-other'),
+      observedExecutionCalendar,
+      executionPolicy,
+    )
+    const sameDayCalendar = executionCalendar({
+      date: '2026-03-06',
+      openAt: '2026-03-06T14:30:00.000Z',
+      closeAt: '2026-03-06T21:00:00.000Z',
+    })
+    const cases: ReadonlyArray<readonly [string, string, Result.Result<unknown, CycleConstructionFailure>]> = [
+      ['signal-close', 'decode', signalSessionCloseAt({})],
+      ['signal-close', 'market-time', signalSessionCloseAt(signalSession('2026-03-08', '02:30'))],
+      ['execution-policy', 'decode', makeCycleExecutionPolicy({})],
+      ['execution-policy', 'decode', makeCycleExecutionPolicyFromModel({})],
+      ['execution-calendar', 'decode', makeExecutionCalendarObservation({})],
+      ['cycle-identity', 'decode', makeCycleIdentity({})],
+      [
+        'cycle-identity',
+        'session-order',
+        makeCycleIdentity(makeIdentityMaterial('2026-03-06', sameDayCalendar, executionPolicy)),
+      ],
+      ['cycle-window', 'decode', makeCycleWindow({}, observedExecutionCalendar, executionPolicy)],
+      [
+        'cycle-window',
+        'session-order',
+        makeCycleWindow(signalSession('2026-03-09'), observedExecutionCalendar, executionPolicy),
+      ],
+      [
+        'cycle-window',
+        'market-time',
+        makeCycleWindow(signalSession('2026-03-08', '02:30'), observedExecutionCalendar, executionPolicy),
+      ],
+      [
+        'cycle-window',
+        'submission-window',
+        makeCycleWindow(
+          signalSession('2026-03-09'),
+          executionCalendar({
+            date: '2026-03-10',
+            openAt: '2026-03-10T13:30:00.000Z',
+            closeAt: '2026-03-10T20:00:00.000Z',
+          }),
+          makeExecutionPolicy(18 * 60 * 60 * 1_000),
+        ),
+      ],
+      ['cycle-draft', 'decode', makeCycleDraft({}, window)],
+      ['cycle-draft', 'decode', makeCycleDraft(identity, {})],
+      ['cycle-draft', 'binding', makeCycleDraft(identity, otherSignalWindow)],
+    ] as const
+
+    for (const [operation, reason, result] of cases) {
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: 'CycleConstructionFailure',
+          operation,
+          reason,
+        })
+      }
+    }
   })
 })
